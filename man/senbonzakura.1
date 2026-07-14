@@ -1,5 +1,5 @@
 .\" Manpage for senbonzakura.
-.TH SENBONZAKURA 1 "2026-07-14" "senbonzakura 0.2.0" "User Commands"
+.TH SENBONZAKURA 1 "2026-07-14" "senbonzakura 0.3.0" "User Commands"
 .SH NAME
 senbonzakura \- multi-direction refusal abliteration for transformer language models
 .SH SYNOPSIS
@@ -17,6 +17,16 @@ senbonzakura \- multi-direction refusal abliteration for transformer language mo
 .RB [ \-\-search
 .IR pareto | scalar ]
 .RI [ options ]
+.br
+.B senbonzakura kageyoshi
+.RB [ \-\-model
+.IR DIR ]
+.RB [ \-\-out
+.IR DIR ]
+.RB [ \-\-track
+.IR DIR ]
+.RB [ \-\-device
+.IR cuda | cpu ]
 .SH DESCRIPTION
 .B senbonzakura
 removes the refusal behaviour from an open weight language model by finding the
@@ -37,6 +47,20 @@ The search minimises three objectives at once: strict non\-compliance (hard refu
 plus hedging), the Heretic keyword rate, and KL divergence from the original model
 on harmless prompts (the coherence guard). Third, the winning configuration is
 baked permanently into the weights and saved.
+.SH BANKAI MODE
+.TP
+.B senbonzakura kageyoshi
+Ultimate balanced\-effort abliteration with no manual tuning. It detects the
+architecture (dense, fused MoE, or expert list) and parameter count, scales the
+search budget to the model's size, and enables every quality lever: the three
+objective NSGA\-II front with knee selection, the multi\-direction refusal subspace,
+the larger\-eval knee re\-score, and early stop. If a
+.I hedge_ds
+directory is present in the track directory, the hedging contrast direction is
+folded in automatically. The mode is deliberately balanced, it selects the most
+uncensored configuration that remains coherent (guarded by the KL ceiling and the
+coherence penalty), not the most aggressive one. Only the path and device flags are
+honoured; the search budget flags are managed internally and ignored in this mode.
 .SH KEY OPTIONS
 .TP
 .BI \-\-model " DIR"
@@ -95,6 +119,14 @@ after ablation, then exit. Use it to see whether high KL means "wrecked" or just
 .B \-\-version
 Print the version and exit.
 .SH EXAMPLES
+.PP
+Bankai, the no\-tuning best effort (recommended):
+.PP
+.RS
+.nf
+senbonzakura kageyoshi \-\-model ./base \-\-track ./ds \-\-out ./abliterated
+.fi
+.RE
 .PP
 A multi\-direction Pareto search, 200 trials, with the larger knee re\-score:
 .PP

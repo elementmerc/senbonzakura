@@ -28,6 +28,8 @@ plus two of our own (5 multi-directional, 6 interpolated index):
 """
 import argparse
 import json
+import os
+import sys
 import time
 
 import torch
@@ -42,14 +44,58 @@ from .metrics import (
     is_soft_refusal,        # hedged-compliance detector (the moralising lecture)
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
+
+def _apply_kageyoshi(args, model, arch, ne, H, NL, log):
+    # BANKAI — "ultimate balanced-effort" preset. The user asked for the best abliteration
+    # we can produce with no knob-twiddling. So: read the detected architecture + parameter
+    # count, auto-scale the search budget to the model's size, and switch on every quality
+    # lever we have (3-objective NSGA-II front + knee, multi-direction refusal subspace,
+    # hedging-contrast direction when a hedged set is present, larger-eval knee re-score,
+    # early stop). "Balanced" is load-bearing: the KL ceiling + broken penalty + the knee
+    # keep it intact rather than scorched, so this is the best UNCENSORING that stays coherent,
+    # not the most aggressive one. Only path/device/dataset flags are honoured; kageyoshi owns
+    # the search budget itself.
+    total = sum(p.numel() for p in model.parameters())
+    b = total / 1e9
+    # Bigger models generate slower per trial, so fewer trials + smaller evals; the snapshot
+    # also holds a CPU copy of every o_proj + down_proj, which is heavy past ~20B (see the
+    # snapshot_weights note), hence the trimmed direction/eval counts in the top tier.
+    if b < 5:
+        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 100, 256, 64, 64, 128
+    elif b < 20:
+        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 80, 256, 64, 48, 96
+    else:
+        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 64, 192, 48, 32, 96
+    args.search = "pareto"          # map the whole refusals/keyword/KL front, pick the balanced knee
+    args.per_component = True        # tune attn.o_proj and mlp.down_proj apart (the MLP may stay untouched)
+    args.mlp_off = False             # let the search decide, don't force attention-only
+    args.max_directions = 3          # ablate the refusal SUBSPACE, not just the difference-of-means
+    args.kl_scale = 4.0              # the coherence guard that makes it balanced
+    args.top_rescore = 6
+    args.patience = max(20, args.trials // 3)   # stop once the front is mapped
+    # Fold the hedging axis only if a hedged-compliance set is present (the lever that closes
+    # the residual keyword gap Heretic wins on); silently skip it when absent.
+    if not args.hedge_ds and os.path.isdir(f"{args.track}/hedge_ds"):
+        args.hedge_ds = f"{args.track}/hedge_ds"
+    hedge_note = f"hedging={args.hedge_ds}" if args.hedge_ds else "hedging=none (no hedge_ds in track)"
+    log("BANKAI. Senbonzakura Kageyoshi — scatter, a thousand blades.")
+    log(f"  {b:.1f}B params, down-proj={arch}{'' if ne is None else f'/{ne}e'}, {NL} layers -> "
+        f"{args.trials} trials, K<={args.max_directions}, eval {args.eval_refusal}/{args.eval_refusal_final}, "
+        f"patience={args.patience}, {hedge_note}")
 
 
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura",
-        description="Multi-direction refusal abliteration for transformer language models, with a quality-guarded Optuna (NSGA-II) search over windowed, per-component, multi-directional weight ablations.")
+        description="Multi-direction refusal abliteration for transformer language models, with a quality-guarded Optuna (NSGA-II) search over windowed, per-component, multi-directional weight ablations.",
+        epilog="bankai: run `senbonzakura kageyoshi [--model ... --out ... --track ... --device ...]` "
+               "for the ultimate balanced-effort abliteration. It auto-detects the architecture "
+               "(dense / fused MoE / expert-list) and parameter count, scales the search budget, and "
+               "turns on every quality lever, so you set only the paths. It owns the search knobs; "
+               "manual --trials / --max-directions / etc. are ignored in this mode.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="/workspace/base")
     ap.add_argument("--out", default="/workspace/abliterated")
     ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")
@@ -105,6 +151,13 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Easter egg / bankai: `senbonzakura kageyoshi ...` strips the release word and runs the
+    # auto-scaled best-effort preset (resolved after the model loads, once the architecture and
+    # size are known). Everything after it still parses, so paths/device flags work as usual.
+    bankai = bool(argv) and argv[0] == "kageyoshi"
+    if bankai:
+        argv = argv[1:]
     args = build_parser().parse_args(argv)
 
     DEV = args.device
@@ -147,6 +200,9 @@ def main(argv=None):
     _ARCH = layer_downproj(model.model.layers[0])[0]
     NE = getattr(model.config, "num_experts", None) or getattr(model.config, "num_local_experts", None)
     log(f"model up: hidden={H} layers={NL} down-proj={_ARCH} experts={NE}")
+
+    if bankai:
+        _apply_kageyoshi(args, model, _ARCH, NE, H, NL, log)
 
     TR = args.track
     GOOD_DS = args.good_ds or f"{TR}/good_ds"

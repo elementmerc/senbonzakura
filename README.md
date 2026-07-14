@@ -66,6 +66,23 @@ installed to `share/man/man1/senbonzakura.1`.
 
 ## Usage
 
+The fast path, if you just want the best result and no knob-twiddling:
+
+```sh
+senbonzakura kageyoshi --model <hf-model-or-path> --out <dir> --track <dir> --device cuda
+```
+
+`kageyoshi` (bankai) is the ultimate balanced-effort mode. It detects the
+architecture (dense, fused MoE, or expert-list) and parameter count, scales the
+search budget accordingly, and switches on every quality lever, so you supply only
+the paths. "Balanced" is the point: it picks the most uncensored config that stays
+coherent (the KL ceiling and coherence penalty guard it), not the most aggressive
+one. It owns the search knobs; manual `--trials` / `--max-directions` and friends
+are ignored in this mode. If a `hedge_ds/` sits in your track directory it folds the
+hedging axis in automatically.
+
+For full manual control:
+
 ```sh
 senbonzakura --model <hf-model-or-path> --out <dir> \
     --track <dir-holding-bad_ds-good_ds-bad_eval_ds> \

@@ -1,0 +1,25 @@
+# No loaded guns: never commit weights, models, or harmful/harmless prompt sets.
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+models/
+abliterated/
+out/
+checkpoints/
+results/
+plots/
+# datasets (the harmful/harmless contrast + eval sets stay private)
+ds/
+*_ds/
+data/
+*.arrow
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.optuna*/
+optuna*.db

@@ -1,0 +1,126 @@
+.\" Manpage for senbonzakura.
+.TH SENBONZAKURA 1 "2026-07-14" "senbonzakura 0.2.0" "User Commands"
+.SH NAME
+senbonzakura \- multi-direction refusal abliteration for transformer language models
+.SH SYNOPSIS
+.B senbonzakura
+.RB [ \-\-model
+.IR DIR ]
+.RB [ \-\-out
+.IR DIR ]
+.RB [ \-\-track
+.IR DIR ]
+.RB [ \-\-trials
+.IR N ]
+.RB [ \-\-max\-directions
+.IR K ]
+.RB [ \-\-search
+.IR pareto | scalar ]
+.RI [ options ]
+.SH DESCRIPTION
+.B senbonzakura
+removes the refusal behaviour from an open weight language model by finding the
+.I directions
+in its activation space that carry "I can't help with that" and orthogonalising
+them out of the residual writing weights. It builds on the single direction method
+of Arditi et al. and the automated search of Heretic, and adds multi-direction
+ablation: refusal is not one blade, it is a small subspace, and cutting several
+directions at once removes the stubborn residual without wrecking coherence.
+.PP
+The method has three stages. First, per layer refusal directions are extracted:
+the good orthogonalised difference of means, plus secondary axes from the PCA of
+the harmful residual cloud, giving an orthonormal basis of the refusal subspace.
+Second, an Optuna search (NSGA\-II by default) explores a windowed, per component,
+multi\-directional ablation and scores each candidate by applying the real,
+norm preserving weight bake, so the search optimises the exact model it will save.
+The search minimises three objectives at once: strict non\-compliance (hard refusal
+plus hedging), the Heretic keyword rate, and KL divergence from the original model
+on harmless prompts (the coherence guard). Third, the winning configuration is
+baked permanently into the weights and saved.
+.SH KEY OPTIONS
+.TP
+.BI \-\-model " DIR"
+Path to the base model to abliterate.
+.TP
+.BI \-\-out " DIR"
+Where to write the abliterated model and
+.IR abliteration.json .
+.TP
+.BI \-\-track " DIR"
+Directory holding the datasets:
+.IR bad_ds ", " good_ds ", " bad_eval_ds .
+.TP
+.BI \-\-trials " N"
+Number of Optuna search trials (default 60).
+.TP
+.BI \-\-max\-directions " K"
+Upper bound on refusal directions ablated per layer. 1 is the original single
+direction method; greater than 1 enables the multi\-direction subspace ablation.
+.TP
+.BI \-\-search " pareto|scalar"
+.B pareto
+maps the whole frontier with NSGA\-II and picks the knee afterwards;
+.B scalar
+uses a single weighted objective with TPE.
+.TP
+.BI \-\-kl\-scale " F"
+Weight on KL in the scalar objective. Higher protects quality harder.
+.TP
+.B \-\-per\-component
+Tune attention o_proj and MLP down_proj separately (the default). The MLP profile
+may fall to zero, leaving the MLP untouched, which often preserves intelligence.
+.TP
+.B \-\-mlp\-off
+Attention only: pin the MLP ablation to zero and drop its search dimensions. Tests
+the "attention carries refusal, MLP carries capability" hypothesis.
+.TP
+.BI \-\-hedge\-ds " DIR"
+A hedged compliance dataset (moralising but complying answers). When given, a
+hedged versus clean contrast direction is folded into the ablated basis, so the
+search can strip the disclaimer axis the difference of means direction misses.
+.TP
+.BI \-\-patience " N"
+Stop the search early once no trial improves the best score for N consecutive
+trials (0 runs all trials).
+.TP
+.BI \-\-eval\-refusal\-final " N"
+Re\-score the top frontier candidates on N bad\-eval prompts before picking the
+knee, so the choice is not overfit to the small search eval.
+.TP
+.BI \-\-inspect " LAYER STRENGTH"
+Print real harmful and harmless generations at one (layer, strength), before and
+after ablation, then exit. Use it to see whether high KL means "wrecked" or just
+"a few benign first tokens flipped".
+.TP
+.B \-\-version
+Print the version and exit.
+.SH EXAMPLES
+.PP
+A multi\-direction Pareto search, 200 trials, with the larger knee re\-score:
+.PP
+.RS
+.nf
+senbonzakura \-\-model ./base \-\-track ./ds \-\-out ./abliterated \\
+    \-\-search pareto \-\-max\-directions 6 \-\-trials 200 \\
+    \-\-eval\-refusal\-final 256 \-\-patience 40
+.fi
+.RE
+.PP
+Attention only ablation with a hedged contrast:
+.PP
+.RS
+.nf
+senbonzakura \-\-model ./base \-\-track ./ds \-\-out ./att \\
+    \-\-mlp\-off \-\-hedge\-ds ./ds/hedged_ds \-\-max\-directions 4
+.fi
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or a clean early exit from
+.BR \-\-inspect / \-\-bench\-only .
+.SH SEE ALSO
+Arditi et al., "Refusal in Language Models Is Mediated by a Single Direction"
+(2024). Heretic (p\-e\-w/heretic).
+.SH AUTHOR
+Daniel Iwugo.

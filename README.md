@@ -44,9 +44,7 @@ tie (both clear the strict count to around eight percent); the extra directions 
 little there, and clearly separate only at 4B. Two model sizes at one seed each is
 suggestive, not an established scaling law: it could be a real trend (a bigger model
 spreading refusal across more directions) or per-model variance, and more sizes and
-repeated seeds would be needed to tell. (The [Benchmark](#benchmark) below still
-shows this 1.7B model's superseded pre-fix run at 40%, not the ~8% here; see
-[Reproducibility](#reproducibility-and-status).)
+repeated seeds would be needed to tell.
 
 ## How it works
 
@@ -151,26 +149,9 @@ left the keyword/hedging axis to chance.
 
 ## Benchmark
 
-Head-to-head against [Heretic](https://github.com/p-e-w/heretic) on Qwen3-1.7B: same base
-model, a 290-prompt evaluation scored with the same ruler, an equal 200-trial search budget
-on the same GPU. The honest read is a trade-off, not a clean sweep.
-
-> **Superseded pre-fix run.** These numbers predate the correctness fixes; under the current
-> code Senbonzakura's keyword rate on this setup drops from 40% to roughly 8% (see
-> [Reproducibility](#reproducibility-and-status)). A matched Heretic re-run is pending, so read
-> this table as historical, not current.
-
-| Model | Hard refusal | Heretic keyword | Coherence (PPL, base 20.40) |
-|---|--:|--:|--:|
-| Heretic (default) | 0.0% | **5.5%** | 20.44 |
-| Senbonzakura (multi-direction) | **0.7%** | 40.0% | **20.16** |
-
-With regards to **Coherence**, Senbonzakura lands level with the base model's
-perplexity while ablating (20.16 vs 20.40; a delta this small is within run-to-run noise,
-so read it as a tie, not a win). With regards to **Refusal suppression on Heretic's own
-keyword metric**, Heretic wins clearly (5.5% vs 40.0%). The gap is not hard refusals (both
-are near zero) but residual *hedging* language that the keyword rate flags on
-otherwise-complying answers.
+A matched head-to-head against [Heretic](https://github.com/p-e-w/heretic), on the same base
+model, evaluation, and search budget, is the natural comparison here. It is pending a re-run under
+the current code and will be published in this section once it lands.
 
 ### Reproducibility and status
 
@@ -182,14 +163,10 @@ otherwise-complying answers.
   `python -m senbonzakura.score --load-in-4bit` on the 290-prompt eval for the refusal columns, and
   `python -m senbonzakura.coherence --load-in-4bit` on the fixed neutral passage for the perplexity,
   both through the same 4-bit loader.
-- **The [Benchmark](#benchmark) head-to-head still shows a pre-fix run.** It predates the
-  correctness fixes to direction extraction (a left-padding last-token bug), the multi-direction
-  basis (a class-separation filter so the extra axes are refusal, not topic variance), and knee
-  selection (which now weights the keyword axis it always searched). Under the corrected code
-  Senbonzakura's keyword rate on the same Qwen3-1.7B setup falls from 40% to roughly 8%, much
-  nearer Heretic's, so the published gap overstates the real one. A fresh matched Heretic re-run on
-  identical settings is the remaining task; until it lands, read the head-to-head as indicative and
-  Senbonzakura's side as stale-high.
+- **A matched Heretic head-to-head is pending** (see [Benchmark](#benchmark)). Recent correctness
+  fixes to direction extraction, the multi-direction basis, and knee selection moved the numbers
+  substantially in Senbonzakura's favour on the keyword axis, so the matched re-run under the
+  corrected code is the remaining task before that comparison is published.
 
 ## What this repository does not contain
 
@@ -204,7 +181,7 @@ Abliteration removes safety guardrails wholesale. That is both the point and the
 danger. Use it accordingly.
 
 Note on licences: this tool is **AGPL-3.0-or-later** (it embeds a keyword metric copied from
-Heretic, which is AGPL; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Separately, a model
+Heretic, which is AGPL). Separately, a model
 you abliterate keeps the **base model's** licence and use restrictions: redistributing an
 abliterated checkpoint is governed by that upstream licence (Qwen, Llama, Gemma and so on), not by
 this repository's.

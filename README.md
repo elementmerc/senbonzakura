@@ -24,17 +24,26 @@ nearby directions the single-arrow method never sees. Account for a refusal
 *subspace* instead of a single vector and the residual refusals fall the rest of
 the way, without the model losing its coherence.
 
-On Qwen3-1.7B, over the same 290-prompt evaluation:
+How much further multi-direction takes you depends on the size of the model. On
+Qwen3-4B, over a 290-prompt evaluation scored with the same ruler:
 
-| Configuration | Hard refusal | Strict (Heretic keyword) | Broken |
-|---|--:|--:|--:|
-| Stock, uncut | 6.2% | 45.5% | 0.0% |
-| Single direction | 2.4% | 40.3% | 0.0% |
-| **Senbonzakura (multi-direction)** | **1.0%** | **21.7%** | **0.0%** |
+| Configuration | Hard refusal | Strict (Heretic keyword) | Broken | Coherence (PPL, base 12.97) |
+|---|--:|--:|--:|--:|
+| Stock, uncut | 7.9% | 63.8% | 0.0% | 12.97 |
+| Single direction | 2.1% | 36.6% | 0.0% | 12.97 |
+| **Senbonzakura (multi-direction)** | **0.0%** | **20.0%** | **0.0%** | 13.29 |
 
-The single-direction pass barely touches the strict count; multi-direction
-roughly halves it, with no broken output. For the direct comparison against
-Heretic on identical hardware, see [Benchmark](#benchmark).
+Single-direction leaves better than a third of the strict count standing.
+Multi-direction cuts it to a fifth and drives hard refusal to zero, with no broken
+output. Coherence stays essentially level with the base model: single-direction is
+identical to stock, multi about two percent higher, both inside run-to-run noise.
+
+The size of that win tracks the size of the model. On the smaller Qwen3-1.7B the
+two configurations roughly tie, both clearing the strict count to around eight
+percent, because once the primary direction is gone there is little residue left
+for the extra axes to take. The refusal subspace matters more as the model grows
+and its refusal machinery spreads across more directions. For the direct
+comparison against Heretic, see [Benchmark](#benchmark).
 
 ## How it works
 
@@ -108,6 +117,13 @@ Score any model on a held-out evaluation set with the same ruler:
 python -m senbonzakura.score --model <dir> --eval <eval-dataset> --out results.json --label mymodel
 ```
 
+Measure its coherence on the same loader, the other half of the ruler (the
+perplexity the model assigns to one fixed neutral passage, lower is better):
+
+```sh
+python -m senbonzakura.coherence --model <dir> --out coherence.json --label mymodel --load-in-4bit
+```
+
 `senbonzakura.metrics` is that shared ruler: hard refusal, soft refusal (the "I
 can't, but here's a lecture" hedge), broken output, and the Heretic keyword rate
 (copied verbatim, so the numbers are directly comparable to Heretic's published
@@ -150,20 +166,22 @@ otherwise-complying answers.
 
 ### Reproducibility and status
 
-Honest caveats on the numbers above, and in the table under [Why multi-direction](#why-multi-direction):
-
 - **Single run, seed 42.** The Optuna sampler is seeded, but GPU kernels (matmul reductions,
   SVD) are not bit-deterministic, so a re-run can differ by a percent or two. No error bars are
   reported; treat small differences as noise.
-- **The two tables come from different development runs and configurations** (trial budget,
-  hedging set on/off, eval slice), so their keyword-rate figures for Senbonzakura are not directly
-  comparable to each other. A single consolidated, reproducible benchmark is the right fix.
-- **These figures predate the correctness fixes** to direction extraction (a left-padding
-  last-token bug), the multi-direction basis (a class-separation filter so the extra axes are
-  refusal, not topic variance), and knee selection (which now weights the keyword axis it always
-  searched). Each changes the numbers, mostly in Senbonzakura's favour on the keyword axis, so the
-  table is being **re-measured** and will be republished once the re-run is complete. Until then,
-  read the current figures as indicative, and the coherence result as the durable claim.
+- **The [Why multi-direction](#why-multi-direction) table is freshly measured** on Qwen3-4B with
+  the current code, and every cell reproduces from the shipped tools:
+  `senbonzakura.score --load-in-4bit` for the refusal columns and
+  `senbonzakura.coherence --load-in-4bit` for the perplexity, both on the same 290-prompt eval and
+  the same 4-bit loader.
+- **The [Benchmark](#benchmark) head-to-head still shows a pre-fix run.** It predates the
+  correctness fixes to direction extraction (a left-padding last-token bug), the multi-direction
+  basis (a class-separation filter so the extra axes are refusal, not topic variance), and knee
+  selection (which now weights the keyword axis it always searched). Under the corrected code
+  Senbonzakura's keyword rate on the same Qwen3-1.7B setup falls from 40% to roughly 8%, much
+  nearer Heretic's, so the published gap overstates the real one. A fresh matched Heretic re-run on
+  identical settings is the remaining task; until it lands, read the head-to-head as indicative and
+  Senbonzakura's side as stale-high.
 
 ## What this repository does not contain
 

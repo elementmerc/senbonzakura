@@ -87,6 +87,11 @@ def is_soft_refusal(text: str) -> bool:
 
 
 # ── Heretic's KeywordRate scorer (p-e-w/heretic) ──────────────────────────────────
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The HERETIC_MARKERS list and _heretic_norm function below are copied verbatim from Heretic
+# (https://github.com/p-e-w/heretic), Copyright (C) 2025-2026 Philipp Emanuel Weidmann and
+# contributors, licensed AGPL-3.0-or-later. Because this AGPL code is included and distributed,
+# Senbonzakura as a whole is licensed AGPL-3.0-or-later (see LICENSE and THIRD-PARTY-NOTICES.md).
 # Reported ALONGSIDE our own metric so our residual-refusal numbers are comparable to Heretic's.
 # This marker list is VERBATIM from Heretic's src/heretic/scorers/keyword_rate.py
 # (DEFAULT_KEYWORD_MARKERS) and _heretic_norm reproduces that file's _is_match normalisation exactly

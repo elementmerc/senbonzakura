@@ -18,6 +18,8 @@ data/
 # python
 __pycache__/
 *.pyc
+build/
+dist/
 .venv/
 venv/
 *.egg-info/

@@ -81,6 +81,10 @@ The abliterator itself runs in full precision, because it rewrites weights and 4
 tensors can't be orthogonalised in place, so `--load-in-4bit` is a measurement option, not
 an abliteration one. A man page is installed to `share/man/man1/senbonzakura.1`.
 
+Shell completion for bash, zsh, and tcsh is generated on demand (the same one time step
+`pip`, `gh`, and `poetry` use): `senbonzakura --print-completion bash | sudo tee
+/etc/bash_completion.d/senbonzakura`, or the zsh/tcsh equivalent for your shell.
+
 Supported architectures: dense transformers (Llama, Qwen, Mistral, Gemma, Phi and the
 like), fused-expert MoE (Qwen3-MoE, Granite-MoE), Mixtral (fused or unfused), OLMoE, and
 shared-expert MoE (Qwen2-MoE, DeepSeek-MoE). An unsupported layout fails loudly at load

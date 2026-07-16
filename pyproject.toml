@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,31 +8,36 @@ version = "0.3.0"
 description = "Multi-direction refusal abliteration for transformer language models."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
   "torch>=2.2",
-  "transformers>=4.44",
+  "transformers>=4.56",
+  "accelerate>=0.26",
   "datasets>=2.0",
   "optuna>=3.0",
-  "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
 # 4-bit loading for the head-to-head bench and low-VRAM runs.
 quant = ["bitsandbytes>=0.43"]
-dev = ["pytest>=7", "build>=1.0", "ruff>=0.4"]
+dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff>=0.4"]
 
 [project.urls]
-Homepage = "https://git.olympus.hq/daniel/senbonzakura"
+Homepage = "https://github.com/elementmerc/senbonzakura"
+Repository = "https://github.com/elementmerc/senbonzakura"
+Issues = "https://github.com/elementmerc/senbonzakura/issues"
 
 [project.scripts]
 # `senbonzakura --help` after `pip install .`  (also works: `python -m senbonzakura`)
@@ -46,3 +51,12 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]
+
+[tool.coverage.run]
+omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; main()` shim
+
+[tool.coverage.report]
+exclude_also = [
+  "if __name__ == .__main__.:",
+  "pragma: no cover",
+]

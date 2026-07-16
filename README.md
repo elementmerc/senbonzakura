@@ -2,6 +2,10 @@
 
 **Multi-direction refusal abliteration for transformer language models.**
 
+<p align="center">
+  <img src="docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
+</p>
+
 Senbonzakura removes the refusal behaviour from an open-weight language model by
 finding the *directions* in its activation space that carry "I can't help with
 that" and orthogonalising them out of the weights. It builds on the
@@ -10,11 +14,11 @@ adds the one thing that moved the needle in my own runs: cutting in **several
 directions at once**, not just one.
 
 Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand
-blades. Refusal is not one blade. It is many.
+blades. Refusal is not one blade. It's many.
 
 ## Why multi-direction
 
-The original finding (Arditi et al., 2024) is that refusal is *mostly* one
+The original finding ([Arditi et al., 2024](https://arxiv.org/abs/2406.11717)) is that refusal is *mostly* one
 direction. Mostly. The last stubborn few percent lives in a small handful of
 nearby directions the single-arrow method never sees. Account for a refusal
 *subspace* instead of a single vector and the residual refusals fall the rest of
@@ -57,12 +61,20 @@ been told to ignore it.
 ## Install
 
 ```sh
-pip install .          # or:  uv pip install .    (torch, transformers, datasets, optuna, numpy)
+pip install .          # or:  uv pip install .   (torch, transformers, accelerate, datasets, optuna)
 senbonzakura --help    # console command; equivalently: python -m senbonzakura --help
 ```
 
-For 4-bit loading on low-VRAM cards, `pip install ".[quant]"`. A man page is
-installed to `share/man/man1/senbonzakura.1`.
+To score a large model on a low-VRAM card, `pip install ".[quant]"` adds 4-bit
+(bitsandbytes) loading **for the scorer**: `python -m senbonzakura.score --load-in-4bit`.
+The abliterator itself runs in full precision, because it rewrites weights and 4-bit
+tensors can't be orthogonalised in place, so `--load-in-4bit` is a measurement option, not
+an abliteration one. A man page is installed to `share/man/man1/senbonzakura.1`.
+
+Supported architectures: dense transformers (Llama, Qwen, Mistral, Gemma, Phi and the
+like), fused-expert MoE (Qwen3-MoE, Granite-MoE), Mixtral (fused or unfused), OLMoE, and
+shared-expert MoE (Qwen2-MoE, DeepSeek-MoE). An unsupported layout fails loudly at load
+rather than silently under-ablating.
 
 ## Usage
 
@@ -72,10 +84,10 @@ The fast path, if you just want the best result and no knob-twiddling:
 senbonzakura kageyoshi --model <hf-model-or-path> --out <dir> --track <dir> --device cuda
 ```
 
-`kageyoshi` (bankai) is the ultimate balanced-effort mode. It detects the
+`kageyoshi` is the ultimate balanced-effort mode. It detects the
 architecture (dense, fused MoE, or expert-list) and parameter count, scales the
 search budget accordingly, and switches on every quality lever, so you supply only
-the paths. "Balanced" is the point: it picks the most uncensored config that stays
+the paths. "Balanced" is the point here. It picks the most uncensored config that stays
 coherent (the KL ceiling and coherence penalty guard it), not the most aggressive
 one. It owns the search knobs; manual `--trials` / `--max-directions` and friends
 are ignored in this mode. If a `hedge_ds/` sits in your track directory it folds the
@@ -113,33 +125,45 @@ figures).
   picking the knee, so the choice isn't overfit to the small search eval.
 - `--inspect LAYER STRENGTH` — print real generations before and after a cut.
 
-The search minimises **three** objectives at once (v0.2): strict non-compliance
+The search minimises **three** objectives at once: strict non-compliance
 (hard refusal plus hedging), the Heretic keyword rate as its own axis, and KL
 divergence (coherence). Earlier versions optimised only hard-refusal-versus-KL and
 left the keyword/hedging axis to chance.
 
 ## Benchmark
 
-Head-to-head against [Heretic](https://github.com/p-e-w/heretic) on Qwen3-1.7B,
-same base model, same 290-prompt evaluation, an equal 200-trial search budget on
-the same GPU. The honest read is a trade-off, not a clean sweep:
+Head-to-head against [Heretic](https://github.com/p-e-w/heretic) on Qwen3-1.7B: same base
+model, a 290-prompt evaluation scored with the same ruler, an equal 200-trial search budget
+on the same GPU. The honest read is a trade-off, not a clean sweep:
 
 | Model | Hard refusal | Heretic keyword | Coherence (PPL, base 20.40) |
 |---|--:|--:|--:|
 | Heretic (default) | 0.0% | **5.5%** | 20.44 |
 | Senbonzakura (multi-direction) | **0.7%** | 40.0% | **20.16** |
 
-Two opposite verdicts. **Coherence**: Senbonzakura wins, and it lands *below* the
-base model's perplexity while ablating. **Refusal suppression on Heretic's own
-keyword metric**: Heretic wins decisively. The gap is not hard refusals (both are
-near zero) but residual *hedging* language that the keyword rate flags on
+With regards to **Coherence**, Senbonzakura lands level with the base model's
+perplexity while ablating (20.16 vs 20.40; a delta this small is within run-to-run noise,
+so read it as a tie, not a win). With regards to **Refusal suppression on Heretic's own
+keyword metric**, Heretic wins clearly (5.5% vs 40.0%). The gap is not hard refusals (both
+are near zero) but residual *hedging* language that the keyword rate flags on
 otherwise-complying answers.
 
-v0.2 targets that gap directly: the keyword rate and hedging are now first-class
-search objectives (they were only *reported* before), plus an optional
-`--hedge-ds` contrast so the ablated basis can span the hedging axis the
-difference-of-means direction never captured. A reconciled re-bench with those
-levers is the next run.
+### Reproducibility and status
+
+Honest caveats on the numbers above, and in the table under [Why multi-direction](#why-multi-direction):
+
+- **Single run, seed 42.** The Optuna sampler is seeded, but GPU kernels (matmul reductions,
+  SVD) are not bit-deterministic, so a re-run can differ by a percent or two. No error bars are
+  reported; treat small differences as noise.
+- **The two tables come from different development runs and configurations** (trial budget,
+  hedging set on/off, eval slice), so their keyword-rate figures for Senbonzakura are not directly
+  comparable to each other. A single consolidated, reproducible benchmark is the right fix.
+- **These figures predate the correctness fixes** to direction extraction (a left-padding
+  last-token bug), the multi-direction basis (a class-separation filter so the extra axes are
+  refusal, not topic variance), and knee selection (which now weights the keyword axis it always
+  searched). Each changes the numbers, mostly in Senbonzakura's favour on the keyword axis, so the
+  table is being **re-measured** and will be republished once the re-run is complete. Until then,
+  read the current figures as indicative, and the coherence result as the durable claim.
 
 ## What this repository does not contain
 
@@ -153,14 +177,18 @@ By design, this is methods and results, not a loaded weapon:
 Abliteration removes safety guardrails wholesale. That is both the point and the
 danger. Use it accordingly.
 
+Note on licences: this tool is Apache-2.0, but a model you abliterate keeps the **base
+model's** licence and use restrictions. Redistributing an abliterated checkpoint is governed
+by that upstream licence (Qwen, Llama, Gemma and so on), not by this repository's.
+
 ## Credit
 
-- Arditi, Obeso, et al. *Refusal in Language Models Is Mediated by a Single
-  Direction* (2024). The direction method this builds on.
+- Arditi, Obeso, et al. [*Refusal in Language Models Is Mediated by a Single
+  Direction*](https://arxiv.org/abs/2406.11717) (2024). The direction method this builds on.
 - [Heretic](https://github.com/p-e-w/heretic) by p-e-w. The automated,
   KL-guarded search this refines, and the keyword metric reported here for
   comparison.
-- Maxime Labonne. *Uncensor any LLM with abliteration.* The tutorial that
+- Maxime Labonne. [*Uncensor any LLM with abliteration*](https://huggingface.co/blog/mlabonne/abliteration). The tutorial that
   popularised the technique.
 
 ## Licence

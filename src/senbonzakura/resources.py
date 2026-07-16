@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Adaptive GPU resource governor for senbonzakura.
 
 Abliterating a model is heavy, sustained GPU work. If you open a game or a browser mid-run, the

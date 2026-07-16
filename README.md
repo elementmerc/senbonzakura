@@ -3,7 +3,7 @@
 **Multi-direction refusal abliteration for transformer language models.**
 
 <p align="center">
-  <img src="docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
+  <img src="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
 </p>
 
 Senbonzakura removes the refusal behaviour from an open-weight language model by
@@ -24,8 +24,8 @@ nearby directions the single-arrow method never sees. Account for a refusal
 *subspace* instead of a single vector and the residual refusals fall the rest of
 the way, without the model losing its coherence.
 
-How much further multi-direction takes you depends on the size of the model. On
-Qwen3-4B, over a 290-prompt evaluation scored with the same ruler:
+The clearest measurement is on Qwen3-4B, over a 290-prompt evaluation scored with
+the same ruler:
 
 | Configuration | Hard refusal | Strict (Heretic keyword) | Broken | Coherence (PPL, base 12.97) |
 |---|--:|--:|--:|--:|
@@ -38,12 +38,15 @@ Multi-direction cuts it to a fifth and drives hard refusal to zero, with no brok
 output. Coherence stays essentially level with the base model: single-direction is
 identical to stock, multi about two percent higher, both inside run-to-run noise.
 
-The size of that win tracks the size of the model. On the smaller Qwen3-1.7B the
-two configurations roughly tie, both clearing the strict count to around eight
-percent, because once the primary direction is gone there is little residue left
-for the extra axes to take. The refusal subspace matters more as the model grows
-and its refusal machinery spreads across more directions. For the direct
-comparison against Heretic, see [Benchmark](#benchmark).
+That advantage may grow with model size, but two points is not a trend I'd bet on.
+On the smaller Qwen3-1.7B, under the same corrected code, single and multi roughly
+tie (both clear the strict count to around eight percent); the extra directions buy
+little there, and clearly separate only at 4B. Two model sizes at one seed each is
+suggestive, not an established scaling law: it could be a real trend (a bigger model
+spreading refusal across more directions) or per-model variance, and more sizes and
+repeated seeds would be needed to tell. (The [Benchmark](#benchmark) below still
+shows this 1.7B model's superseded pre-fix run at 40%, not the ~8% here; see
+[Reproducibility](#reproducibility-and-status).)
 
 ## How it works
 
@@ -150,7 +153,12 @@ left the keyword/hedging axis to chance.
 
 Head-to-head against [Heretic](https://github.com/p-e-w/heretic) on Qwen3-1.7B: same base
 model, a 290-prompt evaluation scored with the same ruler, an equal 200-trial search budget
-on the same GPU. The honest read is a trade-off, not a clean sweep:
+on the same GPU. The honest read is a trade-off, not a clean sweep.
+
+> **Superseded pre-fix run.** These numbers predate the correctness fixes; under the current
+> code Senbonzakura's keyword rate on this setup drops from 40% to roughly 8% (see
+> [Reproducibility](#reproducibility-and-status)). A matched Heretic re-run is pending, so read
+> this table as historical, not current.
 
 | Model | Hard refusal | Heretic keyword | Coherence (PPL, base 20.40) |
 |---|--:|--:|--:|
@@ -170,10 +178,10 @@ otherwise-complying answers.
   SVD) are not bit-deterministic, so a re-run can differ by a percent or two. No error bars are
   reported; treat small differences as noise.
 - **The [Why multi-direction](#why-multi-direction) table is freshly measured** on Qwen3-4B with
-  the current code, and every cell reproduces from the shipped tools:
-  `senbonzakura.score --load-in-4bit` for the refusal columns and
-  `senbonzakura.coherence --load-in-4bit` for the perplexity, both on the same 290-prompt eval and
-  the same 4-bit loader.
+  the current code, and every cell is produced by the shipped tools:
+  `python -m senbonzakura.score --load-in-4bit` on the 290-prompt eval for the refusal columns, and
+  `python -m senbonzakura.coherence --load-in-4bit` on the fixed neutral passage for the perplexity,
+  both through the same 4-bit loader.
 - **The [Benchmark](#benchmark) head-to-head still shows a pre-fix run.** It predates the
   correctness fixes to direction extraction (a left-padding last-token bug), the multi-direction
   basis (a class-separation filter so the extra axes are refusal, not topic variance), and knee
@@ -195,20 +203,25 @@ By design, this is methods and results, not a loaded weapon:
 Abliteration removes safety guardrails wholesale. That is both the point and the
 danger. Use it accordingly.
 
-Note on licences: this tool is Apache-2.0, but a model you abliterate keeps the **base
-model's** licence and use restrictions. Redistributing an abliterated checkpoint is governed
-by that upstream licence (Qwen, Llama, Gemma and so on), not by this repository's.
+Note on licences: this tool is **AGPL-3.0-or-later** (it embeds a keyword metric copied from
+Heretic, which is AGPL; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Separately, a model
+you abliterate keeps the **base model's** licence and use restrictions: redistributing an
+abliterated checkpoint is governed by that upstream licence (Qwen, Llama, Gemma and so on), not by
+this repository's.
 
 ## Credit
 
 - Arditi, Obeso, et al. [*Refusal in Language Models Is Mediated by a Single
   Direction*](https://arxiv.org/abs/2406.11717) (2024). The direction method this builds on.
-- [Heretic](https://github.com/p-e-w/heretic) by p-e-w. The automated,
-  KL-guarded search this refines, and the keyword metric reported here for
-  comparison.
+- [Heretic](https://github.com/p-e-w/heretic) by p-e-w (Philipp Emanuel Weidmann),
+  AGPL-3.0. The automated, KL-guarded search this refines, and the keyword metric
+  reported here for comparison (copied verbatim, which is why this project is
+  AGPL; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 - Maxime Labonne. [*Uncensor any LLM with abliteration*](https://huggingface.co/blog/mlabonne/abliteration). The tutorial that
   popularised the technique.
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE).
+**AGPL-3.0-or-later.** See [LICENSE](LICENSE). Senbonzakura is copyleft because it embeds a
+keyword metric copied verbatim from [Heretic](https://github.com/p-e-w/heretic) (AGPL-3.0); see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

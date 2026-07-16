@@ -361,6 +361,12 @@ def build_parser():
                "turns on every quality lever, so you set only the paths. It owns the search knobs; "
                "manual --trials / --max-directions / etc. are ignored in this mode.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    try:   # optional shell completion; degrade gracefully if shtab is not installed
+        import shtab
+        shtab.add_argument_to(ap, ["--print-completion"],
+                              help="print a bash/zsh/tcsh shell completion script and exit")
+    except ImportError:
+        pass
     ap.add_argument("--model", required=True, help="HF model id or local path to abliterate")
     ap.add_argument("--out", default="abliterated", help="directory to write the abliterated model to")
     ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")

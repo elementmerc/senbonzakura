@@ -29,6 +29,7 @@ dependencies = [
   "accelerate>=0.26",
   "datasets>=2.0",
   "optuna>=3.0",
+  "shtab>=1.6",
 ]
 
 [project.optional-dependencies]

@@ -153,9 +153,10 @@ left the keyword/hedging axis to chance.
 
 ## Benchmark
 
-A matched head-to-head against [Heretic](https://github.com/p-e-w/heretic), on the same base
-model, evaluation, and search budget, is the natural comparison here. It is pending a re-run under
-the current code and will be published in this section once it lands.
+A matched comparison against [Heretic](https://github.com/p-e-w/heretic) on
+gemma-3-12b-it, the model Heretic reports in its own README, is planned so the two
+methods can be read side by side on identical ground: same base model, same
+evaluation, same keyword ruler. It will be added to this section when run.
 
 ### Reproducibility and status
 
@@ -167,10 +168,10 @@ the current code and will be published in this section once it lands.
   `python -m senbonzakura.score --load-in-4bit` on the 290-prompt eval for the refusal columns, and
   `python -m senbonzakura.coherence --load-in-4bit` on the fixed neutral passage for the perplexity,
   both through the same 4-bit loader.
-- **A matched Heretic head-to-head is pending** (see [Benchmark](#benchmark)). Recent correctness
-  fixes to direction extraction, the multi-direction basis, and knee selection moved the numbers
-  substantially in Senbonzakura's favour on the keyword axis, so the matched re-run under the
-  corrected code is the remaining task before that comparison is published.
+- **No head-to-head against Heretic is published yet** (see [Benchmark](#benchmark)). Recent
+  correctness fixes to direction extraction, the multi-direction basis, and knee selection moved the
+  numbers substantially in Senbonzakura's favour on the keyword axis, so any comparison is run under
+  the corrected code, on identical ground, before it goes in.
 
 ## What this repository does not contain
 

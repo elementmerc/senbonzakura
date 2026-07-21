@@ -50,6 +50,8 @@ from .metrics import (
     is_soft_refusal,        # hedged-compliance detector (the moralising lecture)
 )
 from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
+from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
+    MIN_TORCH, torch_version_ok, study_db_path, search_already_done, winning_config, config_to_bake_args)
 
 __version__ = "0.3.0"
 
@@ -448,11 +450,17 @@ def build_parser():
     ap.add_argument("--top-rescore", type=int, default=6,
                     help="how many frontier candidates to re-score with --eval-refusal-final.")
     ap.add_argument("--study-db", default=None,
-                    help="persist the Optuna study to this SQLite file so a long search survives a "
-                         "crash (default: in-memory; <track>/senbon-study.db when --resume is set).")
+                    help="persist the Optuna study to this SQLite file (default: <track>/senbon-study.db, "
+                         "so a killed run resumes with --resume instead of re-searching).")
+    ap.add_argument("--no-persist-study", action="store_true", dest="no_persist_study",
+                    help="do NOT persist the Optuna study (in-memory only). A crash then loses the "
+                         "search; the persistent default is the safer choice for a long paid run.")
     ap.add_argument("--resume", action="store_true",
-                    help="resume a persisted study (implies a SQLite backing store); continues where "
-                         "an interrupted search left off instead of starting over.")
+                    help="resume a persisted study; continues where an interrupted search left off, "
+                         "and if the study already finished, skips straight to bake+save.")
+    ap.add_argument("--bake-config", default=None, dest="bake_config",
+                    help="skip the search entirely: load a saved best-config.json and bake+save that "
+                         "config directly. Recovers a crashed save in minutes instead of re-searching.")
     ap.add_argument("--version", action="version", version=f"senbonzakura {__version__}")
     return ap
 
@@ -956,6 +964,16 @@ class Abliterator:
             log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0): refusals={r*100:.1f}% KL={k:.4f}")
             return   # --bench-only is a one-shot probe; nothing to search or save
 
+        # Direct re-bake: skip the search entirely, bake a saved best-config.json and save. Recovers a
+        # crashed save (or re-issues an output) in minutes instead of paying for the whole search again.
+        # Directions and evals are already prepared above, so the bake reproduces the searched result.
+        if args.bake_config:
+            cfg = json.load(open(args.bake_config, encoding="utf-8"))
+            bpr, b_K, b_mode, b_di = config_to_bake_args(cfg)
+            log(f"direct bake from {args.bake_config} (skipping the search)")
+            self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+            return
+
         log(f"searching {args.trials} trials over layers [{lo},{hi}] ({args.search})")
         # NSGA-II needs a population to exert selection pressure; Optuna's default of 50 is far larger
         # than the small trial budgets here (a 60-trial run would be barely one generation), so pin the
@@ -964,11 +982,11 @@ class Abliterator:
         pop = max(4, min(50, args.trials // 4))
         storage = None
         study_name = f"senbon-{args.search}"
-        if args.resume or args.study_db:
-            db = args.study_db or f"{TR}/senbon-study.db"
+        db = study_db_path(args.study_db, args.no_persist_study, TR)
+        if db:
             storage = f"sqlite:///{db}"
             log(f"persistent study at {db} ({'resuming' if args.resume else 'fresh'}); "
-                f"a killed run can be continued with --resume")
+                f"a killed run resumes with --resume (or --no-persist-study to disable)")
         if args.search == "pareto":
             study = optuna.create_study(
                 directions=["minimize", "minimize", "minimize"],
@@ -979,6 +997,13 @@ class Abliterator:
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=42, n_startup_trials=12),
                 storage=storage, study_name=study_name, load_if_exists=args.resume)
+
+        # --resume on a study that already finished its search (ran the budget or early-stopped)
+        # must skip straight to bake+save, not re-search it. Without this, resume re-runs the whole
+        # search on a completed study (the trap that wasted ~34 min of GPU on the first large run).
+        skip_search = args.resume and search_already_done(study.user_attrs)
+        if skip_search:
+            log("resumed study already finished its search; skipping to bake + save")
 
         # Early stop (lever 4): stop once the best scalarised score (non-compliance + 0.5*keyword under
         # the KL/broken guards) hasn't improved for --patience consecutive trials, on the theory that the
@@ -1005,11 +1030,15 @@ class Abliterator:
         # A single flaky trial (a transient CUDA OOM on an unlucky batch, say) must not kill the whole
         # search; catch it so Optuna marks that trial failed and moves on. Whatever the outcome, the
         # last trial's bake is left applied, so restore to pristine before any downstream read/mutate.
-        try:
-            study.optimize(self.objective, n_trials=args.trials, callbacks=[_patience_cb, _progress_cb],
-                           catch=(RuntimeError,))
-        finally:
-            self.restore_weights()
+        if not skip_search:
+            try:
+                study.optimize(self.objective, n_trials=args.trials, callbacks=[_patience_cb, _progress_cb],
+                               catch=(RuntimeError,))
+            finally:
+                self.restore_weights()
+            # Mark the search finished (budget spent or early-stopped) so a later --resume skips it
+            # instead of re-searching. Persisted with the study, so it survives a crash after the search.
+            study.set_user_attr("search_done", True)
 
         def _row(t):
             pr = _profiles_from_params(t.params)
@@ -1089,6 +1118,18 @@ class Abliterator:
             f"heretic={best.user_attrs.get('heretic',0)*100:.1f}% "
             f"broken={best.user_attrs.get('broken',0)*100:.0f}% KL={best.user_attrs['kl']:.4f}")
 
+        self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+
+    def _bake_and_save(self, bpr, b_K, b_mode, b_di, base_ref, track):
+        """Bake the winning config into the weights and save. Extracted from run() so a
+        --bake-config recovery can save a known config WITHOUT re-searching. Writes
+        best-config.json BEFORE the (crash-prone) save, so even a failed save leaves a
+        re-bakeable artefact and a lost save becomes a minutes-long re-bake, not a re-search."""
+        args, log = self.args, self.log
+        with open(f"{track}/best-config.json", "w", encoding="utf-8") as f:
+            json.dump(winning_config(bpr, b_K, b_mode, b_di), f, indent=2)
+        log(f"wrote winning config to {track}/best-config.json (re-bakeable with --bake-config)")
+
         # ── BAKE the winner into the weights + save ──────────────────────────────────
         # The search left the LAST trial's bake applied; restore to pristine, then bake the winner.
         # Because the search scored this exact operation, POST-BAKE should reproduce the best trial's
@@ -1138,6 +1179,15 @@ def main(argv=None):
             "senbonzakura abliterates by rewriting weights, which needs full precision, so "
             "--load-in-4bit is not supported here. Use it with the scorer to measure a model on "
             "low VRAM: python -m senbonzakura.score --load-in-4bit --model <dir> --eval <ds> --out r.json")
+
+    # Fail loud on an incompatible torch BEFORE the model download (a fused-MoE class imports
+    # torch.distributed.tensor.DTensor, torch >= 2.5); otherwise the run dies only after pulling
+    # tens of GB. The runpod pytorch 2.4 image tripped exactly this.
+    if not torch_version_ok(torch.__version__):
+        raise SystemExit(
+            f"senbonzakura needs torch >= {MIN_TORCH[0]}.{MIN_TORCH[1]} (the transformers MoE path "
+            f"imports torch.distributed.tensor.DTensor); found {torch.__version__}. "
+            f"Install a compatible build, e.g. torch==2.5.1.")
 
     t0 = time.time()
     def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)

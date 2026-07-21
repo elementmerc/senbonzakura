@@ -419,6 +419,11 @@ def build_parser():
     ap.add_argument("--max-directions", type=int, default=3,
                     help="upper bound on refusal directions per layer the search may ablate "
                          "(1 = single-direction, the original method; >1 enables multi-directional)")
+    ap.add_argument("--no-good-orth", action="store_true", dest="no_good_orth",
+                    help="ablation study: do NOT orthogonalise the refusal direction against the "
+                         "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
+                         "toggles off the projection grimjim calls 'projected abliteration'; on by "
+                         "default. For measuring whether the projection helps or hurts the search.")
     ap.add_argument("--search", choices=["pareto", "scalar"], default="pareto",
                     help="pareto: NSGA-II maps the whole refusals-vs-KL frontier, we pick the knee "
                          "(intact + most uncensored). scalar: the old single weighted objective (TPE).")
@@ -662,9 +667,18 @@ class Abliterator:
         dirs_multi = torch.zeros(NL + 1, KMAX, H)
         for li in range(NL + 1):
             gd = good_dir[li]
-            d0 = _orth_to(mb[li] - mg[li], [gd])
-            d0 = d0 / d0.norm().clamp_min(1e-8)
-            basis = [gd, d0]; kept = [d0]
+            if getattr(args, "no_good_orth", False):
+                # Ablation study: raw difference-of-means, NOT orthogonalised to the harmless mean,
+                # and the harmless direction is left out of the basis so the PCA axes are not
+                # good-orthogonalised either. This is the toggle that isolates Refinement 3 (the
+                # projection grimjim proposes) so its effect on the search can be measured.
+                d0 = mb[li] - mg[li]
+                d0 = d0 / d0.norm().clamp_min(1e-8)
+                basis = [d0]; kept = [d0]
+            else:
+                d0 = _orth_to(mb[li] - mg[li], [gd])
+                d0 = d0 / d0.norm().clamp_min(1e-8)
+                basis = [gd, d0]; kept = [d0]
             # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before PCA fills the rest.
             if hedge_md is not None and len(kept) < KMAX:
                 hv = _orth_to(hedge_md[li], basis)

@@ -974,8 +974,8 @@ class Abliterator:
             return   # --inspect is a diagnostic; nothing to search or save
 
         if args.bench_only:
-            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4)); r = self.refusal_rate(self.bad_eval); k = self.kl_vs_orig(self.kl_eval); self.restore_weights()
-            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0): refusals={r*100:.1f}% KL={k:.4f}")
+            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX); r = self.refusal_rate(self.bad_eval); k = self.kl_vs_orig(self.kl_eval); self.restore_weights()
+            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): refusals={r*100:.1f}% KL={k:.4f}")
             return   # --bench-only is a one-shot probe; nothing to search or save
 
         # Direct re-bake: skip the search entirely, bake a saved best-config.json and save. Recovers a

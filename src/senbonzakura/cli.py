@@ -108,6 +108,43 @@ def _axis_separation(bad, good, v):
     return (md / pooled).item()
 
 
+def _signal_certificate(bad, good, n_perm=25, seed=0):
+    # Post-ablation "is the refusal SIGNAL actually gone" check on ONE layer's residual stream.
+    # A robust, self-calibrating reimplementation of OBLITERATUS's RMT spectral-certification idea:
+    # instead of a fragile Marchenko-Pastur constant, measure the linear harmful-vs-harmless
+    # separation (Cohen's d along the mean-difference direction) on the REAL labels, then against
+    # n_perm random label SHUFFLES, and report how many null-sigmas above chance the real
+    # separation sits. This is orthogonal to KL: KL says "the model is still capable", this says
+    # "the refusal signal is un-decodable". A refusal that survives spread thinly across many weak
+    # directions (the extended-refusal / KAUST failure mode) shows here as a modest-but-real z that
+    # a keyword refusal rate misses.
+    #   bad, good : [N, H] post-ablation residuals for harmful / harmless prompts at one layer.
+    # Returns (verdict, z): GREEN (z < 2, inside the shuffled null, refusal linearly gone),
+    # YELLOW (2..5, real but weak/distributed), RED (>= 5, a clear surviving signal).
+    Xb, Xg = bad.float(), good.float()
+
+    def sep(a, b):
+        dm = a.mean(0) - b.mean(0)
+        u = dm / dm.norm().clamp_min(1e-8)               # empirical mean-difference direction
+        pa, pb = a @ u, b @ u
+        pooled = ((pa.var(unbiased=False) + pb.var(unbiased=False)) / 2).clamp_min(1e-12).sqrt()
+        return ((pa.mean() - pb.mean()).abs() / pooled).item()
+
+    real = sep(Xb, Xg)
+    X = torch.cat([Xb, Xg], 0)
+    nb, ntot = Xb.shape[0], Xb.shape[0] + Xg.shape[0]
+    gen = torch.Generator().manual_seed(seed)
+    null = torch.tensor([
+        sep(X[p[:nb]], X[p[nb:]])
+        for p in (torch.randperm(ntot, generator=gen) for _ in range(n_perm))
+    ])
+    # Cohen's d along a FITTED direction is inflated under the null too, so the shuffled separations
+    # are the correct baseline; z measures the real separation against exactly that fitting bias.
+    z = ((real - null.mean()) / null.std().clamp_min(1e-6)).item()
+    verdict = "GREEN" if z < 2.0 else ("YELLOW" if z < 5.0 else "RED")
+    return verdict, z
+
+
 def _available_ram_bytes():
     # Best-effort available host RAM in bytes, for the snapshot pre-flight. Returns None when it
     # can't be determined (non-Linux / unreadable /proc), so the caller treats it as "unknown,
@@ -820,6 +857,23 @@ class Abliterator:
         # --inspect / --bench-only and the --uniform search path.
         self.bake_pc(P, wmax, wmin, D, P, wmax, wmin, D, K, mode, didx)
 
+    def signal_certificate(self):
+        # Scan the searched layer band POST-BAKE and return the WORST (highest surviving-signal)
+        # refusal-signal certificate, since a single layer that still carries the refusal signal is
+        # enough for the capability to leak. KL-independent: complements "still capable" (KL) with
+        # "actually un-refused". Returns (verdict, z, layer). Cheap: one residual pass + a handful of
+        # label-permutation separations per layer.
+        Rb = self.collect_resid(self.bad_eval)
+        Rg = self.collect_resid(self.kl_eval)
+        lo = max(1, int(self.NL * self.args.layer_lo))
+        hi = min(self.NL, int(self.NL * self.args.layer_hi))
+        worst = ("GREEN", 0.0, lo)
+        for li in range(lo, hi + 1):
+            v, z = _signal_certificate(Rb[li], Rg[li])
+            if z == z and z > worst[1]:          # z == z skips a NaN
+                worst = (v, z, li)
+        return worst
+
     # ── eval: refusals (generation) + KL vs original (first-token) ───────────────
     @torch.no_grad()
     def gen_batch(self, prompts):
@@ -1159,6 +1213,10 @@ class Abliterator:
         post_brk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))
         log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% heretic={post_heretic*100:.1f}% "
             f"broken={post_brk*100:.0f}% KL={post_kl:.4f}")
+        # KL-independent verification: is the refusal SIGNAL actually gone (not just the keyword rate)?
+        cert, cert_z, cert_layer = self.signal_certificate()
+        log(f"REFUSAL-SIGNAL CERT: {cert} (z={cert_z:.1f} above chance at layer {cert_layer}); "
+            f"GREEN=refusal linearly gone, YELLOW=weak/distributed (extended-refusal risk), RED=survives")
 
         log(f"saving to {args.out}")
         self.model.save_pretrained(args.out, safe_serialization=True)
@@ -1170,7 +1228,8 @@ class Abliterator:
                        "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
                        "max_directions": self.KMAX,
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
-                       "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl},
+                       "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+                       "refusal_signal_cert": cert, "refusal_signal_cert_z": round(cert_z, 3), "refusal_signal_cert_layer": cert_layer},
                       f, indent=2)
         log("DONE")
 

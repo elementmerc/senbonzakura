@@ -479,6 +479,11 @@ def build_parser():
                          "edits every row as before; e.g. 0.3 leaves the quietest 30%% of rows pristine "
                          "for less collateral. A/B against 0.0 per model to see if coherence improves "
                          "at equal refusal removal.")
+    ap.add_argument("--warm-start", action=argparse.BooleanOptionalAction, default=True,
+                    help="seed the search with one sane diff-of-means config (mid-late window, full "
+                         "projection, single direction) so NSGA-II/TPE begin from a known-decent point "
+                         "instead of cold random sampling. On by default; --no-warm-start to A/B the "
+                         "cold search.")
     ap.add_argument("--no-good-orth", action="store_true", dest="no_good_orth",
                     help="ablation study: do NOT orthogonalise the refusal direction against the "
                          "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
@@ -1123,6 +1128,27 @@ class Abliterator:
         # search; catch it so Optuna marks that trial failed and moves on. Whatever the outcome, the
         # last trial's bake is left applied, so restore to pristine before any downstream read/mutate.
         if not skip_search:
+            if getattr(args, "warm_start", True) and not study.get_trials(deepcopy=False):
+                # Warm-start: enqueue one known-decent config (mid-late window, full projection, single
+                # direction) so the search starts from a good point rather than cold random sampling.
+                # Optuna samples any params we leave unspecified. Fresh study only (a --resume already
+                # has trials); wrapped so a param-range mismatch degrades to a cold search, not a crash.
+                pos = min(max(int(self.NL * 0.6), self.lo), self.hi)
+                dist = max(2, self.NL // 4)
+                seed = {"num_directions": 1, "dir_mode": "per_layer"}
+                if getattr(args, "per_component", True):
+                    seed.update({"o_max_weight_position": pos, "o_max_weight": 1.0,
+                                 "o_min_weight": 0.0, "o_min_weight_distance": dist,
+                                 "d_max_weight_position": pos, "d_max_weight": 1.0,
+                                 "d_min_weight": 0.0, "d_min_weight_distance": dist})
+                else:
+                    seed.update({"max_weight_position": pos, "max_weight": 1.0,
+                                 "min_weight": 0.0, "min_weight_distance": dist})
+                try:
+                    study.enqueue_trial(seed, skip_if_exists=True)
+                    log(f"warm-start: seeded the search with a diff-of-means config (P={pos}, wmax=1.0, K=1)")
+                except Exception as e:
+                    log(f"warm-start seed skipped ({e}); searching cold")
             try:
                 study.optimize(self.objective, n_trials=args.trials, callbacks=[_patience_cb, _progress_cb],
                                catch=(RuntimeError,))

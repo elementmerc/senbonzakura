@@ -1,0 +1,64 @@
+{
+  "_comment": "Starter Claude Code settings for a project. Copy to the project's .claude/settings.json and adjust. This is a TEMPLATE: it carries no secrets, no machine-specific paths, and no accumulated personal permission grants. Keep it that way \u2014 secrets belong in the environment or an encrypted store, never in a committed settings file.",
+  "_comment_permissions": "deny always wins over allow. 'ask' prompts. Start strict and widen deliberately as the project needs it, rather than starting wide.",
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/id_rsa*)",
+      "Read(./**/id_ed25519*)",
+      "Read(./**/credentials*)",
+      "Read(./**/.npmrc)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ]
+  },
+  "_comment_hooks": "Editor-side hooks are separate from the git hooks in claude-baseline/hooks/. Wire git hooks with hooks/install.sh. The SessionStart briefing surfaces, in one block: unpushed/uncommitted work (all branches), the DEFERRED.md ledger (baseline Section 24), and any fleet drill drift. SessionEnd repeats the push check at close. All are fail-open and safe to keep.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/session-briefing.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/panel-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/for-hephaestus-check.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hooks/session-push-check.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "_comment_env": "Never put secret values here. This file is committed. Reference environment variables that are set outside the repo.",
+  "env": {}
+}

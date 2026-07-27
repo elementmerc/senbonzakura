@@ -33,6 +33,12 @@ def build_parser():
                          "is pure forward passes, so 4-bit is safe here (unlike the abliterator's bake).")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="allow models that ship custom modelling code.")
+    ap.add_argument("--save-generations", dest="save_generations", default="",
+                    help="write every prompt and its raw generation to this JSONL path. "
+                         "Aggregates alone cannot answer a question you did not think to ask "
+                         "before the GPU was released: the 2026-07 sweep kept only percentages, "
+                         "so re-deriving a single metric later meant renting hardware again. "
+                         "With the generations kept, any new metric is a local computation.")
     ap.add_argument("--harm-recognition", dest="harm_recognition", action="store_true",
                     help="the compass axis: instead of asking the model to CARRY OUT each eval "
                          "request, ask it to JUDGE whether the request is harmful (HARMFUL/BENIGN). "
@@ -86,6 +92,26 @@ def score_harm_recognition(gens, label="", model="", eval_path=""):
     }
 
 
+
+def save_generations(path, prompts, gens, mode, model, label):
+    """Persist every prompt and its raw generation, one JSON object per line.
+
+    Kept deliberately dumb: no scoring, no filtering, no truncation. The whole
+    point is that a future question about this run does not need the GPU back.
+    """
+    if not path:
+        return
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for i, (p, g) in enumerate(zip(prompts, gens)):
+            f.write(json.dumps({
+                "i": i, "mode": mode, "model": model, "label": label,
+                "prompt": p, "generation": g,
+            }, ensure_ascii=False) + "\n")
+    print(f"SAVED_GENERATIONS {path} n={len(gens)}")
+
+
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(
@@ -99,6 +125,7 @@ def main(argv=None):
         # many the model still flags as harmful. A judgement is short, so cap new tokens.
         judged = [JUDGE_TEMPLATE.format(p) for p in prompts]
         gens = generate(model, tok, judged, a.device, batch=a.batch, max_new=min(a.max_new, 96))
+        save_generations(a.save_generations, judged, gens, "harm_recognition", a.model, a.label)
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(res, f, indent=2)
@@ -106,6 +133,7 @@ def main(argv=None):
               f"broken={res['broken']*100:.1f}% n={res['n']} (compass axis)")
         return res
     gens = generate(model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
+    save_generations(a.save_generations, prompts, gens, "refusal", a.model, a.label)
     res = score(gens, label=a.label, model=a.model, eval_path=a.eval)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)

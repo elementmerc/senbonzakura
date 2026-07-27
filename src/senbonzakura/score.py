@@ -25,6 +25,11 @@ def build_parser():
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="")
     ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
+    ap.add_argument("--skip", type=int, default=0,
+                    help="drop the first N prompts before taking --n. Needed to score a model on "
+                         "prompts its own surgery was NOT fitted on: direction extraction consumes "
+                         "the head of the harmless set and the KL check the slice after it, so "
+                         "measuring false positives on the head would be measuring the training data.")
     ap.add_argument("--max-new", type=int, default=64)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
@@ -121,7 +126,13 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit, trust_remote_code=a.trust_remote_code)
     ds = load_from_disk(a.eval)
     prompts = [r["text"] for r in ds]
+    if a.skip:
+        if a.skip >= len(prompts):
+            raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(prompts)} prompts")
+        prompts = prompts[a.skip:]
     if a.n:
+        if a.n > len(prompts):
+            raise SystemExit(f"--n {a.n} exceeds the {len(prompts)} prompts available after --skip")
         prompts = prompts[:a.n]
     if a.harm_recognition:
         # Compass pass: wrap each harmful request in the judge frame, then measure how

@@ -59,7 +59,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-gemma-2-2b-it.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-gemma-2-2b-it.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-gemma-2-2b-it.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-gemma-2-2b-it.json --label base-compass \
   --save-generations /workspace/gens/base-compass-gemma-2-2b-it.jsonl
 python3 - <<'UP'
 import os
@@ -98,7 +98,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-gemma-2-2b-it.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-gemma-2-2b-it.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-gemma-2-2b-it.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-gemma-2-2b-it.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-gemma-2-2b-it.jsonl
 python3 - <<'UP'
 import os
@@ -140,7 +140,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-qwen3-1.7b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-qwen3-1.7b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-qwen3-1.7b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-qwen3-1.7b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-qwen3-1.7b.jsonl
 python3 - <<'UP'
 import os
@@ -179,7 +179,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-qwen3-1.7b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-qwen3-1.7b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-qwen3-1.7b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-qwen3-1.7b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-qwen3-1.7b.jsonl
 python3 - <<'UP'
 import os
@@ -221,7 +221,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-qwen3-0.6b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-qwen3-0.6b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-qwen3-0.6b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-qwen3-0.6b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-qwen3-0.6b.jsonl
 python3 - <<'UP'
 import os
@@ -260,7 +260,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-qwen3-0.6b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-qwen3-0.6b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-qwen3-0.6b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-qwen3-0.6b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-qwen3-0.6b.jsonl
 python3 - <<'UP'
 import os
@@ -302,7 +302,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-tinyllama-1.1b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-tinyllama-1.1b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-tinyllama-1.1b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-tinyllama-1.1b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-tinyllama-1.1b.jsonl
 python3 - <<'UP'
 import os
@@ -341,7 +341,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-tinyllama-1.1b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-tinyllama-1.1b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-tinyllama-1.1b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-tinyllama-1.1b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-tinyllama-1.1b.jsonl
 python3 - <<'UP'
 import os
@@ -383,7 +383,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-llama-3.2-1b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-llama-3.2-1b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-llama-3.2-1b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-llama-3.2-1b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-llama-3.2-1b.jsonl
 python3 - <<'UP'
 import os
@@ -422,7 +422,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-llama-3.2-1b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-llama-3.2-1b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-llama-3.2-1b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-llama-3.2-1b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-llama-3.2-1b.jsonl
 python3 - <<'UP'
 import os
@@ -464,7 +464,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-qwen2.5-1.5b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-qwen2.5-1.5b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-qwen2.5-1.5b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-qwen2.5-1.5b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-qwen2.5-1.5b.jsonl
 python3 - <<'UP'
 import os
@@ -503,7 +503,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-qwen2.5-1.5b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-qwen2.5-1.5b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-qwen2.5-1.5b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-qwen2.5-1.5b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-qwen2.5-1.5b.jsonl
 python3 - <<'UP'
 import os
@@ -545,7 +545,7 @@ python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/base-refusal-smollm2-1.7b.json --label base-refusal \
   --save-generations /workspace/gens/base-refusal-smollm2-1.7b.jsonl
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/base-compass-smollm2-1.7b.json --label base-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/base-compass-smollm2-1.7b.json --label base-compass \
   --save-generations /workspace/gens/base-compass-smollm2-1.7b.jsonl
 python3 - <<'UP'
 import os
@@ -584,7 +584,7 @@ python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --d
   --out /workspace/results/abl-refusal-smollm2-1.7b.json --label abl-refusal \
   --save-generations /workspace/gens/abl-refusal-smollm2-1.7b.jsonl
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
-  --harm-recognition --out /workspace/results/abl-compass-smollm2-1.7b.json --label abl-compass \
+  --harm-recognition --max-new 512 --out /workspace/results/abl-compass-smollm2-1.7b.json --label abl-compass \
   --save-generations /workspace/gens/abl-compass-smollm2-1.7b.jsonl
 python3 - <<'UP'
 import os

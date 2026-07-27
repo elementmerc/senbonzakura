@@ -1,16 +1,15 @@
 # Compass re-run, 2026-07-27. Replaces the July sweep, whose artefacts are gone.
 #
-# Why this exists: the July run kept only percentages. Its result JSONs, raw
-# generations and abliterated weights were all on a pod that was terminated, so
-# the article's table became the only surviving record and every follow-up
-# question needed the GPU back. This run keeps everything.
+# The July run kept only percentages: its JSONs, generations and weights died
+# with the pod, so the article's table became the only surviving record and every
+# follow-up needed the GPU back. This run keeps all three.
 #
-# Four cells, all at n=200 on the same held-out set, so before and after are
-# finally like-for-like. The July numbers were scored on 64.
+# Both axes at n=200 so before and after are finally like-for-like; July scored 64.
 #
-# One job per model per phase rather than one job for the sweep: a model that
-# fails does not cost the other six, and a resumed run repeats only what broke.
-run = "compass-2026-07-27"
+# The abl-* jobs depend only on setup, NOT on their base-* sibling. They are
+# independent work on the same model, and chaining them would serialise the graph
+# for tidiness rather than correctness, wasting half a two-card box.
+run = "compass-2026-07-27d"
 
 [[job]]
 id = "setup"
@@ -22,11 +21,19 @@ set -euo pipefail
 pip install -q 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu124
 python3 -c 'from torch.distributed.tensor import DTensor'
 python3 -c 'import torch; assert torch.cuda.is_available()'
-pip install -q 'git+https://github.com/elementmerc/senbonzakura.git' hf_transfer
-export HF_HUB_ENABLE_HF_TRANSFER=1
+# Install the tree holst uploaded, NOT a published branch. The run then uses
+# exactly the code on the operator's machine, including work that is committed
+# but not pushed. The first attempt died precisely there: --save-generations
+# existed locally and nowhere else, so the pod installed a version without it.
+pip install -q /workspace/senbonzakura hf_transfer
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --save-generations \
+  || { echo "MISSING_SAVE_GENERATIONS: the uploaded tree is not the one expected"; exit 1; }
+echo "SENBONZAKURA_COMMIT=d4682e6"
+test -n "${HF_TOKEN:-}"
 hf download ops-malware/senbon-track-35axis-clean --repo-type dataset --local-dir /workspace/track
 test -d /workspace/track/bad_eval_ds
-mkdir -p /workspace/results /workspace/gens
+mkdir -p /workspace/results /workspace/gens /workspace/abl
+nvidia-smi -L
 echo SETUP_OK
 """
 
@@ -40,7 +47,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=google/gemma-2-2b-it
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-gemma-2-2b-it.json --label base-refusal \
@@ -53,8 +66,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-gemma-2-2b-it.json","results/base-compass-gemma-2-2b-it.json",
-          "gens/base-refusal-gemma-2-2b-it.jsonl","gens/base-compass-gemma-2-2b-it.jsonl"]:
+for f in ["results/base-refusal-gemma-2-2b-it.json","results/base-compass-gemma-2-2b-it.json","gens/base-refusal-gemma-2-2b-it.jsonl","gens/base-compass-gemma-2-2b-it.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -64,16 +76,23 @@ echo BASE_OK
 id = "abl-gemma-2-2b-it"
 name = "abliterate then both axes, gemma-2-2b-it"
 machine = "rented"
-deps = ["base-gemma-2-2b-it"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=google/gemma-2-2b-it
 O=/workspace/abl/gemma-2-2b-it
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/gemma-2-2b-it-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-gemma-2-2b-it.json --label abl-refusal \
@@ -85,12 +104,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-gemma-2-2b-it.json","results/abl-compass-gemma-2-2b-it.json",
-          "gens/abl-refusal-gemma-2-2b-it.jsonl","gens/abl-compass-gemma-2-2b-it.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-gemma-2-2b-it.json","results/abl-compass-gemma-2-2b-it.json","gens/abl-refusal-gemma-2-2b-it.jsonl","gens/abl-compass-gemma-2-2b-it.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/gemma-2-2b-it-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/gemma-2-2b-it", repo_id="ops-malware/gemma-2-2b-it-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -104,7 +128,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen3-1.7B
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-qwen3-1.7b.json --label base-refusal \
@@ -117,8 +147,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-qwen3-1.7b.json","results/base-compass-qwen3-1.7b.json",
-          "gens/base-refusal-qwen3-1.7b.jsonl","gens/base-compass-qwen3-1.7b.jsonl"]:
+for f in ["results/base-refusal-qwen3-1.7b.json","results/base-compass-qwen3-1.7b.json","gens/base-refusal-qwen3-1.7b.jsonl","gens/base-compass-qwen3-1.7b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -128,16 +157,23 @@ echo BASE_OK
 id = "abl-qwen3-1.7b"
 name = "abliterate then both axes, qwen3-1.7b"
 machine = "rented"
-deps = ["base-qwen3-1.7b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen3-1.7B
 O=/workspace/abl/qwen3-1.7b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/qwen3-1.7b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-qwen3-1.7b.json --label abl-refusal \
@@ -149,12 +185,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-qwen3-1.7b.json","results/abl-compass-qwen3-1.7b.json",
-          "gens/abl-refusal-qwen3-1.7b.jsonl","gens/abl-compass-qwen3-1.7b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-qwen3-1.7b.json","results/abl-compass-qwen3-1.7b.json","gens/abl-refusal-qwen3-1.7b.jsonl","gens/abl-compass-qwen3-1.7b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/qwen3-1.7b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/qwen3-1.7b", repo_id="ops-malware/qwen3-1.7b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -168,7 +209,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen3-0.6B
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-qwen3-0.6b.json --label base-refusal \
@@ -181,8 +228,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-qwen3-0.6b.json","results/base-compass-qwen3-0.6b.json",
-          "gens/base-refusal-qwen3-0.6b.jsonl","gens/base-compass-qwen3-0.6b.jsonl"]:
+for f in ["results/base-refusal-qwen3-0.6b.json","results/base-compass-qwen3-0.6b.json","gens/base-refusal-qwen3-0.6b.jsonl","gens/base-compass-qwen3-0.6b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -192,16 +238,23 @@ echo BASE_OK
 id = "abl-qwen3-0.6b"
 name = "abliterate then both axes, qwen3-0.6b"
 machine = "rented"
-deps = ["base-qwen3-0.6b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen3-0.6B
 O=/workspace/abl/qwen3-0.6b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/qwen3-0.6b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-qwen3-0.6b.json --label abl-refusal \
@@ -213,12 +266,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-qwen3-0.6b.json","results/abl-compass-qwen3-0.6b.json",
-          "gens/abl-refusal-qwen3-0.6b.jsonl","gens/abl-compass-qwen3-0.6b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-qwen3-0.6b.json","results/abl-compass-qwen3-0.6b.json","gens/abl-refusal-qwen3-0.6b.jsonl","gens/abl-compass-qwen3-0.6b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/qwen3-0.6b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/qwen3-0.6b", repo_id="ops-malware/qwen3-0.6b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -232,7 +290,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-tinyllama-1.1b.json --label base-refusal \
@@ -245,8 +309,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-tinyllama-1.1b.json","results/base-compass-tinyllama-1.1b.json",
-          "gens/base-refusal-tinyllama-1.1b.jsonl","gens/base-compass-tinyllama-1.1b.jsonl"]:
+for f in ["results/base-refusal-tinyllama-1.1b.json","results/base-compass-tinyllama-1.1b.json","gens/base-refusal-tinyllama-1.1b.jsonl","gens/base-compass-tinyllama-1.1b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -256,16 +319,23 @@ echo BASE_OK
 id = "abl-tinyllama-1.1b"
 name = "abliterate then both axes, tinyllama-1.1b"
 machine = "rented"
-deps = ["base-tinyllama-1.1b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 O=/workspace/abl/tinyllama-1.1b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/tinyllama-1.1b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-tinyllama-1.1b.json --label abl-refusal \
@@ -277,12 +347,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-tinyllama-1.1b.json","results/abl-compass-tinyllama-1.1b.json",
-          "gens/abl-refusal-tinyllama-1.1b.jsonl","gens/abl-compass-tinyllama-1.1b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-tinyllama-1.1b.json","results/abl-compass-tinyllama-1.1b.json","gens/abl-refusal-tinyllama-1.1b.jsonl","gens/abl-compass-tinyllama-1.1b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/tinyllama-1.1b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/tinyllama-1.1b", repo_id="ops-malware/tinyllama-1.1b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -296,7 +371,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=meta-llama/Llama-3.2-1B-Instruct
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-llama-3.2-1b.json --label base-refusal \
@@ -309,8 +390,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-llama-3.2-1b.json","results/base-compass-llama-3.2-1b.json",
-          "gens/base-refusal-llama-3.2-1b.jsonl","gens/base-compass-llama-3.2-1b.jsonl"]:
+for f in ["results/base-refusal-llama-3.2-1b.json","results/base-compass-llama-3.2-1b.json","gens/base-refusal-llama-3.2-1b.jsonl","gens/base-compass-llama-3.2-1b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -320,16 +400,23 @@ echo BASE_OK
 id = "abl-llama-3.2-1b"
 name = "abliterate then both axes, llama-3.2-1b"
 machine = "rented"
-deps = ["base-llama-3.2-1b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=meta-llama/Llama-3.2-1B-Instruct
 O=/workspace/abl/llama-3.2-1b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/llama-3.2-1b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-llama-3.2-1b.json --label abl-refusal \
@@ -341,12 +428,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-llama-3.2-1b.json","results/abl-compass-llama-3.2-1b.json",
-          "gens/abl-refusal-llama-3.2-1b.jsonl","gens/abl-compass-llama-3.2-1b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-llama-3.2-1b.json","results/abl-compass-llama-3.2-1b.json","gens/abl-refusal-llama-3.2-1b.jsonl","gens/abl-compass-llama-3.2-1b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/llama-3.2-1b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/llama-3.2-1b", repo_id="ops-malware/llama-3.2-1b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -360,7 +452,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen2.5-1.5B-Instruct
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-qwen2.5-1.5b.json --label base-refusal \
@@ -373,8 +471,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-qwen2.5-1.5b.json","results/base-compass-qwen2.5-1.5b.json",
-          "gens/base-refusal-qwen2.5-1.5b.jsonl","gens/base-compass-qwen2.5-1.5b.jsonl"]:
+for f in ["results/base-refusal-qwen2.5-1.5b.json","results/base-compass-qwen2.5-1.5b.json","gens/base-refusal-qwen2.5-1.5b.jsonl","gens/base-compass-qwen2.5-1.5b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -384,16 +481,23 @@ echo BASE_OK
 id = "abl-qwen2.5-1.5b"
 name = "abliterate then both axes, qwen2.5-1.5b"
 machine = "rented"
-deps = ["base-qwen2.5-1.5b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=Qwen/Qwen2.5-1.5B-Instruct
 O=/workspace/abl/qwen2.5-1.5b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/qwen2.5-1.5b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-qwen2.5-1.5b.json --label abl-refusal \
@@ -405,12 +509,17 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-qwen2.5-1.5b.json","results/abl-compass-qwen2.5-1.5b.json",
-          "gens/abl-refusal-qwen2.5-1.5b.jsonl","gens/abl-compass-qwen2.5-1.5b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-qwen2.5-1.5b.json","results/abl-compass-qwen2.5-1.5b.json","gens/abl-refusal-qwen2.5-1.5b.jsonl","gens/abl-compass-qwen2.5-1.5b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/qwen2.5-1.5b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/qwen2.5-1.5b", repo_id="ops-malware/qwen2.5-1.5b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """
 
@@ -424,7 +533,13 @@ resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "BASE_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=HuggingFaceTB/SmolLM2-1.7B-Instruct
 python3 -m senbonzakura.score --model $M --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/base-refusal-smollm2-1.7b.json --label base-refusal \
@@ -437,8 +552,7 @@ import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
-for f in ["results/base-refusal-smollm2-1.7b.json","results/base-compass-smollm2-1.7b.json",
-          "gens/base-refusal-smollm2-1.7b.jsonl","gens/base-compass-smollm2-1.7b.jsonl"]:
+for f in ["results/base-refusal-smollm2-1.7b.json","results/base-compass-smollm2-1.7b.json","gens/base-refusal-smollm2-1.7b.jsonl","gens/base-compass-smollm2-1.7b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
 UP
 echo BASE_OK
@@ -448,16 +562,23 @@ echo BASE_OK
 id = "abl-smollm2-1.7b"
 name = "abliterate then both axes, smollm2-1.7b"
 machine = "rented"
-deps = ["base-smollm2-1.7b"]
+deps = ["setup"]
 timeout_secs = 7200
 resources = { needs_gpu = true }
 success = { type = "stdout-contains", needle = "ABL_OK" }
 command = """
 set -euo pipefail
-export HF_HUB_ENABLE_HF_TRANSFER=1
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
 M=HuggingFaceTB/SmolLM2-1.7B-Instruct
 O=/workspace/abl/smollm2-1.7b
-senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda \
+  --study-db /workspace/abl/smollm2-1.7b-study.db
 test -d $O
 python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda \
   --out /workspace/results/abl-refusal-smollm2-1.7b.json --label abl-refusal \
@@ -469,11 +590,16 @@ python3 - <<'UP'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-for f in ["results/abl-refusal-smollm2-1.7b.json","results/abl-compass-smollm2-1.7b.json",
-          "gens/abl-refusal-smollm2-1.7b.jsonl","gens/abl-compass-smollm2-1.7b.jsonl"]:
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-smollm2-1.7b.json","results/abl-compass-smollm2-1.7b.json","gens/abl-refusal-smollm2-1.7b.jsonl","gens/abl-compass-smollm2-1.7b.jsonl"]:
     api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+python3 - <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo("ops-malware/smollm2-1.7b-abliterated", repo_type="model", private=False, exist_ok=True)
 api.upload_folder(folder_path="/workspace/abl/smollm2-1.7b", repo_id="ops-malware/smollm2-1.7b-abliterated", repo_type="model")
-UP
+UPW
 echo ABL_OK
 """

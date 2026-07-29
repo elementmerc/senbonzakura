@@ -119,6 +119,9 @@ ignore = [
                                  # one-for-one; renaming them would decouple the two
   "D205", "D401", "D213",  # docstring formatting: these are prose paragraphs, not
                            # one-line summaries with a body
+  "D203",     # mutually exclusive with D211, which ALL also selects, so leaving both
+              # on printed a config warning on every single ruff run. D211 (no blank
+              # line before a class docstring) is the style the code already uses
   "PLW0108",  # explicit lambdas that name their argument read better than operator
   "EXE001",   # shebangs on modules that are also importable
   "N812",     # `import torch.nn.functional as F` is the universal torch convention
@@ -142,24 +145,25 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Only rules that are NOT in the global `ignore` above belong here. A per-file
+# entry duplicating a global one is dead config that reads as a decision, and
+# the wrong lesson gets drawn from it when the global entry is later lifted.
+# The one deliberate exception is ANN, whose global ignore is temporary: it is
+# repeated here so that lifting the global one does not silently start
+# demanding annotations on fixtures.
 "tests/*" = [
   "S101",     # assert is what a test is made of
-  "PLR2004",  # magic values are the point of a fixture
   "SLF001",   # tests reach into private state deliberately
   "INP001",   # tests/ is not a package
-  "ARG001", "ARG002", "ARG005",  # stub callbacks and fake signatures ignore their args
+  "ARG002",   # fake method signatures ignore their arguments
   "PT018",    # composite assertions read fine in a table-driven test
-  "ANN",      # covered by the global temporary ignore, kept explicit for when it lifts
-  "PLR0913", "PLR0915",  # fixtures and end-to-end tests take many arguments by nature
+  "ANN",      # global ignore is temporary (D19); this one is not
   "S108",     # /tmp paths in tests are fixtures for "this path does not exist"
   "RUF059",   # unused unpacking is how a test says "I only care about this half"
   "S105",     # "pad_token" / "eos_token" are tokeniser fields, not credentials
   "E741",     # `I` is the identity matrix
-  "RUF001",   # deliberate non-ASCII: mojibake and wide characters are the input
-              # under test for the broken-output detector
   "PT011", "PT013",  # pytest.raises breadth and import style in existing tests
   "N818",     # _FakeOOM is a test double for torch's OOM, named after what it fakes
-  "ARG001", "ARG005",  # already ignored above; kept explicit for the same reason
 ]
 
 [tool.pytest.ini_options]

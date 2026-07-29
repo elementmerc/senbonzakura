@@ -173,13 +173,16 @@ branch = true
 omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; main()` shim
 
 [tool.coverage.report]
-# A ratchet, not a target. It starts at the number measured once the suite went
-# green (2026-07-29) and is raised at each tranche close, so uncovered code is
-# caught as it lands rather than in one reckoning at the end. Setting 90 before
+# A ratchet, not a target. Raised at each tranche close, so uncovered code is
+# caught as it lands rather than in one reckoning at the end.
+#   84  tranche 0: the suite went green
+#   86  tranche 1: score.py's compass path and coherence.py's main()
+# The remaining gap to 90 is margin.py, which is at 0% and is being rewritten in
+# tranche 2; its tests land with those changes rather than being written twice. Setting 90 before
 # the tests exist would make every bare `pytest` red through exactly the stretch
 # of work that needs a green signal, and the documented response to that is to
 # comment the line out.
-fail_under = 84
+fail_under = 86
 exclude_also = [
   "if __name__ == .__main__.:",
   "pragma: no cover",

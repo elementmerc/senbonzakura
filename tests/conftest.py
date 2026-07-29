@@ -169,18 +169,38 @@ def tiny_tok():
     return TinyTokenizer()
 
 
+# The sizes a test run needs, and nothing else. Everything not named here comes
+# from the parser, so a new flag can never be missing from the fixture again: a
+# hand-maintained namespace drifted by seven flags between 2026-07-16 and
+# 2026-07-18 and took five tests down with it, silently, because `cli.py` read
+# several of those flags through `getattr(args, name, default)`.
+#
+# These are only the values that would make the suite slow: the real defaults are
+# 256 direction prompts, 60 trials and 48 generated tokens per eval.
+_TEST_SIZES = {
+    "dir_prompts": 8, "eval_refusal": 6, "eval_kl": 6, "trials": 4,
+    "gen_tokens": 4, "inspect_n": 4, "top_rescore": 3, "gen_batch": 16,
+}
+
+
 @pytest.fixture
 def base_args(tmp_path):
-    """A default argument namespace matching build_parser()'s defaults, pointed at tmp_path."""
-    return types.SimpleNamespace(
-        model="tiny", out=str(tmp_path / "out"), dir_prompts=8, eval_refusal=6, eval_kl=6,
-        trials=4, kl_scale=4.0, layer_lo=0.3, layer_hi=0.8, gen_tokens=4, bench_only=False,
-        track=str(tmp_path / "track"), good_ds=None, device="cpu", inspect=None, inspect_n=4,
-        max_directions=3, search="pareto", per_component=True, mlp_off=False, hedge_ds=None,
-        clean_ds=None, patience=0, eval_refusal_final=0, top_rescore=3, study_db=None,
-        resume=False, trust_remote_code=False, attn_impl=None, load_in_4bit=False,
-        gen_batch=16, gpu_min_free_frac=0.06, max_pause_s=None, no_throttle=False,
-    )
+    """The parser's own defaults, shrunk to test sizes and pointed at tmp_path.
+
+    Derived from `build_parser()` rather than written out, so the fixture cannot
+    drift from the CLI. The assertion below is the actual anti-drift mechanism:
+    it fails the moment an override names a flag the parser no longer has.
+    """
+    from senbonzakura.cli import build_parser
+
+    args = build_parser().parse_args(["--model", "tiny", "--out", str(tmp_path / "out")])
+    missing = set(_TEST_SIZES) - set(vars(args))
+    assert not missing, f"_TEST_SIZES names flags the parser does not define: {sorted(missing)}"
+    for name, value in _TEST_SIZES.items():
+        setattr(args, name, value)
+    args.track = str(tmp_path / "track")
+    args.device = "cpu"
+    return args
 
 
 def make_track(track_dir, n_bad=12, n_good=12, n_eval=8):

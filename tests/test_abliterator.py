@@ -416,3 +416,56 @@ def test_snapshot_ram_preflight_unknown_proceeds(abl, monkeypatch):
     monkeypatch.setattr(cli, "_available_ram_bytes", lambda: None)   # can't measure -> proceed
     abl.snapshot_weights()
     assert abl._pristine   # snapshot taken
+
+
+# ── disk pre-flight (tranche 4, task 22) ─────────────────────────────────────────────
+def test_disk_preflight_refuses_before_the_search(base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The save is the last thing a run does and the most expensive thing to lose.
+
+    Nothing in this repository checked disk before this. A 57 GB base plus a 61 GB
+    output on a 120 GB volume died partway through writing shards, hours in, with the
+    completed search unrecoverable from the half-written output.
+    """
+    monkeypatch.setattr(cli, "free_bytes_for", lambda _p: 1)   # a byte free
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    with pytest.raises(SystemExit, match="not enough disk"):
+        a.run()
+
+
+def test_disk_preflight_says_how_short_it_is(base_args, tiny_model, tiny_tok, track, monkeypatch):
+    monkeypatch.setattr(cli, "free_bytes_for", lambda _p: 1)
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    with pytest.raises(SystemExit, match="short by"):
+        a.run()
+
+
+def test_disk_preflight_proceeds_when_the_disk_cannot_be_measured(base_args, tiny_model, tiny_tok,
+                                                                  track, monkeypatch):
+    monkeypatch.setattr(cli, "free_bytes_for", lambda _p: None)
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert os.path.exists(os.path.join(base_args.out, "abliteration.json"))
+
+
+def test_model_bytes_counts_every_parameter(base_args, tiny_model, tiny_tok):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    expected = sum(p.numel() * p.element_size() for p in tiny_model.parameters())
+    assert a.model_bytes() == expected
+    assert a.model_bytes() > 0
+
+
+# ── an all-trials-failed search (tranche 4, task 21) ─────────────────────────────────
+def test_a_search_where_every_trial_failed_exits_loudly(base_args, tiny_model, tiny_tok, track,
+                                                        monkeypatch):
+    """min() on an empty sequence says "arg is an empty sequence" after hours of rented GPU."""
+    def always_fails(_trial):
+        raise RuntimeError("pretend CUDA ran out of memory during generation")
+
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    monkeypatch.setattr(a, "objective", always_fails)
+    with pytest.raises(SystemExit) as e:
+        a.run()
+    message = str(e.value)
+    assert "no usable trial" in message
+    assert "--bake-config" in message      # the way out, not just the diagnosis
+    assert "--resume" in message

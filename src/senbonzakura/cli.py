@@ -43,6 +43,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
     config_to_bake_args,
+    disk_verdict,
+    free_bytes_for,
     search_already_done,
     study_db_path,
     torch_version_ok,
@@ -1013,6 +1015,18 @@ class Abliterator:
         return scal
 
     # ── the full pipeline ─────────────────────────────────────────────────────────
+    def model_bytes(self):
+        """Bytes the weights will occupy on disk, which is what save_pretrained writes."""
+        return sum(p.numel() * p.element_size() for p in self.model.parameters())
+
+    def preflight_disk(self):
+        """Refuse to start work whose only possible ending is a half-written save."""
+        need = self.model_bytes()
+        ok, message = disk_verdict(need, free_bytes_for(self.args.out))
+        if not ok:
+            raise SystemExit(f"not enough disk to save the result: {message}")
+        self.log(message)
+
     def run(self):
         args, log, NL = self.args, self.log, self.NL
         TR = args.track
@@ -1036,6 +1050,11 @@ class Abliterator:
         self.orig_lp = self.first_token_logprobs(self.kl_eval)
         base_ref = self.refusal_rate(self.bad_eval)
         log(f"BASELINE refusals: {base_ref*100:.1f}%  on {len(self.bad_eval)} bad-eval prompts")
+
+        # Disk, before the search rather than after it. The save is the last thing a run does
+        # and the most expensive thing to lose: a 57 GB base plus a 61 GB output on a 120 GB
+        # volume died partway through writing shards, hours in. Checking here costs one syscall.
+        self.preflight_disk()
 
         # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
         self.snapshot_weights()
@@ -1208,6 +1227,18 @@ class Abliterator:
         # where study.best_trial is undefined). Fall back to the whole set if nothing is under ceiling.
         # Preference now weighs hedging (soft) and the Heretic keyword rate, not hard refusals alone.
         _cand = [t for t in study.trials if t.user_attrs]
+        if not _cand:
+            # min() on an empty sequence raises "min() arg is an empty sequence", which after
+            # several hours of rented GPU tells the operator nothing about what went wrong.
+            failed = sum(1 for t in study.trials if str(getattr(t, "state", "")).endswith("FAIL"))
+            where = f" The study is at {db}." if db else ""
+            raise SystemExit(
+                f"the search produced no usable trial: {len(study.trials)} ran, {failed} failed, and "
+                f"none recorded measurements, so there is no configuration to bake. Every trial "
+                f"raised before it could be scored; the usual causes are running out of VRAM during "
+                f"generation, a model that will not generate at all, or an eval set that loaded "
+                f"empty.{where} Fix the cause and re-run with --resume to keep the completed work, "
+                f"or use --bake-config to save a known configuration without searching.")
         _intact = [t for t in _cand if t.user_attrs["kl"] <= KL_CEIL and t.user_attrs.get("broken", 0.0) <= 0.1]
 
         # Re-score the top candidates on a LARGER bad-eval before choosing, so the knee isn't overfit to

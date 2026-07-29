@@ -4,6 +4,7 @@ These are the pure cores of the fixes from the first large-model H100 run, where
 forced re-running a 34-minute search and a stale torch failed only after a 31 GB download. Kept in
 crashsafe.py (no heavy imports) precisely so they can be tested without torch/optuna present.
 """
+from senbonzakura import crashsafe
 from senbonzakura.crashsafe import (
     MIN_TORCH,
     config_to_bake_args,
@@ -101,3 +102,63 @@ class TestWinningConfigRoundtrip:
             config_to_bake_args({"num_directions": 1})  # missing o_profile/d_profile
         with pytest.raises(ValueError, match="malformed bake config"):
             config_to_bake_args({"o_profile": [1], "d_profile": [1], "num_directions": 1, "dir_mode": "x"})
+
+
+class TestDiskPreflight:
+    """The check that was missing when a 57 GB base plus a 61 GB output met a 120 GB volume.
+
+    safetensors died with "Disk quota exceeded" partway through writing shards, hours into a
+    rented GPU, with the search complete and unrecoverable from the output. These are pure so
+    the interesting cases are testable without filling a disk.
+    """
+
+    def test_room_to_spare_is_approved_and_says_the_numbers(self):
+        ok, msg = crashsafe.disk_verdict(10_000_000_000, 50_000_000_000)
+        assert ok
+        assert "50.0 GB free" in msg
+
+    def test_a_shortfall_is_refused_and_quantified(self):
+        ok, msg = crashsafe.disk_verdict(61_000_000_000, 20_000_000_000)
+        assert not ok
+        assert "short by" in msg
+        assert "44.0 GB" in msg          # 61 GB * 1.05 = 64.05, less the 20 GB free
+
+    def test_exactly_enough_is_not_enough(self):
+        """A serialisation holds a shard in flight, so the margin is the point."""
+        ok, _ = crashsafe.disk_verdict(1_000_000_000, 1_000_000_000)
+        assert not ok
+
+    def test_the_margin_is_what_makes_the_difference(self):
+        assert crashsafe.disk_verdict(1_000_000_000, 1_050_000_000)[0]
+        assert not crashsafe.disk_verdict(1_000_000_000, 1_049_999_999)[0]
+
+    def test_the_margin_is_adjustable(self):
+        assert crashsafe.disk_verdict(1_000_000_000, 1_010_000_000, headroom_frac=0.0)[0]
+
+    def test_an_unmeasurable_disk_proceeds_with_a_warning(self):
+        """An unmeasurable filesystem is not evidence of a full one."""
+        ok, msg = crashsafe.disk_verdict(10_000_000_000, None)
+        assert ok
+        assert "could not measure" in msg
+
+    def test_free_space_is_found_for_a_path_that_does_not_exist_yet(self, tmp_path):
+        """The output directory is created by the save, so a check needing it runs too late."""
+        deep = tmp_path / "not" / "created" / "yet" / "out"
+        got = crashsafe.free_bytes_for(deep)
+        assert isinstance(got, int)
+        assert got > 0
+
+    def test_free_space_for_an_existing_directory(self, tmp_path):
+        assert crashsafe.free_bytes_for(tmp_path) > 0
+
+    def test_an_unreadable_filesystem_reports_none_rather_than_raising(self, tmp_path, monkeypatch):
+        def boom(_):
+            raise OSError("filesystem went away")
+
+        monkeypatch.setattr(crashsafe.shutil, "disk_usage", boom)
+        assert crashsafe.free_bytes_for(tmp_path) is None
+
+    def test_no_existing_ancestor_reports_none(self, tmp_path, monkeypatch):
+        """Defensive: root always exists, so this needs forcing to reach."""
+        monkeypatch.setattr(crashsafe.Path, "exists", lambda _self: False)
+        assert crashsafe.free_bytes_for(tmp_path / "anything") is None

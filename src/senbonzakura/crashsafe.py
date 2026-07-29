@@ -7,7 +7,59 @@ the download" fixes. They import nothing heavy on purpose, so they are unit-test
 (cli.py imports torch/optuna at module load, which the tests must not require).
 """
 
+import shutil
+from pathlib import Path
+
 MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DTensor (torch >= 2.5)
+
+# Fraction of the output size to keep free beyond it. safetensors writes a shard, then its
+# index, and a serialisation can hold one shard in flight, so "exactly enough" is not enough.
+SAVE_HEADROOM_FRAC = 0.05
+
+
+def free_bytes_for(path):
+    """Free bytes on the filesystem that will hold `path`, which need not exist yet.
+
+    Walks up to the nearest existing ancestor, because the output directory is normally
+    created by the save itself, and a preflight that only works after the directory
+    exists is a preflight that runs too late to be worth anything.
+    """
+    p = Path(path).resolve()
+    existing = next((c for c in (p, *p.parents) if c.exists()), None)
+    if existing is None:
+        return None
+    try:
+        return shutil.disk_usage(existing).free
+    except OSError:
+        # Includes the exists()-then-removed race. An unmeasurable disk is reported as
+        # unmeasurable, not as full.
+        return None
+
+
+def disk_verdict(need_bytes, free_bytes, *, headroom_frac=SAVE_HEADROOM_FRAC):
+    """Is there room to write `need_bytes`? Returns (ok, a message worth logging).
+
+    Pure, so the interesting cases are testable without filling a disk. `free_bytes`
+    of None means the filesystem could not be measured, which is reported as a
+    warning rather than a refusal: an unmeasurable disk is not evidence of a full one,
+    and refusing to start on it would be worse than trying.
+
+    This is the check that was missing when a 57 GB base plus a 61 GB output met a
+    120 GB volume and safetensors died with "Disk quota exceeded" partway through the
+    shards, hours into a rented GPU.
+    """
+    want = int(need_bytes * (1.0 + headroom_frac))
+    if free_bytes is None:
+        return True, "disk preflight: could not measure free space; proceeding without the check"
+    if free_bytes >= want:
+        return True, (f"disk preflight: {free_bytes / 1e9:.1f} GB free, need about "
+                      f"{want / 1e9:.1f} GB including a {headroom_frac * 100:.0f}% margin")
+    return False, (f"only {free_bytes / 1e9:.1f} GB free where the output goes, and saving needs "
+                   f"about {want / 1e9:.1f} GB ({need_bytes / 1e9:.1f} GB of weights plus a "
+                   f"{headroom_frac * 100:.0f}% margin): short by "
+                   f"{(want - free_bytes) / 1e9:.1f} GB. Free space, choose an --out on a larger "
+                   f"volume, or delete the base model directory first if the output is going "
+                   f"somewhere else")
 
 
 def torch_version_ok(version, minimum=MIN_TORCH):

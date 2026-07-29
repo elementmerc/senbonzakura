@@ -53,11 +53,43 @@ jobs:
         # own threshold, so the gate cannot drift between local and CI.
         run: pytest
 
+  pinned:
+    # The counterpart to `test`. That job floats every version, which is how an
+    # upstream release that breaks us gets noticed early; this one holds the
+    # environment still, so when a run goes red it is possible to tell "our
+    # change broke it" from "something upstream shifted under us".
+    #
+    # Python is 3.14 and not a matrix, because constraints/ci.txt was resolved on
+    # 3.14: pandas 3.0.5 and numpy 2.5.1 have no 3.10 wheels, so the same pins on
+    # an older interpreter cannot resolve at all.
+    name: pinned environment (python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install the pinned environment
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+          pip install -e ".[dev]" -c constraints/ci.txt
+      - name: Lint
+        run: ruff check src/ tests/
+      - name: Test, with the coverage gate
+        run: pytest
+
   dependency-floor:
     # Installs the *lowest* version each declared dependency permits. Without this
     # the declared floors are decoration: a clean resolve always picks the newest
     # release and satisfies any floor, however wrong. This is the job that would
     # have caught `torch>=2.2` against a MIN_TORCH of 2.5.
+    #
+    # The floors come from constraints/floors.txt rather than from pyproject
+    # alone, because pip has no lowest-version resolution mode: `>=4.56` is
+    # satisfied by the newest release, so without the `==` pins this job would
+    # install the same versions as `test` and prove nothing about any floor
+    # except torch's.
     name: declared floors resolve and run
     runs-on: ubuntu-latest
     steps:
@@ -67,9 +99,13 @@ jobs:
           python-version: "3.10"
           cache: pip
       - name: Install at the declared minimums
+        # torch is pinned here rather than in floors.txt because its CPU wheels
+        # are not on PyPI and its floor varies by Python version. 2.5.1 is the
+        # earliest patch of the declared 2.5 floor that the July environment
+        # record names, so it is the one worth holding the line at.
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
-          pip install -e ".[dev]" --upgrade-strategy only-if-needed
+          pip install -e ".[dev]" -c constraints/floors.txt --upgrade-strategy only-if-needed
       - name: The tool starts and reports its version
         run: |
           python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"

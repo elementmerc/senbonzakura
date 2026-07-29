@@ -712,13 +712,15 @@ class Abliterator:
                 d0 = _orth_to(mb[li] - mg[li], [gd])
                 d0 = d0 / d0.norm().clamp_min(1e-8)
                 basis = [gd, d0]; kept = [d0]
-            # At most H mutually orthonormal vectors exist in an H-dimensional space, and `basis`
-            # already holds the good direction alongside everything in `kept`. Asking for more than
-            # that used to hand the PCA loop pure numerical noise to normalise: with H=8 the
-            # post-projection residual of a linearly dependent axis still cleared the 1e-6 norm
+            # At most H mutually orthonormal vectors exist in an H-dimensional space, and everything
+            # kept has to stay orthonormal to the rest of `basis`, which on the default path also
+            # holds the harmless direction (and does not under --no-good-orth). So the ceiling on
+            # kept directions is H minus whatever sits in the basis without being kept, not H.
+            # Asking for more used to hand the PCA loop pure numerical noise to normalise: with H=8
+            # the post-projection residual of a linearly dependent axis still cleared the 1e-6 norm
             # guard in float32, so it was scaled to unit length and ablated as though it carried
             # refusal. Cap what is kept; KMAX itself stays as-is because it sets the tensor width.
-            kmax_eff = min(KMAX, H)
+            kmax_eff = min(KMAX, H - (len(basis) - len(kept)))
             # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before PCA fills the rest.
             if hedge_md is not None and len(kept) < kmax_eff:
                 hv = _orth_to(hedge_md[li], basis)

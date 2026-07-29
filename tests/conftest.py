@@ -6,7 +6,6 @@ all operate on real tensors and their effects are observable. No weights are dow
 is needed, so the whole suite runs anywhere torch is installed.
 """
 import os
-import types
 
 import pytest
 import torch

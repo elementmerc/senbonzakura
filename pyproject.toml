@@ -24,11 +24,17 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  # The code refuses to start below 2.5: transformers' MoE path imports
-  # torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install` succeed into
-  # an environment the tool then rejects.
+  # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE
+  # path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
+  # succeed into an environment the tool then rejects.
+  #
+  # The floors above 3.12 are wheel availability, not a code requirement: 2.5 has
+  # no cp313 wheels and the first build with cp314 is 2.9 (checked against PyPI,
+  # 2026-07-29). Declaring a floor nothing can install is the same class of
+  # mistake as declaring one the code rejects, just further from the user.
   "torch>=2.5; python_version < '3.13'",
-  "torch>=2.6; python_version >= '3.13'",
+  "torch>=2.6; python_version == '3.13'",
+  "torch>=2.9; python_version >= '3.14'",
   "transformers>=4.56",
   "accelerate>=0.26",
   "datasets>=2.0",

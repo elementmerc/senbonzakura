@@ -58,6 +58,14 @@ def test_kmax_exceeds_hidden_dim(base_args, tiny_model, tiny_tok, track):
     for li in range(a.NL + 1):
         nonzero = int((dm[li].norm(dim=1) > 1e-3).sum())
         assert nonzero <= a.H          # never more real directions than dimensions; extras are zero
+        # The count alone is too weak: H kept directions plus the harmless direction they are all
+        # orthogonalised against is H+1 vectors in H dimensions, and the surplus one is numerical
+        # noise scaled to unit length. Assert what the count is standing in for.
+        rows = dm[li][dm[li].norm(dim=1) > 1e-3]
+        if rows.shape[0] > 1:
+            gram = rows @ rows.T
+            off_diagonal = (gram - torch.eye(rows.shape[0])).abs().max().item()
+            assert off_diagonal < 5e-2, f"layer {li}: directions are not orthonormal ({off_diagonal:.2e})"
 
 
 # ── pathological prompts in evaluation ───────────────────────────────────────────────

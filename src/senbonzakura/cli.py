@@ -452,6 +452,11 @@ def build_parser():
                          "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
                          "toggles off the projection grimjim calls 'projected abliteration'; on by "
                          "default. For measuring whether the projection helps or hurts the search.")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="seed for the Optuna sampler (default 42). Vary it to measure run-to-run "
+                         "spread: a single run tells you nothing about whether a gap between two "
+                         "configurations is real. Note GPU kernels are not bit-deterministic, so a "
+                         "fixed seed reproduces the search path, not the last decimal of a score.")
     ap.add_argument("--search", choices=["pareto", "scalar"], default="pareto",
                     help="pareto: NSGA-II maps the whole refusals-vs-KL frontier, we pick the knee "
                          "(intact + most uncensored). scalar: the old single weighted objective (TPE).")
@@ -1046,12 +1051,12 @@ class Abliterator:
         if args.search == "pareto":
             study = optuna.create_study(
                 directions=["minimize", "minimize", "minimize"],
-                sampler=optuna.samplers.NSGAIISampler(seed=42, population_size=pop),
+                sampler=optuna.samplers.NSGAIISampler(seed=args.seed, population_size=pop),
                 storage=storage, study_name=study_name, load_if_exists=args.resume)
         else:
             study = optuna.create_study(
                 direction="minimize",
-                sampler=optuna.samplers.TPESampler(seed=42, n_startup_trials=12),
+                sampler=optuna.samplers.TPESampler(seed=args.seed, n_startup_trials=12),
                 storage=storage, study_name=study_name, load_if_exists=args.resume)
 
         # --resume on a study that already finished its search (ran the budget or early-stopped)
@@ -1234,7 +1239,11 @@ class Abliterator:
                        "max_directions": self.KMAX,
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
                        "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
-                       "sparsity": float(args.sparsity)},
+                       "sparsity": float(args.sparsity),
+                       # Provenance: a score without the seed that produced it cannot be
+                       # re-run, and cannot be told apart from a re-sample of the same config.
+                       "seed": args.seed, "search": args.search, "trials": args.trials,
+                       "warm_start": args.warm_start, "good_orth": not args.no_good_orth},
                       f, indent=2)
         log("DONE")
 

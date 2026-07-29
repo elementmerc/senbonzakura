@@ -183,6 +183,12 @@ def test_full_run_writes_artefact(base_args, tiny_model, tiny_tok, track):
     with open(p) as f:
         d = json.load(f)
     assert "post_bake_kl" in d and "num_directions" in d and "baseline_refusals" in d
+    # Provenance: a result that does not carry the seed and search settings behind it
+    # cannot be re-run, and a second run of the same config cannot be told from a
+    # different one. Every published number needs this.
+    assert d["seed"] == base_args.seed
+    for k in ("search", "trials", "warm_start", "good_orth", "sparsity"):
+        assert k in d, f"abliteration.json lost its {k} provenance field"
     assert os.path.exists(os.path.join(base_args.track, "trials.json"))
 
 

@@ -64,6 +64,16 @@ def build_parser():
                          "auto preset uses, so it covers every prompt the search could have seen "
                          "(0 to score the selection set too, which is not a held-out number)")
     ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--seed", type=int, default=42,
+                    help="seed for the bootstrap resampling, recorded in the result")
+    ap.add_argument("--bootstrap", type=int, default=2000,
+                    help="bootstrap resamples for the AUC interval (0 to skip). At n=200 the "
+                         "analytic standard error is about 0.029, so an AUC without an interval "
+                         "invites a reader to believe a difference the data does not carry")
+    ap.add_argument("--compare-to", default="",
+                    help="a margins jsonl from a previous run on the same prompts (typically the "
+                         "unabliterated model). Adds the PAIRED interval on the change, which is "
+                         "much tighter than comparing two separate intervals by eye")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true")
     return ap
@@ -114,17 +124,89 @@ def auc(pos, neg):
 
     0.5 is chance. Ties count a half, which matters because a saturated model can
     produce identical margins across many prompts.
+
+    Computed from tie-averaged ranks rather than by comparing every pair. The two
+    are identical by definition of U, and the tests assert it against a naive
+    reference; the reason to care is the bootstrap, which needs thousands of AUCs.
+    Pairwise is 200 x 200 = 40,000 comparisons each, so 2,000 resamples would be
+    80 million of them in Python. Ranking is 400 log 400 instead.
     """
     if not pos or not neg:
         return None
-    wins = 0.0
-    for p in pos:
-        for n in neg:
-            if p > n:
-                wins += 1.0
-            elif p == n:
-                wins += 0.5
-    return wins / (len(pos) * len(neg))
+    n, m = len(pos), len(neg)
+    x = torch.tensor([*pos, *neg], dtype=torch.float64)
+    # Tie-averaged 1-based ranks: for a group of `c` equal values whose last rank is
+    # `e`, every member ranks (e - (c - 1) / 2). Exactly the half-credit for ties.
+    _, inverse, counts = torch.unique(x, return_inverse=True, return_counts=True)
+    last_rank = torch.cumsum(counts, 0).to(torch.float64)
+    ranks = (last_rank - (counts.to(torch.float64) - 1) / 2)[inverse]
+    rank_sum_pos = float(ranks[:n].sum())
+    return (rank_sum_pos - n * (n + 1) / 2) / (n * m)
+
+
+def _resampled_auc(pos, neg, gen):
+    """One bootstrap replicate: resample prompts with replacement, within each arm."""
+    n, m = len(pos), len(neg)
+    pi = torch.randint(n, (n,), generator=gen)
+    ni = torch.randint(m, (m,), generator=gen)
+    return auc([pos[int(i)] for i in pi], [neg[int(i)] for i in ni])
+
+
+def bootstrap_auc_ci(pos, neg, seed=0, resamples=2000, alpha=0.05):
+    """Percentile confidence interval for one AUC, by resampling prompts.
+
+    Prompts are the sampling unit, not pairs: the uncertainty being estimated is
+    "what if we had drawn a different 200 prompts", and resampling pairs would
+    answer a question nobody asked and give an interval that is too narrow.
+
+    Seeded, so the interval is reproducible. Returns (low, high), or None when
+    either arm is empty.
+    """
+    if not pos or not neg:
+        return None
+    gen = torch.Generator().manual_seed(int(seed))
+    draws = sorted(_resampled_auc(pos, neg, gen) for _ in range(resamples))
+    lo = draws[int((alpha / 2) * (resamples - 1))]
+    hi = draws[int((1 - alpha / 2) * (resamples - 1))]
+    return (round(lo, 4), round(hi, 4))
+
+
+def paired_bootstrap_delta_ci(before, after, seed=0, resamples=2000, alpha=0.05):
+    """Interval on the AUC change between two models measured on the SAME prompts.
+
+    The pairing is the whole point. Two independent intervals that overlap do not
+    mean the difference is uncertain: before and after share every prompt, so the
+    prompt-to-prompt variation cancels and the paired interval is much tighter than
+    subtracting two unpaired ones would suggest. So each replicate draws ONE set of
+    prompt indices and applies it to both models.
+
+    `before` and `after` are each (harmful_margins, harmless_margins), aligned by
+    prompt. Returns a dict with the point delta and its interval, or None if the
+    shapes do not line up, which the caller is expected to have refused already.
+    """
+    (bp, bn), (ap, an) = before, after
+    if not bp or not bn or len(bp) != len(ap) or len(bn) != len(an):
+        return None
+    gen = torch.Generator().manual_seed(int(seed))
+    n, m = len(bp), len(bn)
+    draws = []
+    for _ in range(resamples):
+        pi = [int(i) for i in torch.randint(n, (n,), generator=gen)]
+        ni = [int(i) for i in torch.randint(m, (m,), generator=gen)]
+        a = auc([ap[i] for i in pi], [an[i] for i in ni])
+        b = auc([bp[i] for i in pi], [bn[i] for i in ni])
+        draws.append(a - b)
+    draws.sort()
+    lo = draws[int((alpha / 2) * (resamples - 1))]
+    hi = draws[int((1 - alpha / 2) * (resamples - 1))]
+    return {
+        "delta_auc": round(auc(ap, an) - auc(bp, bn), 4),
+        "delta_ci": (round(lo, 4), round(hi, 4)),
+        # A sign that is not consistent across the resamples is the honest way to say
+        # "this delta is not distinguishable from no change", without a p-value.
+        "delta_crosses_zero": bool(lo <= 0.0 <= hi),
+        "resamples": resamples, "seed": int(seed),
+    }
 
 
 def load_prompts(path, what):
@@ -145,6 +227,50 @@ def load_prompts(path, what):
     # load_from_disk above, and a set too small for --n is caught by the fit check in
     # main(), which reports the row count and both flags.
     return [r["text"] for r in ds]
+
+
+def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
+    """Read a previous run's per-prompt margins, aligned to this run's prompts.
+
+    The alignment is checked rather than assumed. A paired interval computed on rows
+    that are not actually the same prompts is not conservative, it is wrong: it
+    reports a tight interval around a meaningless difference. So every row's prompt
+    text must match, and a mismatch is fatal.
+    """
+    by_set = {"harmful": {}, "harmless": {}}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise SystemExit(f"{path}:{lineno} is not valid JSON ({e})") from e
+                kind = row.get("set")
+                if kind not in by_set:
+                    raise SystemExit(f"{path}:{lineno} has set={kind!r}, expected harmful or harmless")
+                by_set[kind][row.get("i")] = (row.get("margin"), row.get("prompt"))
+    except OSError as e:
+        raise SystemExit(f"could not read --compare-to {path}: {e}") from e
+
+    out = []
+    for kind, prompts in (("harmful", harmful_prompts), ("harmless", harmless_prompts)):
+        rows = by_set[kind]
+        if len(rows) != len(prompts):
+            raise SystemExit(f"--compare-to {path} has {len(rows)} {kind} rows but this run scores "
+                             f"{len(prompts)}; a paired interval needs the same prompts")
+        arm = []
+        for i, prompt in enumerate(prompts):
+            if i not in rows:
+                raise SystemExit(f"--compare-to {path} is missing {kind} row {i}")
+            margin_value, previous = rows[i]
+            if previous is not None and previous != prompt:
+                raise SystemExit(f"--compare-to {path} {kind} row {i} is a different prompt than "
+                                 f"this run scores, so the two are not paired")
+            arm.append(margin_value)
+        out.append(arm)
+    return tuple(out)
 
 
 def main(argv=None):
@@ -194,6 +320,8 @@ def main(argv=None):
         "skip_harmful": a.skip_harmful, "skip_harmless": a.skip_harmless,
         "margins_path": margins_path,
         "auc": round(score, 4),
+        "auc_ci": bootstrap_auc_ci(mh, ml, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,
+        "bootstrap_resamples": a.bootstrap, "seed": a.seed,
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
         # A model whose margin never crosses zero always says the same thing. That
@@ -202,6 +330,12 @@ def main(argv=None):
         "frac_harmful_positive": round(sum(m > 0 for m in mh) / len(mh), 4),
         "frac_harmless_positive": round(sum(m > 0 for m in ml) / len(ml), 4),
     }
+    if a.compare_to:
+        before = load_margins_jsonl(a.compare_to, harmful, harmless)
+        res["paired"] = paired_bootstrap_delta_ci((*before,), (mh, ml),
+                                                  seed=a.seed, resamples=a.bootstrap or 2000)
+        res["compared_to"] = a.compare_to
+
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)
 
@@ -215,10 +349,16 @@ def main(argv=None):
                 for i, (m, p) in enumerate(zip(ms, ps, strict=True)):
                     f.write(json.dumps({"i": i, "set": kind, "margin": m, "prompt": p}) + "\n")
 
-    print(f"MARGIN_DONE {a.label} auc={score:.4f} "
+    ci = f" ci=[{res['auc_ci'][0]:.4f},{res['auc_ci'][1]:.4f}]" if res["auc_ci"] else ""
+    print(f"MARGIN_DONE {a.label} auc={score:.4f}{ci} "
           f"mean_h={res['mean_margin_harmful']:.3f} mean_l={res['mean_margin_harmless']:.3f} "
           f"says_harmful_h={res['frac_harmful_positive']*100:.1f}% "
           f"says_harmful_l={res['frac_harmless_positive']*100:.1f}%")
+    if res.get("paired"):
+        p = res["paired"]
+        verdict = "CROSSES ZERO" if p["delta_crosses_zero"] else "excludes zero"
+        print(f"MARGIN_PAIRED {a.label} delta={p['delta_auc']:+.4f} "
+              f"ci=[{p['delta_ci'][0]:+.4f},{p['delta_ci'][1]:+.4f}] {verdict}")
     return res
 
 

@@ -96,6 +96,112 @@ def test_auc_of_scrambled_labels_lands_at_chance():
     assert abs(margin.auc(pool[:200], pool[200:]) - 0.5) < 4 * 0.029
 
 
+def _naive_auc(pos, neg):
+    """The definition, written out: the reference the fast rank form must match."""
+    wins = 0.0
+    for p in pos:
+        for n in neg:
+            if p > n:
+                wins += 1.0
+            elif p == n:
+                wins += 0.5
+    return wins / (len(pos) * len(neg))
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_the_rank_form_equals_the_pairwise_definition(seed):
+    """auc() was rewritten from O(n*m) to ranks for the bootstrap; it must not have moved.
+
+    Values are drawn from a small integer range on purpose, so ties are frequent
+    rather than rare: ties are where a rank implementation goes wrong.
+    """
+    rng = random.Random(seed)
+    pos = [float(rng.randint(0, 4)) for _ in range(40)]
+    neg = [float(rng.randint(0, 4)) for _ in range(35)]
+    assert margin.auc(pos, neg) == pytest.approx(_naive_auc(pos, neg), abs=1e-12)
+
+
+def test_the_rank_form_handles_an_all_ties_arm():
+    assert margin.auc([2.0] * 10, [2.0] * 10) == pytest.approx(_naive_auc([2.0] * 10, [2.0] * 10))
+
+
+# ── bootstrap intervals (task 9) ───────────────────────────────────────────────────
+def test_the_interval_brackets_the_point_estimate():
+    rng = random.Random(7)
+    pos = [rng.gauss(1.0, 1.0) for _ in range(120)]
+    neg = [rng.gauss(0.0, 1.0) for _ in range(120)]
+    lo, hi = margin.bootstrap_auc_ci(pos, neg, seed=42, resamples=400)
+    assert lo < margin.auc(pos, neg) < hi
+
+
+def test_the_interval_is_reproducible_from_the_seed():
+    pos, neg = [3.0, 2.0, 1.5, 4.0], [1.0, 0.5, 2.5, 0.0]
+    first = margin.bootstrap_auc_ci(pos, neg, seed=99, resamples=200)
+    assert first == margin.bootstrap_auc_ci(pos, neg, seed=99, resamples=200)
+    assert first != margin.bootstrap_auc_ci(pos, neg, seed=100, resamples=200)
+
+
+def test_a_wider_interval_for_fewer_prompts():
+    """The reason the interval exists: n=200 and n=20 do not deserve equal confidence."""
+    rng = random.Random(11)
+    big_pos = [rng.gauss(0.6, 1.0) for _ in range(200)]
+    big_neg = [rng.gauss(0.0, 1.0) for _ in range(200)]
+    lo_b, hi_b = margin.bootstrap_auc_ci(big_pos, big_neg, seed=1, resamples=400)
+    lo_s, hi_s = margin.bootstrap_auc_ci(big_pos[:20], big_neg[:20], seed=1, resamples=400)
+    assert (hi_s - lo_s) > (hi_b - lo_b)
+
+
+def test_no_interval_without_both_arms():
+    assert margin.bootstrap_auc_ci([], [1.0], seed=1, resamples=10) is None
+    assert margin.bootstrap_auc_ci([1.0], [], seed=1, resamples=10) is None
+
+
+def test_the_paired_interval_is_tighter_than_two_separate_ones():
+    """The point of pairing: shared prompts cancel, so the delta is known far better.
+
+    Two overlapping unpaired intervals do not mean the change is uncertain, and this
+    is the test that says so numerically.
+    """
+    rng = random.Random(3)
+    bp = [rng.gauss(0.0, 3.0) for _ in range(150)]          # wide prompt-to-prompt spread
+    bn = [rng.gauss(-0.5, 3.0) for _ in range(150)]
+    ap = [v + 1.0 for v in bp]                               # the same prompts, shifted
+    an = list(bn)
+    paired = margin.paired_bootstrap_delta_ci((bp, bn), (ap, an), seed=5, resamples=400)
+    paired_width = paired["delta_ci"][1] - paired["delta_ci"][0]
+
+    b_lo, b_hi = margin.bootstrap_auc_ci(bp, bn, seed=5, resamples=400)
+    a_lo, a_hi = margin.bootstrap_auc_ci(ap, an, seed=5, resamples=400)
+    naive_width = (a_hi - a_lo) + (b_hi - b_lo)              # what eyeballing two intervals implies
+    assert paired_width < naive_width
+
+
+def test_the_paired_delta_matches_the_unresampled_difference():
+    bp, bn = [1.0, 2.0, 3.0], [0.0, 0.5, 1.5]
+    ap, an = [2.0, 3.0, 4.0], [0.0, 0.5, 1.5]
+    got = margin.paired_bootstrap_delta_ci((bp, bn), (ap, an), seed=1, resamples=100)
+    assert got["delta_auc"] == pytest.approx(margin.auc(ap, an) - margin.auc(bp, bn), abs=1e-4)
+
+
+def test_an_unchanged_model_has_a_delta_interval_that_crosses_zero():
+    """Identical margins mean no change, and the interval has to be able to say so."""
+    rng = random.Random(13)
+    pos = [rng.gauss(0.5, 1.0) for _ in range(80)]
+    neg = [rng.gauss(0.0, 1.0) for _ in range(80)]
+    got = margin.paired_bootstrap_delta_ci((pos, neg), (list(pos), list(neg)), seed=2, resamples=300)
+    assert got["delta_auc"] == 0.0
+    assert got["delta_crosses_zero"]
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    (([], []), ([1.0], [1.0])),                       # empty
+    (([1.0, 2.0], [1.0]), ([1.0], [1.0])),            # harmful arms differ in length
+    (([1.0], [1.0, 2.0]), ([1.0], [1.0])),            # harmless arms differ in length
+])
+def test_the_paired_interval_refuses_mismatched_shapes(before, after):
+    assert margin.paired_bootstrap_delta_ci(before, after, seed=1, resamples=10) is None
+
+
 # ── margins ────────────────────────────────────────────────────────────────────────
 def test_margins_returns_one_score_per_prompt(margin_kit):
     model, tok = margin_kit
@@ -379,6 +485,92 @@ def test_main_refuses_a_tokenizer_that_shares_a_verdict_id(loaded, tmp_path, mon
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
                      "--skip-harmless", "0", "--device", "cpu"])
+
+
+# ── the paired comparison end to end ───────────────────────────────────────────────
+def _run(loaded, tmp_path, tag, extra=()):
+    bad, good = _track(tmp_path, n_harmful=4, n_harmless=4)
+    out = str(tmp_path / f"{tag}.json")
+    return margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", out,
+                        "--n", "3", "--skip-harmful", "0", "--skip-harmless", "0",
+                        "--bootstrap", "60", "--device", "cpu", "--label", tag, *extra])
+
+
+def test_the_result_carries_an_interval_and_its_seed(loaded, tmp_path, capsys):
+    res = _run(loaded, tmp_path, "before")
+    lo, hi = res["auc_ci"]
+    assert lo <= res["auc"] <= hi
+    assert res["bootstrap_resamples"] == 60
+    assert res["seed"] == 42
+    assert "ci=[" in capsys.readouterr().out
+
+
+def test_bootstrap_zero_skips_the_interval(loaded, tmp_path):
+    res = _run(loaded, tmp_path, "nb", extra=["--bootstrap", "0"])
+    assert res["auc_ci"] is None
+
+
+def test_compare_to_adds_the_paired_interval(loaded, tmp_path, capsys):
+    """The before-and-after shape the writeup's table needs."""
+    before = _run(loaded, tmp_path, "before")
+    after = _run(loaded, tmp_path, "after", extra=["--compare-to", before["margins_path"]])
+    paired = after["paired"]
+    assert paired["delta_auc"] == 0.0            # the same fixture model both times
+    assert paired["delta_crosses_zero"]
+    assert after["compared_to"] == before["margins_path"]
+    assert "MARGIN_PAIRED" in capsys.readouterr().out
+
+
+def test_compare_to_refuses_a_file_scoring_different_prompts(loaded, tmp_path):
+    """A tight interval around a meaningless difference is worse than no interval."""
+    before = _run(loaded, tmp_path, "before")
+    rows = [json.loads(x) for x in Path(before["margins_path"]).read_text(encoding="utf-8").splitlines()]
+    rows[1]["prompt"] = "a completely different prompt"
+    tampered = tmp_path / "tampered.jsonl"
+    tampered.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    with pytest.raises(SystemExit, match="not paired"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(tampered)])
+
+
+def test_compare_to_refuses_a_file_with_the_wrong_row_count(loaded, tmp_path):
+    before = _run(loaded, tmp_path, "before")
+    rows = Path(before["margins_path"]).read_text(encoding="utf-8").splitlines()
+    short = tmp_path / "short.jsonl"
+    short.write_text("\n".join(rows[:-1]), encoding="utf-8")
+    with pytest.raises(SystemExit, match="paired interval needs the same prompts"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(short)])
+
+
+def test_compare_to_refuses_a_missing_file(loaded, tmp_path):
+    with pytest.raises(SystemExit, match="could not read --compare-to"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(tmp_path / "absent.jsonl")])
+
+
+def test_compare_to_refuses_malformed_rows(loaded, tmp_path):
+    bad_rows = tmp_path / "bad.jsonl"
+    bad_rows.write_text('{"i": 0, "set": "harmful", "margin": 1.0}\nnot json at all\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="not valid JSON"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(bad_rows)])
+
+
+def test_compare_to_refuses_an_unknown_arm_label(loaded, tmp_path):
+    odd = tmp_path / "odd.jsonl"
+    odd.write_text('{"i": 0, "set": "neither", "margin": 1.0}\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="expected harmful or harmless"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(odd)])
+
+
+def test_compare_to_refuses_a_gap_in_the_row_indices(loaded, tmp_path):
+    """Right count, wrong indices: the rows do not cover the prompts they claim to."""
+    before = _run(loaded, tmp_path, "before")
+    rows = [json.loads(x) for x in Path(before["margins_path"]).read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r["set"] == "harmful" and r["i"] == 1:
+            r["i"] = 99
+    gapped = tmp_path / "gapped.jsonl"
+    gapped.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    with pytest.raises(SystemExit, match="missing harmful row 1"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(gapped)])
 
 
 # ── the dataset boundary ───────────────────────────────────────────────────────────

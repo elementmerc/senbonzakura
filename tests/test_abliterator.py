@@ -751,3 +751,52 @@ def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, tra
         artefact = json.load(f)
     assert artefact["directions_per_layer"] == a.dirs_per_layer
     assert len(artefact["directions_per_layer"]) == a.NL + 1
+
+
+# ── the study storage releases its connection pool ────────────────────────────────────
+def test_the_study_storage_is_disposed_after_a_run(base_args, tiny_model, tiny_tok, track):
+    """Optuna's RDBStorage keeps a SQLAlchemy pool that nothing disposes on its own."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert a._study_storage is None, "the storage outlived the run it belongs to"
+
+
+def test_no_connection_survives_a_run(base_args, tiny_model, tiny_tok, track):
+    """Dropping the reference would satisfy the test above and leak exactly as before.
+
+    So this asserts the property rather than the call: force finalisation and demand that
+    Python has no unclosed database to complain about. engine.dispose() is the whole fix
+    and remove_session() is not; measured, the latter leaves all six connections open
+    across three studies, and a fix written around it would read as correct.
+    """
+    import gc
+    import warnings
+
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        gc.collect()
+    unclosed = [w for w in caught if "unclosed database" in str(w.message)]
+    assert not unclosed, f"{len(unclosed)} database handle(s) survived the run"
+
+
+def test_the_pool_is_released_even_when_the_run_raises(base_args, tiny_model, tiny_tok, track,
+                                                       monkeypatch):
+    """The all-trials-failed exit is a SystemExit, which a bare `finally` must still cover."""
+    def always_fails(_trial):
+        raise RuntimeError("pretend every trial died")
+
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    monkeypatch.setattr(a, "objective", always_fails)
+    with pytest.raises(SystemExit):
+        a.run()
+    assert a._study_storage is None
+
+
+def test_no_persist_study_leaves_no_storage_to_dispose(base_args, tiny_model, tiny_tok, track):
+    base_args.no_persist_study = True
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert a._study_storage is None
+    assert not os.path.exists(os.path.join(base_args.track, "senbon-study.db"))

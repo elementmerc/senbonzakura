@@ -172,7 +172,12 @@ ignore = [
 [tool.pytest.ini_options]
 # Coverage runs on a bare `pytest`, so the gate is something you meet while working
 # rather than something CI tells you about after you push.
-addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing"
+# -W error::ResourceWarning is the gate for a leak the suite had for months: Optuna's
+# sqlite storage kept a connection pool nobody disposed, and the 26 warnings it printed
+# were noise that any genuinely new warning would have hidden in. It is affordable
+# because, once fixed, this suite emits no warnings of any kind, so the setting costs
+# nothing today and turns the next leak into a failure instead of more noise.
+addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning"
 
 [tool.coverage.run]
 source = ["senbonzakura"]              # without this, a run measures whatever happened to import

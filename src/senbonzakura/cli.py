@@ -29,6 +29,7 @@ weight math, testable without a model), the Abliterator class (everything that n
 model: direction extraction, the reversible bake, evaluation, and the search), and a thin main().
 """
 import argparse
+import contextlib
 import gc
 import hashlib
 import json
@@ -1189,7 +1190,37 @@ class Abliterator:
         if str(self.dev).startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    @contextlib.contextmanager
+    def _study_storage_scope(self):
+        """Hold the Optuna study storage for one run, and release its pool on the way out.
+
+        Optuna's RDBStorage keeps a SQLAlchemy connection pool that nothing disposes, so a
+        sqlite-backed study leaves roughly two open database handles behind. Today that
+        costs a warning and nothing else: one study per process, and the handles go when
+        the process does. It stops being free the moment anything copies or uploads the
+        study database inside the same process, which is what --upload-to will do.
+
+        `engine.dispose()` is the whole fix, measured. `remove_session()` looks like it
+        should help and changes nothing, so a fix written around it would read as correct
+        and leak exactly as before.
+        """
+        self._study_storage = None
+        try:
+            yield
+        finally:
+            storage, self._study_storage = self._study_storage, None
+            if storage is not None:
+                storage.engine.dispose()
+
     def run(self):
+        # A scope rather than a try/finally around the search: the study is read as far as
+        # the knee selection, 170 lines later, so a `with` there would reindent the whole
+        # search. Wrapping the call keeps disposal deterministic on every path, including
+        # the SystemExit an all-trials-failed search raises.
+        with self._study_storage_scope():
+            return self._run()
+
+    def _run(self):
         args, log, NL = self.args, self.log, self.NL
         TR = args.track
         GOOD_DS = args.good_ds or f"{TR}/good_ds"
@@ -1281,7 +1312,10 @@ class Abliterator:
         study_name = f"senbon-{args.search}"
         db = study_db_path(args.study_db, args.no_persist_study, TR)
         if db:
-            storage = f"sqlite:///{db}"
+            # Built as an object rather than passed as a URL string so its connection pool
+            # can be released; see _study_storage_scope.
+            storage = optuna.storages.RDBStorage(f"sqlite:///{db}")
+            self._study_storage = storage
             log(f"persistent study at {db} ({'resuming' if args.resume else 'fresh'}); "
                 f"a killed run resumes with --resume (or --no-persist-study to disable)")
         if args.search == "pareto":

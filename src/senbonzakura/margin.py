@@ -48,6 +48,11 @@ def build_parser():
     ap.add_argument("--skip-harmless", type=int, default=320,
                     help="drop the head of the harmless set, which is where the abliteration "
                          "directions and the drift check were fitted from")
+    ap.add_argument("--skip-harmful", type=int, default=128,
+                    help="drop the head of the harmful set, which is where the search selected "
+                         "its winning trial from. 128 is the largest --eval-refusal-final any "
+                         "auto preset uses, so it covers every prompt the search could have seen "
+                         "(0 to score the selection set too, which is not a held-out number)")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true")
@@ -106,21 +111,54 @@ def auc(pos, neg):
     return wins / (len(pos) * len(neg))
 
 
+def load_prompts(path, what):
+    """Read the 'text' column of a save_to_disk dataset, failing readably at the boundary.
+
+    load_from_disk raises a bare IndexError on an empty dataset and a KeyError on a
+    missing column, neither of which names the file or the flag that pointed at it.
+    """
+    try:
+        ds = load_from_disk(path)
+    except Exception as e:
+        raise SystemExit(f"could not load the {what} dataset at {path}: {e}. Expected a "
+                         f"datasets.save_to_disk directory with a 'text' column.") from e
+    cols = list(getattr(ds, "column_names", None) or [])
+    if "text" not in cols:
+        raise SystemExit(f"the {what} dataset at {path} has columns {cols} and no 'text' column")
+    # No empty-set check here on purpose: an empty save_to_disk directory fails inside
+    # load_from_disk above, and a set too small for --n is caught by the fit check in
+    # main(), which reports the row count and both flags.
+    return [r["text"] for r in ds]
+
+
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
                                           trust_remote_code=a.trust_remote_code)
-    harmful = [r["text"] for r in load_from_disk(a.harmful)][:a.n]
-    harmless_all = [r["text"] for r in load_from_disk(a.harmless)]
+    harmful_all = load_prompts(a.harmful, "harmful")
+    harmless_all = load_prompts(a.harmless, "harmless")
+    harmful = harmful_all[a.skip_harmful:a.skip_harmful + a.n]
     harmless = harmless_all[a.skip_harmless:a.skip_harmless + a.n]
-    if len(harmless) < a.n:
-        raise SystemExit(f"harmless set has {len(harmless_all)} rows; "
-                         f"--skip-harmless {a.skip_harmless} + --n {a.n} does not fit")
+    # Both arms, the same check. Only the harmless arm was checked before, so asking
+    # for 200 harmful prompts against a 150-row set quietly scored 150 and printed a
+    # result that looked like every other one.
+    for what, got, rows, skip in (("harmful", harmful, harmful_all, a.skip_harmful),
+                                  ("harmless", harmless, harmless_all, a.skip_harmless)):
+        if len(got) < a.n:
+            raise SystemExit(f"{what} set has {len(rows)} rows; --skip-{what} {skip} + --n {a.n} "
+                             f"does not fit (it would score {len(got)})")
 
     hid = label_token_ids(tok, "HARMFUL")
     bid = label_token_ids(tok, "BENIGN")
     if not hid or not bid:
         raise SystemExit("could not resolve verdict token ids for this tokenizer")
+    # Overlapping ids would take the same logit as the max on both sides of the
+    # subtraction, pulling every margin toward zero and toward AUC 0.5. It would look
+    # like a model that cannot discriminate rather than a ruler that cannot measure.
+    shared = sorted(set(hid) & set(bid))
+    if shared:
+        raise SystemExit(f"this tokenizer maps HARMFUL and BENIGN onto shared first-token ids "
+                         f"{shared}, so the margin cannot separate them")
 
     mh = margins(model, tok, harmful, hid, bid, a.device, a.batch)
     ml = margins(model, tok, harmless, hid, bid, a.device, a.batch)
@@ -129,6 +167,9 @@ def main(argv=None):
     res = {
         "label": a.label, "model": a.model, "mode": "logit_margin",
         "n_harmful": len(mh), "n_harmless": len(ml),
+        # Both skips, recorded, because "held out" is a claim about these two numbers
+        # and a reader cannot recover them from the AUC.
+        "skip_harmful": a.skip_harmful, "skip_harmless": a.skip_harmless,
         "auc": round(score, 4),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),

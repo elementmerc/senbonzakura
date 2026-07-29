@@ -167,7 +167,8 @@ def test_main_end_to_end(loaded, tmp_path):
     bad, good = _track(tmp_path)
     out = str(tmp_path / "res.json")
     res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", out,
-                       "--n", "3", "--skip-harmless", "0", "--device", "cpu", "--label", "after"])
+                       "--n", "3", "--skip-harmful", "0", "--skip-harmless", "0",
+                       "--device", "cpu", "--label", "after"])
     assert res["mode"] == "logit_margin"
     assert res["label"] == "after"
     assert res["n_harmful"] == 3
@@ -183,7 +184,7 @@ def test_main_writes_every_per_prompt_margin(loaded, tmp_path):
     bad, good = _track(tmp_path)
     mpath = str(tmp_path / "m.jsonl")
     margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", str(tmp_path / "r.json"),
-                 "--margins", mpath, "--n", "2", "--skip-harmless", "0", "--device", "cpu"])
+                 "--margins", mpath, "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0", "--device", "cpu"])
     with open(mpath, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f]
     assert len(rows) == 4
@@ -198,19 +199,106 @@ def test_main_holds_out_the_head_of_the_harmless_set(loaded, tmp_path):
     bad, good = _track(tmp_path, n_harmless=8)
     mpath = str(tmp_path / "m.jsonl")
     margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", str(tmp_path / "r.json"),
-                 "--margins", mpath, "--n", "2", "--skip-harmless", "5", "--device", "cpu"])
+                 "--margins", mpath, "--n", "2", "--skip-harmful", "0", "--skip-harmless", "5", "--device", "cpu"])
     with open(mpath, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f]
     harmless = [r["prompt"] for r in rows if r["set"] == "harmless"]
     assert harmless == ["harmless question 5", "harmless question 6"]
 
 
-def test_main_refuses_a_harmless_skip_that_does_not_fit(loaded, tmp_path):
-    bad, good = _track(tmp_path, n_harmless=6)
+def test_main_holds_out_the_head_of_the_harmful_set_too(loaded, tmp_path):
+    """The search selected its winning trial on the head of the harmful set.
+
+    Scoring the compass there measures the prompts the surgery was tuned against,
+    which is the same mistake --skip-harmless already existed to avoid on the other
+    arm.
+    """
+    bad, good = _track(tmp_path, n_harmful=8)
+    mpath = str(tmp_path / "m.jsonl")
+    margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", str(tmp_path / "r.json"),
+                 "--margins", mpath, "--n", "2", "--skip-harmful", "5", "--skip-harmless", "0",
+                 "--device", "cpu"])
+    with open(mpath, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f]
+    assert [r["prompt"] for r in rows if r["set"] == "harmful"] == ["harmful request 5", "harmful request 6"]
+
+
+def test_main_records_both_skips(loaded, tmp_path):
+    """"Held out" is a claim about these two numbers, and the AUC does not carry them."""
+    bad, good = _track(tmp_path, n_harmful=8, n_harmless=8)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "2",
+                       "--skip-harmful", "3", "--skip-harmless", "4", "--device", "cpu"])
+    assert res["skip_harmful"] == 3
+    assert res["skip_harmless"] == 4
+
+
+def test_the_default_skips_hold_out_both_arms():
+    """A default of 0 on either arm would publish a selection-set number by accident."""
+    a = margin.build_parser().parse_args(["--model", "m", "--harmful", "h", "--harmless", "l", "--out", "o"])
+    assert a.skip_harmless == 320     # dir_prompts 256 plus the drift check
+    assert a.skip_harmful == 128      # the largest --eval-refusal-final any auto preset uses
+
+
+@pytest.mark.parametrize(("flag", "n_harmful", "n_harmless"), [
+    ("--skip-harmless", 8, 6),
+    ("--skip-harmful", 6, 8),
+])
+def test_main_refuses_a_skip_that_does_not_fit_on_either_arm(loaded, tmp_path, flag, n_harmful, n_harmless):
+    """The harmful arm used to score short and say nothing about it."""
+    bad, good = _track(tmp_path, n_harmful=n_harmful, n_harmless=n_harmless)
+    other = "--skip-harmful" if flag == "--skip-harmless" else "--skip-harmless"
     with pytest.raises(SystemExit, match="does not fit"):
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
-                     "--out", str(tmp_path / "r.json"), "--n", "4", "--skip-harmless", "4",
+                     "--out", str(tmp_path / "r.json"), "--n", "4", flag, "4", other, "0",
                      "--device", "cpu"])
+
+
+def test_main_refuses_a_tokenizer_that_shares_a_verdict_id(loaded, tmp_path, monkeypatch):
+    """Shared ids attenuate every margin, which reads as a model that cannot tell."""
+    bad, good = _track(tmp_path)
+    monkeypatch.setattr(margin, "label_token_ids", lambda tok, word: [3, 7])
+    with pytest.raises(SystemExit, match="shared first-token ids"):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
+                     "--skip-harmless", "0", "--device", "cpu"])
+
+
+# ── the dataset boundary ───────────────────────────────────────────────────────────
+def test_an_empty_dataset_names_itself(loaded, tmp_path):
+    """load_from_disk raises a bare IndexError on an empty set, naming neither file nor flag.
+
+    The wrapper does not add its own empty check: the raise happens inside
+    load_from_disk before any row is read, so what this asserts is that the
+    IndexError comes back out saying which dataset and which flag it was.
+    """
+    from datasets import Dataset
+    _, good = _track(tmp_path)
+    empty = str(tmp_path / "empty")
+    Dataset.from_dict({"text": []}).save_to_disk(empty)
+    with pytest.raises(SystemExit, match="could not load the harmful dataset"):
+        margin.main(["--model", "x", "--harmful", empty, "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
+                     "--skip-harmless", "0", "--device", "cpu"])
+
+
+def test_a_dataset_without_a_text_column_says_which_columns_it_has(loaded, tmp_path):
+    from datasets import Dataset
+    bad, _ = _track(tmp_path)
+    wrong = str(tmp_path / "wrong")
+    Dataset.from_dict({"prompt": ["a", "b"]}).save_to_disk(wrong)
+    with pytest.raises(SystemExit, match="no 'text' column"):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", wrong,
+                     "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
+                     "--skip-harmless", "0", "--device", "cpu"])
+
+
+def test_a_missing_dataset_directory_names_the_path(loaded, tmp_path):
+    _, good = _track(tmp_path)
+    with pytest.raises(SystemExit, match="could not load the harmful dataset"):
+        margin.main(["--model", "x", "--harmful", str(tmp_path / "nope"), "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
+                     "--skip-harmless", "0", "--device", "cpu"])
 
 
 def test_main_refuses_a_tokenizer_whose_verdict_words_do_not_resolve(loaded, tmp_path, monkeypatch):
@@ -218,5 +306,5 @@ def test_main_refuses_a_tokenizer_whose_verdict_words_do_not_resolve(loaded, tmp
     monkeypatch.setattr(margin, "label_token_ids", lambda tok, word: [])
     with pytest.raises(SystemExit, match="verdict token ids"):
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
-                     "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmless", "0",
+                     "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0",
                      "--device", "cpu"])

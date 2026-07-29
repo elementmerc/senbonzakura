@@ -546,9 +546,9 @@ class Abliterator:
             log(f"loading {args.model} on {self.dev}")
             model, tok = load_model_and_tokenizer(
                 args.model, device=self.dev,
-                load_in_4bit=getattr(args, "load_in_4bit", False),
-                trust_remote_code=getattr(args, "trust_remote_code", False),
-                attn_impl=getattr(args, "attn_impl", None), log=log)
+                load_in_4bit=args.load_in_4bit,
+                trust_remote_code=args.trust_remote_code,
+                attn_impl=args.attn_impl, log=log)
         self.tok = tok
         self.model = model
         self.layers = _decoder_layers(model)             # the decoder blocks, resolved defensively
@@ -575,12 +575,12 @@ class Abliterator:
         # and resumes) when another app grabs the card, and grows back when it frees. No-op on CPU.
         self.gov = ResourceGovernor(
             self.dev, log,
-            max_batch=getattr(args, "gen_batch", 16),
-            min_free_frac=getattr(args, "gpu_min_free_frac", 0.08),
-            max_pause_s=getattr(args, "max_pause_s", None),
-            background_mode=getattr(args, "background_mode", False),
-            external_pressure_mb=getattr(args, "external_pressure_mb", 500),
-            enabled=not getattr(args, "no_throttle", False))
+            max_batch=args.gen_batch,
+            min_free_frac=args.gpu_min_free_frac,
+            max_pause_s=args.max_pause_s,
+            background_mode=args.background_mode,
+            external_pressure_mb=args.external_pressure_mb,
+            enabled=not args.no_throttle)
 
         # Search-window layer bounds + reversible-bake / current-direction state.
         self.lo = int(self.NL * args.layer_lo)
@@ -695,7 +695,7 @@ class Abliterator:
         dirs_multi = torch.zeros(NL + 1, KMAX, H)
         for li in range(NL + 1):
             gd = good_dir[li]
-            if getattr(args, "no_good_orth", False):
+            if args.no_good_orth:
                 # Ablation study: raw difference-of-means, NOT orthogonalised to the harmless mean,
                 # and the harmless direction is left out of the basis so the PCA axes are not
                 # good-orthogonalised either. This is the toggle that isolates Refinement 3 (the
@@ -835,7 +835,7 @@ class Abliterator:
         # is awkward).
         self._cur["mode"] = mode
         self._cur["single_set"] = self._interp_multi(didx) if (mode == "single" and didx is not None) else None
-        sp = float(getattr(self.args, "sparsity", 0.0))         # sparse surgery: 0 = edit every row
+        sp = float(self.args.sparsity)         # sparse surgery: 0 = edit every row
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)
@@ -1087,7 +1087,7 @@ class Abliterator:
         # search; catch it so Optuna marks that trial failed and moves on. Whatever the outcome, the
         # last trial's bake is left applied, so restore to pristine before any downstream read/mutate.
         if not skip_search:
-            if getattr(args, "warm_start", True) and not study.get_trials(deepcopy=False):
+            if args.warm_start and not study.get_trials(deepcopy=False):
                 # Warm-start: enqueue one known-decent config (mid-late window, full projection, single
                 # direction) so the search starts from a good point rather than cold random sampling.
                 # Optuna samples any params we leave unspecified. Fresh study only (a --resume already
@@ -1095,7 +1095,7 @@ class Abliterator:
                 pos = min(max(int(self.NL * 0.6), self.lo), self.hi)
                 dist = max(2, self.NL // 4)
                 seed = {"num_directions": 1, "dir_mode": "per_layer"}
-                if getattr(args, "per_component", True):
+                if args.per_component:
                     seed.update({"o_max_weight_position": pos, "o_max_weight": 1.0,
                                  "o_min_weight": 0.0, "o_min_weight_distance": dist,
                                  "d_max_weight_position": pos, "d_max_weight": 1.0,
@@ -1234,7 +1234,7 @@ class Abliterator:
                        "max_directions": self.KMAX,
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
                        "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
-                       "sparsity": float(getattr(args, "sparsity", 0.0))},
+                       "sparsity": float(args.sparsity)},
                       f, indent=2)
         log("DONE")
 

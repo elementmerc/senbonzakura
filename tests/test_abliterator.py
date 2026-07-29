@@ -469,3 +469,55 @@ def test_a_search_where_every_trial_failed_exits_loudly(base_args, tiny_model, t
     assert "no usable trial" in message
     assert "--bake-config" in message      # the way out, not just the diagnosis
     assert "--resume" in message
+
+
+# ── freeing resources before the save (tranche 4, task 20) ───────────────────────────
+def test_the_pristine_snapshot_is_released_before_the_write(base_args, tiny_model, tiny_tok, track):
+    """It holds a host-RAM copy of every residual-writing weight and its job is done by then."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert not a._pristine, "the snapshot survived the save"
+    assert not a._dirty
+
+
+def test_free_before_save_reports_what_it_released(base_args, tiny_model, tiny_tok, track):
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.snapshot_weights()
+    assert a._pristine
+    a.free_before_save()
+    assert not a._pristine
+    assert any("released the pristine snapshot" in x for x in lines)
+
+
+def test_free_before_save_leaves_a_dispatched_model_where_it_is(base_args, tiny_model, tiny_tok):
+    """.to() raises on a model accelerate placed across devices, so it must not be called."""
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    tiny_model.hf_device_map = {"model.layers.0": 0, "model.layers.1": "cpu"}
+    a.dev = "cuda:0"
+
+    def refuse(*_a, **_k):
+        raise RuntimeError(".to() must not be called on a dispatched model")
+
+    tiny_model.to = refuse
+    a.free_before_save()
+    assert any("leaving its placement alone" in x for x in lines)
+
+
+def test_free_before_save_is_a_no_op_on_cpu(base_args, tiny_model, tiny_tok):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+
+    def refuse(*_a, **_k):
+        raise AssertionError("a cpu run must not move the model")
+
+    tiny_model.to = refuse
+    a.free_before_save()      # must not raise
+
+
+def test_the_save_uses_bounded_shards(base_args, tiny_model, tiny_tok, track):
+    """Peak disk during a write is base plus one shard, so shard size sets the high-water mark."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert tiny_model.saved_with["max_shard_size"] == "4GB"
+    assert tiny_model.saved_with["safe_serialization"] is True

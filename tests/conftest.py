@@ -96,8 +96,11 @@ class TinyModel(nn.Module):
             out = torch.cat([out, nxt], dim=1)
         return out
 
-    def save_pretrained(self, d, safe_serialization=True):
+    def save_pretrained(self, d, safe_serialization=True, max_shard_size=None):
+        # max_shard_size is named rather than absorbed into **kwargs so that a caller which
+        # stops passing it fails here, instead of silently going back to 5 GB shards.
         os.makedirs(d, exist_ok=True)
+        self.saved_with = {"safe_serialization": safe_serialization, "max_shard_size": max_shard_size}
         with open(os.path.join(d, "model.marker"), "w", encoding="utf-8") as f:
             f.write("tiny")
 

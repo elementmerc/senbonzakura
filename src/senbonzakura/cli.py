@@ -29,6 +29,7 @@ weight math, testable without a model), the Abliterator class (everything that n
 model: direction extraction, the reversible bake, evaluation, and the search), and a thin main().
 """
 import argparse
+import gc
 import json
 import os
 import sys
@@ -1027,6 +1028,37 @@ class Abliterator:
             raise SystemExit(f"not enough disk to save the result: {message}")
         self.log(message)
 
+    def free_before_save(self):
+        """Give the save every resource it can have, because it is the crash-prone step.
+
+        Two measured failures motivate this. First, `save_pretrained` on a fused MoE needs
+        extra VRAM, because transformers 5.x reshapes the fused expert tensors on the way
+        out; on a full 80 GB card that came up 384 MiB short. Second, the pristine snapshot
+        holds a host-RAM copy of every residual-writing weight, and by this point it has
+        done its job: the search is over and the winner is baked.
+
+        Dropping the snapshot means restore_weights() no longer works, which is why this
+        runs after the post-bake measurement and immediately before the write.
+        """
+        log = self.log
+        held = len(self._pristine)
+        self._pristine.clear()
+        self._dirty.clear()
+        gc.collect()
+        if held:
+            log(f"  save prep: released the pristine snapshot ({held} tensors) from host RAM")
+
+        # A model accelerate dispatched across devices cannot be moved with .to(); moving a
+        # resident one to the host sidesteps both the save-time VRAM spike and the fused-expert
+        # revert path that causes it.
+        if getattr(self.model, "hf_device_map", None):
+            log("  save prep: model is dispatched across devices, leaving its placement alone")
+        elif str(self.dev).startswith("cuda"):
+            self.model.to("cpu")
+            log("  save prep: moved the weights to host RAM for the write")
+        if str(self.dev).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def run(self):
         args, log, NL = self.args, self.log, self.NL
         TR = args.track
@@ -1317,8 +1349,12 @@ class Abliterator:
         log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% heretic={post_heretic*100:.1f}% "
             f"broken={post_brk*100:.0f}% KL={post_kl:.4f}")
 
+        self.free_before_save()
         log(f"saving to {args.out}")
-        self.model.save_pretrained(args.out, safe_serialization=True)
+        # 4 GB shards rather than the 5 GB default: peak disk during the write is base plus
+        # one shard, so smaller shards lower the high-water mark on a tight volume, and a
+        # failed write loses less. Nothing downstream cares how many shards there are.
+        self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size="4GB")
         self.tok.save_pretrained(args.out)
         with open(f"{args.out}/abliteration.json", "w", encoding="utf-8") as f:
             json.dump({"per_component": args.per_component,

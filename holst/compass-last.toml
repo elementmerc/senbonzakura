@@ -1,0 +1,88 @@
+# The last one. qwen3-0.6b died twice to the setsid launch bug (holst wrote a
+# live job off as failed, then dispatched this onto the card that job still
+# held). Fixed in machine.rs by setsid --fork; this run is the proof.
+run = "compass-2026-07-27f"
+
+[[job]]
+id = "setup"
+machine = "rented"
+timeout_secs = 2400
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+pip install -q 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu124
+python3 -c 'from torch.distributed.tensor import DTensor'
+python3 -c 'import torch; assert torch.cuda.is_available()'
+# Install the tree holst uploaded, NOT a published branch. The run then uses
+# exactly the code on the operator's machine, including work that is committed
+# but not pushed. The first attempt died precisely there: --save-generations
+# existed locally and nowhere else, so the pod installed a version without it.
+pip install -q /workspace/senbonzakura hf_transfer
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --save-generations || { echo "MISSING_SAVE_GENERATIONS: the uploaded tree is not the one expected"; exit 1; }
+echo "SENBONZAKURA_COMMIT=d4682e6"
+test -n "${HF_TOKEN:-}"
+hf download ops-malware/senbon-track-35axis-clean --repo-type dataset --local-dir /workspace/track
+test -d /workspace/track/bad_eval_ds
+mkdir -p /workspace/results /workspace/gens /workspace/abl
+nvidia-smi -L
+echo SETUP_OK
+"""
+
+[[job]]
+id = "abl-qwen3-0.6b"
+name = "abliterate then both axes, qwen3-0.6b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 7200
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "ABL_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+M=Qwen/Qwen3-0.6B
+O=/workspace/abl/qwen3-0.6b
+senbonzakura kageyoshi --model $M --out $O --track /workspace/track --device cuda --study-db /workspace/abl/qwen3-0.6b-study.db
+test -d $O
+python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda --out /workspace/results/abl-refusal-qwen3-0.6b.json --label abl-refusal --save-generations /workspace/gens/abl-refusal-qwen3-0.6b.jsonl
+python3 -m senbonzakura.score --model $O --eval /workspace/track/bad_eval_ds --device cuda --harm-recognition --max-new 512 --out /workspace/results/abl-compass-qwen3-0.6b.json --label abl-compass --save-generations /workspace/gens/abl-compass-qwen3-0.6b.jsonl
+cat > /workspace/_upload_up.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+api.create_repo("ops-malware/senbon-compass-2026-07", repo_type="dataset", private=True, exist_ok=True)
+for f in ["results/abl-refusal-qwen3-0.6b.json","results/abl-compass-qwen3-0.6b.json","gens/abl-refusal-qwen3-0.6b.jsonl","gens/abl-compass-qwen3-0.6b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f, repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_up.py
+cat > /workspace/_upload_upw.py <<'UPW'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+api.create_repo("ops-malware/qwen3-0.6b-abliterated", repo_type="model", private=False, exist_ok=True)
+api.upload_folder(folder_path="/workspace/abl/qwen3-0.6b", repo_id="ops-malware/qwen3-0.6b-abliterated", repo_type="model")
+UPW
+retry python3 /workspace/_upload_upw.py
+echo ABL_OK
+"""

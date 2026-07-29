@@ -1,0 +1,637 @@
+# The criterion-free arm.
+#
+# Counting verdicts made the score depend on where each model puts its decision
+# threshold, and two reviewers independently found that balanced accuracy cannot
+# separate a pinned threshold from an absent signal. This measures the HARMFUL
+# minus BENIGN logit margin and reports AUC, which is invariant to that threshold.
+#
+# Forward passes only, so it is fast and there is nothing to parse: no first line,
+# no reasoning block, no verdict-absent fallback, no token budget.
+run = "compass-margin-2026-07-27"
+
+[[job]]
+id = "setup"
+machine = "rented"
+timeout_secs = 2400
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+pip install -q 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu124
+python3 -c 'from torch.distributed.tensor import DTensor'
+python3 -c 'import torch; assert torch.cuda.is_available()'
+# Install the tree holst uploaded, NOT a published branch. The run then uses
+# exactly the code on the operator's machine, including work that is committed
+# but not pushed. The first attempt died precisely there: --save-generations
+# existed locally and nowhere else, so the pod installed a version without it.
+pip install -q /workspace/senbonzakura hf_transfer
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --save-generations || { echo "MISSING_SAVE_GENERATIONS: the uploaded tree is not the one expected"; exit 1; }
+# --skip is what keeps this run off the prompts the surgery was fitted on. A tree
+# without it would silently score the wrong slice, so fail here rather than there.
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --skip ||  { echo "MISSING_SKIP: uploaded tree predates the held-out slice flag"; exit 1; }
+echo "SENBONZAKURA_COMMIT=d4682e6"
+test -n "${HF_TOKEN:-}"
+hf download ops-malware/senbon-track-35axis-clean --repo-type dataset --local-dir /workspace/track
+test -d /workspace/track/bad_eval_ds
+mkdir -p /workspace/results /workspace/gens /workspace/abl
+nvidia-smi -L
+python3 -c "import senbonzakura.margin" >/dev/null || { echo MISSING_MARGIN; exit 1; }
+echo SETUP_OK
+"""
+
+[[job]]
+id = "margin-base-gemma-2-2b-it"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model google/gemma-2-2b-it \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-gemma-2-2b-it \
+  --out /workspace/results/margin-base-gemma-2-2b-it.json --margins /workspace/margins/margin-base-gemma-2-2b-it.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-gemma-2-2b-it
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-gemma-2-2b-it"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/gemma-2-2b-it-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-gemma-2-2b-it \
+  --out /workspace/results/margin-abl-gemma-2-2b-it.json --margins /workspace/margins/margin-abl-gemma-2-2b-it.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-gemma-2-2b-it
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-qwen3-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-qwen3-1.7b \
+  --out /workspace/results/margin-base-qwen3-1.7b.json --margins /workspace/margins/margin-base-qwen3-1.7b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-qwen3-1.7b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-qwen3-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/qwen3-1.7b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-qwen3-1.7b \
+  --out /workspace/results/margin-abl-qwen3-1.7b.json --margins /workspace/margins/margin-abl-qwen3-1.7b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-qwen3-1.7b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-qwen3-0.6b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model Qwen/Qwen3-0.6B \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-qwen3-0.6b \
+  --out /workspace/results/margin-base-qwen3-0.6b.json --margins /workspace/margins/margin-base-qwen3-0.6b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-qwen3-0.6b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-qwen3-0.6b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/qwen3-0.6b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-qwen3-0.6b \
+  --out /workspace/results/margin-abl-qwen3-0.6b.json --margins /workspace/margins/margin-abl-qwen3-0.6b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-qwen3-0.6b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-qwen2.5-1.5b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model Qwen/Qwen2.5-1.5B-Instruct \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-qwen2.5-1.5b \
+  --out /workspace/results/margin-base-qwen2.5-1.5b.json --margins /workspace/margins/margin-base-qwen2.5-1.5b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-qwen2.5-1.5b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-qwen2.5-1.5b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/qwen2.5-1.5b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-qwen2.5-1.5b \
+  --out /workspace/results/margin-abl-qwen2.5-1.5b.json --margins /workspace/margins/margin-abl-qwen2.5-1.5b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-qwen2.5-1.5b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-tinyllama-1.1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-tinyllama-1.1b \
+  --out /workspace/results/margin-base-tinyllama-1.1b.json --margins /workspace/margins/margin-base-tinyllama-1.1b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-tinyllama-1.1b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-tinyllama-1.1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/tinyllama-1.1b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-tinyllama-1.1b \
+  --out /workspace/results/margin-abl-tinyllama-1.1b.json --margins /workspace/margins/margin-abl-tinyllama-1.1b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-tinyllama-1.1b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-llama-3.2-1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model meta-llama/Llama-3.2-1B-Instruct \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-llama-3.2-1b \
+  --out /workspace/results/margin-base-llama-3.2-1b.json --margins /workspace/margins/margin-base-llama-3.2-1b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-llama-3.2-1b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-llama-3.2-1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/llama-3.2-1b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-llama-3.2-1b \
+  --out /workspace/results/margin-abl-llama-3.2-1b.json --margins /workspace/margins/margin-abl-llama-3.2-1b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-llama-3.2-1b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-base-smollm2-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model HuggingFaceTB/SmolLM2-1.7B-Instruct \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-base-smollm2-1.7b \
+  --out /workspace/results/margin-base-smollm2-1.7b.json --margins /workspace/margins/margin-base-smollm2-1.7b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-base-smollm2-1.7b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""
+
+[[job]]
+id = "margin-abl-smollm2-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "MARGIN_DONE" }
+command = """
+set -euo pipefail
+exec 2>&1
+export HF_HOME=/workspace/hf
+mkdir -p /workspace/hf /workspace/margins
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 30
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+python3 -m senbonzakura.margin --model ops-malware/smollm2-1.7b-abliterated \
+  --harmful /workspace/track/bad_eval_ds --harmless /workspace/track/good_ds \
+  --n 200 --skip-harmless 320 --batch 16 --device cuda --label margin-abl-smollm2-1.7b \
+  --out /workspace/results/margin-abl-smollm2-1.7b.json --margins /workspace/margins/margin-abl-smollm2-1.7b.jsonl
+cat > /workspace/_up_margin.py <<'UP'
+import os, sys
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+tag = sys.argv[1]
+for f in [f"results/{tag}.json", f"margins/{tag}.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_up_margin.py margin-abl-smollm2-1.7b
+rm -rf /workspace/hf/hub/models--* 2>/dev/null || true
+"""

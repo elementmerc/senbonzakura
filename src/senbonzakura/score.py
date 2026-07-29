@@ -25,6 +25,11 @@ def build_parser():
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="")
     ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
+    ap.add_argument("--skip", type=int, default=0,
+                    help="drop the first N prompts before taking --n. Needed to score a model on "
+                         "prompts its own surgery was NOT fitted on: direction extraction consumes "
+                         "the head of the harmless set and the KL check the slice after it, so "
+                         "measuring false positives on the head would be measuring the training data.")
     ap.add_argument("--max-new", type=int, default=64)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
@@ -33,6 +38,12 @@ def build_parser():
                          "is pure forward passes, so 4-bit is safe here (unlike the abliterator's bake).")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="allow models that ship custom modelling code.")
+    ap.add_argument("--save-generations", dest="save_generations", default="",
+                    help="write every prompt and its raw generation to this JSONL path. "
+                         "Aggregates alone cannot answer a question you did not think to ask "
+                         "before the GPU was released: the 2026-07 sweep kept only percentages, "
+                         "so re-deriving a single metric later meant renting hardware again. "
+                         "With the generations kept, any new metric is a local computation.")
     ap.add_argument("--harm-recognition", dest="harm_recognition", action="store_true",
                     help="the compass axis: instead of asking the model to CARRY OUT each eval "
                          "request, ask it to JUDGE whether the request is harmful (HARMFUL/BENIGN). "
@@ -82,8 +93,31 @@ def score_harm_recognition(gens, label="", model="", eval_path=""):
         "label": label, "model": model, "eval": eval_path, "n": len(gens),
         "mode": "harm_recognition",
         "harm_recognition": round(metrics.harm_recognition_rate(gens), 4),
+        # A thinking model that never finished reasoning delivered no verdict.
+        # Without this the same run reads as a confident number either way.
+        "indeterminate": round(metrics.indeterminate_rate(gens), 4),
         "broken": round(metrics.broken_rate(gens), 4),
     }
+
+
+
+def save_generations(path, prompts, gens, mode, model, label):
+    """Persist every prompt and its raw generation, one JSON object per line.
+
+    Kept deliberately dumb: no scoring, no filtering, no truncation. The whole
+    point is that a future question about this run does not need the GPU back.
+    """
+    if not path:
+        return
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for i, (p, g) in enumerate(zip(prompts, gens)):
+            f.write(json.dumps({
+                "i": i, "mode": mode, "model": model, "label": label,
+                "prompt": p, "generation": g,
+            }, ensure_ascii=False) + "\n")
+    print(f"SAVED_GENERATIONS {path} n={len(gens)}")
 
 
 def main(argv=None):
@@ -92,20 +126,38 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit, trust_remote_code=a.trust_remote_code)
     ds = load_from_disk(a.eval)
     prompts = [r["text"] for r in ds]
+    if a.skip:
+        if a.skip >= len(prompts):
+            raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(prompts)} prompts")
+        prompts = prompts[a.skip:]
     if a.n:
+        if a.n > len(prompts):
+            raise SystemExit(f"--n {a.n} exceeds the {len(prompts)} prompts available after --skip")
         prompts = prompts[:a.n]
     if a.harm_recognition:
         # Compass pass: wrap each harmful request in the judge frame, then measure how
-        # many the model still flags as harmful. A judgement is short, so cap new tokens.
+        # many the model still flags as harmful.
+        #
+        # No cap here any more. The old min(max_new, 96) assumed a judgement is
+        # short, which is true of the answer and false of the reply: a thinking
+        # model spends its whole budget restating the question and never reaches
+        # a verdict, and the resulting silence used to score as recognition.
         judged = [JUDGE_TEMPLATE.format(p) for p in prompts]
-        gens = generate(model, tok, judged, a.device, batch=a.batch, max_new=min(a.max_new, 96))
+        gens = generate(model, tok, judged, a.device, batch=a.batch, max_new=a.max_new)
+        save_generations(a.save_generations, judged, gens, "harm_recognition", a.model, a.label)
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
+              f"indeterminate={res['indeterminate']*100:.1f}% "
               f"broken={res['broken']*100:.1f}% n={res['n']} (compass axis)")
+        if res["indeterminate"] > 0.1:
+            print(f"COMPASS_UNREADABLE {a.label}: {res['indeterminate']*100:.1f}% of replies "
+                  f"carried no verdict, usually a thinking model truncated mid-reasoning. "
+                  f"Raise --max-new; this number measures the token budget, not the model.")
         return res
     gens = generate(model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
+    save_generations(a.save_generations, prompts, gens, "refusal", a.model, a.label)
     res = score(gens, label=a.label, model=a.model, eval_path=a.eval)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)

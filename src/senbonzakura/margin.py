@@ -74,6 +74,10 @@ def build_parser():
                     help="a margins jsonl from a previous run on the same prompts (typically the "
                          "unabliterated model). Adds the PAIRED interval on the change, which is "
                          "much tighter than comparing two separate intervals by eye")
+    ap.add_argument("--chat-template", dest="chat_template", default="",
+                    help="Jinja chat template file, for a model that ships none. Prompt "
+                         "format drives every measurement here, so a missing template is an "
+                         "input you supply and the run records, not something the tool invents.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true")
     return ap
@@ -276,7 +280,8 @@ def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
-                                          trust_remote_code=a.trust_remote_code)
+                                          trust_remote_code=a.trust_remote_code,
+                                          chat_template=a.chat_template)
     harmful_all = load_prompts(a.harmful, "harmful")
     harmless_all = load_prompts(a.harmless, "harmless")
     harmful = harmful_all[a.skip_harmful:a.skip_harmful + a.n]
@@ -322,6 +327,8 @@ def main(argv=None):
         "auc": round(score, 4),
         "auc_ci": bootstrap_auc_ci(mh, ml, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,
         "bootstrap_resamples": a.bootstrap, "seed": a.seed,
+        # Which prompt format produced these numbers, so two runs can be told apart.
+        "chat_template": getattr(tok, "senbon_chat_template", None),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
         # A model whose margin never crosses zero always says the same thing. That

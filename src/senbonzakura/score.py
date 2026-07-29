@@ -32,6 +32,10 @@ def build_parser():
                          "measuring false positives on the head would be measuring the training data.")
     ap.add_argument("--max-new", type=int, default=64)
     ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--chat-template", dest="chat_template", default="",
+                    help="Jinja chat template file, for a model that ships none. Prompt "
+                         "format drives every measurement here, so a missing template is an "
+                         "input you supply and the run records, not something the tool invents.")
     ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
     ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
                     help="load in 4-bit (bitsandbytes nf4) to score a large model on low VRAM. Scoring "
@@ -122,7 +126,8 @@ def save_generations(path, prompts, gens, mode, model, label):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(
-        a.model, device=a.device, load_in_4bit=a.load_in_4bit, trust_remote_code=a.trust_remote_code)
+        a.model, device=a.device, load_in_4bit=a.load_in_4bit, trust_remote_code=a.trust_remote_code,
+                                          chat_template=a.chat_template)
     ds = load_from_disk(a.eval)
     prompts = [r["text"] for r in ds]
     if a.skip:
@@ -145,6 +150,7 @@ def main(argv=None):
         gens = generate(model, tok, judged, a.device, batch=a.batch, max_new=a.max_new)
         save_generations(a.save_generations, judged, gens, "harm_recognition", a.model, a.label)
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
+        res["chat_template"] = getattr(tok, "senbon_chat_template", None)
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
@@ -158,6 +164,9 @@ def main(argv=None):
     gens = generate(model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
     save_generations(a.save_generations, prompts, gens, "refusal", a.model, a.label)
     res = score(gens, label=a.label, model=a.model, eval_path=a.eval)
+    # Which prompt format produced these numbers. Two runs under different formats are
+    # not comparable, and this is what lets a reader tell.
+    res["chat_template"] = getattr(tok, "senbon_chat_template", None)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

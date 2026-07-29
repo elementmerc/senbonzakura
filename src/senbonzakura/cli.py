@@ -30,10 +30,12 @@ model: direction extraction, the reversible bake, evaluation, and the search), a
 """
 import argparse
 import gc
+import hashlib
 import json
 import os
 import sys
 import time
+from pathlib import Path
 
 import optuna
 import torch
@@ -512,6 +514,10 @@ def build_parser():
     ap.add_argument("--patience", type=int, default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
+    ap.add_argument("--chat-template", dest="chat_template", default="",
+                    help="Jinja chat template file, for a model that ships none. Prompt "
+                         "format drives every measurement here, so a missing template is an "
+                         "input you supply and the run records, not something the tool invents.")
     ap.add_argument("--eval-refusal-final", type=int, default=0,
                     help="re-score the top frontier candidates on this many bad-eval prompts before "
                          "picking the knee, so the choice isn't overfit to the small search eval "
@@ -569,8 +575,69 @@ def last_token_logits(model, enc, log=None):
     return model(**enc, use_cache=False).logits[:, -1, :].float()
 
 
+def _renders_a_chat_prompt(tok):
+    """Can this tokenizer actually turn a message into a prompt?
+
+    Probed behaviourally rather than by reading `tok.chat_template`, because the
+    attribute has moved and been deprecated across transformers versions while
+    apply_chat_template's contract has not.
+    """
+    try:
+        tok.apply_chat_template([{"role": "user", "content": "probe"}],
+                                tokenize=False, add_generation_prompt=True)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def ensure_chat_template(tok, template_path=None, log=None):
+    """Guarantee the tokenizer renders chat prompts, or refuse to measure anything.
+
+    Prompt format drives output, so it drives the refusal rate, the KL and the compass
+    together. The previous behaviour invented a bare "User:/Assistant:" wrapper when a
+    model shipped no template, which is a different format from the one every published
+    number was measured with, chosen silently and recorded nowhere. A number produced
+    that way is not comparable to anything, and nothing said so.
+
+    So a missing template is now an input the operator supplies and the run records,
+    rather than something the tool makes up. Returns the provenance to store beside the
+    results: where the template came from and a digest of it, which is what makes a
+    re-run checkable.
+    """
+    _log = log or (lambda _m: None)
+    if template_path:
+        try:
+            template = Path(template_path).read_text(encoding="utf-8")
+        except OSError as e:
+            raise SystemExit(f"could not read --chat-template {template_path}: {e}") from e
+        if not template.strip():
+            raise SystemExit(f"--chat-template {template_path} is empty")
+        tok.chat_template = template
+        if not _renders_a_chat_prompt(tok):
+            raise SystemExit(f"--chat-template {template_path} did not produce a usable prompt. "
+                             f"It must be a Jinja chat template of the kind tokenizer_config.json "
+                             f"carries in its chat_template field.")
+        digest = hashlib.sha256(template.encode("utf-8")).hexdigest()[:16]
+        _log(f"  chat template: supplied from {template_path} (sha256:{digest})")
+        return {"source": str(template_path), "sha256": digest}
+
+    if _renders_a_chat_prompt(tok):
+        own = getattr(tok, "chat_template", None)
+        digest = (hashlib.sha256(own.encode("utf-8")).hexdigest()[:16]
+                  if isinstance(own, str) and own else None)
+        return {"source": "tokenizer", "sha256": digest}
+
+    raise SystemExit(
+        "this model ships no chat template, so there is no defined way to turn a prompt into "
+        "input for it. Every measurement here depends on that format: refusal rate, KL and the "
+        "compass all change with it. Supply one with --chat-template <file> (a Jinja template of "
+        "the kind tokenizer_config.json carries in chat_template) and it will be recorded with "
+        "the results, so the numbers say which format produced them.")
+
+
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
-                             trust_remote_code=False, attn_impl=None, log=None):
+                             trust_remote_code=False, attn_impl=None, log=None,
+                             chat_template=None):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
     # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
     # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
@@ -581,6 +648,10 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    # Validated here, at the single boundary every entry point passes through, rather than
+    # in each of the three. The provenance rides on the tokenizer so callers can put it in
+    # their result files without the loader having to change what it returns.
+    tok.senbon_chat_template = ensure_chat_template(tok, chat_template, _log)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
     if attn_impl:
         kw["attn_implementation"] = attn_impl
@@ -690,24 +761,16 @@ class Abliterator:
                 f"dataset at {d} has no 'text' column (columns: {getattr(ds, 'column_names', '?')})") from e
 
     def chat(self, p):
+        # No ValueError fallback: the loader has already established that this tokenizer
+        # renders chat prompts, either its own template or one --chat-template supplied. A
+        # ValueError here would mean that guarantee broke, and inventing a prompt format to
+        # paper over it is what made a whole class of numbers incomparable.
         msgs = [{"role": "user", "content": p}]
         try:
             return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         except TypeError:
             # A tokenizer that doesn't accept enable_thinking; retry without it.
-            try:
-                return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-            except ValueError:
-                return self._fallback_prompt(p)
-        except ValueError:
-            # A base/foundation model that ships no chat template at all; don't die on a raw ValueError.
-            return self._fallback_prompt(p)
-
-    @staticmethod
-    def _fallback_prompt(p):
-        # Minimal instruction wrapper for base models with no chat template: not a real template, just
-        # enough structure to elicit a completion so the run proceeds instead of crashing.
-        return f"User: {p}\nAssistant:"
+            return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
 
     # ── direction extraction: per-prompt last-token residuals, bad vs good ────────
     @torch.no_grad()
@@ -1389,7 +1452,8 @@ class Abliterator:
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.
                        "seed": args.seed, "search": args.search, "trials": args.trials,
-                       "warm_start": args.warm_start, "good_orth": not args.no_good_orth},
+                       "warm_start": args.warm_start, "good_orth": not args.no_good_orth,
+                       "chat_template": getattr(self.tok, "senbon_chat_template", None)},
                       f, indent=2)
         log("DONE")
 

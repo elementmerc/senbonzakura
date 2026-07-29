@@ -245,13 +245,29 @@ def test_load_missing_text_column_raises(abl, tmp_path):
 
 
 # ── chat template fallback ─────────────────────────────────────────────────────────────
-def test_chat_fallback_for_no_template(abl):
+def test_chat_does_not_invent_a_prompt_format(abl):
+    """Replaces test_chat_fallback_for_no_template, whose behaviour was removed on purpose.
+
+    That test asserted chat() wrapped a prompt in a bare "User:/Assistant:" format for a
+    tokenizer with no template. Inventing a format made numbers incomparable: the refusal
+    rate, the KL and the compass all move with the prompt format, and the substitution was
+    silent and recorded nowhere. The format is now an input, supplied with --chat-template
+    and validated at the loader, so a ValueError this far in means that guarantee broke and
+    must surface rather than be papered over.
+    """
     class NoTemplateTok:
         def apply_chat_template(self, *a, **k):
             raise ValueError("no chat template")
+
     abl.tok = NoTemplateTok()
-    out = abl.chat("hello")
-    assert "hello" in out and out.startswith("User:")
+    with pytest.raises(ValueError, match="no chat template"):
+        abl.chat("hello")
+
+
+def test_chat_still_retries_without_enable_thinking(abl, tiny_tok):
+    """The one fallback that is kept: an argument some tokenizers reject, not a format."""
+    abl.tok = tiny_tok            # its apply_chat_template raises TypeError on enable_thinking
+    assert abl.chat("hello") == "U: hello"
 
 
 # ── the shared loader ─────────────────────────────────────────────────────────────────
@@ -521,3 +537,101 @@ def test_the_save_uses_bounded_shards(base_args, tiny_model, tiny_tok, track):
     a.run()
     assert tiny_model.saved_with["max_shard_size"] == "4GB"
     assert tiny_model.saved_with["safe_serialization"] is True
+
+
+# ── the chat-template boundary (tranche 4, task 24, decision D) ───────────────────────
+_TEMPLATE = "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}{% endfor %}<|assistant|>"
+
+
+class _NoTemplate:
+    """A base model's tokenizer: apply_chat_template raises until one is assigned."""
+
+    def __init__(self):
+        self.chat_template = None
+        self.padding_side = "right"
+        self.pad_token = None
+        self.eos_token = "</s>"
+
+    def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kw):
+        if not self.chat_template:
+            raise ValueError("cannot use apply_chat_template: no chat template is set")
+        return "".join(f"<|{m['role']}|>{m['content']}" for m in msgs) + "<|assistant|>"
+
+
+def test_a_model_with_no_chat_template_is_refused_not_guessed():
+    """The silent degradation this replaces: a format nobody chose, recorded nowhere."""
+    with pytest.raises(SystemExit, match="ships no chat template"):
+        cli.ensure_chat_template(_NoTemplate())
+
+
+def test_the_refusal_names_the_flag_and_says_why():
+    with pytest.raises(SystemExit) as e:
+        cli.ensure_chat_template(_NoTemplate())
+    message = str(e.value)
+    assert "--chat-template" in message
+    assert "refusal rate, KL and the compass" in message
+
+
+def test_a_supplied_template_is_used_and_its_digest_recorded(tmp_path):
+    f = tmp_path / "t.jinja"
+    f.write_text(_TEMPLATE, encoding="utf-8")
+    tok = _NoTemplate()
+    got = cli.ensure_chat_template(tok, str(f))
+    assert got["source"] == str(f)
+    assert len(got["sha256"]) == 16          # provenance, so a re-run is checkable
+    assert tok.chat_template == _TEMPLATE
+    assert "hello" in tok.apply_chat_template([{"role": "user", "content": "hello"}])
+
+
+def test_the_digest_changes_with_the_template(tmp_path):
+    """Two runs under different formats must be distinguishable from their artefacts."""
+    a, b = tmp_path / "a.jinja", tmp_path / "b.jinja"
+    a.write_text(_TEMPLATE, encoding="utf-8")
+    b.write_text(_TEMPLATE + "{# altered #}", encoding="utf-8")
+    assert (cli.ensure_chat_template(_NoTemplate(), str(a))["sha256"]
+            != cli.ensure_chat_template(_NoTemplate(), str(b))["sha256"])
+
+
+def test_a_models_own_template_is_reported_as_its_own(tiny_tok):
+    got = cli.ensure_chat_template(tiny_tok)
+    assert got["source"] == "tokenizer"
+
+
+@pytest.mark.parametrize(("body", "match"), [
+    ("", "is empty"),
+    ("   \n ", "is empty"),
+])
+def test_an_empty_template_file_is_refused(tmp_path, body, match):
+    f = tmp_path / "empty.jinja"
+    f.write_text(body, encoding="utf-8")
+    with pytest.raises(SystemExit, match=match):
+        cli.ensure_chat_template(_NoTemplate(), str(f))
+
+
+def test_a_missing_template_file_names_the_path(tmp_path):
+    with pytest.raises(SystemExit, match="could not read --chat-template"):
+        cli.ensure_chat_template(_NoTemplate(), str(tmp_path / "absent.jinja"))
+
+
+def test_a_template_that_does_not_render_is_refused(tmp_path):
+    """Accepting a file that produces nothing usable would just move the failure later."""
+    f = tmp_path / "broken.jinja"
+    f.write_text("{% this is not jinja %}", encoding="utf-8")
+
+    class _Strict(_NoTemplate):
+        def apply_chat_template(self, msgs, **kw):
+            if "not jinja" in (self.chat_template or ""):
+                raise ValueError("template failed to compile")
+            return super().apply_chat_template(msgs, **kw)
+
+    with pytest.raises(SystemExit, match="did not produce a usable prompt"):
+        cli.ensure_chat_template(_Strict(), str(f))
+
+
+def test_the_run_records_which_format_produced_its_numbers(base_args, tiny_model, tiny_tok, track):
+    """A number that cannot say what format produced it is not comparable to another."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    tiny_tok.senbon_chat_template = {"source": "tokenizer", "sha256": None}
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        assert json.load(f)["chat_template"] == {"source": "tokenizer", "sha256": None}

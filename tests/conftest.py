@@ -112,12 +112,31 @@ class _Enc(dict):
 
 
 class TinyTokenizer:
-    def __init__(self, decode_text="here is the answer you asked for, step one is"):
+    def __init__(self, decode_text="here is the answer you asked for, step one is", vocab_size=16):
         self.padding_side = "right"     # the loader flips this to "left"
         self.pad_token = "<pad>"
         self.eos_token = "</s>"
         self.pad_token_id = 0
         self._decode_text = decode_text
+        self._V = vocab_size
+
+    def encode(self, text, add_special_tokens=False):
+        """First-token ids for a word, the surface `label_token_ids` reads.
+
+        Leading whitespace folds and case does not, which is the behaviour that
+        matters: a real tokenizer gives several distinct first tokens for the
+        spellings of one verdict word, so the id set has more than one member and
+        the max-over-spellings in `margins` is actually exercised. At the default
+        vocab_size of 16 the HARMFUL and BENIGN sets collide on one id, so a
+        caller measuring a margin wants a wider vocabulary (32 is clean).
+        """
+        word = text.strip()
+        if not word:
+            return []
+        h = 0
+        for c in word:
+            h = (h * 31 + ord(c)) % 997
+        return [h % self._V]
 
     def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kw):
         if "enable_thinking" in kw:
@@ -168,6 +187,12 @@ def model_factory():
 @pytest.fixture
 def tiny_tok():
     return TinyTokenizer()
+
+
+@pytest.fixture
+def tok_factory():
+    """Build a TinyTokenizer with a custom vocabulary size (the margin tests need 32)."""
+    return TinyTokenizer
 
 
 # The sizes a test run needs, and nothing else. Everything not named here comes

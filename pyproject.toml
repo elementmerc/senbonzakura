@@ -159,6 +159,9 @@ ignore = [
   "PT018",    # composite assertions read fine in a table-driven test
   "ANN",      # global ignore is temporary (D19); this one is not
   "S108",     # /tmp paths in tests are fixtures for "this path does not exist"
+  "S311",     # random.Random(seed) is the scrambled-label control for the AUC statistic.
+              # A cryptographic generator would make it unseedable, which is the one
+              # property the test needs
   "RUF059",   # unused unpacking is how a test says "I only care about this half"
   "S105",     # "pad_token" / "eos_token" are tokeniser fields, not credentials
   "E741",     # `I` is the identity matrix
@@ -181,12 +184,12 @@ omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; mai
 # caught as it lands rather than in one reckoning at the end.
 #   84  tranche 0: the suite went green
 #   86  tranche 1: score.py's compass path and coherence.py's main()
-# The remaining gap to 90 is margin.py, which is at 0% and is being rewritten in
-# tranche 2; its tests land with those changes rather than being written twice. Setting 90 before
-# the tests exist would make every bare `pytest` red through exactly the stretch
-# of work that needs a green signal, and the documented response to that is to
-# comment the line out.
-fail_under = 86
+#   92  tranche 2: margin.py, 0% to 100%, which took the total to 93.17%
+# 92 rather than 93 leaves one point of room for the rest of tranche 2, which adds
+# code to this same module. The operator's target was above 90 and that is met; the
+# ratchet keeps going up at each tranche close, but it is never set above the
+# measured figure, because a gate that is red on a clean checkout gets commented out.
+fail_under = 92
 exclude_also = [
   "if __name__ == .__main__.:",
   "pragma: no cover",

@@ -137,29 +137,46 @@ def layer_weight(idx, P, wmax, wmin, D):
 
 
 @torch.no_grad()
-def orthogonalize_np_(W, R, s):
+def _sparsify_rows_(delta, sparsity):
+    # Sparse surgery (OBLITERATUS-style, adapted to the norm-preserving projection): only KEEP the
+    # top (1-sparsity) output-rows by edit magnitude, zero the edit on the rest. The rows with the
+    # largest projection delta are the ones that actually WRITE the refusal direction; leaving the
+    # low-projection rows pristine spares whatever capability they carry, for less collateral at the
+    # same refusal removal on the rows that matter. `delta` is [..., out, in]; rows are the -2 dim.
+    if sparsity <= 0.0:
+        return delta
+    mag = delta.norm(dim=-1)                            # [..., out] per-row edit magnitude
+    keep = max(1, int(round((1.0 - sparsity) * mag.shape[-1])))
+    thr = torch.topk(mag, keep, dim=-1).values.amin(dim=-1, keepdim=True)   # [..., 1]
+    return delta * (mag >= thr).unsqueeze(-1)           # zero the untouched rows
+
+
+def orthogonalize_np_(W, R, s, sparsity=0.0):
     # Refinement 4 (norm-preserving ablation; Heretic row_normalization=full / grimjim):
     # ablate on the row-normalized weight, renormalize, then RESTORE the original row norms.
     # Raw orthogonalization changed the norms and wrecked calibration (KL 12-19); preserving
     # them keeps the model intact. R is [K, H] (refinement 5): removes the whole span.
+    # sparsity>0 restricts the edit to the top-magnitude rows (sparse surgery).
     Rf = R.to(W.device).float()                         # [K, H]
     Wf = W.float()                                      # [out=H, in]
     rn = Wf.norm(dim=1, keepdim=True).clamp_min(1e-8)   # [out,1] original row norms
     Wn = Wf / rn
-    Wn = Wn - s * (Rf.T @ (Rf @ Wn))                    # subtract each column's projection onto span(R)
+    delta = s * (Rf.T @ (Rf @ Wn))                      # each column's projection onto span(R)
+    Wn = Wn - _sparsify_rows_(delta, sparsity)
     Wn = Wn / Wn.norm(dim=1, keepdim=True).clamp_min(1e-8)
     W.copy_((Wn * rn).to(W.dtype))
 
 
 @torch.no_grad()
-def orthogonalize_np_3d_(W, R, s):
+def orthogonalize_np_3d_(W, R, s, sparsity=0.0):
     # Norm-preserving, fused experts [E, out, in]; row norms per (expert, out-row). R is [K, H].
     Rf = R.to(W.device).float()                         # [K, H]
     Wf = W.float()
     rn = Wf.norm(dim=2, keepdim=True).clamp_min(1e-8)   # [E,out,1]
     Wn = Wf / rn
     proj = torch.einsum("kh,ehi->eki", Rf, Wn)          # [E,K,in]
-    Wn = Wn - s * torch.einsum("kh,eki->ehi", Rf, proj)
+    delta = s * torch.einsum("kh,eki->ehi", Rf, proj)   # [E,out,in]
+    Wn = Wn - _sparsify_rows_(delta, sparsity)          # per (expert, out-row) sparsify
     Wn = Wn / Wn.norm(dim=2, keepdim=True).clamp_min(1e-8)
     W.copy_((Wn * rn).to(W.dtype))
 
@@ -419,6 +436,22 @@ def build_parser():
     ap.add_argument("--max-directions", type=int, default=3,
                     help="upper bound on refusal directions per layer the search may ablate "
                          "(1 = single-direction, the original method; >1 enables multi-directional)")
+    ap.add_argument("--sparsity", type=float, default=0.0,
+                    help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
+                         "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "
+                         "edits every row as before; e.g. 0.3 leaves the quietest 30%% of rows pristine "
+                         "for less collateral. A/B against 0.0 per model to see if coherence improves "
+                         "at equal refusal removal.")
+    ap.add_argument("--warm-start", action=argparse.BooleanOptionalAction, default=True,
+                    help="seed the search with one sane diff-of-means config (mid-late window, full "
+                         "projection, single direction) so NSGA-II/TPE begin from a known-decent point "
+                         "instead of cold random sampling. On by default; --no-warm-start to A/B the "
+                         "cold search.")
+    ap.add_argument("--no-good-orth", action="store_true", dest="no_good_orth",
+                    help="ablation study: do NOT orthogonalise the refusal direction against the "
+                         "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
+                         "toggles off the projection grimjim calls 'projected abliteration'; on by "
+                         "default. For measuring whether the projection helps or hurts the search.")
     ap.add_argument("--search", choices=["pareto", "scalar"], default="pareto",
                     help="pareto: NSGA-II maps the whole refusals-vs-KL frontier, we pick the knee "
                          "(intact + most uncensored). scalar: the old single weighted objective (TPE).")
@@ -662,9 +695,18 @@ class Abliterator:
         dirs_multi = torch.zeros(NL + 1, KMAX, H)
         for li in range(NL + 1):
             gd = good_dir[li]
-            d0 = _orth_to(mb[li] - mg[li], [gd])
-            d0 = d0 / d0.norm().clamp_min(1e-8)
-            basis = [gd, d0]; kept = [d0]
+            if getattr(args, "no_good_orth", False):
+                # Ablation study: raw difference-of-means, NOT orthogonalised to the harmless mean,
+                # and the harmless direction is left out of the basis so the PCA axes are not
+                # good-orthogonalised either. This is the toggle that isolates Refinement 3 (the
+                # projection grimjim proposes) so its effect on the search can be measured.
+                d0 = mb[li] - mg[li]
+                d0 = d0 / d0.norm().clamp_min(1e-8)
+                basis = [d0]; kept = [d0]
+            else:
+                d0 = _orth_to(mb[li] - mg[li], [gd])
+                d0 = d0 / d0.norm().clamp_min(1e-8)
+                basis = [gd, d0]; kept = [d0]
             # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before PCA fills the rest.
             if hedge_md is not None and len(kept) < KMAX:
                 hv = _orth_to(hedge_md[li], basis)
@@ -780,6 +822,7 @@ class Abliterator:
         # is awkward).
         self._cur["mode"] = mode
         self._cur["single_set"] = self._interp_multi(didx) if (mode == "single" and didx is not None) else None
+        sp = float(getattr(self.args, "sparsity", 0.0))         # sparse surgery: 0 = edit every row
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)
@@ -789,16 +832,16 @@ class Abliterator:
             R = R / R.norm(dim=1, keepdim=True).clamp_min(1e-8)  # renormalize (interp/GS drift); zero rows stay ~0
             if wo > 0.0:
                 op = _attn_outproj(layer)
-                self._mark_dirty(op); orthogonalize_np_(op, R, wo)
+                self._mark_dirty(op); orthogonalize_np_(op, R, wo, sp)
             if wd > 0.0:
                 for kind, obj in layer_downproj(layer):         # every residual-writing down-proj
                     if kind == "fused3d":
-                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R, wd)
+                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R, wd, sp)
                     elif kind == "list":
                         for W in obj:
-                            self._mark_dirty(W); orthogonalize_np_(W, R, wd)
+                            self._mark_dirty(W); orthogonalize_np_(W, R, wd, sp)
                     else:  # dense
-                        self._mark_dirty(obj); orthogonalize_np_(obj, R, wd)
+                        self._mark_dirty(obj); orthogonalize_np_(obj, R, wd, sp)
 
     @torch.no_grad()
     def bake(self, P, wmax, wmin, D, K=1, mode="per_layer", didx=None):
@@ -960,8 +1003,8 @@ class Abliterator:
             return   # --inspect is a diagnostic; nothing to search or save
 
         if args.bench_only:
-            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4)); r = self.refusal_rate(self.bad_eval); k = self.kl_vs_orig(self.kl_eval); self.restore_weights()
-            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0): refusals={r*100:.1f}% KL={k:.4f}")
+            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX); r = self.refusal_rate(self.bad_eval); k = self.kl_vs_orig(self.kl_eval); self.restore_weights()
+            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): refusals={r*100:.1f}% KL={k:.4f}")
             return   # --bench-only is a one-shot probe; nothing to search or save
 
         # Direct re-bake: skip the search entirely, bake a saved best-config.json and save. Recovers a
@@ -1031,6 +1074,27 @@ class Abliterator:
         # search; catch it so Optuna marks that trial failed and moves on. Whatever the outcome, the
         # last trial's bake is left applied, so restore to pristine before any downstream read/mutate.
         if not skip_search:
+            if getattr(args, "warm_start", True) and not study.get_trials(deepcopy=False):
+                # Warm-start: enqueue one known-decent config (mid-late window, full projection, single
+                # direction) so the search starts from a good point rather than cold random sampling.
+                # Optuna samples any params we leave unspecified. Fresh study only (a --resume already
+                # has trials); wrapped so a param-range mismatch degrades to a cold search, not a crash.
+                pos = min(max(int(self.NL * 0.6), self.lo), self.hi)
+                dist = max(2, self.NL // 4)
+                seed = {"num_directions": 1, "dir_mode": "per_layer"}
+                if getattr(args, "per_component", True):
+                    seed.update({"o_max_weight_position": pos, "o_max_weight": 1.0,
+                                 "o_min_weight": 0.0, "o_min_weight_distance": dist,
+                                 "d_max_weight_position": pos, "d_max_weight": 1.0,
+                                 "d_min_weight": 0.0, "d_min_weight_distance": dist})
+                else:
+                    seed.update({"max_weight_position": pos, "max_weight": 1.0,
+                                 "min_weight": 0.0, "min_weight_distance": dist})
+                try:
+                    study.enqueue_trial(seed, skip_if_exists=True)
+                    log(f"warm-start: seeded the search with a diff-of-means config (P={pos}, wmax=1.0, K=1)")
+                except Exception as e:
+                    log(f"warm-start seed skipped ({e}); searching cold")
             try:
                 study.optimize(self.objective, n_trials=args.trials, callbacks=[_patience_cb, _progress_cb],
                                catch=(RuntimeError,))
@@ -1156,7 +1220,8 @@ class Abliterator:
                        "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
                        "max_directions": self.KMAX,
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
-                       "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl},
+                       "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+                       "sparsity": float(getattr(args, "sparsity", 0.0))},
                       f, indent=2)
         log("DONE")
 

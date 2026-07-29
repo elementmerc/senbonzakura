@@ -1,0 +1,635 @@
+# The benign arm.
+#
+# Every pass so far ran on an all-harmful set, so "harm recognition" was a true
+# positive rate with nothing beside it: a model that answers HARMFUL to
+# everything scores 100% and is indistinguishable from one that knows. This runs
+# the same judge frame over the HARMLESS set, so a false positive rate exists and
+# the metric becomes a measurement rather than a count.
+#
+# Scoring only, no abliteration, so it is short. One card: holst admits a single
+# GPU job per machine, so a second buys nothing.
+run = "compass-benign-2026-07-27"
+
+[[job]]
+id = "setup"
+machine = "rented"
+timeout_secs = 2400
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+pip install -q 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu124
+python3 -c 'from torch.distributed.tensor import DTensor'
+python3 -c 'import torch; assert torch.cuda.is_available()'
+# Install the tree holst uploaded, NOT a published branch. The run then uses
+# exactly the code on the operator's machine, including work that is committed
+# but not pushed. The first attempt died precisely there: --save-generations
+# existed locally and nowhere else, so the pod installed a version without it.
+pip install -q /workspace/senbonzakura hf_transfer
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --save-generations || { echo "MISSING_SAVE_GENERATIONS: the uploaded tree is not the one expected"; exit 1; }
+# --skip is what keeps this run off the prompts the surgery was fitted on. A tree
+# without it would silently score the wrong slice, so fail here rather than there.
+python3 -m senbonzakura.score --help 2>&1 | grep -q -- --skip || { echo "MISSING_SKIP: uploaded tree predates the held-out slice flag"; exit 1; }
+echo "SENBONZAKURA_COMMIT=d4682e6"
+test -n "${HF_TOKEN:-}"
+hf download ops-malware/senbon-track-35axis-clean --repo-type dataset --local-dir /workspace/track
+test -d /workspace/track/bad_eval_ds
+mkdir -p /workspace/results /workspace/gens /workspace/abl
+nvidia-smi -L
+echo SETUP_OK
+"""
+
+[[job]]
+id = "benign-base-gemma-2-2b-it"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model google/gemma-2-2b-it --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-gemma-2-2b-it.json --label benign-base-gemma-2-2b-it \
+  --save-generations /workspace/gens/benign-base-gemma-2-2b-it.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-gemma-2-2b-it.json", "gens/benign-base-gemma-2-2b-it.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-gemma-2-2b-it"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/gemma-2-2b-it-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-gemma-2-2b-it.json --label benign-abl-gemma-2-2b-it \
+  --save-generations /workspace/gens/benign-abl-gemma-2-2b-it.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-gemma-2-2b-it.json", "gens/benign-abl-gemma-2-2b-it.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-qwen3-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model Qwen/Qwen3-1.7B --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-qwen3-1.7b.json --label benign-base-qwen3-1.7b \
+  --save-generations /workspace/gens/benign-base-qwen3-1.7b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-qwen3-1.7b.json", "gens/benign-base-qwen3-1.7b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-qwen3-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/qwen3-1.7b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-qwen3-1.7b.json --label benign-abl-qwen3-1.7b \
+  --save-generations /workspace/gens/benign-abl-qwen3-1.7b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-qwen3-1.7b.json", "gens/benign-abl-qwen3-1.7b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-qwen3-0.6b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model Qwen/Qwen3-0.6B --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-qwen3-0.6b.json --label benign-base-qwen3-0.6b \
+  --save-generations /workspace/gens/benign-base-qwen3-0.6b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-qwen3-0.6b.json", "gens/benign-base-qwen3-0.6b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-qwen3-0.6b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/qwen3-0.6b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-qwen3-0.6b.json --label benign-abl-qwen3-0.6b \
+  --save-generations /workspace/gens/benign-abl-qwen3-0.6b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-qwen3-0.6b.json", "gens/benign-abl-qwen3-0.6b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-qwen2.5-1.5b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model Qwen/Qwen2.5-1.5B-Instruct --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-qwen2.5-1.5b.json --label benign-base-qwen2.5-1.5b \
+  --save-generations /workspace/gens/benign-base-qwen2.5-1.5b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-qwen2.5-1.5b.json", "gens/benign-base-qwen2.5-1.5b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-qwen2.5-1.5b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/qwen2.5-1.5b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-qwen2.5-1.5b.json --label benign-abl-qwen2.5-1.5b \
+  --save-generations /workspace/gens/benign-abl-qwen2.5-1.5b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-qwen2.5-1.5b.json", "gens/benign-abl-qwen2.5-1.5b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-tinyllama-1.1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-tinyllama-1.1b.json --label benign-base-tinyllama-1.1b \
+  --save-generations /workspace/gens/benign-base-tinyllama-1.1b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-tinyllama-1.1b.json", "gens/benign-base-tinyllama-1.1b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-tinyllama-1.1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/tinyllama-1.1b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-tinyllama-1.1b.json --label benign-abl-tinyllama-1.1b \
+  --save-generations /workspace/gens/benign-abl-tinyllama-1.1b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-tinyllama-1.1b.json", "gens/benign-abl-tinyllama-1.1b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-llama-3.2-1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model meta-llama/Llama-3.2-1B-Instruct --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-llama-3.2-1b.json --label benign-base-llama-3.2-1b \
+  --save-generations /workspace/gens/benign-base-llama-3.2-1b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-llama-3.2-1b.json", "gens/benign-base-llama-3.2-1b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-llama-3.2-1b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/llama-3.2-1b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-llama-3.2-1b.json --label benign-abl-llama-3.2-1b \
+  --save-generations /workspace/gens/benign-abl-llama-3.2-1b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-llama-3.2-1b.json", "gens/benign-abl-llama-3.2-1b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-base-smollm2-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model HuggingFaceTB/SmolLM2-1.7B-Instruct --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-base-smollm2-1.7b.json --label benign-base-smollm2-1.7b \
+  --save-generations /workspace/gens/benign-base-smollm2-1.7b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-base-smollm2-1.7b.json", "gens/benign-base-smollm2-1.7b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""
+
+[[job]]
+id = "benign-abl-smollm2-1.7b"
+machine = "rented"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true }
+success = { type = "stdout-contains", needle = "BENIGN_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n+1)); [ $n -ge 3 ] && { echo "RETRY_EXHAUSTED: $*"; return 1; }
+    echo "RETRYING ($n/3): $*"; sleep 20
+  done
+}
+_gpu=""
+for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
+  if exec 9>/workspace/.gpu$i.lock && flock -n 9; then _gpu=$i; break; fi
+done
+[ -n "$_gpu" ] || { echo "NO_FREE_GPU"; exit 1; }
+export CUDA_VISIBLE_DEVICES=$_gpu
+echo "CLAIMED_GPU=$_gpu"
+# The judge frame, on HARMLESS prompts. harm_recognition here is the FALSE
+# POSITIVE rate: how often the model calls a harmless request dangerous.
+python3 -m senbonzakura.score --model ops-malware/smollm2-1.7b-abliterated --eval /workspace/track/good_ds --device cuda \
+  --skip 320 --n 200 --batch 32 --max-new 512 --harm-recognition \
+  --out /workspace/results/benign-abl-smollm2-1.7b.json --label benign-abl-smollm2-1.7b \
+  --save-generations /workspace/gens/benign-abl-smollm2-1.7b.jsonl
+cat > /workspace/_upload_benign.py <<'UP'
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+for f in ["results/benign-abl-smollm2-1.7b.json", "gens/benign-abl-smollm2-1.7b.jsonl"]:
+    api.upload_file(path_or_fileobj="/workspace/"+f, path_in_repo=f,
+                    repo_id="ops-malware/senbon-compass-2026-07", repo_type="dataset")
+UP
+retry python3 /workspace/_upload_benign.py
+echo BENIGN_OK
+"""

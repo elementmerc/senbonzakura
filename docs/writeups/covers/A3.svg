@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#ECEBE4"/>
+  <g transform="translate(864.00 415.80) scale(1.7) translate(-600.00 -315.00)">
+  <path d="M 600.00 163.00 L 618.37 270.65 L 659.40 255.60 L 644.35 296.63 L 752.00 315.00 L 644.35 333.37 L 659.40 374.40 L 618.37 359.35 L 600.00 467.00 L 581.63 359.35 L 540.60 374.40 L 555.65 333.37 L 448.00 315.00 L 555.65 296.63 L 540.60 255.60 L 581.63 270.65 Z" fill="none" stroke="#1A1D22" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="600" cy="315" r="17" fill="none" stroke="#1A1D22" stroke-width="14"/>
+  </g>
+</svg>

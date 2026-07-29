@@ -1,0 +1,78 @@
+name: CI
+
+# Actions are pinned by commit SHA, not by tag (baseline §5): a tag can be moved
+# to point at different code, and a compromised action runs with the workflow's
+# token. The version comment after each SHA is for humans; the SHA is the pin.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The ends of the supported range plus one in the middle. The floors
+        # differ per version because torch's wheel availability does: 2.5 has no
+        # cp313 build and the first with cp314 is 2.9, which pyproject encodes.
+        python: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install torch (CPU build)
+        # The CPU wheel is a fraction of the CUDA one and the suite never touches
+        # a GPU: every test runs against hand-built fixtures, no model downloads.
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install the package and its dev extra
+        # From the published extras rather than a bespoke list, so a broken
+        # dependency declaration fails here instead of failing a user.
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src/ tests/
+
+      - name: Test, with the coverage gate
+        # fail_under lives in pyproject and ratchets upward; CI does not carry its
+        # own threshold, so the gate cannot drift between local and CI.
+        run: pytest
+
+  dependency-floor:
+    # Installs the *lowest* version each declared dependency permits. Without this
+    # the declared floors are decoration: a clean resolve always picks the newest
+    # release and satisfies any floor, however wrong. This is the job that would
+    # have caught `torch>=2.2` against a MIN_TORCH of 2.5.
+    name: declared floors resolve and run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install at the declared minimums
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          pip install -e ".[dev]" --upgrade-strategy only-if-needed
+      - name: The tool starts and reports its version
+        run: |
+          python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"
+          senbonzakura --help > /dev/null
+      - name: Test
+        run: pytest

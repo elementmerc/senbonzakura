@@ -635,3 +635,119 @@ def test_the_run_records_which_format_produced_its_numbers(base_args, tiny_model
     a.run()
     with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
         assert json.load(f)["chat_template"] == {"source": "tokenizer", "sha256": None}
+
+
+# ── SVD non-convergence (tranche 4, task 24, second half) ─────────────────────────────
+def _break_svd(monkeypatch, *, and_eigh=False):
+    """Make torch.linalg.svd refuse to converge, optionally eigh too.
+
+    Only these two functions are replaced. Swapping the whole torch.linalg namespace
+    also breaks the qr() and norm() calls that extraction and torch's own internals make,
+    which fails for a reason unrelated to what is under test.
+    """
+    calls = {"svd": 0}
+
+    def no_svd(*_a, **_k):
+        calls["svd"] += 1
+        raise torch.linalg.LinAlgError("pretend gesdd did not converge")
+
+    monkeypatch.setattr(torch.linalg, "svd", no_svd)
+    if and_eigh:
+        def no_eigh(*_a, **_k):
+            raise torch.linalg.LinAlgError("pretend eigh also failed")
+
+        monkeypatch.setattr(torch.linalg, "eigh", no_eigh)
+    return calls
+
+
+def test_the_gram_retry_reproduces_what_svd_would_have_returned(monkeypatch):
+    """The retry has to be the same maths by another route, or it is not a retry."""
+    torch.manual_seed(11)
+    x = torch.randn(60, 12)
+    xc = x - x.mean(0, keepdim=True)
+    want_s, want_vh = torch.linalg.svd(xc, full_matrices=False)[1:]
+
+    lines = []
+    calls = _break_svd(monkeypatch)
+    got_s, got_vh = cli._principal_axes(xc, 0, lines.append)
+
+    assert calls["svd"] == 1
+    # Singular values match; axes match up to sign, which is free in an eigenvector.
+    assert torch.allclose(got_s[:8], want_s[:8], atol=1e-4)
+    for j in range(8):
+        assert abs(abs(float(got_vh[j] @ want_vh[j])) - 1.0) < 1e-4
+    assert any("retrying via the Gram matrix" in line for line in lines)
+
+
+def test_the_svd_path_is_used_when_it_works():
+    torch.manual_seed(5)
+    xc = torch.randn(40, 9)
+    xc = xc - xc.mean(0, keepdim=True)
+    want = torch.linalg.svd(xc, full_matrices=False)[1]
+    got, _ = cli._principal_axes(xc, 0, lambda _m: None)
+    assert torch.allclose(got, want, atol=1e-6)
+
+
+def test_both_decompositions_failing_stops_the_run(monkeypatch):
+    """The old path logged, dropped to an empty axis set, and reported the K it asked for."""
+    torch.manual_seed(3)
+    _break_svd(monkeypatch, and_eigh=True)
+    with pytest.raises(RuntimeError, match="could not decompose the harmful residual cloud"):
+        cli._principal_axes(torch.randn(20, 6), 7, lambda _m: None)
+
+
+def test_the_failure_names_the_layer_and_the_two_knobs(monkeypatch):
+    torch.manual_seed(3)
+    _break_svd(monkeypatch, and_eigh=True)
+    with pytest.raises(RuntimeError) as e:
+        cli._principal_axes(torch.randn(20, 6), 7, lambda _m: None)
+    message = str(e.value)
+    assert "layer 7" in message
+    assert "--dir-prompts" in message
+    assert "--max-directions" in message
+
+
+def test_extraction_survives_a_non_converging_svd(base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """End to end: the retry keeps a real run alive rather than quietly weakening it."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _break_svd(monkeypatch)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    assert a.dirs_multi.shape == (a.NL + 1, a.KMAX, a.H)
+
+
+def test_extraction_stops_when_neither_decomposition_converges(base_args, tiny_model, tiny_tok,
+                                                               track, monkeypatch):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _break_svd(monkeypatch, and_eigh=True)
+    with pytest.raises(RuntimeError, match="could not decompose"):
+        a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+
+# ── the applied K is recorded, whatever reduced it ────────────────────────────────────
+def test_the_applied_k_per_layer_is_recorded(base_args, tiny_model, tiny_tok, track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    assert len(a.dirs_per_layer) == a.NL + 1
+    assert all(0 <= k <= a.KMAX for k in a.dirs_per_layer)
+    # The count must match the tensor it describes, not the request.
+    for li, k in enumerate(a.dirs_per_layer):
+        assert int((a.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum()) == k
+
+
+def test_a_shortfall_against_the_requested_k_is_announced(base_args, tiny_model, tiny_tok, track):
+    """A run that asks for 3 and applies 1 must not report only the 3."""
+    lines = []
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    if min(a.dirs_per_layer[a.lo:a.hi + 1] or a.dirs_per_layer) < a.KMAX:
+        assert any("not the" in x and "requested" in x for x in lines)
+
+
+def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        artefact = json.load(f)
+    assert artefact["directions_per_layer"] == a.dirs_per_layer
+    assert len(artefact["directions_per_layer"]) == a.NL + 1

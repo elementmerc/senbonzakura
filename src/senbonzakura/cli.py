@@ -575,6 +575,47 @@ def last_token_logits(model, enc, log=None):
     return model(**enc, use_cache=False).logits[:, -1, :].float()
 
 
+def _principal_axes(Xc, li, log):
+    """Principal axes of a centred cloud and their singular values, largest first.
+
+    Two algorithms, not one retried twice. `torch.linalg.svd` on a [N, H] cloud can fail
+    to converge on real residuals; the eigendecomposition of the Gram matrix produces the
+    same right singular vectors by a different and more forgiving route, so it is a real
+    second chance rather than the same computation again.
+
+    If both fail, this raises. The previous behaviour logged and fell back to an empty
+    axis set, which silently reduced the kept basis at that layer: a K=3 run became K=1
+    there and still reported K=3, so the ablation strength on record was not the one
+    applied. A weaker basis produced by accident is worse than a run that stops, because
+    only one of the two is visible afterwards.
+
+    Float64 for the Gram path on purpose. Forming X'X squares the condition number, and
+    the rank floor downstream compares singular values at a ratio of 1e-4, which is 1e-8
+    in eigenvalues, past what float32 holds reliably.
+    """
+    try:
+        _, S, Vh = torch.linalg.svd(Xc, full_matrices=False)   # rows of Vh = principal axes
+    except torch.linalg.LinAlgError as first:
+        log(f"  layer {li}: SVD did not converge ({first}); retrying via the Gram matrix")
+        x64 = Xc.to(torch.float64)
+        try:
+            evals, evecs = torch.linalg.eigh(x64.T @ x64)
+        except torch.linalg.LinAlgError as second:
+            raise RuntimeError(
+                f"could not decompose the harmful residual cloud at layer {li}: SVD did not "
+                f"converge ({first}) and neither did the Gram-matrix eigendecomposition "
+                f"({second}). Continuing would silently drop this layer to fewer directions "
+                f"than requested while still reporting the requested number, so the run stops "
+                f"instead. A cloud this ill-conditioned usually means too few contrast prompts "
+                f"for the hidden size: raise --dir-prompts, or lower --max-directions.") from second
+        order = torch.argsort(evals, descending=True)
+        # Eigenvalues of X'X are the squared singular values of X; clamp first, because a
+        # PSD matrix can still produce small negative eigenvalues through rounding.
+        S = evals[order].clamp_min(0.0).sqrt().to(Xc.dtype)
+        Vh = evecs[:, order].T.to(Xc.dtype)
+    return S, Vh
+
+
 def _renders_a_chat_prompt(tok):
     """Can this tokenizer actually turn a message into a prompt?
 
@@ -862,12 +903,7 @@ class Abliterator:
                 Xc = Rb[li] - Rb[li].mean(0, keepdim=True)   # centre the bad cloud, [N, H]
                 for u in basis:
                     Xc = Xc - torch.outer(Xc @ u, u)         # project out good_dir + d0 (+ hedge)
-                try:
-                    _, S, Vh = torch.linalg.svd(Xc, full_matrices=False)  # rows of Vh = principal axes
-                except torch.linalg.LinAlgError as e:
-                    # A non-converged SVD must fail LOUD, not silently degrade to a weaker basis.
-                    log(f"  layer {li}: SVD did not converge ({e}); using the primary direction only here")
-                    S, Vh = Xc.new_zeros(0), Xc.new_zeros(0, H)
+                S, Vh = _principal_axes(Xc, li, log)
                 # Rank floor: once the singular values fall away from the leading one, the
                 # corresponding axes describe rounding error in a space the earlier directions
                 # already span, not structure in the cloud.
@@ -897,6 +933,18 @@ class Abliterator:
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         self.dirs_multi = dirs_multi.to(torch.bfloat16)      # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)
+        # How many directions each layer ACTUALLY got. A layer can fall short of KMAX for
+        # several legitimate reasons (the separation filter, the rank floor, a degenerate
+        # cloud) and the request is not evidence of the result, so record the achieved
+        # count per layer and say so when it differs. Without this, a run reports the K it
+        # asked for and nothing anywhere states the K it applied.
+        self.dirs_per_layer = [int((self.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum())
+                               for li in range(NL + 1)]
+        window = self.dirs_per_layer[self.lo:self.hi + 1] or self.dirs_per_layer
+        if window and min(window) < KMAX:
+            log(f"  note: within the search window layers got {min(window)} to {max(window)} "
+                f"directions, not the {KMAX} requested; the applied K is recorded per layer in "
+                f"abliteration.json")
         log(f"directions ready: {tuple(self.dirs_multi.shape)} (<= {KMAX}/layer, orthonormal, "
             f"good-orthogonalized, refusal-separation filtered)")
 
@@ -1453,7 +1501,11 @@ class Abliterator:
                        # re-run, and cannot be told apart from a re-sample of the same config.
                        "seed": args.seed, "search": args.search, "trials": args.trials,
                        "warm_start": args.warm_start, "good_orth": not args.no_good_orth,
-                       "chat_template": getattr(self.tok, "senbon_chat_template", None)},
+                       "chat_template": getattr(self.tok, "senbon_chat_template", None),
+                       # The K actually applied at each layer, which is not always the K asked
+                       # for: the separation filter, the rank floor and a degenerate cloud can
+                       # each reduce it, and num_directions alone cannot show that.
+                       "directions_per_layer": getattr(self, "dirs_per_layer", None)},
                       f, indent=2)
         log("DONE")
 

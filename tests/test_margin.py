@@ -147,6 +147,76 @@ def test_margins_of_no_prompts_is_empty(margin_kit):
     assert margin.margins(model, tok, [], [0], [1], "cpu") == []
 
 
+# ── the memory fix (task 10) ───────────────────────────────────────────────────────
+def test_only_the_last_position_is_computed(margin_kit, monkeypatch):
+    """A [B, T, V] tensor is ~10 GB at batch 16 on a large vocabulary, all but one row wasted."""
+    model, tok = margin_kit
+    seen = {}
+    real = model.forward
+
+    def spy(**kw):
+        seen["logits_to_keep"] = kw.get("logits_to_keep")
+        out = real(**kw)
+        seen["shape"] = tuple(out.logits.shape)
+        return out
+
+    monkeypatch.setattr(model, "forward", spy)
+    margin.margins(model, tok, ["a prompt", "another prompt"], [1], [2], "cpu", batch=2)
+    assert seen["logits_to_keep"] == 1
+    assert seen["shape"][1] == 1, "the model returned more than one position of logits"
+
+
+def test_the_score_is_unchanged_by_the_memory_fix(margin_kit):
+    """The shape contract holds: [B, 1, V] and [B, T, V] give the same [:, -1, :] row."""
+    model, tok = margin_kit
+    hid, bid = margin.label_token_ids(tok, "HARMFUL"), margin.label_token_ids(tok, "BENIGN")
+    prompts = ["tiny", "a considerably longer prompt than the first one"]
+    with_fix = margin.margins(model, tok, prompts, hid, bid, "cpu", batch=2)
+
+    class _FullLogitsOnly(type(model)):
+        def forward(self, **kw):
+            if kw.pop("logits_to_keep", None) is not None:
+                pass                       # deliberately ignore it: compute everything
+            return super().forward(**kw)
+
+    model.__class__ = _FullLogitsOnly
+    assert margin.margins(model, tok, prompts, hid, bid, "cpu", batch=2) == pytest.approx(with_fix, abs=1e-6)
+
+
+def test_a_model_that_rejects_the_argument_falls_back_loudly(margin_kit, capsys):
+    """Visible degradation, not silent: the fallback needs far more memory."""
+    from senbonzakura import cli
+    model, tok = margin_kit
+
+    class _Rejects(type(model)):
+        def forward(self, **kw):
+            if "logits_to_keep" in kw:
+                raise TypeError("forward() got an unexpected keyword argument 'logits_to_keep'")
+            return super().forward(**kw)
+
+    model.__class__ = _Rejects
+    cli._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
+    out = margin.margins(model, tok, ["a", "b", "c"], [1], [2], "cpu", batch=1)
+    assert len(out) == 3
+    assert "does not accept logits_to_keep" in capsys.readouterr().out
+    # Warned once for the class, not once per batch.
+    assert _Rejects.__name__ in cli._NO_LOGITS_TO_KEEP
+    cli._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
+
+
+def test_an_unrelated_type_error_is_not_swallowed(margin_kit):
+    """Converting a real forward-pass bug into a quiet memory change would hide it."""
+    model, tok = margin_kit
+
+    class _Broken(type(model)):
+        def forward(self, **kw):
+            raise TypeError("something else entirely is wrong")
+
+    model.__class__ = _Broken
+    with pytest.raises(TypeError, match="something else entirely"):
+        margin.margins(model, tok, ["a"], [1], [2], "cpu")
+
+
 # ── main ───────────────────────────────────────────────────────────────────────────
 def _track(tmp_path, n_harmful=4, n_harmless=6):
     from datasets import Dataset

@@ -69,7 +69,10 @@ class TinyModel(nn.Module):
             nn.init.normal_(p, std=0.2)
 
     def forward(self, input_ids=None, attention_mask=None, output_hidden_states=False,
-                use_cache=False, **kw):
+                use_cache=False, logits_to_keep=None, **kw):
+        # logits_to_keep is named explicitly rather than left to **kw: the memory fix
+        # depends on real models honouring it, so the fixture has to honour it too or
+        # the test proves only that the argument was accepted.
         B, S = input_ids.shape
         # Per-token residual (position-independent, so a token's last-position residual doesn't depend
         # on how much left-padding sits in front of it: this is what lets the C-1 padding-invariance
@@ -81,7 +84,7 @@ class TinyModel(nn.Module):
             h = h + layer.self_attn.o_proj(h)
             h = h + layer.mlp.down_proj(h)
             hs.append(h)
-        logits = self.lm_head(h)
+        logits = self.lm_head(h if logits_to_keep is None else h[:, -logits_to_keep:, :])
         return _Out(tuple(hs), logits)
 
     @torch.no_grad()

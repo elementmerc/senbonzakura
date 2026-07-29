@@ -31,7 +31,8 @@ from pathlib import Path
 import torch
 from datasets import load_from_disk
 
-from .cli import load_model_and_tokenizer
+from .cli import last_token_logits, load_model_and_tokenizer
+from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
 
 
@@ -85,21 +86,27 @@ def label_token_ids(tok, word):
 
 
 @torch.no_grad()
-def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16):
-    """Per prompt: max logit over HARMFUL spellings minus max over BENIGN spellings."""
-    out = []
-    for i in range(0, len(prompts), batch):
-        chunk = prompts[i:i + batch]
+def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=None, log=None):
+    """Per prompt: max logit over HARMFUL spellings minus max over BENIGN spellings.
+
+    Chunked by the shared ResourceGovernor rather than a fixed stride, so the compass
+    shrinks its batch under VRAM pressure and pauses instead of dying, the same way
+    every other batched pass in this project already did. On CPU the governor is
+    inert and chunks at the ceiling, so the numbers are identical either way.
+    """
+    def _do(chunk):
         texts = [tok.apply_chat_template([{"role": "user", "content": JUDGE_TEMPLATE.format(p)}],
                                          tokenize=False, add_generation_prompt=True)
                  for p in chunk]
         enc = tok(texts, return_tensors="pt", padding=True,
                   truncation=True, max_length=2048, add_special_tokens=False).to(device)
-        logits = model(**enc, use_cache=False).logits[:, -1, :].float()
+        logits = last_token_logits(model, enc, log)
         h = logits[:, harmful_ids].max(dim=-1).values
         b = logits[:, benign_ids].max(dim=-1).values
-        out.extend((h - b).cpu().tolist())
-    return out
+        return (h - b).cpu().tolist()
+
+    gov = gov or ResourceGovernor(device, log, max_batch=batch)
+    return gov.run(_do, list(prompts))
 
 
 def auc(pos, neg):

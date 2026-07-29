@@ -512,6 +512,41 @@ def build_parser():
     return ap
 
 
+# Model classes seen to reject logits_to_keep, so the warning fires once each rather
+# than once per batch. Keyed by class name because two models in one process (a base
+# and an abliterated copy) can be different classes with different support.
+_NO_LOGITS_TO_KEEP: set[str] = set()
+
+
+def last_token_logits(model, enc, log=None):
+    """Logits at the final position only, without materialising the whole sequence.
+
+    A full logits tensor is batch x sequence x vocabulary. At batch 16, 2048 tokens
+    and a 150k vocabulary that is roughly 10 GB in fp32 before anything else is
+    allocated, and every caller here immediately throws away all but the last
+    position. `logits_to_keep=1` asks the model to compute only the part that is
+    used, which is the difference between the compass running on a 6 GB card and
+    not running at all.
+
+    The shape contract is unchanged: with the argument honoured the result is
+    [B, 1, V], so [:, -1, :] still selects the same row.
+    """
+    key = type(model).__name__
+    if key not in _NO_LOGITS_TO_KEEP:
+        try:
+            return model(**enc, use_cache=False, logits_to_keep=1).logits[:, -1, :].float()
+        except TypeError as e:
+            # Only the unsupported-argument case falls back. Any other TypeError is a
+            # real bug in the forward pass and must not be converted into a quiet
+            # change of memory behaviour.
+            if "logits_to_keep" not in str(e):
+                raise
+            _NO_LOGITS_TO_KEEP.add(key)
+            (log or print)(f"{key} does not accept logits_to_keep; computing full logits instead, "
+                           f"which needs far more memory at large batch sizes")
+    return model(**enc, use_cache=False).logits[:, -1, :].float()
+
+
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
@@ -904,7 +939,7 @@ class Abliterator:
         def _do(chunk):
             ch = [self.chat(p) for p in chunk]
             enc = self.tok(ch, return_tensors="pt", padding=True, add_special_tokens=False).to(self.dev)
-            lo = self.model(**enc, use_cache=False).logits[:, -1, :].float()
+            lo = last_token_logits(self.model, enc, self.log)
             return list(F.log_softmax(lo, dim=-1).cpu())   # list of [V] tensors, one per prompt
         rows = self.gov.run(_do, list(prompts))
         return torch.stack(rows, 0)  # [N, V]

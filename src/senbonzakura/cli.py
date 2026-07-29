@@ -707,27 +707,40 @@ class Abliterator:
                 d0 = _orth_to(mb[li] - mg[li], [gd])
                 d0 = d0 / d0.norm().clamp_min(1e-8)
                 basis = [gd, d0]; kept = [d0]
+            # At most H mutually orthonormal vectors exist in an H-dimensional space, and `basis`
+            # already holds the good direction alongside everything in `kept`. Asking for more than
+            # that used to hand the PCA loop pure numerical noise to normalise: with H=8 the
+            # post-projection residual of a linearly dependent axis still cleared the 1e-6 norm
+            # guard in float32, so it was scaled to unit length and ablated as though it carried
+            # refusal. Cap what is kept; KMAX itself stays as-is because it sets the tensor width.
+            kmax_eff = min(KMAX, H)
             # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before PCA fills the rest.
-            if hedge_md is not None and len(kept) < KMAX:
+            if hedge_md is not None and len(kept) < kmax_eff:
                 hv = _orth_to(hedge_md[li], basis)
                 n = hv.norm()
                 if n > 1e-6:
                     hv = hv / n
                     kept.append(hv); basis.append(hv)
-            if KMAX > len(kept):
+            if kmax_eff > len(kept):
                 Xc = Rb[li] - Rb[li].mean(0, keepdim=True)   # centre the bad cloud, [N, H]
                 for u in basis:
                     Xc = Xc - torch.outer(Xc @ u, u)         # project out good_dir + d0 (+ hedge)
                 try:
-                    _, _, Vh = torch.linalg.svd(Xc, full_matrices=False)  # rows of Vh = principal axes
+                    _, S, Vh = torch.linalg.svd(Xc, full_matrices=False)  # rows of Vh = principal axes
                 except torch.linalg.LinAlgError as e:
                     # A non-converged SVD must fail LOUD, not silently degrade to a weaker basis.
                     log(f"  layer {li}: SVD did not converge ({e}); using the primary direction only here")
-                    Vh = Xc.new_zeros(0, H)
+                    S, Vh = Xc.new_zeros(0), Xc.new_zeros(0, H)
+                # Rank floor: once the singular values fall away from the leading one, the
+                # corresponding axes describe rounding error in a space the earlier directions
+                # already span, not structure in the cloud.
+                s_floor = float(S[0]) * 1e-4 if S.numel() else 0.0
                 dropped = 0
                 for j in range(Vh.size(0)):
-                    if len(kept) >= KMAX:
+                    if len(kept) >= kmax_eff:
                         break
+                    if float(S[j]) <= s_floor:
+                        continue
                     v = _orth_to(Vh[j], basis)
                     n = v.norm()
                     if n < 1e-6:

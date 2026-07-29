@@ -1,6 +1,7 @@
 """Integration tests for the Abliterator class and the shared loader, against the tiny synthetic
 model. Covers the reversible bake, direction extraction, the C-1 padding-invariance regression,
-evaluation, the full run() pipeline, dataset-boundary errors, and the loader / main guards."""
+evaluation, the full run() pipeline, dataset-boundary errors, and the loader / main guards.
+"""
 import json
 import os
 import types
@@ -40,10 +41,10 @@ def test_snapshot_bake_restore_bit_identity(abl):
     before = [w.detach().clone() for w in _target_weights(abl)]
     abl.bake_pc(2, 1.0, 0.3, 2, 2, 0.8, 0.3, 2, K=2, mode="per_layer")
     after_bake = [w.detach().clone() for w in _target_weights(abl)]
-    assert any(not torch.equal(b, a) for b, a in zip(before, after_bake)), "bake changed nothing"
+    assert any(not torch.equal(b, a) for b, a in zip(before, after_bake, strict=True)), "bake changed nothing"
     abl.restore_weights()
     after_restore = [w.detach().clone() for w in _target_weights(abl)]
-    for b, a in zip(before, after_restore):
+    for b, a in zip(before, after_restore, strict=True):
         assert torch.equal(b, a), "restore was not bit-identical to the pristine snapshot"
 
 
@@ -313,7 +314,7 @@ def test_main_end_to_end(monkeypatch, tiny_model, tiny_tok, track, tmp_path):
 
 # ── MoE bake paths: fused3d + shared-expert (dense) + Mixtral-style list ─────────────
 def _moe_layer(H, I, E, list_style):
-    import torch.nn as nn
+    from torch import nn
     L = nn.Module()
     L.self_attn = nn.Module(); L.self_attn.o_proj = nn.Linear(H, H, bias=False)
     L.mlp = nn.Module()
@@ -331,7 +332,7 @@ def _moe_layer(H, I, E, list_style):
 
 
 def test_bake_restore_moe_arches(tiny_tok, base_args):
-    import torch.nn as nn
+    from torch import nn
     H, I, E = 8, 6, 2
     layers = nn.ModuleList([_moe_layer(H, I, E, list_style=False),   # fused3d + shared dense
                             _moe_layer(H, I, E, list_style=True)])    # Mixtral list
@@ -348,9 +349,9 @@ def test_bake_restore_moe_arches(tiny_tok, base_args):
     a.snapshot_weights()
     before = [w.detach().clone() for w in _target_weights(a)]
     a.bake_pc(0, 1.0, 0.3, 2, 0, 0.8, 0.3, 2, K=2, mode="per_layer")   # hits fused3d + dense + list
-    assert any(not torch.equal(b, w) for b, w in zip(before, _target_weights(a)))
+    assert any(not torch.equal(b, w) for b, w in zip(before, _target_weights(a), strict=True))
     a.restore_weights()
-    for b, w in zip(before, _target_weights(a)):
+    for b, w in zip(before, _target_weights(a), strict=True):
         assert torch.equal(b, w)
 
 

@@ -10,10 +10,10 @@ import pytest
 from senbonzakura.resources import (
     ResourceGovernor,
     SearchProgress,
+    _is_oom,
     cuda_free_total,
     cuda_reclaimable,
     fmt_duration,
-    _is_oom,
 )
 
 

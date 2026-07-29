@@ -144,7 +144,10 @@ def main(argv=None):
     if a.margins:
         with open(a.margins, "w", encoding="utf-8") as f:
             for kind, ms, ps in (("harmful", mh, harmful), ("harmless", ml, harmless)):
-                for i, (m, p) in enumerate(zip(ms, ps)):
+                # strict=True: a margin count that has drifted from its prompt count means the
+                # rows are misaligned, and every margin after the drift is attributed to the
+                # wrong prompt. Fail rather than write a file that reads as valid.
+                for i, (m, p) in enumerate(zip(ms, ps, strict=True)):
                     f.write(json.dumps({"i": i, "set": kind, "margin": m, "prompt": p}) + "\n")
 
     print(f"MARGIN_DONE {a.label} auc={score:.4f} "

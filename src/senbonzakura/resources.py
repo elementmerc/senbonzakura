@@ -295,7 +295,7 @@ class ResourceGovernor:
             chunk = items[i:i + bs]
             try:
                 res = fn(chunk)
-            except Exception as exc:  # noqa: BLE001 - re-raised below unless it is an OOM we handle
+            except Exception as exc:
                 if not _is_oom(exc, self._oom_types):
                     raise
                 self._empty_cache()

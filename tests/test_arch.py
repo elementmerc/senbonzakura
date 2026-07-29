@@ -3,7 +3,7 @@ import types
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from senbonzakura import cli
 

@@ -23,5 +23,8 @@ dist/
 .venv/
 venv/
 *.egg-info/
+.coverage
+.coverage.*
+htmlcov/
 .optuna*/
 optuna*.db

@@ -7,7 +7,6 @@ incoherent model be reported as a safely-uncensored success.
 import os
 
 import optuna
-import pytest
 import torch
 
 from senbonzakura import cli
@@ -99,7 +98,6 @@ def test_single_layer_model_runs(base_args, model_factory, tiny_tok, track):
 
 
 def test_single_prompt_eval(base_args, tiny_model, tiny_tok, tmp_path):
-    from datasets import Dataset
     from conftest import make_track
     track = make_track(str(tmp_path / "track"), n_bad=4, n_good=4, n_eval=1)  # one eval prompt
     base_args.track = track

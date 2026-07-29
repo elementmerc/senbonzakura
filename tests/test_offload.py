@@ -7,13 +7,14 @@ snapshot -> bake -> restore round-trip works when some layers are offloaded and 
 """
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from senbonzakura.cli import _attn_outproj, _owned_weight, _real_tensor
 
 
 class _Hook:
     """Minimal stand-in for accelerate's AlignDevicesHook: just the weights_map the resolver reads."""
+
     def __init__(self, weights_map):
         self.weights_map = weights_map
 
@@ -24,7 +25,8 @@ def _meta_like(t):
 
 def _offload(module, name="weight"):
     """Turn module.<name> into a meta param with the real tensor stashed in a fake offload hook,
-    mimicking what accelerate does to a CPU-offloaded layer. Returns the real tensor."""
+    mimicking what accelerate does to a CPU-offloaded layer. Returns the real tensor.
+    """
     real = getattr(module, name).detach().clone()
     setattr(module, name, _meta_like(real))
     module._hf_hook = _Hook({name: real})

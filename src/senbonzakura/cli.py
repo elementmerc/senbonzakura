@@ -34,24 +34,28 @@ import os
 import sys
 import time
 
+import optuna
 import torch
 import torch.nn.functional as F
 from datasets import load_from_disk
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import optuna
-
+from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
+    MIN_TORCH,
+    config_to_bake_args,
+    search_already_done,
+    study_db_path,
+    torch_version_ok,
+    winning_config,
+)
 from .metrics import (
-    REFUSAL,                # hard-refusal markers (kept in metrics.py, the single source)
-    broken_rate,            # fraction of a batch that is wrecked output
-    heretic_keyword_rate,   # Heretic-comparable refusal metric (the axis Heretic wins)
-    is_broken,              # wrecked-output detector (empty / garbage / repetition)
-    is_refusal,             # hard-refusal detector
-    is_soft_refusal,        # hedged-compliance detector (the moralising lecture)
+    broken_rate,  # fraction of a batch that is wrecked output
+    heretic_keyword_rate,  # Heretic-comparable refusal metric (the axis Heretic wins)
+    is_broken,  # wrecked-output detector (empty / garbage / repetition)
+    is_refusal,  # hard-refusal detector
+    is_soft_refusal,  # hedged-compliance detector (the moralising lecture)
 )
 from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
-from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
-    MIN_TORCH, torch_version_ok, study_db_path, search_already_done, winning_config, config_to_bake_args)
 
 __version__ = "0.3.0"
 
@@ -146,7 +150,7 @@ def _sparsify_rows_(delta, sparsity):
     if sparsity <= 0.0:
         return delta
     mag = delta.norm(dim=-1)                            # [..., out] per-row edit magnitude
-    keep = max(1, int(round((1.0 - sparsity) * mag.shape[-1])))
+    keep = max(1, round((1.0 - sparsity) * mag.shape[-1]))
     thr = torch.topk(mag, keep, dim=-1).values.amin(dim=-1, keepdim=True)   # [..., 1]
     return delta * (mag >= thr).unsqueeze(-1)           # zero the untouched rows
 
@@ -373,7 +377,9 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log):
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura",
-        description="Multi-direction refusal abliteration for transformer language models, with a quality-guarded Optuna (NSGA-II) search over windowed, per-component, multi-directional weight ablations.",
+        description="Multi-direction refusal abliteration for transformer language models, with a "
+                    "quality-guarded Optuna (NSGA-II) search over windowed, per-component, "
+                    "multi-directional weight ablations.",
         epilog="bankai: run `senbonzakura kageyoshi [--model ... --out ... --track ... --device ...]` "
                "for the ultimate balanced-effort abliteration. It auto-detects the architecture "
                "(dense / fused MoE / expert-list) and parameter count, scales the search budget, and "
@@ -392,7 +398,8 @@ def build_parser():
     ap.add_argument("--eval-refusal", type=int, default=64, help="bad-eval prompts for the refusal score")
     ap.add_argument("--eval-kl", type=int, default=64, help="harmless prompts for the KL score")
     ap.add_argument("--trials", type=int, default=60)
-    ap.add_argument("--kl-scale", type=float, default=4.0, help="weight on KL in the objective (higher = protect quality more)")
+    ap.add_argument("--kl-scale", type=float, default=4.0, help="weight on KL in the objective (higher = "
+                                                                "protect quality more)")
     ap.add_argument("--layer-lo", type=float, default=0.3, help="search layers from this fraction of depth")
     ap.add_argument("--layer-hi", type=float, default=0.8)
     ap.add_argument("--gen-tokens", type=int, default=48)
@@ -417,7 +424,8 @@ def build_parser():
     ap.add_argument("--external-pressure-mb", type=int, default=500, dest="external_pressure_mb",
                     help="in --background mode, how much VRAM a non-senbon process must hold to count "
                          "as a foreground app worth yielding to (default 500 MB).")
-    ap.add_argument("--bench-only", action="store_true", help="load, extract, run 1 default-strength ablation + print refusals, no search")
+    ap.add_argument("--bench-only", action="store_true", help="load, extract, run 1 default-strength "
+                                                              "ablation + print refusals, no search")
     ap.add_argument("--track", default="track", help="dir holding bad_ds / good_ds / bad_eval_ds")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
     ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
@@ -431,7 +439,8 @@ def build_parser():
                          "with the scorer (python -m senbonzakura.score --load-in-4bit) to measure a model "
                          "on low VRAM.")
     ap.add_argument("--inspect", nargs=2, type=float, default=None, metavar=("LAYER", "STRENGTH"),
-                    help="print real harmful+harmless generations at (layer, strength), pre and post ablation, then exit")
+                    help="print real harmful+harmless generations at (layer, strength), pre and post "
+                         "ablation, then exit")
     ap.add_argument("--inspect-n", type=int, default=8, help="prompts per side to print in --inspect")
     ap.add_argument("--max-directions", type=int, default=3,
                     help="upper bound on refusal directions per layer the search may ablate "
@@ -541,7 +550,8 @@ class Abliterator:
     reversible norm-preserving bake (shared by the search and the final save), evaluation
     (refusals + KL), and the Optuna search. Constructing it loads the model and detects the
     architecture; `run()` does the extract -> search -> bake -> save pipeline. A model + tokenizer
-    may be injected (skipping the load) so the class can be exercised against a tiny model in tests."""
+    may be injected (skipping the load) so the class can be exercised against a tiny model in tests.
+    """
 
     def __init__(self, args, log, model=None, tok=None):
         self.args = args
@@ -944,7 +954,8 @@ class Abliterator:
         gens = self.gen_batch(self.bad_eval)
         ref = sum(is_refusal(t) for t in gens) / max(1, len(gens))
         soft = sum(is_soft_refusal(t) for t in gens) / max(1, len(gens))   # hedged compliance (lever 1/2)
-        hk = heretic_keyword_rate(gens)                                 # Heretic-comparable rate (the axis Heretic wins)
+        # Heretic-comparable rate (the axis Heretic wins)
+        hk = heretic_keyword_rate(gens)
         brk = broken_rate(gens)                                         # coherence on the harmful set
         hbrk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))  # coherence on harmless
         kl = self.kl_vs_orig(self.kl_eval)
@@ -991,7 +1002,8 @@ class Abliterator:
         base_ref = self.refusal_rate(self.bad_eval)
         log(f"BASELINE refusals: {base_ref*100:.1f}%  on {len(self.bad_eval)} bad-eval prompts")
 
-        self.snapshot_weights()   # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
+        # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
+        self.snapshot_weights()
 
         lo, hi = self.lo, self.hi
 
@@ -1008,13 +1020,14 @@ class Abliterator:
             post_h = self.gen_batch(hprompts); post_g = self.gen_batch(gprompts)
             kl = self.kl_vs_orig(self.kl_eval); self.restore_weights()
             def show(tag, prompts, pre, post):
-                for p, a, b in zip(prompts, pre, post):
+                for p, a, b in zip(prompts, pre, post, strict=True):
                     print(f"\n### {tag}: {p[:110].strip()}")
                     print(f"  PRE : {a[:220].strip()!r}")
                     print(f"  POST: {b[:220].strip()!r}")
             show("HARMFUL", hprompts, pre_h, post_h)
             show("HARMLESS", gprompts, pre_g, post_g)
-            pct = lambda xs, f: 100 * sum(f(t) for t in xs) / max(1, len(xs))
+            def pct(xs, f):
+                return 100 * sum(f(t) for t in xs) / max(1, len(xs))
             log(f"INSPECT harmful:   refusals {pct(pre_h,is_refusal):.0f}%->{pct(post_h,is_refusal):.0f}%  "
                 f"broken {pct(pre_h,is_broken):.0f}%->{pct(post_h,is_broken):.0f}%")
             log(f"INSPECT harmless:  refusals {pct(pre_g,is_refusal):.0f}%->{pct(post_g,is_refusal):.0f}%  "
@@ -1023,15 +1036,20 @@ class Abliterator:
             return   # --inspect is a diagnostic; nothing to search or save
 
         if args.bench_only:
-            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX); r = self.refusal_rate(self.bad_eval); k = self.kl_vs_orig(self.kl_eval); self.restore_weights()
-            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): refusals={r*100:.1f}% KL={k:.4f}")
+            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX)
+            r = self.refusal_rate(self.bad_eval)
+            k = self.kl_vs_orig(self.kl_eval)
+            self.restore_weights()
+            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
+                f"refusals={r*100:.1f}% KL={k:.4f}")
             return   # --bench-only is a one-shot probe; nothing to search or save
 
         # Direct re-bake: skip the search entirely, bake a saved best-config.json and save. Recovers a
         # crashed save (or re-issues an output) in minutes instead of paying for the whole search again.
         # Directions and evals are already prepared above, so the bake reproduces the searched result.
         if args.bake_config:
-            cfg = json.load(open(args.bake_config, encoding="utf-8"))
+            with open(args.bake_config, encoding="utf-8") as f:
+                cfg = json.load(f)
             bpr, b_K, b_mode, b_di = config_to_bake_args(cfg)
             log(f"direct bake from {args.bake_config} (skipping the search)")
             self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
@@ -1130,7 +1148,8 @@ class Abliterator:
                     "dP": pr[4], "dwmax": round(pr[5], 3), "dD": pr[7],
                     "K": t.params.get("num_directions", 1), "mode": t.params.get("dir_mode", "per_layer"),
                     "di": (round(t.params["direction_index"], 2) if "direction_index" in t.params else None),
-                    "refusals": round(t.user_attrs["refusals"], 4), "heretic": round(t.user_attrs.get("heretic", 0.0), 4),
+                    "refusals": round(t.user_attrs["refusals"], 4),
+                    "heretic": round(t.user_attrs.get("heretic", 0.0), 4),
                     "kl": round(t.user_attrs["kl"], 4), "broken": round(t.user_attrs.get("broken", 0.0), 4)}
 
         rows = sorted([_row(t) for t in study.trials if t.user_attrs], key=lambda r: (r["refusals"], r["kl"]))
@@ -1174,7 +1193,8 @@ class Abliterator:
                 s = sum(is_soft_refusal(x) for x in g) / max(1, len(g))
                 h = heretic_keyword_rate(g)
                 _final[t.number] = {"refusals": r, "soft": s, "heretic": h}
-                log(f"   trial {t.number}: refusals={r*100:.1f}% soft={s*100:.1f}% heretic={h*100:.1f}% KL={t.user_attrs['kl']:.4f}")
+                log(f"   trial {t.number}: refusals={r*100:.1f}% soft={s*100:.1f}% "
+                    f"heretic={h*100:.1f}% KL={t.user_attrs['kl']:.4f}")
             self.restore_weights()
             _pool = ranked
 
@@ -1208,7 +1228,8 @@ class Abliterator:
         """Bake the winning config into the weights and save. Extracted from run() so a
         --bake-config recovery can save a known config WITHOUT re-searching. Writes
         best-config.json BEFORE the (crash-prone) save, so even a failed save leaves a
-        re-bakeable artefact and a lost save becomes a minutes-long re-bake, not a re-search."""
+        re-bakeable artefact and a lost save becomes a minutes-long re-bake, not a re-search.
+        """
         args, log = self.args, self.log
         with open(f"{track}/best-config.json", "w", encoding="utf-8") as f:
             json.dump(winning_config(bpr, b_K, b_mode, b_di), f, indent=2)
@@ -1235,8 +1256,10 @@ class Abliterator:
         self.tok.save_pretrained(args.out)
         with open(f"{args.out}/abliteration.json", "w", encoding="utf-8") as f:
             json.dump({"per_component": args.per_component,
-                       "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1], "min_weight": bpr[2], "min_weight_distance": bpr[3]},
-                       "d_profile": {"max_weight_position": bpr[4], "max_weight": bpr[5], "min_weight": bpr[6], "min_weight_distance": bpr[7]},
+                       "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
+                                     "min_weight": bpr[2], "min_weight_distance": bpr[3]},
+                       "d_profile": {"max_weight_position": bpr[4], "max_weight": bpr[5],
+                                     "min_weight": bpr[6], "min_weight_distance": bpr[7]},
                        "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
                        "max_directions": self.KMAX,
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,

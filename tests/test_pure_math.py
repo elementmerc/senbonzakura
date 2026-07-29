@@ -125,7 +125,7 @@ def test_scalar_of_worst_for_damaged_or_unmeasured():
 def test_scalar_of_intact():
     s = cli._scalar_of(_trial({"kl": 0.05, "broken": 0.0, "refusals": 0.1, "soft": 0.05, "heretic": 0.2}))
     assert s == pytest.approx(0.1 + 0.05 + 0.5 * 0.2)
-    assert cli.WORST_SCORE == float("inf")
+    assert float("inf") == cli.WORST_SCORE
 
 
 # ── _available_ram_bytes ─────────────────────────────────────────────────────────────

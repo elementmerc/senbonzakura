@@ -71,8 +71,8 @@ def generate(model, tok, prompts, device, batch=16, max_new=64):
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=max_new, do_sample=False,
                                  pad_token_id=tok.pad_token_id)
-        for j in range(len(chunk)):
-            gens.append(tok.decode(out[j][enc.input_ids.shape[1]:], skip_special_tokens=True))
+        gens.extend(tok.decode(out[j][enc.input_ids.shape[1]:], skip_special_tokens=True)
+                    for j in range(len(chunk)))
     return gens
 
 
@@ -112,11 +112,10 @@ def save_generations(path, prompts, gens, mode, model, label):
     import os
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        for i, (p, g) in enumerate(zip(prompts, gens)):
-            f.write(json.dumps({
+        f.writelines(json.dumps({
                 "i": i, "mode": mode, "model": model, "label": label,
                 "prompt": p, "generation": g,
-            }, ensure_ascii=False) + "\n")
+            }, ensure_ascii=False) + "\n" for i, (p, g) in enumerate(zip(prompts, gens, strict=True)))
     print(f"SAVED_GENERATIONS {path} n={len(gens)}")
 
 

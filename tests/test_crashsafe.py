@@ -5,8 +5,12 @@ forced re-running a 34-minute search and a stale torch failed only after a 31 GB
 crashsafe.py (no heavy imports) precisely so they can be tested without torch/optuna present.
 """
 from senbonzakura.crashsafe import (
-    MIN_TORCH, torch_version_ok, study_db_path, search_already_done,
-    winning_config, config_to_bake_args,
+    MIN_TORCH,
+    config_to_bake_args,
+    search_already_done,
+    study_db_path,
+    torch_version_ok,
+    winning_config,
 )
 
 

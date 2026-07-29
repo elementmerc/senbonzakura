@@ -9,7 +9,7 @@ import os
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 # ── a tiny transformer-shaped model ───────────────────────────────────────────────
@@ -54,7 +54,8 @@ class _Inner(nn.Module):
 
 class TinyModel(nn.Module):
     """A minimal causal-LM stand-in: real o_proj / down_proj Linears write the residual, so the
-    ablation genuinely changes the forward pass (and restore genuinely undoes it)."""
+    ablation genuinely changes the forward pass (and restore genuinely undoes it).
+    """
 
     def __init__(self, H=8, NL=4, V=16):
         super().__init__()
@@ -100,6 +101,7 @@ class TinyModel(nn.Module):
 
 class _Enc(dict):
     """Tokenizer output that works both as **kwargs and via .input_ids / .attention_mask."""
+
     def __init__(self, ids, mask):
         super().__init__(input_ids=ids, attention_mask=mask)
         self.input_ids = ids
@@ -223,7 +225,8 @@ def track(base_args):
 @pytest.fixture
 def abl(base_args, tiny_model, tiny_tok):
     """A constructed Abliterator with a valid orthonormal dirs_multi, ready for bake / eval tests
-    without running full extraction. Shared here so adversarial and integration tests can both use it."""
+    without running full extraction. Shared here so adversarial and integration tests can both use it.
+    """
     from senbonzakura import cli
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
     NL, H, K = a.NL, a.H, a.KMAX

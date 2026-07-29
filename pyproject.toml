@@ -48,7 +48,7 @@ quant = ["bitsandbytes>=0.43"]
 # in `dev` as well so the developer and CI parser surface stays identical, which
 # the argument-namespace fixture depends on.
 completion = ["shtab>=1.6"]
-dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff>=0.4", "shtab>=1.6"]
+dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff==0.16.0", "shtab>=1.6"]
 
 [project.urls]
 Homepage = "https://github.com/elementmerc/senbonzakura"
@@ -68,10 +68,118 @@ where = ["src"]
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]
 
+[tool.ruff]
+# 88 would flag 787 lines in a codebase whose median line is 56 characters and
+# whose p99 is 115: the long ones are weight-surgery expressions with a trailing
+# explanation, and breaking them reads worse. 120 keeps the rule meaningful.
+line-length = 120
+
+[tool.ruff.lint]
+# Everything, then subtract with a reason. Selecting a handful of families means
+# the rules that catch real defects are the ones nobody thought to enable: the
+# leaked file handle in the crash-recovery path was found by SIM115, which is not
+# in ruff's defaults.
+select = ["ALL"]
+ignore = [
+  # Deliberate, permanent.
+  "N806", "N803",  # non-lowercase names: W, Wf, Wn, Xc, Vh, H, NL are the maths
+  "D1",       # missing docstrings: shape-documenting docstrings are going on the
+              # surgery functions specifically; a blanket requirement produces noise
+  "COM812",   # trailing-comma rules that fight a formatter
+  "ISC001",
+  "TD002", "TD003", "FIX002",  # TODO authorship/issue-link rules; this repo tracks
+                               # deferred work in DEFERRED.md, not in issue numbers
+  "PLC0415", # imports inside functions are deliberate: torch and transformers cost
+             # seconds to import and the CLI must be able to print --help without them
+  "TRY003", "EM101", "EM102",  # long messages built at the raise site. Baseline §2.1
+                               # wants errors a user can act on, which is the opposite
+                               # of short exception strings and a lookup table
+  "PTH",      # os.path to pathlib is a migration with no defect behind it
+  "S603", "S607",  # subprocess calls with known-literal arguments (nvidia-smi)
+  "CPY001",   # copyright headers are real and scheduled: v1.0 adds SPDX plus
+              # copyright to every module. Enabled then, not suppressed forever
+  "FURB122",  # its fix turned an explicit write loop into a 136-character
+              # f.writelines generator, breaking the line limit it was run under.
+              # The loop is clearer in a module whose job is being auditable
+  "E702",     # `basis = [gd, d0]; kept = [d0]`: paired assignments on one line are
+              # a deliberate idiom in the surgery code, used consistently
+  "T201",     # print() is how the scorers report results; they are CLI entry points
+  "BLE001", "S110",  # the broad catches left are fail-open probes: /proc/meminfo with
+             # a documented fallback, VRAM queries that return None, a warm-start
+             # enqueue that logs its own exception. A hardware probe must never take
+             # down a multi-hour run. NOTE: this does not bless the two genuinely
+             # silent degradations (the SVD non-convergence path and the fake
+             # chat-template fallback); those are wrong for the opposite reason, they
+             # continue with a weaker result rather than failing open, and they are
+             # scheduled in tranche 4
+  "PLR2004", # comparison thresholds sit at their use site with the reasoning next to
+             # them; hoisting them to named constants moves the explanation away from
+             # the decision
+  "FBT001", "FBT002", "FBT003",  # boolean flags in signatures mirror the CLI flags
+                                 # one-for-one; renaming them would decouple the two
+  "D205", "D401", "D213",  # docstring formatting: these are prose paragraphs, not
+                           # one-line summaries with a body
+  "PLW0108",  # explicit lambdas that name their argument read better than operator
+  "EXE001",   # shebangs on modules that are also importable
+  "N812",     # `import torch.nn.functional as F` is the universal torch convention
+  "C408",     # dict(...) with keyword arguments reads as a record, not a literal
+  "ARG001", "ARG005",  # Optuna callback signatures and no-op log sinks are fixed by
+                       # their caller; the unused half is not ours to rename
+  "SIM105",   # contextlib.suppress hides which line is allowed to fail
+  "D400",     # docstring first lines that end in a colon introduce a list
+  "PLR0913", "PLR0917",  # argument counts. Real, and being addressed structurally by
+                         # the run() decomposition in tranche 3, not by suppression
+  "C901", "PLR0912", "PLR0915", "PLR0911",  # cyclomatic complexity, same answer:
+                         # run() is 237 lines and the fix is decomposition
+  "SIM103",   # the multi-branch predicates carry a comment per branch; collapsing
+              # them into one boolean expression would delete the explanations
+  "RUF001", "RUF003",  # the curly apostrophe in metrics.py is DATA, not typography:
+              # it is the character the verbatim Heretic normaliser folds to an
+              # ASCII quote. "Fixing" it would silently change what the metric matches
+  # Temporary. Type annotations are being adopted in one pass alongside the run()
+  # decomposition (sprint decision D19); this comes off when that lands.
+  "ANN",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "S101",     # assert is what a test is made of
+  "PLR2004",  # magic values are the point of a fixture
+  "SLF001",   # tests reach into private state deliberately
+  "INP001",   # tests/ is not a package
+  "ARG001", "ARG002", "ARG005",  # stub callbacks and fake signatures ignore their args
+  "PT018",    # composite assertions read fine in a table-driven test
+  "ANN",      # covered by the global temporary ignore, kept explicit for when it lifts
+  "PLR0913", "PLR0915",  # fixtures and end-to-end tests take many arguments by nature
+  "S108",     # /tmp paths in tests are fixtures for "this path does not exist"
+  "RUF059",   # unused unpacking is how a test says "I only care about this half"
+  "S105",     # "pad_token" / "eos_token" are tokeniser fields, not credentials
+  "E741",     # `I` is the identity matrix
+  "RUF001",   # deliberate non-ASCII: mojibake and wide characters are the input
+              # under test for the broken-output detector
+  "PT011", "PT013",  # pytest.raises breadth and import style in existing tests
+  "N818",     # _FakeOOM is a test double for torch's OOM, named after what it fakes
+  "ARG001", "ARG005",  # already ignored above; kept explicit for the same reason
+]
+
+[tool.pytest.ini_options]
+# Coverage runs on a bare `pytest`, so the gate is something you meet while working
+# rather than something CI tells you about after you push.
+addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing"
+
 [tool.coverage.run]
+source = ["senbonzakura"]              # without this, a run measures whatever happened to import
+branch = true
 omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; main()` shim
 
 [tool.coverage.report]
+# A ratchet, not a target. It starts at the number measured once the suite went
+# green (2026-07-29) and is raised at each tranche close, so uncovered code is
+# caught as it lands rather than in one reckoning at the end. Setting 90 before
+# the tests exist would make every bare `pytest` red through exactly the stretch
+# of work that needs a green signal, and the documented response to that is to
+# comment the line out.
+fail_under = 84
 exclude_also = [
   "if __name__ == .__main__.:",
   "pragma: no cover",

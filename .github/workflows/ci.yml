@@ -53,6 +53,13 @@ jobs:
         # own threshold, so the gate cannot drift between local and CI.
         run: pytest
 
+      - name: No committed prompts or generations
+        # The hard gate. .gitignore stops an accidental `git add .`; it does nothing
+        # about `git add -f`, a path that matches no pattern, or a file moved into a
+        # tracked directory. This reads what is actually in the tree, and it runs on
+        # every matrix row because it costs milliseconds.
+        run: python3 tools/check_prompt_artefacts.py .
+
   pinned:
     # The counterpart to `test`. That job floats every version, which is how an
     # upstream release that breaks us gets noticed early; this one holds the

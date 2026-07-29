@@ -15,6 +15,15 @@ ds/
 *_ds/
 data/
 *.arrow
+# Retained generations and per-prompt margins. These hold harmful prompts and the
+# replies a model gave to them, so the default is out.
+*.jsonl
+# evidence/ is the one committed home, and it needs an explicit negation: the rule
+# above would otherwise force `git add -f`, which defeats the ignore it bypasses.
+# Files landing here must already have their prompt and generation fields stripped,
+# which tools/check_prompt_artefacts.py enforces rather than trusts.
+!evidence/
+!evidence/**/*.jsonl
 # python
 __pycache__/
 *.pyc

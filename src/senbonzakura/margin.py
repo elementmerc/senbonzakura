@@ -26,6 +26,7 @@ because the pipeline read prose.
 """
 import argparse
 import json
+from pathlib import Path
 
 import torch
 from datasets import load_from_disk
@@ -42,7 +43,15 @@ def build_parser():
     ap.add_argument("--harmful", required=True, help="dataset of harmful prompts (column 'text')")
     ap.add_argument("--harmless", required=True, help="dataset of harmless prompts (column 'text')")
     ap.add_argument("--out", required=True, help="results json path")
-    ap.add_argument("--margins", default="", help="optional jsonl of every per-prompt margin")
+    # Retention is on by default. Both scoring errors in this project's history were
+    # invisible in the percentages and obvious in the per-prompt rows, so the rows are
+    # kept unless someone asks for them not to be.
+    ap.add_argument("--margins", default=None,
+                    help="jsonl of every per-prompt margin (default: alongside --out, as "
+                         "<out>.margins.jsonl). These rows hold the prompts, so they belong in "
+                         "the ignored results/ tree, not in committed evidence.")
+    ap.add_argument("--no-margins", dest="margins", action="store_const", const="",
+                    help="do not retain the per-prompt margins")
     ap.add_argument("--label", default="")
     ap.add_argument("--n", type=int, default=200)
     ap.add_argument("--skip-harmless", type=int, default=320,
@@ -160,6 +169,12 @@ def main(argv=None):
         raise SystemExit(f"this tokenizer maps HARMFUL and BENIGN onto shared first-token ids "
                          f"{shared}, so the margin cannot separate them")
 
+    # None means "not asked either way", so it takes the default beside --out. An
+    # explicit empty string is --no-margins, and must not be overwritten by the default.
+    margins_path = a.margins
+    if margins_path is None:
+        margins_path = str(Path(a.out).with_suffix("")) + ".margins.jsonl"
+
     mh = margins(model, tok, harmful, hid, bid, a.device, a.batch)
     ml = margins(model, tok, harmless, hid, bid, a.device, a.batch)
     score = auc(mh, ml)
@@ -170,6 +185,7 @@ def main(argv=None):
         # Both skips, recorded, because "held out" is a claim about these two numbers
         # and a reader cannot recover them from the AUC.
         "skip_harmful": a.skip_harmful, "skip_harmless": a.skip_harmless,
+        "margins_path": margins_path,
         "auc": round(score, 4),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
@@ -182,8 +198,9 @@ def main(argv=None):
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)
 
-    if a.margins:
-        with open(a.margins, "w", encoding="utf-8") as f:
+    if margins_path:
+        Path(margins_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(margins_path, "w", encoding="utf-8") as f:
             for kind, ms, ps in (("harmful", mh, harmful), ("harmless", ml, harmless)):
                 # strict=True: a margin count that has drifted from its prompt count means the
                 # rows are misaligned, and every margin after the drift is attributed to the

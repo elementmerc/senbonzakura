@@ -11,6 +11,7 @@ published AUC comes from.
 """
 import json
 import random
+from pathlib import Path
 
 import pytest
 import torch
@@ -204,6 +205,52 @@ def test_main_holds_out_the_head_of_the_harmless_set(loaded, tmp_path):
         rows = [json.loads(line) for line in f]
     harmless = [r["prompt"] for r in rows if r["set"] == "harmless"]
     assert harmless == ["harmless question 5", "harmless question 6"]
+
+
+def test_margins_are_retained_by_default(loaded, tmp_path):
+    """Both historical scoring bugs were invisible in the percentages, so the default is on."""
+    bad, good = _track(tmp_path)
+    out = str(tmp_path / "deep" / "res.json")
+    Path(out).parent.mkdir()
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", out,
+                       "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0", "--device", "cpu"])
+    expected = tmp_path / "deep" / "res.margins.jsonl"
+    assert res["margins_path"] == str(expected)
+    assert expected.exists()
+    assert len(expected.read_text(encoding="utf-8").strip().split("\n")) == 4
+
+
+def test_no_margins_turns_retention_off(loaded, tmp_path):
+    """An explicit empty string must not be overwritten by the default."""
+    bad, good = _track(tmp_path)
+    out = str(tmp_path / "res.json")
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", out,
+                       "--no-margins", "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0",
+                       "--device", "cpu"])
+    assert res["margins_path"] == ""
+    assert not (tmp_path / "res.margins.jsonl").exists()
+
+
+def test_the_retained_rows_would_be_refused_by_the_commit_guard(loaded, tmp_path):
+    """The two halves of task 11 meet here: retention is on, and the guard catches it.
+
+    A default-on artefact full of harmful prompts is only safe because something
+    refuses to commit it. This asserts the guard actually fires on what margin.py
+    writes, rather than on a hand-built example of what it might write.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cpa", Path(__file__).resolve().parent.parent / "tools" / "check_prompt_artefacts.py")
+    cpa = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cpa)
+
+    bad, good = _track(tmp_path)
+    margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                 "--out", str(tmp_path / "res.json"), "--n", "2", "--skip-harmful", "0",
+                 "--skip-harmless", "0", "--device", "cpu"])
+    findings = cpa.scan_file(tmp_path / "res.margins.jsonl")
+    assert findings, "the guard did not fire on a retained-margins file"
+    assert all("carries prompt" in f for f in findings)
 
 
 def test_main_holds_out_the_head_of_the_harmful_set_too(loaded, tmp_path):

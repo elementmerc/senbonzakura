@@ -125,3 +125,74 @@ def test_bake_restore_roundtrip_with_offloaded_layer(abl):
     assert not torch.equal(real, before)
     abl.restore_weights()
     assert torch.allclose(real, before, atol=1e-6)
+
+
+# ── the real thing: accelerate's actual dispatch_model (tranche 4, task 23) ───────────
+# Everything above uses a hand-built hook. That verifies our resolution logic and cannot
+# verify the assumption the logic RESTS on, which is a claim about accelerate: that
+# weights_map hands back one stable tensor whose in-place edits reach the next forward.
+# Measured against accelerate 1.14.0, that claim is FALSE for disk-backed offload, and a
+# bake into such a layer is discarded silently. These tests pin the real behaviour so an
+# accelerate upgrade that changes it is noticed here rather than in a published number.
+def _dispatched(tmp_path, disk_layers=(0,), n_layers=4):
+    from accelerate import dispatch_model
+    from conftest import TinyModel
+    model = TinyModel(H=8, NL=n_layers, V=16)
+    device_map = {f"model.layers.{i}": ("disk" if i in disk_layers else "cpu")
+                  for i in range(n_layers)}
+    device_map["lm_head"] = "cpu"
+    return dispatch_model(model, device_map=device_map,
+                          offload_dir=str(tmp_path / "offload"), main_device="cpu")
+
+
+def test_disk_offload_really_does_produce_a_meta_parameter(tmp_path):
+    """The premise of the whole offload path, confirmed against the real library."""
+    model = _dispatched(tmp_path)
+    assert model.model.layers[0].self_attn.o_proj.weight.is_meta
+    assert not model.model.layers[1].self_attn.o_proj.weight.is_meta
+
+
+def test_a_disk_offload_map_does_not_return_a_stable_tensor(tmp_path):
+    """The assumption the bake rested on, measured. Both references are held on purpose."""
+    model = _dispatched(tmp_path)
+    wm = model.model.layers[0].self_attn.o_proj._hf_hook.weights_map
+    first = wm["weight"]
+    second = wm["weight"]
+    assert first is not second, "accelerate now returns a stable tensor; the guard can relax"
+
+
+def test_an_in_place_edit_on_a_disk_offload_map_is_discarded(tmp_path):
+    """Why the guard has to refuse: the edit reaches nothing at all."""
+    model = _dispatched(tmp_path)
+    wm = model.model.layers[0].self_attn.o_proj._hf_hook.weights_map
+    ids = torch.tensor([[1, 2, 3]])
+    before = model(input_ids=ids).logits.clone()
+    wm["weight"].zero_()
+    assert torch.allclose(before, model(input_ids=ids).logits)   # forward unchanged
+    assert wm["weight"].abs().sum() != 0                         # and the write vanished
+
+
+def test_real_tensor_refuses_a_disk_offloaded_weight_instead_of_baking_into_a_copy(tmp_path):
+    """Before this, the bake ran, reported success, and changed nothing.
+
+    That is the worst failure shape available: an unabliterated model published as an
+    abliterated one, with every number in the run consistent with success.
+    """
+    model = _dispatched(tmp_path)
+    with pytest.raises(ValueError, match="disk-offloaded"):
+        _real_tensor(model.model.layers[0].self_attn.o_proj, "weight")
+
+
+def test_real_tensor_still_accepts_a_resident_weight_under_real_dispatch(tmp_path):
+    """The guard must not fire on the layers that are genuinely editable."""
+    model = _dispatched(tmp_path)
+    resident = model.model.layers[1].self_attn.o_proj
+    got = _real_tensor(resident, "weight")
+    assert got is resident.weight
+    assert not got.is_meta
+
+
+def test_the_refusal_names_the_way_out(tmp_path):
+    model = _dispatched(tmp_path)
+    with pytest.raises(ValueError, match="more VRAM or host-RAM headroom"):
+        _real_tensor(model.model.layers[0].self_attn.o_proj, "weight")

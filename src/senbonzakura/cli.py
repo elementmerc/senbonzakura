@@ -220,9 +220,28 @@ def _real_tensor(owner, name):
     if wm is not None:
         try:
             real = wm[name]
+            # Read it a SECOND time and hold both references. The whole bake depends on
+            # weights_map handing back one stable tensor: an in-place edit only reaches the
+            # next forward if the mapping stores the object rather than materialising it.
+            # Disk-backed offload reads from the folder on every access, so each read is a
+            # fresh tensor and the edit is written to something thrown away immediately.
+            #
+            # Holding both references matters. Comparing ids across two separate reads,
+            # without keeping the first alive, can pass by accident: CPython reuses the freed
+            # tensor's address, so the check reports stability that is not there. That is why
+            # this went unnoticed, and it is why the two reads are compared as objects.
+            probe = wm[name]
         except (KeyError, TypeError):
-            real = None
+            real = probe = None
         if real is not None and not getattr(real, "is_meta", False):
+            if real is not probe:
+                raise ValueError(
+                    f"weight {name!r} on {type(owner).__name__} is disk-offloaded: its offload map "
+                    "returns a new tensor on every read, so the norm-preserving bake would write "
+                    "into a copy that is discarded before the next forward pass, and the model "
+                    "would come out unabliterated with nothing reporting it. Load with more VRAM "
+                    "or host-RAM headroom so the weights stay resident or CPU-offloaded, which "
+                    "both support in-place editing.")
             return real
     raise ValueError(
         f"weight {name!r} on {type(owner).__name__} is on the meta device with no resident offload "

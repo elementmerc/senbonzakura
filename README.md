@@ -81,9 +81,23 @@ The abliterator itself runs in full precision, because it rewrites weights and 4
 tensors can't be orthogonalised in place, so `--load-in-4bit` is a measurement option, not
 an abliteration one. A man page is installed to `share/man/man1/senbonzakura.1`.
 
-Shell completion for bash, zsh, and tcsh is generated on demand (the same one time step
-`pip`, `gh`, and `poetry` use): `senbonzakura --print-completion bash | sudo tee
-/etc/bash_completion.d/senbonzakura`, or the zsh/tcsh equivalent for your shell.
+Shell completion for bash, zsh, and tcsh needs `pip install ".[completion]"`, then is
+generated on demand (the same one time step `pip`, `gh`, and `poetry` use):
+`senbonzakura --print-completion bash | sudo tee /etc/bash_completion.d/senbonzakura`, or the
+zsh/tcsh equivalent for your shell. Without that extra the flag is simply absent; nothing
+else changes.
+
+### Running the tests
+
+```sh
+python -m venv .venv && .venv/bin/pip install --upgrade pip
+.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch   # CPU build, no GPU needed
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest                                                     # add --cov for coverage
+```
+
+The suite runs entirely on CPU against small hand-built fixtures, so it needs no model
+download and no GPU.
 
 Supported architectures: dense transformers (Llama, Qwen, Mistral, Gemma, Phi and the
 like), fused-expert MoE (Qwen3-MoE, Granite-MoE), Mixtral (fused or unfused), OLMoE, and

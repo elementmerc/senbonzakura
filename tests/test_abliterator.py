@@ -302,6 +302,12 @@ def test_loader_cuda_auto_branch(monkeypatch, tiny_model, tiny_tok):
 
 
 def test_loader_4bit_branch(monkeypatch, tiny_model, tiny_tok):
+    # transformers 4.56 resolves the bitsandbytes distribution when BitsAndBytesConfig is
+    # constructed and raises PackageNotFoundError without it; 5.x does not. So this test
+    # was passing on the developer machine only because of the installed transformers,
+    # not because the package was there, and it failed the moment CI ran the declared
+    # floor. Skipping without the package is the honest reading: the branch needs it.
+    pytest.importorskip("bitsandbytes", reason="the 4-bit branch needs the quant extra")
     _patch_hf(monkeypatch, tiny_model, tiny_tok)
     m, t = cli.load_model_and_tokenizer("x", device="cuda", load_in_4bit=True)
     assert m is tiny_model   # branch runs; BitsAndBytesConfig is constructed, load is mocked

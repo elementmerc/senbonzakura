@@ -160,7 +160,13 @@ class TinyTokenizer:
             for c in t:
                 h = (h * 31 + ord(c)) % 997
                 ids.append((h % 12) + 1)      # 1..12, never 0 (0 is the pad id)
-            seqs.append(ids[-8:] or [1])      # tail, so the last token reflects the whole text
+            # The tail, so the last token reflects the whole text through the running hash.
+            # The cap is 256 rather than 8 because at 8 every text longer than eight
+            # characters encodes to exactly the same length, and a fixture where length is
+            # constant cannot exercise anything that measures length: the construct-validity
+            # length control read a constant and reported a clean bill of health. 256 clears
+            # the 148-character judge template, so a prompt's own length still shows through.
+            seqs.append(ids[-256:] or [1])
         L = max(len(s) for s in seqs)
         ids, mask = [], []
         for s in seqs:                                   # LEFT padding, matching the real setup

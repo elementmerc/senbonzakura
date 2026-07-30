@@ -75,6 +75,14 @@ def build_parser():
                     help="a margins jsonl from a previous run on the same prompts (typically the "
                          "unabliterated model). Adds the PAIRED interval on the change, which is "
                          "much tighter than comparing two separate intervals by eye")
+    ap.add_argument("--harmless-matched", dest="harmless_matched", default="",
+                    help="optional dataset of harmless prompts on the SAME subjects as the "
+                         "harmful arm. Adds the topic-matched AUC, which is the same question "
+                         "with topic held still: a harmless arm on unrelated subjects lets a "
+                         "topic classifier score well without recognising harm at all")
+    ap.add_argument("--skip-matched", dest="skip_matched", type=int, default=0,
+                    help="drop the head of the topic-matched set, as --skip-harmless does for "
+                         "the main harmless arm")
     ap.add_argument("--chat-template", dest="chat_template", default="",
                     help="Jinja chat template file, for a model that ships none. Prompt "
                          "format drives every measurement here, so a missing template is an "
@@ -100,14 +108,31 @@ def label_token_ids(tok, word):
     return sorted(ids)
 
 
+def canonical_token_id(tok, word):
+    """The first-token id of the verdict word spelled exactly as the judge prompt asks for it.
+
+    `label_token_ids` takes the best of several spellings, which is the right thing for the
+    headline number and is also a free parameter. This is the fixed alternative the controls
+    compare against: one token, chosen without looking at the logits.
+    """
+    enc = tok.encode(word, add_special_tokens=False)
+    return enc[0] if enc else None
+
+
 @torch.no_grad()
-def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=None, log=None):
+def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=None, log=None,
+            detail=False, canonical=None):
     """Per prompt: max logit over HARMFUL spellings minus max over BENIGN spellings.
 
     Chunked by the shared ResourceGovernor rather than a fixed stride, so the compass
     shrinks its batch under VRAM pressure and pauses instead of dying, the same way
     every other batched pass in this project already did. On CPU the governor is
     inert and chunks at the ceiling, so the numbers are identical either way.
+
+    `detail=True` returns a dict per prompt instead of a float, adding the two things the
+    construct-validity controls need: the same difference taken over a single fixed token
+    pair (`canonical`, from `canonical_token_id`), and the prompt's real token count. Both
+    come off the forward pass that already happened, so the controls cost no extra compute.
     """
     def _do(chunk):
         texts = [tok.apply_chat_template([{"role": "user", "content": JUDGE_TEMPLATE.format(p)}],
@@ -118,7 +143,21 @@ def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=
         logits = last_token_logits(model, enc, log)
         h = logits[:, harmful_ids].max(dim=-1).values
         b = logits[:, benign_ids].max(dim=-1).values
-        return (h - b).cpu().tolist()
+        scores = (h - b).cpu().tolist()
+        if not detail:
+            return scores
+        # The padding mask, not the padded width: left padding makes every row the same
+        # length, and a length control measured on the pad would be a constant.
+        mask = enc.get("attention_mask")
+        lengths = (mask.sum(dim=-1).cpu().tolist() if mask is not None
+                   else [int(enc["input_ids"].shape[-1])] * len(chunk))
+        if canonical and None not in canonical:
+            ch, cb = canonical
+            single = (logits[:, ch] - logits[:, cb]).cpu().tolist()
+        else:
+            single = [None] * len(chunk)
+        return [{"margin": m, "canonical": c, "tokens": t}
+                for m, c, t in zip(scores, single, lengths, strict=True)]
 
     gov = gov or ResourceGovernor(device, log, max_batch=batch)
     return gov.run(_do, list(prompts))
@@ -147,6 +186,75 @@ def auc(pos, neg):
     ranks = (last_rank - (counts.to(torch.float64) - 1) / 2)[inverse]
     rank_sum_pos = float(ranks[:n].sum())
     return (rank_sum_pos - n * (n + 1) / 2) / (n * m)
+
+
+def _ranks(values):
+    """Tie-averaged 1-based ranks, the same convention `auc` uses."""
+    x = torch.tensor(values, dtype=torch.float64)
+    _, inverse, counts = torch.unique(x, return_inverse=True, return_counts=True)
+    last_rank = torch.cumsum(counts, 0).to(torch.float64)
+    return (last_rank - (counts.to(torch.float64) - 1) / 2)[inverse]
+
+
+def rank_corr(a, b):
+    """Spearman correlation: Pearson on tie-averaged ranks. None when it is undefined.
+
+    Written out rather than imported, because the only thing needed from a statistics
+    package is this, and the ranks are already computed the same way for the AUC.
+    """
+    if len(a) != len(b) or len(a) < 2:
+        return None
+    ra, rb = _ranks(a), _ranks(b)
+    ra = ra - ra.mean()
+    rb = rb - rb.mean()
+    denominator = float(torch.sqrt((ra * ra).sum() * (rb * rb).sum()))
+    if denominator == 0.0:                 # a constant arm has no correlation to report
+        return None
+    return round(float((ra * rb).sum()) / denominator, 4)
+
+
+def controls(harmful, harmless):
+    """Construct-validity controls: is the compass measuring harm, or something correlated?
+
+    An AUC on its own cannot answer that. Three cheap checks that can, each computed from
+    the forward passes the headline number already paid for:
+
+    `length_only_auc`
+        Rank the prompts by TOKEN COUNT alone and take the AUC of that. It is the score a
+        ruler that has read nothing could achieve. If it lands near the real AUC, the
+        compass may be reporting that harmful prompts in this corpus are simply longer.
+    `canonical_auc`
+        The same AUC using one fixed token pair instead of the best of several spellings.
+        Taking a max over spellings is a free parameter chosen by looking at the logits, so
+        a headline that moves when it is removed is a headline that depends on the choice.
+    `length_corr_*`
+        Spearman correlation between prompt length and margin, per arm. Within one arm harm
+        is roughly constant, so a strong correlation here is length leaking into the score
+        directly rather than through the arms.
+
+    Returns counts and numbers only, never a prompt.
+    """
+    out = {}
+    lengths_h = [r["tokens"] for r in harmful]
+    lengths_l = [r["tokens"] for r in harmless]
+    margins_h = [r["margin"] for r in harmful]
+    margins_l = [r["margin"] for r in harmless]
+
+    out["length_only_auc"] = auc(lengths_h, lengths_l)
+    out["mean_tokens_harmful"] = round(sum(lengths_h) / len(lengths_h), 2) if lengths_h else None
+    out["mean_tokens_harmless"] = round(sum(lengths_l) / len(lengths_l), 2) if lengths_l else None
+    out["length_corr_harmful"] = rank_corr(lengths_h, margins_h)
+    out["length_corr_harmless"] = rank_corr(lengths_l, margins_l)
+
+    canon_h = [r["canonical"] for r in harmful]
+    canon_l = [r["canonical"] for r in harmless]
+    if None in canon_h or None in canon_l:
+        out["canonical_auc"] = None
+        out["canonical_note"] = ("one of the verdict words has no single-token spelling in this "
+                                 "tokenizer, so there is no fixed-token comparison to make")
+    else:
+        out["canonical_auc"] = auc(canon_h, canon_l)
+    return out
 
 
 def _resampled_auc(pos, neg, gen):
@@ -212,6 +320,11 @@ def paired_bootstrap_delta_ci(before, after, seed=0, resamples=2000, alpha=0.05)
         "delta_crosses_zero": bool(lo <= 0.0 <= hi),
         "resamples": resamples, "seed": int(seed),
     }
+
+
+def _fmt(value):
+    """A control that could not be computed prints as such rather than as a number."""
+    return "n/a" if value is None else f"{value:.4f}"
 
 
 def load_prompts(path, what):
@@ -298,7 +411,8 @@ def main(argv=None):
     # skip reads the TAIL of the set, which is real data from the wrong partition.
     if a.n < 1:
         raise SystemExit(f"--n {a.n} scores no prompts; an AUC needs at least one per arm")
-    for flag, value in (("--skip-harmful", a.skip_harmful), ("--skip-harmless", a.skip_harmless)):
+    for flag, value in (("--skip-harmful", a.skip_harmful), ("--skip-harmless", a.skip_harmless),
+                        ("--skip-matched", a.skip_matched)):
         if value < 0:
             raise SystemExit(f"{flag} {value} is negative, which would read the end of the set "
                              f"instead of skipping its head")
@@ -337,8 +451,13 @@ def main(argv=None):
     if margins_path is None:
         margins_path = str(Path(a.out).with_suffix("")) + ".margins.jsonl"
 
-    mh = margins(model, tok, harmful, hid, bid, a.device, a.batch)
-    ml = margins(model, tok, harmless, hid, bid, a.device, a.batch)
+    canonical = (canonical_token_id(tok, "HARMFUL"), canonical_token_id(tok, "BENIGN"))
+    detail_h = margins(model, tok, harmful, hid, bid, a.device, a.batch,
+                       detail=True, canonical=canonical)
+    detail_l = margins(model, tok, harmless, hid, bid, a.device, a.batch,
+                       detail=True, canonical=canonical)
+    mh = [r["margin"] for r in detail_h]
+    ml = [r["margin"] for r in detail_l]
     score = auc(mh, ml)
 
     res = {
@@ -369,7 +488,37 @@ def main(argv=None):
         # ignorance, so record it rather than leaving it to be inferred.
         "frac_harmful_positive": round(sum(m > 0 for m in mh) / len(mh), 4),
         "frac_harmless_positive": round(sum(m > 0 for m in ml) / len(ml), 4),
+        # An AUC alone cannot say whether it measures harm or something that travels with
+        # it. These say what a ruler reading nothing but prompt length would score, and
+        # whether the headline survives dropping the max-over-spellings choice.
+        "controls": controls(detail_h, detail_l),
     }
+    # The topic-matched control. A harmless arm drawn from a different subject matter lets
+    # topic stand in for harm: "how do I make a bomb" against "what is the capital of Peru"
+    # is a comparison a topic classifier wins. Scoring the same harmful arm against harmless
+    # prompts on the SAME subjects is the version of the question with topic held still, and
+    # the gap between the two AUCs is how much of the headline was topic.
+    if a.harmless_matched:
+        matched_all = load_prompts(a.harmless_matched, "topic-matched harmless")
+        matched = matched_all[a.skip_matched:a.skip_matched + a.n]
+        if not matched:
+            raise SystemExit(f"the topic-matched harmless set at {a.harmless_matched} has "
+                             f"{len(matched_all)} rows; --skip-matched {a.skip_matched} leaves none")
+        detail_m = margins(model, tok, matched, hid, bid, a.device, a.batch,
+                           detail=True, canonical=canonical)
+        mm = [r["margin"] for r in detail_m]
+        res["topic_matched"] = {
+            "source": a.harmless_matched,
+            "n": len(mm),
+            "skip": a.skip_matched,
+            # Fewer rows than the main arm is the normal case, so the interval matters more
+            # here than anywhere: a matched set of 140 carries a standard error of about 0.05.
+            "auc": round(auc(mh, mm), 4),
+            "auc_ci": bootstrap_auc_ci(mh, mm, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,
+            "mean_margin": round(sum(mm) / len(mm), 4),
+            "controls": controls(detail_h, detail_m),
+        }
+
     if a.compare_to:
         before = load_margins_jsonl(a.compare_to, harmful, harmless)
         res["paired"] = paired_bootstrap_delta_ci((*before,), (mh, ml),
@@ -394,6 +543,17 @@ def main(argv=None):
           f"mean_h={res['mean_margin_harmful']:.3f} mean_l={res['mean_margin_harmless']:.3f} "
           f"says_harmful_h={res['frac_harmful_positive']*100:.1f}% "
           f"says_harmful_l={res['frac_harmless_positive']*100:.1f}%")
+    c = res["controls"]
+    print(f"MARGIN_CONTROLS {a.label} length_only_auc={_fmt(c['length_only_auc'])} "
+          f"canonical_auc={_fmt(c['canonical_auc'])} "
+          f"length_corr_h={_fmt(c['length_corr_harmful'])} "
+          f"length_corr_l={_fmt(c['length_corr_harmless'])} "
+          f"tokens_h={c['mean_tokens_harmful']} tokens_l={c['mean_tokens_harmless']}")
+    if res.get("topic_matched"):
+        t = res["topic_matched"]
+        tci = f" ci=[{t['auc_ci'][0]:.4f},{t['auc_ci'][1]:.4f}]" if t["auc_ci"] else ""
+        print(f"MARGIN_TOPIC_MATCHED {a.label} auc={t['auc']:.4f}{tci} n={t['n']} "
+              f"(against auc={score:.4f} on the unmatched harmless arm)")
     if res.get("paired"):
         p = res["paired"]
         verdict = "CROSSES ZERO" if p["delta_crosses_zero"] else "excludes zero"

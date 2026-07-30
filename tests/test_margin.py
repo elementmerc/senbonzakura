@@ -258,6 +258,119 @@ def test_margins_of_no_prompts_is_empty(margin_kit):
     assert margin.margins(model, tok, [], [0], [1], "cpu") == []
 
 
+# ── the construct-validity controls (task 14) ──────────────────────────────────────
+def test_detail_carries_the_margin_the_plain_call_returns(margin_kit):
+    """The controls must not be able to disagree with the headline they qualify."""
+    model, tok = margin_kit
+    hid = margin.label_token_ids(tok, "HARMFUL")
+    bid = margin.label_token_ids(tok, "BENIGN")
+    prompts = ["short one", "a much longer prompt with a good few more words in it"]
+    plain = margin.margins(model, tok, prompts, hid, bid, "cpu", batch=2)
+    detailed = margin.margins(model, tok, prompts, hid, bid, "cpu", batch=2, detail=True,
+                              canonical=(hid[0], bid[0]))
+    assert [r["margin"] for r in detailed] == pytest.approx(plain, abs=1e-6)
+
+
+def test_the_recorded_length_is_the_real_one_not_the_padded_width(margin_kit):
+    """Left padding makes every row the same width, so a padded length is a constant.
+
+    A length control measured on the padded width would report a correlation of nothing
+    with everything and look like a clean bill of health.
+    """
+    model, tok = margin_kit
+    hid = margin.label_token_ids(tok, "HARMFUL")
+    bid = margin.label_token_ids(tok, "BENIGN")
+    prompts = ["tiny", "a considerably longer prompt than the first one by some margin"]
+    rows = margin.margins(model, tok, prompts, hid, bid, "cpu", batch=2, detail=True,
+                          canonical=(hid[0], bid[0]))
+    assert rows[0]["tokens"] < rows[1]["tokens"]
+
+    alone = margin.margins(model, tok, prompts, hid, bid, "cpu", batch=1, detail=True,
+                           canonical=(hid[0], bid[0]))
+    assert [r["tokens"] for r in rows] == [r["tokens"] for r in alone]
+
+
+def test_a_verdict_word_with_no_single_token_spelling_says_so(margin_kit):
+    model, tok = margin_kit
+    hid = margin.label_token_ids(tok, "HARMFUL")
+    bid = margin.label_token_ids(tok, "BENIGN")
+    rows = margin.margins(model, tok, ["a prompt"], hid, bid, "cpu", detail=True, canonical=None)
+    assert rows[0]["canonical"] is None
+    out = margin.controls(rows, rows)
+    assert out["canonical_auc"] is None and "canonical_note" in out
+
+
+@pytest.mark.parametrize(("a", "b", "expected"), [
+    ([1, 2, 3, 4], [1, 2, 3, 4], 1.0),
+    ([1, 2, 3, 4], [4, 3, 2, 1], -1.0),
+    # 1 - 6*sum(d^2)/(n(n^2-1)) with d = (0, -2, 1, 1): 1 - 36/60.
+    ([1, 2, 3, 4], [1, 4, 2, 3], 0.4),
+])
+def test_rank_correlation_against_hand_computed_values(a, b, expected):
+    assert margin.rank_corr(a, b) == pytest.approx(expected, abs=1e-4)
+
+
+def test_rank_correlation_averages_ties():
+    """Two tied pairs against a monotone series.
+
+    Ranks become 1.5, 1.5, 3.5, 3.5 against 1, 2, 3, 4, and Pearson on those is
+    4 / sqrt(4 * 5) = 0.8944. The tie-free version of the same ordering would be 1.0, so
+    the number is the tie handling showing up rather than a loss of signal.
+    """
+    assert margin.rank_corr([1, 1, 2, 2], [1, 2, 3, 4]) == pytest.approx(0.8944, abs=1e-4)
+
+
+@pytest.mark.parametrize(("a", "b"), [
+    ([1, 1, 1], [1, 2, 3]),      # one side constant: no correlation exists to report
+    ([1], [1]),                  # too few points
+    ([1, 2], [1, 2, 3]),         # mismatched lengths
+])
+def test_rank_correlation_is_none_where_it_is_undefined(a, b):
+    assert margin.rank_corr(a, b) is None
+
+
+def _rows(margins_, canon, tokens):
+    return [{"margin": m, "canonical": c, "tokens": t}
+            for m, c, t in zip(margins_, canon, tokens, strict=True)]
+
+
+def test_a_length_only_ruler_is_scored_on_the_same_scale_as_the_headline():
+    """If the harmful arm is simply longer, a ruler that reads nothing scores well.
+
+    This is the control's whole point: a length-only AUC near the headline means the
+    headline may be reporting a property of the corpus rather than of the model.
+    """
+    harmful = _rows([5.0, 6.0, 7.0], [5.0, 6.0, 7.0], [40, 45, 50])
+    harmless = _rows([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [10, 12, 14])
+    out = margin.controls(harmful, harmless)
+    assert out["length_only_auc"] == 1.0            # perfectly separable by length alone
+    assert out["mean_tokens_harmful"] == 45.0
+    assert out["mean_tokens_harmless"] == 12.0
+
+
+def test_a_length_balanced_corpus_gives_a_length_only_auc_at_chance():
+    harmful = _rows([5.0, 6.0], [5.0, 6.0], [30, 10])
+    harmless = _rows([1.0, 2.0], [1.0, 2.0], [10, 30])
+    assert margin.controls(harmful, harmless)["length_only_auc"] == 0.5
+
+
+def test_the_canonical_auc_can_disagree_with_the_headline_auc():
+    """Which is the finding: taking the max over spellings is a choice, not a measurement."""
+    harmful = _rows([9.0, 9.0], [-1.0, -2.0], [20, 20])
+    harmless = _rows([1.0, 1.0], [5.0, 6.0], [20, 20])
+    out = margin.controls(harmful, harmless)
+    assert out["canonical_auc"] == 0.0              # the fixed token pair inverts it entirely
+
+
+def test_the_controls_report_no_prompts(margin_kit):
+    """Every diagnostic here is a number, because the inputs are harmful text."""
+    harmful = _rows([1.0, 2.0], [1.0, 2.0], [10, 20])
+    out = margin.controls(harmful, harmful)
+    assert all(v is None or isinstance(v, (int, float, str)) for v in out.values())
+    assert not any(isinstance(v, str) and " " in v and "tokenizer" not in v
+                   for k, v in out.items() if k != "canonical_note")
+
+
 # ── the memory fix (task 10) ───────────────────────────────────────────────────────
 def test_only_the_last_position_is_computed(margin_kit, monkeypatch):
     """A [B, T, V] tensor is ~10 GB at batch 16 on a large vocabulary, all but one row wasted."""
@@ -490,6 +603,47 @@ def test_main_refuses_a_tokenizer_that_shares_a_verdict_id(loaded, tmp_path, mon
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
                      "--skip-harmless", "0", "--device", "cpu"])
+
+
+# ── the controls, end to end (task 14) ─────────────────────────────────────────────
+def test_every_result_carries_the_controls(loaded, tmp_path, capsys):
+    """No refusal or discrimination figure ships without the controls that qualify it."""
+    res = _run(loaded, tmp_path, "controlled")
+    c = res["controls"]
+    for key in ("length_only_auc", "canonical_auc", "length_corr_harmful",
+                "length_corr_harmless", "mean_tokens_harmful", "mean_tokens_harmless"):
+        assert key in c, f"the controls lost {key}"
+    assert "MARGIN_CONTROLS" in capsys.readouterr().out
+
+
+def test_the_topic_matched_arm_is_reported_beside_the_headline(loaded, tmp_path, capsys):
+    from datasets import Dataset
+    matched = str(tmp_path / "matched")
+    Dataset.from_dict({"text": [f"harmless question about the same subject {i}" for i in range(4)]}
+                      ).save_to_disk(matched)
+    res = _run(loaded, tmp_path, "matched", extra=["--harmless-matched", matched])
+    t = res["topic_matched"]
+    assert t["n"] == 3 and t["source"] == matched
+    assert t["auc_ci"][0] <= t["auc"] <= t["auc_ci"][1]
+    assert "controls" in t
+    out = capsys.readouterr().out
+    assert "MARGIN_TOPIC_MATCHED" in out
+    assert "on the unmatched harmless arm" in out       # the comparison, not a lone number
+
+
+def test_a_topic_matched_skip_that_leaves_nothing_is_refused(loaded, tmp_path):
+    from datasets import Dataset
+    matched = str(tmp_path / "matched")
+    Dataset.from_dict({"text": ["one matched harmless prompt"]}).save_to_disk(matched)
+    with pytest.raises(SystemExit, match="leaves none"):
+        _run(loaded, tmp_path, "matched",
+             extra=["--harmless-matched", matched, "--skip-matched", "5"])
+
+
+def test_a_run_without_a_matched_set_says_nothing_about_one(loaded, tmp_path, capsys):
+    res = _run(loaded, tmp_path, "plain")
+    assert "topic_matched" not in res
+    assert "MARGIN_TOPIC_MATCHED" not in capsys.readouterr().out
 
 
 # ── the paired comparison end to end ───────────────────────────────────────────────

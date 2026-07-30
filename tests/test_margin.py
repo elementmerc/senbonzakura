@@ -191,6 +191,11 @@ def test_an_unchanged_model_has_a_delta_interval_that_crosses_zero():
     got = margin.paired_bootstrap_delta_ci((pos, neg), (list(pos), list(neg)), seed=2, resamples=300)
     assert got["delta_auc"] == 0.0
     assert got["delta_crosses_zero"]
+    # Sharper than "crosses zero", and the reason this test earns its place: identical
+    # inputs can only give an interval of exactly zero width if every replicate applies
+    # ONE set of prompt indices to both models. Resample the two arms independently and
+    # the deltas scatter, so this is what actually pins the pairing.
+    assert got["delta_ci"] == (0.0, 0.0)
 
 
 @pytest.mark.parametrize(("before", "after"), [

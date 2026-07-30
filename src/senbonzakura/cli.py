@@ -1305,12 +1305,44 @@ class Abliterator:
             return self._run()
 
     def _run(self):
-        args, log, NL = self.args, self.log, self.NL
+        """The pipeline, as four named phases with three diagnostic exits between the first two.
+
+        It was one 290-line method, and the cost was specific rather than aesthetic: the phases
+        share mutable state through `self`, so reading the knee selection meant scrolling back
+        170 lines to learn what `self.bad_eval` held and whether the weights were pristine at
+        that point. Each phase is named now and what crosses a boundary is an argument or a
+        return value.
+
+        The exits sit after preparation because each one wants the directions and the eval sets
+        and no search: `--inspect` shows what an ablation does to real generations, `--bench-only`
+        probes one fixed window, and `--bake-config` re-bakes a saved winner, which turns a
+        crashed save into minutes of work rather than a repeat of the whole search.
+        """
+        args = self.args
+        TR = args.track
+        base_ref = self._prepare_evals(TR)
+        if args.inspect is not None:
+            return self._inspect()
+        if args.bench_only:
+            return self._bench_only()
+        if args.bake_config:
+            return self._bake_saved_config(base_ref, TR)
+        study, db = self._run_search(TR)
+        bpr, b_K, b_mode, b_di = self._select_knee(study, db, TR)
+        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+
+    def _prepare_evals(self, TR):
+        """Extract the directions, build the eval sets, and prove the run can finish.
+
+        Returns the baseline refusal rate, which every later phase reports against. Leaves
+        `self.bad_eval`, `self.kl_eval` and `self.orig_lp` set and the weights snapshotted, so
+        the search can restore a pristine model between trials.
+        """
+        args, log = self.args, self.log
         # Before the search spends a GPU on it. Every trial's objective is scored with
         # this ruler, so one that misreads does not fail, it optimises toward the wrong
         # configuration and reports a confident number for it.
         log(f"ruler self-check: {validate_ruler()} cases pass")
-        TR = args.track
         # A track records where its partitions end; every dataset here is read as a head of
         # N rows, so a flag larger than a partition walks straight into the next one, and the
         # failure is silent: the run succeeds and reports a number selected on the rows it
@@ -1360,57 +1392,72 @@ class Abliterator:
 
         # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
         self.snapshot_weights()
+        return base_ref
 
+    def _inspect(self):
+        """`--inspect`: what one ablation window does to real generations, before and after.
+
+        A KL number cannot tell "wrecked" from "a few benign first tokens flipped", so this
+        prints the text and reverts. Nothing is searched and nothing is saved.
+        """
+        args, log, NL = self.args, self.log, self.NL
+        # Eyeball what the ablation actually does to real generations: harmful (should
+        # comply after) and harmless (should stay coherent). The KL number alone hides
+        # whether high KL = "wrecked" or just "a few benign first-tokens flipped".
+        ilayer = int(args.inspect[0]); istr = float(args.inspect[1]); n = args.inspect_n
+        iD = max(2, NL // 4)
+        hprompts = self.bad_eval[:n]; gprompts = self.kl_eval[:n]
+        log(f"INSPECT window P={ilayer} wmax={istr} wmin=0 D={iD}: {n} harmful + {n} harmless, pre vs post")
+        pre_h = self.gen_batch(hprompts); pre_g = self.gen_batch(gprompts)
+        self.bake(ilayer, istr, 0.0, iD)
+        post_h = self.gen_batch(hprompts); post_g = self.gen_batch(gprompts)
+        kl = self.kl_vs_orig(self.kl_eval); self.restore_weights()
+        def show(tag, prompts, pre, post):
+            for p, a, b in zip(prompts, pre, post, strict=True):
+                print(f"\n### {tag}: {p[:110].strip()}")
+                print(f"  PRE : {a[:220].strip()!r}")
+                print(f"  POST: {b[:220].strip()!r}")
+        show("HARMFUL", hprompts, pre_h, post_h)
+        show("HARMLESS", gprompts, pre_g, post_g)
+        def pct(xs, f):
+            return 100 * sum(f(t) for t in xs) / max(1, len(xs))
+        log(f"INSPECT harmful:   refusals {pct(pre_h,is_refusal):.0f}%->{pct(post_h,is_refusal):.0f}%  "
+            f"broken {pct(pre_h,is_broken):.0f}%->{pct(post_h,is_broken):.0f}%")
+        log(f"INSPECT harmless:  refusals {pct(pre_g,is_refusal):.0f}%->{pct(post_g,is_refusal):.0f}%  "
+            f"broken {pct(pre_g,is_broken):.0f}%->{pct(post_g,is_broken):.0f}%  first-token KL={kl:.4f}")
+        log("INSPECT verdict: want harmful refusals DOWN with harmless broken≈0 and KL low")
+
+    def _bench_only(self):
+        """`--bench-only`: one fixed default window, measured then reverted. A probe, not a search."""
+        log, NL = self.log, self.NL
+        self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX)
+        r = self.refusal_rate(self.bad_eval)
+        k = self.kl_vs_orig(self.kl_eval)
+        self.restore_weights()
+        log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
+            f"refusals={r*100:.1f}% KL={k:.4f}")
+
+    def _bake_saved_config(self, base_ref, TR):
+        """`--bake-config`: bake a saved winner without searching for it again.
+
+        The directions and eval sets are already prepared, so this reproduces the searched
+        result. It exists because a crashed save used to cost the whole search a second time.
+        """
+        args, log = self.args, self.log
+        with open(args.bake_config, encoding="utf-8") as f:
+            cfg = json.load(f)
+        bpr, b_K, b_mode, b_di = config_to_bake_args(cfg)
+        log(f"direct bake from {args.bake_config} (skipping the search)")
+        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+
+    def _run_search(self, TR):
+        """Run the Optuna search, and return the study with the path it persisted to.
+
+        The db path comes back as well as the study because the failure message when no trial
+        produced a measurement needs to tell the operator where the completed work is.
+        """
+        args, log = self.args, self.log
         lo, hi = self.lo, self.hi
-
-        if args.inspect is not None:
-            # Eyeball what the ablation actually does to real generations: harmful (should
-            # comply after) and harmless (should stay coherent). The KL number alone hides
-            # whether high KL = "wrecked" or just "a few benign first-tokens flipped".
-            ilayer = int(args.inspect[0]); istr = float(args.inspect[1]); n = args.inspect_n
-            iD = max(2, NL // 4)
-            hprompts = self.bad_eval[:n]; gprompts = self.kl_eval[:n]
-            log(f"INSPECT window P={ilayer} wmax={istr} wmin=0 D={iD}: {n} harmful + {n} harmless, pre vs post")
-            pre_h = self.gen_batch(hprompts); pre_g = self.gen_batch(gprompts)
-            self.bake(ilayer, istr, 0.0, iD)
-            post_h = self.gen_batch(hprompts); post_g = self.gen_batch(gprompts)
-            kl = self.kl_vs_orig(self.kl_eval); self.restore_weights()
-            def show(tag, prompts, pre, post):
-                for p, a, b in zip(prompts, pre, post, strict=True):
-                    print(f"\n### {tag}: {p[:110].strip()}")
-                    print(f"  PRE : {a[:220].strip()!r}")
-                    print(f"  POST: {b[:220].strip()!r}")
-            show("HARMFUL", hprompts, pre_h, post_h)
-            show("HARMLESS", gprompts, pre_g, post_g)
-            def pct(xs, f):
-                return 100 * sum(f(t) for t in xs) / max(1, len(xs))
-            log(f"INSPECT harmful:   refusals {pct(pre_h,is_refusal):.0f}%->{pct(post_h,is_refusal):.0f}%  "
-                f"broken {pct(pre_h,is_broken):.0f}%->{pct(post_h,is_broken):.0f}%")
-            log(f"INSPECT harmless:  refusals {pct(pre_g,is_refusal):.0f}%->{pct(post_g,is_refusal):.0f}%  "
-                f"broken {pct(pre_g,is_broken):.0f}%->{pct(post_g,is_broken):.0f}%  first-token KL={kl:.4f}")
-            log("INSPECT verdict: want harmful refusals DOWN with harmless broken≈0 and KL low")
-            return   # --inspect is a diagnostic; nothing to search or save
-
-        if args.bench_only:
-            self.bake(int(NL*0.6), 1.0, 0.0, max(2, NL//4), K=self.KMAX)
-            r = self.refusal_rate(self.bad_eval)
-            k = self.kl_vs_orig(self.kl_eval)
-            self.restore_weights()
-            log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
-                f"refusals={r*100:.1f}% KL={k:.4f}")
-            return   # --bench-only is a one-shot probe; nothing to search or save
-
-        # Direct re-bake: skip the search entirely, bake a saved best-config.json and save. Recovers a
-        # crashed save (or re-issues an output) in minutes instead of paying for the whole search again.
-        # Directions and evals are already prepared above, so the bake reproduces the searched result.
-        if args.bake_config:
-            with open(args.bake_config, encoding="utf-8") as f:
-                cfg = json.load(f)
-            bpr, b_K, b_mode, b_di = config_to_bake_args(cfg)
-            log(f"direct bake from {args.bake_config} (skipping the search)")
-            self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
-            return
-
         log(f"searching {args.trials} trials over layers [{lo},{hi}] ({args.search})")
         # NSGA-II needs a population to exert selection pressure; Optuna's default of 50 is far larger
         # than the small trial budgets here (a 60-trial run would be barely one generation), so pin the
@@ -1500,6 +1547,15 @@ class Abliterator:
             # Mark the search finished (budget spent or early-stopped) so a later --resume skips it
             # instead of re-searching. Persisted with the study, so it survives a crash after the search.
             study.set_user_attr("search_done", True)
+        return study, db
+
+    def _select_knee(self, study, db, TR):
+        """Pick the most-uncensored configuration that is still intact, and return its profile.
+
+        Reads the MEASURED user attributes rather than Optuna's own best trial, which is
+        undefined for a multi-objective study, so one code path serves both search modes.
+        """
+        args, log = self.args, self.log
 
         def _row(t):
             pr = _profiles_from_params(t.params)
@@ -1593,7 +1649,7 @@ class Abliterator:
             f"heretic={best.user_attrs.get('heretic',0)*100:.1f}% "
             f"broken={best.user_attrs.get('broken',0)*100:.0f}% KL={best.user_attrs['kl']:.4f}")
 
-        self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+        return bpr, b_K, b_mode, b_di
 
     def _bake_and_save(self, bpr, b_K, b_mode, b_di, base_ref, track):
         """Bake the winning config into the weights and save. Extracted from run() so a

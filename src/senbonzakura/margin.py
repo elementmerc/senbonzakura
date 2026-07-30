@@ -31,7 +31,8 @@ from pathlib import Path
 import torch
 from datasets import load_from_disk
 
-from .cli import last_token_logits, load_model_and_tokenizer
+from .cli import accelerator_name, last_token_logits, load_model_and_tokenizer
+from .crashsafe import provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
 
@@ -333,6 +334,15 @@ def main(argv=None):
         "bootstrap_resamples": a.bootstrap, "seed": a.seed,
         # Which prompt format produced these numbers, so two runs can be told apart.
         "chat_template": getattr(tok, "senbon_chat_template", None),
+        # Which tokens were actually scored, decoded. The AUC is a difference between
+        # two logits and there is no way to check it later without knowing which two:
+        # a tokenizer change that moves HARMFUL onto a different first token produces a
+        # perfectly plausible number for a different measurement.
+        "verdict_tokens": {
+            "HARMFUL": [{"id": i, "text": tok.decode([i])} for i in hid],
+            "BENIGN": [{"id": i, "text": tok.decode([i])} for i in bid],
+        },
+        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device)),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
         # A model whose margin never crosses zero always says the same thing. That

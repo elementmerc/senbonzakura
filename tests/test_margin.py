@@ -646,3 +646,65 @@ def test_a_dataset_that_loads_but_holds_nothing_is_refused(loaded, tmp_path, mon
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
                      "--skip-harmless", "0", "--device", "cpu"])
+
+
+# ── provenance (task 13) ───────────────────────────────────────────────────────────
+def test_the_result_records_which_tokens_were_scored(loaded, tmp_path, monkeypatch):
+    """The AUC is a difference between two logits, and nothing else says which two.
+
+    A tokenizer change that moves HARMFUL onto a different first token produces a
+    perfectly plausible number for a different measurement, and without this there is
+    no way to tell that happened.
+    """
+    _model, tok = loaded
+    monkeypatch.setattr(tok, "decode", lambda ids, **_k: f"<tok{ids[0]}>")
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
+                       "--skip-harmless", "0", "--bootstrap", "0", "--device", "cpu"])
+    tokens = res["verdict_tokens"]
+    assert set(tokens) == {"HARMFUL", "BENIGN"}
+    for side in tokens.values():
+        assert side, "an empty verdict token set would mean nothing was scored"
+        for entry in side:
+            assert isinstance(entry["id"], int)
+            # Decoded from THAT id. The fixture tokenizer's decode returns a constant, so
+            # asserting the value is merely a string would pass even if the text were
+            # unrelated to the token, which is the only thing this field is for.
+            assert entry["text"] == f"<tok{entry['id']}>"
+    ids = {e["id"] for e in tokens["HARMFUL"]} & {e["id"] for e in tokens["BENIGN"]}
+    assert not ids, "the two sides must not share a scored token"
+
+
+def test_the_result_records_the_environment_that_produced_it(loaded, tmp_path):
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
+                       "--skip-harmless", "0", "--bootstrap", "0", "--device", "cpu"])
+    p = res["provenance"]
+    assert p["device"] == "cpu"
+    assert p["packages"]["torch"]
+    assert p["senbonzakura"]["version"]
+
+
+def test_everything_recorded_survives_the_round_trip_to_disk(loaded, tmp_path):
+    """A field that cannot be serialised is a lost run, discovered at the very end."""
+    bad, good = _track(tmp_path)
+    out = tmp_path / "r.json"
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", str(out),
+                       "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0",
+                       "--bootstrap", "20", "--device", "cpu"])
+    on_disk = json.loads(out.read_text(encoding="utf-8"))
+    assert on_disk["verdict_tokens"] == res["verdict_tokens"]
+    assert on_disk["provenance"]["packages"] == res["provenance"]["packages"]
+
+
+def test_the_recorded_fields_answer_the_questions_a_rerun_asks(loaded, tmp_path):
+    """The July sweep is unreproducible because these were never written down."""
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
+                       "--skip-harmless", "0", "--bootstrap", "0", "--device", "cpu"])
+    required = {"model", "seed", "skip_harmful", "skip_harmless", "n_harmful", "n_harmless",
+                "chat_template", "verdict_tokens", "provenance", "bootstrap_resamples"}
+    assert required <= set(res), f"missing: {sorted(required - set(res))}"

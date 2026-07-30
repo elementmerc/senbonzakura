@@ -843,3 +843,28 @@ def test_no_persist_study_leaves_no_storage_to_dispose(base_args, tiny_model, ti
     a.run()
     assert a._study_storage is None
     assert not os.path.exists(os.path.join(base_args.track, "senbon-study.db"))
+
+
+def test_the_artefact_records_the_environment_that_produced_it(base_args, tiny_model, tiny_tok, track):
+    """A number without its environment is not evidence, and the July sweep proved it."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        p = json.load(f)["provenance"]
+    assert p["device"] == "cpu"
+    assert p["accelerator"] is None          # not guessed off GPU
+    assert p["packages"]["torch"]
+    assert p["senbonzakura"]["version"]
+
+
+def test_the_accelerator_is_not_named_when_there_is_no_gpu():
+    assert cli.accelerator_name("cpu") is None
+    assert cli.accelerator_name("cuda") is None or isinstance(cli.accelerator_name("cuda"), str)
+
+
+def test_the_accelerator_lookup_never_raises_on_a_bad_device(monkeypatch):
+    """A provenance field must not be able to take down a finished run."""
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cli.torch.cuda, "get_device_name",
+                        lambda _i: (_ for _ in ()).throw(RuntimeError("no such device")))
+    assert cli.accelerator_name("cuda:7") is None

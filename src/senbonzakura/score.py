@@ -14,7 +14,8 @@ import torch
 from datasets import load_from_disk
 
 from . import metrics
-from .cli import load_model_and_tokenizer
+from .cli import accelerator_name, load_model_and_tokenizer
+from .crashsafe import provenance
 
 
 def build_parser():
@@ -154,6 +155,7 @@ def main(argv=None):
         save_generations(a.save_generations, judged, gens, "harm_recognition", a.model, a.label)
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         res["chat_template"] = getattr(tok, "senbon_chat_template", None)
+        res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device))
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
@@ -170,6 +172,7 @@ def main(argv=None):
     # Which prompt format produced these numbers. Two runs under different formats are
     # not comparable, and this is what lets a reader tell.
     res["chat_template"] = getattr(tok, "senbon_chat_template", None)
+    res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device))
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

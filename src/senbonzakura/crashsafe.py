@@ -114,3 +114,68 @@ def config_to_bake_args(cfg):
         return bpr, cfg["num_directions"], cfg["dir_mode"], cfg.get("direction_index")
     except (KeyError, IndexError, TypeError) as e:
         raise ValueError(f"malformed bake config: {e}") from e
+
+
+# ── provenance ─────────────────────────────────────────────────────────────────────
+# Written because the July 2026 sweep captured none of this and cannot be reproduced,
+# only approximated: constraints/measured-2026-07-27-compass-sweep.md is the record of
+# what that costs. A version list without the hardware is not provenance either, since
+# torch 2.5.1+cu124 on an H100 and on a 3090 are different measurements.
+#
+# Versions come from importlib.metadata rather than by importing the packages, which
+# keeps this module free of heavy imports and, more usefully, records what is INSTALLED
+# rather than what happened to be importable.
+PROVENANCE_PACKAGES = (
+    "torch", "transformers", "datasets", "optuna", "accelerate",
+    "safetensors", "tokenizers", "numpy", "bitsandbytes",
+)
+
+
+def _installed(name):
+    """The installed version of one package, or None. Absent is a fact, not an error."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None
+
+
+def resolved_versions(packages=PROVENANCE_PACKAGES):
+    """Installed version of each package, or None where it is absent."""
+    return {name: _installed(name) for name in packages}
+
+
+def git_commit(repo_root=None):
+    """The commit this code is running from, with a dirty flag, or None outside a checkout.
+
+    None is the honest answer for a wheel install: there is no commit, and inventing
+    one would be worse than admitting the result came from a released version instead.
+    """
+    import subprocess
+    root = str(repo_root or Path(__file__).resolve().parent.parent.parent)
+    try:
+        rev = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"],
+                             capture_output=True, check=True, timeout=30).stdout.decode().strip()
+        dirty = subprocess.run(["git", "-C", root, "status", "--porcelain"],
+                               capture_output=True, check=True, timeout=30).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {"commit": rev, "dirty": bool(dirty)}
+
+
+def provenance(device=None, accelerator=None, extra=None):
+    """Everything needed to tell whether a re-run is comparable to this one."""
+    import platform
+
+    from . import __version__
+    return {
+        "senbonzakura": {"version": __version__, "git": git_commit()},
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "device": device,
+        # Supplied by the caller, because naming the card needs torch and this module
+        # deliberately does not import it.
+        "accelerator": accelerator,
+        "packages": resolved_versions(),
+        **(extra or {}),
+    }

@@ -162,3 +162,62 @@ class TestDiskPreflight:
         """Defensive: root always exists, so this needs forcing to reach."""
         monkeypatch.setattr(crashsafe.Path, "exists", lambda _self: False)
         assert crashsafe.free_bytes_for(tmp_path / "anything") is None
+
+
+class TestProvenance:
+    """What a reader needs a year later to tell whether a re-run is comparable.
+
+    The July 2026 sweep captured none of this and cannot be reproduced, only
+    approximated. `constraints/measured-2026-07-27-compass-sweep.md` is the record of
+    what that costs, and these are the fields that stop it happening twice.
+    """
+
+    def test_a_missing_package_is_recorded_as_absent_not_omitted(self):
+        """Absent is a fact about the environment; a missing key is an unanswered question."""
+        got = crashsafe.resolved_versions(("senbonzakura", "definitely-not-installed-xyz"))
+        assert got["senbonzakura"]
+        assert "definitely-not-installed-xyz" in got
+        assert got["definitely-not-installed-xyz"] is None
+
+    def test_torch_is_recorded_with_its_build_suffix(self):
+        """+cpu against +cu124 is the difference between two different measurements."""
+        torch_version = crashsafe.resolved_versions(("torch",))["torch"]
+        assert torch_version
+        # Read from installed metadata rather than by importing torch, which is what
+        # keeps this module free of heavy imports.
+        import torch as real
+        assert torch_version == real.__version__
+
+    def test_the_default_package_list_covers_what_moves_a_number(self):
+        got = crashsafe.resolved_versions()
+        assert {"torch", "transformers", "datasets", "optuna"} <= set(got)
+
+    def test_a_checkout_records_its_commit_and_whether_it_was_dirty(self):
+        got = crashsafe.git_commit()
+        assert got is not None, "running from a checkout, so there is a commit"
+        assert len(got["commit"]) >= 7
+        assert isinstance(got["dirty"], bool)
+
+    def test_outside_a_checkout_the_commit_is_none_rather_than_invented(self, tmp_path):
+        """A wheel install has no commit, and inventing one is worse than saying so."""
+        assert crashsafe.git_commit(repo_root=tmp_path) is None
+
+    def test_provenance_carries_every_field_a_rerun_needs(self):
+        p = crashsafe.provenance(device="cuda:0", accelerator="NVIDIA GeForce RTX 3090")
+        assert p["device"] == "cuda:0"
+        assert p["accelerator"] == "NVIDIA GeForce RTX 3090"
+        assert p["senbonzakura"]["version"]
+        assert p["python"]
+        assert p["platform"]
+        assert p["packages"]["torch"]
+
+    def test_provenance_is_json_serialisable(self):
+        """It goes into a result file, so a type that will not serialise is a lost run."""
+        import json
+        json.dumps(crashsafe.provenance(device="cpu"))
+
+    def test_the_accelerator_is_none_rather_than_guessed_off_gpu(self):
+        assert crashsafe.provenance(device="cpu")["accelerator"] is None
+
+    def test_extra_fields_can_be_folded_in(self):
+        assert crashsafe.provenance(device="cpu", extra={"run": "x"})["run"] == "x"

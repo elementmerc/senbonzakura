@@ -49,6 +49,7 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
     config_to_bake_args,
     disk_verdict,
     free_bytes_for,
+    provenance,
     search_already_done,
     study_db_path,
     torch_version_ok,
@@ -616,6 +617,22 @@ def _principal_axes(Xc, li, log):
         S = evals[order].clamp_min(0.0).sqrt().to(Xc.dtype)
         Vh = evecs[:, order].T.to(Xc.dtype)
     return S, Vh
+
+
+def accelerator_name(device):
+    """The card a measurement ran on, or None off GPU.
+
+    Recorded because a version list is not provenance on its own: torch 2.5.1+cu124 on
+    an H100 and on a 3090 are different measurements, and the July 2026 sweep captured
+    neither.
+    """
+    if not str(device).startswith("cuda") or not torch.cuda.is_available():
+        return None
+    try:
+        index = int(str(device).split(":")[1]) if ":" in str(device) else 0
+        return torch.cuda.get_device_name(index)
+    except (RuntimeError, ValueError, AssertionError):
+        return None
 
 
 def _renders_a_chat_prompt(tok):
@@ -1555,7 +1572,9 @@ class Abliterator:
                        # The K actually applied at each layer, which is not always the K asked
                        # for: the separation filter, the rank floor and a degenerate cloud can
                        # each reduce it, and num_directions alone cannot show that.
-                       "directions_per_layer": getattr(self, "dirs_per_layer", None)},
+                       "directions_per_layer": getattr(self, "dirs_per_layer", None),
+                       "provenance": provenance(device=self.dev,
+                                                accelerator=accelerator_name(self.dev))},
                       f, indent=2)
         log("DONE")
 

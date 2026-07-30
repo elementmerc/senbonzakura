@@ -99,6 +99,19 @@ python -m venv .venv && .venv/bin/pip install --upgrade pip
 The suite runs entirely on CPU against small hand-built fixtures, so it needs no model
 download and no GPU.
 
+If you plan to commit, wire the local gates once per clone:
+
+```sh
+bash tools/install-local-hooks.sh
+```
+
+That connects `tools/check_prompt_artefacts.py` to your pre-commit path. The tool keeps
+per-prompt margins and generations by default, because every scoring bug in this project's
+history was invisible in the percentages and obvious in the text, and those rows hold
+harmful prompts and the replies a model gave to them. The gate refuses any staged JSON or
+JSONL carrying a `prompt` or `generation` field. CI runs the same check over the tree, but
+by the time CI sees it the commit exists.
+
 Supported architectures: dense transformers (Llama, Qwen, Mistral, Gemma, Phi and the
 like), fused-expert MoE (Qwen3-MoE, Granite-MoE), Mixtral (fused or unfused), OLMoE, and
 shared-expert MoE (Qwen2-MoE, DeepSeek-MoE). An unsupported layout fails loudly at load

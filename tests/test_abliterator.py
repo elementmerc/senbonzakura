@@ -462,11 +462,12 @@ def test_the_ram_probe_returns_none_when_both_posix_sources_are_absent(monkeypat
     def no_proc(*_a, **_k):
         raise FileNotFoundError("no /proc on this platform")
 
-    def no_sysconf(_name):
-        raise ValueError("unrecognised configuration name")
-
     monkeypatch.setattr("builtins.open", no_proc)
-    monkeypatch.setattr(cli.os, "sysconf", no_sysconf)
+    # delattr, not setattr: on real Windows os.sysconf does not exist at all, so
+    # replacing it raises AttributeError before the test can run. raising=False makes
+    # the same line mean "this attribute is absent" on both platforms, which is the
+    # condition being simulated. The first Windows CI run failed on exactly this.
+    monkeypatch.delattr(cli.os, "sysconf", raising=False)
     assert cli._available_ram_bytes() is None
 
 

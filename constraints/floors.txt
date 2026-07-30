@@ -16,7 +16,7 @@
 
 transformers==4.56
 accelerate==0.26
-datasets==2.0
+datasets==2.15
 optuna==3.0
 
 # The dev extra, because `pip install -e '.[dev]'` at the floors is a real

@@ -44,7 +44,11 @@ dependencies = [
   "torch>=2.9; python_version >= '3.14'",
   "transformers>=4.56",
   "accelerate>=0.26",
-  "datasets>=2.0",
+  # 2.15 is the first release that does not call pyarrow.PyExtensionType, which pyarrow
+  # removed in 14. The declared 2.0 floor resolved cleanly and then died at import with
+  # "module 'pyarrow' has no attribute 'PyExtensionType'", which is precisely what the
+  # dependency-floor CI job exists to catch, and did, on its first ever run.
+  "datasets>=2.15",
   "optuna>=3.0",
 ]
 

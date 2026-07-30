@@ -10,7 +10,13 @@
 #     feature cluster looks reviewable.
 #
 # Never blocks. Fail-open by design: any git or filesystem hiccup prints nothing
-# and exits 0. The HARD half of the gate lives in .githooks/pre-push (owed).
+# and exits 0.
+#
+# The HARD half is .githooks/promotion-gate.sh, called from pre-push, which
+# refuses a dev to main promotion whose commits no panel artefact covers. It
+# landed 2026-07-30, having been described as existing since ADR 63. Note that
+# it does NOT read PANEL_GATE_ENABLED: this hook may be configured, a gate may
+# not (ADR 67).
 set -u
 
 ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"

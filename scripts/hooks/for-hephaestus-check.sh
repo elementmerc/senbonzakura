@@ -19,7 +19,9 @@
 #   - seeded:   the file exists but its goals are still the registry blurb.
 #   - stale:    owned, but nobody has verified it in a while.
 #
-# Never blocks. Fail-open by design: any hiccup prints nothing and exits 0.
+# Never blocks. Fail-open by design: any hiccup prints nothing and exits 0. The
+# blocking half is .githooks/promotion-gate.sh, which refuses a promotion to main
+# from a project whose plan is missing or unparseable (2026-07-30, ADR 70).
 # Deliberately reads NOTHING as shell. This hook's sibling `panel-check.sh` used
 # to `.` the project config, which executed whatever a repo-tracked file said,
 # on session start (fixed 2026-07-26). Nothing here is evaluated.

@@ -37,3 +37,11 @@ venv/
 htmlcov/
 .optuna*/
 optuna*.db
+
+# The committed toy track. Every dataset rule above catches a save_to_disk layout, so
+# the one example a stranger can run has to re-include the DIRECTORY before its
+# contents: git does not descend into an excluded directory, so negating only the files
+# would do nothing. Its prompts are synthetic placeholders, never real harmful text.
+!examples/toy-track/
+!examples/toy-track/**/
+!examples/toy-track/**

@@ -1,0 +1,23 @@
+{
+  "schema": "senbonzakura-track/1",
+  "sources": {
+    "harmful": "/tmp/toysrc/harmful.txt",
+    "harmless": "/tmp/toysrc/harmless.txt"
+  },
+  "counts": {
+    "harmful": {
+      "fit": 8,
+      "search": 4,
+      "measure": 8
+    },
+    "harmless": {
+      "fit": 8,
+      "search": 4,
+      "measure": 8
+    }
+  },
+  "skip_harmful": 4,
+  "skip_harmless": 12,
+  "n_harmful": 8,
+  "n_harmless": 8
+}

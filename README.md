@@ -104,6 +104,71 @@ like), fused-expert MoE (Qwen3-MoE, Granite-MoE), Mixtral (fused or unfused), OL
 shared-expert MoE (Qwen2-MoE, DeepSeek-MoE). An unsupported layout fails loudly at load
 rather than silently under-ablating.
 
+## The track: what the tool reads
+
+A **track** is a directory of three datasets. Every command takes `--track <dir>` and
+looks for these names:
+
+| Directory | What it holds | What reads it |
+|---|---|---|
+| `bad_ds` | Harmful prompts | Direction extraction fits on these |
+| `bad_eval_ds` | Harmful prompts | The search scores trials, and the compass measures |
+| `good_ds` | Harmless prompts | Fitting, the KL reference, and the compass's harmless arm |
+
+Each is a `datasets.save_to_disk` directory with one column, `text`:
+
+```python
+from datasets import Dataset
+Dataset.from_dict({"text": ["first prompt", "second prompt"]}).save_to_disk("mytrack/bad_ds")
+```
+
+### Build one, and have it checked
+
+Doing it by hand is how the mistake happens, so there is a builder:
+
+```sh
+python -m senbonzakura.track \
+    --harmful harmful.txt --harmless harmless.txt \
+    --out mytrack --fit 256 --search 128
+```
+
+One prompt per line. It deduplicates on a case- and punctuation-insensitive key,
+splits each side into three parts by index, and **writes nothing at all unless every
+check passes**:
+
+- `fit` — the directions are extracted from these
+- `search` — the search scores trials on these
+- `measure` — the published number comes from these, and nothing else touches them
+
+The checks are the point. A track is refused if anything in `measure` also appears in
+`fit` or `search`, if a prompt is labelled both harmful and harmless, if a partition is
+empty, or if the two sides differ in size by more than 10%. It reports counts only and
+never prints a prompt, so its output is safe to paste anywhere.
+
+It finishes by telling you the flags that put the compass on the held-out rows:
+
+```
+TRACK_BUILT mytrack  harmful {'fit': 256, 'search': 128, 'measure': 616}
+  measure with: --skip-harmful 128 --skip-harmless 384 --n 616
+```
+
+Those numbers are also written to `mytrack/track.json`, so a reader can check the split
+a year later rather than take it on trust. To re-check a track you already have,
+including one assembled by hand:
+
+```sh
+python -m senbonzakura.track --harmful x --harmless y --out mytrack --audit
+```
+
+Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites
+that backup.
+
+### A toy track to try it on
+
+`examples/toy-track/` is committed and runnable straight from a clone. Its prompts are
+synthetic placeholders rather than real harmful text, because it exists to show the
+plumbing works, not to measure anything.
+
 ## Usage
 
 The fast path, if you just want the best result and no knob-twiddling:

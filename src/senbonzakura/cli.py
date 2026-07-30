@@ -791,8 +791,10 @@ class Abliterator:
         except Exception as e:
             raise FileNotFoundError(
                 f"could not load dataset at {d}: {e}. Expected a datasets.save_to_disk directory "
-                f"with a 'text' column (build one with tools/build_hedge_set.py or datasets.Dataset."
-                f"from_dict({{'text': [...]}}).save_to_disk('{d}')).") from e
+                f"with a 'text' column. Build a whole track with "
+                f"`python -m senbonzakura.track --harmful <file> --harmless <file> --out <dir>`, "
+                f"or one dataset by hand with "
+                f"datasets.Dataset.from_dict({{'text': [...]}}).save_to_disk('{d}').") from e
         avail = len(ds)
         if avail < n:
             self.log(f"  note: {d} holds {avail} prompts, fewer than the {n} requested; using all {avail}")
@@ -857,7 +859,8 @@ class Abliterator:
         # disclaimer/"I must warn you" hedging that the keyword metric flags on complying answers. If a
         # hedged-compliance set is supplied, extract mean(hedged) - mean(clean) at each layer and fold it
         # in as a GUARANTEED ablated direction, so the search can strip the hedging axis the hard-refusal
-        # direction never sees. Build the set with tools/build_hedge_set.py.
+        # direction never sees. Any datasets.save_to_disk directory with a 'text' column will do;
+        # `python -m senbonzakura.track` builds the main three, and a hedge set is the same shape.
         hedge_md = None
         if hedge_ds:
             hedged = self.load(hedge_ds, args.dir_prompts)

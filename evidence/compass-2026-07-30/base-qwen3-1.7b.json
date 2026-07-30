@@ -7,10 +7,10 @@
   "skip_harmful": 132,
   "skip_harmless": 385,
   "margins_path": "margins/base-Qwen3-1.7B.jsonl",
-  "auc": 0.9636,
+  "auc": 0.9887,
   "auc_ci": [
-    0.96,
-    0.9672
+    0.9871,
+    0.9904
   ],
   "bootstrap_resamples": 2000,
   "seed": 42,
@@ -72,7 +72,7 @@
     "senbonzakura": {
       "version": "0.3.0",
       "git": {
-        "commit": "558a237",
+        "commit": "d5a16e0",
         "dirty": null,
         "source": "declared"
       }
@@ -93,35 +93,75 @@
       "bitsandbytes": "0.49.2"
     }
   },
-  "mean_margin_harmful": 2.8951,
-  "mean_margin_harmless": 1.6652,
-  "frac_harmful_positive": 1.0,
-  "frac_harmless_positive": 1.0,
+  "mean_margin_harmful": 21.0994,
+  "mean_margin_harmless": -8.9459,
+  "frac_harmful_positive": 0.9833,
+  "frac_harmless_positive": 0.1849,
   "controls": {
     "length_only_auc": 0.6563985752549933,
-    "mean_tokens_harmful": 51.72,
-    "mean_tokens_harmless": 50.26,
-    "length_corr_harmful": 0.2169,
-    "length_corr_harmless": 0.2884,
-    "canonical_auc": 0.8132479536642384
+    "mean_tokens_harmful": 55.72,
+    "mean_tokens_harmless": 54.26,
+    "length_corr_harmful": 0.1502,
+    "length_corr_harmless": 0.141,
+    "canonical_auc": 0.9887457202044995
+  },
+  "readout": {
+    "harmful": {
+      "argmax_is_verdict": 1.0,
+      "verdict_prob_mass_mean": 1.0,
+      "verdict_prob_mass_median": 1.0,
+      "mean_p_harmful": 0.983366,
+      "mean_p_benign": 0.016634,
+      "top_tokens": [
+        {
+          "id": 39,
+          "text": "H",
+          "count": 4429
+        },
+        {
+          "id": 33,
+          "text": "B",
+          "count": 75
+        }
+      ]
+    },
+    "harmless": {
+      "argmax_is_verdict": 1.0,
+      "verdict_prob_mass_mean": 1.0,
+      "verdict_prob_mass_median": 1.0,
+      "mean_p_harmful": 0.18846,
+      "mean_p_benign": 0.811539,
+      "top_tokens": [
+        {
+          "id": 33,
+          "text": "B",
+          "count": 3671
+        },
+        {
+          "id": 39,
+          "text": "H",
+          "count": 833
+        }
+      ]
+    }
   },
   "topic_matched": {
     "source": "/home/mercury/track-matched/good_matched_ds",
     "n": 280,
     "skip": 0,
-    "auc": 0.9879,
+    "auc": 0.9944,
     "auc_ci": [
-      0.9849,
-      0.9905
+      0.9925,
+      0.9959
     ],
-    "mean_margin": 1.5326,
+    "mean_margin": -10.0728,
     "controls": {
       "length_only_auc": 0.8571587160619132,
-      "mean_tokens_harmful": 51.72,
-      "mean_tokens_harmless": 48.74,
-      "length_corr_harmful": 0.2169,
-      "length_corr_harmless": 0.2522,
-      "canonical_auc": 0.848732475894443
+      "mean_tokens_harmful": 55.72,
+      "mean_tokens_harmless": 52.74,
+      "length_corr_harmful": 0.1502,
+      "length_corr_harmless": -0.1633,
+      "canonical_auc": 0.9944196428571429
     }
   }
 }

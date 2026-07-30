@@ -12,41 +12,76 @@ before-and-after comparison needs an abliteration run, which is a different spec
 
 | model | AUC (95% interval) | length-only AUC | canonical-token AUC | topic-matched AUC |
 |---|---|---|---|---|
-| Qwen3-1.7B | 0.9636 (0.9600 to 0.9672) | 0.6564 | 0.8132 | 0.9879 (n=280) |
-| Qwen3-0.6B | 0.7263 (0.7158 to 0.7364) | 0.6564 | 0.3663 | 0.7860 (n=280) |
+| Qwen3-1.7B | 0.9887 (0.9871 to 0.9904) | 0.6564 | 0.9887 | 0.9944 (n=280) |
+| Qwen3-0.6B | 0.6616 (0.6504 to 0.6722) | 0.6564 | 0.6616 | 0.7104 (n=280) |
 
 AUC is the chance that a harmful prompt gets a higher HARMFUL-minus-BENIGN margin than a
-harmless one. 0.5 is a coin toss. Both models answer "HARMFUL" to **100% of prompts on both
-sides**, which is the exact case a count of verdicts cannot tell apart from ignorance, and
-the reason the margin is measured instead of the answer.
+harmless one. 0.5 is a coin toss.
+
+**Two very different results, and the second one is a null.** Qwen3-1.7B separates the two
+arms almost perfectly. Qwen3-0.6B scores 0.6616 where **counting tokens alone scores 0.6564**,
+and its interval (0.6504 to 0.6722) sits astride that baseline: on this corpus, by this
+measure, the 0.6B does not recognise harm at all. Its actual output says the same thing more
+bluntly. It answers `HARMFUL` to all 4,504 harmful prompts *and* all 4,504 harmless ones.
+
+The 1.7B, by contrast, discriminates in what it emits: `HARMFUL` for 98.3% of the harmful arm
+and 18.5% of the harmless one.
+
+## An earlier version of this file had different numbers
+
+This artefact was first published with 0.9636 and 0.7263, and those numbers were measured at
+the wrong position. Recorded here rather than quietly replaced, because the artefact is meant
+to be a record.
+
+Qwen3 is a thinking model. Its chat template appends `<think>` to the generation prompt, so
+the position immediately after the prompt, where the compass read its two verdict logits, is
+where the model was going to start reasoning. The read-out audit is what caught it:
+
+| | reading `<think>`'s position | reading the verdict's position |
+|---|---|---|
+| most likely token is a verdict | 0.0% of prompts | 100% |
+| probability held by the two verdicts | ~0 | 1.0000 |
+| most frequent token there | `<think>` | `H`, then `B` |
+| Qwen3-1.7B AUC | 0.9636 | 0.9887 |
+| Qwen3-0.6B AUC | 0.7263 | 0.6616 |
+
+The cause was three copies of the same three lines of prompt-rendering code, drifted apart:
+the search generated with thinking turned off, while the scorer that produces the published
+refusal rate and the compass that produces this AUC both left it on. One renderer now, with a
+test asserting all three use it.
+
+**Every senbonzakura number published before 2026-07-30 was measured under that split** and is
+not comparable to what this tool now produces.
 
 ## Read the three control columns before the first one
 
 **Length-only AUC (0.6564).** Rank the prompts by how many tokens they contain, ignore the
-model completely, and you already score 0.6564. That is a fact about the corpus, not about
-any model, which is why it is identical in both rows: same prompts, same tokenizer. It is the
-floor a real result has to clear.
+model completely, and you already score 0.6564. That is a fact about the corpus rather than
+about any model, which is why it is identical in both rows: same prompts, same tokenizer. It
+is the floor a real result has to clear, and the 0.6B does not clear it.
 
-For Qwen3-0.6B that floor is most of the result. 0.7263 against 0.6564 leaves about 0.07 of
-discrimination that could be about harm; the mean prompt lengths differ by 1.5 tokens out of
-51, so this is the shape of the two length distributions rather than one arm simply being
-longer. **A compass reading near 0.66 on this corpus says almost nothing.**
+The mean prompt lengths differ by only 1.5 tokens out of 55, so this floor comes from the
+shape of the two length distributions and not from one arm simply being longer. It will not be
+fixed by trimming a few long prompts.
 
 **Canonical-token AUC.** The headline takes, for each verdict word, the best of several
-spellings (`HARMFUL`, ` HARMFUL`, `Harmful`, ` harmful`, and so on). That choice is made by
-looking at the logits. The canonical column removes it and uses one fixed token pair: the
-first token of the spelling the judge prompt actually asks for. Qwen3-1.7B falls from 0.9636
-to 0.8132. Qwen3-0.6B falls from 0.7263 to 0.3663, which is *below* a coin toss, meaning the
-ranking inverts. Whichever column is published, the choice has to be stated, because the two
-are not small variations on each other.
+spellings (`HARMFUL`, ` HARMFUL`, `Harmful`, ` harmful`, and so on), and that choice is made
+by looking at the logits. The canonical column removes it and uses one fixed token pair: the
+first token of the spelling the judge prompt actually asks for.
+
+**It now agrees with the headline to four decimals on both models.** That is worth stating
+plainly, because in the earlier, wrongly-positioned measurement it did not: the gap was 0.15
+on the 1.7B and the 0.6B inverted below chance. The free parameter was never the problem. The
+position was, and the spelling gap was a symptom of reading a position where no spelling of
+the verdict carried any probability.
 
 **Topic-matched AUC.** The main harmless arm is drawn from different subject matter than the
 harmful arm, so a model that only recognises topics can score well without recognising harm.
-The topic-matched arm holds subject matter still. Both models score *higher* on it than on
-the unmatched arm, which is the reassuring direction: the discrimination survives when topic
-stops being a clue. Caveat, and it matters: that 280-row set predates the rebuilt track and
-is not partitioned, so nothing guarantees its rows were held out. Harmless for a base model;
-it would need fixing before the same column is quoted for an abliterated one.
+The topic-matched arm holds subject matter still. Both models score *higher* on it than on the
+unmatched arm, which is the reassuring direction: the discrimination survives when topic stops
+being a clue. Caveat, and it matters: that 280-row set predates the rebuilt track and is not
+partitioned, so nothing guarantees its rows were held out. Harmless for a base model; it would
+need fixing before the same column is quoted for an abliterated one.
 
 ## What the corpus is, which bounds what the number means
 
@@ -96,13 +131,20 @@ The skips are not arithmetic conventions; they are the boundaries recorded in th
 `track.json`, and a run whose flags would cross them stops rather than measuring.
 
 **Determinism, measured rather than assumed.** Each of these two commands ran three times on
-this card at batch 16, and each produced identical AUCs to four decimal places. That is not a
-general guarantee: batching reorders reductions, so a different `--batch` is a different
-number, which is why the batch is recorded here.
+this card at batch 16 and produced identical AUCs to four decimal places. That is not a general
+guarantee: batching reorders reductions, so a different `--batch` is a different number, which
+is why the batch is recorded here.
 
-**Cost.** 2 min 37 s for the 1.7B and 1 min 45 s for the 0.6B, for 9,288 prompts each plus
+**Cost.** 2 min 45 s for the 1.7B and 1 min 44 s for the 0.6B, for 9,288 prompts each plus
 2,000 bootstrap resamples. One forward pass per prompt and no generation, which is why the
 whole held-out arm is affordable rather than something to subsample.
+
+**Check the read-out before trusting any of it.** Each result file carries a `readout` block
+per arm: what fraction of prompts have a verdict as their most likely token, how much
+probability the two verdict sets hold, and the most frequent tokens at that position with
+counts. If `argmax_is_verdict` is not near 1.0, the AUC above it is a comparison of two tokens
+the model was not going to emit, and the number should be thrown away rather than interpreted.
+That is not hypothetical: it is what happened to the first version of this file.
 
 ## What is missing, deliberately
 

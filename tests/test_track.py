@@ -613,3 +613,34 @@ def test_a_genuinely_lopsided_contrast_is_still_refused():
     harmful = {"fit": ["h"] * 40, "search": ["h"] * 40, "measure": ["h"] * 40}
     harmless = {"fit": ["g"] * 4, "search": ["g"] * 40, "measure": ["g"] * 40}
     assert [f for f in track.check(harmful, harmless) if "differ in size" in f]
+
+
+def test_a_stratum_absent_from_measure_is_refused():
+    """The mirror image of leakage: not a claim that is too good, a claim that is narrower.
+
+    Two strata came out with no measure rows at all while every other check passed, so the
+    published number covered neither and nothing said so.
+    """
+    rows = [f"request number {i} about a thing" for i in range(30)]
+    labels = {track.normalise(r): ("tiny" if i < 2 else "big") for i, r in enumerate(rows)}
+    side = {"fit": rows[:2], "search": rows[2:10], "measure": rows[10:]}   # 'tiny' only in fit
+    harmless = {"fit": ["g1"], "search": ["g2"], "measure": ["g3"]}
+    findings = track.check(side, harmless, labels)
+    assert any("no rows in measure" in f and "tiny" in f for f in findings)
+
+
+def test_the_published_arm_gets_first_claim_on_a_one_request_stratum():
+    """Seeding order decides who goes without, and it must not be measure."""
+    rows = [t.format(f"do the {i}th thing") for i in range(30) for t in _TEMPLATES]
+    rows += [t.format("a lone rare topic") for t in _TEMPLATES]
+    labels = {track.normalise(r): ("rare" if "lone rare" in r else "common") for r in rows}
+    parts = track.partition(rows, fit=len(rows) // 4, search=len(rows) // 5, labels=labels)
+    in_measure = {labels[track.normalise(r)] for r in parts["measure"]}
+    assert "rare" in in_measure, "the one-request stratum was consumed before measure saw it"
+
+
+def test_a_stratum_present_everywhere_raises_no_finding():
+    rows = [f"request number {i} about a thing" for i in range(30)]
+    labels = {track.normalise(r): ("a" if i % 2 else "b") for i, r in enumerate(rows)}
+    side = track.partition(rows, fit=8, search=8, labels=labels)
+    assert not [f for f in track.check(side, side, labels) if "no rows in measure" in f]

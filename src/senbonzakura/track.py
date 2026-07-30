@@ -268,9 +268,14 @@ def partition(rows: list[str], fit: int, search: int, labels=None) -> dict[str, 
     def shortfall(p):
         return (targets[p] - len(out[p])) / max(1, targets[p])
 
+    # Measure first, deliberately. A stratum with only one or two requests is exhausted by
+    # seeding, and whichever partition comes last gets none of it: with fit first, two
+    # strata ended up with ZERO rows in measure, so the published number covered neither
+    # while every other check passed. The published arm gets first claim on every stratum.
+    seed_order = ("measure", "fit", "search")
     seeded: set[str] = set()
     for label in sorted(strata):
-        for name in order:
+        for name in seed_order:
             for key in strata[label]:
                 if key in seeded:
                     continue
@@ -294,7 +299,7 @@ def partition(rows: list[str], fit: int, search: int, labels=None) -> dict[str, 
     return out
 
 
-def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]]) -> list[str]:
+def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]], labels=None) -> list[str]:
     """Every reason this track must not be written. Empty means it may be.
 
     Named separately from the build so a track can be audited without rebuilding it,
@@ -336,6 +341,24 @@ def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]]) -> list
         flat = [normalise(r) for part in side.values() for r in part]
         if len(flat) != len(set(flat)):
             failures.append(f"the {name} side has {len(flat) - len(set(flat))} duplicate prompts across partitions")
+
+        # A stratum the published arm never sees. The mirror image of leakage: not a claim
+        # that is too good, but a claim narrower than it appears. Two strata were entirely
+        # absent from measure while every other check passed.
+        if labels:
+            in_side, in_measure = set(), set()
+            for part, part_rows in side.items():
+                for r in part_rows:
+                    label = labels.get(normalise(r))
+                    if label:
+                        in_side.add(label)
+                        if part == "measure":
+                            in_measure.add(label)
+            missing = in_side - in_measure
+            if missing:
+                failures.append(
+                    f"{len(missing)} {name} strata have no rows in measure, so a number from it "
+                    f"does not cover them: {sorted(missing)}")
 
     harmful_keys = {normalise(r) for part in harmful.values() for r in part}
     harmless_keys = {normalise(r) for part in harmless.values() for r in part}
@@ -489,7 +512,7 @@ def main(argv=None):
         sides[name] = partition(rows, a.fit, a.search, labels)
         sources[name] = str(path)
 
-    failures = check(sides["harmful"], sides["harmless"])
+    failures = check(sides["harmful"], sides["harmless"], labels)
     if failures:
         print("TRACK_REFUSED: nothing was written, because this track would not be "
               "trustworthy:", file=sys.stderr)

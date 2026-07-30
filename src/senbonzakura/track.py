@@ -60,6 +60,12 @@ SHORT_PROMPT_CHARS = 12
 # the difference-of-means partly a measure of which side had more rows.
 MAX_BALANCE_SKEW = 0.10
 
+# ...but not by fewer than this many rows, whatever the fraction says. Allocation deals
+# whole requests, and a request can be several rows, so a difference smaller than a
+# request group is granularity rather than imbalance. Without this floor a five-against-
+# four split reads as "20% skew" and a correct track gets refused for being small.
+BALANCE_MIN_ROWS = 8
+
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -113,12 +119,113 @@ def dedupe(rows: list[str]) -> tuple[list[str], dict[str, int]]:
     return kept, stats
 
 
-def partition(rows: list[str], fit: int, search: int) -> dict[str, list[str]]:
-    """Split into fit / search / measure by index, disjoint by construction.
+# A leading phrase has to be at least this many words, be shared by at least this many
+# rows, and leave at least this many words behind, before it counts as a template rather
+# than a coincidence of phrasing. Corpora built from templates are the normal case here:
+# the one this project runs on crosses seven templates with every seed.
+TEMPLATE_MIN_WORDS = 4
+TEMPLATE_MAX_WORDS = 10
+TEMPLATE_MIN_VARIANTS = 3
+TEMPLATE_MIN_SUPPORT = 0.002
+REQUEST_MIN_WORDS = 3
 
-    Everything after fit + search is measure, so the published arm gets whatever is
-    left rather than a fixed slice: a track that grows should widen the interval it can
-    support, not leave the extra rows unused.
+
+def discover_templates(rows: list[str]) -> list[str]:
+    """Leading phrases shared by enough DIFFERENT requests to be a template, longest first.
+
+    Derived from the corpus rather than hardcoded, so this works on anyone's data and
+    cannot go stale against ours.
+
+    Distinct remainders, not row counts, is what makes a template a template: a phrase
+    followed by many different things is a frame, and one followed by the same thing
+    repeatedly is just a common sentence. Counting rows missed a template used only four
+    times, which let a leak through the check that exists to catch it.
+
+    Over-stripping is close to harmless here and worth understanding: removing a shared
+    prefix cannot merge two requests, because their remainders differ by construction.
+    The only risk is a remainder short enough to collide with an unrelated prompt, which
+    the minimum-remainder rule bounds.
+    """
+    variants: dict[str, set[str]] = {}
+    floor = max(TEMPLATE_MIN_VARIANTS, int(len(rows) * TEMPLATE_MIN_SUPPORT))
+    for row in rows:
+        words = normalise(row).split(" ")
+        for n in range(TEMPLATE_MIN_WORDS, min(TEMPLATE_MAX_WORDS, len(words) - REQUEST_MIN_WORDS) + 1):
+            variants.setdefault(" ".join(words[:n]), set()).add(" ".join(words[n:]))
+    return sorted((p for p, seen in variants.items() if len(seen) >= floor),
+                  key=lambda p: (-len(p.split(" ")), p))
+
+
+def request_key(text: str, templates: list[str]) -> str:
+    """The underlying request, with any template prefix removed.
+
+    This is the unit that must not be split across partitions. Seven templates share one
+    seed, so "Explain in detail how to X" and "Write a step by step guide to X" are
+    different prompts and the same request: on the project's own corpus, 120 of 200
+    harmful eval rows had their request in the training set under another template, while
+    a whole-prompt comparison reported zero overlap.
+    """
+    key = normalise(text)
+    for tpl in templates:              # longest first, so the most specific one wins
+        if key.startswith(tpl + " "):
+            return key[len(tpl):].strip()
+    return key
+
+
+def group_by_request(rows: list[str]) -> dict[str, list[str]]:
+    """Every row that expresses the same request, gathered under it."""
+    templates = discover_templates(rows)
+    groups: dict[str, list[str]] = {}
+    for row in rows:
+        groups.setdefault(request_key(row, templates), []).append(row)
+    return groups
+
+
+def read_labels(path):
+    """A `label<TAB>prompt` file mapping prompts to strata. Returns {normalised prompt: label}.
+
+    Optional, and deliberately external. The labels for this project's corpus are a
+    taxonomy of harmful request categories, which belongs with the data rather than in a
+    tool anyone can install; the mechanism here is generic and carries none of it.
+    """
+    out = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        raise SystemExit(f"could not read --labels {path}: {e}") from e
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        if "\t" not in line:
+            raise SystemExit(f"{path}:{lineno} is not `label<TAB>prompt`")
+        label, prompt = line.split("\t", 1)
+        out[normalise(prompt)] = label.strip()
+    if not out:
+        raise SystemExit(f"--labels {path} is empty")
+    return out
+
+
+UNLABELLED = "(unlabelled)"
+
+
+def partition(rows: list[str], fit: int, search: int, labels=None) -> dict[str, list[str]]:
+    """Split into fit / search / measure, whole requests at a time.
+
+    Two properties, and the second was learned the hard way. Partitions are disjoint by
+    construction; and every template variant of one request lands in the SAME partition,
+    because splitting them puts the same question on both sides of a held-out boundary
+    while a prompt-level check reports it as clean.
+
+    Allocation is deterministic and spreads topics: requests are walked in sorted order
+    and each goes to whichever partition has the largest shortfall **as a fraction of its
+    own target**. The fraction matters. Comparing absolute shortfalls looks equivalent and
+    is not: measure's target dwarfs the others, so it wins every comparison until it is
+    nearly full, and fit and search end up drawn from the tail of the sorted order. On the
+    real corpus that left four of nine harmful axes with no rows at all in the partition
+    the search selects on. Proportional shortfall fills all three at the same rate, so each
+    samples the whole corpus.
+
+    Sizes are therefore approximate, since a request cannot be divided.
     """
     if fit < 0 or search < 0:
         raise SystemExit("fit and search sizes cannot be negative")
@@ -127,11 +234,40 @@ def partition(rows: list[str], fit: int, search: int) -> dict[str, list[str]]:
             f"fit {fit} + search {search} leaves nothing to measure on out of {len(rows)} rows. "
             f"The measure partition is the only one a published number may come from, so a "
             f"track without it is not worth writing.")
-    return {
-        "fit": rows[:fit],
-        "search": rows[fit:fit + search],
-        "measure": rows[fit + search:],
-    }
+
+    groups = group_by_request(rows)
+    measure = len(rows) - fit - search
+    targets = {"fit": fit, "search": search, "measure": measure}
+    out: dict[str, list[str]] = {"fit": [], "search": [], "measure": []}
+    order = list(out)
+
+    # With labels, allocate WITHIN each stratum, so every label that has enough requests
+    # appears in all three partitions. Without them, the sorted request order is the only
+    # stratification available: it spreads a partition across the corpus, but in a small
+    # partition it cannot guarantee any particular category is present. On the real corpus
+    # that difference decided whether the search selected against four of nine axes or all
+    # of them, which is the whole reason labels are worth supplying.
+    strata: dict[str, list[str]] = {}
+    for key in sorted(groups):
+        label = UNLABELLED
+        if labels:
+            found = {labels.get(normalise(r)) for r in groups[key]} - {None}
+            if found:
+                label = min(found)
+        strata.setdefault(label, []).append(key)
+
+    for label in sorted(strata):
+        filled = dict.fromkeys(order, 0)
+        share = {p: targets[p] * sum(len(groups[k]) for k in strata[label]) / max(1, len(rows))
+                 for p in order}
+        for key in strata[label]:
+            # Largest shortfall as a FRACTION of this stratum's share, ties broken by a
+            # fixed order so two runs on the same input produce the same split.
+            name = max(order, key=lambda p: ((share[p] - filled[p]) / max(1.0, share[p]),
+                                             -order.index(p)))
+            out[name].extend(groups[key])
+            filled[name] += len(groups[key])
+    return out
 
 
 def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]]) -> list[str]:
@@ -157,6 +293,22 @@ def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]]) -> list
                     f"{len(shared)} of {len(measure)} {name} measure prompts also appear in "
                     f"{name} {other}, so a number from them measures memorisation")
 
+        # And the same question asked a different way. Templates are discovered across the
+        # whole side, so a request is identified the same way wherever it sits. This check
+        # exists because the prompt-level one above passed a corpus in which 120 of 200
+        # harmful eval rows were template variants of training rows, reporting zero overlap.
+        flat_rows = [r for part_rows in side.values() for r in part_rows]
+        templates = discover_templates(flat_rows)
+        requests = {part: {request_key(r, templates) for r in part_rows}
+                    for part, part_rows in side.items()}
+        for other in ("fit", "search"):
+            shared = requests["measure"] & requests[other]
+            if shared:
+                failures.append(
+                    f"{len(shared)} of {len(requests['measure'])} {name} measure REQUESTS also "
+                    f"appear in {name} {other} under a different template, so the prompts differ "
+                    f"and the question does not")
+
         flat = [normalise(r) for part in side.values() for r in part]
         if len(flat) != len(set(flat)):
             failures.append(f"the {name} side has {len(flat) - len(set(flat))} duplicate prompts across partitions")
@@ -171,7 +323,7 @@ def check(harmful: dict[str, list[str]], harmless: dict[str, list[str]]) -> list
         a, b = len(harmful[part]), len(harmless[part])
         if a and b:
             skew = abs(a - b) / max(a, b)
-            if skew > MAX_BALANCE_SKEW:
+            if skew > MAX_BALANCE_SKEW and abs(a - b) > BALANCE_MIN_ROWS:
                 failures.append(
                     f"the {part} partitions differ in size by {skew:.0%} ({a} harmful against "
                     f"{b} harmless), over the {MAX_BALANCE_SKEW:.0%} limit, so the contrast "
@@ -255,6 +407,12 @@ def build_parser():
     ap.add_argument("--search", type=int, default=128,
                     help="prompts per side the search scores trials on (default: the largest "
                          "--eval-refusal-final any auto preset uses)")
+    ap.add_argument("--labels", default="",
+                    help="optional `label<TAB>prompt` file. With it, every label that has "
+                         "enough distinct requests is guaranteed a share of all three "
+                         "partitions; without it, stratification is by sorted request order, "
+                         "which spreads a partition across the corpus but cannot guarantee a "
+                         "small one contains any particular category")
     ap.add_argument("--audit", action="store_true",
                     help="run the checks against an existing track and write nothing")
     return ap
@@ -293,15 +451,18 @@ def main(argv=None):
         print(f"TRACK_AUDIT_OK {out}")
         return {}
 
+    labels = read_labels(a.labels) if a.labels else None
+    if labels:
+        print(f"labels: {len(labels)} prompts across {len(set(labels.values()))} strata")
     sides = {}
-    sources = {}
+    sources = {"labels": a.labels or None}
     for name, path in (("harmful", a.harmful), ("harmless", a.harmless)):
         rows, stats = dedupe(read_prompts(Path(path)))
         # Counts only, never content: these inputs are harmful text.
         print(f"{name}: {len(rows)} kept  (blank {stats['blank']}, too short "
               f"{stats['too_short']}, duplicate {stats['duplicate']}, "
               f"short but kept {stats['short_but_kept']})")
-        sides[name] = partition(rows, a.fit, a.search)
+        sides[name] = partition(rows, a.fit, a.search, labels)
         sources[name] = str(path)
 
     failures = check(sides["harmful"], sides["harmless"])

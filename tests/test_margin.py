@@ -578,6 +578,42 @@ def test_compare_to_refuses_a_gap_in_the_row_indices(loaded, tmp_path):
         _run(loaded, tmp_path, "after", extra=["--compare-to", str(gapped)])
 
 
+def test_compare_to_refuses_a_row_whose_margin_is_not_a_number(loaded, tmp_path):
+    """Otherwise it reaches the bootstrap as None and dies there, naming no row."""
+    before = _run(loaded, tmp_path, "before")
+    rows = [json.loads(x) for x in Path(before["margins_path"]).read_text(encoding="utf-8").splitlines()]
+    del rows[2]["margin"]
+    holed = tmp_path / "holed.jsonl"
+    holed.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    with pytest.raises(SystemExit, match="is not a number"):
+        _run(loaded, tmp_path, "after", extra=["--compare-to", str(holed)])
+
+
+def test_compare_to_with_no_resampling_is_refused_rather_than_overridden(loaded, tmp_path):
+    """--bootstrap 0 asked for no resampling; the paired interval is resampling."""
+    before = _run(loaded, tmp_path, "before")
+    with pytest.raises(SystemExit, match="pick one"):
+        _run(loaded, tmp_path, "after",
+             extra=["--compare-to", before["margins_path"], "--bootstrap", "0"])
+
+
+# ── arguments that would silently score the wrong rows ─────────────────────────────
+@pytest.mark.parametrize(("extra", "expected"), [
+    (["--n", "0"], "scores no prompts"),
+    (["--n", "-3"], "scores no prompts"),
+    (["--skip-harmful", "-1"], "is negative"),
+    (["--skip-harmless", "-1"], "is negative"),
+])
+def test_nonsense_slice_arguments_are_refused(loaded, tmp_path, extra, expected):
+    """A negative skip reads the TAIL of the set: real rows, from the wrong partition."""
+    bad, good = _track(tmp_path, n_harmful=4, n_harmless=4)
+    with pytest.raises(SystemExit, match=expected):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                     "--out", str(tmp_path / "never.json"), "--n", "3",
+                     "--skip-harmful", "0", "--skip-harmless", "0",
+                     "--bootstrap", "0", "--device", "cpu", *extra])
+
+
 # ── the dataset boundary ───────────────────────────────────────────────────────────
 def test_an_empty_dataset_names_itself(loaded, tmp_path):
     """load_from_disk raises a bare IndexError on an empty set, naming neither file nor flag.

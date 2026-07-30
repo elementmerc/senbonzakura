@@ -274,6 +274,12 @@ def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
             if i not in rows:
                 raise SystemExit(f"--compare-to {path} is missing {kind} row {i}")
             margin_value, previous = rows[i]
+            # A row without a usable margin would reach the bootstrap as None and die there,
+            # thousands of resamples deep, with a TypeError naming neither the file nor the
+            # row. The boundary is here.
+            if not isinstance(margin_value, (int, float)) or isinstance(margin_value, bool):
+                raise SystemExit(f"--compare-to {path} {kind} row {i} has margin={margin_value!r}, "
+                                 f"which is not a number, so no interval can come from it")
             if previous is not None and previous != prompt:
                 raise SystemExit(f"--compare-to {path} {kind} row {i} is a different prompt than "
                                  f"this run scores, so the two are not paired")
@@ -287,6 +293,19 @@ def main(argv=None):
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
                                           trust_remote_code=a.trust_remote_code,
                                           chat_template=a.chat_template)
+    # Slice arithmetic makes a nonsense argument silently produce a plausible file rather
+    # than an error: --n 0 scores nothing and then dies inside round(None), and a negative
+    # skip reads the TAIL of the set, which is real data from the wrong partition.
+    if a.n < 1:
+        raise SystemExit(f"--n {a.n} scores no prompts; an AUC needs at least one per arm")
+    for flag, value in (("--skip-harmful", a.skip_harmful), ("--skip-harmless", a.skip_harmless)):
+        if value < 0:
+            raise SystemExit(f"{flag} {value} is negative, which would read the end of the set "
+                             f"instead of skipping its head")
+    if a.compare_to and not a.bootstrap:
+        raise SystemExit("--compare-to exists to produce the paired interval, and --bootstrap 0 "
+                         "asks for no resampling; pick one")
+
     harmful_all = load_prompts(a.harmful, "harmful")
     harmless_all = load_prompts(a.harmless, "harmless")
     harmful = harmful_all[a.skip_harmful:a.skip_harmful + a.n]
@@ -354,7 +373,7 @@ def main(argv=None):
     if a.compare_to:
         before = load_margins_jsonl(a.compare_to, harmful, harmless)
         res["paired"] = paired_bootstrap_delta_ci((*before,), (mh, ml),
-                                                  seed=a.seed, resamples=a.bootstrap or 2000)
+                                                  seed=a.seed, resamples=a.bootstrap)
         res["compared_to"] = a.compare_to
 
     with open(a.out, "w", encoding="utf-8") as f:

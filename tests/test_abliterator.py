@@ -175,6 +175,35 @@ def test_knee_scalar_kl_only_above_target():
     assert cli.knee_scalar(0.0, 0.0, 0.0, cli.KL_TARGET + 0.1) > 0.0
 
 
+# ── the recorded boundaries, honoured by the consumer ─────────────────────────────────
+def test_a_run_that_would_select_on_the_measured_rows_stops_before_the_model(
+        base_args, tiny_model, tiny_tok, track):
+    """The failure this prevents is invisible afterwards: the run succeeds either way.
+
+    Every dataset here is read as a head of N rows, and `bad_eval_ds` is the search
+    partition followed immediately by the measure partition, so a selection set larger
+    than the search partition selects trials on the rows the published number comes from.
+    """
+    with open(os.path.join(base_args.track, "track.json"), "w") as f:
+        json.dump({"counts": {"harmful": {"fit": 12, "search": 2, "measure": 6},
+                              "harmless": {"fit": 6, "search": 3, "measure": 3}}}, f)
+    base_args.eval_refusal_final = 8
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    with pytest.raises(SystemExit, match=r"read past the boundaries"):
+        a.run()
+
+
+def test_a_track_with_boundaries_the_flags_respect_runs(base_args, tiny_model, tiny_tok, track):
+    with open(os.path.join(base_args.track, "track.json"), "w") as f:
+        json.dump({"counts": {"harmful": {"fit": 12, "search": 8, "measure": 0},
+                              "harmless": {"fit": 8, "search": 4, "measure": 0}}}, f)
+    base_args.eval_kl = 4                     # 8 extraction + 4 KL == the 12 set aside
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert any("track boundaries" in x for x in lines)
+
+
 # ── the full pipeline ─────────────────────────────────────────────────────────────────
 def test_full_run_writes_artefact(base_args, tiny_model, tiny_tok, track):
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)

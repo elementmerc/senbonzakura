@@ -400,6 +400,52 @@ def manifest(harmful: dict[str, list[str]], harmless: dict[str, list[str]], sour
     }
 
 
+def read_manifest(track_dir):
+    """The recorded partition boundaries of a track, or None if it has none.
+
+    None is not a failure: a hand-built track predates the builder and still has to run.
+    It means the boundaries are unknown, which is exactly why nothing can be checked
+    against them.
+    """
+    try:
+        m = json.loads((Path(track_dir) / "track.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return m if isinstance(m, dict) and "counts" in m else None
+
+
+def flag_violations(m, *, eval_refusal=0, eval_refusal_final=0, dir_prompts=0, eval_kl=0):
+    """Ways a run's flags would reach past the boundaries the track records.
+
+    The track makes "held out" a property of the files. That property survives only if the
+    consumer respects it, and the consumer reads the HEAD of each dataset by count: the
+    search takes the first `--eval-refusal-final` rows of `bad_eval_ds`, which is the
+    search partition followed immediately by the measure partition. Ask for more rows than
+    the search partition holds and the search starts selecting trials on the rows the
+    published number comes from, with nothing to say so. That is the original defect
+    reappearing through a flag rather than through a file.
+    """
+    counts = m.get("counts") or {}
+    bad, good = counts.get("harmful") or {}, counts.get("harmless") or {}
+    out = []
+    search = bad.get("search")
+    if search is not None:
+        for flag, value in (("--eval-refusal", eval_refusal), ("--eval-refusal-final", eval_refusal_final)):
+            if value > search:
+                out.append(
+                    f"{flag} {value} is more than the {search} harmful rows this track holds for "
+                    f"selection, so the search would score trials on {value - search} of the rows "
+                    f"the published number comes from. Lower it to {search} or rebuild the track "
+                    f"with a larger --search")
+    fit, gsearch = good.get("fit"), good.get("search")
+    if None not in (fit, gsearch) and dir_prompts + eval_kl > fit + gsearch:
+        out.append(
+            f"--dir-prompts {dir_prompts} plus --eval-kl {eval_kl} reads "
+            f"{dir_prompts + eval_kl} harmless rows, past the {fit + gsearch} this track keeps "
+            f"aside, so the KL reference would be measured on rows the compass reports on")
+    return out
+
+
 def _save(rows: list[str], path: Path) -> None:
     from datasets import Dataset
     Dataset.from_dict({"text": rows}).save_to_disk(str(path))

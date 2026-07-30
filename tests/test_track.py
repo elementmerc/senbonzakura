@@ -393,6 +393,57 @@ def test_a_stale_staging_directory_from_an_interrupted_run_is_cleared(tmp_path):
     assert not stale.exists()
 
 
+# ── the boundaries the consumer has to respect ─────────────────────────────────────
+_M = {"counts": {"harmful": {"fit": 259, "search": 132, "measure": 4504},
+                 "harmless": {"fit": 257, "search": 128, "measure": 4597}}}
+
+
+def test_no_manifest_is_not_a_failure(tmp_path):
+    """A hand-built track predates the builder and still has to run; its bounds are unknown."""
+    assert track.read_manifest(tmp_path) is None
+    (tmp_path / "track.json").write_text("{}", encoding="utf-8")
+    assert track.read_manifest(tmp_path) is None          # parses, but records no counts
+    (tmp_path / "track.json").write_text("not json", encoding="utf-8")
+    assert track.read_manifest(tmp_path) is None
+
+
+def test_a_manifest_round_trips_from_a_built_track(tmp_path):
+    h, g = _sources(tmp_path, n=14)
+    out = tmp_path / "track"
+    m = track.main(["--harmful", str(h), "--harmless", str(g), "--out", str(out),
+                    "--fit", "4", "--search", "4"])
+    assert track.read_manifest(out)["counts"] == m["counts"]
+
+
+def test_the_presets_fit_inside_the_rebuilt_track():
+    """The real numbers, because the sizes were chosen for these flags and must keep fitting."""
+    assert track.flag_violations(_M, eval_refusal=64, eval_refusal_final=128,
+                                 dir_prompts=256, eval_kl=64) == []
+
+
+def test_a_selection_set_larger_than_the_search_partition_is_refused():
+    """The original defect, reappearing through a flag instead of through a file."""
+    v = track.flag_violations(_M, eval_refusal_final=200)
+    assert len(v) == 1
+    assert "68 of the rows the published number comes from" in v[0]
+    assert "Lower it to 132" in v[0]
+
+
+def test_both_refusal_flags_are_checked():
+    assert len(track.flag_violations(_M, eval_refusal=133, eval_refusal_final=133)) == 2
+
+
+def test_a_kl_set_reaching_the_reported_harmless_rows_is_refused():
+    v = track.flag_violations(_M, dir_prompts=256, eval_kl=200)
+    assert len(v) == 1 and "past the 385" in v[0]
+
+
+def test_flags_are_unchecked_when_the_counts_are_absent():
+    """Half a manifest constrains half as much, and must not invent the other half."""
+    partial = {"counts": {"harmful": {"fit": 4}}}
+    assert track.flag_violations(partial, eval_refusal_final=10_000, eval_kl=10_000) == []
+
+
 # ── the committed toy track ────────────────────────────────────────────────────────
 def test_the_committed_toy_track_still_passes_its_own_audit():
     """It is the one thing a stranger runs from a clone, so it must stay correct.

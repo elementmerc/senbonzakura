@@ -64,6 +64,10 @@ from .metrics import (
     validate_ruler,  # refuses to measure with a ruler that misreads its own cases
 )
 from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
+from .track import (  # the recorded partition boundaries, and the flags that would cross them
+    flag_violations,
+    read_manifest,
+)
 
 __version__ = "0.3.0"
 
@@ -1256,6 +1260,21 @@ class Abliterator:
         # configuration and reports a confident number for it.
         log(f"ruler self-check: {validate_ruler()} cases pass")
         TR = args.track
+        # A track records where its partitions end; every dataset here is read as a head of
+        # N rows, so a flag larger than a partition walks straight into the next one. Checked
+        # before the model is touched, because the failure is silent afterwards: the run
+        # succeeds and reports a number selected on the rows it claims to have held out.
+        manifest = read_manifest(TR)
+        if manifest:
+            bad_flags = flag_violations(
+                manifest, eval_refusal=args.eval_refusal,
+                eval_refusal_final=args.eval_refusal_final,
+                dir_prompts=args.dir_prompts, eval_kl=args.eval_kl)
+            if bad_flags:
+                raise SystemExit("these flags would read past the boundaries "
+                                 f"{TR}/track.json records:\n"
+                                 + "\n".join(f"  {b}" for b in bad_flags))
+            log(f"track boundaries: {manifest['counts']}")
         GOOD_DS = args.good_ds or f"{TR}/good_ds"
         clean_src = args.clean_ds or GOOD_DS
         self.extract_directions(f"{TR}/bad_ds", GOOD_DS, args.hedge_ds, clean_src)

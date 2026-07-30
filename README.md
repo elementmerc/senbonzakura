@@ -176,6 +176,13 @@ image of leakage, a number narrower than it looks rather than better than it sho
 Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites
 that backup.
 
+`track.json` is also read at the start of a run, and a run whose flags would reach past a
+recorded boundary stops before the model loads. Each dataset is read as its first N rows,
+and the search rows come immediately before the measured ones, so asking for a larger
+selection set than the track keeps aside would quietly select on the rows the published
+number comes from. A track without a `track.json`, one assembled by hand, runs as before:
+its boundaries are unknown, so there is nothing to check against.
+
 ### A toy track to try it on
 
 `examples/toy-track/` is committed and runnable straight from a clone. Its prompts are

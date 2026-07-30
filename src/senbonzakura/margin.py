@@ -31,7 +31,7 @@ from pathlib import Path
 import torch
 from datasets import load_from_disk
 
-from .cli import accelerator_name, last_token_logits, load_model_and_tokenizer
+from .cli import accelerator_name, last_token_logits, load_model_and_tokenizer, render_chat
 from .crashsafe import provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
@@ -135,9 +135,10 @@ def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=
     come off the forward pass that already happened, so the controls cost no extra compute.
     """
     def _do(chunk):
-        texts = [tok.apply_chat_template([{"role": "user", "content": JUDGE_TEMPLATE.format(p)}],
-                                         tokenize=False, add_generation_prompt=True)
-                 for p in chunk]
+        # The shared renderer, not a local copy: it turns thinking off where the model supports
+        # it, which is what puts the read-out position where the verdict actually goes rather
+        # than where `<think>` goes. See `render_chat`.
+        texts = [render_chat(tok, JUDGE_TEMPLATE.format(p)) for p in chunk]
         enc = tok(texts, return_tensors="pt", padding=True,
                   truncation=True, max_length=2048, add_special_tokens=False).to(device)
         logits = last_token_logits(model, enc, log)
@@ -156,8 +157,18 @@ def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=
             single = (logits[:, ch] - logits[:, cb]).cpu().tolist()
         else:
             single = [None] * len(chunk)
-        return [{"margin": m, "canonical": c, "tokens": t}
-                for m, c, t in zip(scores, single, lengths, strict=True)]
+        # What the model would actually emit here, and how much of its probability the two
+        # verdicts hold. The margin is a difference between two logits at one position; that
+        # difference is only a verdict if a verdict is what belongs at that position. On a
+        # thinking model the position is where the reasoning opener goes instead.
+        probs = logits.softmax(dim=-1)
+        top = logits.argmax(dim=-1).cpu().tolist()
+        p_h = probs[:, harmful_ids].sum(dim=-1).cpu().tolist()
+        p_b = probs[:, benign_ids].sum(dim=-1).cpu().tolist()
+        return [{"margin": m, "canonical": c, "tokens": t, "argmax": a, "p_harmful": ph,
+                 "p_benign": pb}
+                for m, c, t, a, ph, pb in zip(scores, single, lengths, top, p_h, p_b,
+                                              strict=True)]
 
     gov = gov or ResourceGovernor(device, log, max_batch=batch)
     return gov.run(_do, list(prompts))
@@ -255,6 +266,53 @@ def controls(harmful, harmless):
     else:
         out["canonical_auc"] = auc(canon_h, canon_l)
     return out
+
+
+READOUT_TOP_TOKENS = 8
+
+
+def readout(rows, verdict_ids, decode, top=READOUT_TOP_TOKENS):
+    """What sits at the position the margin is read from, and how much of the mass it holds.
+
+    The compass takes the difference of two logits at the position where a verdict would begin.
+    That is a verdict only if a verdict is what the model would put there. Three of the seven
+    models in the published table are thinking models, whose first emitted token at that
+    position is a reasoning opener, and for those the "verdict logits" describe a token the
+    model was never going to produce: a counterfactual, not a reading.
+
+    So this records, per arm:
+
+    `argmax_is_verdict`
+        the fraction of prompts where the most likely token really is one of the verdict
+        spellings. Near 1.0 means the read-out position is where the verdict lives. Near 0
+        means the number is being taken from somewhere the model is doing something else.
+    `verdict_prob_mass`
+        how much total probability the two verdict sets hold. A margin between two tokens
+        that together carry 0.1% of the mass is a comparison of two rounding errors.
+    `top_tokens`
+        the most frequent argmax tokens across the arm, decoded, with counts.
+
+    Aggregate only. A per-prompt list of what the model said would be a generation log, which
+    is the thing this project deliberately keeps out of committed artefacts.
+    """
+    if not rows:
+        return None
+    ids = set(verdict_ids)
+    n = len(rows)
+    counts = {}
+    for r in rows:
+        counts[r["argmax"]] = counts.get(r["argmax"], 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+    mass = [r["p_harmful"] + r["p_benign"] for r in rows]
+    mass.sort()
+    return {
+        "argmax_is_verdict": round(sum(1 for r in rows if r["argmax"] in ids) / n, 4),
+        "verdict_prob_mass_mean": round(sum(mass) / n, 6),
+        "verdict_prob_mass_median": round(mass[n // 2], 6),
+        "mean_p_harmful": round(sum(r["p_harmful"] for r in rows) / n, 6),
+        "mean_p_benign": round(sum(r["p_benign"] for r in rows) / n, 6),
+        "top_tokens": [{"id": i, "text": decode([i]), "count": c} for i, c in ranked],
+    }
 
 
 def _resampled_auc(pos, neg, gen):
@@ -492,6 +550,13 @@ def main(argv=None):
         # it. These say what a ruler reading nothing but prompt length would score, and
         # whether the headline survives dropping the max-over-spellings choice.
         "controls": controls(detail_h, detail_l),
+        # Whether the position being read is the position the verdict lives at. See `readout`:
+        # on a thinking model it is where the reasoning opener goes, and then the margin
+        # compares two tokens the model was never going to emit.
+        "readout": {
+            "harmful": readout(detail_h, hid + bid, tok.decode),
+            "harmless": readout(detail_l, hid + bid, tok.decode),
+        },
     }
     # The topic-matched control. A harmless arm drawn from a different subject matter lets
     # topic stand in for harm: "how do I make a bomb" against "what is the capital of Peru"
@@ -549,6 +614,10 @@ def main(argv=None):
           f"length_corr_h={_fmt(c['length_corr_harmful'])} "
           f"length_corr_l={_fmt(c['length_corr_harmless'])} "
           f"tokens_h={c['mean_tokens_harmful']} tokens_l={c['mean_tokens_harmless']}")
+    r = res["readout"]["harmful"]
+    print(f"MARGIN_READOUT {a.label} argmax_is_verdict={r['argmax_is_verdict']*100:.1f}% "
+          f"verdict_prob_mass={r['verdict_prob_mass_mean']:.4f} "
+          f"top={[t['text'] for t in r['top_tokens'][:3]]}")
     if res.get("topic_matched"):
         t = res["topic_matched"]
         tci = f" ci=[{t['auc_ci'][0]:.4f},{t['auc_ci'][1]:.4f}]" if t["auc_ci"] else ""

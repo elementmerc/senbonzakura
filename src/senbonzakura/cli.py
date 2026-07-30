@@ -623,6 +623,32 @@ def _principal_axes(Xc, li, log):
     return S, Vh
 
 
+def render_chat(tok, content):
+    """One user turn, rendered into a prompt, with thinking OFF where the model supports it.
+
+    Shared rather than duplicated, and that is the whole point of it existing. This project had
+    two copies: the generation path passed `enable_thinking=False`, and the compass did not.
+    On Qwen3 the difference is decisive, because the thinking template appends `<think>` to the
+    generation prompt, so the position the compass reads its verdict logits from is the position
+    the model was going to put `<think>` at. Measured on the held-out arm before this was shared:
+    the most likely token there was a verdict for **0.0%** of prompts and the two verdict sets
+    held ~0 probability, on both Qwen3-1.7B and Qwen3-0.6B. The refusal axis and the compass axis
+    of the same published table were therefore measured under different prompt formats.
+
+    No ValueError fallback: the loader has already established that this tokenizer renders chat
+    prompts, either its own template or one `--chat-template` supplied. A ValueError here would
+    mean that guarantee broke, and inventing a prompt format to paper over it is what made a
+    whole class of numbers incomparable.
+    """
+    msgs = [{"role": "user", "content": content}]
+    try:
+        return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                       enable_thinking=False)
+    except TypeError:
+        # A tokenizer that does not accept enable_thinking; retry without it.
+        return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+
+
 def accelerator_name(device):
     """The card a measurement ran on, or None off GPU.
 
@@ -827,16 +853,7 @@ class Abliterator:
                 f"dataset at {d} has no 'text' column (columns: {getattr(ds, 'column_names', '?')})") from e
 
     def chat(self, p):
-        # No ValueError fallback: the loader has already established that this tokenizer
-        # renders chat prompts, either its own template or one --chat-template supplied. A
-        # ValueError here would mean that guarantee broke, and inventing a prompt format to
-        # paper over it is what made a whole class of numbers incomparable.
-        msgs = [{"role": "user", "content": p}]
-        try:
-            return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
-        except TypeError:
-            # A tokenizer that doesn't accept enable_thinking; retry without it.
-            return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        return render_chat(self.tok, p)
 
     # ── direction extraction: per-prompt last-token residuals, bad vs good ────────
     @torch.no_grad()

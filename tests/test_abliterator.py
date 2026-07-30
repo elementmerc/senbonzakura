@@ -299,6 +299,41 @@ def test_chat_still_retries_without_enable_thinking(abl, tiny_tok):
     assert abl.chat("hello") == "U: hello"
 
 
+def test_thinking_is_turned_off_where_the_tokenizer_supports_it():
+    """The Qwen3 case, which decided where the compass was reading its verdict from.
+
+    A thinking template appends `<think>` to the generation prompt, so the position after it is
+    where the model puts a reasoning opener rather than a verdict. Measured on the held-out arm
+    while these three call sites had drifted apart: the most likely token there was a verdict
+    for 0.0% of prompts, on both Qwen3-1.7B and Qwen3-0.6B.
+    """
+    seen = {}
+
+    class _Thinking:
+        def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kw):
+            seen.update(kw)
+            return "<|im_start|>user\n" + msgs[0]["content"] + "<|im_end|>\n<|im_start|>assistant\n"
+
+    cli.render_chat(_Thinking(), "a request")
+    assert seen == {"enable_thinking": False}
+
+
+def test_every_entry_point_renders_a_prompt_the_same_way(abl, tiny_tok):
+    """Three copies of these three lines had drifted, and the drift is not visible in a number.
+
+    The search generated with thinking off; the scorer that produces the published refusal rate
+    and the compass that produces the AUC both left it on. So a configuration was selected under
+    one prompt format and reported under another. Same renderer now, and this asserts it rather
+    than trusting that nobody copies it a fourth time.
+    """
+    from senbonzakura import margin, score
+    assert score.render_chat is cli.render_chat
+    assert margin.render_chat is cli.render_chat
+
+    abl.tok = tiny_tok
+    assert abl.chat("a request") == cli.render_chat(tiny_tok, "a request")
+
+
 # ── the shared loader ─────────────────────────────────────────────────────────────────
 def _patch_hf(monkeypatch, tiny_model, tiny_tok):
     monkeypatch.setattr(cli, "AutoTokenizer",

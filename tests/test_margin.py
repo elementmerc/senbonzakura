@@ -330,8 +330,83 @@ def test_rank_correlation_is_none_where_it_is_undefined(a, b):
 
 
 def _rows(margins_, canon, tokens):
-    return [{"margin": m, "canonical": c, "tokens": t}
+    return [{"margin": m, "canonical": c, "tokens": t, "argmax": 0,
+             "p_harmful": 0.0, "p_benign": 0.0}
             for m, c, t in zip(margins_, canon, tokens, strict=True)]
+
+
+# ── the read-out position (task 13f) ───────────────────────────────────────────────
+def _readout_rows(argmaxes, p_h=0.4, p_b=0.3):
+    return [{"margin": 0.0, "canonical": 0.0, "tokens": 10, "argmax": a,
+             "p_harmful": p_h, "p_benign": p_b} for a in argmaxes]
+
+
+def test_a_verdict_at_the_read_out_position_is_reported_as_such():
+    rows = _readout_rows([7, 7, 9, 7])
+    out = margin.readout(rows, [7, 9], decode=lambda ids: f"<{ids[0]}>")
+    assert out["argmax_is_verdict"] == 1.0
+    assert out["top_tokens"][0] == {"id": 7, "text": "<7>", "count": 3}
+
+
+def test_a_reasoning_opener_at_the_read_out_position_is_caught():
+    """The finding this exists for: three of seven published models are thinking models.
+
+    If the most likely token at the scored position is not a verdict, the margin compares two
+    tokens the model was never going to emit.
+    """
+    rows = _readout_rows([151667, 151667, 151667, 7])      # a think-tag three times out of four
+    out = margin.readout(rows, [7, 9], decode=lambda ids: "<think>" if ids[0] > 1000 else "H")
+    assert out["argmax_is_verdict"] == 0.25
+    assert out["top_tokens"][0]["text"] == "<think>"
+
+
+def test_the_verdict_probability_mass_is_reported():
+    """Two logits that together hold a thousandth of the mass are two rounding errors."""
+    rows = _readout_rows([1, 1], p_h=0.0004, p_b=0.0002)
+    out = margin.readout(rows, [7], decode=lambda ids: "x")
+    assert out["verdict_prob_mass_mean"] == pytest.approx(0.0006, abs=1e-9)
+    assert out["mean_p_harmful"] == pytest.approx(0.0004, abs=1e-9)
+    assert out["mean_p_benign"] == pytest.approx(0.0002, abs=1e-9)
+
+
+def test_the_read_out_audit_reports_counts_and_never_a_prompt():
+    """Aggregate only: a per-prompt list of what the model said is a generation log."""
+    out = margin.readout(_readout_rows([1, 2, 3]), [1], decode=lambda ids: "t")
+    assert set(out) == {"argmax_is_verdict", "verdict_prob_mass_mean", "verdict_prob_mass_median",
+                        "mean_p_harmful", "mean_p_benign", "top_tokens"}
+    assert all(set(t) == {"id", "text", "count"} for t in out["top_tokens"])
+
+
+def test_the_top_token_list_is_capped_and_deterministic():
+    rows = _readout_rows(list(range(50)))
+    out = margin.readout(rows, [], decode=lambda ids: str(ids[0]))
+    assert len(out["top_tokens"]) == margin.READOUT_TOP_TOKENS
+    # All tied at one occurrence, so the id breaks the tie and two runs agree.
+    assert [t["id"] for t in out["top_tokens"]] == list(range(margin.READOUT_TOP_TOKENS))
+
+
+def test_no_rows_means_no_read_out_rather_than_a_divide_by_zero():
+    assert margin.readout([], [1], decode=lambda ids: "t") is None
+
+
+def test_the_scored_logits_and_the_read_out_agree(margin_kit):
+    """The audit must describe the same forward pass the margin came from, not another one."""
+    model, tok = margin_kit
+    hid = margin.label_token_ids(tok, "HARMFUL")
+    bid = margin.label_token_ids(tok, "BENIGN")
+    rows = margin.margins(model, tok, ["one prompt"], hid, bid, "cpu", detail=True,
+                          canonical=(hid[0], bid[0]))
+
+    texts = [tok.apply_chat_template(
+        [{"role": "user", "content": margin.JUDGE_TEMPLATE.format("one prompt")}],
+        tokenize=False, add_generation_prompt=True)]
+    enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False)
+    with torch.no_grad():
+        logits = model(**enc).logits[:, -1, :].float()
+    probs = logits.softmax(dim=-1)
+    assert rows[0]["argmax"] == int(logits.argmax(dim=-1)[0])
+    assert rows[0]["p_harmful"] == pytest.approx(float(probs[0, hid].sum()), abs=1e-6)
+    assert rows[0]["p_benign"] == pytest.approx(float(probs[0, bid].sum()), abs=1e-6)
 
 
 def test_a_length_only_ruler_is_scored_on_the_same_scale_as_the_headline():
@@ -606,6 +681,15 @@ def test_main_refuses_a_tokenizer_that_shares_a_verdict_id(loaded, tmp_path, mon
 
 
 # ── the controls, end to end (task 14) ─────────────────────────────────────────────
+def test_every_result_carries_the_read_out_audit(loaded, tmp_path, capsys):
+    res = _run(loaded, tmp_path, "readout")
+    for arm in ("harmful", "harmless"):
+        r = res["readout"][arm]
+        assert 0.0 <= r["argmax_is_verdict"] <= 1.0
+        assert r["top_tokens"]
+    assert "MARGIN_READOUT" in capsys.readouterr().out
+
+
 def test_every_result_carries_the_controls(loaded, tmp_path, capsys):
     """No refusal or discrimination figure ships without the controls that qualify it."""
     res = _run(loaded, tmp_path, "controlled")

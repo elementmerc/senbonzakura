@@ -14,7 +14,7 @@ import torch
 from datasets import load_from_disk
 
 from . import metrics
-from .cli import accelerator_name, load_model_and_tokenizer
+from .cli import accelerator_name, load_model_and_tokenizer, render_chat
 from .crashsafe import provenance
 
 
@@ -70,8 +70,11 @@ def generate(model, tok, prompts, device, batch=16, max_new=64):
     gens = []
     for i in range(0, len(prompts), batch):
         chunk = prompts[i:i + batch]
-        texts = [tok.apply_chat_template([{"role": "user", "content": p}],
-                                         tokenize=False, add_generation_prompt=True) for p in chunk]
+        # The shared renderer. This was a third copy of the same three lines, and the copies
+        # had drifted: the search's own generation passed `enable_thinking=False` and this one
+        # did not, so a configuration was selected under one prompt format and then reported
+        # under another. One renderer, one format, everywhere.
+        texts = [render_chat(tok, p) for p in chunk]
         enc = tok(texts, return_tensors="pt", padding=True, truncation=True, max_length=2048).to(device)
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=max_new, do_sample=False,

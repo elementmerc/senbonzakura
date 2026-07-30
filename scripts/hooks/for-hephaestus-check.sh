@@ -109,7 +109,62 @@ if [ ! -f "$PLAN" ]; then
     say ""
     say "Empty is a valid answer. An empty next_6_months is honest; a horizon"
     say "invented to fill the field is worse than no horizon at all."
+    say ""
+    say "ONE YAML TRAP, and it has already bitten once: any value containing a"
+    say "colon followed by a space MUST be quoted, or YAML reads it as a nested"
+    say "mapping and the whole file stops parsing."
+    say "    - text: Headless GNOME host: Mutter capture      <- BREAKS the file"
+    say "    - text: \"Headless GNOME host: Mutter capture\"    <- correct"
+    say "A plan that does not parse makes the project invisible to the brief, so"
+    say "run the validator after writing: telos check."
     exit 0
+fi
+
+# ── Mode 1b: the plan exists but does not parse ─────────────────────────────
+# The block above spends five lines warning about the colon-space YAML trap and
+# then never checks for it. Measured 2026-07-30: a plan carrying that exact trap
+# passed this hook in total silence, because everything below reads the file with
+# `sed` and sed does not parse YAML. It happily extracts a `checked:` line from a
+# file the brief cannot read at all.
+#
+# That is the worst of the three failure modes. A missing plan is loud. A stale
+# plan is loud. A plan that is present, recent and UNPARSEABLE was silent, and it
+# makes the project invisible to the morning brief exactly as if it did not exist.
+# Emptiness must be distinguishable from silence (principle 17).
+#
+# `telos check` is the validator that already knows the schema; there is no
+# second implementation here. The binary is looked up in a HARDCODED order and
+# never from repo config, because a value reaching an exec position must come
+# from the machine (ADR 67).
+TELOS=""
+for _c in telos "$HOME/.local/bin/telos" \
+          "$HOME/the-factory/hephaestus/target/release/telos"; do
+    if command -v "$_c" >/dev/null 2>&1; then TELOS=$(command -v "$_c"); break; fi
+done
+
+if [ -n "$TELOS" ]; then
+    # --root is the only scoping flag, so scan the sibling set and keep the one
+    # line that names this project. Cheap: a dozen small files.
+    _me=$(basename "$ROOT")
+    _bad=$("$TELOS" check --root "$(dirname "$ROOT")" 2>/dev/null \
+           | grep -E "^FAIL[[:space:]]+${_me}:" | head -1)
+    if [ -n "$_bad" ]; then
+        say "THE PLAN DOES NOT PARSE, so this project is invisible to the brief."
+        say "  ${_bad}"
+        say ""
+        say "Fix it before other work. The usual cause is a value containing a"
+        say "colon followed by a space, which YAML reads as a nested mapping:"
+        say "    - text: Headless GNOME host: Mutter capture      <- BREAKS"
+        say "    - text: \"Headless GNOME host: Mutter capture\"    <- correct"
+        say "Re-run 'telos check' until it is clean."
+        exit 0
+    fi
+else
+    # A gate that cannot measure must say so rather than fall quiet, or its
+    # silence is indistinguishable from a pass. Same rule panel-check follows.
+    say "CANNOT VALIDATE: no telos binary found, so this plan is unchecked."
+    say "Build it in hephaestus and link it onto PATH:"
+    say "  ln -sfn ~/the-factory/hephaestus/target/release/telos ~/.local/bin/telos"
 fi
 
 # ── Read the frontmatter WITHOUT executing anything ─────────────────────────

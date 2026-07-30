@@ -42,12 +42,14 @@ if [ -d "$DRILLS" ]; then
     fi
 fi
 
-# Multi-persona review gate (baseline Section 25): the MANDATORY adoption
-# bootstrap in a repo that has not adopted it, else commits since the last
-# panel review. Wired by install-project.sh; fail-open, never blocks.
-if [ -x "$HERE/panel-check.sh" ]; then
-    CLAUDE_PROJECT_DIR="$ROOT" bash "$HERE/panel-check.sh" || true
-fi
+# Multi-persona review gate (baseline Section 25): NOT called here. It runs as its
+# own SessionStart hook entry in .claude/settings.json instead.
+#
+# It used to run in both places, so every session printed the panel line twice
+# (measured 2026-07-30). The copy removed is THIS one, deliberately: the briefing
+# is large enough that the harness spills its output to a file and shows only a
+# preview, so a gate buried inside it can go unread. A standalone hook entry
+# arrives on its own.
 
 echo "──────────────────────────────────────────────────────────────────"
 exit 0

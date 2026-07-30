@@ -506,11 +506,30 @@ def test_labels_put_every_stratum_in_every_partition():
     corpus that left the search partition with no rows from three of nine harmful axes.
     """
     rows, labels = _labelled_corpus()
-    parts = track.partition(rows, fit=len(rows) // 20, search=len(rows) // 40, labels=labels)
     axes = set(labels.values())
+    # The share has to be able to HOLD every stratum: allocation deals whole requests of
+    # seven rows, so a partition of six groups cannot contain nine categories whatever the
+    # algorithm does. Sized so each partition holds comfortably more groups than strata.
+    parts = track.partition(rows, fit=len(rows) // 4, search=len(rows) // 5, labels=labels)
     for name, part in parts.items():
         seen = {labels[track.normalise(r)] for r in part}
         assert seen == axes, f"{name} missed {sorted(axes - seen)}"
+
+
+def test_a_partition_too_small_for_every_stratum_is_still_maximally_diverse():
+    """When it cannot hold them all, it must not waste slots on repeats.
+
+    A fixed stratum order aliases against the allocation stride, which can starve whole
+    categories forever; rotating the order each cycle is what prevents that.
+    """
+    rows, labels = _labelled_corpus()
+    parts = track.partition(rows, fit=len(rows) // 40, search=len(rows) // 40, labels=labels)
+    for name in ("fit", "search"):
+        part = parts[name]
+        groups = len(part) // len(_TEMPLATES)
+        seen = {labels[track.normalise(r)] for r in part}
+        assert len(seen) >= min(groups, len(set(labels.values()))) - 1, (
+            f"{name} holds {groups} requests but only {len(seen)} categories")
 
 
 def test_labels_do_not_break_the_request_grouping():

@@ -45,6 +45,7 @@ import re
 import shutil
 import sys
 import unicodedata
+from itertools import zip_longest
 from pathlib import Path
 
 # Rows shorter than this after normalisation are dropped as noise rather than prompts.
@@ -256,17 +257,40 @@ def partition(rows: list[str], fit: int, search: int, labels=None) -> dict[str, 
                 label = min(found)
         strata.setdefault(label, []).append(key)
 
+    # Two phases, because interleaving alone cannot guarantee coverage. Phase one seeds
+    # every partition with one request from every stratum, which is what makes "each
+    # partition represents the corpus" a property rather than a hope. Phase two fills the
+    # rest against the GLOBAL target, so the totals stay honest.
+    #
+    # The alternative, allocating each stratum against its own quota, was tried and
+    # overshot: the rounding error compounds with the number of strata, and twelve of them
+    # put the fit partition 15% over target, which the balance check then refused.
+    def shortfall(p):
+        return (targets[p] - len(out[p])) / max(1, targets[p])
+
+    seeded: set[str] = set()
     for label in sorted(strata):
-        filled = dict.fromkeys(order, 0)
-        share = {p: targets[p] * sum(len(groups[k]) for k in strata[label]) / max(1, len(rows))
-                 for p in order}
-        for key in strata[label]:
-            # Largest shortfall as a FRACTION of this stratum's share, ties broken by a
-            # fixed order so two runs on the same input produce the same split.
-            name = max(order, key=lambda p: ((share[p] - filled[p]) / max(1.0, share[p]),
-                                             -order.index(p)))
-            out[name].extend(groups[key])
-            filled[name] += len(groups[key])
+        for name in order:
+            for key in strata[label]:
+                if key in seeded:
+                    continue
+                if len(out[name]) >= targets[name]:
+                    break                      # no room; the fill pass will handle it
+                out[name].extend(groups[key])
+                seeded.add(key)
+                break
+
+    # Interleaved, not stratum by stratum. Walking strata in order let whichever ones came
+    # first absorb the small partitions' remaining room: the search partition came out with
+    # 22 requests from one axis and 1 from another, so a configuration would have been
+    # selected mostly against surveillance. Interleaving spreads the remainder too.
+    remaining = [[k for k in strata[label] if k not in seeded] for label in sorted(strata)]
+    for key in [k for tier in zip_longest(*remaining) for k in tier if k is not None]:
+        # Largest shortfall as a FRACTION of target, ties broken by a fixed order so two
+        # runs on the same input produce the same split.
+        name = max(order, key=lambda p: (shortfall(p), -order.index(p)))
+        out[name].extend(groups[key])
+
     return out
 
 

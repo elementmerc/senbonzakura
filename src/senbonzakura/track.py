@@ -445,8 +445,10 @@ def build_parser():
         prog="senbonzakura.track",
         description="Build an evaluation track with a fit / search / measure split that is "
                     "checked before it is written.")
-    ap.add_argument("--harmful", required=True, help="text file of harmful prompts, one per line")
-    ap.add_argument("--harmless", required=True, help="text file of harmless prompts, one per line")
+    # Not required, because --audit reads an existing track and has no use for them; making
+    # them mandatory forced anyone checking a track to invent two paths that are never read.
+    ap.add_argument("--harmful", default="", help="text file of harmful prompts, one per line")
+    ap.add_argument("--harmless", default="", help="text file of harmless prompts, one per line")
     ap.add_argument("--out", required=True, help="track directory to create")
     ap.add_argument("--fit", type=int, default=256,
                     help="prompts per side the directions are extracted from (default: the "
@@ -465,8 +467,15 @@ def build_parser():
     return ap
 
 
-def audit(track: Path) -> list[str]:
-    """Re-run the checks on a track that already exists, using its recorded boundaries."""
+def audit(track: Path, labels=None) -> list[str]:
+    """Re-run the checks on a track that already exists, using its recorded boundaries.
+
+    `labels` matters more than it looks. The recorded counts are the ONLY thing that says
+    where a partition boundary falls in an existing track, and the strata check is the one
+    that catches the mirror image of leakage: an arm narrower than the number claims. Audit
+    without labels cannot run it, so a hand-built track passes an audit that never asked
+    the question.
+    """
     from datasets import load_from_disk
     try:
         m = json.loads((track / "track.json").read_text(encoding="utf-8"))
@@ -478,9 +487,27 @@ def audit(track: Path) -> list[str]:
     bad_eval = [r["text"] for r in load_from_disk(str(track / "bad_eval_ds"))]
     good = [r["text"] for r in load_from_disk(str(track / "good_ds"))]
     hs, gf, gs = counts["harmful"]["search"], counts["harmless"]["fit"], counts["harmless"]["search"]
+
+    # The boundaries are recorded, not derivable, so a manifest that disagrees with the
+    # files makes every slice below the wrong rows and the audit answers a question about a
+    # track that does not exist. Refuse rather than report on the wrong partitions.
+    expected = {
+        "bad_ds": (len(bad_fit), counts["harmful"]["fit"]),
+        "bad_eval_ds": (len(bad_eval), counts["harmful"]["search"] + counts["harmful"]["measure"]),
+        "good_ds": (len(good), gf + gs + counts["harmless"]["measure"]),
+    }
+    wrong = [f"{n}: {have} rows on disk, {want} in track.json"
+             for n, (have, want) in expected.items() if have != want]
+    if wrong:
+        raise SystemExit(
+            f"{track}/track.json does not describe the datasets beside it, so the recorded "
+            f"partition boundaries cannot be trusted and neither could an audit using them: "
+            + "; ".join(wrong))
+
     return check(
         {"fit": bad_fit, "search": bad_eval[:hs], "measure": bad_eval[hs:]},
         {"fit": good[:gf], "search": good[gf:gf + gs], "measure": good[gf + gs:]},
+        labels,
     )
 
 
@@ -489,7 +516,7 @@ def main(argv=None):
     out = Path(a.out)
 
     if a.audit:
-        failures = audit(out)
+        failures = audit(out, read_labels(a.labels) if a.labels else None)
         if failures:
             print(f"TRACK_AUDIT_FAILED {out}", file=sys.stderr)
             for f in failures:
@@ -497,6 +524,10 @@ def main(argv=None):
             raise SystemExit(1)
         print(f"TRACK_AUDIT_OK {out}")
         return {}
+
+    missing = [f for f, v in (("--harmful", a.harmful), ("--harmless", a.harmless)) if not v]
+    if missing:
+        raise SystemExit(f"building a track needs {' and '.join(missing)}")
 
     labels = read_labels(a.labels) if a.labels else None
     if labels:

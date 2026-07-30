@@ -307,11 +307,71 @@ def test_audit_catches_a_track_that_was_not_built_here(tmp_path, capsys):
     assert "TRACK_AUDIT_FAILED" in capsys.readouterr().err
 
 
+def test_audit_uses_the_labels_it_is_given(tmp_path, capsys):
+    """The strata check is the audit's only way to see an arm narrower than the claim.
+
+    Built by hand rather than by `partition`, because the builder now refuses to produce a
+    track with a stratum missing from measure; the case that has to be caught is the
+    hand-assembled corpus, which is how the real one was made.
+    """
+    from datasets import Dataset
+    out = tmp_path / "handmade"
+    out.mkdir()
+    fit = [f"harmful alpha request {i}" for i in range(4)] + ["harmful beta request only"]
+    ev = [f"harmful alpha other {i}" for i in range(4)]          # no BETA row in measure
+    good = [f"harmless question number {i}" for i in range(9)]
+    Dataset.from_dict({"text": fit}).save_to_disk(str(out / "bad_ds"))
+    Dataset.from_dict({"text": ev}).save_to_disk(str(out / "bad_eval_ds"))
+    Dataset.from_dict({"text": good}).save_to_disk(str(out / "good_ds"))
+    (out / "track.json").write_text(json.dumps({
+        "counts": {"harmful": {"fit": 5, "search": 1, "measure": 3},
+                   "harmless": {"fit": 3, "search": 3, "measure": 3}}}), encoding="utf-8")
+
+    labels = tmp_path / "labels.tsv"
+    labels.write_text("".join(f"ALPHA\t{r}\n" for r in fit[:4] + ev)
+                      + f"BETA\t{fit[4]}\n"
+                      + "".join(f"BENIGN\t{r}\n" for r in good), encoding="utf-8")
+
+    assert track.audit(out) == [], "without labels there is nothing to notice"
+    failures = track.audit(out, track.read_labels(labels))
+    assert any("no rows in measure" in f and "BETA" in f for f in failures)
+
+    with pytest.raises(SystemExit):
+        track.main(["--harmful", "x", "--harmless", "y", "--out", str(out),
+                    "--labels", str(labels), "--audit"])
+    assert "TRACK_AUDIT_FAILED" in capsys.readouterr().err
+
+
+def test_audit_refuses_when_the_manifest_disagrees_with_the_files(tmp_path):
+    """The recorded counts are the only record of where a boundary falls.
+
+    If they do not match the rows on disk, every slice the audit takes is the wrong rows,
+    and a clean verdict describes a track that does not exist. That is worse than no audit.
+    """
+    from datasets import Dataset
+    out = tmp_path / "drifted"
+    out.mkdir()
+    Dataset.from_dict({"text": [f"harmful request number {i}" for i in range(6)]}).save_to_disk(str(out / "bad_ds"))
+    Dataset.from_dict({"text": [f"harmful other thing {i}" for i in range(6)]}).save_to_disk(str(out / "bad_eval_ds"))
+    Dataset.from_dict({"text": [f"harmless question number {i}" for i in range(9)]}).save_to_disk(str(out / "good_ds"))
+    (out / "track.json").write_text(json.dumps({
+        "counts": {"harmful": {"fit": 6, "search": 3, "measure": 99},     # 102, not 6
+                   "harmless": {"fit": 3, "search": 3, "measure": 3}}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"does not describe the datasets"):
+        track.audit(out)
+
+
 def test_audit_without_a_manifest_says_so(tmp_path):
     out = tmp_path / "bare"
     out.mkdir()
     with pytest.raises(SystemExit, match=r"no readable track\.json"):
-        track.main(["--harmful", "x", "--harmless", "y", "--out", str(out), "--audit"])
+        track.main(["--out", str(out), "--audit"])
+
+
+def test_a_build_without_sources_says_which_flag_is_missing(tmp_path):
+    """They are optional only because --audit never reads them."""
+    with pytest.raises(SystemExit, match=r"--harmful and --harmless"):
+        track.main(["--out", str(tmp_path / "nope")])
 
 
 def test_a_stale_staging_directory_from_an_interrupted_run_is_cleared(tmp_path):

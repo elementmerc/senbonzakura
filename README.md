@@ -145,6 +145,14 @@ The checks are the point. A track is refused if anything in `measure` also appea
 empty, or if the two sides differ in size by more than 10%. It reports counts only and
 never prints a prompt, so its output is safe to paste anywhere.
 
+One of those checks looks past the text. Corpora are often built by crossing a handful
+of phrasings with a list of requests, so the same question appears several times as
+several different strings; comparing whole prompts then reports a clean split while the
+eval set is full of training questions in other clothes. The builder works out the
+phrasings from your own corpus, strips them, and keeps every wording of one request in
+the same part. On the corpus this project runs on, that is the difference between
+"zero overlap" and 60% of the eval set.
+
 It finishes by telling you the flags that put the compass on the held-out rows:
 
 ```
@@ -157,8 +165,13 @@ a year later rather than take it on trust. To re-check a track you already have,
 including one assembled by hand:
 
 ```sh
-python -m senbonzakura.track --harmful x --harmless y --out mytrack --audit
+python -m senbonzakura.track --out mytrack --audit
 ```
+
+If you have a `label<TAB>prompt` file for the corpus, pass `--labels` to the audit too.
+It adds the one check that cannot be run without it: whether every category present in
+the track actually reaches the `measure` part. A category that does not is the mirror
+image of leakage, a number narrower than it looks rather than better than it should be.
 
 Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites
 that backup.

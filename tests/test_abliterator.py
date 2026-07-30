@@ -334,6 +334,60 @@ def test_every_entry_point_renders_a_prompt_the_same_way(abl, tiny_tok):
     assert abl.chat("a request") == cli.render_chat(tiny_tok, "a request")
 
 
+# ── the shared loader SURFACE (task 16) ───────────────────────────────────────────────
+def test_every_command_offers_the_same_loading_flags():
+    """Four copies of these flags had drifted, in ways that showed up in the numbers.
+
+    --device carried help text in three of the four and none in the fourth, --load-in-4bit
+    existed on two of the three forward-only paths, and each --model described itself
+    differently. The prompt renderer beside them drifted the same way and that one moved the
+    compass's read-out onto the wrong token, so this is not a tidiness test.
+    """
+    from senbonzakura import coherence, margin, score
+
+    shared = {"--model", "--device", "--trust-remote-code", "--load-in-4bit"}
+    for module in (cli, score, margin, coherence):
+        flags = {a for action in module.build_parser()._actions for a in action.option_strings}
+        assert shared <= flags, f"{module.__name__} is missing {shared - flags}"
+
+    # --chat-template belongs to the commands whose measurement depends on prompt format.
+    for module in (cli, score, margin):
+        flags = {a for action in module.build_parser()._actions for a in action.option_strings}
+        assert "--chat-template" in flags, f"{module.__name__} lost --chat-template"
+    coh = {a for action in coherence.build_parser()._actions for a in action.option_strings}
+    assert "--chat-template" not in coh, "perplexity of a fixed passage has no prompt format"
+
+
+def test_perplexity_does_not_require_a_chat_template(tiny_model, monkeypatch):
+    """The fail-loud template check was refusing runs that never render a prompt.
+
+    A base model with no chat template has a perfectly well defined perplexity on a fixed
+    passage, and the guard exists to stop an INVENTED prompt format reaching a measurement that
+    depends on one. This measurement does not.
+    """
+    class _NoTemplate:
+        pad_token = "<pad>"
+        pad_token_id = 0
+        padding_side = "right"
+
+        def apply_chat_template(self, *a, **k):
+            raise ValueError("no chat template is set")
+
+        def __call__(self, text, return_tensors="pt"):
+            return types.SimpleNamespace(input_ids=torch.tensor([[1, 2, 3, 4]]))
+
+    tok = _NoTemplate()
+    monkeypatch.setattr(cli, "AutoTokenizer",
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: tok))
+    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_model))
+
+    with pytest.raises(SystemExit, match="chat template"):
+        cli.load_model_and_tokenizer("m", device="cpu")          # the paths that need one
+    model, got = cli.load_model_and_tokenizer("m", device="cpu", needs_chat_template=False)
+    assert got is tok and got.senbon_chat_template is None
+
+
 # ── the shared loader ─────────────────────────────────────────────────────────────────
 def _patch_hf(monkeypatch, tiny_model, tiny_tok):
     monkeypatch.setattr(cli, "AutoTokenizer",

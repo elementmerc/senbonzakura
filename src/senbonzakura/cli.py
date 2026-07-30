@@ -416,6 +416,12 @@ def build_parser():
                "(dense / fused MoE / expert-list) and parameter count, scales the search budget, and "
                "turns on every quality lever, so you set only the paths. It owns the search knobs; "
                "manual --trials / --max-directions / etc. are ignored in this mode.",
+        parents=[loader_parser(
+            model_help="HF model id or local path to abliterate",
+            four_bit_help="NOT supported by the abliterator: the weight bake needs full "
+                          "precision. Use it with the scorer "
+                          "(python -m senbonzakura.score --load-in-4bit) to measure a model "
+                          "on low VRAM.")],
         formatter_class=argparse.RawDescriptionHelpFormatter)
     try:   # optional shell completion; degrade gracefully if shtab is not installed
         import shtab
@@ -423,7 +429,6 @@ def build_parser():
                               help="print a bash/zsh/tcsh shell completion script and exit")
     except ImportError:
         pass
-    ap.add_argument("--model", required=True, help="HF model id or local path to abliterate")
     ap.add_argument("--out", default="abliterated", help="directory to write the abliterated model to")
     ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")
     ap.add_argument("--eval-refusal", type=int, default=64, help="bad-eval prompts for the refusal score")
@@ -459,16 +464,9 @@ def build_parser():
                                                               "ablation + print refusals, no search")
     ap.add_argument("--track", default="track", help="dir holding bad_ds / good_ds / bad_eval_ds")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
-    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
-    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
-                    help="allow models that ship custom modelling code (some Hub models need it); off by default.")
     ap.add_argument("--attn-impl", dest="attn_impl", default=None,
                     help="attention implementation to request (eager / sdpa / flash_attention_2); "
                          "default lets transformers choose (sdpa).")
-    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
-                    help="NOT supported by the abliterator: the weight bake needs full precision. Use it "
-                         "with the scorer (python -m senbonzakura.score --load-in-4bit) to measure a model "
-                         "on low VRAM.")
     ap.add_argument("--inspect", nargs=2, type=float, default=None, metavar=("LAYER", "STRENGTH"),
                     help="print real harmful+harmless generations at (layer, strength), pre and post "
                          "ablation, then exit")
@@ -521,10 +519,6 @@ def build_parser():
     ap.add_argument("--patience", type=int, default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
-    ap.add_argument("--chat-template", dest="chat_template", default="",
-                    help="Jinja chat template file, for a model that ships none. Prompt "
-                         "format drives every measurement here, so a missing template is an "
-                         "input you supply and the run records, not something the tool invents.")
     ap.add_argument("--eval-refusal-final", type=int, default=0,
                     help="re-score the top frontier candidates on this many bad-eval prompts before "
                          "picking the knee, so the choice isn't overfit to the small search eval "
@@ -621,6 +615,42 @@ def _principal_axes(Xc, li, log):
         S = evals[order].clamp_min(0.0).sqrt().to(Xc.dtype)
         Vh = evecs[:, order].T.to(Xc.dtype)
     return S, Vh
+
+
+def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
+                  chat_template=True):
+    """The flags every entry point needs in order to LOAD a model, defined once.
+
+    A parent parser rather than a copy in each of the four commands. The copies had already
+    drifted in ways that matter: `--device` carried help text in three places and none in the
+    fourth, `--load-in-4bit` existed on two of the four forward-only paths, and each `--model`
+    described itself differently. Worse, the same drift in the *prompt* rendering beside these
+    flags is what put the compass's read-out at the wrong position (see `render_chat`), so
+    "four near-copies of the loading surface" is not a tidiness complaint.
+
+    `four_bit_help` lets the abliterator say that it REJECTS the flag while still accepting it,
+    which is what turns an obscure failure at bake time into a sentence at startup.
+    """
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--model", required=True, help=model_help)
+    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
+    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
+                    help="allow models that ship custom modelling code (some Hub models need "
+                         "it); off by default.")
+    # Omitted for a command whose measurement does not depend on prompt format, so it does not
+    # offer a knob that would change nothing.
+    if chat_template:
+        ap.add_argument("--chat-template", dest="chat_template", default="",
+                        help="Jinja chat template file, for a model that ships none. Prompt "
+                             "format drives every measurement here, so a missing template is an "
+                             "input you supply and the run records, not something the tool "
+                             "invents.")
+    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
+                    help=four_bit_help or ("load in 4-bit (bitsandbytes nf4) to measure a large "
+                                           "model on low VRAM. Safe on the forward-only paths; "
+                                           "the abliterator refuses it, because the weight bake "
+                                           "rewrites tensors and needs full precision."))
+    return ap
 
 
 def render_chat(tok, content):
@@ -727,7 +757,7 @@ def ensure_chat_template(tok, template_path=None, log=None):
 
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
-                             chat_template=None):
+                             chat_template=None, needs_chat_template=True):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
     # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
     # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
@@ -741,7 +771,11 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # Validated here, at the single boundary every entry point passes through, rather than
     # in each of the three. The provenance rides on the tokenizer so callers can put it in
     # their result files without the loader having to change what it returns.
-    tok.senbon_chat_template = ensure_chat_template(tok, chat_template, _log)
+    # Scoped to the callers whose measurement depends on prompt format. The perplexity of a
+    # fixed neutral passage does not: it never renders a chat prompt, so requiring a template
+    # there refused to measure base models for a reason that did not apply to them.
+    tok.senbon_chat_template = (ensure_chat_template(tok, chat_template, _log)
+                                if needs_chat_template else None)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
     if attn_impl:
         kw["attn_implementation"] = attn_impl

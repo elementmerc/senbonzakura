@@ -20,7 +20,7 @@ import math
 
 import torch
 
-from .cli import load_model_and_tokenizer
+from .cli import load_model_and_tokenizer, loader_parser
 
 # A fixed, deliberately unremarkable passage. It touches no refusal-adjacent topic,
 # so a rising perplexity here is coherence damage, not the model balking at content.
@@ -47,17 +47,14 @@ NEUTRAL = (
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="senbonzakura.coherence",
-                                 description="Measure a model's coherence as neutral-passage perplexity.")
-    ap.add_argument("--model", required=True)
+    # No --chat-template, deliberately: this measures the perplexity of a fixed passage and
+    # never renders a chat prompt, so there is no prompt format for one to specify.
+    ap = argparse.ArgumentParser(
+        prog="senbonzakura.coherence",
+        description="Measure a model's coherence as neutral-passage perplexity.",
+        parents=[loader_parser(chat_template=False)])
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="")
-    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
-    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
-                    help="load in 4-bit (bitsandbytes nf4) to measure a large model on low VRAM. This is a "
-                         "pure forward pass, so 4-bit is safe here (unlike the abliterator's bake).")
-    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
-                    help="allow models that ship custom modelling code.")
     return ap
 
 
@@ -71,7 +68,8 @@ def coherence(model, tok, text=NEUTRAL):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(
-        a.model, device=a.device, load_in_4bit=a.load_in_4bit, trust_remote_code=a.trust_remote_code)
+        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        trust_remote_code=a.trust_remote_code, needs_chat_template=False)
     res = {"label": a.label, "model": a.model, **coherence(model, tok)}
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)

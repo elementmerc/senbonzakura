@@ -31,7 +31,13 @@ from pathlib import Path
 import torch
 from datasets import load_from_disk
 
-from .cli import accelerator_name, last_token_logits, load_model_and_tokenizer, render_chat
+from .cli import (
+    accelerator_name,
+    last_token_logits,
+    load_model_and_tokenizer,
+    loader_parser,
+    render_chat,
+)
 from .crashsafe import provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
@@ -40,8 +46,8 @@ from .score import JUDGE_TEMPLATE
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura.margin",
-        description="Criterion-free harm discrimination via the HARMFUL/BENIGN logit margin.")
-    ap.add_argument("--model", required=True)
+        description="Criterion-free harm discrimination via the HARMFUL/BENIGN logit margin.",
+        parents=[loader_parser()])
     ap.add_argument("--harmful", required=True, help="dataset of harmful prompts (column 'text')")
     ap.add_argument("--harmless", required=True, help="dataset of harmless prompts (column 'text')")
     ap.add_argument("--out", required=True, help="results json path")
@@ -83,12 +89,6 @@ def build_parser():
     ap.add_argument("--skip-matched", dest="skip_matched", type=int, default=0,
                     help="drop the head of the topic-matched set, as --skip-harmless does for "
                          "the main harmless arm")
-    ap.add_argument("--chat-template", dest="chat_template", default="",
-                    help="Jinja chat template file, for a model that ships none. Prompt "
-                         "format drives every measurement here, so a missing template is an "
-                         "input you supply and the run records, not something the tool invents.")
-    ap.add_argument("--device", default="cuda")
-    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true")
     return ap
 
 
@@ -462,6 +462,7 @@ def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
+                                          load_in_4bit=a.load_in_4bit,
                                           trust_remote_code=a.trust_remote_code,
                                           chat_template=a.chat_template)
     # Slice arithmetic makes a nonsense argument silently produce a plausible file rather

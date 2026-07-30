@@ -14,14 +14,15 @@ import torch
 from datasets import load_from_disk
 
 from . import metrics
-from .cli import accelerator_name, load_model_and_tokenizer, render_chat
+from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import provenance
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="senbonzakura.score",
-                                 description="Score a model's refusal / coherence on a fixed eval set.")
-    ap.add_argument("--model", required=True)
+    ap = argparse.ArgumentParser(
+        prog="senbonzakura.score",
+        description="Score a model's refusal / coherence on a fixed eval set.",
+        parents=[loader_parser()])
     ap.add_argument("--eval", required=True, help="path to eval-fixed dataset (column 'text')")
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="")
@@ -33,16 +34,6 @@ def build_parser():
                          "measuring false positives on the head would be measuring the training data.")
     ap.add_argument("--max-new", type=int, default=64)
     ap.add_argument("--batch", type=int, default=16)
-    ap.add_argument("--chat-template", dest="chat_template", default="",
-                    help="Jinja chat template file, for a model that ships none. Prompt "
-                         "format drives every measurement here, so a missing template is an "
-                         "input you supply and the run records, not something the tool invents.")
-    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
-    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
-                    help="load in 4-bit (bitsandbytes nf4) to score a large model on low VRAM. Scoring "
-                         "is pure forward passes, so 4-bit is safe here (unlike the abliterator's bake).")
-    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
-                    help="allow models that ship custom modelling code.")
     ap.add_argument("--save-generations", dest="save_generations", default="",
                     help="write every prompt and its raw generation to this JSONL path. "
                          "Aggregates alone cannot answer a question you did not think to ask "

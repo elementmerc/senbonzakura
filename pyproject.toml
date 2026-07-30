@@ -22,6 +22,13 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  # Declared because CI runs on all three, not because the code looks portable.
+  # Before 2026-07-30 there were no OS classifiers at all, which PyPI presents as
+  # OS-independent: a claim nothing had ever tested. macOS means arm64; the CPU
+  # index's newest x86_64 torch is 2.2.2, below this project's 2.5 floor.
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
   # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE

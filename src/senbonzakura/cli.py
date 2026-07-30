@@ -989,7 +989,15 @@ class Abliterator:
                 targets += obj if kind == "list" else [obj]
         need = sum(W.numel() * W.element_size() for W in targets)
         avail = _available_ram_bytes()
-        if avail is not None and need > 0.9 * avail:
+        if avail is None:
+            # Both probes are POSIX: /proc/meminfo is Linux-only and SC_AVPHYS_PAGES is
+            # absent on Windows and unreliable on macOS. Proceeding is right, because an
+            # unmeasurable machine is not a small one, but proceeding QUIETLY is not: the
+            # operator would believe a guard ran when none did, and the failure it guards
+            # against is an out-of-memory kill partway through a rented GPU run.
+            self.log(f"  snapshot: cannot measure host RAM on this platform, so the "
+                     f"{need/1e9:.1f} GB pre-flight was skipped, not passed")
+        elif need > 0.9 * avail:
             raise MemoryError(
                 f"the reversible search needs {need/1e9:.1f} GB of host RAM to hold the pristine copy "
                 f"of every o_proj + down_proj, but only {avail/1e9:.1f} GB is available. Free memory, "

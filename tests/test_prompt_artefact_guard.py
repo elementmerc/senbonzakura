@@ -112,6 +112,35 @@ def test_a_file_that_cannot_be_read_is_a_finding(tmp_path):
     assert "could not be read" in guard.scan_file(tmp_path / "absent.json")[0]
 
 
+# ── Windows line endings (CI runs there as of 2026-07-30) ─────────────────────────
+def test_crlf_jsonl_is_still_caught(tmp_path):
+    """open(..., "w") writes CRLF on Windows, and this reads bytes and splits on newline.
+
+    A trailing carriage return on every line must not stop the guard finding a prompt.
+    Getting this wrong would not fail loudly; it would quietly pass a file full of
+    harmful prompts, which is the one outcome this tool exists to prevent.
+    """
+    p = tmp_path / "win.jsonl"
+    p.write_bytes(b"".join(json.dumps({"i": i, "prompt": "bad thing"}).encode() + b"\r\n"
+                           for i in range(3)))
+    findings = guard.scan_file(p)
+    assert len(findings) == 3
+    assert all("carries prompt" in f for f in findings)
+
+
+def test_crlf_does_not_manufacture_false_findings(tmp_path):
+    """The other half: a clean CRLF file must not read as unparseable."""
+    p = tmp_path / "clean.jsonl"
+    p.write_bytes(b'{"margin": 1.0}\r\n{"margin": 2.0}\r\n\r\n')
+    assert guard.scan_file(p) == []
+
+
+def test_crlf_json_is_parsed(tmp_path):
+    p = tmp_path / "win.json"
+    p.write_bytes(b'{\r\n  "auc": 0.9,\r\n  "prompt": "x"\r\n}\r\n')
+    assert len(guard.scan_file(p)) == 1
+
+
 # ── collecting targets ─────────────────────────────────────────────────────────────
 def test_collect_walks_directories_and_ignores_other_suffixes(tmp_path):
     (tmp_path / "nested").mkdir()

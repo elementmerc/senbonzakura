@@ -434,6 +434,42 @@ def test_snapshot_ram_preflight_unknown_proceeds(abl, monkeypatch):
     assert abl._pristine   # snapshot taken
 
 
+def test_an_unmeasurable_ram_preflight_says_it_was_skipped(base_args, tiny_model, tiny_tok, monkeypatch):
+    """Windows and macOS reach this path, and CI now runs there.
+
+    Both probes are POSIX: /proc/meminfo is Linux-only and SC_AVPHYS_PAGES is absent on
+    Windows. Proceeding is right, since an unmeasurable machine is not a small one, but
+    proceeding quietly would let an operator believe a guard ran when none did.
+    """
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    monkeypatch.setattr(cli, "_available_ram_bytes", lambda: None)
+    a.snapshot_weights()
+    assert any("skipped, not passed" in line for line in lines)
+
+
+def test_a_measurable_ram_preflight_does_not_claim_to_be_skipped(base_args, tiny_model, tiny_tok,
+                                                                 monkeypatch):
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    monkeypatch.setattr(cli, "_available_ram_bytes", lambda: 64 * 10**9)
+    a.snapshot_weights()
+    assert not any("skipped" in line for line in lines)
+
+
+def test_the_ram_probe_returns_none_when_both_posix_sources_are_absent(monkeypatch):
+    """Simulates Windows: no /proc/meminfo and no SC_AVPHYS_PAGES."""
+    def no_proc(*_a, **_k):
+        raise FileNotFoundError("no /proc on this platform")
+
+    def no_sysconf(_name):
+        raise ValueError("unrecognised configuration name")
+
+    monkeypatch.setattr("builtins.open", no_proc)
+    monkeypatch.setattr(cli.os, "sysconf", no_sysconf)
+    assert cli._available_ram_bytes() is None
+
+
 # ── disk pre-flight (tranche 4, task 22) ─────────────────────────────────────────────
 def test_disk_preflight_refuses_before_the_search(base_args, tiny_model, tiny_tok, track, monkeypatch):
     """The save is the last thing a run does and the most expensive thing to lose.

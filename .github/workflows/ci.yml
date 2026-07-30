@@ -19,15 +19,36 @@ concurrency:
 
 jobs:
   test:
-    name: test (python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # bash on every runner, including Windows, so one `run:` line cannot mean
+        # two different things. Windows runners ship Git Bash.
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        # The ends of the supported range plus one in the middle. The floors
-        # differ per version because torch's wheel availability does: 2.5 has no
-        # cp313 build and the first with cp314 is 2.9, which pyproject encodes.
-        python: ["3.10", "3.12", "3.14"]
+        # Python versions are swept on Linux: the ends of the supported range plus
+        # one in the middle. The floors differ per version because torch's wheel
+        # availability does: 2.5 has no cp313 build and the first with cp314 is 2.9,
+        # which pyproject encodes.
+        #
+        # Windows and macOS get one representative version rather than the full
+        # sweep. Three OSes times three versions is nine jobs to catch what one
+        # version per platform catches, and what differs across platforms here is
+        # the platform, not the interpreter: /proc/meminfo does not exist off Linux,
+        # and an open file handle blocks deletion on Windows.
+        #
+        # macos-latest is arm64. Do not pin macos-13: the CPU index's newest x86_64
+        # torch is 2.2.2, below this project's declared 2.5 floor, so an x86 runner
+        # cannot install a supported torch at all.
+        include:
+          - {os: ubuntu-latest, python: "3.10"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: windows-latest, python: "3.12"}
+          - {os: macos-latest, python: "3.12"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -38,6 +59,8 @@ jobs:
       - name: Install torch (CPU build)
         # The CPU wheel is a fraction of the CUDA one and the suite never touches
         # a GPU: every test runs against hand-built fixtures, no model downloads.
+        # One line for all three platforms: the CPU index carries manylinux,
+        # win_amd64 and macosx arm64 wheels for every Python this matrix uses.
         run: pip install --index-url https://download.pytorch.org/whl/cpu torch
 
       - name: Install the package and its dev extra
@@ -58,7 +81,7 @@ jobs:
         # about `git add -f`, a path that matches no pattern, or a file moved into a
         # tracked directory. This reads what is actually in the tree, and it runs on
         # every matrix row because it costs milliseconds.
-        run: python3 tools/check_prompt_artefacts.py .
+        run: python tools/check_prompt_artefacts.py .
 
   pinned:
     # The counterpart to `test`. That job floats every version, which is how an

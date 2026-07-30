@@ -218,6 +218,15 @@ def main(argv=None) -> int:
         findings.extend(read(target))
 
     if not findings:
+        if not targets:
+            # "0 file(s) clean" reads as a pass, and it is not one: it means nothing was
+            # looked at. A directory of results that are not yet tracked expands to nothing,
+            # so the most natural way to use this tool before committing is exactly the case
+            # that silently checked nothing.
+            print("prompt-artefact check: nothing to check. A directory expands to what git "
+                  "TRACKS under it, so untracked files are skipped; name them directly to "
+                  "check them before they are staged.")
+            return 0
         print(f"prompt-artefact check: {len(targets)} file(s) clean")
         return 0
 

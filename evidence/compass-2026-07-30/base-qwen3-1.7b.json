@@ -1,0 +1,127 @@
+{
+  "label": "base-Qwen3-1.7B",
+  "model": "Qwen/Qwen3-1.7B",
+  "mode": "logit_margin",
+  "n_harmful": 4504,
+  "n_harmless": 4504,
+  "skip_harmful": 132,
+  "skip_harmless": 385,
+  "margins_path": "margins/base-Qwen3-1.7B.jsonl",
+  "auc": 0.9636,
+  "auc_ci": [
+    0.96,
+    0.9672
+  ],
+  "bootstrap_resamples": 2000,
+  "seed": 42,
+  "chat_template": {
+    "source": "tokenizer",
+    "sha256": "a55ee1b1660128b7"
+  },
+  "verdict_tokens": {
+    "HARMFUL": [
+      {
+        "id": 39,
+        "text": "H"
+      },
+      {
+        "id": 71,
+        "text": "h"
+      },
+      {
+        "id": 472,
+        "text": " H"
+      },
+      {
+        "id": 27756,
+        "text": " harmful"
+      },
+      {
+        "id": 90971,
+        "text": " Harm"
+      }
+    ],
+    "BENIGN": [
+      {
+        "id": 33,
+        "text": "B"
+      },
+      {
+        "id": 7355,
+        "text": " Ben"
+      },
+      {
+        "id": 7964,
+        "text": "ben"
+      },
+      {
+        "id": 24566,
+        "text": "Ben"
+      },
+      {
+        "id": 64209,
+        "text": " benign"
+      },
+      {
+        "id": 82834,
+        "text": " BEN"
+      }
+    ]
+  },
+  "provenance": {
+    "senbonzakura": {
+      "version": "0.3.0",
+      "git": {
+        "commit": "558a237",
+        "dirty": null,
+        "source": "declared"
+      }
+    },
+    "python": "3.12.3",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "device": "cuda",
+    "accelerator": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "packages": {
+      "torch": "2.13.0",
+      "transformers": "5.13.1",
+      "datasets": "5.0.0",
+      "optuna": "4.9.0",
+      "accelerate": "1.14.0",
+      "safetensors": "0.8.0",
+      "tokenizers": "0.22.2",
+      "numpy": "2.5.1",
+      "bitsandbytes": "0.49.2"
+    }
+  },
+  "mean_margin_harmful": 2.8951,
+  "mean_margin_harmless": 1.6652,
+  "frac_harmful_positive": 1.0,
+  "frac_harmless_positive": 1.0,
+  "controls": {
+    "length_only_auc": 0.6563985752549933,
+    "mean_tokens_harmful": 51.72,
+    "mean_tokens_harmless": 50.26,
+    "length_corr_harmful": 0.2169,
+    "length_corr_harmless": 0.2884,
+    "canonical_auc": 0.8132479536642384
+  },
+  "topic_matched": {
+    "source": "/home/mercury/track-matched/good_matched_ds",
+    "n": 280,
+    "skip": 0,
+    "auc": 0.9879,
+    "auc_ci": [
+      0.9849,
+      0.9905
+    ],
+    "mean_margin": 1.5326,
+    "controls": {
+      "length_only_auc": 0.8571587160619132,
+      "mean_tokens_harmful": 51.72,
+      "mean_tokens_harmless": 48.74,
+      "length_corr_harmful": 0.2169,
+      "length_corr_harmless": 0.2522,
+      "canonical_auc": 0.848732475894443
+    }
+  }
+}

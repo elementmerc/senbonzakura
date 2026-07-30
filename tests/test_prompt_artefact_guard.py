@@ -157,6 +157,22 @@ def test_collect_takes_named_files_directly(tmp_path):
 
 
 # ── the command ────────────────────────────────────────────────────────────────────
+def test_checking_nothing_does_not_report_a_pass(tmp_path, capsys):
+    """"0 file(s) clean" reads as a pass and means the opposite: nothing was looked at.
+
+    The natural way to use this before committing is to point it at a directory of fresh
+    results, and a directory expands to what git tracks, so that is exactly the case that
+    checked nothing.
+    """
+    import subprocess as sp
+    sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "untracked.json").write_text('{"prompt": "not checked"}', encoding="utf-8")
+    assert guard.main([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "nothing to check" in out
+    assert "0 file(s) clean" not in out
+
+
 def test_main_returns_zero_on_a_clean_tree(tmp_path, capsys):
     (tmp_path / "res.json").write_text(json.dumps({"auc": 0.9}), encoding="utf-8")
     assert guard.main([str(tmp_path)]) == 0

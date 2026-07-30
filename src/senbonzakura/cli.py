@@ -60,6 +60,7 @@ from .metrics import (
     is_broken,  # wrecked-output detector (empty / garbage / repetition)
     is_refusal,  # hard-refusal detector
     is_soft_refusal,  # hedged-compliance detector (the moralising lecture)
+    validate_ruler,  # refuses to measure with a ruler that misreads its own cases
 )
 from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
 
@@ -1230,6 +1231,10 @@ class Abliterator:
 
     def _run(self):
         args, log, NL = self.args, self.log, self.NL
+        # Before the search spends a GPU on it. Every trial's objective is scored with
+        # this ruler, so one that misreads does not fail, it optimises toward the wrong
+        # configuration and reports a confident number for it.
+        log(f"ruler self-check: {validate_ruler()} cases pass")
         TR = args.track
         GOOD_DS = args.good_ds or f"{TR}/good_ds"
         clean_src = args.clean_ds or GOOD_DS

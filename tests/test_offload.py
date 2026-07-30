@@ -196,3 +196,26 @@ def test_the_refusal_names_the_way_out(tmp_path):
     model = _dispatched(tmp_path)
     with pytest.raises(ValueError, match="more VRAM or host-RAM headroom"):
         _real_tensor(model.model.layers[0].self_attn.o_proj, "weight")
+
+
+def test_ram_offload_is_accepted_by_the_guard():
+    """The guard must refuse disk offload WITHOUT refusing the low-VRAM path.
+
+    That distinction is the whole reason the run is not simply aborted on any offload.
+    accelerate's OffloadedWeightsLoader gives state_dict priority and returns the stored
+    object, so a RAM-offloaded weight is genuinely editable in place; the disk branch
+    reads a fresh tensor out of safetensors on every access. Built from the real
+    accelerate class rather than a dict, because a dict would pass by construction and
+    prove nothing about the library.
+    """
+    from accelerate.utils import OffloadedWeightsLoader
+
+    real = torch.randn(4, 4)
+    module = nn.Linear(4, 4, bias=False)
+    module.weight = nn.Parameter(torch.empty(4, 4, device="meta"), requires_grad=False)
+    module._hf_hook = _Hook(OffloadedWeightsLoader(state_dict={"weight": real}))
+
+    got = _real_tensor(module, "weight")
+    assert got is real
+    got.zero_()
+    assert float(real.abs().sum()) == 0.0    # the edit lands where the forward will read it

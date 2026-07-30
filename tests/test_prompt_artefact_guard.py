@@ -216,3 +216,43 @@ def test_this_repository_is_clean():
     """The check CI runs, run here too, so a bad commit fails before it is written."""
     root = Path(__file__).resolve().parent.parent
     assert guard.main([str(root / "evidence"), str(root / "docs"), str(root / "holst")]) == 0
+
+
+# ── what a directory expands to ────────────────────────────────────────────────────
+def test_a_directory_expands_to_what_git_tracks(tmp_path):
+    """Walking the filesystem was wrong in both directions.
+
+    Run over the repository root it descended into .venv, checking fifteen dependency
+    files and exactly one of ours while reporting "16 files clean"; and a third-party
+    file that happened to carry a "prompt" key would have blocked a commit for no
+    reason. What this tool is for is what gets published.
+    """
+    import subprocess as sp
+    sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "tracked.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "untracked.json").write_text("{}", encoding="utf-8")
+    vendored = tmp_path / ".venv" / "lib"
+    vendored.mkdir(parents=True)
+    (vendored / "dependency.json").write_text('{"prompt": "not ours"}', encoding="utf-8")
+    sp.run(["git", "-C", str(tmp_path), "add", "tracked.json"], check=True)
+
+    names = {p.name for p in guard.collect([str(tmp_path)])}
+    assert names == {"tracked.json"}
+    assert "dependency.json" not in names       # the vendored tree is not our business
+    assert "untracked.json" not in names        # cannot be published, so not checked
+
+
+def test_a_directory_outside_a_repository_still_gets_walked(tmp_path, monkeypatch):
+    """The tool stays useful on a loose directory of results."""
+    (tmp_path / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "b.jsonl").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(guard, "tracked_under", lambda _d: None)
+    assert {p.name for p in guard.collect([str(tmp_path)])} == {"a.json", "b.jsonl"}
+
+
+def test_a_named_file_is_checked_whether_or_not_git_knows_it(tmp_path):
+    """Naming a file explicitly is an instruction, not a query about tracking."""
+    f = tmp_path / "loose.jsonl"
+    f.write_text('{"prompt": "x"}', encoding="utf-8")
+    assert guard.collect([str(f)]) == [f]
+    assert guard.scan_file(f)

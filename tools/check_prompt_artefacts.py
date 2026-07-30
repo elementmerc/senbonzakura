@@ -121,13 +121,45 @@ def staged_paths() -> list[Path]:
     return [Path(n) for n in names if Path(n).suffix in SUFFIXES]
 
 
+def tracked_under(directory: Path) -> list[Path] | None:
+    """Version-controlled JSON and JSONL under a directory, or None if git cannot say."""
+    # -C, so git is asked about the repository that CONTAINS the directory. Without it
+    # git answers for the current working directory, which for any target outside it
+    # errors and falls back to walking, silently: the fallback then looks like a
+    # deliberate choice rather than a failed question.
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(directory), "ls-files", "-z"],
+            capture_output=True, check=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
+    return [directory / n for n in names if Path(n).suffix in SUFFIXES]
+
+
 def collect(paths: list[str]) -> list[Path]:
-    """Expand the given paths, walking directories, keeping only JSON and JSONL."""
+    """Expand the given paths, keeping only JSON and JSONL.
+
+    A directory expands to what git TRACKS under it, not to what the filesystem holds.
+    Walking the filesystem was wrong in both directions: it descended into .venv, so a
+    run over the repository root checked fifteen dependency files and exactly one of
+    ours while reporting "16 files clean", and a third-party file that happened to carry
+    a "prompt" key would have blocked a commit for no reason. What this tool is for is
+    what gets published, and that is what git tracks.
+
+    Outside a repository it falls back to walking, so the tool still works on a loose
+    directory of results.
+    """
     found: list[Path] = []
     for name in paths:
         p = Path(name)
         if p.is_dir():
-            found.extend(sorted(q for q in p.rglob("*") if q.is_file() and q.suffix in SUFFIXES))
+            tracked = tracked_under(p)
+            if tracked is None:
+                found.extend(sorted(q for q in p.rglob("*") if q.is_file() and q.suffix in SUFFIXES))
+            else:
+                found.extend(sorted(tracked))
         elif p.suffix in SUFFIXES:
             found.append(p)
     return found

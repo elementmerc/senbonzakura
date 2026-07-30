@@ -145,12 +145,23 @@ def resolved_versions(packages=PROVENANCE_PACKAGES):
     return {name: _installed(name) for name in packages}
 
 
-def git_commit(repo_root=None):
-    """The commit this code is running from, with a dirty flag, or None outside a checkout.
+# The commit a run declares when it is not executing from a checkout. The name is the one
+# the run specs already export, so this reads what they were already writing.
+COMMIT_ENV = "SENBONZAKURA_COMMIT"
 
-    None is the honest answer for a wheel install: there is no commit, and inventing
-    one would be worse than admitting the result came from a released version instead.
+
+def git_commit(repo_root=None, env=None):
+    """The commit this code is running from, with a dirty flag, or None if nothing knows.
+
+    Two sources, and the answer says which one it came from. `git` is the trustworthy one.
+    A rented pod or a shipped tarball is not a checkout, so git cannot answer there and the
+    run declares the commit through the environment instead; that is a claim rather than a
+    measurement, and `source` records the difference rather than flattening it.
+
+    None stays the honest answer when neither source knows. A result that cannot say which
+    code produced it should say so, not guess.
     """
+    import os
     import subprocess
     root = str(repo_root or Path(__file__).resolve().parent.parent.parent)
     try:
@@ -158,9 +169,15 @@ def git_commit(repo_root=None):
                              capture_output=True, check=True, timeout=30).stdout.decode().strip()
         dirty = subprocess.run(["git", "-C", root, "status", "--porcelain"],
                                capture_output=True, check=True, timeout=30).stdout.strip()
+        return {"commit": rev, "dirty": bool(dirty), "source": "git"}
     except (OSError, subprocess.SubprocessError):
+        pass
+    declared = ((env if env is not None else os.environ).get(COMMIT_ENV) or "").strip()
+    if not declared:
         return None
-    return {"commit": rev, "dirty": bool(dirty)}
+    # Whether the tree matched that commit is unknowable from here, so the dirty flag is
+    # None rather than False: "not checked" and "checked and clean" are different facts.
+    return {"commit": declared, "dirty": None, "source": "declared"}
 
 
 def provenance(device=None, accelerator=None, extra=None):

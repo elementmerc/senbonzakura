@@ -197,10 +197,27 @@ class TestProvenance:
         assert got is not None, "running from a checkout, so there is a commit"
         assert len(got["commit"]) >= 7
         assert isinstance(got["dirty"], bool)
+        assert got["source"] == "git"
+
+    def test_a_checkout_ignores_a_declared_commit(self):
+        """The git answer is the trustworthy one; a claim must not override it."""
+        got = crashsafe.git_commit(env={crashsafe.COMMIT_ENV: "deadbee"})
+        assert got["source"] == "git" and got["commit"] != "deadbee"
 
     def test_outside_a_checkout_the_commit_is_none_rather_than_invented(self, tmp_path):
         """A wheel install has no commit, and inventing one is worse than saying so."""
-        assert crashsafe.git_commit(repo_root=tmp_path) is None
+        assert crashsafe.git_commit(repo_root=tmp_path, env={}) is None
+        assert crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "   "}) is None
+
+    def test_off_checkout_a_run_may_declare_its_commit_and_it_is_marked_as_a_claim(self, tmp_path):
+        """A rented pod is not a checkout, and a result that cannot name its code is unusable.
+
+        The declared value is a claim: nothing here can check the tree against it, so the
+        dirty flag is None rather than False. "Not checked" and "checked and clean" are
+        different facts and the file has to be able to say which one it holds.
+        """
+        got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: " d4682e6 "})
+        assert got == {"commit": "d4682e6", "dirty": None, "source": "declared"}
 
     def test_provenance_carries_every_field_a_rerun_needs(self):
         p = crashsafe.provenance(device="cuda:0", accelerator="NVIDIA GeForce RTX 3090")

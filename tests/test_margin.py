@@ -585,7 +585,10 @@ def test_an_empty_dataset_names_itself(loaded, tmp_path):
     _, good = _track(tmp_path)
     empty = str(tmp_path / "empty")
     Dataset.from_dict({"text": []}).save_to_disk(empty)
-    with pytest.raises(SystemExit, match="could not load the harmful dataset"):
+    # The message differs across the supported datasets range (5.x raises inside
+    # load_from_disk, 2.15 returns nothing), so assert what both paths guarantee:
+    # a loud exit that names which arm.
+    with pytest.raises(SystemExit, match="harmful"):
         margin.main(["--model", "x", "--harmful", empty, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
                      "--skip-harmless", "0", "--device", "cpu"])
@@ -617,3 +620,24 @@ def test_main_refuses_a_tokenizer_whose_verdict_words_do_not_resolve(loaded, tmp
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0",
                      "--device", "cpu"])
+
+
+def test_a_dataset_that_loads_but_holds_nothing_is_refused(loaded, tmp_path, monkeypatch):
+    """Version-independent cover for the empty branch.
+
+    datasets 5.x raises inside load_from_disk before a row is read, so on a current
+    install that branch is unreachable; on the 2.15 floor the same directory loads and
+    yields nothing. Faking the loader exercises it on every supported version.
+    """
+    class _Empty:
+        column_names = ("text",)
+
+        def __iter__(self):
+            return iter(())
+
+    bad, good = _track(tmp_path)
+    monkeypatch.setattr(margin, "load_from_disk", lambda _p: _Empty())
+    with pytest.raises(SystemExit, match=r"harmful dataset .* is empty"):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
+                     "--skip-harmless", "0", "--device", "cpu"])

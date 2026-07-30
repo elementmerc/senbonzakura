@@ -227,10 +227,14 @@ def load_prompts(path, what):
     cols = list(getattr(ds, "column_names", None) or [])
     if "text" not in cols:
         raise SystemExit(f"the {what} dataset at {path} has columns {cols} and no 'text' column")
-    # No empty-set check here on purpose: an empty save_to_disk directory fails inside
-    # load_from_disk above, and a set too small for --n is caught by the fit check in
-    # main(), which reports the row count and both flags.
-    return [r["text"] for r in ds]
+    rows = [r["text"] for r in ds]
+    if not rows:
+        # Reachable, and only on part of the supported range: datasets 5.x raises inside
+        # load_from_disk on an empty save_to_disk directory, while 2.15 loads it happily
+        # and hands back nothing. Without this the same input produces a different error
+        # depending on the installed version, which the dependency-floor job caught.
+        raise SystemExit(f"the {what} dataset at {path} is empty")
+    return rows
 
 
 def load_margins_jsonl(path, harmful_prompts, harmless_prompts):

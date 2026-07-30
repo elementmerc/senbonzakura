@@ -17,7 +17,7 @@
 transformers==4.56
 accelerate==0.26
 datasets==2.15
-optuna==3.0
+optuna==3.1
 
 # The dev extra, because `pip install -e '.[dev]'` at the floors is a real
 # thing a contributor does, and the suite has to pass there too.

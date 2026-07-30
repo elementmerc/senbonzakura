@@ -49,7 +49,10 @@ dependencies = [
   # "module 'pyarrow' has no attribute 'PyExtensionType'", which is precisely what the
   # dependency-floor CI job exists to catch, and did, on its first ever run.
   "datasets>=2.15",
-  "optuna>=3.0",
+  # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
+  # it ("assert version is not None"), which took out 17 tests in the floors job.
+  # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.
+  "optuna>=3.1",
 ]
 
 [project.optional-dependencies]

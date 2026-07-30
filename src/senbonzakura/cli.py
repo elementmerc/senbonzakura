@@ -1261,9 +1261,15 @@ class Abliterator:
         log(f"ruler self-check: {validate_ruler()} cases pass")
         TR = args.track
         # A track records where its partitions end; every dataset here is read as a head of
-        # N rows, so a flag larger than a partition walks straight into the next one. Checked
-        # before the model is touched, because the failure is silent afterwards: the run
-        # succeeds and reports a number selected on the rows it claims to have held out.
+        # N rows, so a flag larger than a partition walks straight into the next one, and the
+        # failure is silent: the run succeeds and reports a number selected on the rows it
+        # claims to have held out.
+        #
+        # Here rather than in main(), for a reason worth keeping: `kageyoshi` resolves its own
+        # budget from the loaded model's size and OVERWRITES eval_refusal_final, so a check
+        # sitting before that would inspect the parser default (0) and pass every time. The
+        # model is loaded by this point, which is later than a preflight should be, but it is
+        # the first moment the values being checked are the values that will be used.
         manifest = read_manifest(TR)
         if manifest:
             bad_flags = flag_violations(

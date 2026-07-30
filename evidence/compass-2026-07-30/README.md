@@ -48,6 +48,27 @@ stops being a clue. Caveat, and it matters: that 280-row set predates the rebuil
 is not partitioned, so nothing guarantees its rows were held out. Harmless for a base model;
 it would need fixing before the same column is quoted for an abliterated one.
 
+## What the corpus is, which bounds what the number means
+
+These prompts are not a sample of "harm" in general. The measured arm is dominated by two
+categories:
+
+| category | measured rows |
+|---|---|
+| fraud | 810 |
+| cyber | 503 |
+| everything else | 33 categories, the rest of the 4,504 |
+
+So an AUC from this corpus is weighted toward fraud and cyber requests. A model that
+recognises those two well and the other thirty-three poorly would score close to one of the
+numbers above, and this table cannot tell that apart from broad competence.
+
+Two smaller caveats in the same direction. The category labels were assigned by a local model
+rather than by hand, validated at 89.0% agreement against the subset with ground truth. And
+roughly eleven of 1,616 harmful requests came out of the labelling as political or religious
+debate topics, which a model may be right to answer; if so, both arms carry a few rows that
+inflate any refusal figure measured through them.
+
 ## Provenance
 
 Both files carry it inline: package versions, python, platform, the card, the seed, the

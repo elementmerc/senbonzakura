@@ -203,12 +203,63 @@ def test_staged_paths_fails_loudly_when_git_cannot_be_run(monkeypatch):
     assert e.value.code == 2
 
 
+def _repo(tmp_path):
+    import subprocess as sp
+    sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+    return tmp_path
+
+
 def test_main_scans_what_is_staged(monkeypatch, tmp_path, capsys):
-    f = tmp_path / "staged.jsonl"
-    f.write_text(json.dumps({"generation": "here you go"}), encoding="utf-8")
-    monkeypatch.setattr(guard, "staged_paths", lambda: [f])
+    import subprocess as sp
+    repo = _repo(tmp_path)
+    (repo / "staged.jsonl").write_text(json.dumps({"generation": "here you go"}), encoding="utf-8")
+    sp.run(["git", "-C", str(repo), "add", "staged.jsonl"], check=True)
+    monkeypatch.chdir(repo)
     assert guard.main(["--staged"]) == 1
     assert "carries generation" in capsys.readouterr().err
+
+
+def test_the_staged_content_is_checked_and_not_the_working_copy(monkeypatch, tmp_path, capsys):
+    """A commit records the index, so that is what a pre-commit gate has to read.
+
+    Stage an artefact carrying its generations, then tidy the working copy: a check that
+    reads the file from disk passes, and the commit still publishes the prompts.
+    """
+    import subprocess as sp
+    repo = _repo(tmp_path)
+    f = repo / "evidence.jsonl"
+    f.write_text(json.dumps({"prompt": "a harmful request", "generation": "a reply"}) + "\n",
+                 encoding="utf-8")
+    sp.run(["git", "-C", str(repo), "add", "evidence.jsonl"], check=True)
+    f.write_text(json.dumps({"margin": 1.5}) + "\n", encoding="utf-8")   # the tidy-up
+
+    assert guard.scan_file(f) == [], "the working copy really is clean"
+    monkeypatch.chdir(repo)
+    assert guard.main(["--staged"]) == 1
+    assert "carries generation, prompt" in capsys.readouterr().err
+
+
+def test_a_staged_path_git_cannot_produce_is_a_finding(monkeypatch, tmp_path):
+    """Unreadable is not clean, whatever the reason."""
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    assert guard.scan_staged(Path("never-staged.json"))
+
+
+def test_a_rename_into_the_tree_is_still_checked(monkeypatch):
+    """A file that entered before this check existed can be moved into a published path."""
+    class _Done:
+        stdout = b"evidence/moved.jsonl\0"
+
+    seen = {}
+
+    def fake_run(cmd, *a, **k):
+        seen["cmd"] = cmd
+        return _Done()
+
+    monkeypatch.setattr(guard.subprocess, "run", fake_run)
+    assert [p.as_posix() for p in guard.staged_paths()] == ["evidence/moved.jsonl"]
+    assert "--diff-filter=ACMR" in seen["cmd"]
 
 
 # ── the guard against its own repository ───────────────────────────────────────────

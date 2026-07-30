@@ -72,12 +72,20 @@ def banned_keys_in(obj, depth: int = 0) -> set[str]:
 
 
 def scan_file(path: Path) -> list[str]:
-    """Findings for one file, as human-readable lines. Empty means clean."""
+    """Findings for one file on disk, as human-readable lines. Empty means clean."""
     try:
         raw = path.read_bytes()
     except OSError as e:
         return [f"{path}: could not be read ({e}), so it cannot be cleared"]
+    return scan_bytes(path, raw)
 
+
+def scan_bytes(path: Path, raw: bytes) -> list[str]:
+    """Findings for one artefact's CONTENT, whatever it was read from.
+
+    Separate from `scan_file` because what a pre-commit check must read is the staged
+    blob rather than the working copy, and those two are not the same bytes.
+    """
     findings: list[str] = []
     if path.suffix == ".jsonl":
         for lineno, line in enumerate(raw.split(b"\n"), 1):
@@ -108,10 +116,15 @@ def scan_file(path: Path) -> list[str]:
 
 
 def staged_paths() -> list[Path]:
-    """Files staged for commit, added or modified, that this checker cares about."""
+    """Files staged for commit that this checker cares about.
+
+    Renames count (`R`) as well as additions and modifications: a file that entered the
+    tree before this check existed can be moved into a published directory without its
+    content ever being looked at.
+    """
     try:
         out = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM", "-z"],
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
             capture_output=True, check=True, timeout=60,
         ).stdout
     except (OSError, subprocess.SubprocessError) as e:
@@ -119,6 +132,28 @@ def staged_paths() -> list[Path]:
         raise SystemExit(2) from e
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
     return [Path(n) for n in names if Path(n).suffix in SUFFIXES]
+
+
+def scan_staged(path: Path) -> list[str]:
+    """Findings for the STAGED content of one path.
+
+    The distinction is the whole point of a pre-commit gate. A commit records the index,
+    not the working tree, so reading the file from disk checks bytes that may never be
+    committed: stage an artefact full of prompts, then overwrite the working copy with a
+    stripped version, and a check that reads disk passes while the commit carries the
+    prompts. The staged blob is the thing that gets published.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "cat-file", "blob", f":{path.as_posix()}"],
+            capture_output=True, check=True, timeout=60,
+        )
+    except subprocess.CalledProcessError as e:
+        why = e.stderr.decode("utf-8", "replace").strip()
+        return [f"{path}: staged content could not be read from the index ({why}), so it cannot be cleared"]
+    except (OSError, subprocess.SubprocessError) as e:
+        return [f"{path}: staged content could not be read from the index ({e}), so it cannot be cleared"]
+    return scan_bytes(path, out.stdout)
 
 
 def tracked_under(directory: Path) -> list[Path] | None:
@@ -177,9 +212,10 @@ def main(argv=None) -> int:
         ap.error("give either --staged or one or more paths, not both and not neither")
 
     targets = staged_paths() if a.staged else collect(a.paths)
+    read = scan_staged if a.staged else scan_file
     findings: list[str] = []
     for target in targets:
-        findings.extend(scan_file(target))
+        findings.extend(read(target))
 
     if not findings:
         print(f"prompt-artefact check: {len(targets)} file(s) clean")

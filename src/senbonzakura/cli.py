@@ -411,18 +411,29 @@ def build_parser():
         description="Multi-direction refusal abliteration for transformer language models, with a "
                     "quality-guarded Optuna (NSGA-II) search over windowed, per-component, "
                     "multi-directional weight ablations.",
-        epilog="bankai: run `senbonzakura kageyoshi [--model ... --out ... --track ... --device ...]` "
-               "for the ultimate balanced-effort abliteration. It auto-detects the architecture "
-               "(dense / fused MoE / expert-list) and parameter count, scales the search budget, and "
-               "turns on every quality lever, so you set only the paths. It owns the search knobs; "
-               "manual --trials / --max-directions / etc. are ignored in this mode.",
+        epilog=(
+            "commands:\n"
+            "  abliterate   remove refusal directions and save the model (the default: the flags "
+            "below work with or without the word)\n"
+            "  kageyoshi    abliterate with the auto-scaled best-effort preset. It detects the "
+            "architecture (dense / fused MoE / expert-list) and parameter count, scales the search "
+            "budget and turns on every quality lever, so you set only the paths. It owns the search "
+            "knobs; manual --trials / --max-directions and the rest are ignored in this mode\n"
+            "  compass      measure harm discrimination as the HARMFUL/BENIGN logit margin (AUC), "
+            "with the construct-validity controls beside it\n"
+            "  score        refusal, hedging, the Heretic keyword rate and broken output on a "
+            "fixed eval set\n"
+            "  coherence    perplexity of a fixed neutral passage, the coherence cost\n"
+            "  track        build an evaluation track with a checked fit / search / measure split\n"
+            "\n"
+            "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[loader_parser(
             model_help="HF model id or local path to abliterate",
             four_bit_help="NOT supported by the abliterator: the weight bake needs full "
                           "precision. Use it with the scorer "
                           "(python -m senbonzakura.score --load-in-4bit) to measure a model "
-                          "on low VRAM.")],
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+                          "on low VRAM.")])
     try:   # optional shell completion; degrade gracefully if shtab is not installed
         import shtab
         shtab.add_argument_to(ap, ["--print-completion"],
@@ -1711,14 +1722,36 @@ class Abliterator:
         log("DONE")
 
 
+# The commands that live in sibling modules. Dispatched by name, and imported only when one is
+# actually asked for: `margin` imports this module, so a module-level import here is circular.
+DELEGATED = ("compass", "score", "coherence", "track")
+
+
+def _delegate(name):
+    from . import coherence, margin, score, track
+    return {"compass": margin.main, "score": score.main,
+            "coherence": coherence.main, "track": track.main}[name]
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Easter egg / bankai: `senbonzakura kageyoshi ...` strips the release word and runs the
-    # auto-scaled best-effort preset (resolved after the model loads, once the architecture and
-    # size are known). Everything after it still parses, so paths/device flags work as usual.
-    bankai = bool(argv) and argv[0] == "kageyoshi"
-    if bankai:
+
+    # Subcommands, with abliteration as the default. `senbonzakura --model X --out Y` keeps
+    # working exactly as before, because every run spec on record and every README example is
+    # written that way, and a tool that renames its own entry point breaks the records of what
+    # was already run.
+    if argv and argv[0] in DELEGATED:
+        return _delegate(argv[0])(argv[1:])
+
+    # `kageyoshi` is a real subcommand now rather than an argv[0] trick: it runs the abliterator
+    # with the auto-scaled best-effort preset, resolved after the model loads once the
+    # architecture and parameter count are known. `abliterate` names the default explicitly.
+    bankai = False
+    if argv and argv[0] == "kageyoshi":
+        bankai, argv = True, argv[1:]
+    elif argv and argv[0] == "abliterate":
         argv = argv[1:]
+
     args = build_parser().parse_args(argv)
 
     if args.load_in_4bit:
@@ -1745,7 +1778,7 @@ def main(argv=None):
     abl = Abliterator(args, log)
     if bankai:
         _apply_kageyoshi(args, abl.model, abl.arch, abl.ne, abl.NL, log)
-    abl.run()
+    return abl.run()
 
 
 if __name__ == "__main__":

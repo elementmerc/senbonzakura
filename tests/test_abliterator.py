@@ -518,6 +518,69 @@ def test_version_constant():
     assert cli.__version__ == "0.3.0"
 
 
+# ── subcommands (task 18) ─────────────────────────────────────────────────────────────
+def test_the_bare_flag_form_still_abliterates(monkeypatch):
+    """Every run spec on record and every README example is written this way.
+
+    A tool that renames its own entry point invalidates the records of what was already run, so
+    the subcommand is additive and abliteration stays the default.
+    """
+    seen = {}
+    monkeypatch.setattr(cli, "Abliterator", lambda args, log: seen.setdefault("args", args))
+    monkeypatch.setattr(cli, "torch_version_ok", lambda *a: True)
+    with pytest.raises(AttributeError):        # the stub has no .run(); parsing is what matters
+        cli.main(["--model", "m", "--out", "o"])
+    assert seen["args"].model == "m"
+
+
+@pytest.mark.parametrize("name", ["compass", "score", "coherence", "track"])
+def test_each_delegated_subcommand_reaches_its_own_main(monkeypatch, name):
+    called = {}
+    monkeypatch.setattr(cli, "_delegate", lambda n: lambda argv: called.update(name=n, argv=argv))
+    cli.main([name, "--model", "m"])
+    assert called == {"name": name, "argv": ["--model", "m"]}
+
+
+def test_the_delegation_table_resolves_for_real():
+    """Not a stub: the lazy import exists because `margin` imports `cli` back."""
+    from senbonzakura import coherence, margin, score, track
+    assert cli._delegate("compass") is margin.main
+    assert cli._delegate("score") is score.main
+    assert cli._delegate("coherence") is coherence.main
+    assert cli._delegate("track") is track.main
+
+
+@pytest.mark.parametrize(("argv", "expect_preset"), [
+    (["kageyoshi", "--model", "m"], True),
+    (["abliterate", "--model", "m"], False),
+    (["--model", "m"], False),
+])
+def test_kageyoshi_is_a_real_subcommand_and_abliterate_names_the_default(
+        monkeypatch, argv, expect_preset):
+    applied = {}
+    monkeypatch.setattr(cli, "torch_version_ok", lambda *a: True)
+    monkeypatch.setattr(cli, "_apply_kageyoshi",
+                        lambda *a, **k: applied.setdefault("yes", True))
+
+    class _Stub:
+        def __init__(self, args, log):
+            self.model = self.arch = self.ne = self.NL = None
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr(cli, "Abliterator", _Stub)
+    cli.main(argv)
+    assert applied.get("yes", False) is expect_preset
+
+
+def test_every_subcommand_is_listed_in_the_help():
+    """A dispatcher nobody can discover is a private API with a public name."""
+    text = cli.build_parser().format_help()
+    for name in ("abliterate", "kageyoshi", *cli.DELEGATED):
+        assert name in text, f"{name} is dispatched but undocumented"
+
+
 # ── kageyoshi preset ─────────────────────────────────────────────────────────────────
 def test_apply_kageyoshi(tiny_model):
     args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,

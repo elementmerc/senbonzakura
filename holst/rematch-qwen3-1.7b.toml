@@ -37,9 +37,9 @@ test -d "$RUN/src/senbonzakura" || { echo "MISSING_TREE: ship the tree first"; e
 test -d "$T/bad_eval_ds" || { echo "MISSING_TRACK: $T has no bad_eval_ds"; exit 1; }
 "$PY" -c 'import torch; assert torch.cuda.is_available(), "no card"'
 cd "$RUN"
-PYTHONPATH=src "$PY" -m senbonzakura.margin --help | grep -q -- --harmless-matched || {
+PYTHONPATH=src "$PY" -u -m senbonzakura.margin --help | grep -q -- --harmless-matched || {
     echo "TREE_PREDATES_CONTROLS: the shipped tree has no --harmless-matched"; exit 1; }
-PYTHONPATH=src "$PY" -m senbonzakura.track --out "$T" --audit
+PYTHONPATH=src "$PY" -u -m senbonzakura.track --out "$T" --audit
 
 # The recorded boundaries, and the flags this run will pass, checked against each other
 # before anything is measured.
@@ -108,25 +108,25 @@ export PYTHONPATH=src
 # the recorded 132-row search partition, 256 + 64 fits inside the 385 harmless rows set aside.
 # Passing them by hand would be ignored, so it is not done. --gen-batch pins the generation
 # batch, which has to be fixed and recorded because batching reorders reductions.
-"$PY" -m senbonzakura.cli kageyoshi --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+"$PY" -u -m senbonzakura.cli kageyoshi --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
     --seed $SEED --device cuda --gen-batch 16 --study-db "$RUN/abl/s$SEED.db"
 test -d "$O"
 
 # Refusal, hedging, the Heretic keyword rate, and the harmless arm, in one pass each. The
 # harmless arm is not optional: a harmful refusal rate alone cannot tell "the abliteration
 # worked" from "the model is too damaged to refuse anything".
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
     --batch 16 --device cuda --label "senbon-s$SEED-harmful" \
     --out "results/senbon-s$SEED-harmful.json" \
     --save-generations "gens/senbon-s$SEED-harmful.jsonl"
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
     --batch 16 --device cuda --label "senbon-s$SEED-harmless" \
     --out "results/senbon-s$SEED-harmless.json" \
     --save-generations "gens/senbon-s$SEED-harmless.jsonl"
 
 # The compass, with the construct-validity controls, on the full measure arm. Forward passes
 # only, so the whole arm costs minutes and there is no reason to subsample it.
-"$PY" -m senbonzakura.margin --model "$O" \
+"$PY" -u -m senbonzakura.margin --model "$O" \
     --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
     --skip-harmful 132 --skip-harmless 385 --n 4504 \
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda \
@@ -168,15 +168,15 @@ test -d "$O"
 
 export SENBONZAKURA_COMMIT="${SENBON_COMMIT:-unset}"
 export PYTHONPATH=src
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
     --batch 16 --device cuda --label "heretic-s$SEED-harmful" \
     --out "results/heretic-s$SEED-harmful.json" \
     --save-generations "gens/heretic-s$SEED-harmful.jsonl"
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
     --batch 16 --device cuda --label "heretic-s$SEED-harmless" \
     --out "results/heretic-s$SEED-harmless.json" \
     --save-generations "gens/heretic-s$SEED-harmless.jsonl"
-"$PY" -m senbonzakura.margin --model "$O" \
+"$PY" -u -m senbonzakura.margin --model "$O" \
     --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
     --skip-harmful 132 --skip-harmless 385 --n 4504 \
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda \

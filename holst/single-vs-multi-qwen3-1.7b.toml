@@ -28,7 +28,7 @@ test -d "$RUN/src/senbonzakura" || { echo "MISSING_TREE"; exit 1; }
 test -d "$T/bad_eval_ds" || { echo "MISSING_TRACK"; exit 1; }
 "$PY" -c 'import torch; assert torch.cuda.is_available()'
 cd "$RUN"
-PYTHONPATH=src "$PY" -m senbonzakura.track --out "$T" --audit
+PYTHONPATH=src "$PY" -u -m senbonzakura.track --out "$T" --audit
 
 # The claim under test is about K, so the thing that would quietly invalidate it is a hedge
 # set appearing in the track and being folded into the K=3 arm only. Refuse rather than
@@ -78,23 +78,23 @@ export SENBONZAKURA_COMMIT="${SENBON_COMMIT:-unset}"
 [ "$SENBONZAKURA_COMMIT" != "unset" ] || { echo "SET SENBON_COMMIT"; exit 1; }
 export PYTHONPATH=src
 
-"$PY" -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
     --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
     --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
     --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
     --study-db "$RUN/abl/$ARM.db"
 test -d "$O"
 
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
     --batch 16 --device cuda --label "$ARM-harmful" \
     --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
 # The harmless arm is not optional. A refusal rate that fell because the model can no longer
 # refuse anything is indistinguishable from one that fell because the surgery worked, unless
 # this is measured beside it.
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
     --batch 16 --device cuda --label "$ARM-harmless" \
     --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
-"$PY" -m senbonzakura.margin --model "$O" \
+"$PY" -u -m senbonzakura.margin --model "$O" \
     --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
     --skip-harmful 132 --skip-harmless 385 --n 4504 \
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
@@ -131,20 +131,20 @@ export PYTHONPATH=src
 # Byte-identical to arm A but for --max-directions. Written out in full rather than shared
 # through a variable, because the one line that differs between two arms of a comparison
 # should be visible in a diff of the two blocks.
-"$PY" -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
     --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
     --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
     --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
     --study-db "$RUN/abl/$ARM.db"
 test -d "$O"
 
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
     --batch 16 --device cuda --label "$ARM-harmful" \
     --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
-"$PY" -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
     --batch 16 --device cuda --label "$ARM-harmless" \
     --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
-"$PY" -m senbonzakura.margin --model "$O" \
+"$PY" -u -m senbonzakura.margin --model "$O" \
     --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
     --skip-harmful 132 --skip-harmless 385 --n 4504 \
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \

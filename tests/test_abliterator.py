@@ -1116,6 +1116,48 @@ def test_a_kept_axis_is_recorded_and_is_not_counted_as_rejected(
     assert any(layer for layer in a.axis_separations), "kept axes are recorded too"
 
 
+def test_the_rank_floor_keeps_numerical_noise_out_of_the_direction_set(abl, monkeypatch):
+    """The guard that stops rounding error being ablated as though it were refusal.
+
+    Found untested on 2026-08-03 by mutation: deleting the floor entirely broke no test. Its
+    own comment records what it prevents, which had actually happened at H=8 before the cap
+    landed: a linearly dependent axis whose post-projection residual still cleared the 1e-6 norm
+    guard in float32 was scaled to unit length and ablated as a refusal direction.
+
+    The cloud here genuinely spans three dimensions. Everything past that is float noise, and
+    the separation filter is forced to accept anything, so ONLY the floor can hold the count
+    down. Without it, the run fills all KMAX slots with normalised noise.
+    """
+    NL1, H = abl.NL + 1, abl.H
+    abl.KMAX = H                      # ask for far more directions than the cloud can support
+    torch.manual_seed(11)
+    rank = 3
+
+    def fake_collect(prompts):
+        n = len(prompts)
+        base = torch.zeros(NL1, n, H)
+        if prompts and prompts[0].startswith("GOOD"):
+            base[:, :, 0] = 5.0
+        else:
+            # Structure in exactly `rank` directions, and nothing anywhere else but noise that
+            # sits far below the floor at S[0] * 1e-4.
+            for d in range(rank):
+                base[:, :, d + 1] = torch.randn(NL1, n) * (4.0 - d)
+        return base + torch.randn(NL1, n, H) * 1e-9
+
+    monkeypatch.setattr(abl, "load",
+                        lambda d, n: [("GOOD " if "good" in d else "BAD ") + str(i) for i in range(n)])
+    monkeypatch.setattr(abl, "collect_resid", fake_collect)
+    monkeypatch.setattr(cli, "_axis_separation", lambda *a, **k: 99.0)   # filter accepts everything
+
+    abl.extract_directions("bad", "good", None, "good")
+
+    assert max(abl.dirs_per_layer) <= rank + 1, (
+        f"noise axes were kept: asked for {abl.KMAX} and got {max(abl.dirs_per_layer)} from a "
+        f"rank-{rank} cloud, so the floor is not holding")
+    assert max(abl.dirs_per_layer) > 1, "the fixture must let real axes through, or it proves nothing"
+
+
 def test_the_total_measured_exceeds_the_bounded_record(
         base_args, tiny_model, tiny_tok, track, monkeypatch):
     """The count and the sample are different numbers and must not be confused.

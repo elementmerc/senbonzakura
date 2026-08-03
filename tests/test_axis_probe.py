@@ -49,6 +49,24 @@ def test_an_all_zero_result_is_reported_as_a_broken_instrument():
     assert "Nothing here measures direction count" in r["verdict"]
 
 
+def test_the_zero_criterion_covers_the_residue_a_real_model_actually_produced():
+    """1.07e-5, measured across 3,556 axes on Qwen3-1.7B.
+
+    The first version of this criterion was an absolute 1e-6 taken from a synthetic case that
+    produced ~1e-8, so it reported "not broken" about the very measurement it was written for.
+    A constant calibrated on one dataset and never checked against another is exactly the
+    failure the filter itself represents, which is why the criterion is now relative.
+    """
+    assert probe.summarise(_fake([[1.07e-5]]))["filter_is_unsatisfiable"] is True
+    # And a separation small enough to be uninteresting is still a measurement, not residue.
+    assert probe.summarise(_fake([[0.01]]))["filter_is_unsatisfiable"] is False
+
+
+def test_the_probe_and_the_extractor_cannot_disagree_about_what_zero_means():
+    """Two copies of a constant is how the prompt renderer drifted into three."""
+    assert probe.STRUCTURAL_ZERO == cli.MIN_AXIS_SEPARATION * cli.STRUCTURAL_ZERO_FRACTION
+
+
 def test_a_small_but_real_separation_is_not_mistaken_for_the_broken_case():
     """The boundary matters: 0.02 is a finding about the data, 1e-8 is a finding about the code."""
     r = probe.summarise(_fake([[0.02], [0.01]]))

@@ -39,9 +39,11 @@ import sys
 
 from senbonzakura import cli
 
-# Below this, a separation is floating-point residue around an exact zero rather than a small
-# measurement. Real separations on real models land in the tenths; the observed residue is ~1e-8.
-STRUCTURAL_ZERO = 1e-6
+# The probe reads the same relative criterion the extractor uses rather than carrying its own, so
+# the two cannot disagree about whether a run was broken. It was an independent absolute constant
+# for a few hours and immediately drifted: 1e-6, calibrated on a synthetic case, against a real
+# model whose residue peaked at 1.07e-5 across 3,556 axes.
+STRUCTURAL_ZERO = cli.MIN_AXIS_SEPARATION * cli.STRUCTURAL_ZERO_FRACTION
 
 
 def build_args(argv=None):

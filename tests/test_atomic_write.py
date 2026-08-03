@@ -194,3 +194,47 @@ def test_a_losing_concurrent_writer_says_what_happened(tmp_path):
     content = target.read_text()
     assert len(set(content)) == 1, "the winner's file must not be interleaved"
     assert not (tmp_path / "race.json.part").exists(), "no temporary file may survive"
+
+
+# ── durability, which the mutation sweep found nothing was asserting ───────────────────
+def test_the_data_is_fsynced_before_the_rename(tmp_path, monkeypatch):
+    """Found unprotected on 2026-08-03: dropping the fsync broke no test in the suite.
+
+    Ordering is the whole guarantee. `os.replace` is atomic with respect to the directory
+    entry, so after a crash the target is either the old file or the new one, never a mix. But
+    that only holds if the new file's CONTENTS reached the disk first: rename the entry while
+    the bytes are still in the page cache and a power loss leaves a complete-looking file full
+    of zeroes, which is worse than the truncated file this whole helper exists to prevent.
+
+    An fsync has no in-process observable effect, so this asserts the call and its order rather
+    than the physics. That is weaker than a behavioural test and is the strongest available.
+    """
+    order = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(os, "replace", lambda a, b: (order.append("replace"), real_replace(a, b))[1])
+
+    target = tmp_path / "out.json"
+    with atomic_write(target) as f:
+        f.write('{"a": 1}')
+
+    assert order == ["fsync", "replace"], f"expected fsync before replace, got {order}"
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_no_rename_happens_when_the_body_raises(tmp_path, monkeypatch):
+    """The other half of the ordering contract: a failed write must never reach the target."""
+    renamed = []
+    monkeypatch.setattr(os, "replace", lambda a, b: renamed.append((a, b)))
+
+    target = tmp_path / "out.json"
+    def write_then_fail():
+        with atomic_write(target) as f:
+            f.write("half")
+            raise ValueError("boom")
+
+    with pytest.raises(ValueError):
+        write_then_fail()
+
+    assert not renamed, "a failed write was renamed over the target"
+    assert not target.exists()

@@ -108,6 +108,15 @@ MIN_AXIS_SEPARATION = 0.5
 # existed, and the tail is rounding error by construction (see the rank floor below).
 MAX_RECORDED_AXES = 8
 
+#: A candidate separation below this FRACTION of the threshold is floating-point residue around an
+#: exact zero rather than a small measurement, and means the filter is structurally unsatisfiable.
+#: Relative rather than absolute, and that is not a style choice: the first version of this constant
+#: was an absolute 1e-6, taken from a synthetic case that produced ~1e-8, and the first real model
+#: measured peaked at 1.07e-5 across 3,556 axes. The absolute constant therefore reported "not
+#: broken" about the exact measurement it was written to describe. A constant calibrated on one
+#: dataset and never checked against another is the failure this whole area is about.
+STRUCTURAL_ZERO_FRACTION = 1e-3
+
 # The "worse than anything real" score, used to keep damaged / unmeasured trials out of the running
 # for best. A true infinity so no finite objective can ever tie or beat it.
 WORST_SCORE = float("inf")
@@ -1086,7 +1095,8 @@ class Abliterator:
         # be cleared. Measured 2026-08-03 on two models and three corpora: every one of 224 axes
         # returned ~1e-8. This is louder than the shortfall note below because a shortfall is a
         # result and this is a broken instrument.
-        self.filter_is_unsatisfiable = bool(axes_measured_total) and max_sep_seen < 1e-6
+        structural_zero = MIN_AXIS_SEPARATION * STRUCTURAL_ZERO_FRACTION
+        self.filter_is_unsatisfiable = bool(axes_measured_total) and max_sep_seen < structural_zero
         if self.filter_is_unsatisfiable:
             log(f"  BROKEN FILTER: all {axes_measured_total} candidate axes scored a refusal separation "
                 f"of ~0, which the geometry forces rather than the data: the axes are "

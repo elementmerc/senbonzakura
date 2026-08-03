@@ -83,12 +83,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -139,6 +157,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -165,12 +192,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -221,6 +266,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -247,12 +301,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -303,6 +375,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -329,12 +410,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -385,6 +484,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -411,12 +519,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -467,6 +593,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -493,12 +628,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -549,6 +702,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -575,12 +737,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -631,6 +811,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -657,12 +846,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -713,6 +920,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -739,12 +955,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -795,6 +1029,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """
@@ -821,12 +1064,30 @@ O=$RUN/abl/$ARM
 cd "$RUN"
 mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
 
-# One attempt at a time, enforced rather than assumed. A detached job survives the
-# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
-# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
-# not a slow run, it is two failed ones.
+# TWO locks, because they stop two different accidents and neither covers the other.
+#
+# The per-arm lock stops a second copy of THIS arm. A detached job survives the orchestrator
+# giving up on its launcher, so a launch wrongly written off leaves this arm running while a
+# retry is dispatched at it.
 exec 9>"$RUN/abl/$ARM.lock"
 flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# The card lock stops two DIFFERENT arms sharing one GPU, which the per-arm lock permits by
+# construction and which happened on 2026-08-03: the orchestrator reattached to a running job
+# after a restart without re-taking its GPU slot, believed the card was free, and put a second
+# arm on it. That is not merely slow. The VRAM governor sizes the generation batch from
+# available headroom, so the second arm baselined at 0.9 GB where every other arm had 1.9 GB,
+# and reproducibility only holds at a fixed batch size. Both arms had to be discarded.
+#
+# It WAITS rather than failing, because the second arm is legitimate work that simply must not
+# start yet, and it announces the wait so a run that serialises does not look like a run that
+# hung.
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another arm holds the card; waiting rather than sharing it"
+    flock -w 14000 8 || { echo "GPU_WAIT_TIMEOUT: the card never came free"; exit 1; }
+fi
+echo "GPU_ACQUIRED $ARM"
 
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
@@ -877,6 +1138,15 @@ test -d "$O"
     --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
     --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
     --compare-to "margins/base-Qwen3-1.7B.jsonl"
+
+# Keep the record of the K that was actually APPLIED before the output tree goes. abliteration.json
+# carries dirs_per_layer, and the separation filter can leave a layer with fewer directions than
+# were requested: on 2026-08-03 every K=3 arm reported one direction per layer within the search
+# window. Deleting the only file that says so, which this script used to do, makes the arm
+# unfalsifiable. The result is not evidence about K unless the applied K is on record beside it.
+mkdir -p "$RUN/applied-k"
+cp "$O/abliteration.json" "$RUN/applied-k/$ARM-abliteration.json" 2>/dev/null     || echo "WARNING: $O/abliteration.json is missing, so the applied K for $ARM is unrecorded"
+
 rm -rf "$O"
 echo ARM_OK
 """

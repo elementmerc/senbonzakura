@@ -314,6 +314,12 @@ this repository's.
 - Maxime Labonne. [*Uncensor any LLM with abliteration*](https://huggingface.co/blog/mlabonne/abliteration). The tutorial that
   popularised the technique.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests need a test, a commit message that says
+why, and one line added to [CONTRIBUTORS.md](CONTRIBUTORS.md) agreeing to the
+[CLA](CLA.md). The project is AGPL and stays AGPL; you keep the copyright in what you write.
+
 ## Licence
 
 **AGPL-3.0-or-later.** See [LICENSE](LICENSE). Senbonzakura is copyleft because it embeds a

@@ -62,6 +62,10 @@ def build_args(argv=None):
     ap.add_argument("--eval-refusal", type=int, default=64)
     ap.add_argument("--eval-kl", type=int, default=64)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--directions-from", default=None,
+                    help="load a [NL+1, K, H] direction set (as written by tools/rdo.py) instead "
+                         "of extracting cluster directions. The rest of the harness is unchanged, "
+                         "so two direction sources are scored with one measuring stick.")
     own = ap.parse_args(argv)
 
     args = cli.build_parser().parse_args([
@@ -302,11 +306,46 @@ def experiment_4(a, log, strengths):
             "degenerate_reason": bad, "matched_refusal": matched_refusal_table(rows)}
 
 
-def experiments_2_and_3(a, log, which):
+def load_directions(a, path, log):
+    """Install an externally optimised direction set in place of the extracted one.
+
+    Validated rather than trusted: a set with the wrong shape, or one whose rows are not
+    orthonormal, would be scored under a geometry the bake does not implement and the comparison
+    would be measuring the mistake instead of the method.
+    """
+    blob = torch.load(path, map_location="cpu", weights_only=False)
+    dirs = blob["dirs_multi"] if isinstance(blob, dict) else blob
+    if dirs.shape[0] != a.NL + 1 or dirs.shape[2] != a.H:
+        raise SystemExit(
+            f"{path} holds directions of shape {tuple(dirs.shape)}, which does not fit this model "
+            f"(expected [{a.NL + 1}, K, {a.H}]). A direction set from another model cannot be "
+            f"scored here.")
+    for li in range(dirs.shape[0]):
+        M = dirs[li].float()
+        live = M[M.norm(dim=-1) > 1e-6]
+        if live.shape[0] > 1:
+            gram = live @ live.T
+            if not torch.allclose(gram, torch.eye(live.shape[0]), atol=1e-3):
+                raise SystemExit(
+                    f"{path}: the directions at layer {li} are not orthonormal. The bake computes "
+                    f"R^T(RW), which is a projection only for an orthonormal basis; correlated "
+                    f"rows over-subtract along what they share, which is extra ablation strength "
+                    f"disguised as an extra direction.")
+    a.dirs_multi = dirs.to(torch.bfloat16)
+    a.dirs_per_layer = [int((a.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum())
+                        for li in range(a.NL + 1)]
+    a.KMAX = max(1, int(dirs.shape[1]))
+    log(f"loaded directions from {path}: K up to {max(a.dirs_per_layer)} per layer")
+
+
+def experiments_2_and_3(a, log, which, directions_from=None):
     args = a.args
     TR = args.track
-    a.extract_directions(f"{TR}/bad_ds", args.good_ds or f"{TR}/good_ds", args.hedge_ds,
-                         args.clean_ds or args.good_ds or f"{TR}/good_ds")
+    if directions_from:
+        load_directions(a, directions_from, log)
+    else:
+        a.extract_directions(f"{TR}/bad_ds", args.good_ds or f"{TR}/good_ds", args.hedge_ds,
+                             args.clean_ds or args.good_ds or f"{TR}/good_ds")
     a.bad_eval = a.load(f"{TR}/bad_eval_ds", args.eval_refusal)
     _kl_all = a.load(args.good_ds or f"{TR}/good_ds", args.dir_prompts + args.eval_kl)
     a.kl_eval = _kl_all[args.dir_prompts:args.dir_prompts + args.eval_kl] or _kl_all[:args.eval_kl]
@@ -333,7 +372,7 @@ def main(argv=None):
     a = cli.Abliterator(args, log)
 
     record = {"model": args.model, "track": args.track, "seed": args.seed,
-              "experiment": own.experiment,
+              "experiment": own.experiment, "directions_from": own.directions_from,
               "axis_separation_threshold": cli.MIN_AXIS_SEPARATION}
 
     if own.experiment in ("e1", "all"):
@@ -342,7 +381,7 @@ def main(argv=None):
         log(f"\n  E1 verdict: {record['e1']['verdict']}.\n")
 
     if own.experiment in ("e2", "e3", "all"):
-        record["e2_e3"] = experiments_2_and_3(a, log, own.experiment)
+        record["e2_e3"] = experiments_2_and_3(a, log, own.experiment, own.directions_from)
 
     if own.experiment in ("e4", "all"):
         strengths = [float(x) for x in own.strengths.split(",") if x.strip()]
@@ -350,8 +389,12 @@ def main(argv=None):
             # e4 alone still needs the directions and the eval sets that "all" builds above.
             args_ = a.args
             TR = args_.track
-            a.extract_directions(f"{TR}/bad_ds", args_.good_ds or f"{TR}/good_ds", args_.hedge_ds,
-                                 args_.clean_ds or args_.good_ds or f"{TR}/good_ds")
+            if own.directions_from:
+                load_directions(a, own.directions_from, log)
+            else:
+                a.extract_directions(f"{TR}/bad_ds", args_.good_ds or f"{TR}/good_ds",
+                                     args_.hedge_ds,
+                                     args_.clean_ds or args_.good_ds or f"{TR}/good_ds")
             a.bad_eval = a.load(f"{TR}/bad_eval_ds", args_.eval_refusal)
             _kl = a.load(args_.good_ds or f"{TR}/good_ds", args_.dir_prompts + args_.eval_kl)
             a.kl_eval = _kl[args_.dir_prompts:args_.dir_prompts + args_.eval_kl] or _kl[:args_.eval_kl]

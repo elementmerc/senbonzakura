@@ -292,3 +292,66 @@ def test_the_random_control_is_carried_into_the_grid():
     for band in table["targets"].values():
         for entry in band.values():
             assert entry["harmful_refusal"] != 0.5, "a random-extras arm leaked into the comparison"
+
+
+# ── loading an externally optimised direction set ─────────────────────────────────────
+class _LoadStub:
+    def __init__(self, NL=4, H=8):
+        self.NL, self.H, self.KMAX = NL, H, 3
+        self.dirs_multi = None
+        self.dirs_per_layer = None
+
+
+def test_a_loaded_direction_set_installs_and_counts_itself(tmp_path):
+    a = _LoadStub()
+    dirs = torch.zeros(a.NL + 1, 2, a.H)
+    for li in range(2, a.NL + 1):
+        dirs[li] = torch.eye(a.H)[:2]
+    path = tmp_path / "d.pt"
+    torch.save({"dirs_multi": dirs}, path)
+
+    dv.load_directions(a, str(path), lambda m: None)
+    assert a.dirs_per_layer[:2] == [0, 0]
+    assert a.dirs_per_layer[2:] == [2] * (a.NL - 1)
+    assert a.KMAX == 2
+
+
+def test_a_direction_set_from_another_model_is_refused(tmp_path):
+    """Shapes that do not fit would otherwise be scored as though they did."""
+    a = _LoadStub(NL=4, H=8)
+    path = tmp_path / "d.pt"
+    torch.save({"dirs_multi": torch.zeros(9, 2, 64)}, path)   # a different model entirely
+    with pytest.raises(SystemExit, match="does not fit this model"):
+        dv.load_directions(a, str(path), lambda m: None)
+
+
+def test_a_non_orthonormal_direction_set_is_refused(tmp_path):
+    """The guard that stops correlated rows being read as extra directions.
+
+    The bake computes R^T(RW), a projection only for an orthonormal R. Correlated rows
+    over-subtract along whatever they share, which shows up as a stronger ablation and would be
+    credited to "more directions".
+    """
+    a = _LoadStub()
+    dirs = torch.zeros(a.NL + 1, 2, a.H)
+    d0 = torch.zeros(a.H); d0[0] = 1.0
+    near = torch.zeros(a.H); near[0] = 0.95; near[1] = 0.312
+    for li in range(2, a.NL + 1):
+        dirs[li, 0], dirs[li, 1] = d0, near / near.norm()
+    path = tmp_path / "d.pt"
+    torch.save({"dirs_multi": dirs}, path)
+
+    with pytest.raises(SystemExit, match="not orthonormal"):
+        dv.load_directions(a, str(path), lambda m: None)
+
+
+def test_a_single_direction_per_layer_is_not_called_non_orthonormal(tmp_path):
+    """One row is trivially orthonormal; the guard must not fire on a K=1 set."""
+    a = _LoadStub()
+    dirs = torch.zeros(a.NL + 1, 1, a.H)
+    for li in range(1, a.NL + 1):
+        dirs[li, 0, 0] = 1.0
+    path = tmp_path / "d.pt"
+    torch.save({"dirs_multi": dirs}, path)
+    dv.load_directions(a, str(path), lambda m: None)
+    assert a.KMAX == 1

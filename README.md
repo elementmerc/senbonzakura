@@ -33,6 +33,29 @@ the same ruler:
 | Single direction | 2.1% | 36.6% | 0.0% | 12.97 |
 | **Senbonzakura (multi-direction)** | **0.0%** | **20.0%** | **0.0%** | 13.29 |
 
+> ### Read this table with the caveats attached, not 300 lines below it
+>
+> **These numbers were measured on 2026-07-14 and two scoring bugs have been fixed since.**
+> They are kept here because deleting a published claim is not the same as correcting one,
+> and because the qualitative shape (multi below single below stock) is what the rest of this
+> section argues. Do not treat the figures as current.
+>
+> - **The refusal scanner read only the first 240 characters** of a reply until 2026-07-21
+>   (`71cc119`). Fifty-one of fifty-six refusal markers land past that point, so refusals were
+>   undercounted.
+> - **The prompt renderer had drifted into three copies** until 2026-07-30 (`d5a16e0`), and the
+>   scorer's copy left thinking enabled. Qwen3-4B is a thinking model, so the replies being
+>   scored were not the replies the search had selected on.
+> - **This is a 290-prompt evaluation that is not held out.** Some of these prompts are the
+>   ones the winning configuration was chosen on, which flatters any tuned method, this one
+>   included.
+> - **One seed, no intervals.** A single run is a sample.
+>
+> **Why it has not been re-measured:** Qwen3-4B does not fit the 6 GB card this project is
+> built around, so a corrected run needs hardware we do not own. That is the honest reason,
+> not an oversight. What *has* been re-measured, on held-out rows with intervals, is
+> Qwen3-1.7B; see [Reproducibility and status](#reproducibility-and-status).
+
 Single-direction leaves better than a third of the strict count standing.
 Multi-direction cuts it to a fifth and drives hard refusal to zero, with no broken
 output. Coherence stays essentially level with the base model: single-direction is
@@ -328,14 +351,26 @@ evaluation, same keyword ruler. It will be added to this section when run.
 
 ### Reproducibility and status
 
-- **Single run, seed 42.** The Optuna sampler is seeded, but GPU kernels (matmul reductions,
-  SVD) are not bit-deterministic, so a re-run can differ by a percent or two. No error bars are
-  reported; treat small differences as noise.
-- **The [Why multi-direction](#why-multi-direction) table is freshly measured** on Qwen3-4B with
-  the current code, and every cell is produced by the shipped tools:
-  `python -m senbonzakura.score --load-in-4bit` on the 290-prompt eval for the refusal columns, and
-  `python -m senbonzakura.coherence --load-in-4bit` on the fixed neutral passage for the perplexity,
-  both through the same 4-bit loader.
+- **The [Why multi-direction](#why-multi-direction) table is NOT current.** It was measured on
+  2026-07-14, before two scoring fixes, on an evaluation that is not held out. The caveats are
+  printed beside the table itself rather than here, because a qualification three hundred lines
+  from the thing it qualifies is not a qualification. Every cell was produced by the shipped
+  tools (`python -m senbonzakura.score --load-in-4bit` for the refusal columns,
+  `python -m senbonzakura.coherence --load-in-4bit` for perplexity), which is what makes it
+  reproducible; it is comparability with today's code that it lacks.
+- **Every figure this project measured before 2026-07-30 is affected.** Two bugs: the refusal
+  scanner read a 240-character window (`71cc119`, 2026-07-21), and the prompt renderer existed
+  in three copies that had drifted, so a configuration selected under one prompt format was
+  reported under another (`d5a16e0`, 2026-07-30). Numbers either side of those dates are not
+  comparable, and this project would rather say so than quietly restate them.
+- **Determinism, measured rather than assumed.** On a fixed batch size the forward-only paths
+  are reproducible: each compass command was run three times on the same card at batch 16 and
+  produced AUCs identical to four decimal places. That says nothing about generation, which is
+  sampled, and nothing about a different batch size, which changes reduction order.
+- **The model-size ceiling.** Every model this tool has been run on is **under 3B, and six of
+  the seven are under 2B**; gemma-2-2b-it is the largest at 2.61B and carries the strongest
+  result. Nothing here is evidence about how the method behaves at 7B, 30B or beyond. The
+  streaming work exists to make those sizes reachable on hardware we own.
 - **No head-to-head against Heretic is published yet** (see [Benchmark](#benchmark)). Recent
   correctness fixes to direction extraction, the multi-direction basis, and knee selection moved the
   numbers substantially in Senbonzakura's favour on the keyword axis, so any comparison is run under

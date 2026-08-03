@@ -32,7 +32,7 @@
 #
 # Machine "rog" is the WSL2 instance on the ROG laptop, which holds the 6 GB card. atlas has no
 # GPU and no torch, so it cannot host any of this.
-run = "direction-validation-2026-08-03"
+run = "direction-validation-2026-08-03b"
 
 [[job]]
 id = "setup"
@@ -147,7 +147,8 @@ fi
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
     --experiment all --device cuda --max-directions 8 \\
-    --dir-prompts 128 --eval-refusal 64 --eval-kl 64 --seed 42 \\
+    --strengths 0.2,0.35,0.5,0.7,1.0 \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --seed 42 \\
     --out "$RUN/validation/e2-e3-qwen3.json"
 
 "$PY" -c "import json; json.load(open('$RUN/validation/e2-e3-qwen3.json'))"
@@ -229,6 +230,34 @@ for tag, r in rows:
                   f"{rand[K]['harmful_refusal']}  ->  {verdict}")
         print("\\n    If fitted does not beat random, the extra directions are not carrying "
               "refusal and the advantage is only that more of the space was cut.")
+
+print("\\n=== E4: K against ablation strength, compared at MATCHED refusal removal ===")
+for tag, r in rows:
+    e4 = r.get("e4")
+    if not e4:
+        continue
+    print(f"\\n  {tag}   strengths {e4['strengths']}")
+    if e4["degenerate_reason"]:
+        print(f"    UNREADABLE: {e4['degenerate_reason']}")
+        continue
+    print("    {:<22} {:>9} {:>10} {:>8}".format("arm", "harmful", "harmless", "KL"))
+    for row in e4["rows"]:
+        print("    {:<22} {:>9} {:>10} {:>8}".format(
+            row["arm"], row["harmful_refusal"], row["harmless_refusal"], row["kl"]))
+
+    mr = e4["matched_refusal"]
+    print(f"\\n    baseline refusal (least-ablated arm): {mr.get('baseline_refusal')}")
+    for band, entries in mr["targets"].items():
+        print(f"\\n    at {band}, the cheapest arm of each K:")
+        for K, e in entries.items():
+            print(f"      K={K}: KL {e['kl']}  (strength {e['strength']}, "
+                  f"refusal {e['harmful_refusal']})")
+        kls = {int(K): e["kl"] for K, e in entries.items()}
+        if len(kls) > 1:
+            best = min(kls, key=kls.get)
+            print(f"      -> lowest KL at this refusal level: K={best}. "
+                  + ("MULTI-DIRECTION WINS here." if best > 1 else
+                     "Single direction wins here."))
 EOF
 echo REPORT_OK
 """

@@ -349,7 +349,15 @@ def load_directions(a, path, log):
     log(f"loaded directions from {path}: K up to {max(a.dirs_per_layer)} per layer")
 
 
-def experiments_2_and_3(a, log, which, directions_from=None):
+def prepare_for_bakes(a, log, directions_from=None):
+    """Install the directions, build the eval sets, and snapshot the pristine weights.
+
+    One copy, called by every experiment that bakes. It was two copies for an afternoon, one in
+    each caller, which is how this project ended up with three drifted renderings of the same
+    chat prompt and a compass reading its verdict off the wrong token for nine days. The KL set
+    is the harmless slice AFTER the prompts the directions were fitted on, so coherence is
+    measured on rows the directions never saw.
+    """
     args = a.args
     TR = args.track
     if directions_from:
@@ -359,9 +367,21 @@ def experiments_2_and_3(a, log, which, directions_from=None):
                              args.clean_ds or args.good_ds or f"{TR}/good_ds")
     a.bad_eval = a.load(f"{TR}/bad_eval_ds", args.eval_refusal)
     _kl_all = a.load(args.good_ds or f"{TR}/good_ds", args.dir_prompts + args.eval_kl)
-    a.kl_eval = _kl_all[args.dir_prompts:args.dir_prompts + args.eval_kl] or _kl_all[:args.eval_kl]
+    # Falls back to the head of the harmless set when it is too small to spare a disjoint slice,
+    # which is a real degradation and is why the fallback is visible rather than silent.
+    disjoint = _kl_all[args.dir_prompts:args.dir_prompts + args.eval_kl]
+    if not disjoint:
+        log(f"  NOTE: the harmless set holds {len(_kl_all)} prompts, too few to spare a slice "
+            f"disjoint from the {args.dir_prompts} the directions were fitted on. Coherence is "
+            f"being measured on prompts the directions saw, which flatters it.")
+    a.kl_eval = disjoint or _kl_all[:args.eval_kl]
     a.orig_lp = a.first_token_logprobs(a.kl_eval)
     a.snapshot_weights()
+
+
+def experiments_2_and_3(a, log, which, directions_from=None):
+    args = a.args
+    prepare_for_bakes(a, log, directions_from)
 
     rows = []
     kmax = max(a.dirs_per_layer)
@@ -397,20 +417,8 @@ def main(argv=None):
     if own.experiment in ("e4", "all"):
         strengths = [float(x) for x in own.strengths.split(",") if x.strip()]
         if own.experiment == "e4":
-            # e4 alone still needs the directions and the eval sets that "all" builds above.
-            args_ = a.args
-            TR = args_.track
-            if own.directions_from:
-                load_directions(a, own.directions_from, log)
-            else:
-                a.extract_directions(f"{TR}/bad_ds", args_.good_ds or f"{TR}/good_ds",
-                                     args_.hedge_ds,
-                                     args_.clean_ds or args_.good_ds or f"{TR}/good_ds")
-            a.bad_eval = a.load(f"{TR}/bad_eval_ds", args_.eval_refusal)
-            _kl = a.load(args_.good_ds or f"{TR}/good_ds", args_.dir_prompts + args_.eval_kl)
-            a.kl_eval = _kl[args_.dir_prompts:args_.dir_prompts + args_.eval_kl] or _kl[:args_.eval_kl]
-            a.orig_lp = a.first_token_logprobs(a.kl_eval)
-            a.snapshot_weights()
+            # e4 alone still needs what the e2/e3 branch above would have built.
+            prepare_for_bakes(a, log, own.directions_from)
         record["e4"] = experiment_4(a, log, strengths)
         bad = record["e4"]["degenerate_reason"]
         log(f"\n  E4: {'UNREADABLE — ' + bad if bad else 'grid has spread; see matched_refusal'}\n")

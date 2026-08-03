@@ -523,3 +523,113 @@ def test_main_record_is_written_atomically(base_args, tiny_model, tiny_tok, trac
         dv.main(["--model", "fixture", "--track", track, "--device", "cpu",
                  "--experiment", "e1", "--dir-prompts", "8", "--out", str(out)])
     assert not out.exists() and not list(tmp_path.glob("*.part"))
+
+
+# ── the shared preparation, which was two copies for an afternoon ─────────────────────
+def test_prepare_installs_directions_eval_sets_and_a_snapshot(base_args, tiny_model, tiny_tok,
+                                                              track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    dv.prepare_for_bakes(a, lambda m: None)
+
+    assert a.dirs_multi is not None and a.dirs_per_layer
+    assert a.bad_eval and a.kl_eval
+    assert a.orig_lp is not None
+    assert a._pristine, "no pristine snapshot, so an arm could not be restored"
+
+
+def test_prepare_says_so_when_the_kl_set_is_not_disjoint(base_args, tiny_model, tiny_tok, track):
+    """Measuring coherence on the prompts the directions were fitted on flatters it.
+
+    The fallback is legitimate on a small corpus and must not be silent, because the number it
+    produces is not comparable to one measured on a held-out slice.
+    """
+    lines = []
+    base_args.dir_prompts = 64          # more than the toy harmless set holds
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    dv.prepare_for_bakes(a, lines.append)
+
+    joined = "\n".join(lines)
+    assert "too few to spare a slice" in joined
+    assert "flatters it" in joined
+
+
+def test_prepare_uses_a_disjoint_kl_slice_when_it_can(base_args, tiny_model, tiny_tok, track,
+                                                      monkeypatch):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    a.args.dir_prompts = 2
+    a.args.eval_kl = 2
+
+    lines = []
+    dv.prepare_for_bakes(a, lines.append)
+    fitted = a.load(f"{track}/good_ds", a.args.dir_prompts)
+    assert not (set(a.kl_eval) & set(fitted)), "the coherence set overlaps the fitted prompts"
+    assert "too few to spare" not in "\n".join(lines)
+
+
+def test_prepare_can_install_an_external_direction_set(base_args, tiny_model, tiny_tok, track,
+                                                       tmp_path):
+    """The RDO path: directions come from a file, everything else is identical."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    dirs = torch.zeros(a.NL + 1, 1, a.H)
+    for li in range(1, a.NL + 1):
+        dirs[li, 0, 0] = 1.0
+    path = tmp_path / "d.pt"
+    torch.save({"dirs_multi": dirs}, path)
+
+    dv.prepare_for_bakes(a, lambda m: None, str(path))
+    assert a.KMAX == 1
+    assert a.dirs_per_layer[0] == 0 and a.dirs_per_layer[1] == 1
+    assert a.bad_eval and a.orig_lp is not None
+
+
+def test_experiments_2_and_3_runs_both_halves(base_args, tiny_model, tiny_tok, track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    out = dv.experiments_2_and_3(a, lambda m: None, "all")
+
+    assert out["rows"], "no arms were measured"
+    assert "max_k_available" in out
+    labels = [r["arm"] for r in out["rows"]]
+    assert any(x.startswith("fitted-K") for x in labels)
+
+
+def test_main_runs_the_e4_grid_and_records_it(base_args, tiny_model, tiny_tok, track,
+                                              tmp_path, monkeypatch):
+    out = tmp_path / "v.json"
+    real = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    rc = dv.main(["--model", "fixture", "--track", track, "--device", "cpu",
+                  "--experiment", "e4", "--strengths", "0.5,1.0",
+                  "--dir-prompts", "4", "--eval-refusal", "2", "--eval-kl", "2",
+                  "--out", str(out)])
+    assert rc == 0
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["experiment"] == "e4"
+    assert record["e4"]["strengths"] == [0.5, 1.0]
+    assert "matched_refusal" in record["e4"]
+
+
+def test_all_prepares_exactly_once(base_args, tiny_model, tiny_tok, track, tmp_path, monkeypatch):
+    """`--experiment all` runs e2/e3 and then e4, and both need the same setup.
+
+    Preparing twice would re-snapshot weights that an arm had already baked and restore to the
+    wrong pristine state, so every arm after the second preparation would be measured against a
+    model that is not the original.
+    """
+    calls = []
+    real = dv.prepare_for_bakes
+    monkeypatch.setattr(dv, "prepare_for_bakes",
+                        lambda a, log, d=None: (calls.append(1), real(a, log, d))[1])
+    real_abl = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real_abl(args, log, model=tiny_model, tok=tiny_tok))
+
+    dv.main(["--model", "fixture", "--track", track, "--device", "cpu", "--experiment", "all",
+             "--strengths", "1.0", "--dir-prompts", "4", "--eval-refusal", "2", "--eval-kl", "2",
+             "--out", str(tmp_path / "v.json")])
+    assert len(calls) == 1, f"prepared {len(calls)} times; a second snapshot loses the pristine weights"

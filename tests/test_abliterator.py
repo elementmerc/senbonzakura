@@ -1444,3 +1444,18 @@ def test_the_bake_does_not_build_an_autograd_graph(abl):
 
     assert W.grad_fn is None
     assert W.is_leaf, "the bake turned a weight into a graph node"
+
+
+def test_no_hedge_note_when_there_is_no_hedge_set(base_args, tiny_model, tiny_tok, track):
+    """The alarm must be silent on the ordinary path, or it becomes noise nobody reads.
+
+    Almost every run has no hedge set (none has ever existed), so a note that fired anyway would
+    appear in every log and stop meaning anything.
+    """
+    lines = []
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert a.hedge_applied_layers == 0
+    assert "hedging direction was applied" not in "\n".join(lines)

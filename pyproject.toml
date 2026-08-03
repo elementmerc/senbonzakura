@@ -217,7 +217,7 @@ omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; mai
 # code to this same module. The operator's target was above 90 and that is met; the
 # ratchet keeps going up at each tranche close, but it is never set above the
 # measured figure, because a gate that is red on a clean checkout gets commented out.
-fail_under = 92
+fail_under = 95
 exclude_also = [
   "if __name__ == .__main__.:",
   "pragma: no cover",

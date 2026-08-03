@@ -4,10 +4,15 @@ All notable changes to Senbonzakura are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — TYBW
 
-The release that makes the measurement trustworthy. The codename and date are added at tag
-time.
+The release that makes the measurement trustworthy. The date is added at tag time.
+
+**The multi-direction feature does not work and has never worked.** The filter that decides
+whether a candidate direction carries refusal cannot accept any direction, on any model, at
+any setting, for a reason in the maths rather than in the data. Every run that asked for more
+than one direction applied exactly one. This was found by this release's own instrumentation,
+it is described below, and the fix is not in this release.
 
 **If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
@@ -93,8 +98,28 @@ not comparable to what this version produces.
 - The prompt-retention guard reads what is staged rather than what is in the working tree, so
   an artefact staged with prompts and then tidied on disk is still refused.
 
+### Known defects
+
+- **Asking for more than one refusal direction has no effect.** The check that decides whether
+  a candidate direction carries refusal compares the average harmful reply against the average
+  harmless one, along a direction built to be at right angles to both averages. The difference
+  it looks for is therefore always zero, so every candidate is rejected and one direction is
+  applied however many are requested. Measured across two model families and three prompt sets:
+  656 candidates, all rejected, none close. A run now says so in plain words instead of
+  reporting the result as though a search had happened. What the right replacement check is has
+  not been decided, so no fix ships here.
+- **A direction count reported before this release cannot be trusted**, including the
+  comparison table in the README. Those runs applied one direction whatever they requested.
+  This does not mean refusal is a single direction; it means this tool has not measured it.
+
 ### Fixed
 
+- A run that requests several refusal directions and applies one now says so in those words.
+  The note that reported this was scoped to part of the model and read as though the rest had
+  been fine, which is what hid the defect above for most of a day.
+- Every candidate direction's score is kept in the result file, whether it was used or not. A
+  count on its own cannot say whether a direction was rejected narrowly or was never possible,
+  and those are different findings.
 - The refusal scanner read only the first 240 characters of a reply, and 51 of 56 refusal
   markers land past that point.
 - The prompt renderer existed in three copies that had drifted, so a configuration selected

@@ -66,15 +66,26 @@ the same ruler:
 > axis cleared the tool's own refusal-separation threshold at any of the model's 29 layers, so
 > the surgery in the two arms was identical and the comparison measured something else.
 >
-> By this tool's own standard, then, refusal in Qwen3-1.7B is one direction. That is what
-> [Arditi et al.](https://arxiv.org/abs/2406.11717) reported, and this section describes as
-> true "mostly".
+> **Corrected the same day, and it is worse than the paragraph above said.** The reason no
+> second axis ever cleared the threshold is not a fact about Qwen3-1.7B. The check that decides
+> whether a candidate direction carries refusal compares the average harmful reply against the
+> average harmless one, measured along a direction that is built to sit at right angles to both
+> of those averages. The difference it looks for is zero every time, by construction. **No
+> direction can pass that check, on any model, at any setting.**
 >
-> This does not show the claim is false. The table above is Qwen3-4B, a different model, and
-> whether the constraint is the model, the corpus, or a threshold constant that has never been
-> validated is an open question with three cheap experiments attached to it. It does mean
-> **nobody should currently believe the claim on this project's evidence**, and that includes
-> us.
+> Measured across two model families and three prompt sets: 656 candidate directions, every one
+> rejected, none close. So **every run this project has ever made applied exactly one direction,
+> whatever it was asked for**, and the multi-direction row of the table above is a second search
+> configuration rather than a second direction.
+>
+> This does not show the claim is false either. It shows the tool has never tested it. The
+> honest position is that whether refusal occupies more than one direction is **unmeasured
+> here**, and **nobody should believe the claim on this project's evidence**, us included. The
+> fix is a research question (what the check should compare instead) and is not in this
+> release.
+
+Read the next three paragraphs against the caveat above: "multi-direction" names the
+configuration those runs requested, not the number of directions they applied, which was one.
 
 Single-direction leaves better than a third of the strict count standing.
 Multi-direction cuts it to a fifth and drives hard refusal to zero, with no broken

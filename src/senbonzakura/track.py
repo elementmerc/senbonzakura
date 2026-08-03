@@ -400,18 +400,42 @@ def manifest(harmful: dict[str, list[str]], harmless: dict[str, list[str]], sour
     }
 
 
+#: Manifest schema versions this build understands. A manifest with no `schema` key is
+#: treated as the first version, because hand-written ones predate the field.
+KNOWN_SCHEMAS = frozenset({"senbonzakura-track/1"})
+
+
 def read_manifest(track_dir):
     """The recorded partition boundaries of a track, or None if it has none.
 
     None is not a failure: a hand-built track predates the builder and still has to run.
     It means the boundaries are unknown, which is exactly why nothing can be checked
     against them.
+
+    A manifest whose `schema` is one this build does not know is a different matter and
+    raises. Until 2026-08-03 the field was written and never read, which is worse than not
+    having one: it looks like a compatibility guarantee and is not. When a second version
+    exists, an older build reading it would take the fields it recognised, ignore whatever
+    changed, and slice the datasets confidently at the wrong offsets. Every number
+    downstream would come from the wrong rows and nothing would say so.
     """
     try:
         m = json.loads((Path(track_dir) / "track.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return m if isinstance(m, dict) and "counts" in m else None
+    if not (isinstance(m, dict) and "counts" in m):
+        return None
+    schema = m.get("schema", "senbonzakura-track/1")
+    if schema not in KNOWN_SCHEMAS:
+        raise SystemExit(
+            f"{track_dir}/track.json declares schema {schema!r}, which this build of "
+            f"senbonzakura does not understand (it knows {sorted(KNOWN_SCHEMAS)}).\n"
+            f"This track was written by a newer version. Upgrade senbonzakura rather than "
+            f"running against it: the partition boundaries are read from this file, so "
+            f"guessing at an unknown layout would slice the datasets at the wrong offsets "
+            f"and every number would come from the wrong rows."
+        )
+    return m
 
 
 def flag_violations(m, *, eval_refusal=0, eval_refusal_final=0, dir_prompts=0, eval_kl=0):

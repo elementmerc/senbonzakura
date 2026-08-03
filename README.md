@@ -173,6 +173,62 @@ TRACK_BUILT mytrack  harmful {'fit': 256, 'search': 128, 'measure': 616}
   measure with: --skip-harmful 128 --skip-harmless 384 --n 616
 ```
 
+### `track.json`: where the boundaries are recorded
+
+The three partitions are stored end to end inside each dataset, so `bad_ds` is the fit rows
+followed by nothing else, while `bad_eval_ds` is the search rows followed by the measure
+rows. **Nothing about a directory of prompts says where one partition ends and the next
+begins**, so the builder writes it down:
+
+```json
+{
+  "schema": "senbonzakura-track/1",
+  "sources": { "harmful": "harmful.txt", "harmless": "harmless.txt" },
+  "counts": {
+    "harmful":  { "fit": 256, "search": 128, "measure": 616 },
+    "harmless": { "fit": 256, "search": 128, "measure": 616 }
+  },
+  "skip_harmful": 128,
+  "skip_harmless": 384,
+  "n_harmful": 616,
+  "n_harmless": 616
+}
+```
+
+| Field | What it is |
+|---|---|
+| `schema` | The format version. A manifest declaring a version this build does not know is **refused**, rather than read with the fields it happens to recognise. A manifest with no `schema` at all is read as version 1, because hand-written ones predate the field. |
+| `sources` | Where the prompts came from, so a track can be traced to its input. |
+| `counts` | Rows in each partition, per side. The record the boundary checks are made against. |
+| `skip_harmful`, `skip_harmless` | What to pass to `--skip-harmful` and `--skip-harmless` to land on the measure rows. |
+| `n_harmful`, `n_harmless` | What to pass to `--n`. |
+
+**This file is load-bearing, not documentation.** Three things read it:
+
+- **The audit** (`--audit`) re-checks an existing track: leakage, empty partitions, whether
+  the rows on disk still match the counts recorded here. A `track.json` that disagrees with
+  the rows beside it is refused, because every slice taken from it would silently read the
+  wrong rows.
+- **The boundary check** refuses a run whose flags would cross a partition. Asking the search
+  to score more prompts than the `search` partition holds means selecting a configuration on
+  the rows the published number comes from, and the tool stops rather than doing it.
+- **The measure flags above** are read from it rather than remembered.
+
+A track with no `track.json` still runs. It simply gets none of the above, and every
+boundary becomes something you have to keep right by hand.
+
+### The optional fourth and fifth directories
+
+| Directory | What it holds | What reads it |
+|---|---|---|
+| `good_matched_ds` | Harmless prompts matched to the harmful ones by topic | `--harmless-matched`, the compass's construct-validity control |
+| `hedge_ds` | Hedged compliances, neither refusal nor clean answer | The hedging direction, when one exists |
+
+Both are optional and neither is built by `senbonzakura.track` today. `good_matched_ds`
+answers "is the compass reading refusal, or is it reading topic?" by holding the subject
+matter still. `hedge_ds` has no public dataset behind it anywhere, which is why the
+single-versus-multi comparison is two arms rather than three.
+
 Those numbers are also written to `mytrack/track.json`, so a reader can check the split
 a year later rather than take it on trust. To re-check a track you already have,
 including one assembled by hand:

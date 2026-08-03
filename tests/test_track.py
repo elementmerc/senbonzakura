@@ -755,3 +755,51 @@ def test_a_stratum_present_everywhere_raises_no_finding():
     labels = {track.normalise(r): ("a" if i % 2 else "b") for i, r in enumerate(rows)}
     side = track.partition(rows, fit=8, search=8, labels=labels)
     assert not [f for f in track.check(side, side, labels) if "no rows in measure" in f]
+
+
+# ── manifest schema versioning ──────────────────────────────────────────────────────
+def test_a_manifest_without_a_schema_key_is_read_as_version_one(tmp_path):
+    """Hand-written manifests predate the field and must keep working."""
+    (tmp_path / "track.json").write_text(json.dumps({"counts": {"harmful": {"fit": 1}}}))
+    m = track.read_manifest(tmp_path)
+    assert m is not None
+    assert m["counts"]["harmful"]["fit"] == 1
+
+
+def test_a_known_schema_is_read(tmp_path):
+    (tmp_path / "track.json").write_text(
+        json.dumps({"schema": "senbonzakura-track/1", "counts": {"harmful": {"fit": 1}}})
+    )
+    assert track.read_manifest(tmp_path) is not None
+
+
+def test_an_unknown_schema_refuses_rather_than_guessing(tmp_path):
+    """The whole point of the version field.
+
+    An older build reading a newer manifest would take the fields it recognised, ignore
+    whatever changed, and slice the datasets at the wrong offsets. Every number downstream
+    would come from the wrong rows with nothing saying so.
+    """
+    (tmp_path / "track.json").write_text(
+        json.dumps({"schema": "senbonzakura-track/2", "counts": {"harmful": {"fit": 1}}})
+    )
+    with pytest.raises(SystemExit) as e:
+        track.read_manifest(tmp_path)
+    msg = str(e.value)
+    assert "senbonzakura-track/2" in msg
+    assert "wrong rows" in msg, "the message must say what goes wrong, not just that it refused"
+
+
+def test_a_missing_or_unreadable_manifest_is_still_none_not_an_error(tmp_path):
+    assert track.read_manifest(tmp_path) is None
+    (tmp_path / "track.json").write_text("{not json")
+    assert track.read_manifest(tmp_path) is None
+    (tmp_path / "track.json").write_text(json.dumps({"no": "counts"}))
+    assert track.read_manifest(tmp_path) is None
+
+
+def test_the_builder_writes_a_schema_this_build_knows():
+    """The writer and the reader must not drift apart."""
+    parts = {"fit": ["a"], "search": ["b"], "measure": ["c"]}
+    m = track.manifest(parts, parts, {"harmful": "x", "harmless": "y"})
+    assert m["schema"] in track.KNOWN_SCHEMAS

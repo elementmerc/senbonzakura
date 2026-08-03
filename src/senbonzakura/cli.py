@@ -100,6 +100,14 @@ def knee_scalar(ref, soft, heretic, kl):
 # within-harmful content/topic variance, not refusal, and ablating it strips capability (Tier-1 P1).
 MIN_AXIS_SEPARATION = 0.5
 
+# How many candidate axes per layer keep their separation value in the result file. The threshold
+# above was chosen once and never validated against a measurement, so a run that keeps only one
+# direction per layer cannot currently be told apart from a run whose second direction missed by
+# 0.02. Recording the rejected values makes that difference visible. Bounded because this lands in
+# a JSON file: the leading few axes are where a real second refusal direction would be if it
+# existed, and the tail is rounding error by construction (see the rank floor below).
+MAX_RECORDED_AXES = 8
+
 # The "worse than anything real" score, used to keep damaged / unmeasured trials out of the running
 # for best. A true infinity so no finite objective can ever tie or beat it.
 WORST_SCORE = float("inf")
@@ -958,6 +966,11 @@ class Abliterator:
         # SUBSPACE (refusal is not always a single direction). The search picks how many (num_directions)
         # to actually ablate.
         dirs_multi = torch.zeros(NL + 1, KMAX, H)
+        # Per layer, the separation of every candidate PCA axis that was actually measured, kept or
+        # not. Without this a layer that got one direction is indistinguishable from a layer whose
+        # second candidate missed the threshold by a hair, and that difference is the whole
+        # question of whether refusal here is one direction or one direction plus a constant.
+        axis_seps = [[] for _ in range(NL + 1)]
         for li in range(NL + 1):
             gd = good_dir[li]
             if args.no_good_orth:
@@ -1012,7 +1025,10 @@ class Abliterator:
                     # if it actually separates harmful from harmless (Cohen's d over the projections).
                     # Below the threshold it is within-harmful content/topic variance, not refusal, and
                     # ablating it would strip capability rather than refusal.
-                    if _axis_separation(Rb[li], Rg[li], v) < MIN_AXIS_SEPARATION:
+                    sep = _axis_separation(Rb[li], Rg[li], v)
+                    if len(axis_seps[li]) < MAX_RECORDED_AXES:
+                        axis_seps[li].append(round(float(sep), 4))
+                    if sep < MIN_AXIS_SEPARATION:
                         dropped += 1
                         continue
                     kept.append(v); basis.append(v)
@@ -1038,6 +1054,23 @@ class Abliterator:
         # The loudest case is the one that matters: when NO layer anywhere got more than one
         # direction, a multi-direction run is a single-direction run and must say so in those
         # words, because that is the sentence a reader needs and "1 to 1" is not it.
+        # The separations themselves, and the one number that says whether the single-direction
+        # result is a property of the model or of the threshold: the largest separation any
+        # REJECTED axis reached. A best rejected value just under MIN_AXIS_SEPARATION means the
+        # constant decided the outcome; one far below it means the second direction is not there.
+        self.axis_separations = axis_seps
+        rejected = [d for layer in axis_seps for d in layer if d < MIN_AXIS_SEPARATION]
+        self.best_rejected_separation = max(rejected) if rejected else None
+        if self.best_rejected_separation is not None:
+            near = self.best_rejected_separation >= MIN_AXIS_SEPARATION * 0.8
+            log(f"  rejected-axis separations: {len(rejected)} axis/axes measured below the "
+                f"threshold, best {self.best_rejected_separation:.4f} against "
+                f"{MIN_AXIS_SEPARATION}"
+                + (". That is close enough to the threshold that the cut-off, not the model, "
+                   "decided the direction count; treat the single-direction reading as a "
+                   "property of MIN_AXIS_SEPARATION until it is varied." if near else
+                   ". Well clear of the threshold, so lowering it would not add a direction."))
+
         window = self.dirs_per_layer[self.lo:self.hi + 1] or self.dirs_per_layer
         whole = self.dirs_per_layer or [0]
         if KMAX > 1 and max(whole) <= 1:
@@ -1733,6 +1766,13 @@ class Abliterator:
                        # for: the separation filter, the rank floor and a degenerate cloud can
                        # each reduce it, and num_directions alone cannot show that.
                        "directions_per_layer": getattr(self, "dirs_per_layer", None),
+                       # Why each layer got the count it did. A rejected axis whose separation
+                       # sits just under the threshold means the constant chose the direction
+                       # count; one far under it means the second direction is genuinely absent.
+                       # The count alone cannot tell those apart, which is why it is recorded.
+                       "axis_separations": getattr(self, "axis_separations", None),
+                       "axis_separation_threshold": MIN_AXIS_SEPARATION,
+                       "best_rejected_separation": getattr(self, "best_rejected_separation", None),
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},
                       f, indent=2)

@@ -1003,6 +1003,106 @@ def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, tra
     assert len(artefact["directions_per_layer"]) == a.NL + 1
 
 
+# ── why a layer got the count it did, not just what the count was ─────────────────────
+def _sep_sequence(monkeypatch, values):
+    """Make `_axis_separation` return `values` in order, repeating the last one forever.
+
+    The extractor asks once per candidate axis per layer, and the number of candidates is a
+    property of the fixture's hidden size, so a fixed-length list would run out mid-layer.
+    """
+    seen = []
+
+    def fake(bad, good, v):
+        d = values[len(seen)] if len(seen) < len(values) else values[-1]
+        seen.append(d)
+        return d
+
+    monkeypatch.setattr(cli, "_axis_separation", fake)
+    return seen
+
+
+def test_the_separation_of_every_rejected_axis_is_recorded(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """A layer that got one direction must say whether the second missed by a hair or a mile.
+
+    The count alone cannot distinguish "refusal here is one direction" from "the threshold
+    was set to 0.5 and the second direction scored 0.49", and the whole multi-direction claim
+    turns on which of those is true.
+    """
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.42])
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert len(a.axis_separations) == a.NL + 1
+    measured = [d for layer in a.axis_separations for d in layer]
+    assert measured, "nothing was measured, so the fixture is not exercising the filter"
+    assert all(d == pytest.approx(0.42) for d in measured)
+    assert a.best_rejected_separation == pytest.approx(0.42)
+
+
+def test_a_near_miss_names_the_threshold_as_the_cause(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The finding this instrumentation exists to make visible."""
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION - 0.01])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    joined = "\n".join(lines)
+    assert "rejected-axis separations" in joined
+    assert "the cut-off, not the model, decided the direction count" in joined
+
+
+def test_a_clear_rejection_says_lowering_the_threshold_would_not_help(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The opposite verdict, which is the one that would let the claim be published."""
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.02])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    joined = "\n".join(lines)
+    assert "Well clear of the threshold" in joined
+    assert "the cut-off, not the model" not in joined
+
+
+def test_a_kept_axis_is_recorded_and_is_not_counted_as_rejected(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION + 1.0])
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert a.best_rejected_separation is None, "nothing was below the threshold"
+    assert max(a.dirs_per_layer) > 1, "a clearing axis must actually be kept"
+    assert any(layer for layer in a.axis_separations), "kept axes are recorded too"
+
+
+def test_the_recorded_axes_are_bounded(base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The record lands in a JSON file, so it is capped rather than unbounded."""
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.01])
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert all(len(layer) <= cli.MAX_RECORDED_AXES for layer in a.axis_separations)
+
+
+def test_the_artefact_carries_the_separations_and_the_threshold(
+        base_args, tiny_model, tiny_tok, track):
+    """A result file that records the count without the threshold cannot be re-read later."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        artefact = json.load(f)
+    assert artefact["axis_separations"] == a.axis_separations
+    assert artefact["axis_separation_threshold"] == cli.MIN_AXIS_SEPARATION
+    assert artefact["best_rejected_separation"] == a.best_rejected_separation
+
+
 # ── the study storage releases its connection pool ────────────────────────────────────
 def test_the_study_storage_is_disposed_after_a_run(base_args, tiny_model, tiny_tok, track):
     """Optuna's RDBStorage keeps a SQLAlchemy pool that nothing disposes on its own."""

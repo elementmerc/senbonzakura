@@ -448,6 +448,9 @@ def build_parser():
             "fixed eval set\n"
             "  coherence    perplexity of a fixed neutral passage, the coherence cost\n"
             "  track        build an evaluation track with a checked fit / search / measure split\n"
+            "  validate     ask whether a direction set carries refusal or carries topic: "
+            "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
+            "direction count against ablation strength compared at matched refusal removal\n"
             "\n"
             "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1903,13 +1906,14 @@ class Abliterator:
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-DELEGATED = ("compass", "score", "coherence", "track")
+DELEGATED = ("compass", "score", "coherence", "track", "validate")
 
 
 def _delegate(name):
-    from . import coherence, margin, score, track
+    from . import coherence, margin, score, track, validate
     return {"compass": margin.main, "score": score.main,
-            "coherence": coherence.main, "track": track.main}[name]
+            "coherence": coherence.main, "track": track.main,
+            "validate": validate.main}[name]
 
 
 def main(argv=None):

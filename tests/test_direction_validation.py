@@ -5,21 +5,14 @@ plant data whose answer is known and demand that the experiment reach it. An exp
 cannot tell a topic direction from a refusal direction on data built to contain one or the other
 is not evidence about either, and this project has already shipped one of those.
 """
-import importlib.util
-import sys
-from pathlib import Path
+import json
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from senbonzakura import cli
-
-_SPEC = importlib.util.spec_from_file_location(
-    "direction_validation", Path(__file__).resolve().parent.parent / "tools" / "direction_validation.py")
-dv = importlib.util.module_from_spec(_SPEC)
-sys.modules["direction_validation"] = dv
-_SPEC.loader.exec_module(dv)
+from senbonzakura import validate as dv
 
 
 class _Stub:
@@ -395,3 +388,138 @@ def test_the_anchor_is_excluded_from_the_spread_check():
     reason = dv.degenerate_reason(flat)
     assert reason and "no dynamic range" in reason, (
         "the anchor disguised a floored grid as a grid with spread")
+
+
+# ── the bake-and-measure arm, against the tiny model ──────────────────────────────────
+def _ready_abl(base_args, tiny_model, tiny_tok, track):
+    """An Abliterator with directions, eval sets and a snapshot: what `_measure` expects."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    a.bad_eval = a.load(f"{track}/bad_eval_ds", 4)
+    a.kl_eval = a.load(f"{track}/good_ds", 4)
+    a.orig_lp = a.first_token_logprobs(a.kl_eval)
+    a.snapshot_weights()
+    return a
+
+
+def test_measure_reports_both_arms_and_the_kl(base_args, tiny_model, tiny_tok, track):
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    row = dv._measure(a, "fitted-K1-s0.5", 1, lambda m: None, strength=0.5)
+
+    assert row["arm"] == "fitted-K1-s0.5" and row["K"] == 1
+    assert row["strength"] == pytest.approx(0.5)
+    assert row["random_extras"] is False
+    for key in ("harmful_refusal", "harmless_refusal", "kl"):
+        assert isinstance(row[key], float)
+    assert 0.0 <= row["harmful_refusal"] <= 1.0
+
+
+def test_measure_restores_the_weights_it_baked(base_args, tiny_model, tiny_tok, track):
+    """Every arm must start from the pristine model, or arm N measures arms 1..N-1 as well."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    before = [p.detach().clone() for p in a.model.parameters()]
+    dv._measure(a, "fitted-K1", 1, lambda m: None, strength=1.0)
+    for b, p in zip(before, a.model.parameters(), strict=True):
+        assert torch.equal(b, p), "a measured arm left the weights changed"
+
+
+def test_measure_restores_the_directions_after_randomising_them(
+        base_args, tiny_model, tiny_tok, track):
+    """The random control must not leak into the fitted arms that follow it."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    before = a.dirs_multi.clone()
+    dv._measure(a, "random-K2", 2, lambda m: None, randomise_extras=True, seed=1, strength=1.0)
+    assert torch.equal(before, a.dirs_multi), "the randomised directions were not put back"
+
+
+def test_the_randomised_extras_keep_the_primary_direction(base_args, tiny_model, tiny_tok, track):
+    """The control varies only the EXTRAS. Replacing direction 0 would change what is compared."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    primary = a.dirs_multi[:, 0].clone()
+    seen = {}
+
+    real_bake = a.bake
+
+    def spy(*args, **kw):
+        seen["primary"] = a.dirs_multi[:, 0].clone()
+        return real_bake(*args, **kw)
+
+    a.bake = spy
+    dv._measure(a, "random-K2", 2, lambda m: None, randomise_extras=True, seed=1, strength=1.0)
+    assert torch.equal(primary, seen["primary"]), "the control replaced the primary direction"
+
+
+def test_measure_at_zero_strength_is_the_unablated_anchor(base_args, tiny_model, tiny_tok, track):
+    """Strength 0 must leave the model alone, or the anchor is not an anchor."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    before = [p.detach().clone() for p in a.model.parameters()]
+    row = dv._measure(a, "unablated", 1, lambda m: None, strength=0.0)
+    assert row["strength"] == 0.0
+    for b, p in zip(before, a.model.parameters(), strict=True):
+        assert torch.equal(b, p)
+
+
+# ── the grid and the entry point ──────────────────────────────────────────────────────
+def test_experiment_4_runs_the_anchor_the_grid_and_the_control(
+        base_args, tiny_model, tiny_tok, track):
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    out = dv.experiment_4(a, lambda m: None, [0.5, 1.0])
+
+    arms = [r["arm"] for r in out["rows"]]
+    assert any(r["strength"] == 0.0 for r in out["rows"]), "no unablated anchor was measured"
+    assert any(r["random_extras"] for r in out["rows"]) or max(a.dirs_per_layer) < 2
+    assert out["strengths"] == [0.5, 1.0]
+    assert "matched_refusal" in out and "degenerate_reason" in out
+    assert len(arms) == len(set(arms)), "two arms share a label, so one overwrites the other"
+
+
+def test_experiment_1_runs_against_the_tiny_model(base_args, tiny_model, tiny_tok, track):
+    """The leave-one-cluster-out path, end to end, on a corpus too small for usable folds.
+
+    The toy track cannot fill two clusters of MIN_CLUSTER_ROWS, so the honest answer is "no
+    usable folds" and this asserts the experiment says that rather than dividing by zero.
+    """
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.args.track = track
+    out = dv.experiment_1(a, lambda m: None)
+    assert "verdict" in out and "folds" in out
+
+
+def test_the_subcommand_is_reachable_through_the_cli():
+    """`senbonzakura validate` must dispatch, or the promotion from tools/ did nothing."""
+    assert "validate" in cli.DELEGATED
+    assert cli._delegate("validate") is dv.main
+
+
+def test_the_subcommand_is_documented_in_the_help():
+    """A dispatched command nobody can find is not a command."""
+    text = cli.build_parser().format_help()
+    assert "validate" in text
+    assert "matched refusal" in text
+
+
+def test_main_runs_e1_and_writes_a_record(base_args, tiny_model, tiny_tok, track,
+                                          tmp_path, monkeypatch):
+    out = tmp_path / "v.json"
+    real = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    rc = dv.main(["--model", "fixture", "--track", track, "--device", "cpu",
+                  "--experiment", "e1", "--dir-prompts", "8", "--out", str(out)])
+    assert rc == 0
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["experiment"] == "e1" and "e1" in record
+    assert record["directions_from"] is None
+
+
+def test_main_record_is_written_atomically(base_args, tiny_model, tiny_tok, track,
+                                           tmp_path, monkeypatch):
+    out = tmp_path / "v.json"
+    real = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    monkeypatch.setattr(dv.json, "dump", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        dv.main(["--model", "fixture", "--track", track, "--device", "cpu",
+                 "--experiment", "e1", "--dir-prompts", "8", "--out", str(out)])
+    assert not out.exists() and not list(tmp_path.glob("*.part"))

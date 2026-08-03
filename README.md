@@ -126,8 +126,16 @@ repeated seeds would be needed to tell.
 1. **Extract the refusal subspace.** For a few hundred harmful and harmless
    prompts, record the last-token residual at every layer. The difference of
    means (harmful minus harmless), good-orthogonalised, is the primary refusal
-   direction; up to K-1 further axes come from a PCA of the harmful residual
-   cloud. Together they span the refusal subspace at each layer.
+   direction. Further directions come from grouping the harmful prompts and taking
+   each group's own average against the harmless average: a model refuses a weapons
+   request differently from a self-harm one, and a single average over both is the
+   average of two things that are not the same thing. Each is then orthogonalised
+   against the directions already kept, and the best-separating are taken up to K.
+
+   Earlier versions took those further directions from a PCA of the harmful residual
+   cloud, which asks how the harmful prompts VARY rather than what separates them from
+   harmless ones. That method could never keep a single extra direction, for a reason
+   in the geometry rather than the data; see the caveat under the table above.
 2. **Search (Optuna).** An NSGA-II search over which layers to cut, how strongly,
    how many directions, and per-layer directions versus a single interpolated one,
    maps the whole refusals-versus-coherence frontier. Each trial applies the
@@ -393,6 +401,42 @@ The search minimises **three** objectives at once: strict non-compliance
 (hard refusal plus hedging), the Heretic keyword rate as its own axis, and KL
 divergence (coherence). Earlier versions optimised only hard-refusal-versus-KL and
 left the keyword/hedging axis to chance.
+
+## Checking whether the directions are refusal directions
+
+A method that finds several directions has not thereby shown that the extra ones remove
+refusal. They might be removing subject matter. A set of harmful prompts about one topic
+differs from harmless prompts partly because of the topic, and cutting that costs the
+model knowledge rather than caution.
+
+`senbonzakura validate` is the check. It is separate from the abliterator on purpose:
+the tool that produces a direction set should not be the only thing that grades it.
+
+```sh
+senbonzakura validate --model <hf-id> --track mytrack --experiment all --out result.json
+```
+
+Three questions, and each has a control that can fail:
+
+- **Do the directions work on prompts they were never fitted on?** The harmful prompts are
+  grouped, one group is held out, directions are fitted on the rest, and the held-out group
+  is scored. A direction tied to a subject cannot separate a subject it never saw. The
+  score is reported next to a **random direction** measured the same way, because a number
+  without a floor beside it cannot be read.
+- **Do the fitted extra directions beat random ones?** The same run repeats with the extra
+  directions replaced by random ones. If cutting random directions does as well, the
+  fitted ones were not carrying anything.
+- **Is removing several better than removing one?** Direction count is swept against
+  ablation strength, and the results are compared **at matched refusal removal**. This
+  matters more than it sounds: cutting harder always costs more coherence, so comparing
+  coherence between runs that removed different amounts of refusal compares nothing.
+
+The run reports an unreadable grid as unreadable. If every setting lands on the same
+refusal rate, there is no room for direction count to show an effect, and it says so
+instead of printing a table that looks like data.
+
+**We publish our own results from this, including when they are unflattering.** See the
+caveat under the table above.
 
 ## Benchmark
 

@@ -4,6 +4,113 @@ All notable changes to Senbonzakura are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The release that makes the measurement trustworthy. The codename and date are added at tag
+time.
+
+**If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
+fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
+not comparable to what this version produces.
+
+### Measurement
+
+- The compass, a harm-recognition score, is now a first-class command: it asks whether an
+  abliterated model still recognises harm rather than only whether it complies.
+- Every compass figure now carries a confidence interval. An AUC without one invites belief
+  the data cannot support.
+- The compass measures on rows nothing was fitted or selected on. Its harmful arm was
+  previously scored on the prompts the winning configuration had been chosen from.
+- Results ship with the controls that qualify them: what a ruler reading only prompt length
+  would score, the same figure over one fixed token pair, and a topic-matched arm.
+- A read-out audit reports what the model actually put at the position being scored, which is
+  how the largest bug in this release was found.
+- `--seed` exists, and every result file records the value it ran at. One run cannot tell a
+  finding from a coin toss.
+- Every result records what produced it: the code version, the package versions, and the
+  commit.
+
+### Data
+
+- `senbonzakura.track` builds an evaluation split and refuses to write one that leaks.
+  Nothing that appears in the measured partition may appear in the fitted or searched ones.
+- The leak check compares requests, not strings. The same question wears many templates, and
+  comparing whole prompts reported a clean split while 60% of the measured set was training
+  questions in other clothes.
+- Every category present in the corpus reaches the measured partition, so a published figure
+  cannot come from a narrower slice than it claims.
+- `track.json` records where the partition boundaries fell, and a run whose flags would cross
+  one is refused rather than quietly allowed.
+- Per-prompt margins and generations are kept, so the next question does not need the GPU
+  back, and a guard refuses to commit any file containing prompts.
+
+### Engine
+
+- The search can be given a fixed prompt format instead of inventing one when a model has no
+  chat template.
+- Sparse surgery restricts the ablation to the rows that write refusal.
+- The search can warm-start from a difference-of-means seed.
+- A disk-space check runs before the search rather than during the save, so a long run cannot
+  die at the last step.
+- Every result file is written atomically, so an interrupted run leaves the previous result
+  intact rather than a truncated one.
+
+### CLI
+
+- Real subcommands: `abliterate`, `kageyoshi`, `compass`, `score`, `coherence` and `track`.
+  The existing flag form is unchanged, because every run on record is written that way.
+- A startup banner on a terminal, from a rotating set of five designs. It prints nothing when
+  output is redirected, so captured logs are byte-identical to before.
+- One model-loading surface instead of four near-copies. The four had drifted apart, which is
+  what put the compass's read-out on the wrong token.
+
+### Documentation
+
+- The README documents the track layout, the manifest, and the optional datasets.
+- The headline comparison table now carries its caveats beside it: which two scoring bugs
+  affected it, that its evaluation is not held out, that it is one seed, and why it has not
+  been re-measured.
+- A contributor licence agreement, a contributing guide, and a contributors file.
+
+### Packaging and CI
+
+- Continuous integration, which this repository had never had, on Linux, Windows and macOS
+  across five Python versions.
+- Declared dependency floors are tested at the floor, because a floor nothing installs at is
+  not a tested floor.
+- Importing the package no longer imports the whole command-line interface, so running any
+  module with `-m` no longer prints a warning about unpredictable behaviour.
+
+### Licence
+
+- The AGPL section 5(a) statement of modification, with dates, in the notices file, the
+  README, and beside the copied code. A test pins the copied region so it cannot drift from
+  upstream without someone deciding to let it.
+
+### Security
+
+- The pre-commit hooks no longer execute the project configuration file.
+- The prompt-retention guard reads what is staged rather than what is in the working tree, so
+  an artefact staged with prompts and then tidied on disk is still refused.
+
+### Fixed
+
+- The refusal scanner read only the first 240 characters of a reply, and 51 of 56 refusal
+  markers land past that point.
+- The prompt renderer existed in three copies that had drifted, so a configuration selected
+  under one prompt format was reported under another.
+- The compass scored the prompt read back to the model rather than the model's verdict.
+- A non-converging matrix decomposition quietly weakened the ablation and reported the
+  strength it had been asked for, not the one it applied.
+- A layer offloaded to disk was never abliterated, and nothing said so.
+- Nine orthonormal directions cannot exist in an eight-dimensional space, and the code
+  believed they could.
+- Nonsense slice arguments produced a plausible-looking result file instead of an error.
+
+### Other
+
+Bug fixes and improvements.
+
 ## [0.3.0] "Pilot" — 2026-07-17
 
 The first public release: on PyPI, on GitHub, AGPL-3.0.

@@ -89,10 +89,17 @@ def summarise(a):
     # axes are orthogonalised against a basis spanning both class means, so the numerator of
     # Cohen's d vanishes by construction and the filter cannot be passed at any positive threshold.
     # Reported first because every other reading below assumes the instrument works.
-    structural = bool(measured) and max(abs(d) for d in measured) < STRUCTURAL_ZERO
+    # From the extractor's exact totals, not from `measured`, which is a bounded per-layer sample.
+    # One real layer measured 127 candidates and recorded 8, so a count taken from the sample
+    # understates the evidence by more than an order of magnitude.
+    total = getattr(a, "axes_measured_total", len(measured))
+    peak = getattr(a, "max_axis_separation", None)
+    if peak is None:
+        peak = max((abs(d) for d in measured), default=None)
+    structural = bool(total) and peak is not None and peak < STRUCTURAL_ZERO
 
     if structural:
-        verdict = (f"every one of the {len(measured)} candidate axes scored a separation "
+        verdict = (f"every one of the {total} candidate axes scored a separation "
                    "indistinguishable from zero, which is what the geometry forces rather than "
                    "anything about this model or corpus: the axes are orthogonalised against a "
                    "basis spanning both class means, and Cohen's d is a difference of class means. "
@@ -124,10 +131,11 @@ def summarise(a):
         "axis_separation_threshold": threshold,
         "directions_per_layer": a.dirs_per_layer,
         "axis_separations": seps,
-        "axes_measured": len(measured),
+        "axes_measured": total,
+        "axes_recorded": len(measured),
         "axes_rejected": len(rejected),
         "best_rejected_separation": best,
-        "max_separation_any_axis": max(measured) if measured else None,
+        "max_separation_any_axis": peak,
         "filter_is_unsatisfiable": structural,
         "verdict": verdict,
     }

@@ -971,6 +971,12 @@ class Abliterator:
         # second candidate missed the threshold by a hair, and that difference is the whole
         # question of whether refusal here is one direction or one direction plus a constant.
         axis_seps = [[] for _ in range(NL + 1)]
+        # `axis_seps` is a bounded SAMPLE (the leading MAX_RECORDED_AXES per layer). These two are
+        # exact totals over every axis actually measured, which is far more: one real layer measured
+        # 127 candidates against the 8 that were kept in the record. A verdict about whether any
+        # axis can clear the threshold has to come from all of them, not from the first few.
+        axes_measured_total = 0
+        max_sep_seen = 0.0
         for li in range(NL + 1):
             gd = good_dir[li]
             if args.no_good_orth:
@@ -1021,11 +1027,21 @@ class Abliterator:
                     if n < 1e-6:
                         continue
                     v = v / n
-                    # P1: a principal axis of the harmful cloud is kept as a refusal direction ONLY
-                    # if it actually separates harmful from harmless (Cohen's d over the projections).
-                    # Below the threshold it is within-harmful content/topic variance, not refusal, and
-                    # ablating it would strip capability rather than refusal.
+                    # The INTENT: keep a principal axis only if it separates harmful from harmless
+                    # (Cohen's d over the projections), since an axis that does not is within-harmful
+                    # topic variance and ablating it would strip capability rather than refusal.
+                    #
+                    # THIS CODE DOES NOT DO THAT, and cannot. `v` is orthogonalised against a basis
+                    # spanning both class means, so `mb·v = mg·v = 0` and Cohen's d, a difference of
+                    # class means, is exactly zero for every candidate. The filter rejects everything
+                    # at any positive threshold, on any model. Measured 2026-08-03 across two model
+                    # families and three corpora; proof in private/research/
+                    # 2026-08-03-the-separation-filter-can-never-pass.md. The replacement statistic is
+                    # an open decision, so the broken filter is left in place and reported loudly
+                    # rather than swapped for a guess.
                     sep = _axis_separation(Rb[li], Rg[li], v)
+                    axes_measured_total += 1
+                    max_sep_seen = max(max_sep_seen, abs(float(sep)))
                     if len(axis_seps[li]) < MAX_RECORDED_AXES:
                         axis_seps[li].append(round(float(sep), 4))
                     if sep < MIN_AXIS_SEPARATION:
@@ -1059,6 +1075,8 @@ class Abliterator:
         # REJECTED axis reached. A best rejected value just under MIN_AXIS_SEPARATION means the
         # constant decided the outcome; one far below it means the second direction is not there.
         self.axis_separations = axis_seps
+        self.axes_measured_total = axes_measured_total
+        self.max_axis_separation = max_sep_seen if axes_measured_total else None
         measured = [d for layer in axis_seps for d in layer]
         rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
         self.best_rejected_separation = max(rejected) if rejected else None
@@ -1068,9 +1086,9 @@ class Abliterator:
         # be cleared. Measured 2026-08-03 on two models and three corpora: every one of 224 axes
         # returned ~1e-8. This is louder than the shortfall note below because a shortfall is a
         # result and this is a broken instrument.
-        self.filter_is_unsatisfiable = bool(measured) and max(abs(d) for d in measured) < 1e-6
+        self.filter_is_unsatisfiable = bool(axes_measured_total) and max_sep_seen < 1e-6
         if self.filter_is_unsatisfiable:
-            log(f"  BROKEN FILTER: all {len(measured)} candidate axes scored a refusal separation "
+            log(f"  BROKEN FILTER: all {axes_measured_total} candidate axes scored a refusal separation "
                 f"of ~0, which the geometry forces rather than the data: the axes are "
                 f"orthogonalised against a basis spanning both class means, and the separation "
                 f"statistic is a difference of class means. No axis can clear "
@@ -1786,9 +1804,14 @@ class Abliterator:
                        # sits just under the threshold means the constant chose the direction
                        # count; one far under it means the second direction is genuinely absent.
                        # The count alone cannot tell those apart, which is why it is recorded.
+                       # A bounded sample per layer, plus the two exact totals over every axis
+                       # measured. The sample is the evidence; the totals are the count it came from.
                        "axis_separations": getattr(self, "axis_separations", None),
                        "axis_separation_threshold": MIN_AXIS_SEPARATION,
+                       "axes_measured_total": getattr(self, "axes_measured_total", None),
+                       "max_axis_separation": getattr(self, "max_axis_separation", None),
                        "best_rejected_separation": getattr(self, "best_rejected_separation", None),
+                       "filter_is_unsatisfiable": getattr(self, "filter_is_unsatisfiable", None),
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},
                       f, indent=2)

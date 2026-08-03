@@ -1116,6 +1116,60 @@ def test_a_kept_axis_is_recorded_and_is_not_counted_as_rejected(
     assert any(layer for layer in a.axis_separations), "kept axes are recorded too"
 
 
+def test_the_total_measured_exceeds_the_bounded_record(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The count and the sample are different numbers and must not be confused.
+
+    `axis_separations` keeps the leading few per layer so the result file stays small. A real
+    layer measured 127 candidates and recorded 8, so a verdict or a published count taken from
+    the record understates the evidence by more than an order of magnitude.
+    """
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.0])
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    recorded = sum(len(layer) for layer in a.axis_separations)
+    assert a.axes_measured_total >= recorded
+    assert a.axes_measured_total > 0
+    assert a.max_axis_separation == pytest.approx(0.0)
+
+
+def test_the_verdict_comes_from_every_axis_not_the_sample(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """A separating axis past the record's cap must stop the broken-filter verdict.
+
+    Otherwise the flag says "no axis can pass" on evidence that stopped looking after eight.
+    """
+    base_args.max_directions = 1     # keep nothing, so every candidate is measured and recorded
+    seen = []
+
+    def fake(bad, good, v):
+        # Zero for the first MAX_RECORDED_AXES of the layer, then a clear separation past the cap.
+        d = 0.0 if len(seen) < cli.MAX_RECORDED_AXES else 5.0
+        seen.append(d)
+        return d
+
+    monkeypatch.setattr(cli, "_axis_separation", fake)
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert a.max_axis_separation == pytest.approx(5.0)
+    assert a.filter_is_unsatisfiable is False, (
+        "a non-zero axis past the record's cap was invisible to the verdict")
+
+
+def test_the_artefact_carries_the_totals_and_the_verdict(base_args, tiny_model, tiny_tok, track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        artefact = json.load(f)
+    assert artefact["axes_measured_total"] == a.axes_measured_total
+    assert artefact["max_axis_separation"] == a.max_axis_separation
+    assert artefact["filter_is_unsatisfiable"] == a.filter_is_unsatisfiable
+
+
 def test_the_recorded_axes_are_bounded(base_args, tiny_model, tiny_tok, track, monkeypatch):
     """The record lands in a JSON file, so it is capped rather than unbounded."""
     base_args.max_directions = 3

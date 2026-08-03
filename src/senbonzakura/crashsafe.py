@@ -7,6 +7,8 @@ the download" fixes. They import nothing heavy on purpose, so they are unit-test
 (cli.py imports torch/optuna at module load, which the tests must not require).
 """
 
+import contextlib
+import os
 import shutil
 from pathlib import Path
 
@@ -15,6 +17,42 @@ MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DT
 # Fraction of the output size to keep free beyond it. safetensors writes a shard, then its
 # index, and a serialisation can hold one shard in flight, so "exactly enough" is not enough.
 SAVE_HEADROOM_FRAC = 0.05
+
+
+@contextlib.contextmanager
+def atomic_write(path, encoding="utf-8"):
+    """Open `path` for writing so that it is never observed half-written.
+
+    Every result this project produces is the output of a run that costs GPU hours, and a
+    plain `open(path, "w")` truncates the file the instant it is called. A process killed
+    between that and the last byte leaves a file that exists, is not empty, and is not a
+    result. Anything downstream that tests for presence, or for a non-zero size, then treats
+    a measurement that never finished as one that did. A run spec's completeness check was
+    doing exactly that until 2026-08-03.
+
+    So the content goes to a sibling `.part`, is flushed and fsynced, and only then replaced
+    over the target. `os.replace` is atomic on POSIX and on Windows, so a reader sees either
+    the previous file or the complete new one, never a prefix of it.
+
+    A `.part` left behind by SIGKILL is harmless: nothing ever reads one, and the next
+    attempt overwrites it. It is deliberately not cleaned up on a signal, because a handler
+    that runs during an uncatchable kill does not exist.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    try:
+        with open(tmp, "w", encoding=encoding) as f:
+            yield f
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # BaseException, not Exception: a KeyboardInterrupt mid-write must not leave the
+        # partial file behind either, and that is the likeliest way this is interrupted.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def free_bytes_for(path):

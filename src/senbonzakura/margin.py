@@ -38,7 +38,7 @@ from .cli import (
     loader_parser,
     render_chat,
 )
-from .crashsafe import provenance
+from .crashsafe import atomic_write, provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
 
@@ -591,12 +591,12 @@ def main(argv=None):
                                                   seed=a.seed, resamples=a.bootstrap)
         res["compared_to"] = a.compare_to
 
-    with open(a.out, "w", encoding="utf-8") as f:
+    with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
 
     if margins_path:
         Path(margins_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(margins_path, "w", encoding="utf-8") as f:
+        with atomic_write(margins_path) as f:
             for kind, ms, ps in (("harmful", mh, harmful), ("harmless", ml, harmless)):
                 # strict=True: a margin count that has drifted from its prompt count means the
                 # rows are misaligned, and every margin after the drift is attributed to the

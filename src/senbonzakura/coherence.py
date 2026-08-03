@@ -21,6 +21,7 @@ import math
 import torch
 
 from .cli import load_model_and_tokenizer, loader_parser
+from .crashsafe import atomic_write
 
 # A fixed, deliberately unremarkable passage. It touches no refusal-adjacent topic,
 # so a rising perplexity here is coherence damage, not the model balking at content.
@@ -71,7 +72,7 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, needs_chat_template=False)
     res = {"label": a.label, "model": a.model, **coherence(model, tok)}
-    with open(a.out, "w", encoding="utf-8") as f:
+    with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"COHERENCE_DONE {a.label} ppl={res['ppl']:.2f} nll={res['nll']:.4f} n_tokens={res['n_tokens']}")
     return res

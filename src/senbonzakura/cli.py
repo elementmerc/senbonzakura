@@ -46,6 +46,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
+    atomic_write,
     config_to_bake_args,
     disk_verdict,
     free_bytes_for,
@@ -1579,7 +1580,7 @@ class Abliterator:
                     "kl": round(t.user_attrs["kl"], 4), "broken": round(t.user_attrs.get("broken", 0.0), 4)}
 
         rows = sorted([_row(t) for t in study.trials if t.user_attrs], key=lambda r: (r["refusals"], r["kl"]))
-        with open(f"{TR}/trials.json", "w", encoding="utf-8") as f:
+        with atomic_write(f"{TR}/trials.json") as f:
             json.dump(rows, f, indent=2)
         log("frontier (lowest refusals first, intact = KL under ceiling AND broken≈0):")
         for r in [x for x in rows if x["kl"] <= KL_CEIL and x["broken"] <= 0.1][:8]:
@@ -1669,7 +1670,7 @@ class Abliterator:
         re-bakeable artefact and a lost save becomes a minutes-long re-bake, not a re-search.
         """
         args, log = self.args, self.log
-        with open(f"{track}/best-config.json", "w", encoding="utf-8") as f:
+        with atomic_write(f"{track}/best-config.json") as f:
             json.dump(winning_config(bpr, b_K, b_mode, b_di), f, indent=2)
         log(f"wrote winning config to {track}/best-config.json (re-bakeable with --bake-config)")
 
@@ -1696,7 +1697,7 @@ class Abliterator:
         # failed write loses less. Nothing downstream cares how many shards there are.
         self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size="4GB")
         self.tok.save_pretrained(args.out)
-        with open(f"{args.out}/abliteration.json", "w", encoding="utf-8") as f:
+        with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump({"per_component": args.per_component,
                        "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
                                      "min_weight": bpr[2], "min_weight_distance": bpr[3]},

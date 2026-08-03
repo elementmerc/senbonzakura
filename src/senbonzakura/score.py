@@ -15,7 +15,7 @@ from datasets import load_from_disk
 
 from . import metrics
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
-from .crashsafe import provenance
+from .crashsafe import atomic_write, provenance
 
 
 def build_parser():
@@ -110,7 +110,7 @@ def save_generations(path, prompts, gens, mode, model, label):
         return
     import os
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with atomic_write(path) as f:
         f.writelines(json.dumps({
                 "i": i, "mode": mode, "model": model, "label": label,
                 "prompt": p, "generation": g,
@@ -150,7 +150,7 @@ def main(argv=None):
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         res["chat_template"] = getattr(tok, "senbon_chat_template", None)
         res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device))
-        with open(a.out, "w", encoding="utf-8") as f:
+        with atomic_write(a.out) as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
               f"indeterminate={res['indeterminate']*100:.1f}% "
@@ -167,7 +167,7 @@ def main(argv=None):
     # not comparable, and this is what lets a reader tell.
     res["chat_template"] = getattr(tok, "senbon_chat_template", None)
     res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device))
-    with open(a.out, "w", encoding="utf-8") as f:
+    with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "
           f"soft={res['soft_refusal']*100:.1f}% noncompliant={res['noncompliant']*100:.1f}% "

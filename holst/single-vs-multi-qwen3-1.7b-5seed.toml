@@ -1210,6 +1210,38 @@ for k in (1, 3):
 print(json.dumps(rows, indent=2))
 open("results/SINGLE_VS_MULTI.json", "w").write(json.dumps(rows, indent=2) + "\\n")
 
+# ── did the manipulation actually happen? ────────────────────────────────────────────────
+# The statistics above can be impeccable and the conclusion still wrong, because nothing in
+# them checks that the arms differed in the thing being tested. On 2026-08-03 this exact
+# comparison returned a clean separation across ten arms at p about 0.004, passed its own
+# declared inconclusive test, and was reported as "K=3 better" while BOTH arms had ablated one
+# direction per layer. The requested K differed; the applied K did not.
+#
+# So the verdict is gated on the manipulation, not only on the numbers. A comparison that
+# cannot show its arms differed reports that, loudly, instead of a result.
+applied = {}
+for path in sorted(glob.glob("applied-k/k*-s*-abliteration.json")):
+    arm = path.split("/")[-1].split("-")[0]              # k1 / k3
+    dpl = json.loads(open(path).read()).get("directions_per_layer") or []
+    if dpl:
+        applied.setdefault(arm, set()).add(max(dpl))
+
+print("
+APPLIED K, read from directions_per_layer rather than from the request:")
+if len(applied) < 2:
+    print("  RECORDS MISSING for at least one arm, so the K actually applied is unknown.")
+    print("  NO CLAIM ABOUT K CAN BE MADE from this run.")
+else:
+    for arm in sorted(applied):
+        print(f"  {arm}: max directions per layer = {sorted(applied[arm])}")
+    if len({frozenset(v) for v in applied.values()}) == 1:
+        print("  MANIPULATION FAILED: every arm applied the same number of directions per layer.")
+        print("  The arms performed identical surgery, so any difference between them is a")
+        print("  difference between searches and NOT evidence about K. Do not report this as a")
+        print("  result about direction count.")
+    else:
+        print("  the arms differ in applied K, so a comparison about K is meaningful.")
+
 # The declared outcome, evaluated by the script rather than by eye on the morning the numbers
 # land. Says "inconclusive" out loud, because that is a result and not a failure.
 if len(rows) == 2:

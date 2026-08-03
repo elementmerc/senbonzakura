@@ -60,7 +60,7 @@ name = "K=1, the single-direction baseline, seed 42"
 machine = "rog"
 deps = ["setup"]
 timeout_secs = 14400
-resources = { needs_gpu = true, ram_gb = 8 }
+resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "ARM_OK" }
 command = """
 set -euo pipefail
@@ -74,8 +74,12 @@ T=$HOME/track-heldout
 M=$HOME/track-matched/good_matched_ds
 O=$RUN/abl/$ARM
 cd "$RUN"
-export SENBONZAKURA_COMMIT="${SENBON_COMMIT:-unset}"
-[ "$SENBONZAKURA_COMMIT" != "unset" ] || { echo "SET SENBON_COMMIT"; exit 1; }
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
 export PYTHONPATH=src
 
 "$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
@@ -110,7 +114,7 @@ name = "K=3, the refusal subspace, seed 42"
 machine = "rog"
 deps = ["setup"]
 timeout_secs = 14400
-resources = { needs_gpu = true, ram_gb = 8 }
+resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "ARM_OK" }
 command = """
 set -euo pipefail
@@ -124,8 +128,12 @@ T=$HOME/track-heldout
 M=$HOME/track-matched/good_matched_ds
 O=$RUN/abl/$ARM
 cd "$RUN"
-export SENBONZAKURA_COMMIT="${SENBON_COMMIT:-unset}"
-[ "$SENBONZAKURA_COMMIT" != "unset" ] || { echo "SET SENBON_COMMIT"; exit 1; }
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
 export PYTHONPATH=src
 
 # Byte-identical to arm A but for --max-directions. Written out in full rather than shared

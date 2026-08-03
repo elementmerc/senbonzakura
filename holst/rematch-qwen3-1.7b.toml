@@ -83,7 +83,7 @@ name = "senbonzakura, Qwen3-1.7B, seed 42"
 machine = "rog"
 deps = ["setup"]
 timeout_secs = 14400
-resources = { needs_gpu = true, ram_gb = 8 }
+resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "ARM_OK" }
 command = """
 set -euo pipefail
@@ -98,8 +98,13 @@ cd "$RUN"
 
 # The commit is declared rather than measured: the shipped tree is a tarball, not a
 # checkout, so git cannot answer and the result file records this as a claim.
-export SENBONZAKURA_COMMIT="${SENBON_COMMIT:-unset}"
-[ "$SENBONZAKURA_COMMIT" != "unset" ] || { echo "SET SENBON_COMMIT: a citable run names its code"; exit 1; }
+#
+# It is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
 
 export PYTHONPATH=src
 # kageyoshi, not a hand-set budget: it owns trials, dir-prompts and the eval sizes, resolving
@@ -147,7 +152,7 @@ name = "heretic at its own defaults, Qwen3-1.7B, seed 42"
 machine = "rog"
 deps = ["setup"]
 timeout_secs = 14400
-resources = { needs_gpu = true, ram_gb = 8 }
+resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "ARM_OK" }
 command = """
 set -euo pipefail

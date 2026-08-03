@@ -423,10 +423,16 @@ def read_manifest(track_dir):
         m = json.loads((Path(track_dir) / "track.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not (isinstance(m, dict) and "counts" in m):
+    # A manifest is untrusted input: it is a file on disk that this process did not write,
+    # and it decides which rows every published number is measured on. Anything that is not
+    # the shape we understand is "no manifest", not "a manifest to interpret loosely".
+    # `"counts" in m` alone let a null counts through, and it then reached a `.get` on None
+    # deep inside the boundary check; a list-valued schema reached a frozenset membership
+    # test and raised an unhashable-type TypeError instead of the refusal below.
+    if not (isinstance(m, dict) and isinstance(m.get("counts"), dict)):
         return None
     schema = m.get("schema", "senbonzakura-track/1")
-    if schema not in KNOWN_SCHEMAS:
+    if not isinstance(schema, str) or schema not in KNOWN_SCHEMAS:
         raise SystemExit(
             f"{track_dir}/track.json declares schema {schema!r}, which this build of "
             f"senbonzakura does not understand (it knows {sorted(KNOWN_SCHEMAS)}).\n"

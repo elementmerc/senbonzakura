@@ -40,13 +40,30 @@ def atomic_write(path, encoding="utf-8"):
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # A fixed `.part` name rather than a unique one, deliberately. Unique names mean two
+    # writers of the same file never collide, at the cost of leaving one orphan per SIGKILL
+    # for ever; a fixed name leaves at most one per target and the next attempt reuses it.
+    # For a project whose runs are long, killable and disk-bound, bounded litter wins. The
+    # cost is the collision handled below.
     tmp = path.with_name(path.name + ".part")
     try:
         with open(tmp, "w", encoding=encoding) as f:
             yield f
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        try:
+            os.replace(tmp, path)
+        except FileNotFoundError as e:
+            # Our own temp file vanished between writing and renaming it. The realistic
+            # cause is a second writer of the SAME path finishing first and renaming it away.
+            # Say that, because the bare error names a `.part` file the caller never asked
+            # for and reads like a missing-output bug rather than a race.
+            raise RuntimeError(
+                f"could not finish writing {path}: its temporary file {tmp.name} disappeared "
+                f"before it could be renamed. The usual cause is two processes writing the "
+                f"same path at once, which is not safe: one of them has already replaced it, "
+                f"and this one's output is lost. Give them separate output paths."
+            ) from e
     except BaseException:
         # BaseException, not Exception: a KeyboardInterrupt mid-write must not leave the
         # partial file behind either, and that is the likeliest way this is interrupted.

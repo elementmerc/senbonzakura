@@ -803,3 +803,30 @@ def test_the_builder_writes_a_schema_this_build_knows():
     parts = {"fit": ["a"], "search": ["b"], "measure": ["c"]}
     m = track.manifest(parts, parts, {"harmful": "x", "harmless": "y"})
     assert m["schema"] in track.KNOWN_SCHEMAS
+
+
+@pytest.mark.parametrize(("payload", "expect"), [
+    ({"schema": ["a"], "counts": {"harmful": {}}}, "refuse"),
+    ({"schema": 1, "counts": {"harmful": {}}}, "refuse"),
+    ({"schema": None, "counts": {"harmful": {}}}, "refuse"),
+    ({"schema": "senbonzakura-track/1", "counts": None}, "none"),
+    ({"schema": "senbonzakura-track/1", "counts": []}, "none"),
+    ({"schema": "senbonzakura-track/1"}, "none"),
+    ([1, 2, 3], "none"),
+    ("a string", "none"),
+])
+def test_a_malformed_manifest_is_refused_or_ignored_never_half_read(tmp_path, payload, expect):
+    """A manifest is untrusted input that decides which rows every number is measured on.
+
+    Two holes found on 2026-08-03 by probing rather than by a failure: a list-valued schema
+    reached a frozenset membership test and raised `TypeError: unhashable type`, and a null
+    `counts` passed the `"counts" in m` check and reached a `.get` on None inside the
+    boundary check. Both are malformed input producing a Python error instead of either the
+    loud refusal or the honest "there is no manifest here".
+    """
+    (tmp_path / "track.json").write_text(json.dumps(payload))
+    if expect == "refuse":
+        with pytest.raises(SystemExit):
+            track.read_manifest(tmp_path)
+    else:
+        assert track.read_manifest(tmp_path) is None

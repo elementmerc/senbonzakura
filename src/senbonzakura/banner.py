@@ -212,4 +212,12 @@ def emit(version, stream, *, env=None):
 
     colour = tty and not env.get("NO_COLOR")
     name = setting if setting in DESIGNS else choose(shutil.get_terminal_size().columns, version)
-    print(render(name, version, colour=colour), file=stream, flush=True)
+    try:
+        print(render(name, version, colour=colour), file=stream, flush=True)
+    except OSError:
+        # A closed or broken stream is not a reason to stop. `SENBON_BANNER=gokei senbonzakura
+        # --help | head -1` closes the pipe while this is still writing, and an abliteration
+        # that dies because its decoration could not be drawn is the exact failure the rest of
+        # this module is written to avoid. Swallowed rather than reported, because there is
+        # nowhere left to report it TO: the stream that failed is the one a message would go to.
+        pass

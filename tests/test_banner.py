@@ -235,3 +235,43 @@ def test_a_stream_with_no_isatty_is_treated_as_not_a_terminal():
     out = Bare()
     banner.emit("0.4", out, env={})
     assert out.text == ""
+
+
+def test_a_broken_stream_does_not_stop_the_run():
+    """The rule this module is written around, applied to the case it originally missed.
+
+    `SENBON_BANNER=gokei senbonzakura --help | head -1` closes the pipe while the banner is
+    still writing. An abliteration that dies because its decoration could not be drawn is
+    exactly the failure the unknown-name path already guards against.
+    """
+    class Broken(io.StringIO):
+        def isatty(self):
+            return True
+
+        def write(self, s):
+            raise OSError("broken pipe")
+
+    banner.emit("0.4", Broken(), env={})              # must not raise
+    banner.emit("0.4", Broken(), env={"SENBON_BANNER": "gokei"})
+    banner.emit("0.4", Broken(), env={"NO_COLOR": "1"})
+
+
+def test_a_real_error_in_rendering_is_not_swallowed():
+    """The suppression is for the stream, not for us. A bug here must still surface."""
+    class Fine(io.StringIO):
+        def isatty(self):
+            return True
+
+    with pytest.raises(KeyError):
+        banner.render("no-such-design", "0.4")
+
+    # And emit's own guard only covers OSError, so a non-OSError from the stream propagates.
+    class Odd(io.StringIO):
+        def isatty(self):
+            return True
+
+        def write(self, s):
+            raise ValueError("not a stream problem")
+
+    with pytest.raises(ValueError):
+        banner.emit("0.4", Odd(), env={})

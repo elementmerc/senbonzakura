@@ -154,3 +154,43 @@ def test_a_process_killed_mid_write_leaves_the_previous_result_intact(tmp_path):
     assert json.loads(target.read_text()) == {"auc": 0.5}, (
         "the previous result was destroyed by a write that never completed"
     )
+
+
+def test_a_losing_concurrent_writer_says_what_happened(tmp_path):
+    """Two writers of one path is a race, and the loser must diagnose it, not just fail.
+
+    The fixed `.part` name means the writer that finishes second finds its temporary file
+    already renamed away by the first. The bare error is a FileNotFoundError naming a file
+    the caller never created, which reads like a missing-output bug. It is a race, and the
+    message says so.
+    """
+    import threading
+    import time
+
+    target = tmp_path / "race.json"
+    errors = []
+
+    def write(tag, delay):
+        try:
+            with atomic_write(target) as f:
+                f.write(tag * 200)
+                time.sleep(delay)
+        except Exception as exc:
+            errors.append(exc)
+
+    slow = threading.Thread(target=write, args=("a", 0.30))
+    fast = threading.Thread(target=write, args=("b", 0.02))
+    slow.start()
+    fast.start()
+    slow.join()
+    fast.join()
+
+    assert len(errors) == 1, f"exactly one writer should lose, got {errors}"
+    msg = str(errors[0])
+    assert "two processes writing the same path" in msg
+    assert "separate output paths" in msg
+
+    # The surviving file is still one writer's complete output, never a mixture.
+    content = target.read_text()
+    assert len(set(content)) == 1, "the winner's file must not be interleaved"
+    assert not (tmp_path / "race.json.part").exists(), "no temporary file may survive"

@@ -246,7 +246,14 @@ def matched_refusal_table(rows, tolerance=0.05):
     if not fitted:
         return {"targets": out, "note": "no fitted arms"}
 
-    baseline = max(r["harmful_refusal"] for r in fitted)   # the least-ablated arm's refusal
+    # Prefer the true unablated anchor (strength 0) when it exists. Falling back to the
+    # least-ablated ARM was a real distortion in the first run: its weakest arm had already
+    # stripped most of the refusal, so "90% removed" meant 90% below an already-gutted 21% and
+    # every percentage read stronger than it was. The K ranking was unaffected, since every arm
+    # is measured against the same anchor, but the labels were not honest.
+    anchors = [r for r in fitted if r["strength"] == 0.0]
+    baseline = (anchors[0]["harmful_refusal"] if anchors
+                else max(r["harmful_refusal"] for r in fitted))
     for target_frac in (0.5, 0.75, 0.9):
         target = baseline * (1.0 - target_frac)
         best = {}
@@ -260,7 +267,8 @@ def matched_refusal_table(rows, tolerance=0.05):
                 str(K): {"kl": r["kl"], "strength": r["strength"],
                          "harmful_refusal": r["harmful_refusal"]}
                 for K, r in sorted(best.items())}
-    return {"targets": out, "baseline_refusal": baseline}
+    return {"targets": out, "baseline_refusal": baseline,
+            "baseline_is_unablated": bool(anchors)}
 
 
 def degenerate_reason(rows):
@@ -271,7 +279,7 @@ def degenerate_reason(rows):
     A sweep with no spread measures nothing about what it varied, and it has to say so in the
     output rather than in someone's head.
     """
-    fitted = [r for r in rows if not r["random_extras"]]
+    fitted = [r for r in rows if not r["random_extras"] and r["strength"] > 0.0]
     if len(fitted) < 2:
         return "fewer than two fitted arms"
     vals = {r["harmful_refusal"] for r in fitted}
@@ -291,6 +299,11 @@ def experiment_4(a, log, strengths):
     rows = []
     kmax = max(a.dirs_per_layer)
     ks = sorted({1, 2, 3, min(5, kmax), min(8, kmax)} & set(range(1, kmax + 1))) or [1]
+    # The unablated anchor. Without it the "percent removed" labels are relative to whichever arm
+    # happened to ablate least, which in the first run was an arm that had already removed most of
+    # the refusal. One extra evaluation buys percentages that mean what they say.
+    log("E4: measuring the unablated anchor first")
+    rows.append(_measure(a, "unablated-K1-s0", 1, log, strength=0.0))
     log(f"E4: {len(ks)} direction counts x {len(strengths)} strengths")
     rows.extend(_measure(a, f"fitted-K{K}-s{s:g}", K, log, strength=s)
                 for K in ks for s in strengths)

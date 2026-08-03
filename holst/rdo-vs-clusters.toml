@@ -26,7 +26,7 @@
 # What would count as success: at a matched refusal level, RDO k=4 reaching it at lower KL than
 # K=1. What would count as failure: K=1 still cheapest, which would say the subspace is not there
 # to find in these models at this scale, and that is a result worth publishing too.
-run = "rdo-vs-clusters-2026-08-04"
+run = "rdo-vs-clusters-2026-08-04b"
 
 [[job]]
 id = "setup"

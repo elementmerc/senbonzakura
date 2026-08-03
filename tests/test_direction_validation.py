@@ -355,3 +355,43 @@ def test_a_single_direction_per_layer_is_not_called_non_orthonormal(tmp_path):
     torch.save({"dirs_multi": dirs}, path)
     dv.load_directions(a, str(path), lambda m: None)
     assert a.KMAX == 1
+
+
+# ── the unablated anchor ──────────────────────────────────────────────────────────────
+def test_the_unablated_anchor_is_preferred_as_the_baseline():
+    """"Percent removed" must be relative to the untouched model, not to the gentlest arm.
+
+    The first grid's weakest arm had already stripped most of the refusal, so "90% removed" meant
+    90% below an already-gutted 21%. The K ranking was unharmed (every arm shares one anchor) but
+    every percentage in the report read stronger than it was.
+    """
+    rows = [
+        {"arm": "unablated", "K": 1, "strength": 0.0, "random_extras": False,
+         "harmful_refusal": 0.72, "harmless_refusal": 0.0, "kl": 0.0},
+        {"arm": "fitted-K1", "K": 1, "strength": 0.5, "random_extras": False,
+         "harmful_refusal": 0.20, "harmless_refusal": 0.0, "kl": 0.10},
+    ]
+    table = dv.matched_refusal_table(rows)
+    assert table["baseline_refusal"] == pytest.approx(0.72)
+    assert table["baseline_is_unablated"] is True
+
+
+def test_without_an_anchor_the_baseline_falls_back_and_says_so():
+    rows = [{"arm": "fitted-K1", "K": 1, "strength": 0.5, "random_extras": False,
+             "harmful_refusal": 0.20, "harmless_refusal": 0.0, "kl": 0.10},
+            {"arm": "fitted-K3", "K": 3, "strength": 0.5, "random_extras": False,
+             "harmful_refusal": 0.05, "harmless_refusal": 0.0, "kl": 0.30}]
+    table = dv.matched_refusal_table(rows)
+    assert table["baseline_refusal"] == pytest.approx(0.20)
+    assert table["baseline_is_unablated"] is False
+
+
+def test_the_anchor_is_excluded_from_the_spread_check():
+    """The anchor is unablated by definition, so it must not make a flat grid look varied."""
+    flat = [{"arm": "unablated", "K": 1, "strength": 0.0, "random_extras": False,
+             "harmful_refusal": 0.72, "harmless_refusal": 0.0, "kl": 0.0}]
+    flat += [{"arm": f"fitted-K{k}", "K": k, "strength": 1.0, "random_extras": False,
+              "harmful_refusal": 0.0, "harmless_refusal": 0.0, "kl": 0.3 * k} for k in (1, 2, 3)]
+    reason = dv.degenerate_reason(flat)
+    assert reason and "no dynamic range" in reason, (
+        "the anchor disguised a floored grid as a grid with spread")

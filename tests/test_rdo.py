@@ -231,7 +231,8 @@ def test_the_refusal_loss_carries_a_gradient_to_the_direction():
     raw = torch.randn(2, 8, requires_grad=True)
     enc = {"input_ids": torch.tensor([[1, 2, 3], [4, 5, 6]])}
 
-    loss = rdo.refusal_loss(model, enc, rdo.orthonormalise(raw), model.model.layers, 0, [1, 2, 3])
+    openers = [torch.tensor([1, 2]), torch.tensor([3])]
+    loss = rdo.refusal_loss(model, enc, rdo.orthonormalise(raw), model.model.layers, 0, openers)
     assert loss.grad_fn is not None, "the refusal loss is detached from the direction"
     loss.backward()
     assert raw.grad is not None and raw.grad.abs().sum() > 0, "no gradient reached the direction"
@@ -267,7 +268,8 @@ def test_a_model_whose_layers_are_never_called_is_detected():
         p.requires_grad_(False)
     raw = torch.randn(1, 8, requires_grad=True)
     enc = {"input_ids": torch.tensor([[1, 2, 3]])}
-    loss = rdo.refusal_loss(model, enc, rdo.orthonormalise(raw), model.model.layers, 0, [1, 2])
+    loss = rdo.refusal_loss(model, enc, rdo.orthonormalise(raw), model.model.layers, 0,
+                            [torch.tensor([1, 2])])
     assert loss.grad_fn is None, (
         "this model was supposed to bypass its blocks; if it no longer does, the guard above "
         "is not demonstrating anything")
@@ -339,3 +341,51 @@ def test_the_model_weights_are_not_touched(tiny_tok, track):
 
     for b, p in zip(before, a.model.parameters(), strict=True):
         assert torch.equal(b, p), "the optimiser moved a model weight"
+
+
+# ── precision, which only bites on a real model ───────────────────────────────────────
+def test_the_hook_works_when_the_model_runs_in_bfloat16():
+    """Real models are bf16 and the directions are a float32 parameter.
+
+    Multiplying the two directly raises, and every fixture here is float32, so this was found by
+    a GPU run failing rather than by the suite. Casting the DIRECTION down to bf16 would "fix"
+    the error while rounding the thing being optimised to about three decimal digits every step,
+    so the hook lifts the activations instead.
+    """
+    layers = [_Block()]
+    d = torch.zeros(1, 4); d[0, 0] = 1.0
+    x = torch.tensor([[[3.0, 1.0, 0.0, 0.0]]], dtype=torch.bfloat16)
+
+    with rdo.ablation_hooks(layers, d):
+        out = layers[0](x)
+    assert out.dtype == torch.bfloat16, "the hook changed the residual stream's dtype"
+    assert float(out[0, 0, 0]) == pytest.approx(0.0, abs=1e-2)
+    assert float(out[0, 0, 1]) == pytest.approx(1.0, abs=1e-2)
+
+
+def test_the_direction_keeps_full_precision_through_a_bfloat16_hook():
+    """The gradient must reach a float32 parameter, not a bf16 copy of it."""
+    layers = [_Block()]
+    raw = torch.randn(2, 8, requires_grad=True)
+    x = torch.randn(1, 3, 8, dtype=torch.bfloat16)
+    with rdo.ablation_hooks(layers, rdo.orthonormalise(raw)):
+        out = layers[0](x)
+    out.float().pow(2).sum().backward()
+    assert raw.dtype == torch.float32
+    assert raw.grad is not None and raw.grad.abs().sum() > 0
+
+
+def test_openers_that_tokenise_the_same_are_not_counted_twice():
+    """Duplicate sequences would inflate the logsumexp and read as more refusal mass."""
+    model = _HookableModel()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    d = rdo.orthonormalise(torch.randn(1, 8))
+    enc = {"input_ids": torch.tensor([[1, 2, 3]])}
+
+    one = rdo.refusal_loss(model, enc, d, model.model.layers, 0, [torch.tensor([4, 5])])
+    twice = rdo.refusal_loss(model, enc, d, model.model.layers, 0,
+                             [torch.tensor([4, 5]), torch.tensor([4, 5])])
+    # log(2x) = log(x) + log 2, so a duplicated opener shifts the loss by a constant it should
+    # never have earned.
+    assert float(twice) > float(one)

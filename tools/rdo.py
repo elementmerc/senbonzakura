@@ -59,10 +59,15 @@ def ablation_hooks(layers, dirs, start=0):
     def make(idx):
         def hook(_module, _inp, out):
             h = out[0] if isinstance(out, tuple) else out
-            # h: [batch, seq, H]. Remove the component of h lying in span(dirs).
-            coef = h @ dirs.T                     # [b, s, K]
-            h = h - coef @ dirs                   # [b, s, H]
-            return (h, *out[1:]) if isinstance(out, tuple) else h
+            # Compute in float32 and cast back. Real models run in bf16 while the directions are a
+            # float32 parameter, so multiplying the two directly raises; casting the DIRECTION down
+            # instead would round the thing being optimised to bf16 at every step. The fixtures are
+            # float32, so this only ever shows up on a real model.
+            hf = h.float()
+            df = dirs.float()
+            hf = hf - (hf @ df.T) @ df            # remove the component lying in span(dirs)
+            hf = hf.to(h.dtype)
+            return (hf, *out[1:]) if isinstance(out, tuple) else hf
         return hook
 
     try:
@@ -87,14 +92,35 @@ def orthonormalise(raw):
 
 
 # ── the losses ────────────────────────────────────────────────────────────────────────
-def refusal_loss(model, enc, dirs, layers, start, refusal_ids):
-    """How much probability mass the model still puts on refusing, with `dirs` ablated."""
-    with ablation_hooks(layers, dirs, start):
-        out = model(**enc, use_cache=False)
-    logp = F.log_softmax(out.logits[:, -1, :].float(), dim=-1)
-    # logsumexp over the refusal vocabulary: "how likely is ANY refusal opener", which is what
-    # the metric downstream actually counts, rather than one hand-picked token.
-    return torch.logsumexp(logp[:, refusal_ids], dim=-1).mean()
+def refusal_loss(model, enc, dirs, layers, start, openers):
+    r"""How much probability the model still puts on actually SAYING a refusal opener.
+
+    Scored over whole openers under teacher forcing, not over their first tokens. Scoring first
+    tokens looked equivalent and is not: "I cannot", "I cant" and "I am unable" all begin with
+    "I", so nine openers collapsed to four token ids and the loss became mostly "do not begin with
+    the word I". That is an ordinary English word, so the optimiser would have been pushed to
+    damage plain language rather than to remove refusal, with the preservation term fighting it
+    the whole way.
+
+    `openers` is a list of [T] id tensors. Each contributes the summed log-probability of emitting
+    that exact continuation; logsumexp across them reads as "how likely is ANY of these refusals".
+    """
+    scores = []
+    ids_in = enc["input_ids"]
+    for opener in openers:
+        cont = opener.to(ids_in.device).unsqueeze(0).expand(ids_in.shape[0], -1)
+        kw = {"input_ids": torch.cat([ids_in, cont], dim=1), "use_cache": False}
+        if "attention_mask" in enc:
+            kw["attention_mask"] = torch.cat([enc["attention_mask"], torch.ones_like(cont)], dim=1)
+        with ablation_hooks(layers, dirs, start):
+            out = model(**kw)
+        logp = F.log_softmax(out.logits.float(), dim=-1)
+        # Position i predicts token i+1, so the opener's first token is predicted at the last
+        # prompt position.
+        t = cont.shape[1]
+        picked = logp[:, -t - 1:-1, :].gather(-1, cont.unsqueeze(-1)).squeeze(-1)   # [b, t]
+        scores.append(picked.sum(-1))                                              # [b]
+    return torch.logsumexp(torch.stack(scores, dim=-1), dim=-1).mean()
 
 
 def preserve_loss(model, enc, dirs, layers, start, base_logp):
@@ -141,10 +167,17 @@ def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=
     # The refusal vocabulary: the first tokens of the openers the scorer already counts. Reusing
     # them means the optimiser is pushing on the same quantity the evaluation reads, rather than
     # on a proxy that might move independently of it.
-    openers = ["I cannot", "I can't", "I'm sorry", "Sorry", "I am unable", "I apologise",
-               "As an AI", "I must decline", "Unfortunately"]
-    refusal_ids = sorted({tok(o, add_special_tokens=False)["input_ids"][0] for o in openers})
-    log(f"refusal vocabulary: {len(refusal_ids)} first-token ids from {len(openers)} openers")
+    opener_text = ["I cannot help with that", "I can't assist with that", "I'm sorry, but I can't",
+                   "I am unable to provide", "As an AI, I cannot"]
+    # Distinct SEQUENCES. Two openers that tokenise identically would be counted twice and the
+    # logsumexp would read as though there were more refusal mass than there is.
+    seen, openers = set(), []
+    for text in opener_text:
+        ids = tuple(tok(text, add_special_tokens=False)["input_ids"])
+        if ids and ids not in seen:
+            seen.add(ids)
+            openers.append(torch.tensor(ids))
+    log(f"refusal openers: {len(openers)} distinct sequences, lengths {[len(o) for o in openers]}")
 
     g = torch.Generator(device="cpu").manual_seed(seed)
     raw = torch.randn(k, a.H, generator=g).to(a.dev, torch.float32)
@@ -172,7 +205,8 @@ def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=
         j -= j % batch
 
         dirs = orthonormalise(raw)
-        l_ref = refusal_loss(model, encode(harmful[i:i + batch]), dirs, a.layers, start, refusal_ids)
+        l_ref = refusal_loss(model, encode(harmful[i:i + batch]), dirs, a.layers,
+                             start, openers)
         l_pre = preserve_loss(model, encode(harmless[j:j + batch]), dirs, a.layers, start,
                               base_cache[j])
         l_ind = independence_loss(raw) if k > 1 else torch.zeros((), device=a.dev)

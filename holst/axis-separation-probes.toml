@@ -1,0 +1,294 @@
+# Is refusal one direction here, or is a constant saying so?
+#
+# On 2026-08-03 a five-seed, pre-registered, held-out comparison of K=1 against K=3 produced
+# complete separation at p about 0.004 and had to be withdrawn: both arms had ablated exactly one
+# direction per layer, because no second principal axis cleared MIN_AXIS_SEPARATION = 0.5. The
+# arms performed identical surgery, so the numbers compared two search trajectories.
+#
+# Three explanations survive and the direction count cannot tell them apart:
+#
+#   THRESHOLD  0.5 was chosen once and never validated, and sits above a real second direction.
+#   MODEL      Qwen3-1.7B genuinely carries refusal in a single direction.
+#   CORPUS     the harmful side varies too little to give the PCA anything past the first axis.
+#
+# Four probes, a 2x2 in model and corpus with one extra that varies only the harmless side.
+# Each is a forward pass over the contrast prompts with no search and no generation, so the whole
+# design costs minutes rather than the hours the withdrawn comparison cost.
+#
+#   A  Qwen3-1.7B   track-heldout                     baseline; answers THRESHOLD on its own
+#   B  gemma-2-2b-it track-heldout                    answers MODEL
+#   C  Qwen3-1.7B   ds-mlabonne                       answers CORPUS (both sides differ)
+#   D  Qwen3-1.7B   heldout harmful + matched harmless answers CORPUS (harmless side only)
+#
+# Reading them: `best_rejected_separation` is the number. Close under 0.5 in probe A and the
+# threshold decided the project's headline claim. Far under it in A but not in B, and the
+# single-direction result belongs to Qwen3-1.7B rather than to the method. Far under it in A but
+# not in C or D, and it belongs to the corpus.
+#
+# Every probe asks for --max-directions 8 rather than the 3 a real run applies. The question is
+# what is present, not what would be used, and an axis that is never measured cannot be reported.
+#
+# Nothing here edits a weight or writes a checkpoint. These probes are read-only by construction.
+run = "axis-separation-probes"
+
+[[job]]
+id = "setup"
+machine = "rog"
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+test -d "$RUN/src/senbonzakura" || { echo "MISSING_TREE"; exit 1; }
+test -f "$RUN/tools/axis_probe.py" || { echo "MISSING_PROBE: the tree predates the instrumentation"; exit 1; }
+
+# The probe reads separations the extractor only started recording at 84dbfb6. An older tree
+# would run, report nothing, and look like a model with no second direction, which is the exact
+# wrong answer. Refuse rather than measure with an instrument that cannot see.
+cd "$RUN"
+PYTHONPATH=src "$PY" -c "
+from senbonzakura import cli
+assert hasattr(cli, 'MAX_RECORDED_AXES'), 'the shipped extractor does not record axis separations'
+print('instrument ok, threshold', cli.MIN_AXIS_SEPARATION)
+"
+"$PY" -c 'import torch; assert torch.cuda.is_available()'
+
+for d in "$HOME/track-heldout/bad_ds" "$HOME/track-heldout/good_ds" \\
+         "$HOME/track2/ds-mlabonne/bad_ds" "$HOME/track2/ds-mlabonne/good_ds" \\
+         "$HOME/track-matched/good_matched_ds"; do
+    test -d "$d" || { echo "MISSING_CORPUS: $d"; exit 1; }
+done
+
+mkdir -p "$RUN/probes" "$RUN/abl"
+echo SETUP_OK
+"""
+
+# Each probe takes the card-wide lock. Two probes on one 6 GB card is not merely slow: it is how
+# 2026-08-03 lost two arms, because the VRAM governor sizes its batch from live headroom and a
+# measurement taken at a different batch size is not comparable to the others. They wait rather
+# than fail, since a serialised run of four short jobs is fine and a lost one is not.
+
+[[job]]
+id = "probe-a-qwen3-heldout"
+name = "A: Qwen3-1.7B, held-out corpus (baseline)"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "PROBE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE"; exit 1; }
+
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another probe holds the card; waiting rather than sharing it"
+    flock -w 3000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }
+fi
+
+PYTHONPATH=src "$PY" -u tools/axis_probe.py \\
+    --model Qwen/Qwen3-1.7B \\
+    --track "$HOME/track-heldout" \\
+    --device cuda --max-directions 8 --dir-prompts 128 \\
+    --label "A: Qwen3-1.7B, held-out corpus" \\
+    --out "$RUN/probes/a-qwen3-heldout.json"
+
+"$PY" -c "import json; json.load(open('$RUN/probes/a-qwen3-heldout.json'))"
+echo PROBE_OK
+"""
+
+[[job]]
+id = "probe-b-gemma-heldout"
+name = "B: gemma-2-2b-it, held-out corpus (isolates the model)"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "PROBE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE"; exit 1; }
+
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another probe holds the card; waiting rather than sharing it"
+    flock -w 3000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }
+fi
+
+PYTHONPATH=src "$PY" -u tools/axis_probe.py \\
+    --model google/gemma-2-2b-it \\
+    --track "$HOME/track-heldout" \\
+    --device cuda --max-directions 8 --dir-prompts 128 \\
+    --label "B: gemma-2-2b-it, held-out corpus" \\
+    --out "$RUN/probes/b-gemma-heldout.json"
+
+"$PY" -c "import json; json.load(open('$RUN/probes/b-gemma-heldout.json'))"
+echo PROBE_OK
+"""
+
+[[job]]
+id = "probe-c-qwen3-mlabonne"
+name = "C: Qwen3-1.7B, mlabonne corpus (isolates the corpus, both sides)"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "PROBE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE"; exit 1; }
+
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another probe holds the card; waiting rather than sharing it"
+    flock -w 3000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }
+fi
+
+# A different corpus entirely: mlabonne's harmful_behaviors against harmless_alpaca, which is
+# the pairing most published abliteration work fits on. If a second direction appears here and
+# not on the held-out track, the missing direction is a property of our corpus.
+PYTHONPATH=src "$PY" -u tools/axis_probe.py \\
+    --model Qwen/Qwen3-1.7B \\
+    --track "$HOME/track2/ds-mlabonne" \\
+    --device cuda --max-directions 8 --dir-prompts 128 \\
+    --label "C: Qwen3-1.7B, mlabonne corpus" \\
+    --out "$RUN/probes/c-qwen3-mlabonne.json"
+
+"$PY" -c "import json; json.load(open('$RUN/probes/c-qwen3-mlabonne.json'))"
+echo PROBE_OK
+"""
+
+[[job]]
+id = "probe-d-qwen3-matched"
+name = "D: Qwen3-1.7B, topic-matched harmless (isolates the harmless side)"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 3600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "PROBE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE"; exit 1; }
+
+exec 8>"$RUN/abl/gpu.lock"
+if ! flock -n 8; then
+    echo "GPU_BUSY: another probe holds the card; waiting rather than sharing it"
+    flock -w 3000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }
+fi
+
+# Same harmful side as probe A, topic-matched harmless side. The separation filter measures
+# harmful against harmless, so a harmless set drawn from different topics moves every d without
+# the harmful cloud changing at all. This is the cheapest way to see how much of the threshold
+# verdict is a property of what we compare against rather than of refusal.
+PYTHONPATH=src "$PY" -u tools/axis_probe.py \\
+    --model Qwen/Qwen3-1.7B \\
+    --track "$HOME/track-heldout" \\
+    --good-ds "$HOME/track-matched/good_matched_ds" \\
+    --device cuda --max-directions 8 --dir-prompts 128 \\
+    --label "D: Qwen3-1.7B, topic-matched harmless" \\
+    --out "$RUN/probes/d-qwen3-matched.json"
+
+"$PY" -c "import json; json.load(open('$RUN/probes/d-qwen3-matched.json'))"
+echo PROBE_OK
+"""
+
+[[job]]
+id = "collate"
+name = "read the four together"
+machine = "rog"
+deps = ["probe-a-qwen3-heldout", "probe-b-gemma-heldout",
+        "probe-c-qwen3-mlabonne", "probe-d-qwen3-matched"]
+timeout_secs = 600
+success = { type = "stdout-contains", needle = "COLLATE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+
+# The comparison is the point, so it is made here rather than by eye across four log tails. A
+# missing probe is a refusal, not a three-row table: the withdrawn result is exactly what
+# happens when a summary is produced from less than it claims to describe.
+PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
+import json, os, sys
+
+RUN = os.path.expanduser("~/senbon-run")
+WANT = [("A", "a-qwen3-heldout"), ("B", "b-gemma-heldout"),
+        ("C", "c-qwen3-mlabonne"), ("D", "d-qwen3-matched")]
+
+rows, missing = [], []
+for tag, name in WANT:
+    path = f"{RUN}/probes/{name}.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows.append((tag, json.load(f)))
+    except (OSError, ValueError) as e:
+        missing.append(f"{tag} ({name}): {e}")
+
+if missing:
+    print("INCOMPLETE: refusing to summarise a design that did not finish")
+    for m in missing:
+        print("  " + m)
+    sys.exit(1)
+
+w = "  {:<3} {:<22} {:<26} {:>7} {:>9} {:>9} {:>7}"
+print()
+print(w.format("", "model", "corpus", "axes", "rejected", "best rej", "maxK"))
+for tag, r in rows:
+    best = r["best_rejected_separation"]
+    print(w.format(
+        tag,
+        r["model"].split("/")[-1][:22],
+        os.path.basename(r["track"].rstrip("/"))[:26],
+        r["axes_measured"],
+        r["axes_rejected"],
+        "none" if best is None else f"{best:.4f}",
+        max(r["directions_per_layer"])))
+
+thr = rows[0][1]["axis_separation_threshold"]
+print(f"\\n  threshold {thr}\\n")
+for tag, r in rows:
+    print(f"  {tag}: {r['verdict']}.")
+
+multi = [tag for tag, r in rows if max(r["directions_per_layer"]) > 1]
+print()
+if multi:
+    print(f"  A second direction cleared the threshold in: {', '.join(multi)}. The "
+          "single-direction result is NOT a property of the method.")
+else:
+    near = [tag for tag, r in rows
+            if r["best_rejected_separation"] is not None
+            and r["best_rejected_separation"] >= thr * 0.8]
+    if near:
+        print(f"  No probe kept a second direction, but {', '.join(near)} came within 20% of the "
+              "threshold. The constant is doing the deciding and must be varied before any "
+              "claim about direction count is published.")
+    else:
+        print("  No probe kept a second direction and none came close. Across two models and "
+              "three corpora, refusal is one direction by this tool's own measure. That is a "
+              "finding about the claim, and it is negative.")
+EOF
+echo COLLATE_OK
+"""

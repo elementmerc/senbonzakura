@@ -1,0 +1,931 @@
+# Does removing three refusal directions beat removing one?
+#
+# The project's headline claim, measured on rows nothing was fitted or selected on. Two arms
+# per seed, identical in every respect except the one being tested, across five seeds.
+#
+# Pre-registered in private/plans/pre-registration-2026-07-30-rematch.md section 5, which was
+# amended BEFORE this file existed to record why the third arm (K=3 with the hedging
+# direction) is not here: there is no hedged-compliance dataset anywhere, so the hedging
+# direction cannot be folded in either arm. That absence is what makes these two arms a clean
+# isolation of K rather than a confound.
+#
+# Why this is not a rented run: Qwen3-1.7B fits the 6 GB card, and the arms differ by one
+# integer, so the whole comparison is affordable on hardware already owned.
+#
+# The ten arm blocks are mechanical copies differing only in SEED and K. They are generated
+# and then read back and checked rather than hand-copied, because a seed that silently repeats
+# turns five independent measurements into three and nothing in the output would say so.
+#
+# Seed 42 ran on 2026-08-02 and its three result files are already on disk. Its two arms are
+# still listed here and will short-circuit on the already-complete check below. That is the
+# point: the run is declared in full, and what has already been measured is not measured again.
+run = "single-vs-multi-qwen3-1.7b-5seed"
+
+[[job]]
+id = "setup"
+machine = "rog"
+timeout_secs = 1800
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+test -d "$RUN/src/senbonzakura" || { echo "MISSING_TREE"; exit 1; }
+test -d "$T/bad_eval_ds" || { echo "MISSING_TRACK"; exit 1; }
+"$PY" -c 'import torch; assert torch.cuda.is_available()'
+cd "$RUN"
+PYTHONPATH=src "$PY" -u -m senbonzakura.track --out "$T" --audit
+
+# The claim under test is about K, so the thing that would quietly invalidate it is a hedge
+# set appearing in the track and being folded into the K=3 arm only. Refuse rather than
+# measure a confound: if a hedge set is added later, this spec must be rewritten to carry
+# the third arm, not silently run a different comparison under the same name.
+if [ -d "$T/hedge_ds" ]; then
+    echo "HEDGE_SET_PRESENT: this spec's two arms no longer isolate K; see the pre-registration"
+    exit 1
+fi
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+echo SETUP_OK
+"""
+
+# The search knobs below are NOT kageyoshi's. kageyoshi resolves its own budget and pins
+# --max-directions to 3, so the K=1 arm cannot be expressed through it. Both arms therefore
+# set the knobs by hand, to the same values kageyoshi would choose for a sub-5B model, so the
+# only difference between the arms is --max-directions:
+#
+#   trials 100, dir-prompts 256, eval-refusal 64, eval-kl 64, eval-refusal-final 128,
+#   search pareto, per-component, kl-scale 4.0, top-rescore 6, patience 33
+#
+# 128 fits inside the recorded 132-row search partition, and 256 + 64 inside the 385
+# harmless rows set aside; the tree refuses the run rather than crossing either boundary.
+
+[[job]]
+id = "arm-k1-seed-42"
+name = "K=1, seed 42"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=42
+K=1
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k3-seed-42"
+name = "K=3, seed 42"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=42
+K=3
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k1-seed-43"
+name = "K=1, seed 43"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=43
+K=1
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k3-seed-43"
+name = "K=3, seed 43"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=43
+K=3
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k1-seed-44"
+name = "K=1, seed 44"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=44
+K=1
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k3-seed-44"
+name = "K=3, seed 44"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=44
+K=3
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k1-seed-45"
+name = "K=1, seed 45"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=45
+K=1
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k3-seed-45"
+name = "K=3, seed 45"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=45
+K=3
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k1-seed-46"
+name = "K=1, seed 46"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=46
+K=1
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "arm-k3-seed-46"
+name = "K=3, seed 46"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 14400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "ARM_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+SEED=46
+K=3
+ARM="k$K-s$SEED"
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+T=$HOME/track-heldout
+M=$HOME/track-matched/good_matched_ds
+O=$RUN/abl/$ARM
+cd "$RUN"
+mkdir -p "$RUN/results" "$RUN/margins" "$RUN/gens" "$RUN/abl"
+
+# One attempt at a time, enforced rather than assumed. A detached job survives the
+# orchestrator giving up on its launcher, so a launch wrongly written off leaves this arm
+# running while a retry is dispatched onto the same card. Two abliterations sharing 6 GB is
+# not a slow run, it is two failed ones.
+exec 9>"$RUN/abl/$ARM.lock"
+flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing to run a second copy"; exit 1; }
+
+# Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
+# result files and were then retried anyway, and the retry died on the Optuna study the first
+# attempt had already created. A completed arm now says so and stops.
+if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
+   && [ -s "results/$ARM-harmless.json" ]; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+    echo ARM_OK
+    exit 0
+fi
+
+# A fresh attempt is a fresh search. A part-written study from a killed attempt is never
+# resumed silently: the seed fixes the trial sequence, so a resumed search is not the search
+# the pre-registration describes, and the difference would be invisible in the output.
+rm -f "$RUN/abl/$ARM.db"
+rm -rf "$O"
+
+# The commit is read from the file the ship step writes beside the tree, not from the
+# environment: this job runs over ssh to PowerShell to wsl to bash, and an exported variable
+# does not survive that. Reading it from the tree also ties the declared commit to the code
+# that was actually shipped, which is what provenance is supposed to mean.
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT" 2>/dev/null || true)"
+[ -n "$SENBONZAKURA_COMMIT" ] || { echo "NO_COMMIT_FILE: $RUN/COMMIT is missing, so this run could not name its own code"; exit 1; }
+export PYTHONPATH=src
+
+"$PY" -u -m senbonzakura.cli --model Qwen/Qwen3-1.7B --out "$O" --track "$T" \
+    --max-directions $K --seed $SEED --device cuda --gen-batch 16 \
+    --trials 100 --dir-prompts 256 --eval-refusal 64 --eval-kl 64 --eval-refusal-final 128 \
+    --search pareto --per-component --kl-scale 4.0 --top-rescore 6 --patience 33 \
+    --study-db "$RUN/abl/$ARM.db"
+test -d "$O"
+
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/bad_eval_ds" --skip 132 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmful" \
+    --out "results/$ARM-harmful.json" --save-generations "gens/$ARM-harmful.jsonl"
+# The harmless arm is not optional. A refusal rate that fell because the model can no longer
+# refuse anything is indistinguishable from one that fell because the surgery worked, unless
+# this is measured beside it.
+"$PY" -u -m senbonzakura.score --model "$O" --eval "$T/good_ds" --skip 385 --n 512 \
+    --batch 16 --device cuda --label "$ARM-harmless" \
+    --out "results/$ARM-harmless.json" --save-generations "gens/$ARM-harmless.jsonl"
+"$PY" -u -m senbonzakura.margin --model "$O" \
+    --harmful "$T/bad_eval_ds" --harmless "$T/good_ds" --harmless-matched "$M" \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed $SEED --device cuda --label "$ARM-compass" \
+    --out "results/$ARM-compass.json" --margins "margins/$ARM-compass.jsonl" \
+    --compare-to "margins/base-Qwen3-1.7B.jsonl"
+rm -rf "$O"
+echo ARM_OK
+"""
+
+[[job]]
+id = "compare"
+name = "K=1 against K=3, from the files"
+machine = "rog"
+deps = ["arm-k1-seed-42", "arm-k3-seed-42", "arm-k1-seed-43", "arm-k3-seed-43", "arm-k1-seed-44", "arm-k3-seed-44", "arm-k1-seed-45", "arm-k3-seed-45", "arm-k1-seed-46", "arm-k3-seed-46"]
+timeout_secs = 600
+success = { type = "stdout-contains", needle = "COMPARE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+cd "$HOME/senbon-run"
+$HOME/track2/venv/bin/python - <<'PY'
+import glob
+import json
+import statistics
+
+def read(pattern):
+    return {p: json.loads(open(p).read()) for p in sorted(glob.glob(pattern))}
+
+def mean(vals):
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+def spread(vals):
+    # The seed-to-seed standard deviation, which is the whole reason five seeds were run.
+    # Reported rather than a confidence interval because five is too few for one to mean much.
+    return round(statistics.stdev(vals), 4) if len(vals) > 1 else None
+
+rows = []
+for k in (1, 3):
+    h = read(f"results/k{k}-s*-harmful.json")
+    g = read(f"results/k{k}-s*-harmless.json")
+    c = read(f"results/k{k}-s*-compass.json")
+    if not h:
+        continue
+    kw = [d["heretic"] for d in h.values()]
+    auc = [d["auc"] for d in c.values()]
+    rows.append({
+        "K": k,
+        "seeds": sorted(int(p.split("-s")[1].split("-")[0]) for p in h),
+        # score.py's own key names: heretic, refusal, soft_refusal, broken.
+        "keyword_mean": mean(kw),
+        "keyword_sd": spread(kw),
+        "keyword_per_seed": [round(v, 4) for v in kw],
+        "refusal_mean": mean([d["refusal"] for d in h.values()]),
+        "soft_mean": mean([d["soft_refusal"] for d in h.values()]),
+        # The harmless arm, always beside the harmful one.
+        "harmless_refusal_mean": mean([d["refusal"] for d in g.values()]),
+        "broken_mean": mean([d["broken"] for d in h.values()]),
+        "auc_mean": mean(auc),
+        "auc_sd": spread(auc),
+        # The paired interval on the change from base, which is the number that says whether
+        # a difference is distinguishable from no change at all.
+        "paired": [d.get("paired", {}).get("delta_ci") for d in c.values()],
+        "length_only_auc": sorted({(d.get("controls") or {}).get("length_only_auc")
+                                   for d in c.values()}),
+    })
+print(json.dumps(rows, indent=2))
+open("results/SINGLE_VS_MULTI.json", "w").write(json.dumps(rows, indent=2) + "\\n")
+
+# The declared outcome, evaluated by the script rather than by eye on the morning the numbers
+# land. Says "inconclusive" out loud, because that is a result and not a failure.
+if len(rows) == 2:
+    a, b = rows[0], rows[1]
+    delta = b["keyword_mean"] - a["keyword_mean"]
+    print(f"\\nK=3 minus K=1 on the keyword axis: {delta:+.4f} "
+          f"({'K=3 better' if delta < 0 else 'K=1 better or equal'})")
+    n = min(len(a["keyword_per_seed"]), len(b["keyword_per_seed"]))
+    print(f"seeds per arm: K=1 {len(a['keyword_per_seed'])}, K=3 {len(b['keyword_per_seed'])}")
+    if n < 5:
+        print(f"PRE-REGISTRATION SHORTFALL: {n} seed(s) per arm, not the five that were "
+              f"declared. Read this as provisional.")
+    sd = max(x for x in (a["keyword_sd"], b["keyword_sd"], 0) if x is not None)
+    if sd and abs(delta) < 2 * sd:
+        print(f"INCONCLUSIVE: the gap ({abs(delta):.4f}) is inside twice the seed-to-seed "
+              f"spread ({sd:.4f}).")
+PY
+echo COMPARE_OK
+"""

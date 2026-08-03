@@ -1,3 +1,11 @@
+# SUPERSEDED on 2026-08-03 by single-vs-multi-qwen3-1.7b-5seed.toml. Do not run this file.
+#
+# It is kept because it is the record of what actually produced the seed-42 results now on
+# disk, and a spec that a published number came from should not vanish. What replaced it
+# carries all five pre-registered seeds and, more importantly, arms that can be retried: this
+# version's arms could not be, which is how a run that had completely succeeded was recorded
+# as two failures. See the successor's header.
+#
 # Does removing three refusal directions beat removing one?
 #
 # The project's headline claim, measured on rows nothing was fitted or selected on. Two arms,

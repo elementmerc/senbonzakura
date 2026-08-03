@@ -39,6 +39,10 @@ import sys
 
 from senbonzakura import cli
 
+# Below this, a separation is floating-point residue around an exact zero rather than a small
+# measurement. Real separations on real models land in the tenths; the observed residue is ~1e-8.
+STRUCTURAL_ZERO = 1e-6
+
 
 def build_args(argv=None):
     """Parse into the REAL parser, then override, so no default is invented here.
@@ -81,7 +85,20 @@ def summarise(a):
     best = a.best_rejected_separation
     threshold = cli.MIN_AXIS_SEPARATION
 
-    if best is None:
+    # An exact zero is not a small measurement, it is the signature of a broken one. The candidate
+    # axes are orthogonalised against a basis spanning both class means, so the numerator of
+    # Cohen's d vanishes by construction and the filter cannot be passed at any positive threshold.
+    # Reported first because every other reading below assumes the instrument works.
+    structural = bool(measured) and max(abs(d) for d in measured) < STRUCTURAL_ZERO
+
+    if structural:
+        verdict = (f"every one of the {len(measured)} candidate axes scored a separation "
+                   "indistinguishable from zero, which is what the geometry forces rather than "
+                   "anything about this model or corpus: the axes are orthogonalised against a "
+                   "basis spanning both class means, and Cohen's d is a difference of class means. "
+                   "The filter cannot be passed at any positive threshold. Nothing here measures "
+                   "direction count")
+    elif best is None:
         verdict = ("no candidate axis was rejected, so the threshold did not bind here and the "
                    "direction count is a property of the model and the corpus")
     elif best >= threshold * 0.8:
@@ -96,6 +113,10 @@ def summarise(a):
     return {
         "model": a.args.model,
         "track": a.args.track,
+        # Recorded even when unset. A probe that varies only the harmless side is otherwise
+        # indistinguishable in its own artefact from one that did not, and two records that look
+        # identical while measuring different things is how this project loses a result.
+        "good_ds_override": a.args.good_ds,
         "hidden_size": a.H,
         "layers": a.NL,
         "max_directions_requested": a.KMAX,
@@ -107,6 +128,7 @@ def summarise(a):
         "axes_rejected": len(rejected),
         "best_rejected_separation": best,
         "max_separation_any_axis": max(measured) if measured else None,
+        "filter_is_unsatisfiable": structural,
         "verdict": verdict,
     }
 

@@ -1041,6 +1041,41 @@ def test_the_separation_of_every_rejected_axis_is_recorded(
     assert a.best_rejected_separation == pytest.approx(0.42)
 
 
+def test_an_unsatisfiable_filter_is_announced_as_a_broken_instrument(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """What the real extractor does today, and it must not read as a result.
+
+    Every candidate axis scores ~0 because it is orthogonalised against a basis spanning both
+    class means while the statistic is a difference of class means. A run that reports this as
+    "no second direction found" is reporting a broken instrument as a measurement, which is
+    exactly how the five-seed comparison came to be published and withdrawn.
+    """
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.0])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert a.filter_is_unsatisfiable is True
+    joined = "\n".join(lines)
+    assert "BROKEN FILTER" in joined
+    assert "cannot take effect" in joined
+    assert "the-separation-filter-can-never-pass" in joined, "the finding must be reachable"
+
+
+def test_a_real_small_separation_is_not_called_a_broken_filter(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """0.02 is a fact about the data; 1e-8 is a fact about the code. Do not conflate them."""
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.02])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert a.filter_is_unsatisfiable is False
+    assert "BROKEN FILTER" not in "\n".join(lines)
+
+
 def test_a_near_miss_names_the_threshold_as_the_cause(
         base_args, tiny_model, tiny_tok, track, monkeypatch):
     """The finding this instrumentation exists to make visible."""

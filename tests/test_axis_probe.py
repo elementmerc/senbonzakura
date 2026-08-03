@@ -27,7 +27,7 @@ def _fake(seps, *, threshold=None):
     flat = [d for layer in seps for d in layer]
     below = [d for d in flat if d < (threshold or cli.MIN_AXIS_SEPARATION)]
     return SimpleNamespace(
-        args=SimpleNamespace(model="m", track="t", dir_prompts=128),
+        args=SimpleNamespace(model="m", track="t", dir_prompts=128, good_ds=None),
         H=8, NL=2, KMAX=8,
         dirs_per_layer=[1] * len(seps),
         axis_separations=seps,
@@ -35,6 +35,33 @@ def _fake(seps, *, threshold=None):
 
 
 # ── the verdict, which is the entire point of the tool ────────────────────────────────
+def test_an_all_zero_result_is_reported_as_a_broken_instrument():
+    """What every probe actually returned on 2026-08-03, on two models and three corpora.
+
+    A separation of zero on every axis is not a small measurement. It is what the geometry
+    forces: candidates are orthogonalised against a basis spanning both class means, and the
+    statistic is a difference of class means. Reading that as "the model has one direction" is
+    the mistake this branch exists to stop anyone making again.
+    """
+    r = probe.summarise(_fake([[0.0, 1e-8], [0.0, 3e-9]]))
+    assert r["filter_is_unsatisfiable"] is True
+    assert "cannot be passed at any positive threshold" in r["verdict"]
+    assert "Nothing here measures direction count" in r["verdict"]
+
+
+def test_a_small_but_real_separation_is_not_mistaken_for_the_broken_case():
+    """The boundary matters: 0.02 is a finding about the data, 1e-8 is a finding about the code."""
+    r = probe.summarise(_fake([[0.02], [0.01]]))
+    assert r["filter_is_unsatisfiable"] is False
+    assert "absent, not filtered" in r["verdict"]
+
+
+def test_no_axes_measured_is_not_called_broken():
+    """A K=1 run measures nothing, and nothing is not evidence of a broken filter."""
+    assert probe.summarise(_fake([[], []]))["filter_is_unsatisfiable"] is False
+
+
+
 def test_a_near_miss_blames_the_threshold():
     """The reading that would mean the headline claim was suppressed by a constant."""
     r = probe.summarise(_fake([[cli.MIN_AXIS_SEPARATION - 0.01], [0.1]]))
@@ -66,6 +93,12 @@ def test_no_axes_at_all_is_not_a_crash():
     assert r["axes_measured"] == 0
     assert r["max_separation_any_axis"] is None
     assert r["best_rejected_separation"] is None
+
+
+def test_the_harmless_side_override_is_recorded_even_when_unset():
+    """Two probes that differ only in the harmless side must not produce identical records."""
+    r = probe.summarise(_fake([[0.2]]))
+    assert "good_ds_override" in r and r["good_ds_override"] is None
 
 
 def test_the_counts_describe_the_separations_they_ship_with():

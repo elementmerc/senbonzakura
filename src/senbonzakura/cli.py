@@ -1059,9 +1059,25 @@ class Abliterator:
         # REJECTED axis reached. A best rejected value just under MIN_AXIS_SEPARATION means the
         # constant decided the outcome; one far below it means the second direction is not there.
         self.axis_separations = axis_seps
-        rejected = [d for layer in axis_seps for d in layer if d < MIN_AXIS_SEPARATION]
+        measured = [d for layer in axis_seps for d in layer]
+        rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
         self.best_rejected_separation = max(rejected) if rejected else None
-        if self.best_rejected_separation is not None:
+        # An exact zero across every axis is not a small measurement. The candidates are
+        # orthogonalised against a basis spanning both class means, and Cohen's d is a difference
+        # of class means, so the numerator vanishes by construction and no positive threshold can
+        # be cleared. Measured 2026-08-03 on two models and three corpora: every one of 224 axes
+        # returned ~1e-8. This is louder than the shortfall note below because a shortfall is a
+        # result and this is a broken instrument.
+        self.filter_is_unsatisfiable = bool(measured) and max(abs(d) for d in measured) < 1e-6
+        if self.filter_is_unsatisfiable:
+            log(f"  BROKEN FILTER: all {len(measured)} candidate axes scored a refusal separation "
+                f"of ~0, which the geometry forces rather than the data: the axes are "
+                f"orthogonalised against a basis spanning both class means, and the separation "
+                f"statistic is a difference of class means. No axis can clear "
+                f"{MIN_AXIS_SEPARATION}, or any positive value, so --max-directions above 1 "
+                f"cannot take effect. See private/research/"
+                f"2026-08-03-the-separation-filter-can-never-pass.md.")
+        elif self.best_rejected_separation is not None:
             near = self.best_rejected_separation >= MIN_AXIS_SEPARATION * 0.8
             log(f"  rejected-axis separations: {len(rejected)} axis/axes measured below the "
                 f"threshold, best {self.best_rejected_separation:.4f} against "

@@ -190,6 +190,7 @@ def _sparsify_rows_(delta, sparsity):
     return delta * (mag >= thr).unsqueeze(-1)           # zero the untouched rows
 
 
+@torch.no_grad()
 def orthogonalize_np_(W, R, s, sparsity=0.0):
     # Refinement 4 (norm-preserving ablation; Heretic row_normalization=full / grimjim):
     # ablate on the row-normalized weight, renormalize, then RESTORE the original row norms.
@@ -1005,6 +1006,7 @@ class Abliterator:
         # axis can clear the threshold has to come from all of them, not from the first few.
         axes_measured_total = 0
         axes_rejected_total = 0
+        hedge_applied = [False] * (NL + 1)
         max_sep_seen = 0.0
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
         # each. Below two, there is no second refusal mode to look for and the run says so rather
@@ -1040,13 +1042,21 @@ class Abliterator:
             # guard in float32, so it was scaled to unit length and ablated as though it carried
             # refusal. Cap what is kept; KMAX itself stays as-is because it sets the tensor width.
             kmax_eff = min(KMAX, H - (len(basis) - len(kept)))
-            # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before PCA fills the rest.
+            # Guaranteed hedging direction (lever 2), good- and d0-orthogonalised, before the
+            # cluster candidates fill the rest.
+            #
+            # It is gated on there being room, which means K=1 SILENTLY LOSES IT: at K=1 the
+            # primary direction already fills the budget. That turns any K=1 against K>1
+            # comparison into a comparison of "more directions AND a supervised hedging contrast
+            # aimed at the very metric being reported", which is two changes wearing one name.
+            # Recorded per layer and announced below rather than left to be discovered.
             if hedge_md is not None and len(kept) < kmax_eff:
                 hv = _orth_to(hedge_md[li], basis)
                 n = hv.norm()
                 if n > 1e-6:
                     hv = hv / n
                     kept.append(hv); basis.append(hv)
+                    hedge_applied[li] = True
             if kmax_eff > len(kept) and n_clusters >= 2:
                 # Candidates are per-CLUSTER difference-of-means, not principal axes of the
                 # harmful cloud. The distinction is the whole reason this code was rewritten on
@@ -1146,6 +1156,13 @@ class Abliterator:
         rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
         self.best_rejected_separation = max(rejected) if rejected else None
         self.axes_rejected_total = axes_rejected_total
+        self.hedge_applied_layers = int(sum(hedge_applied))
+        if hedge_md is not None and self.hedge_applied_layers < NL + 1:
+            log(f"  NOTE: the hedging direction was applied at {self.hedge_applied_layers} of "
+                f"{NL + 1} layers. It needs a free direction slot, so a run at "
+                f"--max-directions 1 loses it entirely. A comparison against a larger K is then "
+                f"a comparison of two things at once, the direction count and the hedging "
+                f"contrast, and the hedging contrast targets the metric being reported.")
 
         # A guard that accepts everything discriminates exactly as much as one that rejects
         # everything: not at all. Both extremes are alarms and both have now happened here, the
@@ -1897,6 +1914,9 @@ class Abliterator:
                        "max_axis_separation": getattr(self, "max_axis_separation", None),
                        "best_rejected_separation": getattr(self, "best_rejected_separation", None),
                        "axes_rejected_total": getattr(self, "axes_rejected_total", None),
+                       # How many layers actually got the hedging direction. It is gated on a
+                       # free slot, so K=1 gets none of it and a K comparison would be confounded.
+                       "hedge_applied_layers": getattr(self, "hedge_applied_layers", None),
                        "filter_is_unsatisfiable": getattr(self, "filter_is_unsatisfiable", None),
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},

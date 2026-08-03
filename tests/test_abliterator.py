@@ -1360,3 +1360,87 @@ def test_the_accelerator_lookup_never_raises_on_a_bad_device(monkeypatch):
     monkeypatch.setattr(cli.torch.cuda, "get_device_name",
                         lambda _i: (_ for _ in ()).throw(RuntimeError("no such device")))
     assert cli.accelerator_name("cuda:7") is None
+
+
+# ── the hedging direction is gated on K, and that has to be visible ───────────────────
+def test_the_hedging_direction_is_lost_at_k1_and_the_run_says_so(
+        base_args, tiny_model, tiny_tok, track, tmp_path, monkeypatch):
+    """K=1 has no free slot, so the hedging direction silently vanishes.
+
+    That makes a K=1 against K>1 comparison a comparison of two things at once: the direction
+    count, and a supervised hedging contrast aimed at the very metric being reported. It is
+    announced now rather than left in a source comment for someone to find after the run.
+    """
+    from datasets import Dataset
+    hedge = str(tmp_path / "hedge")
+    Dataset.from_dict({"text": [f"hedged answer {i}" for i in range(8)]}).save_to_disk(hedge)
+
+    lines = []
+    base_args.max_directions = 1
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", hedge, f"{track}/good_ds")
+
+    assert a.hedge_applied_layers == 0, "K=1 should have no room for the hedging direction"
+    joined = "\n".join(lines)
+    assert "hedging direction was applied at 0" in joined
+    assert "two things at once" in joined
+
+
+def test_the_hedging_direction_lands_when_there_is_room(base_args, tiny_model, tiny_tok,
+                                                        monkeypatch):
+    """The other half: given a slot and a hedge contrast that is not already in the basis.
+
+    Built rather than taken from the toy track, whose harmful and harmless means coincide, so
+    every direction there is degenerate and the test would pass or fail for the wrong reason.
+    """
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    NL1, H = a.NL + 1, a.H
+    torch.manual_seed(3)
+
+    def fake_collect(prompts):
+        tag = prompts[0].split()[0] if prompts else "BAD"
+        base = torch.zeros(NL1, len(prompts), H)
+        axis = {"GOOD": 0, "BAD": 1, "HEDGE": 2}[tag]      # each cloud in its own direction
+        base[:, :, axis] = 6.0
+        return base + torch.randn(NL1, len(prompts), H) * 0.05
+
+    def fake_load(path, n):
+        tag = "HEDGE" if "hedge" in str(path) else ("GOOD" if "good" in str(path) else "BAD")
+        return [f"{tag} {i}" for i in range(n)]
+
+    monkeypatch.setattr(a, "load", fake_load)
+    monkeypatch.setattr(a, "collect_resid", fake_collect)
+    a.extract_directions("bad", "good", "hedge", "good")
+
+    assert a.hedge_applied_layers == a.NL + 1, (
+        f"a free slot and an independent hedge contrast should apply at every layer, got "
+        f"{a.hedge_applied_layers}")
+
+
+def test_the_artefact_records_how_many_layers_got_the_hedge(base_args, tiny_model, tiny_tok, track):
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.run()
+    with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
+        artefact = json.load(f)
+    assert artefact["hedge_applied_layers"] == a.hedge_applied_layers
+
+
+# ── the bake must not build a graph ───────────────────────────────────────────────────
+def test_the_bake_does_not_build_an_autograd_graph(abl):
+    """`orthogonalize_np_` had no @torch.no_grad() while its 3D sibling did.
+
+    A bake inside a grad-enabled context would build a graph over every residual-writing weight
+    in the model and hold it alive, which on a real model is gigabytes of activations kept for a
+    backward pass nobody is going to run.
+    """
+    W = torch.nn.Parameter(torch.randn(8, 4))            # a leaf that requires grad, like a weight
+    R = torch.eye(8)[:2]
+
+    # Without @torch.no_grad() this raises: an in-place write to a leaf that requires grad is
+    # exactly what the bake does to every residual-writing weight in the model.
+    with torch.enable_grad():
+        cli.orthogonalize_np_(W, R, 1.0)
+
+    assert W.grad_fn is None
+    assert W.is_leaf, "the bake turned a weight into a graph node"

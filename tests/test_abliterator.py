@@ -959,13 +959,39 @@ def test_the_applied_k_per_layer_is_recorded(base_args, tiny_model, tiny_tok, tr
 
 
 def test_a_shortfall_against_the_requested_k_is_announced(base_args, tiny_model, tiny_tok, track):
-    """A run that asks for 3 and applies 1 must not report only the 3."""
+    """A run that asks for 3 and applies fewer must not report only the 3."""
     lines = []
     base_args.max_directions = 3
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
     a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
-    if min(a.dirs_per_layer[a.lo:a.hi + 1] or a.dirs_per_layer) < a.KMAX:
-        assert any("not the" in x and "requested" in x for x in lines)
+    if min(a.dirs_per_layer) < a.KMAX:
+        joined = "\n".join(lines)
+        assert "directions_per_layer" in joined, "a shortfall must point at the record of it"
+
+
+def test_a_run_that_applies_one_direction_everywhere_says_so_in_those_words(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """The message that would have saved a day on 2026-08-03.
+
+    A comparison ran for hours with both arms ablating a single direction per layer, because
+    the note describing the shortfall was scoped to the searched layer window and read as
+    though layers outside it might have had more. The case that matters is not "some layers
+    fell short"; it is "this multi-direction run is a single-direction run", and it has to be
+    said in words a reader cannot misread as a detail.
+    """
+    lines = []
+    base_args.max_directions = 3
+    # Nothing clears the refusal-separation bar, which is exactly what happened on the real
+    # model: every candidate axis past the first carried content rather than refusal.
+    monkeypatch.setattr(cli, "_axis_separation", lambda *a, **k: 0.0)
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+
+    assert max(a.dirs_per_layer) <= 1, "the fixture must actually produce the single-direction case"
+    joined = "\n".join(lines)
+    assert "SINGLE direction per layer" in joined
+    assert "Nothing here is evidence about multiple directions" in joined
+    assert "directions_per_layer" in joined
 
 
 def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, track):

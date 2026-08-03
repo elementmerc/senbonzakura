@@ -1029,11 +1029,27 @@ class Abliterator:
         # asked for and nothing anywhere states the K it applied.
         self.dirs_per_layer = [int((self.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum())
                                for li in range(NL + 1)]
+        # Report the WHOLE model, and name the window separately. Scoping this line to the
+        # search window cost most of a day on 2026-08-03: it said "within the search window
+        # layers got 1 to 1 directions", which left open, and wrongly, that layers outside the
+        # window had more. They did not, and the comparison the run existed to make had been
+        # measuring nothing for hours before anyone read the per-layer record.
+        #
+        # The loudest case is the one that matters: when NO layer anywhere got more than one
+        # direction, a multi-direction run is a single-direction run and must say so in those
+        # words, because that is the sentence a reader needs and "1 to 1" is not it.
         window = self.dirs_per_layer[self.lo:self.hi + 1] or self.dirs_per_layer
-        if window and min(window) < KMAX:
-            log(f"  note: within the search window layers got {min(window)} to {max(window)} "
-                f"directions, not the {KMAX} requested; the applied K is recorded per layer in "
-                f"abliteration.json")
+        whole = self.dirs_per_layer or [0]
+        if KMAX > 1 and max(whole) <= 1:
+            log(f"  NOTE: no layer anywhere got more than one direction, so this run ablates a "
+                f"SINGLE direction per layer despite --max-directions {KMAX}. Nothing here is "
+                f"evidence about multiple directions. The per-layer counts are in "
+                f"abliteration.json under directions_per_layer.")
+        elif whole and min(whole) < KMAX:
+            log(f"  note: across all {len(whole)} layers the counts run {min(whole)} to "
+                f"{max(whole)}, not the {KMAX} requested (search window layers "
+                f"{self.lo} to {self.hi}: {min(window)} to {max(window)}); the applied K is "
+                f"recorded per layer in abliteration.json under directions_per_layer.")
         log(f"directions ready: {tuple(self.dirs_multi.shape)} (<= {KMAX}/layer, orthonormal, "
             f"good-orthogonalized, refusal-separation filtered)")
 

@@ -53,8 +53,28 @@ the same ruler:
 >
 > **Why it has not been re-measured:** Qwen3-4B does not fit the 6 GB card this project is
 > built around, so a corrected run needs hardware we do not own. That is the honest reason,
-> not an oversight. What *has* been re-measured, on held-out rows with intervals, is
-> Qwen3-1.7B; see [Reproducibility and status](#reproducibility-and-status).
+> not an oversight.
+>
+> ### The multi-direction claim has not been tested in a way that isolates it
+>
+> Added 2026-08-03, and it is the more important caveat of the two.
+>
+> A comparison was run on Qwen3-1.7B specifically to test whether removing several directions
+> beats removing one: two arms, five seeds each, held out, everything identical but the
+> direction budget. **Both arms turned out to have removed exactly one direction per layer.**
+> The extra capacity existed in the data structure and was never filled, because no second
+> axis cleared the tool's own refusal-separation threshold at any of the model's 29 layers, so
+> the surgery in the two arms was identical and the comparison measured something else.
+>
+> By this tool's own standard, then, refusal in Qwen3-1.7B is one direction. That is what
+> [Arditi et al.](https://arxiv.org/abs/2406.11717) reported, and this section describes as
+> true "mostly".
+>
+> This does not show the claim is false. The table above is Qwen3-4B, a different model, and
+> whether the constraint is the model, the corpus, or a threshold constant that has never been
+> validated is an open question with three cheap experiments attached to it. It does mean
+> **nobody should currently believe the claim on this project's evidence**, and that includes
+> us.
 
 Single-direction leaves better than a third of the strict count standing.
 Multi-direction cuts it to a fifth and drives hard refusal to zero, with no broken

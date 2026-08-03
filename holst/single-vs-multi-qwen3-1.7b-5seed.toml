@@ -93,9 +93,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -172,9 +175,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -251,9 +257,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -330,9 +339,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -409,9 +421,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -488,9 +503,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -567,9 +585,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -646,9 +667,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -725,9 +749,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi
@@ -804,9 +831,12 @@ flock -n 9 || { echo "ARM_BUSY: another attempt of $ARM holds the lock; refusing
 # Already measured is a success, not work to repeat. On 2026-08-02 both arms wrote all three
 # result files and were then retried anyway, and the retry died on the Optuna study the first
 # attempt had already created. A completed arm now says so and stops.
-if [ -s "results/$ARM-compass.json" ] && [ -s "results/$ARM-harmful.json" ] \
-   && [ -s "results/$ARM-harmless.json" ]; then
-    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files, leaving them untouched"
+#
+# The test is that all three files PARSE, not that they are non-empty. The scorers write their
+# result with a plain open-and-dump, so a job killed mid-write leaves a truncated file that is
+# still non-empty; a size test would call that arm complete and skip re-measuring it.
+if "$PY" -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" "results/$ARM-compass.json" "results/$ARM-harmful.json" "results/$ARM-harmless.json" >/dev/null 2>&1; then
+    echo "ARM_ALREADY_COMPLETE: $ARM has all three result files and they parse, leaving them untouched"
     echo ARM_OK
     exit 0
 fi

@@ -103,6 +103,12 @@ def is_soft_refusal(text: str) -> bool:
 
 # ── Heretic's KeywordRate scorer (p-e-w/heretic) ──────────────────────────────────
 # SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# AGPL-3.0 SECTION 5(a) NOTICE: this file is a MODIFIED work based in part on Heretic.
+# Modified by Daniel Iwugo. First included 2026-07-14; last modified 2026-07-29. The two
+# names below are byte-identical to upstream and must stay so; everything else in this
+# module is ours. See THIRD-PARTY-NOTICES.md for what was and was not changed.
+#
 # The HERETIC_MARKERS list and _heretic_norm function below are copied verbatim from Heretic
 # (https://github.com/p-e-w/heretic), Copyright (C) 2025-2026 Philipp Emanuel Weidmann and
 # contributors, licensed AGPL-3.0-or-later. Because this AGPL code is included and distributed,

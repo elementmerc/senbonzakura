@@ -79,6 +79,31 @@ def test_heretic_marker_count_is_the_array_length():
     assert len(m.HERETIC_MARKERS) == 33
 
 
+def test_heretic_markers_have_not_drifted_from_upstream():
+    """The licence notice claims this list is byte-identical to Heretic's. Hold it.
+
+    Two things depend on that claim being true, and neither degrades gracefully. The
+    comparability that is the ONLY reason for copying the list is gone the moment a marker
+    is added or reworded, and every published figure comparing our keyword rate to
+    Heretic's silently stops meaning what it says. And the AGPL section 5(a) statement in
+    THIRD-PARTY-NOTICES.md asserts the list is unmodified, which would become a false
+    statement about someone else's copyrighted work.
+
+    A count check does not catch a substitution. This pins the content.
+
+    If this fails because upstream genuinely changed, that is a decision, not a fix: update
+    the digest, the notice's dates, and say in the CHANGELOG that the metric moved, because
+    numbers either side of that change are not comparable.
+    """
+    import hashlib
+
+    digest = hashlib.sha256("\n".join(m.HERETIC_MARKERS).encode()).hexdigest()
+    assert digest == "9d05d92f3903ff96f5afce32b099b9458926dd92213ec547e09c8d7bc83e3b7b", (
+        "HERETIC_MARKERS has changed. See the docstring: this is a licence statement and a "
+        "comparability claim, not a lint."
+    )
+
+
 def test_heretic_empty_is_match():
     assert m.is_heretic_refusal("") is True
     assert m.is_heretic_refusal("   ") is True

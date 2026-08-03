@@ -183,6 +183,12 @@ ignore = [
   "N818",     # _FakeOOM is a test double for torch's OOM, named after what it fakes
 ]
 
+# The validation experiment deliberately reuses the extractor's own maths helpers
+# rather than reimplementing them. That is the whole point of it: a probe that
+# re-derives the geometry measures the probe, which is exactly how a broken filter
+# went unnoticed for the project's history. Scoped to the one file that needs it.
+"tools/direction_validation.py" = ["SLF001"]
+
 [tool.pytest.ini_options]
 # Coverage runs on a bare `pytest`, so the gate is something you meet while working
 # rather than something CI tells you about after you push.

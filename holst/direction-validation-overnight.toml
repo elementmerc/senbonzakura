@@ -1,0 +1,234 @@
+# Do the extra refusal directions carry refusal, or do they carry topic?
+#
+# The clustered extractor now finds up to eight directions per layer where the old one always
+# found exactly one. That is not evidence the extras are refusal directions: the separation filter
+# meant to judge them accepts every candidate it is shown, so it discriminates as little now as it
+# did when it rejected everything.
+#
+# The published work has the same hole. "Exploring the multi-dimensional refusal subspace"
+# (LessWrong) reaches the same clustering method independently and states plainly that it has no
+# random-direction baseline and no cross-topic generalisation test. arXiv:2603.22061 argues that
+# topic-matched contrasts cannot separate refusal from topic and recommends exactly those two
+# controls. Running them is what would make this the tool that settles the question rather than
+# another one that asserts it.
+#
+#   E1  leave-one-cluster-out. Fit with a cluster excluded, then ask whether the fitted directions
+#       still separate it. Against a random-direction floor and the global mean difference as a
+#       ceiling. No generation, minutes per model.
+#   E2  random-direction control. Ablate K directions where the extras are random instead of
+#       fitted. If fitted does not beat random at matched K, the extras carry nothing.
+#   E3  K sweep from ONE fixed window. Only K varies, so the withdrawn five-seed comparison's
+#       confound (two arms, two different searches) cannot recur.
+#
+# Read E1 first. If the extras do not generalise, E2 and E3 are measuring a topic detector and the
+# multi-direction claim does not survive in its current form. That is a publishable negative and
+# it is cheaper to find tonight than after a rented card.
+#
+# One honest caveat, recorded here so nobody reads the output too generously: when refusal really
+# is a single direction, the global mean difference absorbs it and the extras can only carry
+# cluster-specific structure. "The extras do not generalise" therefore means "refusal is one
+# direction here", not "the method is broken". The two readings are distinguished by E1's
+# d0-on-held-out column, which stays high in the first case.
+#
+# Machine "rog" is the WSL2 instance on the ROG laptop, which holds the 6 GB card. atlas has no
+# GPU and no torch, so it cannot host any of this.
+run = "direction-validation-2026-08-03"
+
+[[job]]
+id = "setup"
+machine = "rog"
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+test -f "$RUN/tools/direction_validation.py" || { echo "MISSING_TOOL"; exit 1; }
+cd "$RUN"
+
+# The clustered extractor is what these experiments judge. An older tree would run, apply one
+# direction, and report that the extras do not generalise because there are none. Refuse rather
+# than produce a verdict about a version that is not installed.
+PYTHONPATH=src "$PY" -c "
+from senbonzakura import cli
+assert hasattr(cli, '_kmeans_labels'), 'the shipped extractor predates clustered candidates'
+assert hasattr(cli, 'MIN_CLUSTER_ROWS')
+print('clustered extractor present; threshold', cli.MIN_AXIS_SEPARATION)
+"
+"$PY" -c 'import torch; assert torch.cuda.is_available()'
+mkdir -p "$RUN/validation" "$RUN/abl"
+echo SETUP_OK
+"""
+
+# E1 runs alone first, for both models, because it is cheap and it can make the rest pointless.
+
+[[job]]
+id = "e1-qwen3"
+name = "E1: leave-one-cluster-out, Qwen3-1.7B"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "E1_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
+    --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+    --experiment e1 --device cuda --max-directions 8 --dir-prompts 128 --seed 42 \\
+    --out "$RUN/validation/e1-qwen3.json"
+
+"$PY" -c "import json; json.load(open('$RUN/validation/e1-qwen3.json'))"
+echo E1_OK
+"""
+
+[[job]]
+id = "e1-gemma"
+name = "E1: leave-one-cluster-out, gemma-2-2b-it"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 5400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "E1_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --experiment e1 --device cuda --max-directions 8 --dir-prompts 128 --seed 42 \\
+    --out "$RUN/validation/e1-gemma.json"
+
+"$PY" -c "import json; json.load(open('$RUN/validation/e1-gemma.json'))"
+echo E1_OK
+"""
+
+# E2 and E3 share one model load and one direction extraction, so they run together. They generate
+# text, which is why they cost hours where E1 costs minutes.
+
+[[job]]
+id = "e2-e3-qwen3"
+name = "E2 + E3: random-direction control and K sweep, Qwen3-1.7B"
+machine = "rog"
+deps = ["e1-qwen3"]
+timeout_secs = 21600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "E23_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+# Already complete is a success, not work to repeat: this is the long job and an interrupted
+# night should not throw away a finished one. The test is that the file PARSES.
+if "$PY" -c "import json; json.load(open('$RUN/validation/e2-e3-qwen3.json'))" >/dev/null 2>&1; then
+    echo "ALREADY_COMPLETE"; echo E23_OK; exit 0
+fi
+
+PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
+    --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+    --experiment all --device cuda --max-directions 8 \\
+    --dir-prompts 128 --eval-refusal 64 --eval-kl 64 --seed 42 \\
+    --out "$RUN/validation/e2-e3-qwen3.json"
+
+"$PY" -c "import json; json.load(open('$RUN/validation/e2-e3-qwen3.json'))"
+echo E23_OK
+"""
+
+[[job]]
+id = "report"
+name = "read the three together"
+machine = "rog"
+deps = ["e1-qwen3", "e1-gemma", "e2-e3-qwen3"]
+timeout_secs = 600
+success = { type = "stdout-contains", needle = "REPORT_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+
+PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
+import json, os, sys
+
+RUN = os.path.expanduser("~/senbon-run")
+WANT = [("E1 Qwen3-1.7B", "e1-qwen3"), ("E1 gemma-2-2b-it", "e1-gemma"),
+        ("E2+E3 Qwen3-1.7B", "e2-e3-qwen3")]
+
+rows, missing = [], []
+for tag, name in WANT:
+    try:
+        with open(f"{RUN}/validation/{name}.json", encoding="utf-8") as f:
+            rows.append((tag, json.load(f)))
+    except (OSError, ValueError) as e:
+        missing.append(f"{tag}: {e}")
+
+if missing:
+    print("INCOMPLETE: refusing to summarise a design that did not finish")
+    for m in missing:
+        print("  " + m)
+    sys.exit(1)
+
+print("\\n=== E1: do the extra directions generalise to prompts they never saw? ===")
+for tag, r in rows:
+    e1 = r.get("e1")
+    if not e1:
+        continue
+    s = e1["summary"]
+    print(f"\\n  {tag}")
+    if not s:
+        print("    no usable folds")
+        continue
+    print(f"    folds                     {s['folds']}")
+    print(f"    mean fitted extra         {s['mean_extra']}")
+    print(f"    mean random floor         {s['mean_random']}")
+    print(f"    mean d0 (ceiling)         {s['mean_d0']}")
+    print(f"    folds beating random max  {s['folds_where_extra_beats_random_max']}/{s['folds']}")
+    print(f"    verdict: {e1['verdict']}.")
+
+print("\\n=== E2 and E3: what does each K actually buy, and does fitted beat random? ===")
+for tag, r in rows:
+    block = r.get("e2_e3")
+    if not block:
+        continue
+    print(f"\\n  {tag}   (max K available: {block['max_k_available']})")
+    print("    {:<22} {:>9} {:>10} {:>8}".format("arm", "harmful", "harmless", "KL"))
+    for row in block["rows"]:
+        print("    {:<22} {:>9} {:>10} {:>8}".format(
+            row["arm"], row["harmful_refusal"], row["harmless_refusal"], row["kl"]))
+
+    fitted = {r_["K"]: r_ for r_ in block["rows"] if not r_["random_extras"]}
+    rand = {r_["K"]: r_ for r_ in block["rows"] if r_["random_extras"]}
+    shared = sorted(set(fitted) & set(rand))
+    if shared:
+        print("\\n    fitted against random at matched K:")
+        for K in shared:
+            d = rand[K]["harmful_refusal"] - fitted[K]["harmful_refusal"]
+            verdict = ("fitted wins" if d > 0.02 else
+                       "random wins" if d < -0.02 else "no difference worth reading")
+            print(f"      K={K}: fitted {fitted[K]['harmful_refusal']} vs random "
+                  f"{rand[K]['harmful_refusal']}  ->  {verdict}")
+        print("\\n    If fitted does not beat random, the extra directions are not carrying "
+              "refusal and the advantage is only that more of the space was cut.")
+EOF
+echo REPORT_OK
+"""

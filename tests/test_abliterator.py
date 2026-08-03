@@ -862,91 +862,6 @@ def test_the_run_records_which_format_produced_its_numbers(base_args, tiny_model
 
 
 # ── SVD non-convergence (tranche 4, task 24, second half) ─────────────────────────────
-def _break_svd(monkeypatch, *, and_eigh=False):
-    """Make torch.linalg.svd refuse to converge, optionally eigh too.
-
-    Only these two functions are replaced. Swapping the whole torch.linalg namespace
-    also breaks the qr() and norm() calls that extraction and torch's own internals make,
-    which fails for a reason unrelated to what is under test.
-    """
-    calls = {"svd": 0}
-
-    def no_svd(*_a, **_k):
-        calls["svd"] += 1
-        raise torch.linalg.LinAlgError("pretend gesdd did not converge")
-
-    monkeypatch.setattr(torch.linalg, "svd", no_svd)
-    if and_eigh:
-        def no_eigh(*_a, **_k):
-            raise torch.linalg.LinAlgError("pretend eigh also failed")
-
-        monkeypatch.setattr(torch.linalg, "eigh", no_eigh)
-    return calls
-
-
-def test_the_gram_retry_reproduces_what_svd_would_have_returned(monkeypatch):
-    """The retry has to be the same maths by another route, or it is not a retry."""
-    torch.manual_seed(11)
-    x = torch.randn(60, 12)
-    xc = x - x.mean(0, keepdim=True)
-    want_s, want_vh = torch.linalg.svd(xc, full_matrices=False)[1:]
-
-    lines = []
-    calls = _break_svd(monkeypatch)
-    got_s, got_vh = cli._principal_axes(xc, 0, lines.append)
-
-    assert calls["svd"] == 1
-    # Singular values match; axes match up to sign, which is free in an eigenvector.
-    assert torch.allclose(got_s[:8], want_s[:8], atol=1e-4)
-    for j in range(8):
-        assert abs(abs(float(got_vh[j] @ want_vh[j])) - 1.0) < 1e-4
-    assert any("retrying via the Gram matrix" in line for line in lines)
-
-
-def test_the_svd_path_is_used_when_it_works():
-    torch.manual_seed(5)
-    xc = torch.randn(40, 9)
-    xc = xc - xc.mean(0, keepdim=True)
-    want = torch.linalg.svd(xc, full_matrices=False)[1]
-    got, _ = cli._principal_axes(xc, 0, lambda _m: None)
-    assert torch.allclose(got, want, atol=1e-6)
-
-
-def test_both_decompositions_failing_stops_the_run(monkeypatch):
-    """The old path logged, dropped to an empty axis set, and reported the K it asked for."""
-    torch.manual_seed(3)
-    _break_svd(monkeypatch, and_eigh=True)
-    with pytest.raises(RuntimeError, match="could not decompose the harmful residual cloud"):
-        cli._principal_axes(torch.randn(20, 6), 7, lambda _m: None)
-
-
-def test_the_failure_names_the_layer_and_the_two_knobs(monkeypatch):
-    torch.manual_seed(3)
-    _break_svd(monkeypatch, and_eigh=True)
-    with pytest.raises(RuntimeError) as e:
-        cli._principal_axes(torch.randn(20, 6), 7, lambda _m: None)
-    message = str(e.value)
-    assert "layer 7" in message
-    assert "--dir-prompts" in message
-    assert "--max-directions" in message
-
-
-def test_extraction_survives_a_non_converging_svd(base_args, tiny_model, tiny_tok, track, monkeypatch):
-    """End to end: the retry keeps a real run alive rather than quietly weakening it."""
-    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    _break_svd(monkeypatch)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
-    assert a.dirs_multi.shape == (a.NL + 1, a.KMAX, a.H)
-
-
-def test_extraction_stops_when_neither_decomposition_converges(base_args, tiny_model, tiny_tok,
-                                                               track, monkeypatch):
-    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    _break_svd(monkeypatch, and_eigh=True)
-    with pytest.raises(RuntimeError, match="could not decompose"):
-        a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
-
-
 # ── the applied K is recorded, whatever reduced it ────────────────────────────────────
 def test_the_applied_k_per_layer_is_recorded(base_args, tiny_model, tiny_tok, track):
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
@@ -958,12 +873,14 @@ def test_the_applied_k_per_layer_is_recorded(base_args, tiny_model, tiny_tok, tr
         assert int((a.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum()) == k
 
 
-def test_a_shortfall_against_the_requested_k_is_announced(base_args, tiny_model, tiny_tok, track):
+def test_a_shortfall_against_the_requested_k_is_announced(base_args, tiny_model, tiny_tok, track,
+                                                          monkeypatch):
     """A run that asks for 3 and applies fewer must not report only the 3."""
     lines = []
     base_args.max_directions = 3
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
     if min(a.dirs_per_layer) < a.KMAX:
         joined = "\n".join(lines)
         assert "directions_per_layer" in joined, "a shortfall must point at the record of it"
@@ -985,7 +902,8 @@ def test_a_run_that_applies_one_direction_everywhere_says_so_in_those_words(
     # model: every candidate axis past the first carried content rather than refusal.
     monkeypatch.setattr(cli, "_axis_separation", lambda *a, **k: 0.0)
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     assert max(a.dirs_per_layer) <= 1, "the fixture must actually produce the single-direction case"
     joined = "\n".join(lines)
@@ -1007,8 +925,8 @@ def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, tra
 def _sep_sequence(monkeypatch, values):
     """Make `_axis_separation` return `values` in order, repeating the last one forever.
 
-    The extractor asks once per candidate axis per layer, and the number of candidates is a
-    property of the fixture's hidden size, so a fixed-length list would run out mid-layer.
+    The extractor asks once per candidate direction per layer, so a fixed-length list would run
+    out mid-layer and the tail would read as an unrelated value.
     """
     seen = []
 
@@ -1019,6 +937,117 @@ def _sep_sequence(monkeypatch, values):
 
     monkeypatch.setattr(cli, "_axis_separation", fake)
     return seen
+
+
+def _clusterable(a, monkeypatch, n=64, modes=3, seed=5):
+    """Feed the extractor a harmful cloud with `modes` distinct refusal modes.
+
+    The committed toy track holds twelve prompts, which cannot fill two clusters of
+    MIN_CLUSTER_ROWS, so a test that used it would exercise the too-small-corpus branch instead
+    of the clustering. This is the smallest fixture that can express "refusal is not one thing":
+    several groups of harmful prompts, each sitting in its own direction away from the harmless
+    cloud, which is the structure the clustered extractor exists to find.
+    """
+    NL1, H = a.NL + 1, a.H
+    torch.manual_seed(seed)
+    assert modes + 2 <= H, "the fixture needs a dimension per mode plus the harmless one"
+    # Ask for exactly as many clusters as there are modes. With more, k-means splits the same
+    # blobs into pieces smaller than MIN_CLUSTER_ROWS and every candidate is skipped, which is
+    # correct behaviour and useless as a fixture.
+    a.args.direction_clusters = modes
+    assert n >= modes * cli.MIN_CLUSTER_ROWS, "too few rows to fill one cluster per mode"
+
+    def fake_collect(prompts):
+        k = len(prompts)
+        base = torch.zeros(NL1, k, H)
+        if prompts and prompts[0].startswith("GOOD"):
+            base[:, :, 0] = 5.0
+        else:
+            # Row i belongs to mode i % modes and is displaced along that mode's own dimension.
+            for i in range(k):
+                base[:, i, 1 + (i % modes)] = 6.0
+        return base + torch.randn(NL1, k, H) * 0.02
+
+    monkeypatch.setattr(a, "load",
+                        lambda d, m: [("GOOD " if "good" in d else "BAD ") + str(i) for i in range(n)])
+    monkeypatch.setattr(a, "collect_resid", fake_collect)
+
+
+def test_a_second_refusal_direction_is_actually_kept(base_args, tiny_model, tiny_tok, monkeypatch):
+    """The claim the project is named for, exercised end to end with nothing mocked.
+
+    No monkeypatched separation here: real clouds, the real statistic, the real filter. Until
+    2026-08-03 no test in this suite required a candidate direction to PASS, which is how a
+    filter that rejected everything survived every review. This is that test.
+    """
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert max(a.dirs_per_layer) > 1, (
+        f"no layer kept a second direction: {a.dirs_per_layer}. The separation values measured "
+        f"were {a.axis_separations}")
+    assert a.filter_is_unsatisfiable is False
+    assert a.max_axis_separation > cli.MIN_AXIS_SEPARATION
+
+
+def test_the_kept_directions_stay_orthonormal(base_args, tiny_model, tiny_tok, monkeypatch):
+    """The bake's norm-preserving maths assumes an orthonormal basis.
+
+    Two clusters can carry overlapping refusal, so a candidate scored before another was kept
+    has to be re-orthogonalised against it. Skipping that puts a near-duplicate row into a set
+    the surgery treats as independent, and the ablation strength applied stops matching the one
+    on record.
+    """
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    for li, k in enumerate(a.dirs_per_layer):
+        if k < 2:
+            continue
+        M = a.dirs_multi[li, :k].float()
+        gram = M @ M.T
+        assert torch.allclose(gram, torch.eye(k), atol=6e-2), (
+            f"layer {li} kept {k} directions that are not orthonormal:\n{gram}")
+
+
+def test_the_candidate_set_does_not_change_when_the_budget_does(
+        base_args, tiny_model, tiny_tok, monkeypatch):
+    """K must be a budget and nothing else, or a K comparison is not a comparison of K.
+
+    The withdrawn five-seed run failed for the mirror image of this: its two arms differed in
+    more than the quantity under test. Candidates are all scored before any is kept, so the set
+    a K=1 run considers is the set a K=3 run considers.
+    """
+    runs = {}
+    for k in (1, 2, 3):
+        base_args.max_directions = k
+        a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+        _clusterable(a, monkeypatch, n=48, modes=3)
+        a.extract_directions("bad", "good", None, "good")
+        runs[k] = a
+
+    assert max(runs[3].dirs_per_layer) > max(runs[1].dirs_per_layer), (
+        "the fixture must actually let the larger budget keep more, or this proves nothing")
+
+    # A smaller budget keeps a PREFIX of what a larger one keeps: same directions, fewer of them.
+    # That is what makes the arms of a K comparison differ in K alone. Candidates are ranked by
+    # separation before any is kept, so the budget truncates the list rather than changing it.
+    for smaller in (1, 2):
+        for li in range(runs[3].NL + 1):
+            k = min(runs[smaller].dirs_per_layer[li], runs[3].dirs_per_layer[li])
+            for j in range(k):
+                a_dir = runs[smaller].dirs_multi[li, j].float()
+                b_dir = runs[3].dirs_multi[li, j].float()
+                # Up to sign: a direction and its negative ablate the same subspace.
+                assert abs(float(a_dir @ b_dir)) == pytest.approx(1.0, abs=6e-2), (
+                    f"K={smaller} and K=3 disagree on direction {j} at layer {li}")
+
+    kept_seps = [s for layer in runs[3].axis_separations for s in layer]
+    assert kept_seps, "nothing was measured, so the prefix claim above is untested"
 
 
 def test_the_separation_of_every_rejected_axis_is_recorded(
@@ -1032,7 +1061,8 @@ def test_the_separation_of_every_rejected_axis_is_recorded(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [0.42])
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     assert len(a.axis_separations) == a.NL + 1
     measured = [d for layer in a.axis_separations for d in layer]
@@ -1054,7 +1084,8 @@ def test_an_unsatisfiable_filter_is_announced_as_a_broken_instrument(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [0.0])
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     assert a.filter_is_unsatisfiable is True
     joined = "\n".join(lines)
@@ -1070,7 +1101,8 @@ def test_a_real_small_separation_is_not_called_a_broken_filter(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [0.02])
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     assert a.filter_is_unsatisfiable is False
     assert "BROKEN FILTER" not in "\n".join(lines)
@@ -1083,7 +1115,8 @@ def test_a_near_miss_names_the_threshold_as_the_cause(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION - 0.01])
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     joined = "\n".join(lines)
     assert "rejected-axis separations" in joined
@@ -1097,7 +1130,8 @@ def test_a_clear_rejection_says_lowering_the_threshold_would_not_help(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [0.02])
     a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     joined = "\n".join(lines)
     assert "Well clear of the threshold" in joined
@@ -1109,53 +1143,12 @@ def test_a_kept_axis_is_recorded_and_is_not_counted_as_rejected(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION + 1.0])
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     assert a.best_rejected_separation is None, "nothing was below the threshold"
     assert max(a.dirs_per_layer) > 1, "a clearing axis must actually be kept"
     assert any(layer for layer in a.axis_separations), "kept axes are recorded too"
-
-
-def test_the_rank_floor_keeps_numerical_noise_out_of_the_direction_set(abl, monkeypatch):
-    """The guard that stops rounding error being ablated as though it were refusal.
-
-    Found untested on 2026-08-03 by mutation: deleting the floor entirely broke no test. Its
-    own comment records what it prevents, which had actually happened at H=8 before the cap
-    landed: a linearly dependent axis whose post-projection residual still cleared the 1e-6 norm
-    guard in float32 was scaled to unit length and ablated as a refusal direction.
-
-    The cloud here genuinely spans three dimensions. Everything past that is float noise, and
-    the separation filter is forced to accept anything, so ONLY the floor can hold the count
-    down. Without it, the run fills all KMAX slots with normalised noise.
-    """
-    NL1, H = abl.NL + 1, abl.H
-    abl.KMAX = H                      # ask for far more directions than the cloud can support
-    torch.manual_seed(11)
-    rank = 3
-
-    def fake_collect(prompts):
-        n = len(prompts)
-        base = torch.zeros(NL1, n, H)
-        if prompts and prompts[0].startswith("GOOD"):
-            base[:, :, 0] = 5.0
-        else:
-            # Structure in exactly `rank` directions, and nothing anywhere else but noise that
-            # sits far below the floor at S[0] * 1e-4.
-            for d in range(rank):
-                base[:, :, d + 1] = torch.randn(NL1, n) * (4.0 - d)
-        return base + torch.randn(NL1, n, H) * 1e-9
-
-    monkeypatch.setattr(abl, "load",
-                        lambda d, n: [("GOOD " if "good" in d else "BAD ") + str(i) for i in range(n)])
-    monkeypatch.setattr(abl, "collect_resid", fake_collect)
-    monkeypatch.setattr(cli, "_axis_separation", lambda *a, **k: 99.0)   # filter accepts everything
-
-    abl.extract_directions("bad", "good", None, "good")
-
-    assert max(abl.dirs_per_layer) <= rank + 1, (
-        f"noise axes were kept: asked for {abl.KMAX} and got {max(abl.dirs_per_layer)} from a "
-        f"rank-{rank} cloud, so the floor is not holding")
-    assert max(abl.dirs_per_layer) > 1, "the fixture must let real axes through, or it proves nothing"
 
 
 def test_the_total_measured_exceeds_the_bounded_record(
@@ -1169,7 +1162,8 @@ def test_the_total_measured_exceeds_the_bounded_record(
     base_args.max_directions = 3
     _sep_sequence(monkeypatch, [0.0])
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    _clusterable(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
 
     recorded = sum(len(layer) for layer in a.axis_separations)
     assert a.axes_measured_total >= recorded
@@ -1178,12 +1172,11 @@ def test_the_total_measured_exceeds_the_bounded_record(
 
 
 def test_the_verdict_comes_from_every_axis_not_the_sample(
-        base_args, tiny_model, tiny_tok, track, monkeypatch):
+        base_args, model_factory, tiny_tok, monkeypatch):
     """A separating axis past the record's cap must stop the broken-filter verdict.
 
     Otherwise the flag says "no axis can pass" on evidence that stopped looking after eight.
     """
-    base_args.max_directions = 1     # keep nothing, so every candidate is measured and recorded
     seen = []
 
     def fake(bad, good, v):
@@ -1194,8 +1187,14 @@ def test_the_verdict_comes_from_every_axis_not_the_sample(
 
     monkeypatch.setattr(cli, "_axis_separation", fake)
     base_args.max_directions = 3
-    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
-    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    # A wider model than the shared fixture: this needs more refusal modes than the record holds,
+    # and each mode wants its own dimension.
+    modes = cli.MAX_RECORDED_AXES * 2
+    a = cli.Abliterator(base_args, lambda m: None,
+                        model=model_factory(H=modes + 4, NL=3, V=16), tok=tiny_tok)
+    # More clusters than MAX_RECORDED_AXES, so candidates exist past the point the record stops.
+    _clusterable(a, monkeypatch, n=modes * cli.MIN_CLUSTER_ROWS, modes=modes)
+    a.extract_directions("bad", "good", None, "good")
 
     assert a.max_axis_separation == pytest.approx(5.0)
     assert a.filter_is_unsatisfiable is False, (

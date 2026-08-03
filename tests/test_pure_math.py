@@ -81,9 +81,15 @@ def test_axis_separation_low_for_overlapping_clouds():
     assert d < cli.MIN_AXIS_SEPARATION   # no separation -> would be dropped
 
 
-# ── the filter cannot be passed, and that is the bug ──────────────────────────────────
-def _candidate_axes(Rb, Rg, n=5):
-    """Build candidate axes exactly as `extract_directions` does, and return them with the basis."""
+# ── why PCA candidates were abandoned, and what replaced them ─────────────────────────
+def _pca_candidate_axes(Rb, Rg, n=5):
+    """Build candidates the way the extractor did BEFORE 2026-08-03: principal axes of the
+    harmful cloud, orthogonalised against the harmless direction and the difference of means.
+
+    Kept as executable documentation. It is the construction the project shipped for its whole
+    history, and the reason it was replaced is a fact about geometry that a comment cannot
+    demonstrate and this can.
+    """
     mb, mg = Rb.mean(0), Rg.mean(0)
     gd = mg / mg.norm()
     d0 = cli._orth_to(mb - mg, [gd]); d0 = d0 / d0.norm()
@@ -93,63 +99,127 @@ def _candidate_axes(Rb, Rg, n=5):
     for u in basis:
         Xc = Xc - torch.outer(Xc @ u, u)
     Vh = torch.linalg.svd(Xc, full_matrices=False)[2]
-
-    out = []
-    for j in range(n):
-        v = cli._orth_to(Vh[j], basis)
-        out.append(v / v.norm())
-    return out
+    return [cli._orth_to(Vh[j], basis) / cli._orth_to(Vh[j], basis).norm() for j in range(n)]
 
 
-def _clouds_with_a_real_second_direction(seed=0, N=200, H=64):
+def _clouds_with_two_refusal_modes(seed=0, per_mode=100, H=64):
+    """Harmful prompts in two distinct refusal modes, harmless prompts in neither.
+
+    Both modes sit away from the harmless cloud, in different directions. Any method that claims
+    to find a refusal SUBSPACE has to find two directions here; a method that finds one has found
+    the average of two things that are not the same thing.
+    """
     torch.manual_seed(seed)
-    Rg = torch.randn(N, H)
-    Rb = torch.randn(N, H)
-    Rb[:, 0] += 4.0                      # the difference-of-means direction
-    Rb[:, 1] += 3.0                      # a genuine SECOND separating direction
-    Rb[:, 2] += torch.randn(N) * 5.0     # within-harmful spread that separates nothing
+    Rg = torch.randn(2 * per_mode, H)
+    Rb = torch.randn(2 * per_mode, H)
+    Rb[:per_mode, 0] += 6.0        # mode one
+    Rb[per_mode:, 1] += 6.0        # mode two, independent of the first
     return Rb, Rg
 
 
-def test_the_data_really_does_carry_a_second_separating_direction():
-    """The control for the test below: without this, a zero would prove nothing."""
-    Rb, Rg = _clouds_with_a_real_second_direction()
-    e1 = torch.zeros(Rb.shape[1]); e1[1] = 1.0
-    assert cli._axis_separation(Rb, Rg, e1) > 2.0
+def test_the_data_really_does_carry_two_separating_directions():
+    """The control. Without it, a method finding nothing would prove nothing."""
+    Rb, Rg = _clouds_with_two_refusal_modes()
+    for axis in (0, 1):
+        e = torch.zeros(Rb.shape[1]); e[axis] = 1.0
+        assert cli._axis_separation(Rb, Rg, e) > 1.0
 
 
-def test_every_candidate_axis_scores_zero_because_it_is_orthogonal_to_both_means(recwarn):
-    """The structural defect, pinned (2026-08-03).
+def test_pca_candidates_score_zero_because_they_are_orthogonal_to_both_means():
+    """The defect that made the multi-direction feature inert for the project's whole history.
 
-    Candidates are orthogonalised against a basis spanning both class means, and Cohen's d is a
-    difference of class means, so the numerator is exactly zero however separable the data is.
-    The filter is unsatisfiable rather than strict, and no positive threshold changes that.
-
-    This test asserts the CURRENT broken behaviour on purpose, so that a fix has to come here
-    and say what it changed. Its partner below asserts the behaviour we actually want.
+    Candidates were orthogonalised against a basis spanning both class means, and the statistic
+    judging them is a difference of class means, so the numerator is exactly zero however
+    separable the data is. Not strict: unsatisfiable. Kept as a regression test so nobody
+    reintroduces the construction, and as the evidence behind the rewrite.
     """
-    Rb, Rg = _clouds_with_a_real_second_direction()
-    for v in _candidate_axes(Rb, Rg):
-        assert cli._axis_separation(Rb, Rg, v) < 1e-6
+    Rb, Rg = _clouds_with_two_refusal_modes()
+    for v in _pca_candidate_axes(Rb, Rg):
+        assert cli._axis_separation(Rb, Rg, v) < 1e-4
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "The refusal-separation filter cannot pass any axis: candidates are orthogonalised against a "
-    "basis spanning both class means and the statistic is a difference of class means, so d is "
-    "structurally 0. Documented in private/research/"
-    "2026-08-03-the-separation-filter-can-never-pass.md. strict=True so that whichever replacement "
-    "statistic is chosen, this test goes red the moment it starts working and has to be un-xfailed "
-    "deliberately rather than drifting green unnoticed."))
-def test_a_genuinely_separating_second_axis_can_be_kept():
-    """The property the multi-direction claim depends on, and which has never held.
+def test_a_cluster_candidate_separates_where_a_pca_candidate_cannot():
+    """The replacement, on the same data, measured the same way.
 
-    No test in this suite ever required a candidate axis to PASS the filter, which is why a
-    filter that rejects everything survived every review. A rejection path tested only with
-    rejections is not tested.
+    Each cluster's own difference-of-means is separating BY CONSTRUCTION, and what survives
+    orthogonalisation against d0 is the part of that cluster's refusal the global mean difference
+    misses. That residue is what a second direction is, and it is what the old construction threw
+    away before measuring.
     """
-    Rb, Rg = _clouds_with_a_real_second_direction()
-    assert any(cli._axis_separation(Rb, Rg, v) >= cli.MIN_AXIS_SEPARATION
-               for v in _candidate_axes(Rb, Rg))
+    Rb, Rg = _clouds_with_two_refusal_modes()
+    mg = Rg.mean(0)
+    gd = mg / mg.norm()
+    d0 = cli._orth_to(Rb.mean(0) - mg, [gd]); d0 = d0 / d0.norm()
+    basis = [gd, d0]
+
+    labels = cli._kmeans_labels(Rb, 2, seed=42)
+    best = 0.0
+    for c in labels.unique():
+        rows = Rb[labels == c]
+        if rows.size(0) < cli.MIN_CLUSTER_ROWS:
+            continue
+        v = cli._orth_to(rows.mean(0) - mg, basis)
+        if v.norm() < 1e-6:
+            continue
+        v = v / v.norm()
+        # Scored against the cluster's own rows. Against the whole harmful cloud the global mean
+        # is orthogonal to v by construction and this collapses to zero again.
+        best = max(best, cli._axis_separation(rows, Rg, v))
+
+    assert best >= cli.MIN_AXIS_SEPARATION, (
+        f"the replacement kept nothing either: best cluster separation was {best:.4f} against a "
+        f"threshold of {cli.MIN_AXIS_SEPARATION}")
+
+
+def test_scoring_a_cluster_direction_against_the_whole_cloud_reproduces_the_bug():
+    """The one line that would silently undo the rewrite.
+
+    Measuring a cluster's direction against every harmful row instead of that cluster's rows
+    puts the global mean back in the numerator, where it is orthogonal to the candidate by
+    construction. The score returns to zero and the filter is unsatisfiable again.
+    """
+    Rb, Rg = _clouds_with_two_refusal_modes()
+    mg = Rg.mean(0)
+    gd = mg / mg.norm()
+    d0 = cli._orth_to(Rb.mean(0) - mg, [gd]); d0 = d0 / d0.norm()
+
+    labels = cli._kmeans_labels(Rb, 2, seed=42)
+    c = labels.unique()[0]
+    rows = Rb[labels == c]
+    v = cli._orth_to(rows.mean(0) - mg, [gd, d0])
+    v = v / v.norm()
+
+    assert cli._axis_separation(rows, Rg, v) >= cli.MIN_AXIS_SEPARATION   # correct scoring
+    assert cli._axis_separation(Rb, Rg, v) < 1e-4                          # the trap
+
+
+# ── k-means ───────────────────────────────────────────────────────────────────────────
+def test_kmeans_recovers_planted_clusters():
+    torch.manual_seed(3)
+    X = torch.cat([torch.randn(40, 6) + 10.0, torch.randn(40, 6) - 10.0])
+    labels = cli._kmeans_labels(X, 2, seed=1)
+    assert len(labels.unique()) == 2
+    assert len(labels[:40].unique()) == 1 and len(labels[40:].unique()) == 1
+
+
+def test_kmeans_is_deterministic_for_a_seed():
+    """Two runs on the same input must produce byte-identical output, directions included."""
+    torch.manual_seed(3)
+    X = torch.randn(60, 8)
+    assert torch.equal(cli._kmeans_labels(X, 4, seed=7), cli._kmeans_labels(X, 4, seed=7))
+
+
+def test_kmeans_never_returns_more_clusters_than_rows():
+    X = torch.randn(3, 5)
+    assert len(cli._kmeans_labels(X, 10, seed=0).unique()) <= 3
+
+
+def test_kmeans_survives_identical_rows():
+    """Every squared distance is zero, so the ++ seeding has nothing to sample from."""
+    X = torch.ones(20, 4)
+    labels = cli._kmeans_labels(X, 5, seed=0)
+    assert labels.shape == (20,)
+    assert len(labels.unique()) >= 1
 
 
 # ── _profiles_from_params ───────────────────────────────────────────────────────────

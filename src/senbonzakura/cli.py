@@ -117,6 +117,11 @@ MAX_RECORDED_AXES = 8
 #: dataset and never checked against another is the failure this whole area is about.
 STRUCTURAL_ZERO_FRACTION = 1e-3
 
+#: A cluster smaller than this does not get to propose a direction. Its mean is dominated by the
+#: few prompts in it, so the "direction" would encode those prompts rather than a refusal mode,
+#: and ablating it would strip whatever they happen to be about.
+MIN_CLUSTER_ROWS = 8
+
 # The "worse than anything real" score, used to keep damaged / unmeasured trials out of the running
 # for best. A true infinity so no finite objective can ever tie or beat it.
 WORST_SCORE = float("inf")
@@ -503,6 +508,13 @@ def build_parser():
     ap.add_argument("--max-directions", type=int, default=3,
                     help="upper bound on refusal directions per layer the search may ablate "
                          "(1 = single-direction, the original method; >1 enables multi-directional)")
+    ap.add_argument("--direction-clusters", type=int, default=8,
+                    help="how many refusal modes to look for per layer. The harmful prompts are "
+                         "clustered and each cluster proposes one candidate direction; the ones "
+                         "that separate harmful from harmless best are kept, up to "
+                         "--max-directions. Deliberately independent of --max-directions so the "
+                         "candidate set does not change when the budget does, which is what makes "
+                         "a K=1 against K=3 comparison a comparison of K.")
     ap.add_argument("--sparsity", type=float, default=0.0,
                     help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "
@@ -605,45 +617,49 @@ def last_token_logits(model, enc, log=None):
     return model(**enc, use_cache=False).logits[:, -1, :].float()
 
 
-def _principal_axes(Xc, li, log):
-    """Principal axes of a centred cloud and their singular values, largest first.
+def _kmeans_labels(X, k, seed, iters=25):
+    """Cluster the rows of `X` into at most `k` groups. Returns per-row labels.
 
-    Two algorithms, not one retried twice. `torch.linalg.svd` on a [N, H] cloud can fail
-    to converge on real residuals; the eigendecomposition of the Gram matrix produces the
-    same right singular vectors by a different and more forgiving route, so it is a real
-    second chance rather than the same computation again.
+    Plain Lloyd's algorithm with k-means++ seeding, written here rather than pulled in: it is
+    forty lines against a dependency in the fitting path of a security-adjacent tool, and every
+    call is on a [prompts, hidden] matrix small enough that the clever implementations buy
+    nothing (128 x 2048 at k=8).
 
-    If both fail, this raises. The previous behaviour logged and fell back to an empty
-    axis set, which silently reduced the kept basis at that layer: a K=3 run became K=1
-    there and still reported K=3, so the ablation strength on record was not the one
-    applied. A weaker basis produced by accident is worse than a run that stops, because
-    only one of the two is visible afterwards.
-
-    Float64 for the Gram path on purpose. Forming X'X squares the condition number, and
-    the rank floor downstream compares singular values at a ratio of 1e-4, which is 1e-8
-    in eigenvalues, past what float32 holds reliably.
+    Deterministic for a given seed, because two runs of this project on the same input must
+    produce byte-identical output, and a random initialisation would leak into the direction set.
     """
-    try:
-        _, S, Vh = torch.linalg.svd(Xc, full_matrices=False)   # rows of Vh = principal axes
-    except torch.linalg.LinAlgError as first:
-        log(f"  layer {li}: SVD did not converge ({first}); retrying via the Gram matrix")
-        x64 = Xc.to(torch.float64)
-        try:
-            evals, evecs = torch.linalg.eigh(x64.T @ x64)
-        except torch.linalg.LinAlgError as second:
-            raise RuntimeError(
-                f"could not decompose the harmful residual cloud at layer {li}: SVD did not "
-                f"converge ({first}) and neither did the Gram-matrix eigendecomposition "
-                f"({second}). Continuing would silently drop this layer to fewer directions "
-                f"than requested while still reporting the requested number, so the run stops "
-                f"instead. A cloud this ill-conditioned usually means too few contrast prompts "
-                f"for the hidden size: raise --dir-prompts, or lower --max-directions.") from second
-        order = torch.argsort(evals, descending=True)
-        # Eigenvalues of X'X are the squared singular values of X; clamp first, because a
-        # PSD matrix can still produce small negative eigenvalues through rounding.
-        S = evals[order].clamp_min(0.0).sqrt().to(Xc.dtype)
-        Vh = evecs[:, order].T.to(Xc.dtype)
-    return S, Vh
+    n = X.size(0)
+    k = max(1, min(k, n))
+    g = torch.Generator().manual_seed(int(seed))
+
+    # k-means++ seeding: each new centre is drawn with probability proportional to its squared
+    # distance from the nearest existing one, which spreads the starts out instead of letting
+    # two land in the same dense region and leaving a real cluster unrepresented.
+    first = int(torch.randint(n, (1,), generator=g))
+    centres = [X[first]]
+    d2 = ((X - X[first]) ** 2).sum(1)
+    for _ in range(1, k):
+        total = float(d2.sum())
+        if not (total > 0) or not torch.isfinite(d2).all():
+            # Every remaining row coincides with a chosen centre (or the distances are not
+            # finite). There is no meaningful next centre; stop rather than pick noise.
+            break
+        nxt = int(torch.multinomial(d2 / total, 1, generator=g))
+        centres.append(X[nxt])
+        d2 = torch.minimum(d2, ((X - X[nxt]) ** 2).sum(1))
+
+    C = torch.stack(centres).clone()
+    labels = torch.full((n,), -1, dtype=torch.long)
+    for _ in range(iters):
+        new = torch.cdist(X, C).argmin(1)
+        if torch.equal(new, labels):
+            break                      # converged; further passes cannot move anything
+        labels = new
+        for j in range(C.size(0)):
+            m = labels == j
+            if m.any():
+                C[j] = X[m].mean(0)
+    return labels
 
 
 def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
@@ -986,6 +1002,17 @@ class Abliterator:
         # axis can clear the threshold has to come from all of them, not from the first few.
         axes_measured_total = 0
         max_sep_seen = 0.0
+        # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
+        # each. Below two, there is no second refusal mode to look for and the run says so rather
+        # than quietly measuring nothing: a contrast set this small cannot support the claim, and
+        # silently returning one direction is how the previous defect stayed invisible.
+        n_clusters = min(int(args.direction_clusters), len(bad) // MIN_CLUSTER_ROWS)
+        if KMAX > 1 and n_clusters < 2:
+            log(f"  NOTE: {len(bad)} harmful prompts cannot fill two clusters of "
+                f"{MIN_CLUSTER_ROWS}, so no second refusal mode can be looked for and this run "
+                f"applies a SINGLE direction per layer despite --max-directions {KMAX}. Raise "
+                f"--dir-prompts to at least {2 * MIN_CLUSTER_ROWS} to search for more. The "
+                f"per-layer counts are recorded in abliteration.json under directions_per_layer.")
         for li in range(NL + 1):
             gd = good_dir[li]
             if args.no_good_orth:
@@ -1016,39 +1043,48 @@ class Abliterator:
                 if n > 1e-6:
                     hv = hv / n
                     kept.append(hv); basis.append(hv)
-            if kmax_eff > len(kept):
-                Xc = Rb[li] - Rb[li].mean(0, keepdim=True)   # centre the bad cloud, [N, H]
-                for u in basis:
-                    Xc = Xc - torch.outer(Xc @ u, u)         # project out good_dir + d0 (+ hedge)
-                S, Vh = _principal_axes(Xc, li, log)
-                # Rank floor: once the singular values fall away from the leading one, the
-                # corresponding axes describe rounding error in a space the earlier directions
-                # already span, not structure in the cloud.
-                s_floor = float(S[0]) * 1e-4 if S.numel() else 0.0
-                dropped = 0
-                for j in range(Vh.size(0)):
-                    if len(kept) >= kmax_eff:
-                        break
-                    if float(S[j]) <= s_floor:
-                        continue
-                    v = _orth_to(Vh[j], basis)
+            if kmax_eff > len(kept) and n_clusters >= 2:
+                # Candidates are per-CLUSTER difference-of-means, not principal axes of the
+                # harmful cloud. The distinction is the whole reason this code was rewritten on
+                # 2026-08-03, and it is not a matter of taste:
+                #
+                # A principal axis describes how the harmful cloud VARIES, which is a different
+                # question from what separates harmful from harmless. Worse, every candidate had
+                # to be orthogonalised against a basis spanning both class means, and the filter
+                # that judged it was a difference of those means, so the score was exactly zero
+                # by construction and no axis could ever be kept. See private/research/
+                # 2026-08-03-the-separation-filter-can-never-pass.md.
+                #
+                # Clustering fixes the cause rather than the symptom. Refusal is not one
+                # behaviour: a model refuses a weapons request differently from a self-harm one.
+                # Each cluster's own mean, measured against the harmless mean, is a direction that
+                # separates BY CONSTRUCTION, and what survives orthogonalisation against d0 is
+                # precisely the part of that cluster's refusal the global mean difference misses.
+                # That residue is what a second direction is supposed to be.
+                labels = _kmeans_labels(Rb[li], n_clusters, args.seed + li)
+                # Largest clusters first, ties broken by cluster id, so the candidate ORDER does
+                # not depend on dictionary iteration or on how many directions were requested.
+                sizes = [(int((labels == c).sum()), int(c)) for c in labels.unique()]
+                sizes.sort(key=lambda s: (-s[0], s[1]))
+
+                # Every candidate is scored before any is kept, then the best are taken. Ranking
+                # rather than first-past-the-post is what makes a K comparison honest: the
+                # candidate SET is identical whatever K is, so K is a budget and nothing else.
+                # The withdrawn five-seed comparison failed for exactly the opposite reason.
+                scored, dropped = [], 0
+                for size, c in sizes:
+                    if size < MIN_CLUSTER_ROWS:
+                        continue      # a mean over three rows is noise wearing a direction's hat
+                    rows = Rb[li][labels == c]
+                    v = _orth_to(rows.mean(0) - mg[li], basis)
                     n = v.norm()
                     if n < 1e-6:
-                        continue
+                        continue      # this cluster's refusal is entirely inside what d0 already cuts
                     v = v / n
-                    # The INTENT: keep a principal axis only if it separates harmful from harmless
-                    # (Cohen's d over the projections), since an axis that does not is within-harmful
-                    # topic variance and ablating it would strip capability rather than refusal.
-                    #
-                    # THIS CODE DOES NOT DO THAT, and cannot. `v` is orthogonalised against a basis
-                    # spanning both class means, so `mb·v = mg·v = 0` and Cohen's d, a difference of
-                    # class means, is exactly zero for every candidate. The filter rejects everything
-                    # at any positive threshold, on any model. Measured 2026-08-03 across two model
-                    # families and three corpora; proof in private/research/
-                    # 2026-08-03-the-separation-filter-can-never-pass.md. The replacement statistic is
-                    # an open decision, so the broken filter is left in place and reported loudly
-                    # rather than swapped for a guess.
-                    sep = _axis_separation(Rb[li], Rg[li], v)
+                    # Scored against the CLUSTER's rows, not the whole harmful cloud. Against the
+                    # whole cloud the global mean is orthogonal to v by construction and the score
+                    # collapses to zero again, which is the trap the old code fell into.
+                    sep = _axis_separation(rows, Rg[li], v)
                     axes_measured_total += 1
                     max_sep_seen = max(max_sep_seen, abs(float(sep)))
                     if len(axis_seps[li]) < MAX_RECORDED_AXES:
@@ -1056,10 +1092,25 @@ class Abliterator:
                     if sep < MIN_AXIS_SEPARATION:
                         dropped += 1
                         continue
-                    kept.append(v); basis.append(v)
+                    scored.append((float(sep), int(c), v))
+
+                scored.sort(key=lambda s: (-s[0], s[1]))
+                for _sep, _c, cand in scored:
+                    if len(kept) >= kmax_eff:
+                        break
+                    # Re-orthogonalise against what has been kept since this candidate was scored.
+                    # Two clusters can carry overlapping refusal, and keeping both unmodified
+                    # would put a near-duplicate row in a basis the bake assumes is orthonormal.
+                    w = _orth_to(cand, basis)
+                    n = w.norm()
+                    if n < 1e-6:
+                        continue
+                    w = w / n
+                    kept.append(w); basis.append(w)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
-                    log(f"  layer {li}: dropped {dropped} PCA axis/axes below the refusal-separation "
-                        f"threshold (d<{MIN_AXIS_SEPARATION}); they carried content, not refusal")
+                    log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
+                        f"refusal-separation threshold (d<{MIN_AXIS_SEPARATION}); they carried "
+                        f"content, not refusal")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         self.dirs_multi = dirs_multi.to(torch.bfloat16)      # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)

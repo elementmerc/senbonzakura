@@ -29,7 +29,7 @@
 # what is present, not what would be used, and an axis that is never measured cannot be reported.
 #
 # Nothing here edits a weight or writes a checkpoint. These probes are read-only by construction.
-run = "axis-separation-probes"
+run = "axis-separation-probes-2026-08-03"
 
 [[job]]
 id = "setup"
@@ -273,8 +273,18 @@ for tag, r in rows:
     print(f"  {tag}: {r['verdict']}.")
 
 multi = [tag for tag, r in rows if max(r["directions_per_layer"]) > 1]
+broken = [tag for tag, r in rows if r.get("filter_is_unsatisfiable")]
 print()
-if multi:
+if broken:
+    # Checked before anything else, because every other reading below assumes the numbers mean
+    # something. "No second direction was found" and "no second direction COULD be found" look
+    # identical in a table of zeroes and are opposite conclusions.
+    print(f"  BROKEN INSTRUMENT in: {', '.join(broken)}. The separation filter cannot be passed "
+          "at any positive threshold, so these runs measure nothing about direction count. Do "
+          "not read the zeroes as evidence that refusal is one direction; the claim is "
+          "UNMEASURED, not refuted. See private/research/"
+          "2026-08-03-the-separation-filter-can-never-pass.md.")
+elif multi:
     print(f"  A second direction cleared the threshold in: {', '.join(multi)}. The "
           "single-direction result is NOT a property of the method.")
 else:

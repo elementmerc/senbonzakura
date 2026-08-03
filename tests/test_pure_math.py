@@ -273,3 +273,84 @@ def test_scalar_of_intact():
 def test_available_ram_bytes():
     v = cli._available_ram_bytes()
     assert v is None or (isinstance(v, int) and v > 0)
+
+
+# ── the two geometric facts that were misdiagnosed on 2026-08-03 ──────────────────────
+def test_orthogonalising_the_extras_does_not_change_the_ablated_subspace():
+    """Stated wrongly, out loud, before it was checked. Pinned so it is not restated.
+
+    It looked as though orthogonalising each cluster direction against d0 was throwing away the
+    refusal component and leaving only topic, and that removing the orthogonalisation would be
+    the fix. Gram-Schmidt preserves the span, so the subspace ablated is identical either way and
+    "stop orthogonalising" is a no-op on the surgery. The real difference between this method and
+    the published ones is WHICH subspace is chosen, not how its basis is written down.
+    """
+    torch.manual_seed(0)
+    H = 64
+    d0 = torch.randn(H); d0 = d0 / d0.norm()
+    c1 = 0.8 * d0 + 0.6 * torch.randn(H); c1 = c1 / c1.norm()
+    c2 = 0.7 * d0 + 0.7 * torch.randn(H); c2 = c2 / c2.norm()
+
+    v1 = cli._orth_to(c1, [d0]); v1 = v1 / v1.norm()
+    v2 = cli._orth_to(c2, [d0, v1]); v2 = v2 / v2.norm()
+
+    def projector(M):
+        q, _ = torch.linalg.qr(M.T)
+        return q @ q.T
+
+    raw = projector(torch.stack([d0, c1, c2]))
+    orth = projector(torch.stack([d0, v1, v2]))
+    assert torch.allclose(raw, orth, atol=1e-5), "Gram-Schmidt changed the span, which it cannot"
+
+
+def test_the_bake_requires_an_orthonormal_direction_set():
+    """Why the orthogonalisation cannot simply be dropped, whatever a paper does.
+
+    `orthogonalize_np_` computes R^T (R W), which equals the projection onto span(R) only when R
+    is orthonormal. Feed it correlated rows and it over-subtracts along the shared component,
+    which is a silent increase in ablation strength wearing the costume of "more directions".
+    Anyone tempted to pass raw cluster directions has to defeat this test first.
+    """
+    torch.manual_seed(1)
+    # W is [H, in]: `orthogonalize_np_` projects each COLUMN onto span(R), so the residual
+    # dimension is the first axis.
+    H, cols = 32, 16
+    d0 = torch.randn(H); d0 = d0 / d0.norm()
+    c1 = 0.9 * d0 + 0.2 * torch.randn(H); c1 = c1 / c1.norm()   # strongly correlated with d0
+
+    W = torch.randn(H, cols)
+    correlated = torch.stack([d0, c1])
+    q, _ = torch.linalg.qr(correlated.T)
+    orthonormal = q.T
+
+    a, b = W.clone(), W.clone()
+    cli.orthogonalize_np_(a, correlated, 1.0)
+    cli.orthogonalize_np_(b, orthonormal, 1.0)
+    assert not torch.allclose(a, b, atol=1e-4), (
+        "a correlated basis and its orthonormalisation produced the same edit, so this test no "
+        "longer demonstrates why the orthonormalisation is load-bearing")
+
+
+def test_a_correlated_basis_removes_more_than_the_subspace_contains():
+    """The over-subtraction, measured rather than asserted.
+
+    With a correctly orthonormal basis, projecting twice changes nothing after the first time
+    (the projector is idempotent). With correlated rows it keeps eating into the weight, which is
+    what makes the extra "direction" look effective when it is only extra strength.
+    """
+    torch.manual_seed(2)
+    H = 24
+    d0 = torch.randn(H); d0 = d0 / d0.norm()
+    c1 = 0.95 * d0 + 0.1 * torch.randn(H); c1 = c1 / c1.norm()
+    correlated = torch.stack([d0, c1])
+    q, _ = torch.linalg.qr(correlated.T)
+
+    x = torch.randn(H)
+    once_ok = q.T.T @ (q.T @ x)
+    twice_ok = q.T.T @ (q.T @ once_ok)
+    assert torch.allclose(once_ok, twice_ok, atol=1e-5), "the orthonormal projector is idempotent"
+
+    once_bad = correlated.T @ (correlated @ x)
+    twice_bad = correlated.T @ (correlated @ once_bad)
+    assert not torch.allclose(once_bad, twice_bad, atol=1e-3), (
+        "the correlated 'projector' is idempotent, so it is not over-subtracting after all")

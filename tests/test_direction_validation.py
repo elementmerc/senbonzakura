@@ -201,3 +201,94 @@ def test_the_experiment_choice_reaches_the_record():
     assert own.experiment == "e1"
     with pytest.raises(SystemExit):
         dv.build_args(["--model", "m", "--out", "/tmp/x.json", "--experiment", "nonsense"])
+
+
+# ── regression guards: the mistakes of 2026-08-03, made permanent ─────────────────────
+# Every one of these encodes a specific error that produced a confident, wrong result. They
+# matter MOST when the numbers start looking good, which is exactly when a guard gets dropped
+# as noise. Each names the failure it prevents so nobody deletes it as redundant.
+
+def test_a_grid_with_no_spread_refuses_to_be_read():
+    """The floor effect that made the first K sweep meaningless.
+
+    Eleven arms all landed at exactly 0.0% refusal, because the default window removed
+    everything at K=1. The table looked like data and contained none. A sweep whose arms all
+    share one value says nothing about the thing it varied and must say so.
+    """
+    flat = [{"arm": f"fitted-K{k}", "K": k, "strength": 1.0, "random_extras": False,
+             "harmful_refusal": 0.0, "harmless_refusal": 0.0, "kl": 0.3 * k} for k in (1, 2, 3)]
+    reason = dv.degenerate_reason(flat)
+    assert reason and "no dynamic range" in reason
+    assert "floor" in reason
+
+
+def test_a_ceiling_is_caught_as_well_as_a_floor():
+    """The mirror case: nothing was removed, so K is equally unmeasurable."""
+    flat = [{"arm": f"fitted-K{k}", "K": k, "strength": 0.1, "random_extras": False,
+             "harmful_refusal": 1.0, "harmless_refusal": 0.0, "kl": 0.01} for k in (1, 2, 3)]
+    reason = dv.degenerate_reason(flat)
+    assert reason and "ceiling" in reason
+
+
+def test_a_grid_with_spread_is_allowed_through():
+    """The guard must not fire on a readable grid, or it becomes noise nobody reads."""
+    rows = [{"arm": "fitted-K1", "K": 1, "strength": 0.5, "random_extras": False,
+             "harmful_refusal": 0.40, "harmless_refusal": 0.0, "kl": 0.20},
+            {"arm": "fitted-K3", "K": 3, "strength": 0.5, "random_extras": False,
+             "harmful_refusal": 0.15, "harmless_refusal": 0.0, "kl": 0.35}]
+    assert dv.degenerate_reason(rows) is None
+
+
+def test_kl_is_only_compared_at_matched_refusal_removal():
+    """Comparing KL across arms that removed different amounts of refusal compares nothing.
+
+    More ablation always costs more KL, so the arm that cut harder "loses" whatever the quality
+    of its directions. This is the comparison Wollschlaeger and Piras both make at matched
+    attack success, and the one the withdrawn work never made.
+    """
+    rows = [
+        # K=1 needs full strength to reach 10% refusal, and pays 0.9 KL for it.
+        {"arm": "fitted-K1-s1.0", "K": 1, "strength": 1.0, "random_extras": False,
+         "harmful_refusal": 0.10, "harmless_refusal": 0.0, "kl": 0.90},
+        {"arm": "fitted-K1-s0.3", "K": 1, "strength": 0.3, "random_extras": False,
+         "harmful_refusal": 0.80, "harmless_refusal": 0.0, "kl": 0.10},
+        # K=3 reaches the same 10% at lower strength and lower KL: the multi-direction win.
+        {"arm": "fitted-K3-s0.5", "K": 3, "strength": 0.5, "random_extras": False,
+         "harmful_refusal": 0.10, "harmless_refusal": 0.0, "kl": 0.40},
+    ]
+    table = dv.matched_refusal_table(rows)
+    assert table["baseline_refusal"] == pytest.approx(0.80)
+    band = (table["targets"].get("87%_removed") or table["targets"].get("90%_removed")
+            or table["targets"].get("75%_removed"))
+    assert band, f"no matched band was produced: {table}"
+    # Both K reached the band; the cheaper one must be reported as cheaper.
+    assert band["3"]["kl"] < band["1"]["kl"]
+
+
+def test_a_k_that_never_reaches_the_target_gets_no_entry():
+    """A K that cannot reach the target must be absent, not credited with its best near-miss."""
+    rows = [
+        {"arm": "fitted-K1", "K": 1, "strength": 1.0, "random_extras": False,
+         "harmful_refusal": 0.05, "harmless_refusal": 0.0, "kl": 0.5},
+        {"arm": "fitted-K3", "K": 3, "strength": 1.0, "random_extras": False,
+         "harmful_refusal": 0.60, "harmless_refusal": 0.0, "kl": 0.1},
+    ]
+    table = dv.matched_refusal_table(rows)
+    for band in table["targets"].values():
+        if "1" in band and "3" not in band:
+            break
+    else:
+        pytest.fail(f"K=3 should be missing from at least one band: {table['targets']}")
+
+
+def test_the_random_control_is_carried_into_the_grid():
+    """E2's floor has to exist at every strength, or "fitted beats random" is untested."""
+    rows = [{"arm": "fitted-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": False,
+             "harmful_refusal": 0.2, "harmless_refusal": 0.0, "kl": 0.3},
+            {"arm": "random-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": True,
+             "harmful_refusal": 0.5, "harmless_refusal": 0.0, "kl": 0.3}]
+    # The matched table considers fitted arms only; the random arms must not leak into it.
+    table = dv.matched_refusal_table(rows)
+    for band in table["targets"].values():
+        for entry in band.values():
+            assert entry["harmful_refusal"] != 0.5, "a random-extras arm leaked into the comparison"

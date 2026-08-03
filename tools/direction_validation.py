@@ -49,7 +49,11 @@ def build_args(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True)
     ap.add_argument("--track", default="track")
-    ap.add_argument("--experiment", default="all", choices=["e1", "e2", "e3", "all"])
+    ap.add_argument("--experiment", default="all", choices=["e1", "e2", "e3", "e4", "all"])
+    ap.add_argument("--strengths", default="0.3,0.5,0.7,0.85,1.0",
+                    help="ablation strengths for the E4 grid. The weakest must leave refusal "
+                         "partly standing or the grid has no room for K to show an effect, "
+                         "which is how the first run of this sweep measured nothing.")
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--max-directions", type=int, default=8)
@@ -180,8 +184,8 @@ def experiment_1(a, log):
 
 
 # ── E2 / E3: bake and measure ─────────────────────────────────────────────────────────
-def _measure(a, label, K, log, randomise_extras=False, seed=0):
-    """Bake one fixed window at K directions and report what it cost and bought."""
+def _measure(a, label, K, log, randomise_extras=False, seed=0, strength=1.0):
+    """Bake one window at K directions and one strength, and report what it cost and bought."""
     NL = a.NL
     saved = None
     if randomise_extras and K > 1:
@@ -202,10 +206,11 @@ def _measure(a, label, K, log, randomise_extras=False, seed=0):
                 a.dirs_multi[li, j] = r.to(a.dirs_multi.dtype)
                 basis.append(r)
 
-    a.bake(int(NL * 0.6), 1.0, 0.0, max(2, NL // 4), K=K)
+    a.bake(int(NL * 0.6), strength, 0.0, max(2, NL // 4), K=K)
     row = {
         "arm": label,
         "K": K,
+        "strength": round(strength, 3),
         "random_extras": randomise_extras,
         "harmful_refusal": round(a.refusal_rate(a.bad_eval), 4),
         # The harmless arm is not optional: a refusal rate alone cannot tell "the abliteration
@@ -216,9 +221,85 @@ def _measure(a, label, K, log, randomise_extras=False, seed=0):
     a.restore_weights()
     if saved is not None:
         a.dirs_multi = saved
-    log(f"  {label}: harmful={row['harmful_refusal']} harmless={row['harmless_refusal']} "
-        f"kl={row['kl']}")
+    log(f"  {label}: s={strength:.2f} harmful={row['harmful_refusal']} "
+        f"harmless={row['harmless_refusal']} kl={row['kl']}")
     return row
+
+
+def matched_refusal_table(rows, tolerance=0.05):
+    """Compare K at MATCHED refusal removal, which is the only comparison that means anything.
+
+    Reading KL off arms that removed different amounts of refusal compares nothing: more ablation
+    always costs more KL, so whichever arm cut harder "loses" regardless of whether its directions
+    were better chosen. The papers this replicates (Wollschlaeger, Piras) compare at matched
+    attack success for the same reason.
+
+    For each K, take the arm with the LOWEST KL among those reaching the target refusal removal.
+    A K that never reaches the target has no entry rather than a flattering one.
+    """
+    out = {}
+    fitted = [r for r in rows if not r["random_extras"]]
+    if not fitted:
+        return {"targets": out, "note": "no fitted arms"}
+
+    baseline = max(r["harmful_refusal"] for r in fitted)   # the least-ablated arm's refusal
+    for target_frac in (0.5, 0.75, 0.9):
+        target = baseline * (1.0 - target_frac)
+        best = {}
+        for r in fitted:
+            if r["harmful_refusal"] <= target + tolerance * baseline:
+                cur = best.get(r["K"])
+                if cur is None or r["kl"] < cur["kl"]:
+                    best[r["K"]] = r
+        if best:
+            out[f"{int(target_frac * 100)}%_removed"] = {
+                str(K): {"kl": r["kl"], "strength": r["strength"],
+                         "harmful_refusal": r["harmful_refusal"]}
+                for K, r in sorted(best.items())}
+    return {"targets": out, "baseline_refusal": baseline}
+
+
+def degenerate_reason(rows):
+    """Say why a grid cannot be read, rather than letting a flat table look like a result.
+
+    The first run of this sweep put every arm at exactly 0.0% refusal because the default window
+    already removed everything at K=1. Eleven arms, one number, and the table looked like data.
+    A sweep with no spread measures nothing about what it varied, and it has to say so in the
+    output rather than in someone's head.
+    """
+    fitted = [r for r in rows if not r["random_extras"]]
+    if len(fitted) < 2:
+        return "fewer than two fitted arms"
+    vals = {r["harmful_refusal"] for r in fitted}
+    if len(vals) == 1:
+        v = next(iter(vals))
+        floor = "floor (every arm removed all refusal)" if v == 0.0 else \
+                "ceiling (no arm removed any refusal)" if v >= 1.0 else \
+                f"a single value ({v})"
+        return (f"every fitted arm landed on {floor}, so this grid has no dynamic range and "
+                f"says nothing about K. Widen the strength range until the weakest arm leaves "
+                f"refusal partly standing.")
+    return None
+
+
+def experiment_4(a, log, strengths):
+    """The K sweep with headroom: every K at every strength, then compared at matched refusal."""
+    rows = []
+    kmax = max(a.dirs_per_layer)
+    ks = sorted({1, 2, 3, min(5, kmax), min(8, kmax)} & set(range(1, kmax + 1))) or [1]
+    log(f"E4: {len(ks)} direction counts x {len(strengths)} strengths")
+    rows.extend(_measure(a, f"fitted-K{K}-s{s:g}", K, log, strength=s)
+                for K in ks for s in strengths)
+    # The random control at the same strengths, so "fitted beats random" is judged with headroom.
+    rows.extend(_measure(a, f"random-K{K}-s{s:g}", K, log,
+                         randomise_extras=True, seed=a.args.seed + K, strength=s)
+                for K in [k for k in ks if k > 1][:2] for s in strengths)
+
+    bad = degenerate_reason(rows)
+    if bad:
+        log(f"  DEGENERATE: {bad}")
+    return {"rows": rows, "max_k_available": kmax, "strengths": list(strengths),
+            "degenerate_reason": bad, "matched_refusal": matched_refusal_table(rows)}
 
 
 def experiments_2_and_3(a, log, which):
@@ -262,6 +343,23 @@ def main(argv=None):
 
     if own.experiment in ("e2", "e3", "all"):
         record["e2_e3"] = experiments_2_and_3(a, log, own.experiment)
+
+    if own.experiment in ("e4", "all"):
+        strengths = [float(x) for x in own.strengths.split(",") if x.strip()]
+        if own.experiment == "e4":
+            # e4 alone still needs the directions and the eval sets that "all" builds above.
+            args_ = a.args
+            TR = args_.track
+            a.extract_directions(f"{TR}/bad_ds", args_.good_ds or f"{TR}/good_ds", args_.hedge_ds,
+                                 args_.clean_ds or args_.good_ds or f"{TR}/good_ds")
+            a.bad_eval = a.load(f"{TR}/bad_eval_ds", args_.eval_refusal)
+            _kl = a.load(args_.good_ds or f"{TR}/good_ds", args_.dir_prompts + args_.eval_kl)
+            a.kl_eval = _kl[args_.dir_prompts:args_.dir_prompts + args_.eval_kl] or _kl[:args_.eval_kl]
+            a.orig_lp = a.first_token_logprobs(a.kl_eval)
+            a.snapshot_weights()
+        record["e4"] = experiment_4(a, log, strengths)
+        bad = record["e4"]["degenerate_reason"]
+        log(f"\n  E4: {'UNREADABLE — ' + bad if bad else 'grid has spread; see matched_refusal'}\n")
 
     with cli.atomic_write(own.out) as f:
         json.dump(record, f, indent=2)

@@ -30,8 +30,13 @@ the same ruler:
 | Configuration | Hard refusal | Strict (Heretic keyword) | Broken | Coherence (PPL, base 12.97) |
 |---|--:|--:|--:|--:|
 | Stock, uncut | 7.9% | 63.8% | 0.0% | 12.97 |
-| Single direction | 2.1% | 36.6% | 0.0% | 12.97 |
-| **Senbonzakura (multi-direction)** | **0.0%** | **20.0%** | **0.0%** | 13.29 |
+| Search pinned to one direction | 2.1% | 36.6% | 0.0% | 12.97 |
+| **Search allowed up to three** | **0.0%** | **20.0%** | **0.0%** | 13.29 |
+
+**Both rows applied one direction per layer.** The bottom row is named for the budget the
+search was given, not for the number of directions it used, and until 2026-08-03 those were
+the same words for a reason that turned out to be a bug. The difference between the two rows
+is real and is a difference between two searches. Read the caveats below before quoting it.
 
 > ### Read this table with the caveats attached, not 300 lines below it
 >
@@ -71,18 +76,34 @@ the same ruler:
 > whether a candidate direction carries refusal compares the average harmful reply against the
 > average harmless one, measured along a direction that is built to sit at right angles to both
 > of those averages. The difference it looks for is zero every time, by construction. **No
-> direction can pass that check, on any model, at any setting.**
+> direction could pass that check, on any model, at any setting.**
 >
-> Measured across two model families and three prompt sets: 656 candidate directions, every one
-> rejected, none close. So **every run this project has ever made applied exactly one direction,
-> whatever it was asked for**, and the multi-direction row of the table above is a second search
-> configuration rather than a second direction.
+> Measured across two model families and three prompt sets: 13,970 candidate directions, every
+> one rejected, none close. So **every run this project made before 2026-08-03 applied exactly
+> one direction, whatever it was asked for**, and the bottom row of the table above is a second
+> search configuration rather than a second direction.
 >
-> This does not show the claim is false either. It shows the tool has never tested it. The
-> honest position is that whether refusal occupies more than one direction is **unmeasured
-> here**, and **nobody should believe the claim on this project's evidence**, us included. The
-> fix is a research question (what the check should compare instead) and is not in this
-> release.
+> ### What has been fixed, and what has not
+>
+> The extractor was rewritten the same day. Candidate directions now come from clustering the
+> harmful prompts and taking each cluster's own average against the harmless average, so a
+> candidate separates the two groups by construction rather than being built unable to. On the
+> same four probes it now finds and applies **up to eight directions per layer** where it
+> previously found one.
+>
+> **That means the feature does something. It does not yet mean the claim is true.** Two things
+> are still unshown, and the README will not say otherwise until they are measured:
+>
+> - **Whether the extra directions carry refusal rather than topic.** The threshold that was
+>   supposed to answer this now rejects nothing at all: all 678 candidates scored between 0.90
+>   and 9.02 against a bar of 0.5. It has swapped failure modes, not started working. A cluster
+>   of harmful prompts about one subject separates from harmless prompts partly *because* of the
+>   subject, and cutting that removes capability rather than refusal.
+> - **Whether removing several directions beats removing one.** The comparison that was meant to
+>   show this is withdrawn, and re-running it needs the above settled first.
+>
+> So: **nobody should believe the multi-direction claim on this project's evidence**, us
+> included. What changed today is that the question can now be asked at all.
 
 Read the next three paragraphs against the caveat above: "multi-direction" names the
 configuration those runs requested, not the number of directions they applied, which was one.

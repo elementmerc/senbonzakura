@@ -1050,6 +1050,61 @@ def test_the_candidate_set_does_not_change_when_the_budget_does(
     assert kept_seps, "nothing was measured, so the prefix claim above is untested"
 
 
+def test_a_filter_that_rejects_nothing_says_so(base_args, tiny_model, tiny_tok, monkeypatch):
+    """Both extremes are alarms, and both have happened here within an hour of each other.
+
+    The old statistic rejected 100% of candidates for the project's whole history. The
+    replacement rejects 0%: on Qwen3-1.7B all 175 cluster candidates scored between 0.90 and
+    4.99 against a threshold of 0.5. A guard that accepts everything is not evidence that what
+    it accepted carries refusal, and nobody was reading the rejection rate because the guard
+    existed and was assumed to work.
+    """
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION + 2.0])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert a.axes_rejected_total == 0
+    joined = "\n".join(lines)
+    assert "rejected NONE" in joined
+    assert "not discriminating" in joined
+
+
+def test_a_filter_that_rejects_everything_says_so(base_args, tiny_model, tiny_tok, monkeypatch):
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [0.01])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert a.axes_rejected_total == a.axes_measured_total > 0
+    assert "rejected ALL" in "\n".join(lines)
+
+
+def test_a_discriminating_filter_says_nothing(base_args, tiny_model, tiny_tok, monkeypatch):
+    """The healthy case is silent, or the alarm becomes noise nobody reads."""
+    lines = []
+    base_args.max_directions = 3
+    # Alternate: some candidates clear the bar, some do not.
+    flip = {"n": 0}
+
+    def fake(bad, good, v):
+        flip["n"] += 1
+        return cli.MIN_AXIS_SEPARATION + 1.0 if flip["n"] % 2 else 0.01
+
+    monkeypatch.setattr(cli, "_axis_separation", fake)
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert 0 < a.axes_rejected_total < a.axes_measured_total
+    joined = "\n".join(lines)
+    assert "rejected NONE" not in joined and "rejected ALL" not in joined
+
+
 def test_the_separation_of_every_rejected_axis_is_recorded(
         base_args, tiny_model, tiny_tok, track, monkeypatch):
     """A layer that got one direction must say whether the second missed by a hair or a mile.

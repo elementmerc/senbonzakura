@@ -1001,6 +1001,7 @@ class Abliterator:
         # 127 candidates against the 8 that were kept in the record. A verdict about whether any
         # axis can clear the threshold has to come from all of them, not from the first few.
         axes_measured_total = 0
+        axes_rejected_total = 0
         max_sep_seen = 0.0
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
         # each. Below two, there is no second refusal mode to look for and the run says so rather
@@ -1091,6 +1092,7 @@ class Abliterator:
                         axis_seps[li].append(round(float(sep), 4))
                     if sep < MIN_AXIS_SEPARATION:
                         dropped += 1
+                        axes_rejected_total += 1
                         continue
                     scored.append((float(sep), int(c), v))
 
@@ -1140,6 +1142,25 @@ class Abliterator:
         measured = [d for layer in axis_seps for d in layer]
         rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
         self.best_rejected_separation = max(rejected) if rejected else None
+        self.axes_rejected_total = axes_rejected_total
+
+        # A guard that accepts everything discriminates exactly as much as one that rejects
+        # everything: not at all. Both extremes are alarms and both have now happened here, the
+        # first for the project's whole history and the second within an hour of fixing it. The
+        # rejection rate is therefore reported on every run rather than inspected when something
+        # already looks wrong, because "the filter exists" was taken for "the filter works" twice.
+        if axes_measured_total:
+            reject_rate = axes_rejected_total / axes_measured_total
+            if reject_rate == 0.0:
+                log(f"  NOTE: the refusal-separation filter rejected NONE of "
+                    f"{axes_measured_total} candidate directions (all scored above "
+                    f"{MIN_AXIS_SEPARATION}). It is not discriminating, so it is not evidence "
+                    f"that the kept directions carry refusal rather than topic. See "
+                    f"private/research/2026-08-03-the-clustered-extractor.md.")
+            elif reject_rate == 1.0:
+                log(f"  NOTE: the refusal-separation filter rejected ALL "
+                    f"{axes_measured_total} candidate directions, so no candidate could be kept "
+                    f"and the direction count is a property of the filter rather than the model.")
         # An exact zero across every axis is not a small measurement. The candidates are
         # orthogonalised against a basis spanning both class means, and Cohen's d is a difference
         # of class means, so the numerator vanishes by construction and no positive threshold can
@@ -1872,6 +1893,7 @@ class Abliterator:
                        "axes_measured_total": getattr(self, "axes_measured_total", None),
                        "max_axis_separation": getattr(self, "max_axis_separation", None),
                        "best_rejected_separation": getattr(self, "best_rejected_separation", None),
+                       "axes_rejected_total": getattr(self, "axes_rejected_total", None),
                        "filter_is_unsatisfiable": getattr(self, "filter_is_unsatisfiable", None),
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},

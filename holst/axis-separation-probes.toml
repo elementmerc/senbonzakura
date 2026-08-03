@@ -29,7 +29,7 @@
 # what is present, not what would be used, and an axis that is never measured cannot be reported.
 #
 # Nothing here edits a weight or writes a checkpoint. These probes are read-only by construction.
-run = "axis-separation-probes-2026-08-03c"
+run = "axis-separation-probes-2026-08-03d"
 
 [[job]]
 id = "setup"

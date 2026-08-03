@@ -8,11 +8,17 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 The release that makes the measurement trustworthy. The date is added at tag time.
 
-**The multi-direction feature does not work and has never worked.** The filter that decides
-whether a candidate direction carries refusal cannot accept any direction, on any model, at
-any setting, for a reason in the maths rather than in the data. Every run that asked for more
-than one direction applied exactly one. This was found by this release's own instrumentation,
-it is described below, and the fix is not in this release.
+**The multi-direction feature had never worked, and was rewritten in this release.** The check
+that decided whether a candidate direction carries refusal could not accept any direction, on
+any model, at any setting, for a reason in the maths rather than in the data, so every earlier
+run applied exactly one direction however many it was asked for. Directions are now found by
+grouping the harmful prompts and taking each group's own average, which finds up to eight per
+layer where the old method found one.
+
+**Read the next sentence before quoting the one above.** Finding more directions is not the
+same as showing they carry refusal, and this release does not show that. Any direction count
+from a version before this one is not trustworthy, and the comparison that was meant to prove
+several directions beat one is withdrawn.
 
 **If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
@@ -100,17 +106,30 @@ not comparable to what this version produces.
 
 ### Known defects
 
-- **Asking for more than one refusal direction has no effect.** The check that decides whether
-  a candidate direction carries refusal compares the average harmful reply against the average
-  harmless one, along a direction built to be at right angles to both averages. The difference
-  it looks for is therefore always zero, so every candidate is rejected and one direction is
-  applied however many are requested. Measured across two model families and three prompt sets:
-  656 candidates, all rejected, none close. A run now says so in plain words instead of
-  reporting the result as though a search had happened. What the right replacement check is has
-  not been decided, so no fix ships here.
+- **Finding several directions is not the same as showing they are refusal directions.** The
+  check meant to tell a refusal direction from a topic direction now accepts every candidate it
+  is shown, where before it rejected every one. It has changed which way it fails rather than
+  started working, so nothing in this release establishes that the extra directions remove
+  refusal rather than ability. A run reports the rejection rate on every extraction, and both
+  "none rejected" and "all rejected" print a warning.
 - **A direction count reported before this release cannot be trusted**, including the
   comparison table in the README. Those runs applied one direction whatever they requested.
-  This does not mean refusal is a single direction; it means this tool has not measured it.
+  This does not mean refusal is a single direction; it means the tool had not measured it.
+- **Whether removing several directions beats removing one is unanswered.** The comparison
+  intended to settle it is withdrawn, because both of its arms turned out to be removing the
+  same single direction.
+
+### Engine
+
+- Refusal directions are found by grouping the harmful prompts and taking each group's own
+  average against the harmless average, rather than by looking at how the harmful prompts vary.
+  A model refuses a weapons request differently from a self-harm one, and the old method could
+  not represent that. `--direction-clusters` sets how many groups to look for.
+- A run that asks for several directions and gets them keeps the same first direction it would
+  have kept at a budget of one, so two runs that differ only in the budget differ only in the
+  budget.
+- A contrast set too small to form two groups says so and explains how many prompts it needs,
+  rather than quietly returning a single direction.
 
 ### Fixed
 

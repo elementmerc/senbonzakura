@@ -1736,6 +1736,13 @@ def _delegate(name):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
+    # Decoration only, and structurally unable to reach a result: it prints nothing unless
+    # stdout is a terminal, so a redirected run, a spec's captured log and every `stdout-contains`
+    # check see exactly what they saw before this existed. Imported here rather than at module
+    # level to keep the package's import surface small.
+    from . import banner
+    banner.emit(__version__, sys.stdout)
+
     # Subcommands, with abliteration as the default. `senbonzakura --model X --out Y` keeps
     # working exactly as before, because every run spec on record and every README example is
     # written that way, and a tool that renames its own entry point breaks the records of what

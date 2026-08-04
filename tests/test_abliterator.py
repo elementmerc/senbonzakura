@@ -1459,3 +1459,36 @@ def test_no_hedge_note_when_there_is_no_hedge_set(base_args, tiny_model, tiny_to
 
     assert a.hedge_applied_layers == 0
     assert "hedging direction was applied" not in "\n".join(lines)
+
+
+def test_auto_is_an_alias_for_kageyoshi(monkeypatch):
+    """A beginner should not need to know a sword release to get the setting that thinks for them.
+
+    Same dispatch, not a second mode: whichever name is used, the run resolves its own budget and
+    levers from the architecture once the model is loaded.
+    """
+    seen = {}
+
+    class _Stub:
+        def __init__(self, args, log, **kw):
+            seen["bankai"] = getattr(args, "bankai", None)
+            seen["model"] = args.model
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr(cli, "Abliterator", _Stub)
+    monkeypatch.setattr(cli, "resolve_bankai", lambda *a, **k: None, raising=False)
+
+    for name in ("kageyoshi", "auto"):
+        seen.clear()
+        try:
+            cli.main([name, "--model", "fixture", "--device", "cpu", "--bench-only"])
+        except (SystemExit, AttributeError, TypeError):
+            pass
+        assert seen.get("model") == "fixture", f"{name} did not reach the abliterator"
+
+
+def test_auto_is_listed_in_the_help():
+    text = cli.build_parser().format_help()
+    assert "auto" in text and "alias for kageyoshi" in text

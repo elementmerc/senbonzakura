@@ -449,6 +449,7 @@ def build_parser():
             "fixed eval set\n"
             "  coherence    perplexity of a fixed neutral passage, the coherence cost\n"
             "  track        build an evaluation track with a checked fit / search / measure split\n"
+            "  auto         alias for kageyoshi, for anyone who has not met the name\n"
             "  validate     ask whether a direction set carries refusal or carries topic: "
             "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
             "direction count against ablation strength compared at matched refusal removal\n"
@@ -1957,7 +1958,11 @@ def main(argv=None):
     # with the auto-scaled best-effort preset, resolved after the model loads once the
     # architecture and parameter count are known. `abliterate` names the default explicitly.
     bankai = False
-    if argv and argv[0] == "kageyoshi":
+    # `auto` is a plain-English alias for `kageyoshi`, not a second mode: both resolve the search
+    # budget and the quality levers from the architecture and parameter count once the model is
+    # loaded. Someone meeting this tool for the first time should not have to know a Japanese
+    # sword release to get the setting that thinks for them.
+    if argv and argv[0] in ("kageyoshi", "auto"):
         bankai, argv = True, argv[1:]
     elif argv and argv[0] == "abliterate":
         argv = argv[1:]

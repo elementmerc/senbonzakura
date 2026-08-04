@@ -1,0 +1,354 @@
+# Why do optimised directions underperform a plain difference-of-means?
+#
+# RDO reaches 73.4% refusal on gemma where the difference-of-means reaches 14.8%. Directions
+# chosen for their effect are doing worse than the simplest possible direction, which is the
+# opposite of what should happen and is more likely a mechanical fault than a conceptual one.
+# Three candidates, run in the order that makes the later ones interpretable.
+#
+#   T  the transfer gap. RDO optimises a residual-stream HOOK; the evaluation BAKES weights.
+#      Same directions, both operations, the bake's own layer profile. If they disagree, RDO is
+#      optimising something the evaluation does not perform, and every RDO number so far is
+#      measuring that mismatch. Cheap, and it can invalidate the other two.
+#
+#      Bundled with it: the projection magnitude. arXiv:2603.22061 found geometrically pure
+#      directions that do nothing because matching drops their magnitude below the level at which
+#      weight projection perturbs the stream. Our extras are orthogonalised against d0, which
+#      removes the largest shared component by construction, so they are that exact shape.
+#
+#   L  a longer optimisation. 200 steps at batch 2 is small next to what the paper describes.
+#      1000 steps, same everything else, so the difference is the budget.
+#
+#   S  five seeds. The one positive result this project has (Qwen3 RDO, K=2 at 6.3x lower KL than
+#      K=1 at matched refusal) is a single sample, and a single sample with complete separation at
+#      p about 0.004 has already been withdrawn here once. Five seeds, each optimised and scored
+#      independently, is what makes it a finding rather than an anecdote.
+#
+# Ordered T, L, S deliberately: T is minutes and can explain everything, L is one model, S is the
+# expensive one. All jobs are resumable, take the card-wide lock, and short-circuit on a result
+# that already parses, so an interrupted day resumes rather than restarts.
+run = "close-the-gap-2026-08-04"
+
+[[job]]
+id = "setup"
+machine = "rog"
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+PYTHONPATH=src "$PY" -c "
+from senbonzakura import validate
+for name in ('experiment_transfer', 'projection_magnitude', 'residual_ablation'):
+    assert hasattr(validate, name), name
+print('validate has the transfer and magnitude diagnostics')
+"
+"$PY" -c 'import torch; assert torch.cuda.is_available()'
+mkdir -p "$RUN/gap" "$RUN/abl"
+echo SETUP_OK
+"""
+
+# ── T: the transfer gap, on both models, using directions that already exist ──────────
+
+[[job]]
+id = "transfer-gemma"
+name = "T: hook against bake, gemma RDO directions"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 10800
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "T_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" -c "import json; json.load(open('$RUN/gap/transfer-gemma.json'))" >/dev/null 2>&1; then
+    echo "ALREADY_COMPLETE"; echo T_OK; exit 0
+fi
+
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --experiment transfer --directions-from "$RUN/rdo/gemma-k4.pt" \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/gap/transfer-gemma.json"
+echo T_OK
+"""
+
+[[job]]
+id = "transfer-gemma-clusters"
+name = "T: hook against bake, gemma CLUSTER directions (the control)"
+machine = "rog"
+deps = ["transfer-gemma"]
+timeout_secs = 10800
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "T_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" -c "import json; json.load(open('$RUN/gap/transfer-gemma-clusters.json'))" >/dev/null 2>&1; then
+    echo "ALREADY_COMPLETE"; echo T_OK; exit 0
+fi
+
+# The control that makes the RDO number readable. Cluster directions were never optimised
+# against a hook, so if THEY also show a hook-bake gap the gap is a property of the two
+# operations rather than something RDO did, and it explains nothing about RDO specifically.
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --experiment transfer \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/gap/transfer-gemma-clusters.json"
+echo T_OK
+"""
+
+# ── L: does a bigger optimisation budget close it? ────────────────────────────────────
+
+[[job]]
+id = "rdo-gemma-long"
+name = "L: 1000 steps on gemma, everything else identical"
+machine = "rog"
+deps = ["transfer-gemma-clusters"]
+timeout_secs = 21600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "L_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" -c "
+import torch
+b = torch.load('$RUN/gap/gemma-k4-long.pt', map_location='cpu', weights_only=False)
+assert b['dirs_multi'].ndim == 3
+" >/dev/null 2>&1; then echo "ALREADY_COMPLETE"; echo L_OK; exit 0; fi
+
+PYTHONPATH=src "$PY" -u tools/rdo.py \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --k 4 --steps 1000 --layer-frac auto --preserve 1.0 --indep 0.5 \\
+    --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed 42 \\
+    --out "$RUN/gap/gemma-k4-long.pt"
+echo L_OK
+"""
+
+[[job]]
+id = "score-gemma-long"
+name = "L: score the long-optimised directions on the same stick"
+machine = "rog"
+deps = ["rdo-gemma-long"]
+timeout_secs = 21600
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SCORE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" -c "import json; json.load(open('$RUN/gap/score-gemma-long.json'))" >/dev/null 2>&1; then
+    echo "ALREADY_COMPLETE"; echo SCORE_OK; exit 0
+fi
+
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --experiment e4 --directions-from "$RUN/gap/gemma-k4-long.pt" \\
+    --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/gap/score-gemma-long.json"
+echo SCORE_OK
+"""
+
+# ── S: five seeds on the one positive result this project has ─────────────────────────
+# Seeds 42 to 46, each a fresh optimisation and a fresh scoring. Chained rather than parallel
+# because the card holds one at a time anyway, and chaining makes the resume order obvious.
+
+[[job]]
+id = "seed-43"
+name = "S: Qwen3 RDO, seed 43"
+machine = "rog"
+deps = ["score-gemma-long"]
+timeout_secs = 28800
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SEED_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+for S in 43 44; do
+    if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed$S.json'))" >/dev/null 2>&1; then
+        echo "SEED $S ALREADY_COMPLETE"; continue
+    fi
+    PYTHONPATH=src "$PY" -u tools/rdo.py \\
+        --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+        --k 4 --steps 200 --layer-frac auto --preserve 1.0 --indep 0.5 \\
+        --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed $S \\
+        --out "$RUN/gap/qwen3-k4-seed$S.pt"
+    PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+        --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+        --experiment e4 --directions-from "$RUN/gap/qwen3-k4-seed$S.pt" \\
+        --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
+        --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed $S \\
+        --out "$RUN/gap/qwen3-seed$S.json"
+done
+echo SEED_OK
+"""
+
+[[job]]
+id = "seed-45"
+name = "S: Qwen3 RDO, seeds 45 and 46"
+machine = "rog"
+deps = ["seed-43"]
+timeout_secs = 28800
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SEED_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+for S in 45 46; do
+    if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed$S.json'))" >/dev/null 2>&1; then
+        echo "SEED $S ALREADY_COMPLETE"; continue
+    fi
+    PYTHONPATH=src "$PY" -u tools/rdo.py \\
+        --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+        --k 4 --steps 200 --layer-frac auto --preserve 1.0 --indep 0.5 \\
+        --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed $S \\
+        --out "$RUN/gap/qwen3-k4-seed$S.pt"
+    PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+        --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+        --experiment e4 --directions-from "$RUN/gap/qwen3-k4-seed$S.pt" \\
+        --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
+        --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed $S \\
+        --out "$RUN/gap/qwen3-seed$S.json"
+done
+echo SEED_OK
+"""
+
+[[job]]
+id = "report"
+name = "read the day together"
+machine = "rog"
+deps = ["transfer-gemma", "transfer-gemma-clusters", "score-gemma-long", "seed-43", "seed-45"]
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "REPORT_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+
+PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
+import glob, json, os, statistics, sys
+sys.path.insert(0, os.path.expanduser("~/senbon-run/src"))
+from senbonzakura.validate import matched_refusal_table
+
+RUN = os.path.expanduser("~/senbon-run")
+
+
+def load(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+print("\\n=== T: does the hook agree with the bake? ===")
+for tag, name in (("RDO directions", "transfer-gemma"),
+                  ("cluster directions (control)", "transfer-gemma-clusters")):
+    r = load(f"{RUN}/gap/{name}.json")
+    if not r or "transfer" not in r:
+        print(f"  {tag}: MISSING"); continue
+    t = r["transfer"]
+    print(f"  {tag}: mean |delta| {t['mean_abs_delta']}, worst {t['max_abs_delta']}")
+    print(f"     {t['reading']}.")
+    m = r.get("projection_magnitude")
+    if m:
+        print(f"     magnitudes: {m['reading']}.")
+
+print("\\n=== L: does 1000 steps beat 200? ===")
+r = load(f"{RUN}/gap/score-gemma-long.json")
+if not r or "e4" not in r:
+    print("  MISSING")
+else:
+    e4 = r["e4"]
+    if e4["degenerate_reason"]:
+        print(f"  UNREADABLE: {e4['degenerate_reason']}")
+    else:
+        for band, entries in e4["matched_refusal"]["targets"].items():
+            kls = {int(K): e["kl"] for K, e in entries.items()}
+            best = min(kls, key=kls.get) if kls else None
+            print(f"  {band}: " + "  ".join(f"K={K}:{v:.4f}" for K, v in sorted(kls.items()))
+                  + (f"   -> cheapest K={best}" if best else ""))
+
+print("\\n=== S: does the Qwen3 K=2 advantage hold across seeds? ===")
+per_seed = {}
+for p in sorted(glob.glob(f"{RUN}/gap/qwen3-seed*.json")):
+    seed = os.path.basename(p).replace("qwen3-seed", "").replace(".json", "")
+    r = load(p)
+    if not r or "e4" not in r:
+        continue
+    t = matched_refusal_table(r["e4"]["rows"])
+    band = t["targets"].get("50%_removed") or {}
+    if band:
+        per_seed[seed] = {int(K): e["kl"] for K, e in band.items()}
+
+# Seed 42 came from the earlier run and belongs in the same table.
+r42 = load(f"{RUN}/rdo/score-qwen3-rdo.json")
+if r42 and "e4" in r42:
+    b = matched_refusal_table(r42["e4"]["rows"])["targets"].get("50%_removed") or {}
+    if b:
+        per_seed["42"] = {int(K): e["kl"] for K, e in b.items()}
+
+if not per_seed:
+    print("  no seeds produced a usable band")
+else:
+    print("  KL at the 50%-removed band, by seed:")
+    for seed in sorted(per_seed):
+        kls = per_seed[seed]
+        best = min(kls, key=kls.get)
+        print(f"    seed {seed}: " + "  ".join(f"K={K}:{v:.3f}" for K, v in sorted(kls.items()))
+              + f"   cheapest K={best}")
+    winners = [min(k, key=k.get) for k in per_seed.values()]
+    from collections import Counter
+    tally = Counter(winners)
+    print(f"\\n  cheapest K per seed: {dict(tally)} over {len(per_seed)} seeds")
+    if len(per_seed) >= 3:
+        k1 = [k.get(1) for k in per_seed.values() if k.get(1) is not None]
+        k2 = [k.get(2) for k in per_seed.values() if k.get(2) is not None]
+        if len(k1) >= 3 and len(k2) >= 3:
+            print(f"  K=1 KL: mean {statistics.mean(k1):.3f} sd {statistics.pstdev(k1):.3f}")
+            print(f"  K=2 KL: mean {statistics.mean(k2):.3f} sd {statistics.pstdev(k2):.3f}")
+            print("  A K=2 advantage that survives five seeds is a finding. One that appears in "
+                  "two of five is the single-seed result this project already withdrew once.")
+EOF
+echo REPORT_OK
+"""

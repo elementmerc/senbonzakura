@@ -206,8 +206,10 @@ def experiment_1(a, log):
         else:
             alignment["reading"] = (
                 "the clusters point in genuinely different directions from the global mean "
-                "difference, so there is real structure for the extras to carry and their failure "
-                "to generalise is not explained by alignment alone")
+                "difference, not merely further along it, so their failure to generalise is NOT "
+                "explained by alignment. Different is not the same as shared: a direction unique "
+                "to one cluster is topic structure, and only the held-out folds above can tell "
+                "the two apart. Read this beside them rather than on its own")
 
     usable = [f for f in folds if f["best_extra_on_held_out"] is not None
               and f["random_mean"] is not None]

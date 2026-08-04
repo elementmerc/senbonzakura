@@ -26,7 +26,7 @@
 # What would count as success: at a matched refusal level, RDO k=4 reaching it at lower KL than
 # K=1. What would count as failure: K=1 still cheapest, which would say the subspace is not there
 # to find in these models at this scale, and that is a result worth publishing too.
-run = "rdo-vs-clusters-2026-08-04b"
+run = "rdo-vs-clusters-2026-08-04c"
 
 [[job]]
 id = "setup"
@@ -83,7 +83,7 @@ sys.exit(0)
 
 PYTHONPATH=src "$PY" -u tools/rdo.py \\
     --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
-    --k 4 --steps 200 --layer-frac 0.55 --preserve 1.0 --indep 0.5 \\
+    --k 4 --steps 200 --layer-frac auto --preserve 1.0 --indep 0.5 \\
     --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed 42 \\
     --out "$RUN/rdo/gemma-k4.pt"
 echo RDO_OK
@@ -112,7 +112,7 @@ fi
 
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
-    --experiment e4 --directions-from "$RUN/rdo/gemma-k4.pt" \\
+    --experiment all --directions-from "$RUN/rdo/gemma-k4.pt" \\
     --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
     --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
     --out "$RUN/rdo/score-gemma-rdo.json"
@@ -142,7 +142,7 @@ fi
 
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
-    --experiment e4 --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 8 \\
+    --experiment all --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 8 \\
     --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
     --out "$RUN/rdo/score-gemma-clusters.json"
 echo SCORE_OK
@@ -179,7 +179,7 @@ sys.exit(0)
 
 PYTHONPATH=src "$PY" -u tools/rdo.py \\
     --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
-    --k 4 --steps 200 --layer-frac 0.55 --preserve 1.0 --indep 0.5 \\
+    --k 4 --steps 200 --layer-frac auto --preserve 1.0 --indep 0.5 \\
     --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed 42 \\
     --out "$RUN/rdo/qwen3-k4.pt"
 echo RDO_OK
@@ -208,7 +208,7 @@ fi
 
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
-    --experiment e4 --directions-from "$RUN/rdo/qwen3-k4.pt" \\
+    --experiment all --directions-from "$RUN/rdo/qwen3-k4.pt" \\
     --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
     --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
     --out "$RUN/rdo/score-qwen3-rdo.json"

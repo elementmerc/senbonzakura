@@ -152,6 +152,25 @@ def independence_loss(dirs):
 
 
 # ── the optimiser ─────────────────────────────────────────────────────────────────────
+def bake_window_start(NL):
+    """The lowest layer the evaluation's bake actually touches.
+
+    `_measure` bakes at P = int(NL * 0.6) with half-width D = max(2, NL // 4), so the window runs
+    from P - D. Derived rather than written down: RDO optimised from layer 14 while the bake
+    reached down to layer 9, so five layers inside the window held no directions at all and
+    gemma's RDO arms could not remove enough refusal to reach any comparison band. Two
+    hand-tuned constants that must agree is how that happens.
+    """
+    return max(0, int(NL * 0.6) - max(2, NL // 4))
+
+
+def resolve_layer_frac(spec, NL):
+    """`auto` ties the optimisation window to the bake window; a float pins it by hand."""
+    if str(spec).strip().lower() == "auto":
+        return bake_window_start(NL) / max(1, NL)
+    return float(spec)
+
+
 def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=0):
     """Learn K orthonormal directions that ablate refusal while holding harmless behaviour."""
     args = a.args
@@ -162,7 +181,13 @@ def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=
 
     harmful = a.load(f"{args.track}/bad_ds", args.dir_prompts)
     harmless = a.load(args.good_ds or f"{args.track}/good_ds", args.dir_prompts)
-    start = int(a.NL * layer_frac)
+    start = int(a.NL * resolve_layer_frac(layer_frac, a.NL))
+    window_lo = bake_window_start(a.NL)
+    if start > window_lo:
+        log(f"  NOTE: optimising from layer {start} while the evaluation bake reaches down to "
+            f"layer {window_lo}. Layers {window_lo} to {start - 1} will be inside the bake window "
+            f"with no directions in them, so this direction set cannot remove as much refusal as "
+            f"one that covers the window. Pass --layer-frac auto to tie the two together.")
 
     # The refusal vocabulary: the first tokens of the openers the scorer already counts. Reusing
     # them means the optimiser is pushing on the same quantity the evaluation reads, rather than
@@ -262,7 +287,10 @@ def main(argv=None):
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--k", type=int, default=4)
     ap.add_argument("--steps", type=int, default=150)
-    ap.add_argument("--layer-frac", type=float, default=0.6)
+    ap.add_argument("--layer-frac", default="auto",
+                    help="where to start optimising, as a fraction of depth. 'auto' (default) "
+                         "starts at the lowest layer the evaluation's bake touches, so the "
+                         "directions cover the window they will be applied in.")
     ap.add_argument("--preserve", type=float, default=1.0)
     ap.add_argument("--indep", type=float, default=0.5)
     ap.add_argument("--lr", type=float, default=0.05)
@@ -282,10 +310,13 @@ def main(argv=None):
 
     torch.save({"dirs_multi": to_dirs_multi(dirs, a.NL, a.H, start),
                 "k": own.k, "start_layer": start, "model": own.model,
+                # Recorded together so a later reader can check they agree rather than assume it.
+                "bake_window_start": bake_window_start(a.NL), "layers": a.NL,
                 "history": history, "seed": own.seed}, own.out)
     log(f"written to {own.out}")
     with cli.atomic_write(own.out + ".json") as f:
         json.dump({"k": own.k, "start_layer": start, "model": own.model,
+                   "bake_window_start": bake_window_start(a.NL), "layers": a.NL,
                    "history": history, "seed": own.seed}, f, indent=2)
     return 0
 

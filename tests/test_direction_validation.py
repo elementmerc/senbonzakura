@@ -633,3 +633,87 @@ def test_all_prepares_exactly_once(base_args, tiny_model, tiny_tok, track, tmp_p
              "--strengths", "1.0", "--dir-prompts", "4", "--eval-refusal", "2", "--eval-kl", "2",
              "--out", str(tmp_path / "v.json")])
     assert len(calls) == 1, f"prepared {len(calls)} times; a second snapshot loses the pristine weights"
+
+
+def test_the_matched_band_picks_the_arm_closest_to_the_target_not_the_cheapest():
+    """The selection that decided a verdict wrongly on 2026-08-04.
+
+    K=1 reached 14.8% refusal for KL 0.019; K=2 reached 17.2% for KL 0.018. Picking the cheapest
+    arm that CLEARED the target crowned K=2, which had simply done less work. Two arms that
+    overshoot by different amounts are not at the same refusal level, and comparing their KL is
+    the mistake matching exists to prevent.
+    """
+    base = 0.766
+    rows = [
+        {"arm": "anchor", "K": 1, "strength": 0.0, "random_extras": False,
+         "harmful_refusal": base, "harmless_refusal": 0.0, "kl": 0.0},
+        # K=1 overshoots hard and is cheap for how far it went.
+        {"arm": "fitted-K1", "K": 1, "strength": 1.0, "random_extras": False,
+         "harmful_refusal": 0.148, "harmless_refusal": 0.0, "kl": 0.019},
+        # K=1 also has an arm that lands ON the target.
+        {"arm": "fitted-K1-near", "K": 1, "strength": 0.6, "random_extras": False,
+         "harmful_refusal": 0.380, "harmless_refusal": 0.0, "kl": 0.009},
+        {"arm": "fitted-K2", "K": 2, "strength": 1.0, "random_extras": False,
+         "harmful_refusal": 0.172, "harmless_refusal": 0.0, "kl": 0.018},
+    ]
+    band = dv.matched_refusal_table(rows)["targets"]["50%_removed"]
+    # The K=1 entry must be the arm that landed near 0.383, not the one that blew past it.
+    assert band["1"]["harmful_refusal"] == pytest.approx(0.380)
+    assert band["1"]["kl"] == pytest.approx(0.009)
+    assert abs(band["1"]["overshoot"]) < abs(band["2"]["overshoot"])
+
+
+def test_every_matched_entry_reports_its_overshoot():
+    """A band entry without its distance from the target cannot be read as matched or not."""
+    rows = [{"arm": "anchor", "K": 1, "strength": 0.0, "random_extras": False,
+             "harmful_refusal": 0.8, "harmless_refusal": 0.0, "kl": 0.0},
+            {"arm": "fitted-K1", "K": 1, "strength": 1.0, "random_extras": False,
+             "harmful_refusal": 0.2, "harmless_refusal": 0.0, "kl": 0.05}]
+    table = dv.matched_refusal_table(rows)
+    assert table["target_tolerance"] > 0
+    for band in table["targets"].values():
+        for entry in band.values():
+            assert "overshoot" in entry
+
+
+# ── the diagnostic that explains a cluster failure ────────────────────────────────────
+def _aligned_clusters(n_per=40, H=32, NL1=5, seed=0):
+    """Clusters that differ from harmless only in DEGREE, all along one axis.
+
+    What "amounts of refusal" looks like: every group sits further along the same direction. The
+    published methods cluster prompt text into semantic categories instead, which would give
+    groups differing in direction rather than magnitude.
+    """
+    torch.manual_seed(seed)
+    groups = []
+    for t in range(4):
+        g = torch.randn(n_per, H) * 0.3
+        g[:, 0] += 3.0 + 2.0 * t          # same direction, different amount
+        groups.append(g)
+    Rb = torch.cat(groups)
+    Rg = torch.randn(4 * n_per, H) * 0.3
+    Rg[:, 1] += 5.0
+    return _stack(Rb, NL1), _stack(Rg, NL1)
+
+
+def test_clusters_that_differ_only_in_degree_are_named_as_such():
+    r = _run(*_aligned_clusters())
+    al = r["cluster_alignment"]
+    assert al, "no alignment was measured"
+    assert al["median_residual_fraction"] < 0.1
+    assert "amounts of refusal rather than kinds" in al["reading"]
+
+
+def test_clusters_pointing_different_ways_are_not_blamed_on_alignment():
+    """The multi-component fixture has genuinely different directions; the diagnostic must say so."""
+    r = _run(*_multi_component_refusal())
+    al = r["cluster_alignment"]
+    assert al["median_residual_fraction"] >= 0.1
+    assert "genuinely different directions" in al["reading"]
+
+
+def test_the_alignment_diagnostic_reports_its_sample_size():
+    r = _run(*_topic_only())
+    al = r["cluster_alignment"]
+    assert al["clusters_measured"] > 0
+    assert 0.0 <= al["fraction_above_0_99"] <= 1.0

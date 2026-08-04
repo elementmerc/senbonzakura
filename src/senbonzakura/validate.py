@@ -134,7 +134,32 @@ def experiment_1(a, log):
                 if r.norm() > 1e-6:
                     rnd.append(cli._axis_separation(test, Rg[li], r / r.norm()))
 
+            # Are these clusters "kinds of refusal" or "amounts of refusal"?
+            #
+            # The published methods cluster different things. The LessWrong work clusters prompt
+            # TEXT into semantic categories; Piras trains a SOM on harmful representations. This
+            # clusters raw residuals, and the dominant variance in a harmful residual cloud at a
+            # refusal-relevant layer may simply be how hard refusal is firing. If so, every
+            # cluster's difference-of-means points along d0, orthogonalising leaves noise, and the
+            # extras are topic by construction. Cosine against d0 measures exactly that: near 1
+            # means the cluster differs from harmless in the same DIRECTION as everything else and
+            # only in degree.
+            cos_to_d0 = []
+            for sc in sub.unique():
+                rows_c = train[sub == sc]
+                if rows_c.size(0) < cli.MIN_CLUSTER_ROWS:
+                    continue
+                # Orthogonalised against the harmless direction FIRST, exactly as the extractor
+                # does before it builds a candidate. Without that step the harmless mean's own
+                # offset dominates the cosine and a set of perfectly aligned clusters reads as
+                # 0.81 rather than 1.0, which is the diagnostic measuring its own arithmetic.
+                diff = cli._orth_to(rows_c.mean(0) - mg, [gd])
+                n_diff = diff.norm()
+                if n_diff > 1e-6:
+                    cos_to_d0.append(round(float((diff / n_diff) @ d0), 4))
+
             folds.append({
+                "cluster_cos_to_d0": cos_to_d0,
                 "layer": li,
                 "held_out_cluster": int(c),
                 "held_out_rows": int(held.sum()),
@@ -151,6 +176,38 @@ def experiment_1(a, log):
             log(f"  layer {li} fold {int(c)}: d0={folds[-1]['d0_on_held_out']} "
                 f"extra={folds[-1]['best_extra_on_held_out']} "
                 f"random={folds[-1]['random_mean']}")
+
+    # Across every fold: how aligned are the cluster directions with the global one?
+    all_cos = [abs(c) for f in folds for c in f.get("cluster_cos_to_d0", [])]
+    alignment = {}
+    if all_cos:
+        all_cos.sort()
+        med = all_cos[len(all_cos) // 2]
+        # What fraction of a cluster's own direction SURVIVES removing the global one. The cosine
+        # alone does not separate the cases: clusters that differ only in degree score 0.999 and
+        # clusters carrying a real second component score 0.93, which is a hair apart on a cosine
+        # and 0.04 against 0.37 once expressed as the surviving part. That surviving part is also
+        # the thing the extractor actually keeps, so it is the honest quantity to report.
+        residual = (max(0.0, 1.0 - med ** 2)) ** 0.5
+        alignment = {
+            "clusters_measured": len(all_cos),
+            "median_abs_cos_to_d0": round(med, 4),
+            "max_abs_cos_to_d0": round(all_cos[-1], 4),
+            "median_residual_fraction": round(residual, 4),
+            "fraction_above_0_99": round(sum(1 for c in all_cos if c > 0.99) / len(all_cos), 3),
+        }
+        if residual < 0.1:
+            alignment["reading"] = (
+                "the clusters differ from harmless in the same DIRECTION as the global mean "
+                "difference and only in degree, so they are amounts of refusal rather than kinds "
+                "of it. Orthogonalising against d0 then leaves almost nothing, which is why the "
+                "extra directions cannot generalise. Clustering prompt TEXT into semantic "
+                "categories, as the published work does, is the change this points at.")
+        else:
+            alignment["reading"] = (
+                "the clusters point in genuinely different directions from the global mean "
+                "difference, so there is real structure for the extras to carry and their failure "
+                "to generalise is not explained by alignment alone")
 
     usable = [f for f in folds if f["best_extra_on_held_out"] is not None
               and f["random_mean"] is not None]
@@ -182,7 +239,8 @@ def experiment_1(a, log):
             verdict = ("mixed: the extra directions beat random on some held-out clusters and not "
                        "others, so they carry something transferable but not reliably")
 
-    return {"folds": folds, "summary": summary, "verdict": verdict}
+    return {"folds": folds, "summary": summary, "verdict": verdict,
+            "cluster_alignment": alignment}
 
 
 # ── E2 / E3: bake and measure ─────────────────────────────────────────────────────────
@@ -254,19 +312,31 @@ def matched_refusal_table(rows, tolerance=0.05):
                 else max(r["harmful_refusal"] for r in fitted))
     for target_frac in (0.5, 0.75, 0.9):
         target = baseline * (1.0 - target_frac)
+        # The arm CLOSEST to the target, not the cheapest arm that cleared it. Those are
+        # different selections and the difference decided a verdict: on one grid, K=1 reached
+        # 14.8% refusal for KL 0.019 and K=2 reached 17.2% for KL 0.018, and picking the
+        # cheapest-that-cleared crowned K=2 for doing less work. An arm that overshoots by 0.21
+        # and one that overshoots by 0.23 are not at the same refusal level, so their KL is not
+        # comparable, which is the whole point of matching. Ties on distance go to lower KL.
         best = {}
         for r in fitted:
             if r["harmful_refusal"] <= target + tolerance * baseline:
+                key = (abs(r["harmful_refusal"] - target), r["kl"])
                 cur = best.get(r["K"])
-                if cur is None or r["kl"] < cur["kl"]:
+                if cur is None or key < (abs(cur["harmful_refusal"] - target), cur["kl"]):
                     best[r["K"]] = r
         if best:
             out[f"{int(target_frac * 100)}%_removed"] = {
                 str(K): {"kl": r["kl"], "strength": r["strength"],
-                         "harmful_refusal": r["harmful_refusal"]}
+                         "harmful_refusal": r["harmful_refusal"],
+                         # How far past the target this arm landed. Two arms with very different
+                         # overshoots are not a matched comparison and their KL must not be read
+                         # as one; the report says so rather than leaving it to be noticed.
+                         "overshoot": round(target - r["harmful_refusal"], 4)}
                 for K, r in sorted(best.items())}
     return {"targets": out, "baseline_refusal": baseline,
-            "baseline_is_unablated": bool(anchors)}
+            "baseline_is_unablated": bool(anchors),
+            "target_tolerance": tolerance}
 
 
 def degenerate_reason(rows):

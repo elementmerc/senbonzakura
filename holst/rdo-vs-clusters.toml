@@ -69,7 +69,17 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if [ -f "$RUN/rdo/gemma-k4.pt" ]; then echo "ALREADY_COMPLETE"; echo RDO_OK; exit 0; fi
+# Loadable, not merely present. A `[ -f ]` test accepts a torch file truncated by a killed
+# run, and the next job would then score whatever half a tensor decodes to. The JSON guards
+# three lines below already require a successful parse; this one did not, which is the same
+# defect fixed in the arm guards on 2026-08-03 reintroduced next to its own correction.
+if "$PY" -c "
+import sys, torch
+b = torch.load('$RUN/rdo/gemma-k4.pt', map_location='cpu', weights_only=False)
+d = b['dirs_multi']
+assert d.ndim == 3 and d.shape[1] > 0, d.shape
+sys.exit(0)
+" >/dev/null 2>&1; then echo "ALREADY_COMPLETE"; echo RDO_OK; exit 0; fi
 
 PYTHONPATH=src "$PY" -u tools/rdo.py \\
     --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
@@ -155,7 +165,17 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if [ -f "$RUN/rdo/qwen3-k4.pt" ]; then echo "ALREADY_COMPLETE"; echo RDO_OK; exit 0; fi
+# Loadable, not merely present. A `[ -f ]` test accepts a torch file truncated by a killed
+# run, and the next job would then score whatever half a tensor decodes to. The JSON guards
+# three lines below already require a successful parse; this one did not, which is the same
+# defect fixed in the arm guards on 2026-08-03 reintroduced next to its own correction.
+if "$PY" -c "
+import sys, torch
+b = torch.load('$RUN/rdo/qwen3-k4.pt', map_location='cpu', weights_only=False)
+d = b['dirs_multi']
+assert d.ndim == 3 and d.shape[1] > 0, d.shape
+sys.exit(0)
+" >/dev/null 2>&1; then echo "ALREADY_COMPLETE"; echo RDO_OK; exit 0; fi
 
 PYTHONPATH=src "$PY" -u tools/rdo.py \\
     --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\

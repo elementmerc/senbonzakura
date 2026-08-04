@@ -540,3 +540,15 @@ def test_identical_class_means_fall_back_loudly_rather_than_silently(tiny_tok, t
                                  lr=0.1, batch=2, log=said.append, seed=0, init="mean-diff")
     assert warm is False, "a fallback that reports success is the defect this guards"
     assert any("WARNING" in m and "warm-start" in m for m in said), said
+
+
+def test_the_summed_score_is_still_reachable_for_attribution_runs():
+    """An attribution arm has to be able to reproduce the pre-2026-08-04 behaviour exactly."""
+    model = _ConstantLogitModel(vocab=8)
+    enc = {"input_ids": torch.tensor([[1, 2, 3]])}
+    ctx = contextlib.nullcontext
+    four = torch.tensor([4, 5, 6, 7])
+
+    per_token = rdo.opener_logprob(model, enc, [four], ctx, per_token=True)
+    summed = rdo.opener_logprob(model, enc, [four], ctx, per_token=False)
+    assert float(summed) == pytest.approx(4 * float(per_token), abs=1e-4)

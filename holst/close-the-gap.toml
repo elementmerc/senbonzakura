@@ -114,12 +114,15 @@ echo T_OK
 """
 
 # ── L: does a bigger optimisation budget close it? ────────────────────────────────────
+# Runs after S. S answers whether the project's one positive result is real, which is worth more
+# than whether a longer budget improves a model whose RDO number is still unmeasured, and L's
+# six-hour ceiling would otherwise eat the card before the seeds got near it.
 
 [[job]]
 id = "rdo-gemma-long"
 name = "L: 1000 steps on gemma, everything else identical"
 machine = "rog"
-deps = ["transfer-gemma-clusters"]
+deps = ["seed-45"]
 timeout_secs = 21600
 resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "L_OK" }
@@ -179,12 +182,54 @@ echo SCORE_OK
 # ── S: five seeds on the one positive result this project has ─────────────────────────
 # Seeds 42 to 46, each a fresh optimisation and a fresh scoring. Chained rather than parallel
 # because the card holds one at a time anyway, and chaining makes the resume order obvious.
+#
+# Seed 42 is REDONE rather than reused, and this is not tidiness. The existing
+# rdo/qwen3-k4.pt was optimised from layer 15 by hand, where `--layer-frac auto` derives layer 9
+# for this model, and the existing rdo/score-qwen3-rdo.json predates the unablated anchor, so its
+# "50% removed" band is measured against its own weakest ablated arm rather than against the
+# model. Either difference on its own would make the seed-42 row a different experiment sitting
+# in the same table, and it is the row the headline claim rests on.
+
+[[job]]
+id = "seed-42"
+name = "S: Qwen3 RDO, seed 42 redone under the current configuration"
+machine = "rog"
+deps = ["transfer-gemma-clusters"]
+timeout_secs = 28800
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SEED_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed42.json'))" >/dev/null 2>&1; then
+    echo "SEED 42 ALREADY_COMPLETE"; echo SEED_OK; exit 0
+fi
+
+PYTHONPATH=src "$PY" -u tools/rdo.py \\
+    --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+    --k 4 --steps 200 --layer-frac auto --preserve 1.0 --indep 0.5 \\
+    --lr 0.05 --batch 2 --dir-prompts 128 --device cuda --seed 42 \\
+    --out "$RUN/gap/qwen3-k4-seed42.pt"
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+    --experiment e4 --directions-from "$RUN/gap/qwen3-k4-seed42.pt" \\
+    --strengths 0.2,0.35,0.5,0.7,1.0 --max-directions 4 \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/gap/qwen3-seed42.json"
+echo SEED_OK
+"""
 
 [[job]]
 id = "seed-43"
 name = "S: Qwen3 RDO, seed 43"
 machine = "rog"
-deps = ["score-gemma-long"]
+deps = ["seed-42"]
 timeout_secs = 28800
 resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "SEED_OK" }
@@ -256,7 +301,7 @@ echo SEED_OK
 id = "report"
 name = "read the day together"
 machine = "rog"
-deps = ["transfer-gemma", "transfer-gemma-clusters", "score-gemma-long", "seed-43", "seed-45"]
+deps = ["transfer-gemma", "transfer-gemma-clusters", "score-gemma-long", "seed-42", "seed-43", "seed-45"]
 timeout_secs = 900
 success = { type = "stdout-contains", needle = "REPORT_OK" }
 command = """
@@ -310,23 +355,23 @@ else:
                   + (f"   -> cheapest K={best}" if best else ""))
 
 print("\\n=== S: does the Qwen3 K=2 advantage hold across seeds? ===")
+# Every seed in this table must define its band against the same thing. A run without the
+# unablated anchor measures "percent removed" against its own weakest ablated arm, which is a
+# different question wearing the same label, so it is dropped loudly rather than averaged in.
 per_seed = {}
 for p in sorted(glob.glob(f"{RUN}/gap/qwen3-seed*.json")):
     seed = os.path.basename(p).replace("qwen3-seed", "").replace(".json", "")
     r = load(p)
     if not r or "e4" not in r:
         continue
-    t = matched_refusal_table(r["e4"]["rows"])
+    rows = r["e4"]["rows"]
+    t = matched_refusal_table(rows)
+    if not t.get("baseline_is_unablated"):
+        print(f"    seed {seed}: DROPPED, no unablated anchor, so its band is not comparable")
+        continue
     band = t["targets"].get("50%_removed") or {}
     if band:
         per_seed[seed] = {int(K): e["kl"] for K, e in band.items()}
-
-# Seed 42 came from the earlier run and belongs in the same table.
-r42 = load(f"{RUN}/rdo/score-qwen3-rdo.json")
-if r42 and "e4" in r42:
-    b = matched_refusal_table(r42["e4"]["rows"])["targets"].get("50%_removed") or {}
-    if b:
-        per_seed["42"] = {int(K): e["kl"] for K, e in b.items()}
 
 if not per_seed:
     print("  no seeds produced a usable band")

@@ -120,7 +120,7 @@ def orthonormalise(raw):
 
 
 # ── the losses ────────────────────────────────────────────────────────────────────────
-def opener_logprob(model, enc, openers, ctx):
+def opener_logprob(model, enc, openers, ctx, per_token=True):
     r"""How much probability the model puts on actually SAYING a refusal opener, under `ctx`.
 
     Scored over whole openers under teacher forcing, not over their first tokens. Scoring first
@@ -140,7 +140,12 @@ def opener_logprob(model, enc, openers, ctx):
     2026-08-04 was learned under that imbalance, which fits their KL being an order of magnitude
     worse than a plain difference-of-means. The paper's term is a cross-entropy, which is a mean
     over tokens, so this is the faithful reading as well as the balanced one.
+
+    `per_token=False` restores the summed form. It exists so an attribution run can hold the other
+    two 2026-08-04 fixes fixed and vary this one, rather than reporting that "the fixes helped"
+    without knowing which fix did the work.
     """
+    reduce = (lambda x: x.mean(-1)) if per_token else (lambda x: x.sum(-1))
     scores = []
     ids_in = enc["input_ids"]
     for opener in openers:
@@ -155,19 +160,20 @@ def opener_logprob(model, enc, openers, ctx):
         # prompt position.
         t = cont.shape[1]
         picked = logp[:, -t - 1:-1, :].gather(-1, cont.unsqueeze(-1)).squeeze(-1)   # [b, t]
-        scores.append(picked.mean(-1))                                             # [b]
+        scores.append(reduce(picked))                                              # [b]
     return torch.logsumexp(torch.stack(scores, dim=-1), dim=-1).mean()
 
 
-def refusal_loss(model, enc, dirs, layers, start, openers):
+def refusal_loss(model, enc, dirs, layers, start, openers, per_token=True):
     """Refusal still available on HARMFUL prompts once the directions are projected out.
 
     Minimised: the whole point of ablating is that this goes down.
     """
-    return opener_logprob(model, enc, openers, lambda: ablation_hooks(layers, dirs, start))
+    return opener_logprob(model, enc, openers, lambda: ablation_hooks(layers, dirs, start),
+                          per_token=per_token)
 
 
-def induction_loss(model, enc, direction, layers, layer_idx, alpha, openers):
+def induction_loss(model, enc, direction, layers, layer_idx, alpha, openers, per_token=True):
     """Refusal the direction ADDS to a HARMLESS prompt when it is added rather than removed.
 
     Returned negated, so minimising the total loss maximises induced refusal. This is
@@ -178,7 +184,8 @@ def induction_loss(model, enc, direction, layers, layer_idx, alpha, openers):
     because preservation only says the undamaged model stayed undamaged.
     """
     return -opener_logprob(model, enc, openers,
-                           lambda: addition_hook(layers, direction, alpha, layer_idx))
+                           lambda: addition_hook(layers, direction, alpha, layer_idx),
+                           per_token=per_token)
 
 
 def preserve_loss(model, enc, dirs, layers, start, base_logp):
@@ -277,7 +284,7 @@ def mean_diff_init(a, harmful, harmless, k, g, log):
 
 
 def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=0,
-             induce_w=0.2, induce_alpha=1.0, init="mean-diff"):
+             induce_w=0.2, induce_alpha=1.0, init="mean-diff", per_token=True):
     """Learn K orthonormal directions that ablate refusal while holding harmless behaviour."""
     args = a.args
     model, tok = a.model, a.tok
@@ -344,7 +351,7 @@ def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=
         dirs = orthonormalise(raw)
         enc_good = encode(harmless[j:j + batch])
         l_ref = refusal_loss(model, encode(harmful[i:i + batch]), dirs, a.layers,
-                             start, openers)
+                             start, openers, per_token=per_token)
         l_pre = preserve_loss(model, enc_good, dirs, a.layers, start, base_cache[j])
         l_ind = independence_loss(raw) if k > 1 else torch.zeros((), device=a.dev)
         # One direction per step, round-robin, rather than all K. Scoring every direction's
@@ -352,7 +359,7 @@ def optimise(a, k, steps, layer_frac, preserve_w, indep_w, lr, batch, log, seed=
         # anyway; cycling gives an unbiased stochastic estimate of that mean at the price of one.
         # Over 200 steps with K=4 each direction is exercised about 50 times.
         l_add = (induction_loss(model, enc_good, dirs[step % k], a.layers, induce_layer,
-                                induce_alpha, openers)
+                                induce_alpha, openers, per_token=per_token)
                  if induce_w else torch.zeros((), device=a.dev))
         loss = l_ref + induce_w * l_add + preserve_w * l_pre + indep_w * l_ind
 
@@ -423,6 +430,12 @@ def main(argv=None):
                     help="'mean-diff' (default) warm-starts the first direction from the "
                          "difference-of-means, so the set cannot start worse than the baseline it "
                          "is compared against. 'random' reproduces the paper's initialisation.")
+    ap.add_argument("--score", choices=("per-token", "summed"), default="per-token",
+                    help="how a refusal opener is scored. 'per-token' (default) is the "
+                         "paper's cross-entropy. 'summed' reproduces the behaviour before "
+                         "2026-08-04, where this term reached -700 against a preservation KL "
+                         "near 1 and preservation stopped mattering; it exists for "
+                         "attribution runs, not for producing directions.")
     ap.add_argument("--indep", type=float, default=0.5)
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--batch", type=int, default=4)
@@ -438,7 +451,8 @@ def main(argv=None):
     a = cli.Abliterator(args, log)
     dirs, history, start, warm_started = optimise(
         a, own.k, own.steps, own.layer_frac, own.preserve, own.indep, own.lr, own.batch, log,
-        seed=own.seed, induce_w=own.induce, induce_alpha=own.induce_alpha, init=own.init)
+        seed=own.seed, induce_w=own.induce, induce_alpha=own.induce_alpha, init=own.init,
+        per_token=(own.score == "per-token"))
 
     # Everything that changes what the directions MEAN, recorded with them. Two runs whose
     # metadata differ here are two different experiments, and a resume guard or a cross-seed table
@@ -449,6 +463,7 @@ def main(argv=None):
             "steps": own.steps, "lr": own.lr, "batch": own.batch,
             "preserve": own.preserve, "induce": own.induce, "induce_alpha": own.induce_alpha,
             "indep": own.indep, "init": own.init, "warm_started": warm_started,
+            "score": own.score,
             "dir_prompts": own.dir_prompts, "layer_frac": str(own.layer_frac),
             "history": history, "seed": own.seed}
     torch.save({"dirs_multi": to_dirs_multi(dirs, a.NL, a.H, start), **meta}, own.out)

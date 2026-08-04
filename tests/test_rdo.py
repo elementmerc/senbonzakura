@@ -5,6 +5,7 @@ DOES rather than by what the activations look like. So the tests check the two t
 make it silently useless: an ablation hook that does not actually ablate, and a gradient that
 does not actually reach the direction. Both would still produce a plausible-looking direction set.
 """
+import contextlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -287,16 +288,28 @@ class _HookableAbl:
         self.args = type("A", (), {"track": track, "good_ds": None, "dir_prompts": 8})()
 
     def load(self, path, n):
-        return [f"prompt {i}" for i in range(n)]
+        # Keyed on the path so the harmful and harmless sets are genuinely different prompts.
+        # They used to be identical, which made the two class means identical and would have hidden
+        # a warm start that never fired.
+        tag = "bad" if "bad" in str(path) else "good"
+        return [f"{tag} prompt {i}" for i in range(n)]
 
     def chat(self, p):
         return p
+
+    def collect_resid(self, prompts, bs=16):
+        # [NL+1, N, H], the shape the real one returns. Deterministic in the prompt text so the
+        # two classes have genuinely different means and the warm start has something to find.
+        n = len(prompts)
+        g = torch.Generator().manual_seed(abs(hash(prompts[0])) % (2 ** 31))
+        base = torch.randn(self.NL + 1, 1, self.H, generator=g)
+        return base + 0.1 * torch.randn(self.NL + 1, n, self.H, generator=g)
 
 
 def test_the_optimiser_moves_the_directions_and_records_its_losses(tiny_tok, track):
     """A short real run on a model whose hooks actually fire."""
     a = _HookableAbl(_HookableModel(), tiny_tok, track)
-    dirs, history, start = rdo.optimise(a, k=2, steps=3, layer_frac=0.5, preserve_w=1.0,
+    dirs, history, start, _warm = rdo.optimise(a, k=2, steps=3, layer_frac=0.5, preserve_w=1.0,
                                         indep_w=0.5, lr=0.1, batch=2, log=lambda m: None, seed=0)
 
     assert dirs.shape == (2, a.H)
@@ -308,9 +321,9 @@ def test_the_optimiser_moves_the_directions_and_records_its_losses(tiny_tok, tra
 def test_the_directions_actually_move(tiny_tok, track):
     """A run that leaves the directions at their initialisation has optimised nothing."""
     a = _HookableAbl(_HookableModel(), tiny_tok, track)
-    start_dirs, _, _ = rdo.optimise(a, k=2, steps=0, layer_frac=0.5, preserve_w=1.0,
+    start_dirs, _, _, _ = rdo.optimise(a, k=2, steps=0, layer_frac=0.5, preserve_w=1.0,
                                     indep_w=0.5, lr=0.5, batch=2, log=lambda m: None, seed=0)
-    moved, _, _ = rdo.optimise(a, k=2, steps=8, layer_frac=0.5, preserve_w=1.0,
+    moved, _, _, _ = rdo.optimise(a, k=2, steps=8, layer_frac=0.5, preserve_w=1.0,
                                indep_w=0.5, lr=0.5, batch=2, log=lambda m: None, seed=0)
     assert not torch.allclose(start_dirs, moved, atol=1e-4), "the optimiser did not move anything"
 
@@ -389,3 +402,141 @@ def test_openers_that_tokenise_the_same_are_not_counted_twice():
     # log(2x) = log(x) + log 2, so a duplicated opener shifts the loss by a constant it should
     # never have earned.
     assert float(twice) > float(one)
+
+
+# ── the induction term (added 2026-08-04) ─────────────────────────────────────────────
+def test_the_addition_hook_adds_the_direction():
+    layers = [_Block(), _Block()]
+    v = torch.tensor([1.0, 0.0, 0.0, 0.0])
+    x = torch.zeros(1, 1, 4)
+    with rdo.addition_hook(layers, v, alpha=2.0, layer_idx=1):
+        assert float(layers[0](x)[0, 0, 0]) == pytest.approx(0.0), "the wrong layer was touched"
+        assert float(layers[1](x)[0, 0, 0]) == pytest.approx(2.0)
+
+
+def test_the_addition_hook_handles_a_tuple_output_and_is_removed():
+    layers = [_TupleBlock()]
+    v = torch.tensor([1.0, 0.0, 0.0, 0.0])
+    with rdo.addition_hook(layers, v, alpha=1.0, layer_idx=0):
+        out = layers[0](torch.zeros(1, 1, 4))
+        assert isinstance(out, tuple) and out[1] == "cache"
+        assert float(out[0][0, 0, 0]) == pytest.approx(1.0)
+    assert float(layers[0](torch.zeros(1, 1, 4))[0][0, 0, 0]) == pytest.approx(0.0)
+
+
+def test_induction_is_the_negated_opener_score_so_minimising_it_maximises_refusal():
+    """Sign errors here would train the directions to SUPPRESS the refusal they should induce."""
+    model = _HookableModel()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    d = rdo.orthonormalise(torch.randn(2, 8))
+    enc = {"input_ids": torch.tensor([[1, 2, 3]])}
+    openers = [torch.tensor([4, 5])]
+
+    induced = rdo.induction_loss(model, enc, d[0], model.model.layers, 0, 1.0, openers)
+    direct = rdo.opener_logprob(
+        model, enc, openers,
+        lambda: rdo.addition_hook(model.model.layers, d[0], 1.0, 0))
+    assert float(induced) == pytest.approx(-float(direct), abs=1e-5)
+
+
+def test_induction_is_differentiable_so_it_can_train_the_direction():
+    model = _HookableModel()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    raw = torch.randn(1, 8, requires_grad=True)
+    loss = rdo.induction_loss(model, {"input_ids": torch.tensor([[1, 2, 3]])},
+                              rdo.orthonormalise(raw)[0], model.model.layers, 0, 1.0,
+                              [torch.tensor([4, 5])])
+    loss.backward()
+    assert raw.grad is not None and raw.grad.abs().sum() > 0
+
+
+def test_the_run_records_whether_the_induction_term_was_on(tiny_tok, track):
+    """A run without the term is a different experiment and the history has to say so."""
+    a = _HookableAbl(_HookableModel(), tiny_tok, track)
+    _, on, _, _ = rdo.optimise(a, k=2, steps=1, layer_frac=0.5, preserve_w=1.0, indep_w=0.5,
+                               lr=0.1, batch=2, log=lambda m: None, seed=0, induce_w=0.2)
+    _, off, _, _ = rdo.optimise(a, k=2, steps=1, layer_frac=0.5, preserve_w=1.0, indep_w=0.5,
+                                lr=0.1, batch=2, log=lambda m: None, seed=0, induce_w=0.0)
+    assert "induced" in on[0] and "induced" in off[0]
+    assert off[0]["induced"] == 0.0, "a disabled term must read as zero, not as a stale value"
+
+
+# ── the per-token refusal score (fixed 2026-08-04) ────────────────────────────────────
+class _ConstantLogitModel(torch.nn.Module):
+    """Every position predicts the same uniform distribution, so per-token log-prob is constant."""
+
+    def __init__(self, vocab=8):
+        super().__init__()
+        self.vocab = vocab
+        self.model = type("M", (), {"layers": [_Block()]})()
+
+    def forward(self, input_ids=None, **kw):
+        B, S = input_ids.shape
+        return type("O", (), {"logits": torch.zeros(B, S, self.vocab)})()
+
+
+def test_the_opener_score_is_per_token_not_summed():
+    """A longer opener must not score lower purely for being longer.
+
+    Summed, this term reached -700 on a real run while the preservation KL sat near 1, so
+    preservation contributed nothing to the gradient and the optimiser could buy refusal removal
+    with unlimited damage. Every RDO direction produced before 2026-08-04 was learned that way.
+    """
+    model = _ConstantLogitModel(vocab=8)
+    enc = {"input_ids": torch.tensor([[1, 2, 3]])}
+    ctx = contextlib.nullcontext
+
+    short = rdo.opener_logprob(model, enc, [torch.tensor([4])], ctx)
+    long = rdo.opener_logprob(model, enc, [torch.tensor([4, 5, 6, 7])], ctx)
+    assert float(short) == pytest.approx(float(long), abs=1e-5), (
+        "the opener score scales with token count, so it is a sum rather than a mean")
+    # And the value is the per-token log-probability of a uniform distribution over 8 tokens.
+    assert float(short) == pytest.approx(-torch.tensor(8.0).log().item(), abs=1e-5)
+
+
+# ── the warm start (added 2026-08-04) ─────────────────────────────────────────────────
+def test_the_warm_start_puts_the_difference_of_means_in_the_direction_set(tiny_tok, track):
+    """At step zero the set must CONTAIN the baseline it will be compared against."""
+    a = _HookableAbl(_HookableModel(), tiny_tok, track)
+    dirs, _, _, warm = rdo.optimise(a, k=2, steps=0, layer_frac=0.5, preserve_w=1.0, indep_w=0.5,
+                                    lr=0.1, batch=2, log=lambda m: None, seed=0, init="mean-diff")
+    assert warm is True
+
+    li = rdo.bake_centre_layer(a.NL)
+    mb = a.collect_resid(a.load(f"{a.args.track}/bad_ds", 8))[li].mean(0)
+    mg = a.collect_resid(a.load(f"{a.args.track}/good_ds", 8))[li].mean(0)
+    gd = mg / mg.norm()
+    d0 = mb - mg
+    d0 = d0 - (d0 @ gd) * gd
+    d0 = d0 / d0.norm()
+
+    # Gram-Schmidt fixes the first row up to sign, and a projection is sign-invariant.
+    assert abs(float(dirs[0] @ d0)) == pytest.approx(1.0, abs=1e-4)
+
+
+def test_a_random_init_does_not_claim_to_be_warm_started(tiny_tok, track):
+    a = _HookableAbl(_HookableModel(), tiny_tok, track)
+    dirs, _, _, warm = rdo.optimise(a, k=2, steps=0, layer_frac=0.5, preserve_w=1.0, indep_w=0.5,
+                                    lr=0.1, batch=2, log=lambda m: None, seed=0, init="random")
+    assert warm is False
+    li = rdo.bake_centre_layer(a.NL)
+    mb = a.collect_resid(a.load(f"{a.args.track}/bad_ds", 8))[li].mean(0)
+    mg = a.collect_resid(a.load(f"{a.args.track}/good_ds", 8))[li].mean(0)
+    d0 = (mb - mg) / (mb - mg).norm()
+    assert abs(float(dirs[0] @ d0)) < 0.99
+
+
+def test_identical_class_means_fall_back_loudly_rather_than_silently(tiny_tok, track):
+    """Layer 0 really does have identical class means, so this path is reachable, not defensive."""
+    class Degenerate(_HookableAbl):
+        def collect_resid(self, prompts, bs=16):
+            return torch.ones(self.NL + 1, len(prompts), self.H)
+
+    said = []
+    a = Degenerate(_HookableModel(), tiny_tok, track)
+    _, _, _, warm = rdo.optimise(a, k=2, steps=0, layer_frac=0.5, preserve_w=1.0, indep_w=0.5,
+                                 lr=0.1, batch=2, log=said.append, seed=0, init="mean-diff")
+    assert warm is False, "a fallback that reports success is the defect this guards"
+    assert any("WARNING" in m and "warm-start" in m for m in said), said

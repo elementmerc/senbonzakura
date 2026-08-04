@@ -35,6 +35,7 @@ Usage:
       --out results.json [--device cuda] [--max-directions 8] [--seed 42]
 """
 import argparse
+import contextlib
 import json
 
 import torch
@@ -47,7 +48,8 @@ def build_args(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True)
     ap.add_argument("--track", default="track")
-    ap.add_argument("--experiment", default="all", choices=["e1", "e2", "e3", "e4", "all"])
+    ap.add_argument("--experiment", default="all",
+                    choices=["e1", "e2", "e3", "e4", "transfer", "all"])
     ap.add_argument("--strengths", default="0.3,0.5,0.7,0.85,1.0",
                     help="ablation strengths for the E4 grid. The weakest must leave refusal "
                          "partly standing or the grid has no room for K to show an effect, "
@@ -243,6 +245,143 @@ def experiment_1(a, log):
 
     return {"folds": folds, "summary": summary, "verdict": verdict,
             "cluster_alignment": alignment}
+
+
+# ── the transfer gap: the operation optimised against, versus the one applied ─────────
+@contextlib.contextmanager
+def residual_ablation(a, K, P, wmax, wmin, D):
+    """Ablate by forward hook on the residual stream, using the bake's own layer profile.
+
+    RDO optimises a HOOK, which removes the direction from the accumulated residual stream. The
+    evaluation BAKES, which removes it from the weights that write into that stream. Those are
+    related and not identical: the hook also removes whatever earlier layers and the embedding
+    put there, while the bake only stops new writes. A direction tuned against one may transfer
+    poorly to the other, and RDO's directions remove far less refusal than a plain
+    difference-of-means, so the gap is the leading suspect.
+
+    Sharing `layer_weight` with the bake is what makes this a measurement of the OPERATION. Give
+    the hook its own profile and the comparison measures the profile instead.
+    """
+    handles = []
+
+    def make(idx):
+        w = cli.layer_weight(idx, P, wmax, wmin, D)
+        M = a.dirs_multi[idx + 1][:K].float()
+        live = M[M.norm(dim=-1) > 1e-6]
+
+        def hook(_module, _inp, out):
+            if w <= 0.0 or live.shape[0] == 0:
+                return out
+            h = out[0] if isinstance(out, tuple) else out
+            hf = h.float()
+            R = live.to(hf.device)
+            hf = hf - w * ((hf @ R.T) @ R)
+            hf = hf.to(h.dtype)
+            return (hf, *out[1:]) if isinstance(out, tuple) else hf
+        return hook
+
+    try:
+        for i, layer in enumerate(a.layers):
+            handles.append(layer.register_forward_hook(make(i)))
+        yield
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+def transfer_gap(a, log, K, strength=1.0):
+    """Score the SAME directions under the hook and under the bake, and report the difference."""
+    NL = a.NL
+    P, D = int(NL * 0.6), max(2, NL // 4)
+
+    with residual_ablation(a, K, P, strength, 0.0, D):
+        hooked = {"harmful_refusal": round(a.refusal_rate(a.bad_eval), 4),
+                  "harmless_refusal": round(a.refusal_rate(a.kl_eval), 4),
+                  "kl": round(a.kl_vs_orig(a.kl_eval), 4)}
+
+    a.bake(P, strength, 0.0, D, K=K)
+    baked = {"harmful_refusal": round(a.refusal_rate(a.bad_eval), 4),
+             "harmless_refusal": round(a.refusal_rate(a.kl_eval), 4),
+             "kl": round(a.kl_vs_orig(a.kl_eval), 4)}
+    a.restore_weights()
+
+    d_ref = baked["harmful_refusal"] - hooked["harmful_refusal"]
+    log(f"  K={K} s={strength}: hook harmful={hooked['harmful_refusal']} kl={hooked['kl']} | "
+        f"bake harmful={baked['harmful_refusal']} kl={baked['kl']} | delta={d_ref:+.4f}")
+    return {"K": K, "strength": strength, "hook": hooked, "bake": baked,
+            "refusal_delta_bake_minus_hook": round(d_ref, 4)}
+
+
+def projection_magnitude(a, log, K):
+    """How much activation actually lies along each kept direction.
+
+    arXiv:2603.22061 found topic-matched contrasts producing geometrically purer directions that
+    do nothing, and named the mechanism: matching "reduces the magnitude of the extracted
+    direction below the threshold at which weight-matrix projection perturbs the residual
+    stream". Purity is not the same as effect. A direction can separate the classes perfectly and
+    still lie along an axis the activations barely occupy, and removing it then changes nothing.
+
+    Our extra directions are orthogonalised against d0, which removes the largest shared
+    component BY CONSTRUCTION, so they are exactly the shape that paper warns about and we have
+    never measured their magnitude. Reported as a fraction of the primary direction's magnitude,
+    because the absolute scale of a residual stream is not comparable across models or layers.
+    """
+    args = a.args
+    bad = a.load(f"{args.track}/bad_ds", args.dir_prompts)
+    Rb = a.collect_resid(bad)
+    NL = a.NL
+    P, D = int(NL * 0.6), max(2, NL // 4)
+    layers = [li for li in range(NL + 1) if cli.layer_weight(li - 1, P, 1.0, 0.0, D) > 0]
+
+    per_k = {j: [] for j in range(K)}
+    for li in layers:
+        M = a.dirs_multi[li][:K].float()
+        for j in range(min(K, M.shape[0])):
+            v = M[j]
+            if v.norm() < 1e-6:
+                continue
+            per_k[j].append(float((Rb[li] @ v).abs().mean()))
+
+    primary = sum(per_k[0]) / len(per_k[0]) if per_k[0] else 0.0
+    out = {}
+    for j, vals in per_k.items():
+        if not vals:
+            continue
+        mean = sum(vals) / len(vals)
+        out[str(j)] = {"mean_abs_projection": round(mean, 4),
+                       "fraction_of_primary": round(mean / primary, 4) if primary else None}
+    weakest = min((v["fraction_of_primary"] for v in out.values()
+                   if v["fraction_of_primary"] is not None), default=None)
+    reading = ("no directions measured" if weakest is None else
+               (f"the weakest kept direction carries {weakest:.1%} of the primary's activation "
+                f"magnitude, so removing it perturbs the residual stream by that much less. A "
+                f"direction this small cannot do much whatever its separation score says, which "
+                f"is the failure arXiv:2603.22061 describes")
+               if weakest < 0.25 else
+               (f"every kept direction carries at least {weakest:.1%} of the primary's activation "
+                f"magnitude, so they are large enough to act and their weakness is not explained "
+                f"by magnitude"))
+    log(f"  projection magnitudes (fraction of primary): "
+        f"{ {k: v['fraction_of_primary'] for k, v in out.items()} }")
+    return {"per_direction": out, "weakest_fraction_of_primary": weakest, "reading": reading}
+
+
+def experiment_transfer(a, log, ks, strengths):
+    """The whole point: if these two disagree, RDO is optimising the wrong operation."""
+    log("T: the same directions ablated by hook and by weight bake")
+    rows = [transfer_gap(a, log, K, s) for K in ks for s in strengths]
+    deltas = [abs(r["refusal_delta_bake_minus_hook"]) for r in rows]
+    worst = max(deltas) if deltas else 0.0
+    mean = sum(deltas) / len(deltas) if deltas else 0.0
+    if worst < 0.05:
+        reading = ("hook and bake agree closely, so a direction optimised against the hook is "
+                   "optimised against what the bake does and the transfer is not the problem")
+    else:
+        reading = (f"hook and bake disagree by up to {worst:.3f} in refusal rate, so RDO is "
+                   f"optimising an operation the evaluation does not perform. The fix is to "
+                   f"optimise the bake directly rather than a residual-stream hook")
+    return {"rows": rows, "mean_abs_delta": round(mean, 4),
+            "max_abs_delta": round(worst, 4), "reading": reading}
 
 
 # ── E2 / E3: bake and measure ─────────────────────────────────────────────────────────
@@ -485,6 +624,15 @@ def main(argv=None):
 
     if own.experiment in ("e2", "e3", "all"):
         record["e2_e3"] = experiments_2_and_3(a, log, own.experiment, own.directions_from)
+
+    if own.experiment == "transfer":
+        prepare_for_bakes(a, log, own.directions_from)
+        kmax = max(a.dirs_per_layer)
+        ks = sorted({1, 2, min(4, kmax)} & set(range(1, kmax + 1))) or [1]
+        record["transfer"] = experiment_transfer(a, log, ks, [0.5, 1.0])
+        log(f"\n  T: {record['transfer']['reading']}\n")
+        record["projection_magnitude"] = projection_magnitude(a, log, max(ks))
+        log(f"\n  M: {record['projection_magnitude']['reading']}\n")
 
     if own.experiment in ("e4", "all"):
         strengths = [float(x) for x in own.strengths.split(",") if x.strip()]

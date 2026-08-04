@@ -717,3 +717,146 @@ def test_the_alignment_diagnostic_reports_its_sample_size():
     al = r["cluster_alignment"]
     assert al["clusters_measured"] > 0
     assert 0.0 <= al["fraction_above_0_99"] <= 1.0
+
+
+# ── the transfer gap ──────────────────────────────────────────────────────────────────
+def test_the_hook_uses_the_bakes_own_layer_profile(base_args, model_factory, tiny_tok, track):
+    """Give the hook its own profile and the comparison measures the profile, not the operation.
+
+    The registered hooks are invoked directly rather than through a forward pass: the shared
+    fixture's layer modules have no `forward` of their own, which is the same reason a hook on
+    them never fires, and is exactly why the transfer question needs asking on a real model.
+    """
+    a = _ready_abl(base_args, model_factory(H=8, NL=12, V=16), tiny_tok, track)
+    NL = a.NL
+    P, D = int(NL * 0.6), max(2, NL // 4)
+    outside = [i for i in range(NL) if abs(i - P) > D]
+    inside = [i for i in range(NL) if cli.layer_weight(i, P, 1.0, 0.0, D) > 0]
+    assert outside and inside, "the fixture needs layers on both sides of the window"
+
+    x = torch.randn(1, 2, a.H)
+    with dv.residual_ablation(a, 1, P, 1.0, 0.0, D):
+        hooks = {i: list(layer._forward_hooks.values())[-1] for i, layer in enumerate(a.layers)}
+        for i in outside:
+            assert cli.layer_weight(i, P, 1.0, 0.0, D) == 0.0
+            assert torch.equal(hooks[i](a.layers[i], None, x), x), (
+                f"layer {i} is outside the bake window and was ablated anyway")
+        touched = [i for i in inside
+                   if not torch.allclose(hooks[i](a.layers[i], None, x), x, atol=1e-6)]
+        assert touched, "no layer inside the window was ablated, so this proves nothing"
+
+
+def test_the_hook_scales_with_the_layer_weight(base_args, model_factory, tiny_tok, track):
+    """Strength must taper with distance from the window centre, as the bake's does."""
+    a = _ready_abl(base_args, model_factory(H=8, NL=12, V=16), tiny_tok, track)
+    NL = a.NL
+    P, D = int(NL * 0.6), max(2, NL // 4)
+    x = torch.randn(1, 2, a.H)
+
+    with dv.residual_ablation(a, 1, P, 1.0, 0.0, D):
+        hooks = {i: list(layer._forward_hooks.values())[-1] for i, layer in enumerate(a.layers)}
+        removed = {}
+        for i in range(NL):
+            if cli.layer_weight(i, P, 1.0, 0.0, D) > 0:
+                removed[i] = float((x - hooks[i](a.layers[i], None, x)).norm())
+
+    # The centre of the window must remove at least as much as its edge.
+    edge = min(removed, key=lambda i: cli.layer_weight(i, P, 1.0, 0.0, D))
+    assert removed[P] >= removed[edge], (
+        f"the window centre removed {removed[P]:.4f} and its edge {removed[edge]:.4f}")
+
+
+def test_the_hooks_are_removed_afterwards(base_args, tiny_model, tiny_tok, track):
+    """A leaked hook would silently ablate the bake measurement that follows it."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    before = [len(layer._forward_hooks) for layer in a.layers]
+    with dv.residual_ablation(a, 1, int(a.NL * 0.6), 1.0, 0.0, 2):
+        during = [len(layer._forward_hooks) for layer in a.layers]
+    after = [len(layer._forward_hooks) for layer in a.layers]
+    assert during != before, "no hook was installed"
+    assert after == before, "a hook outlived its context"
+
+
+def test_transfer_gap_restores_the_weights(base_args, tiny_model, tiny_tok, track):
+    """It bakes to measure the bake arm, so it must put the model back."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    before = [p.detach().clone() for p in a.model.parameters()]
+    dv.transfer_gap(a, lambda m: None, K=1, strength=1.0)
+    for b, p in zip(before, a.model.parameters(), strict=True):
+        assert torch.equal(b, p), "the transfer measurement left the model baked"
+
+
+def test_transfer_gap_reports_both_arms_and_their_difference(base_args, tiny_model, tiny_tok,
+                                                             track):
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+    row = dv.transfer_gap(a, lambda m: None, K=1, strength=1.0)
+    assert set(row) == {"K", "strength", "hook", "bake", "refusal_delta_bake_minus_hook"}
+    for arm in ("hook", "bake"):
+        assert {"harmful_refusal", "harmless_refusal", "kl"} <= set(row[arm])
+    assert row["refusal_delta_bake_minus_hook"] == pytest.approx(
+        row["bake"]["harmful_refusal"] - row["hook"]["harmful_refusal"], abs=1e-4)
+
+
+def test_agreement_and_disagreement_get_different_readings(base_args, tiny_model, tiny_tok, track,
+                                                           monkeypatch):
+    """The verdict must depend on the numbers, not be constant."""
+    a = _ready_abl(base_args, tiny_model, tiny_tok, track)
+
+    monkeypatch.setattr(dv, "transfer_gap",
+                        lambda *args, **kw: {"K": 1, "strength": 1.0, "hook": {}, "bake": {},
+                                             "refusal_delta_bake_minus_hook": 0.001})
+    assert "not the problem" in dv.experiment_transfer(a, lambda m: None, [1], [1.0])["reading"]
+
+    monkeypatch.setattr(dv, "transfer_gap",
+                        lambda *args, **kw: {"K": 1, "strength": 1.0, "hook": {}, "bake": {},
+                                             "refusal_delta_bake_minus_hook": 0.42})
+    r = dv.experiment_transfer(a, lambda m: None, [1], [1.0])
+    assert "optimising an operation the evaluation does not perform" in r["reading"]
+    assert r["max_abs_delta"] == pytest.approx(0.42)
+
+
+# ── projection magnitude: purity is not effect ────────────────────────────────────────
+class _MagStub:
+    """An Abliterator shaped just enough for `projection_magnitude`."""
+
+    def __init__(self, dirs_multi, Rb, NL, H):
+        self.dirs_multi, self._Rb, self.NL, self.H = dirs_multi, Rb, NL, H
+        self.args = type("A", (), {"track": "t", "good_ds": None, "dir_prompts": 8})()
+
+    def load(self, path, n):
+        return ["p"] * n
+
+    def collect_resid(self, prompts):
+        return self._Rb
+
+
+def _mag_case(second_scale):
+    """Two directions; the second occupies `second_scale` of the activation the first does."""
+    NL, H, N = 12, 8, 32
+    torch.manual_seed(0)
+    dirs = torch.zeros(NL + 1, 2, H)
+    for li in range(NL + 1):
+        dirs[li, 0, 0] = 1.0
+        dirs[li, 1, 1] = 1.0
+    Rb = torch.zeros(NL + 1, N, H)
+    Rb[:, :, 0] = 10.0                       # lots of activation along direction 0
+    Rb[:, :, 1] = 10.0 * second_scale        # and this much along direction 1
+    return _MagStub(dirs, Rb, NL, H)
+
+
+def test_a_direction_the_activations_barely_occupy_is_named_as_such():
+    """The failure arXiv:2603.22061 describes: geometrically fine, functionally too small."""
+    r = dv.projection_magnitude(_mag_case(0.05), lambda m: None, K=2)
+    assert r["weakest_fraction_of_primary"] == pytest.approx(0.05, abs=0.01)
+    assert "cannot do much whatever its separation score says" in r["reading"]
+
+
+def test_directions_of_comparable_magnitude_are_not_blamed_on_size():
+    r = dv.projection_magnitude(_mag_case(0.8), lambda m: None, K=2)
+    assert r["weakest_fraction_of_primary"] > 0.25
+    assert "not explained by magnitude" in r["reading"]
+
+
+def test_the_primary_direction_is_its_own_reference():
+    r = dv.projection_magnitude(_mag_case(0.5), lambda m: None, K=2)
+    assert r["per_direction"]["0"]["fraction_of_primary"] == pytest.approx(1.0, abs=1e-3)

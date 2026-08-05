@@ -84,20 +84,50 @@ def test_a_float_written_as_1_0_does_not_match_the_string_1(result):
 
 def test_a_dotted_path_reaches_into_nested_dicts(result):
     p = result({"e4": {"strengths": [0.2], "degenerate_reason": None}})
-    assert ao.main([p, "e4.degenerate_reason=None"]) == 0
+    assert ao.main([p, "e4.degenerate_reason=null"]) == 0
     assert ao.main([p, "e4.degenerate_reason=something"]) == 1
 
 
-def test_configuration_under_a_meta_container_is_found_too(result):
-    """The two writers here disagree about where config lives; a guard used for one only is unused."""
-    p = result({"meta": {"seed": 43, "init": "random"}})
-    assert ao.main([p, "seed=43", "init=random"]) == 0
+def test_json_null_is_spelled_null_and_a_literal_none_string_does_not_satisfy_it(result):
+    """`degenerate_reason=null` means "the grid was readable" and is a guard worth writing.
+
+    Comparing str(got) alone made a real null and the recorded TEXT "None" indistinguishable, so a
+    file that had recorded the string would have satisfied a guard asking for the null.
+    """
+    real_null = result({"degenerate_reason": None}, "a.json")
+    literal = result({"degenerate_reason": "None"}, "b.json")
+    assert ao.main([real_null, "degenerate_reason=null"]) == 0
+    assert ao.main([literal, "degenerate_reason=null"]) == 1, (
+        "the string 'None' satisfied a guard asking for JSON null")
+    assert ao.main([literal, "degenerate_reason=None"]) == 0
+
+
+def test_booleans_may_be_written_the_json_way_or_the_python_way(result):
+    p = result({"warm_started": True})
+    assert ao.main([p, "warm_started=true"]) == 0
+    assert ao.main([p, "warm_started=True"]) == 0
+    assert ao.main([p, "warm_started=false"]) == 1
+
+
+def test_only_the_root_is_searched_so_no_answer_can_come_from_elsewhere(result):
+    """The container fallback could satisfy a guard from a place the real container never held.
+
+    With a `meta` fallback, `arms.K` died inside the root's real `arms` (a list, not a dict) and
+    then silently retried under `meta`, where a planted value satisfied it. Every writer in this
+    repo puts configuration at the root, so the fallback bought nothing and cost exactly this.
+    """
+    p = result({"arms": [{"K": 1}, {"K": 2}], "meta": {"arms": {"K": "9"}}})
+    assert ao.main([p, "arms.K=9"]) == 1, "an expectation was satisfied from the wrong container"
+
+    q = result({"meta": {"seed": 43}}, "q.json")
+    assert ao.main([q, "seed=43"]) == 1, "a root-only lookup answered from meta"
+
+
+def test_a_list_rooted_artefact_says_why_it_cannot_be_checked(result, capsys):
+    """cli.py writes trials.json as a bare array; the guard must explain, not list every key."""
+    p = result([{"trial": 1}, {"trial": 2}])
     assert ao.main([p, "seed=42"]) == 1
-
-
-def test_a_root_key_wins_over_a_meta_key_of_the_same_name(result):
-    p = result({"seed": 42, "meta": {"seed": 99}})
-    assert ao.main([p, "seed=42"]) == 0
+    assert "not an object" in capsys.readouterr().out
 
 
 def test_lookup_survives_a_path_that_runs_into_a_non_dict(result):

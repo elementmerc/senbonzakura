@@ -37,6 +37,7 @@ Usage:
 import argparse
 import contextlib
 import json
+import math
 
 import torch
 
@@ -427,7 +428,7 @@ def _measure(a, label, K, log, randomise_extras=False, seed=0, strength=1.0):
     return row
 
 
-def matched_refusal_table(rows, tolerance=0.05):
+def matched_refusal_table(rows, tolerance=0.05, n_eval=None):
     """Compare K at MATCHED refusal removal, which is the only comparison that means anything.
 
     Reading KL off arms that removed different amounts of refusal compares nothing: more ablation
@@ -441,7 +442,16 @@ def matched_refusal_table(rows, tolerance=0.05):
     out, ranking = {}, {}
     fitted = [r for r in rows if not r["random_extras"]]
     if not fitted:
-        return {"targets": out, "ranking": ranking, "note": "no fitted arms"}
+        # The same key set as the normal return, so a reader of one shape does not KeyError on
+        # the other. An empty table is a legitimate outcome, not a different kind of object.
+        return {"targets": out, "ranking": ranking, "note": "no fitted arms",
+                "baseline_refusal": None, "baseline_is_unablated": False, "n_eval": n_eval,
+                "degenerate_reason": "no fitted arms", "target_tolerance": tolerance}
+
+    # A grid with no dynamic range says nothing about K, and `rank_band` cannot see that on its
+    # own: when every arm sits at the same refusal the spread is zero, the matched-level test
+    # passes trivially, and a confident winner is published for a grid that measured nothing.
+    degenerate = degenerate_reason(rows)
 
     # Prefer the true unablated anchor (strength 0) when it exists. Falling back to the
     # least-ablated ARM was a real distortion in the first run: its weakest arm had already
@@ -459,9 +469,17 @@ def matched_refusal_table(rows, tolerance=0.05):
         # cheapest-that-cleared crowned K=2 for doing less work. An arm that overshoots by 0.21
         # and one that overshoots by 0.23 are not at the same refusal level, so their KL is not
         # comparable, which is the whole point of matching. Ties on distance go to lower KL.
+        #
+        # Membership is TWO-SIDED. It used to be `refusal <= target + tolerance*baseline`, open
+        # downward, so an arm that removed everything was a member of the 50% band: a grid whose
+        # arms sat at 0.02 and 0.00 refusal published a verdict under the heading "50%_removed"
+        # when both arms had removed essentially all of it. Open-ended membership also made the
+        # spread unbounded, which is why the comparability test below could not describe its own
+        # threshold honestly. An arm that blew past this band belongs to a deeper one.
+        lo, hi = target - tolerance * baseline, target + tolerance * baseline
         best = {}
         for r in fitted:
-            if r["harmful_refusal"] <= target + tolerance * baseline:
+            if lo <= r["harmful_refusal"] <= hi:
                 key = (abs(r["harmful_refusal"] - target), r["kl"])
                 cur = best.get(r["K"])
                 if cur is None or key < (abs(cur["harmful_refusal"] - target), cur["kl"]):
@@ -480,9 +498,11 @@ def matched_refusal_table(rows, tolerance=0.05):
             # Deliberately a SIBLING of `targets` rather than extra keys inside a band. Mixing
             # verdict keys in with the per-K arms means every consumer that iterates a band trips
             # over them, which is a worse defect than the one being fixed.
-            ranking[band] = rank_band(entries, baseline, tolerance)
+            ranking[band] = rank_band(entries, baseline, tolerance, n_eval=n_eval,
+                                      degenerate=degenerate)
     return {"targets": out, "ranking": ranking, "baseline_refusal": baseline,
-            "baseline_is_unablated": bool(anchors),
+            "baseline_is_unablated": bool(anchors), "n_eval": n_eval,
+            "degenerate_reason": degenerate,
             "target_tolerance": tolerance}
 
 
@@ -492,45 +512,84 @@ def matched_refusal_table(rows, tolerance=0.05):
 TIE_FRACTION = 0.05
 
 
-def rank_band(entries, baseline, tolerance):
+def refusal_match_tolerance(refusals, n_eval, baseline, tolerance):
+    """How far apart two refusal rates may sit and still count as the same level.
+
+    A fixed fraction of the baseline was the wrong quantity and was wrong in both directions at
+    once. Refusal is a proportion measured on `n_eval` prompts, so the precision of a DIFFERENCE
+    between two arms is set by the binomial standard error, not by the baseline. At p = 0.15 on
+    64 prompts that standard error is about 0.065, so a threshold of 0.05 * baseline = 0.038
+    refused a ranking on more than half of all pairs whose true refusal was IDENTICAL, while
+    still admitting genuinely mismatched pairs at larger p.
+
+    Two standard errors of the difference, which is what this returns when `n_eval` is known, is
+    the quantity that actually answers "could these two arms be at the same level". Without
+    `n_eval` there is nothing better than the old constant, so it falls back and says so by
+    returning the same number.
+    """
+    if not n_eval or n_eval <= 0:
+        return tolerance * baseline
+    p = sum(refusals) / len(refusals)
+    p = min(max(p, 1.0 / n_eval), 1.0 - 1.0 / n_eval)   # keep the variance from collapsing at 0/1
+    return 2.0 * math.sqrt(2.0 * p * (1.0 - p) / n_eval)
+
+
+def rank_band(entries, baseline, tolerance, n_eval=None, degenerate=None):
     """Decide whether a band's arms may be ranked at all, and by how much the winner won.
 
-    Two separate failures on 2026-08-04, both of which printed a confident verdict:
+    Everything here exists because a report printed a confident verdict it had not earned:
 
-    1. Arms that were not at the same refusal level were ranked anyway. Membership of a band
-       allows a spread of up to twice `tolerance * baseline`, so two arms can both be "in" the
-       50% band while one has removed materially more refusal than the other. More ablation
-       always costs more KL, so ranking those compares the strengths, not the directions.
-    2. A one-percent KL difference was reported as a win.
-
-    Returns the keys to merge into the band. `comparable` false means the numbers are still worth
-    reading individually but must not be turned into a ranking, and `reason` says why.
+    1. A grid with no dynamic range was ranked. When every arm sits at the same refusal the
+       spread is zero, so the matched-level test passes TRIVIALLY and a winner is announced for a
+       grid that measured nothing. `degenerate` carries that judgement in from the caller, since
+       a band cannot see the grid it came from.
+    2. Arms at different refusal levels were ranked. More ablation always costs more KL, so that
+       compares strengths rather than directions.
+    3. A one-percent KL difference was reported as a win.
+    4. A zero or negative KL produced a division and a reason string asserting that -0.001 and
+       0.5 are within five percent of each other.
     """
     arms = dict(entries)
+    if not arms:
+        return {"comparable": False, "spread": 0.0,
+                "reason": "no arm reached this band"}
     if len(arms) < 2:
-        return {"comparable": False, "reason": "only one arm reached this band, so there is "
-                                               "nothing to compare it against", "spread": 0.0}
+        return {"comparable": False, "spread": 0.0,
+                "reason": "only one arm reached this band, so there is nothing to compare it "
+                          "against"}
+    if degenerate:
+        return {"comparable": False, "spread": 0.0,
+                "reason": f"the grid itself says nothing about K ({degenerate}), so no ranking "
+                          f"drawn from it can mean anything"}
+
+    kls = [e.get("kl") for e in arms.values()]
+    if any(not isinstance(k, (int, float)) or isinstance(k, bool) for k in kls):
+        return {"comparable": False, "spread": 0.0,
+                "reason": "at least one arm has a non-numeric KL, so the arms cannot be ordered"}
 
     refusals = [e["harmful_refusal"] for e in arms.values()]
     spread = max(refusals) - min(refusals)
-    # Half the band's own width. Beyond this the arms are at genuinely different refusal levels
-    # and the whole premise of a matched comparison has gone.
-    allowed = tolerance * baseline
+    allowed = refusal_match_tolerance(refusals, n_eval, baseline, tolerance)
     if spread > allowed:
-        return {"comparable": False, "spread": round(spread, 4),
-                "reason": (f"the arms span {spread:.4f} in refusal, more than the {allowed:.4f} "
-                           f"this band allows, so they are not at a matched level and their KL "
+        return {"comparable": False, "spread": round(spread, 4), "allowed": round(allowed, 4),
+                "reason": (f"the arms span {spread:.4f} in refusal against a matching tolerance "
+                           f"of {allowed:.4f}, so they are not at the same level and their KL "
                            f"cannot be ranked")}
 
     order = sorted(arms.items(), key=lambda kv: kv[1]["kl"])
     (best_k, best_e), (next_k, next_e) = order[0], order[1]
-    if best_e["kl"] <= 0 or (next_e["kl"] - best_e["kl"]) <= TIE_FRACTION * next_e["kl"]:
-        return {"comparable": True, "spread": round(spread, 4), "cheapest": None,
+    if best_e["kl"] <= 0 or next_e["kl"] <= 0:
+        return {"comparable": False, "spread": round(spread, 4), "allowed": round(allowed, 4),
+                "reason": (f"K={best_k} reports a KL of {best_e['kl']}, which is not a positive "
+                           f"divergence, so no ratio between arms is meaningful")}
+    if (next_e["kl"] - best_e["kl"]) <= TIE_FRACTION * next_e["kl"]:
+        return {"comparable": True, "spread": round(spread, 4), "allowed": round(allowed, 4),
+                "cheapest": None,
                 "reason": (f"K={best_k} and K={next_k} are within {TIE_FRACTION:.0%} on KL "
                            f"({best_e['kl']} against {next_e['kl']}), which is a tie rather than "
                            f"a win")}
-    return {"comparable": True, "spread": round(spread, 4), "cheapest": int(best_k),
-            "margin": round(next_e["kl"] / best_e["kl"], 3),
+    return {"comparable": True, "spread": round(spread, 4), "allowed": round(allowed, 4),
+            "cheapest": int(best_k), "margin": round(next_e["kl"] / best_e["kl"], 3),
             "reason": (f"K={best_k} is cheapest at a matched refusal level, "
                        f"{next_e['kl'] / best_e['kl']:.2f}x below the next best")}
 
@@ -558,6 +617,26 @@ def degenerate_reason(rows):
     return None
 
 
+def _directions_meta(directions_from):
+    """The sidecar `tools/rdo.py` writes beside a direction file, or None.
+
+    `directions_from` is only a path, and two arms of the same ladder differ by what is INSIDE
+    that file (the score form, the induction weight, the initialisation) rather than by its name.
+    Carrying the sidecar into the result means one artefact answers "which directions were these",
+    instead of the answer living in a second file that no report ever opened.
+    """
+    if not directions_from:
+        return None
+    try:
+        with open(f"{directions_from}.json", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
+        return {"error": f"no readable sidecar beside {directions_from}"}
+    # The optimisation history is long and is already in the sidecar; the configuration is what a
+    # reader needs here.
+    return {k: v for k, v in meta.items() if k != "history"} if isinstance(meta, dict) else None
+
+
 def floor_direction_counts(ks):
     """Which direction counts get a random-direction control arm, bounded in cost.
 
@@ -567,7 +646,10 @@ def floor_direction_counts(ks):
     at a different direction count. The largest K is exactly the arm a claim gets made about, so
     it is the one that can least afford to go without.
     """
-    multi = [k for k in ks if k > 1]
+    # sorted() on entry: `multi[:2] + multi[-1:]` assumed an ordering the caller was
+    # never required to provide, and on an unsorted list the largest K went unfloored,
+    # which is the exact defect this function exists to prevent.
+    multi = sorted({k for k in ks if k > 1})
     return sorted(set(multi[:2] + multi[-1:]))
 
 
@@ -598,7 +680,8 @@ def experiment_4(a, log, strengths):
     if bad:
         log(f"  DEGENERATE: {bad}")
     return {"rows": rows, "max_k_available": kmax, "strengths": list(strengths),
-            "degenerate_reason": bad, "matched_refusal": matched_refusal_table(rows)}
+            "degenerate_reason": bad,
+            "matched_refusal": matched_refusal_table(rows, n_eval=a.args.eval_refusal)}
 
 
 def load_directions(a, path, log):
@@ -686,9 +769,20 @@ def main(argv=None):
     log = lambda m: print(m, flush=True)   # noqa: E731
     a = cli.Abliterator(args, log)
 
+    # Everything that changes what this record MEANS, so a later reader (or a resume guard) can
+    # tell two runs apart. It used to be six fields, of which only `directions_from` differed
+    # between the arms of a four-arm ladder, and that field is a path: swap the flags, keep the
+    # filenames, and nothing in the artefact recorded the difference. The direction file's own
+    # sidecar is folded in for the same reason, since "which directions" is the largest single
+    # thing that varies between arms and it lived in a separate file nothing read.
     record = {"model": args.model, "track": args.track, "seed": args.seed,
               "experiment": own.experiment, "directions_from": own.directions_from,
-              "axis_separation_threshold": cli.MIN_AXIS_SEPARATION}
+              "axis_separation_threshold": cli.MIN_AXIS_SEPARATION,
+              "max_directions": args.max_directions, "direction_clusters": args.direction_clusters,
+              "dir_prompts": args.dir_prompts, "eval_refusal": args.eval_refusal,
+              "eval_kl": args.eval_kl, "strengths": own.strengths,
+              "code_version": cli.code_version(),
+              "directions_meta": _directions_meta(own.directions_from)}
 
     if own.experiment in ("e1", "all"):
         log("E1: leave one cluster out")

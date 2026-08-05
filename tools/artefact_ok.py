@@ -33,20 +33,39 @@ MISSING = object()
 def lookup(doc, path):
     """Fetch a dotted path out of nested dicts, or MISSING.
 
-    Also searches one level into a top-level `meta`/`config` container, because the two writers in
-    this repo disagree about whether configuration lives at the root or under a key, and a guard
-    that only worked for one of them would be a guard nobody used for the other.
+    Strictly one container: the root. An earlier version also retried the whole path under a
+    top-level `meta` or `config` key, on the theory that this repo's writers disagree about where
+    configuration lives. They do not: `tools/rdo.py` and `src/senbonzakura/validate.py` both write
+    config at the root, and no writer in the repo emits either container. So the fallback bought
+    nothing and cost a false-match surface, because a path that died PART WAY through the real
+    container would silently retry elsewhere and could be satisfied by a value the authoritative
+    container never held. A guard that can answer from the wrong place is worse than no guard.
     """
-    for prefix in ([], ["meta"], ["config"]):
-        cur = doc
-        for part in prefix + path.split("."):
-            if not isinstance(cur, dict) or part not in cur:
-                cur = MISSING
-                break
-            cur = cur[part]
-        if cur is not MISSING:
-            return cur
-    return MISSING
+    cur = doc
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return MISSING
+        cur = cur[part]
+    return cur
+
+
+def matches(got, want):
+    """Does a recorded value satisfy an expectation string?
+
+    JSON null is spelled `null` and matches ONLY an actual null. Comparing `str(got)` alone made
+    a recorded null and the recorded STRING "None" indistinguishable, which matters because
+    `degenerate_reason=null` ("the grid was readable") is one of the guards most worth writing,
+    and a file recording the literal text "None" would have satisfied it.
+    """
+    if want == "null":
+        return got is None
+    if got is None:
+        return False
+    if isinstance(got, bool):
+        # JSON spells these true/false; Python str() spells them True/False. Accept both rather
+        # than fail a spec author for writing the JSON they are looking at.
+        return want.lower() == str(got).lower()
+    return str(got) == want
 
 
 def mismatches(doc, expectations):
@@ -56,7 +75,7 @@ def mismatches(doc, expectations):
         got = lookup(doc, key)
         if got is MISSING:
             bad.append(f"{key}: the file does not record it, so it cannot be shown to match")
-        elif str(got) != str(want):
+        elif not matches(got, want):
             bad.append(f"{key}: file says {got!r}, this run wants {want!r}")
     return bad
 
@@ -103,6 +122,14 @@ def main(argv=None):
               "about which configuration produced it; name the keys that must match.",
               file=sys.stderr)
         return 2
+
+    if not isinstance(doc, dict):
+        # A bare JSON array (cli.py writes trials.json that way) records no configuration at all,
+        # so no expectation can ever be shown to hold. Say that, rather than reporting every key
+        # as individually missing and leaving the reader to work out why.
+        print(f"artefact_ok: {a.file} is a {type(doc).__name__}, not an object, so it records no "
+              f"configuration to check expectations against; it will be rebuilt")
+        return 1
 
     bad = mismatches(doc, expectations)
     if bad:

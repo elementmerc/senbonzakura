@@ -274,17 +274,31 @@ def test_a_k_that_never_reaches_the_target_gets_no_entry():
         pytest.fail(f"K=3 should be missing from at least one band: {table['targets']}")
 
 
-def test_the_random_control_is_carried_into_the_grid():
-    """E2's floor has to exist at every strength, or "fitted beats random" is untested."""
-    rows = [{"arm": "fitted-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": False,
-             "harmful_refusal": 0.2, "harmless_refusal": 0.0, "kl": 0.3},
-            {"arm": "random-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": True,
-             "harmful_refusal": 0.5, "harmless_refusal": 0.0, "kl": 0.3}]
-    # The matched table considers fitted arms only; the random arms must not leak into it.
-    table = dv.matched_refusal_table(rows)
-    for band in table["targets"].values():
-        for entry in band.values():
-            assert entry["harmful_refusal"] != 0.5, "a random-extras arm leaked into the comparison"
+def test_a_random_extras_arm_never_enters_the_matched_comparison():
+    """The matched table ranks FITTED arms; a random arm in it would be a floor scoring as a result.
+
+    The previous version of this test could not fail. Its rows produced no bands at all, so the
+    assertion loop body never ran, and even with the `random_extras` filter removed the surviving
+    assertion still held. A leak test whose leak changes nothing tests nothing, so this one names
+    the random arm's KL and demands it be absent by identity rather than by a property it might
+    share with a fitted arm.
+    """
+    anchor = {"arm": "unablated-K1-s0", "K": 1, "strength": 0.0, "random_extras": False,
+              "harmful_refusal": 0.80, "harmless_refusal": 0.0, "kl": 0.0}
+    # Both land inside the 50% band (target 0.40), so both are genuinely eligible for selection
+    # and only the filter keeps the random one out. The random arm is CHEAPER, so a leak would
+    # win the band outright rather than sit in it unnoticed.
+    fitted = {"arm": "fitted-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": False,
+              "harmful_refusal": 0.40, "harmless_refusal": 0.0, "kl": 0.30}
+    random_arm = {"arm": "random-K2-s0.5", "K": 2, "strength": 0.5, "random_extras": True,
+                  "harmful_refusal": 0.40, "harmless_refusal": 0.0, "kl": 0.01}
+
+    table = dv.matched_refusal_table([anchor, fitted, random_arm])
+    band = table["targets"]["50%_removed"]
+    assert band, "the fixture produced no band, so this test would assert nothing"
+    assert band["2"]["kl"] == pytest.approx(0.30), (
+        "the random-extras arm won the band, so the floor is being scored as a result")
+    assert all(e["kl"] != pytest.approx(0.01) for e in band.values())
 
 
 # ── loading an externally optimised direction set ─────────────────────────────────────
@@ -656,11 +670,18 @@ def test_the_matched_band_picks_the_arm_closest_to_the_target_not_the_cheapest()
         {"arm": "fitted-K2", "K": 2, "strength": 1.0, "random_extras": False,
          "harmful_refusal": 0.172, "harmless_refusal": 0.0, "kl": 0.018},
     ]
-    band = dv.matched_refusal_table(rows)["targets"]["50%_removed"]
+    t = dv.matched_refusal_table(rows)
+    band = t["targets"]["50%_removed"]
     # The K=1 entry must be the arm that landed near 0.383, not the one that blew past it.
     assert band["1"]["harmful_refusal"] == pytest.approx(0.380)
     assert band["1"]["kl"] == pytest.approx(0.009)
-    assert abs(band["1"]["overshoot"]) < abs(band["2"]["overshoot"])
+    # And K=2, which overshot to 0.172, is not in this band AT ALL. Membership is two-sided, so an
+    # arm that blew past the target belongs to a deeper band rather than sitting in this one with
+    # a large overshoot for a reader to notice. That is the stronger form of the same fix.
+    assert "2" not in band, "an arm that overshot by 0.21 is not at this band's refusal level"
+    assert band["1"]["overshoot"] == pytest.approx(0.003, abs=0.01)
+    # It does land in a deeper band, so the arm is not lost, only filed correctly.
+    assert any("2" in b for name, b in t["targets"].items() if name != "50%_removed")
 
 
 def test_every_matched_entry_reports_its_overshoot():
@@ -892,7 +913,7 @@ def test_arms_at_different_refusal_levels_are_refused_a_ranking():
     # Baseline 0.8, tolerance 0.05 -> arms may span at most 0.04 in refusal. These span 0.10.
     v = dv.rank_band(_band((1, 0.10, 0.90), (2, 0.20, 0.10)), baseline=0.8, tolerance=0.05)
     assert v["comparable"] is False
-    assert "not at a matched level" in v["reason"]
+    assert "not at the same level" in v["reason"]
     assert "cheapest" not in v, "an unrankable band must not name a winner"
 
 
@@ -916,9 +937,18 @@ def test_a_band_only_one_arm_reached_is_not_a_comparison():
 
 
 def test_a_zero_kl_arm_cannot_win_by_division():
-    """A degenerate 0.0 KL would otherwise divide by zero or claim an infinite margin."""
-    v = dv.rank_band(_band((1, 0.15, 0.0), (2, 0.15, 0.5)), baseline=0.8, tolerance=0.05)
-    assert v["cheapest"] is None
+    """A degenerate 0.0 KL would otherwise divide by zero or claim an infinite margin.
+
+    It is refused a ranking outright rather than called a tie: a reason string saying that 0.0 and
+    0.5 are "within 5% of each other" was factually false, and the same wording appeared for
+    negative KL.
+    """
+    for bad in (0.0, -0.001):
+        v = dv.rank_band(_band((1, 0.15, bad), (2, 0.15, 0.5)), baseline=0.8, tolerance=0.05)
+        assert v["comparable"] is False, bad
+        assert "cheapest" not in v, "a non-positive KL must not produce a winner"
+        assert "not a positive divergence" in v["reason"]
+        assert "within" not in v["reason"], "the tie wording must not describe a non-positive KL"
 
 
 def test_the_ranking_travels_beside_the_table_not_inside_the_bands():
@@ -935,3 +965,86 @@ def test_the_ranking_travels_beside_the_table_not_inside_the_bands():
             assert key.isdigit(), f"{key!r} is not a direction count"
             assert set(entry) == {"kl", "strength", "harmful_refusal", "overshoot"}
         assert band in t["ranking"]
+
+
+# ── provenance and the statistical matching tolerance (added 2026-08-05) ──────────────
+def test_the_code_version_is_recorded_or_honestly_unknown():
+    """Records with no build stamp cannot be interpreted after the library changes underneath."""
+    v = cli.code_version()
+    assert isinstance(v, str) and v
+    assert v.startswith("unknown") or any(ch.isalnum() for ch in v)
+
+
+def test_a_direction_sidecar_is_folded_into_the_result(tmp_path):
+    """Two ladder arms differ by what is INSIDE the direction file, not by its name."""
+    pt = tmp_path / "dirs.pt"
+    (tmp_path / "dirs.pt.json").write_text(
+        json.dumps({"init": "mean-diff", "induce": 0.2, "score": "per-token",
+                    "history": [{"step": 0}]}), encoding="utf-8")
+    meta = dv._directions_meta(str(pt))
+    assert meta["init"] == "mean-diff" and meta["induce"] == 0.2
+    assert "history" not in meta, "the optimisation history bloats every record it lands in"
+
+
+def test_a_missing_sidecar_is_reported_rather_than_silently_absent():
+    meta = dv._directions_meta("/definitely/not/here.pt")
+    assert meta and "error" in meta
+
+
+def test_no_directions_file_means_no_sidecar():
+    assert dv._directions_meta(None) is None
+
+
+def test_the_matching_tolerance_follows_the_eval_size_not_the_baseline():
+    """A fixed fraction of the baseline is not the precision of a difference of two proportions.
+
+    At p=0.15 on 64 prompts the standard error of the difference is about 0.065, so the old
+    constant (0.05 * baseline) refused a ranking on more than half of all pairs whose true
+    refusal was identical, while admitting genuinely mismatched pairs elsewhere.
+    """
+    wide = dv.refusal_match_tolerance([0.15, 0.15], n_eval=64, baseline=0.8, tolerance=0.05)
+    tight = dv.refusal_match_tolerance([0.15, 0.15], n_eval=1024, baseline=0.8, tolerance=0.05)
+    assert wide > tight, "more eval prompts must buy a tighter matching tolerance"
+    assert wide == pytest.approx(2 * (2 * 0.15 * 0.85 / 64) ** 0.5, rel=1e-6)
+    # Without n_eval there is nothing better than the old constant, and it says so by returning it.
+    assert dv.refusal_match_tolerance([0.15], None, 0.8, 0.05) == pytest.approx(0.04)
+
+
+def test_a_zero_refusal_band_does_not_collapse_its_own_tolerance():
+    """At p=0 the binomial variance is zero, which would make every pair look mismatched."""
+    t = dv.refusal_match_tolerance([0.0, 0.0], n_eval=128, baseline=0.8, tolerance=0.05)
+    assert t > 0
+
+
+def test_a_grid_with_no_dynamic_range_is_refused_a_ranking():
+    """The 2026-08-04 failure in its purest form: every arm identical, so spread is trivially 0.
+
+    A zero spread passes the matched-level test by construction, so without the grid's own
+    degeneracy verdict a floored grid produces a confident winner in every band.
+    """
+    rows = [{"arm": "unablated-K1-s0", "K": 1, "strength": 0.0, "random_extras": False,
+             "harmful_refusal": 0.72, "harmless_refusal": 0.0, "kl": 0.0}]
+    rows.extend({"arm": f"fitted-K{K}", "K": K, "strength": 1.0, "random_extras": False,
+                 "harmful_refusal": 0.0, "harmless_refusal": 0.0, "kl": 0.1 * K}
+                for K in (1, 2, 3, 4))
+    t = dv.matched_refusal_table(rows, n_eval=128)
+    assert t["degenerate_reason"], "this grid has no dynamic range and the table should say so"
+    for band, verdict in t["ranking"].items():
+        assert verdict["comparable"] is False, band
+        assert "cheapest" not in verdict, f"{band} named a winner from a floored grid"
+
+
+def test_an_empty_table_keeps_the_same_key_set_as_a_full_one():
+    """A reader of the normal shape must not KeyError on the empty one."""
+    only_random = [{"arm": "random-K2", "K": 2, "strength": 1.0, "random_extras": True,
+                    "harmful_refusal": 0.2, "harmless_refusal": 0.0, "kl": 0.1}]
+    empty = dv.matched_refusal_table(only_random)
+    full = dv.matched_refusal_table([
+        *only_random,
+        {"arm": "unablated-K1-s0", "K": 1, "strength": 0.0, "random_extras": False,
+         "harmful_refusal": 0.8, "harmless_refusal": 0.0, "kl": 0.0}])
+    assert set(full) - set(empty) == set(), f"missing from the empty shape: {set(full) - set(empty)}"
+
+
+def test_a_band_with_no_arms_says_so_rather_than_claiming_one_arm():
+    assert "no arm reached" in dv.rank_band({}, baseline=0.8, tolerance=0.05)["reason"]

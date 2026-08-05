@@ -100,6 +100,29 @@ def knee_scalar(ref, soft, heretic, kl):
 # within-harmful content/topic variance, not refusal, and ablating it strips capability (Tier-1 P1).
 MIN_AXIS_SEPARATION = 0.5
 
+
+def code_version():
+    """Which build produced this artefact, as a git description or an honest admission.
+
+    Code reaches the GPU box by hand, and on 2026-08-04 a run executed against a checkout that
+    predated the very changes it existed to measure. Worse, library semantics changed between a
+    run finishing and its records being read, and nothing in the records said which side of the
+    change they came from. A symbol-presence check in a run spec proves "at least as new as X";
+    it does not identify a build. This does.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "describe",
+             "--always", "--dirty", "--abbrev=12"],
+            capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown: git could not be run"
+    v = out.stdout.strip()
+    # "unknown" rather than a blank, because an empty string in a provenance field reads as
+    # "recorded and empty" instead of "never established".
+    return v or "unknown: not a git checkout"
+
 # How many candidate axes per layer keep their separation value in the result file. The threshold
 # above was chosen once and never validated against a measurement, so a run that keeps only one
 # direction per layer cannot currently be told apart from a run whose second direction missed by

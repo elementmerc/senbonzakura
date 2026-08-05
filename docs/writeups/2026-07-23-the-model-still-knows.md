@@ -16,6 +16,26 @@ I tested that. It took three tries, because the first two tests were broken. Thi
 
 ## The results
 
+> **Correction, 2026-08-05: the gemma-2-2b-it row is withdrawn.**
+>
+> The tool edits a model's weights to remove refusal. Gemma 2 passes each layer's output through
+> a learned rescaling step *before* adding it back into the model's running state, and the tool
+> was editing the weights that feed that step rather than what comes out of it. The rescaling
+> then partly undid the edit.
+>
+> So the gemma row is not a measurement of abliteration; it is a measurement of an edit that
+> mostly did not take effect. Both of its numbers, the refusal drop and the AUC, are affected,
+> and I would rather strike the row than restate it before it is re-measured.
+>
+> The other six rows stand. Llama, Qwen and SmolLM all add each layer's output to the running
+> state directly, with no rescaling in between, so the edit lands as intended on those. That
+> difference between model families is the entire mechanism, and it is why the same code produced
+> a real result on six models and an artefact on the seventh.
+>
+> How it was caught: the same directions were applied two ways, once by editing weights and once
+> by intervening directly on the model's running state, which bypasses the rescaling. On Qwen3
+> the two agreed to within 0.016 in refusal rate. On gemma they disagreed by 0.578.
+
 Seven small instruct models from four families. Rented A40 GPUs, about £1.87 for everything here.
 
 AUC is the score. It asks: given one harmful and one harmless prompt, how often does the model rank the harmful one as more dangerous? 0.5 is a coin flip. 1.0 is perfect.
@@ -32,7 +52,7 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 
 **What the data says:**
 
-- **Three models could genuinely tell harmful from harmless.** Those three kept nearly all of it. Gemma went from 90% refusals to 2.5% and lost 0.013 AUC. Qwen2.5 lost 0.001. Qwen3-1.7B lost 0.031.
+- **Three models could genuinely tell harmful from harmless.** Those three kept nearly all of it. Qwen2.5 lost 0.001. Qwen3-1.7B lost 0.031. (Gemma was the third, and its row is withdrawn: see the correction above.)
 - **That answers the worry.** On models that had the knowledge, the refusal and the knowledge sit in different places. You can take one and leave the other.
 - **Two models lost real ground.** Llama-3.2-1B lost 0.134 and Qwen3-0.6B lost 0.098. Both ended up close to a coin flip.
 - **The loss does not track anything obvious.** Correlation between how much they knew and how much they lost: 0.14. Between how much refusal was removed and how much was lost: 0.18. Both are nothing.

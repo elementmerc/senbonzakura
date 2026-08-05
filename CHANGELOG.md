@@ -106,6 +106,19 @@ not comparable to what this version produces.
 
 ### Known defects
 
+- **Every Gemma measurement is withdrawn.** The weight edit did not reach the model's running
+  state on that architecture. Gemma 2 and Gemma 3 pass each layer's output through a learned
+  rescaling step before adding it back, and the tool edited the weights feeding that step rather
+  than what comes out of it, so the rescaling partly undid the edit. Measured on gemma-2-2b-it:
+  the weight edit and an equivalent direct intervention disagreed by 0.578 in refusal rate,
+  against 0.016 on Qwen3, and no Gemma setting moved KL above 0.021. The cause is fixed in this
+  release and Gemma numbers will be re-measured; until then they are unmeasured rather than
+  wrong. Llama, Mistral, Phi and Qwen are unaffected.
+- **Ablating a direction removes most of it, not all of it.** The edit preserves each weight
+  row's original length, which is what keeps the model coherent, and that step does not commute
+  with the removal, so roughly an eighth of a direction survives on every architecture. This is
+  a deliberate trade-off inherited from the upstream method rather than a new fault, but it was
+  not written down anywhere and "the direction was ablated" reads stronger than what happens.
 - **Finding several directions is not the same as showing they are refusal directions.** The
   check meant to tell a refusal direction from a topic direction now accepts every candidate it
   is shown, where before it rejected every one. It has changed which way it fails rather than

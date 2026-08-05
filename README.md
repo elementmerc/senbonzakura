@@ -463,10 +463,21 @@ evaluation, same keyword ruler. It will be added to this section when run.
   are reproducible: each compass command was run three times on the same card at batch 16 and
   produced AUCs identical to four decimal places. That says nothing about generation, which is
   sampled, and nothing about a different batch size, which changes reduction order.
+- **Every Gemma figure is withdrawn (2026-08-05).** The weight edit did not reach the residual
+  stream on that architecture. Gemma 2 and Gemma 3 pass each sublayer's output through a
+  learned-gain normalisation *before* adding it to the residual stream, and this tool edited the
+  weights upstream of that step, so the normalisation partly undid the edit before it took
+  effect. Measured: on gemma-2-2b-it the weight edit and an equivalent activation-space
+  intervention disagreed by 0.578 in refusal rate, against 0.016 on Qwen3, and no Gemma
+  configuration moved KL above 0.021 at any setting. Directions chosen by the tool scored no
+  better than random ones. The cause is fixed and the numbers will be re-measured; until they
+  are, treat every Gemma result here as unmeasured rather than as a result. Qwen models are
+  unaffected: the architecture difference is the whole mechanism, which is why the same code
+  worked on one family and not the other.
 - **The model-size ceiling.** Every model this tool has been run on is **under 3B, and six of
-  the seven are under 2B**; gemma-2-2b-it is the largest at 2.61B and carries the strongest
-  result. Nothing here is evidence about how the method behaves at 7B, 30B or beyond. The
-  streaming work exists to make those sizes reachable on hardware we own.
+  the seven are under 2B**; gemma-2-2b-it is the largest at 2.61B. Nothing here is evidence about
+  how the method behaves at 7B, 30B or beyond. The streaming work exists to make those sizes
+  reachable on hardware we own.
 - **No head-to-head against Heretic is published yet** (see [Benchmark](#benchmark)). Recent
   correctness fixes to direction extraction, the multi-direction basis, and knee selection moved the
   numbers substantially in Senbonzakura's favour on the keyword axis, so any comparison is run under

@@ -129,13 +129,28 @@ def torch_version_ok(version, minimum=MIN_TORCH):
     return parsed >= minimum
 
 
-def study_db_path(study_db, no_persist, track):
+def study_db_path(study_db, no_persist, track, out=None):
     """Where to persist the Optuna study. Persist BY DEFAULT so a killed run resumes instead of
     re-searching; return None (in-memory) only when explicitly opted out. Explicit --study-db wins.
+
+    The default moved from the track to the output directory. The study is something the run
+    produces, and putting it in the track meant a read-only corpus could not be searched at all,
+    while two runs over one track quietly shared a study and resumed into each other's trials.
+
+    An existing study at the old path is still honoured, so a killed run started before this
+    change resumes rather than silently beginning again. That fallback only applies when a study
+    is actually sitting there; it is a migration, not a second default.
     """
     if no_persist:
         return None
-    return study_db or f"{track}/senbon-study.db"
+    if study_db:
+        return study_db
+    if out is None:
+        return f"{track}/senbon-study.db"
+    legacy = Path(f"{track}/senbon-study.db")
+    if legacy.is_file():
+        return str(legacy)
+    return f"{out}/senbon-study.db"
 
 
 def search_already_done(user_attrs):

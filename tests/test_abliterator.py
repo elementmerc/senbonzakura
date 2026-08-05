@@ -11,7 +11,7 @@ import optuna
 import pytest
 import torch
 
-from senbonzakura import cli, metrics
+from senbonzakura import cli, crashsafe, metrics
 
 
 def _log_sink():
@@ -230,7 +230,12 @@ def test_full_run_writes_artefact(base_args, tiny_model, tiny_tok, track):
     assert d["seed"] == base_args.seed
     for k in ("search", "trials", "warm_start", "good_orth", "sparsity"):
         assert k in d, f"abliteration.json lost its {k} provenance field"
-    assert os.path.exists(os.path.join(base_args.track, "trials.json"))
+    # Beside the run's own artefacts, NOT inside the corpus it was given. Writing it into the
+    # track ruled out a read-only corpus, which the benchmark container mounts, and let two runs
+    # over one track overwrite each other's table silently.
+    assert os.path.exists(os.path.join(base_args.out, "trials.json"))
+    assert not os.path.exists(os.path.join(base_args.track, "trials.json")), \
+        "the trial table must not be written into the input dataset"
 
 
 def test_full_run_scalar_mode_with_patience(base_args, tiny_model, tiny_tok, track):
@@ -246,7 +251,28 @@ def test_run_resume_persists_study(base_args, tiny_model, tiny_tok, track):
     base_args.resume = True
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
     a.run()
-    assert os.path.exists(os.path.join(base_args.track, "senbon-study.db"))
+    # Beside the run, not in the corpus: the study is something the run produces.
+    assert os.path.exists(os.path.join(base_args.out, "senbon-study.db"))
+
+
+def test_a_study_left_at_the_old_path_still_resumes(base_args, tiny_model, tiny_tok, track):
+    """The default moved. A run killed before that must not silently start its search again.
+
+    The fallback applies only when a study is actually sitting at the old path, so it is a
+    migration rather than a second default nobody can predict.
+    """
+    legacy = os.path.join(base_args.track, "senbon-study.db")
+    open(legacy, "w").close()
+    assert crashsafe.study_db_path(None, False, base_args.track, base_args.out) == legacy
+    os.unlink(legacy)
+    assert crashsafe.study_db_path(None, False, base_args.track, base_args.out) == \
+        os.path.join(base_args.out, "senbon-study.db")
+
+
+def test_an_explicit_study_path_beats_both(base_args):
+    assert crashsafe.study_db_path("/tmp/mine.db", False, base_args.track, base_args.out) == \
+        "/tmp/mine.db"
+    assert crashsafe.study_db_path("/tmp/mine.db", True, base_args.track, base_args.out) is None
 
 
 def test_bench_only(base_args, tiny_model, tiny_tok, track):
@@ -1544,3 +1570,35 @@ def test_auto_is_an_alias_for_kageyoshi(monkeypatch):
 def test_auto_is_listed_in_the_help():
     text = cli.build_parser().format_help()
     assert "auto" in text and "alias for kageyoshi" in text
+
+
+# ── run artefacts belong beside the run, not inside its input ─────────────────────────
+def test_no_artefact_is_written_into_the_track(base_args, tiny_model, tiny_tok, track):
+    """Three artefacts used to land in --track, which is an input directory.
+
+    A read-only corpus, which the benchmark container mounts and which anyone sharing a dataset
+    would want, then killed the run one artefact at a time: the study at the first trial, the
+    trial table after the last, the winning config after the bake. Each arrived an hour apart as
+    an OSError naming a `.part` file, with the GPU work already spent.
+    """
+    before = set(os.listdir(base_args.track))
+    cli.Abliterator(base_args, lambda m: None, tiny_model, tiny_tok).run()
+    after = set(os.listdir(base_args.track))
+    assert after == before, f"the run wrote into its input dataset: {sorted(after - before)}"
+    for artefact in ("trials.json", "best-config.json", "abliteration.json"):
+        assert os.path.exists(os.path.join(base_args.out, artefact)), \
+            f"{artefact} should be beside the model it describes"
+
+
+def test_an_unwritable_output_is_refused_before_the_search(base_args, tiny_model, tiny_tok, track,
+                                                           monkeypatch):
+    """The check exists so the next artefact added in the wrong place costs a second, not an hour."""
+    abl = cli.Abliterator(base_args, lambda m: None, tiny_model, tiny_tok)
+
+    def refuse(path, exist_ok=False):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(os, "makedirs", refuse)
+    with pytest.raises(SystemExit) as e:
+        abl.preflight_writable()
+    assert "cannot write to" in str(e.value)

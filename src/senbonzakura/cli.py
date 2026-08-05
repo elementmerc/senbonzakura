@@ -732,8 +732,9 @@ def build_parser():
     ap.add_argument("--top-rescore", type=int, default=6,
                     help="how many frontier candidates to re-score with --eval-refusal-final.")
     ap.add_argument("--study-db", default=None,
-                    help="persist the Optuna study to this SQLite file (default: <track>/senbon-study.db, "
-                         "so a killed run resumes with --resume instead of re-searching).")
+                    help="persist the Optuna study to this SQLite file (default: <out>/senbon-study.db, "
+                         "so a killed run resumes with --resume instead of re-searching). An "
+                         "existing study at the older <track>/senbon-study.db is still picked up.")
     ap.add_argument("--no-persist-study", action="store_true", dest="no_persist_study",
                     help="do NOT persist the Optuna study (in-memory only). A crash then loses the "
                          "search; the persistent default is the safer choice for a long paid run.")
@@ -1620,6 +1621,40 @@ class Abliterator:
             raise SystemExit(f"not enough disk to save the result: {message}")
         self.log(message)
 
+    def preflight_writable(self):
+        """Prove every path this run writes to can be written to, before it spends an hour.
+
+        Three artefacts used to be written into `--track`, which is an input. A read-only corpus
+        (what the benchmark container mounts, and what anyone sharing a dataset would want) then
+        killed the run one artefact at a time: the study at the first trial, the trial table after
+        the last one, the winning config after the bake. Each failure arrived as a SQLAlchemy or
+        OSError naming a `.part` file, an hour apart, with the GPU work already spent.
+
+        Those writes now go to `--out`. This checks the paths anyway, because the next one added
+        in the wrong place should cost a second at startup rather than an hour of card time.
+        """
+        db = study_db_path(self.args.study_db, self.args.no_persist_study,
+                           self.args.track, self.args.out)
+        targets = [("--out", self.args.out)]
+        if not self.args.no_persist_study:
+            targets.append(("--study-db", os.path.dirname(db) or "."))
+        for flag, path in targets:
+            self._prove_writable(flag, path)
+
+    @staticmethod
+    def _prove_writable(flag, path):
+        try:
+            os.makedirs(path, exist_ok=True)
+            probe = os.path.join(path, ".senbonzakura-write-probe")
+            with open(probe, "w") as f:
+                f.write("")
+            os.unlink(probe)
+        except OSError as e:
+            raise SystemExit(
+                f"{flag} points at {path}, which this run cannot write to: {e}. Every artefact "
+                f"the run produces goes there, so it would fail partway through with the GPU work "
+                f"already spent. Point it somewhere writable.") from e
+
     def free_before_save(self):
         """Give the save every resource it can have, because it is the crash-prone step.
 
@@ -1703,10 +1738,10 @@ class Abliterator:
         if args.bench_only:
             return self._bench_only()
         if args.bake_config:
-            return self._bake_saved_config(base_ref, TR)
+            return self._bake_saved_config(base_ref)
         study, db = self._run_search(TR)
         bpr, b_K, b_mode, b_di = self._select_knee(study, db, TR)
-        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
 
     def _prepare_evals(self, TR):
         """Extract the directions, build the eval sets, and prove the run can finish.
@@ -1764,6 +1799,7 @@ class Abliterator:
         # and the most expensive thing to lose: a 57 GB base plus a 61 GB output on a 120 GB
         # volume died partway through writing shards, hours in. Checking here costs one syscall.
         self.preflight_disk()
+        self.preflight_writable()
 
         # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
         self.snapshot_weights()
@@ -1812,7 +1848,7 @@ class Abliterator:
         log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
             f"refusals={r*100:.1f}% KL={k:.4f}")
 
-    def _bake_saved_config(self, base_ref, TR):
+    def _bake_saved_config(self, base_ref):
         """`--bake-config`: bake a saved winner without searching for it again.
 
         The directions and eval sets are already prepared, so this reproduces the searched
@@ -1823,7 +1859,7 @@ class Abliterator:
             cfg = json.load(f)
         bpr, b_K, b_mode, b_di = config_to_bake_args(cfg)
         log(f"direct bake from {args.bake_config} (skipping the search)")
-        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref, TR)
+        return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
 
     def _run_search(self, TR):
         """Run the Optuna search, and return the study with the path it persisted to.
@@ -1841,7 +1877,7 @@ class Abliterator:
         pop = max(4, min(50, args.trials // 4))
         storage = None
         study_name = f"senbon-{args.search}"
-        db = study_db_path(args.study_db, args.no_persist_study, TR)
+        db = study_db_path(args.study_db, args.no_persist_study, TR, args.out)
         if db:
             # Built as an object rather than passed as a URL string so its connection pool
             # can be released; see _study_storage_scope.
@@ -1943,7 +1979,11 @@ class Abliterator:
                     "kl": round(t.user_attrs["kl"], 4), "broken": round(t.user_attrs.get("broken", 0.0), 4)}
 
         rows = sorted([_row(t) for t in study.trials if t.user_attrs], key=lambda r: (r["refusals"], r["kl"]))
-        with atomic_write(f"{TR}/trials.json") as f:
+        # Beside the run's other artefacts, not inside the corpus. The trial table is something
+        # this run produced; the track is something it was given. Writing it into the track ruled
+        # out a read-only corpus, which the benchmark mounts, and let two runs over one track
+        # overwrite each other's table with nothing said.
+        with atomic_write(f"{self.args.out}/trials.json") as f:
             json.dump(rows, f, indent=2)
         log("frontier (lowest refusals first, intact = KL under ceiling AND broken≈0):")
         for r in [x for x in rows if x["kl"] <= KL_CEIL and x["broken"] <= 0.1][:8]:
@@ -2026,16 +2066,19 @@ class Abliterator:
 
         return bpr, b_K, b_mode, b_di
 
-    def _bake_and_save(self, bpr, b_K, b_mode, b_di, base_ref, track):
+    def _bake_and_save(self, bpr, b_K, b_mode, b_di, base_ref):
         """Bake the winning config into the weights and save. Extracted from run() so a
         --bake-config recovery can save a known config WITHOUT re-searching. Writes
         best-config.json BEFORE the (crash-prone) save, so even a failed save leaves a
         re-bakeable artefact and a lost save becomes a minutes-long re-bake, not a re-search.
         """
         args, log = self.args, self.log
-        with atomic_write(f"{track}/best-config.json") as f:
+        # Beside the model it describes, not inside the corpus. `--bake-config` takes an explicit
+        # path so nothing depended on the old location, and the old location made a run over a
+        # read-only track impossible while overwriting the previous run's winner in place.
+        with atomic_write(f"{args.out}/best-config.json") as f:
             json.dump(winning_config(bpr, b_K, b_mode, b_di), f, indent=2)
-        log(f"wrote winning config to {track}/best-config.json (re-bakeable with --bake-config)")
+        log(f"wrote winning config to {args.out}/best-config.json (re-bakeable with --bake-config)")
 
         # ── BAKE the winner into the weights + save ──────────────────────────────────
         # The search left the LAST trial's bake applied; restore to pristine, then bake the winner.

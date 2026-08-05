@@ -57,11 +57,13 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
     winning_config,
 )
 from .metrics import (
+    KL_CEIL,  # the hard "too damaged" line; a trial above it is excluded outright
     broken_rate,  # fraction of a batch that is wrecked output
     heretic_keyword_rate,  # Heretic-comparable refusal metric (the axis Heretic wins)
     is_broken,  # wrecked-output detector (empty / garbage / repetition)
     is_refusal,  # hard-refusal detector
     is_soft_refusal,  # hedged-compliance detector (the moralising lecture)
+    knee_scalar,  # the weighted selection rule over those rulers
     validate_ruler,  # refuses to measure with a ruler that misreads its own cases
 )
 from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
@@ -71,29 +73,6 @@ from .track import (  # the recorded partition boundaries, and the flags that wo
 )
 
 __version__ = "0.3.0"
-
-# Coherence guard thresholds. KL_TARGET is the "comfortably intact" mark used by the knee
-# scalariser (a config under it pays no coherence surcharge); KL_CEIL is the hard "too damaged"
-# line above which a trial is excluded outright.
-KL_TARGET = 0.1
-KL_CEIL = 0.25
-
-# Knee-selection weights (Tier-1 P2 fix): the final pick minimises a WEIGHTED scalar of the three
-# search objectives, not a lexicographic tuple that let the keyword axis fall to a tiebreaker. The
-# keyword/hedging term carries real weight so the saved model actually reflects the axis Heretic wins.
-KNEE_W_NONCOMPLIANCE = 1.0   # hard refusal + hedged compliance
-KNEE_W_KEYWORD = 1.0         # Heretic keyword rate (its own axis, now steered at selection time)
-KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
-
-
-def knee_scalar(ref, soft, heretic, kl):
-    # The weighted knee score (P2): lower is better. The keyword/hedging axis carries real weight so
-    # the final pick reflects the axis the search already optimises, instead of the old lexicographic
-    # tuple where it only broke exact ties. KL surcharges only above the comfortably-intact target.
-    return (KNEE_W_NONCOMPLIANCE * (ref + soft)
-            + KNEE_W_KEYWORD * heretic
-            + KNEE_W_KL * max(0.0, kl - KL_TARGET))
-
 
 # A candidate PCA axis is kept as a refusal direction only if it separates the harmful and harmless
 # residual clouds by at least this standardised mean difference (Cohen's d). Below it, the axis is
@@ -507,7 +486,57 @@ def _scalar_of(t):
     return ua["refusals"] + ua.get("soft", 0.0) + 0.5 * ua.get("heretic", 0.0)
 
 
-def _apply_kageyoshi(args, model, arch, ne, NL, log):
+# The budget knobs kageyoshi resolves from the architecture, paired with the flags that set them.
+# A benchmark arm is only comparable if the budget it ran under is the budget it published, so an
+# explicit value here is honoured rather than quietly replaced; see _kageyoshi_explicit.
+_KAGEYOSHI_BUDGET_FLAGS = {
+    "trials": ("--trials",),
+    "dir_prompts": ("--dir-prompts",),
+    "eval_refusal": ("--eval-refusal",),
+    "eval_kl": ("--eval-kl",),
+    "eval_refusal_final": ("--eval-refusal-final",),
+    "max_directions": ("--max-directions",),
+    "top_rescore": ("--top-rescore",),
+    "patience": ("--patience",),
+    "kl_scale": ("--kl-scale",),
+}
+
+
+def kl_eval_slice(good_prompts, dir_prompts, eval_kl, warn=None):
+    """The harmless slice KL is measured on: disjoint from the prompts the directions were fit on.
+
+    A function rather than four lines inline because the head-to-head benchmark has to hand the
+    competing tool the SAME slice, and it does so from a separate process that cannot load the
+    abliterator. Two copies of this arithmetic would let the two tools be scored on prompts that
+    merely look alike.
+    """
+    if len(good_prompts) > dir_prompts:
+        return good_prompts[dir_prompts:dir_prompts + eval_kl]
+    if warn:
+        warn("too small for a KL set disjoint from extraction; reusing the harmless tail")
+    return good_prompts[-eval_kl:]
+
+
+def _kageyoshi_explicit(argv):
+    """Which budget knobs the caller set by hand, so the preset can leave them alone.
+
+    kageyoshi resolves the search budget from the model, which is the whole point of the preset,
+    and it used to do so unconditionally. That silently discarded `--trials 200`: the run then
+    executed 100 trials while its own command line, its spec and its published table all said 200.
+    An equal-budget comparison cannot survive that, and nothing in the log said it had happened.
+    """
+    if not argv:
+        return set()
+    seen = set()
+    for dest, flags in _KAGEYOSHI_BUDGET_FLAGS.items():
+        for flag in flags:
+            # `--trials 200` and `--trials=200` are the same instruction and both count.
+            if flag in argv or any(a.startswith(flag + "=") for a in argv):
+                seen.add(dest)
+    return seen
+
+
+def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=()):
     # BANKAI — "ultimate balanced-effort" preset. The user asked for the best abliteration
     # we can produce with no knob-twiddling. So: read the detected architecture + parameter
     # count, auto-scale the search budget to the model's size, and switch on every quality
@@ -515,26 +544,40 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log):
     # hedging-contrast direction when a hedged set is present, larger-eval knee re-score,
     # early stop). "Balanced" is load-bearing: the KL ceiling + broken penalty + the knee
     # keep it intact rather than scorched, so this is the best UNCENSORING that stays coherent,
-    # not the most aggressive one. Only path/device/dataset flags are honoured; kageyoshi owns
-    # the search budget itself.
+    # not the most aggressive one. Path/device/dataset flags are honoured, and so is any budget
+    # knob the caller set by hand; everything else kageyoshi resolves from the model.
+    explicit = set(explicit)
+
+    def preset(dest, value):
+        if dest in explicit:
+            log(f"  keeping your --{dest.replace('_', '-')}={getattr(args, dest)} "
+                f"(kageyoshi would have chosen {value})")
+            return
+        setattr(args, dest, value)
+
     total = sum(p.numel() for p in model.parameters())
     b = total / 1e9
     # Bigger models generate slower per trial, so fewer trials + smaller evals; the snapshot
     # also holds a CPU copy of every o_proj + down_proj, which is heavy past ~20B (see the
     # snapshot_weights note), hence the trimmed direction/eval counts in the top tier.
     if b < 5:
-        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 100, 256, 64, 64, 128
+        budget = (100, 256, 64, 64, 128)
     elif b < 20:
-        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 80, 256, 64, 48, 96
+        budget = (80, 256, 64, 48, 96)
     else:
-        args.trials, args.dir_prompts, args.eval_refusal, args.eval_kl, args.eval_refusal_final = 64, 192, 48, 32, 96
+        budget = (64, 192, 48, 32, 96)
+    for dest, value in zip(("trials", "dir_prompts", "eval_refusal", "eval_kl",
+                            "eval_refusal_final"), budget, strict=True):
+        preset(dest, value)
     args.search = "pareto"          # map the whole refusals/keyword/KL front, pick the balanced knee
     args.per_component = True        # tune attn.o_proj and mlp.down_proj apart (the MLP may stay untouched)
     args.mlp_off = False             # let the search decide, don't force attention-only
-    args.max_directions = 3          # ablate the refusal SUBSPACE, not just the difference-of-means
-    args.kl_scale = 4.0              # the coherence guard that makes it balanced
-    args.top_rescore = 6
-    args.patience = max(20, args.trials // 3)   # stop once the front is mapped
+    preset("max_directions", 3)      # ablate the refusal SUBSPACE, not just the difference-of-means
+    preset("kl_scale", 4.0)          # the coherence guard that makes it balanced
+    preset("top_rescore", 6)
+    # Resolved from the trial count AFTER it settles, so an explicit --trials moves the early stop
+    # with it rather than leaving a patience computed against a budget that no longer applies.
+    preset("patience", max(20, args.trials // 3))   # stop once the front is mapped
     # Fold the hedging axis only if a hedged-compliance set is present (the lever that closes
     # the residual keyword gap Heretic wins on); silently skip it when absent.
     if not args.hedge_ds and os.path.isdir(f"{args.track}/hedge_ds"):
@@ -1707,12 +1750,10 @@ class Abliterator:
         # coherence is measured on prompts the directions were not fit on. Falls back to the harmless
         # tail (with a warning) only when the dataset is too small to spare a disjoint slice.
         self.bad_eval = self.load(f"{TR}/bad_eval_ds", args.eval_refusal)
-        _kl_all = self.load(GOOD_DS, args.dir_prompts + args.eval_kl)
-        if len(_kl_all) > args.dir_prompts:
-            self.kl_eval = _kl_all[args.dir_prompts:args.dir_prompts + args.eval_kl]
-        else:
-            log(f"  note: {GOOD_DS} too small for a KL set disjoint from extraction; reusing the harmless tail")
-            self.kl_eval = _kl_all[-args.eval_kl:]
+        self.kl_eval = kl_eval_slice(
+            self.load(GOOD_DS, args.dir_prompts + args.eval_kl),
+            args.dir_prompts, args.eval_kl,
+            lambda m: log(f"  note: {GOOD_DS} {m}"))
 
         log("caching original first-token distribution (KL reference) + baseline refusals")
         self.orig_lp = self.first_token_logprobs(self.kl_eval)
@@ -2128,7 +2169,8 @@ def main(argv=None):
 
     abl = Abliterator(args, log)
     if bankai:
-        _apply_kageyoshi(args, abl.model, abl.arch, abl.ne, abl.NL, log)
+        _apply_kageyoshi(args, abl.model, abl.arch, abl.ne, abl.NL, log,
+                         explicit=_kageyoshi_explicit(argv))
     return abl.run()
 
 

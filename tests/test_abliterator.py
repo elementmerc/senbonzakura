@@ -5,12 +5,13 @@ evaluation, the full run() pipeline, dataset-boundary errors, and the loader / m
 import json
 import os
 import types
+from pathlib import Path
 
 import optuna
 import pytest
 import torch
 
-from senbonzakura import cli
+from senbonzakura import cli, metrics
 
 
 def _log_sink():
@@ -171,8 +172,18 @@ def test_knee_scalar_weights_keyword_axis():
 
 
 def test_knee_scalar_kl_only_above_target():
-    assert cli.knee_scalar(0.0, 0.0, 0.0, cli.KL_TARGET) == pytest.approx(0.0)
-    assert cli.knee_scalar(0.0, 0.0, 0.0, cli.KL_TARGET + 0.1) > 0.0
+    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET) == pytest.approx(0.0)
+    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET + 0.1) > 0.0
+
+
+def test_the_knee_scalar_is_importable_without_the_abliterator():
+    # The head-to-head gives Heretic the same best-of-N selection pass, and that pass runs inside a
+    # container holding Heretic's dependency tree, not ours. It can only reuse this rule rather than
+    # copy it if the module carrying it imports nothing.
+    src = (Path(__file__).resolve().parents[1] / "src/senbonzakura/metrics.py").read_text()
+    imports = [ln for ln in src.splitlines() if ln.startswith(("import ", "from "))]
+    assert imports == [], f"metrics.py must stay import-free; found {imports}"
+    assert metrics.knee_scalar is cli.knee_scalar
 
 
 # ── the recorded boundaries, honoured by the consumer ─────────────────────────────────
@@ -591,6 +602,47 @@ def test_apply_kageyoshi(tiny_model):
     assert args.max_directions == 3         # ablate the subspace
     assert args.trials > 0                   # budget auto-scaled from param count
     assert args.per_component is True and args.mlp_off is False
+
+
+@pytest.mark.parametrize(("argv", "expected"), [
+    (["--model", "m"], set()),
+    (["--model", "m", "--trials", "200"], {"trials"}),
+    (["--model", "m", "--trials=200", "--patience=0"], {"trials", "patience"}),
+    (["--trials", "200", "--eval-refusal-final", "128"], {"trials", "eval_refusal_final"}),
+    # A path that merely contains the text of a flag is not that flag being set.
+    (["--out", "/runs/--trials"], set()),
+])
+def test_kageyoshi_reads_which_budget_flags_were_set_by_hand(argv, expected):
+    assert cli._kageyoshi_explicit(argv) == expected
+
+
+def test_kageyoshi_keeps_a_budget_the_caller_set(tiny_model):
+    """The equal-budget arm passes --trials 200 and the preset used to discard it silently.
+
+    The run then executed the preset's own trial count while its command line, its spec and its
+    published table all said 200, which is the precise failure an equal-budget comparison cannot
+    survive. So an explicitly-set knob is kept, and the log says the preset stood down.
+    """
+    args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,
+                                 trials=200, search="scalar", per_component=False, mlp_off=True,
+                                 kl_scale=1.0, top_rescore=0, patience=0)
+    lines = []
+    cli._apply_kageyoshi(args, tiny_model, "dense", None, tiny_model._NL, lines.append,
+                         explicit={"trials", "patience"})
+    assert args.trials == 200
+    assert args.patience == 0            # not recomputed from the trial count behind the caller
+    assert args.max_directions == 3      # a knob nobody set is still the preset's to choose
+    assert any("--trials" in ln for ln in lines), "standing down must be visible in the log"
+
+
+def test_kageyoshi_patience_follows_a_trial_count_the_caller_set(tiny_model):
+    """Left unset, patience is derived AFTER trials settles, so it tracks the real budget."""
+    args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,
+                                 trials=200, search="scalar", per_component=False, mlp_off=True,
+                                 kl_scale=1.0, top_rescore=0, patience=0)
+    cli._apply_kageyoshi(args, tiny_model, "dense", None, tiny_model._NL, lambda m: None,
+                         explicit={"trials"})
+    assert args.patience == max(20, 200 // 3)
 
 
 # ── uniform + mlp-off search paths ───────────────────────────────────────────────────

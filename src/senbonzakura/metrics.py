@@ -173,6 +173,38 @@ def broken_rate(texts: list[str]) -> float:
     return sum(is_broken(t) for t in texts) / max(1, len(texts))
 
 
+# --- The selection rule over those rulers ----------------------------------------
+# The knee scalar lives here rather than beside the search because it is a rule about the rulers
+# above, and because the head-to-head benchmark gives a competing tool the same best-of-N selection
+# pass senbonzakura gives itself. That pass runs inside a sealed container holding the other tool's
+# dependency tree, and this module imports nothing, so it can be read there without dragging the
+# abliterator in. A second copy of these weights would let the two selections drift apart while the
+# published table claimed one rule. cli.py re-exports the names, so every existing caller is
+# unchanged.
+
+# Coherence guard thresholds. KL_TARGET is the "comfortably intact" mark used by the knee
+# scalariser (a config under it pays no coherence surcharge); KL_CEIL is the hard "too damaged"
+# line above which a trial is excluded outright.
+KL_TARGET = 0.1
+KL_CEIL = 0.25
+
+# Knee-selection weights (Tier-1 P2 fix): the final pick minimises a WEIGHTED scalar of the three
+# search objectives, not a lexicographic tuple that let the keyword axis fall to a tiebreaker. The
+# keyword/hedging term carries real weight so the saved model actually reflects the axis Heretic wins.
+KNEE_W_NONCOMPLIANCE = 1.0   # hard refusal + hedged compliance
+KNEE_W_KEYWORD = 1.0         # Heretic keyword rate (its own axis, now steered at selection time)
+KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
+
+
+def knee_scalar(ref: float, soft: float, heretic: float, kl: float) -> float:
+    # The weighted knee score (P2): lower is better. The keyword/hedging axis carries real weight so
+    # the final pick reflects the axis the search already optimises, instead of the old lexicographic
+    # tuple where it only broke exact ties. KL surcharges only above the comfortably-intact target.
+    return (KNEE_W_NONCOMPLIANCE * (ref + soft)
+            + KNEE_W_KEYWORD * heretic
+            + KNEE_W_KL * max(0.0, kl - KL_TARGET))
+
+
 # --- Harm recognition (the "compass" axis) --------------------------------------
 # Abliteration removes the refusal *behaviour* direction, not the *harm-representation*.
 # Those are different directions, so a well cut model can comply with a harmful request

@@ -1,0 +1,177 @@
+# Does the weight bake reach the residual stream on Gemma-2 at all?
+#
+# Gemma2DecoderLayer applies a learned-gain RMSNorm to the attention output AND to the MLP output
+# BEFORE adding either to the residual stream:
+#
+#     hidden = self.self_attn(...)
+#     hidden = self.post_attention_layernorm(hidden)     <- between the weights we edit and the add
+#     hidden = residual + hidden
+#
+# Qwen3 does not: its sublayer output goes straight into the residual, and its own
+# `post_attention_layernorm` is applied to the residual BEFORE the MLP, which is a different thing
+# wearing the same name. `bake_pc` removes span(R) from o_proj and down_proj, so on Gemma-2 the
+# edit is upstream of a rescale-and-rotate that partly undoes it, and `cli.py` contains no
+# reference to either post-norm.
+#
+# The data already looks like this diagnosis: on gemma the maximum KL any arm reaches at any K and
+# any strength is 0.021, against 0.208 on Qwen3, and fitted directions score no better than random.
+# That is the signature of an intervention that is not landing, not of a model resisting one.
+#
+# `residual_ablation` hooks the BLOCK output, downstream of both norms, so it bypasses the problem
+# entirely. `experiment_transfer` runs the same directions through both operations and reports
+# `refusal_delta_bake_minus_hook`. So:
+#
+#   * a large delta on gemma and a small one on Qwen3 confirms the diagnosis, and the size of the
+#     delta is the size of the defect;
+#   * a large delta on BOTH means the hook and the bake simply differ (untapered full-strength
+#     against a windowed, strength-scaled, norm-preserving edit) and gemma is not special;
+#   * a small delta on gemma refutes the diagnosis, and the gemma failure is still unexplained.
+#
+# Qwen3 is the control and it is what makes the gemma number readable. Running gemma alone would
+# measure the hook-against-bake difference and let us attribute all of it to the architecture.
+run = "gemma-bake-diagnosis-2026-08-05"
+
+[[job]]
+id = "setup"
+machine = "rog"
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+PYTHONPATH=src "$PY" -c "
+from senbonzakura import validate, cli
+for n in ('experiment_transfer', 'transfer_gap', 'residual_ablation'):
+    assert hasattr(validate, n), n
+print('code_version:', cli.code_version())
+"
+"$PY" -c 'import torch; assert torch.cuda.is_available()'
+mkdir -p "$RUN/diag" "$RUN/abl"
+echo SETUP_OK
+"""
+
+[[job]]
+id = "transfer-gemma"
+name = "gemma: hook against bake, on directions that already exist"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 7200
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "T_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 3600 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" tools/artefact_ok.py "$RUN/diag/transfer-gemma.json" \\
+    model=google/gemma-2-2b-it seed=42 experiment=transfer; then
+    echo "ALREADY_COMPLETE"; echo T_OK; exit 0
+fi
+
+# Cluster directions rather than RDO ones, deliberately: the question is whether the BAKE lands on
+# this architecture, and cluster directions are what every previously published gemma number used.
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
+    --experiment transfer --strengths 0.5,1.0 --max-directions 2 \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/diag/transfer-gemma.json"
+echo T_OK
+"""
+
+[[job]]
+id = "transfer-qwen3"
+name = "Qwen3: the control that makes the gemma number readable"
+machine = "rog"
+deps = ["transfer-gemma"]
+timeout_secs = 7200
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "T_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 3600 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+if "$PY" tools/artefact_ok.py "$RUN/diag/transfer-qwen3.json" \\
+    model=Qwen/Qwen3-1.7B seed=42 experiment=transfer; then
+    echo "ALREADY_COMPLETE"; echo T_OK; exit 0
+fi
+
+PYTHONPATH=src "$PY" -u -m senbonzakura validate \\
+    --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
+    --experiment transfer --strengths 0.5,1.0 --max-directions 2 \\
+    --dir-prompts 128 --eval-refusal 128 --eval-kl 64 --device cuda --seed 42 \\
+    --out "$RUN/diag/transfer-qwen3.json"
+echo T_OK
+"""
+
+[[job]]
+id = "report"
+name = "read the two together"
+machine = "rog"
+deps = ["transfer-gemma", "transfer-qwen3"]
+timeout_secs = 900
+success = { type = "stdout-contains", needle = "REPORT_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+PY=$HOME/track2/venv/bin/python
+
+PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
+import json, os, sys
+
+RUN = os.path.expanduser("~/senbon-run")
+out = {}
+for tag in ("gemma", "qwen3"):
+    try:
+        with open(f"{RUN}/diag/transfer-{tag}.json", encoding="utf-8") as f:
+            out[tag] = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"MISSING {tag}: {e}")
+
+if len(out) < 2:
+    print("INCOMPLETE: both models are needed; gemma alone cannot be attributed to architecture")
+    sys.exit(1)
+
+print("\\n=== hook against bake, same directions ===")
+for tag, doc in out.items():
+    t = doc.get("transfer") or {}
+    print(f"\\n  {tag}  (code {doc.get('code_version')})")
+    print(f"    mean |bake - hook| refusal delta: {t.get('mean_abs_delta')}")
+    print(f"    worst: {t.get('max_abs_delta')}")
+    for r in t.get("rows", []):
+        print(f"      K={r.get('K')} s={r.get('strength')}: "
+              f"hook {r.get('refusal_hook')}  bake {r.get('refusal_bake')}  "
+              f"delta {r.get('refusal_delta_bake_minus_hook')}")
+    print(f"    {t.get('reading')}")
+
+g = (out['gemma'].get('transfer') or {}).get('max_abs_delta')
+q = (out['qwen3'].get('transfer') or {}).get('max_abs_delta')
+print("\\n=== what this means ===")
+if g is not None and q is not None:
+    if g > 0.15 and q < 0.10:
+        print(f"  CONFIRMED. gemma disagrees by {g} where Qwen3 disagrees by {q}. The bake does")
+        print("  not reach the residual stream on Gemma-2, whose post-sublayer RMSNorms sit")
+        print("  between the edited weights and the add. Every gemma number measured through the")
+        print("  bake needs a correction notice, and the bake needs an architecture-aware fix.")
+    elif g > 0.15 and q >= 0.10:
+        print(f"  NOT ARCHITECTURAL. Both disagree (gemma {g}, Qwen3 {q}), so the gap is between")
+        print("  the hook and the bake as operations, not something Gemma-2 does. RDO is")
+        print("  optimising an operation the evaluation does not perform, on both models.")
+    else:
+        print(f"  REFUTED. gemma disagrees by only {g}, so the bake does reach the stream and the")
+        print("  gemma failure remains unexplained. Do not write up the RMSNorm diagnosis.")
+EOF
+echo REPORT_OK
+"""

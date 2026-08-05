@@ -354,3 +354,170 @@ def test_a_correlated_basis_removes_more_than_the_subspace_contains():
     twice_bad = correlated.T @ (correlated @ once_bad)
     assert not torch.allclose(once_bad, twice_bad, atol=1e-3), (
         "the correlated 'projector' is idempotent, so it is not over-subtracting after all")
+
+
+# ── the post-sublayer-norm bake fix (added 2026-08-05) ────────────────────────────────
+class _GemmaStyleNorm(torch.nn.Module):
+    """Gemma-2's RMSNorm: scales by (1 + weight), with weight initialised to zeros."""
+
+    def __init__(self, H, seed=0):
+        super().__init__()
+        g = torch.Generator().manual_seed(seed)
+        self.weight = torch.nn.Parameter(torch.randn(H, generator=g) * 0.5)
+        self.eps = 1e-6
+
+    def forward(self, x):
+        n = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        return (n * (1.0 + self.weight.float())).type_as(x)
+
+
+class _LlamaStyleNorm(torch.nn.Module):
+    """Llama's RMSNorm: scales by weight directly, initialised to ones."""
+
+    def __init__(self, H, seed=1):
+        super().__init__()
+        g = torch.Generator().manual_seed(seed)
+        self.weight = torch.nn.Parameter(1.0 + torch.randn(H, generator=g) * 0.3)
+        self.eps = 1e-6
+
+    def forward(self, x):
+        n = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        return (n * self.weight.float()).type_as(x)
+
+
+@pytest.mark.parametrize("norm_cls", [_GemmaStyleNorm, _LlamaStyleNorm])
+def test_norm_gain_is_recovered_without_reading_the_weight(norm_cls):
+    """Probing with ones recovers the gain for BOTH RMSNorm conventions.
+
+    Reading `norm.weight` directly is silently wrong by exactly one on Gemma-style norms, which
+    multiply by (1 + weight) where Llama-style multiply by weight. Since rms(ones) == 1, the
+    output on a ones vector IS the gain, whatever the convention.
+    """
+    H = 32
+    norm = norm_cls(H)
+    g = cli.norm_gain(norm, H, "cpu", torch.float32)
+    expected = norm(torch.ones(1, 1, H)).float().reshape(-1)
+    assert torch.allclose(g, expected, atol=1e-5)
+
+
+def test_folding_the_gain_cuts_the_post_norm_leak_across_seeds():
+    """The property the fix exists for, on a Gemma-shaped write path.
+
+    The bake edits the weight producing x; the residual actually receives norm(x). Removing
+    span(R) from x leaves R present in norm(x), because the per-channel gain rotates the vector
+    off the plane. Folding the gain in targets the right subspace.
+
+    It does not reach zero, and that is expected rather than a shortfall: `orthogonalize_np_` is
+    norm-preserving by design (it restores each row's original norm after projecting, which is
+    what stopped raw orthogonalisation wrecking KL), and row scaling does not commute with a
+    left-side projection. So roughly a seventh of any direction survives on EVERY architecture.
+    What this asserts is the part the fold is responsible for: the extra leak caused by the norm.
+
+    Several seeds, because a single one would let a lucky gain vector stand in for the mechanism.
+    """
+    H, K = 48, 3
+    for seed in range(5):
+        torch.manual_seed(seed)
+        norm = _GemmaStyleNorm(H, seed=seed)
+        W = torch.randn(H, 20)
+        q, _ = torch.linalg.qr(torch.randn(H, K))
+        R = q.T[:K]
+        g = cli.norm_gain(norm, H, "cpu", torch.float32)
+
+        def leak(weight, norm=norm, R=R, H=H):
+            with torch.no_grad():
+                x = weight.T.unsqueeze(1)                  # [cols, 1, H]
+                y = norm(x).reshape(x.shape[0], H)
+                return float((y @ R.T).norm())
+
+        naive = W.clone()
+        cli.orthogonalize_np_(naive, R, 1.0)               # what the bake did before
+        folded = W.clone()
+        cli.orthogonalize_np_(folded, cli.fold_norm_gain(R, g), 1.0)
+
+        assert leak(folded) < leak(naive) / 1.5, (
+            f"seed {seed}: folding did not cut the post-norm leak "
+            f"(naive {leak(naive):.4f}, folded {leak(folded):.4f})")
+
+
+def test_norm_preservation_leaves_part_of_the_direction_standing():
+    """A documented trade-off, asserted so it stays visible and cannot drift silently.
+
+    `orthogonalize_np_` restores each row's original norm after projecting, which is what keeps
+    KL sane (raw orthogonalisation measured KL 12 to 19). The cost is that row scaling does not
+    commute with a left-side projection, so ablating a direction removes most of it and not all
+    of it, on every architecture. Anyone reading "the direction was ablated" should know it means
+    roughly seven eighths of it.
+    """
+    torch.manual_seed(0)
+    H, K = 64, 3
+    W = torch.randn(H, 32)
+    q, _ = torch.linalg.qr(torch.randn(H, K))
+    R = q.T[:K]
+
+    before = float((R @ W).norm())
+    pure = W - R.T @ (R @ W)
+    baked = W.clone()
+    cli.orthogonalize_np_(baked, R, 1.0)
+    after = float((R @ baked).norm())
+
+    assert float((R @ pure).norm()) < 1e-4, "a plain projection should remove the direction fully"
+    assert after > 1e-3, "norm preservation is expected to leave a residual; it did not"
+    assert after < before * 0.25, (
+        f"norm preservation left {after / before:.1%} of the direction standing, which is more "
+        f"than the roughly one seventh this trade-off has historically cost")
+
+
+def test_the_fold_is_a_no_op_when_the_gain_is_uniform():
+    """A gain of all-ones cannot rotate anything, so the folded set must span what R spans."""
+    torch.manual_seed(2)
+    H, K = 24, 2
+    q, _ = torch.linalg.qr(torch.randn(H, K))
+    R = q.T[:K]
+    folded = cli.fold_norm_gain(R, torch.ones(H))
+
+    def projector(M):
+        b, _ = torch.linalg.qr(M.T)
+        return b @ b.T
+
+    assert torch.allclose(projector(R), projector(folded), atol=1e-5)
+
+
+def test_the_folded_rows_are_orthonormal_so_the_bake_stays_a_projection():
+    """R * g is not orthonormal even when R is, and R^T(RW) is a projection only if it is."""
+    torch.manual_seed(3)
+    H, K = 40, 4
+    q, _ = torch.linalg.qr(torch.randn(H, K))
+    R = q.T[:K]
+    g = 1.0 + torch.rand(H) * 3.0
+    folded = cli.fold_norm_gain(R, g)
+    assert torch.allclose(folded @ folded.T, torch.eye(K), atol=1e-5)
+
+
+def test_an_unused_direction_slot_stays_zero_after_folding():
+    """A zero row means "no direction here"; QR would otherwise fill it with an arbitrary one."""
+    H = 16
+    R = torch.zeros(3, H)
+    R[0, 0] = 1.0
+    folded = cli.fold_norm_gain(R, 1.0 + torch.rand(H))
+    assert folded[1].abs().sum() == pytest.approx(0.0, abs=1e-6)
+    assert folded[2].abs().sum() == pytest.approx(0.0, abs=1e-6)
+    assert folded[0].norm() == pytest.approx(1.0, abs=1e-5)
+
+
+def test_the_two_layer_shapes_are_told_apart():
+    """Both shapes have a `post_attention_layernorm` and it means opposite things."""
+    class Standard(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.post_attention_layernorm = _LlamaStyleNorm(8)
+
+    class PostSublayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.post_attention_layernorm = _GemmaStyleNorm(8)
+            self.post_feedforward_layernorm = _GemmaStyleNorm(8, seed=5)
+
+    assert cli.post_sublayer_norms(Standard()) == (None, None)
+    attn, mlp = cli.post_sublayer_norms(PostSublayer())
+    assert attn is not None and mlp is not None

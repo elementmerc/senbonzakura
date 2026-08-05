@@ -1048,3 +1048,22 @@ def test_an_empty_table_keeps_the_same_key_set_as_a_full_one():
 
 def test_a_band_with_no_arms_says_so_rather_than_claiming_one_arm():
     assert "no arm reached" in dv.rank_band({}, baseline=0.8, tolerance=0.05)["reason"]
+
+
+def test_a_stamped_sync_carries_the_version_where_git_cannot(tmp_path, monkeypatch):
+    """The GPU box is a file copy, not a checkout, so `git describe` returns nothing there.
+
+    That is the one machine whose build actually needs identifying: a run once executed against a
+    checkout predating the changes it existed to measure. A sync stamps CODE_VERSION beside the
+    package and it is the authority when git is absent.
+    """
+    import subprocess as sp
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    monkeypatch.setattr(cli, "__file__", str(pkg / "cli.py"))
+    monkeypatch.setattr(sp, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no git here")))
+
+    assert "neither a git checkout nor a stamped sync" in cli.code_version()
+    (pkg / "CODE_VERSION").write_text("v0.3.0-124-gabcdef\n", encoding="utf-8")
+    v = cli.code_version()
+    assert "v0.3.0-124-gabcdef" in v and "stamped at sync" in v

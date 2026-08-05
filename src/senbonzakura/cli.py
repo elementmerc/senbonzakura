@@ -111,17 +111,31 @@ def code_version():
     it does not identify a build. This does.
     """
     import subprocess
+    here = Path(__file__).resolve().parent
     try:
         out = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parent), "describe",
-             "--always", "--dirty", "--abbrev=12"],
+            ["git", "-C", str(here), "describe", "--always", "--dirty", "--abbrev=12"],
             capture_output=True, text=True, timeout=10, check=False)
+        v = out.stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return "unknown: git could not be run"
-    v = out.stdout.strip()
+        v = ""
+    if v:
+        return v
+
+    # The GPU box is not a git checkout: code reaches it by file copy, so `git describe` there
+    # returns nothing and the stamp would read "unknown" on the one machine whose provenance
+    # actually needs establishing. A sync writes CODE_VERSION beside the package, and it is the
+    # authority when git is absent.
+    for candidate in (here / "CODE_VERSION", here.parent.parent / "CODE_VERSION"):
+        try:
+            stamped = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if stamped:
+            return f"{stamped} (stamped at sync, not a git checkout)"
     # "unknown" rather than a blank, because an empty string in a provenance field reads as
     # "recorded and empty" instead of "never established".
-    return v or "unknown: not a git checkout"
+    return "unknown: neither a git checkout nor a stamped sync"
 
 # How many candidate axes per layer keep their separation value in the result file. The threshold
 # above was chosen once and never validated against a measurement, so a run that keeps only one
@@ -242,6 +256,86 @@ def orthogonalize_np_3d_(W, R, s, sparsity=0.0):
     Wn = Wn - _sparsify_rows_(delta, sparsity)          # per (expert, out-row) sparsify
     Wn = Wn / Wn.norm(dim=2, keepdim=True).clamp_min(1e-8)
     W.copy_((Wn * rn).to(W.dtype))
+
+
+def post_sublayer_norms(layer):
+    """The norms sitting BETWEEN a sublayer's output and the residual add, as (attn, mlp).
+
+    Two layer shapes exist and the attribute names do not distinguish them, which is the trap.
+
+    Qwen3, Llama, Mistral, Phi3 (the sublayer output IS the residual write):
+
+        hidden = self.self_attn(...)
+        hidden = residual + hidden                      <- o_proj output goes straight in
+        hidden = self.post_attention_layernorm(hidden)  <- applied to the RESIDUAL, pre-MLP
+        hidden = self.mlp(hidden)
+        hidden = residual + hidden
+
+    Gemma-2, Gemma-3, Olmo-2 (a norm intercepts both writes):
+
+        hidden = self.self_attn(...)
+        hidden = self.post_attention_layernorm(hidden)     <- applied to the ATTENTION OUTPUT
+        hidden = residual + hidden
+        hidden = self.mlp(hidden)
+        hidden = self.post_feedforward_layernorm(hidden)   <- applied to the MLP OUTPUT
+        hidden = residual + hidden
+
+    Both have a `post_attention_layernorm` and it means opposite things. `post_feedforward_layernorm`
+    exists only in the second shape, so it is the discriminator.
+
+    This matters because the bake edits o_proj and down_proj. In the first shape that is the
+    residual write and the edit lands. In the second a learned-gain RMSNorm rescales and rotates
+    the result before it reaches the stream, so the edit is largely undone: measured on
+    2026-08-05, gemma disagreed with an equivalent hook by 0.578 in refusal rate where Qwen3
+    disagreed by 0.016, and gemma's KL never exceeded 0.021 across an entire grid.
+    """
+    if hasattr(layer, "post_feedforward_layernorm"):
+        return (getattr(layer, "post_attention_layernorm", None),
+                getattr(layer, "post_feedforward_layernorm", None))
+    return (None, None)
+
+
+@torch.no_grad()
+def norm_gain(norm, H, device, dtype):
+    """The elementwise gain a normalisation applies, recovered by probing it.
+
+    RMSNorm computes `(x / rms(x)) * g`. On a vector of ones, `rms(x) == 1`, so the output IS `g`.
+    That recovers the gain for any variant without reading its source, which matters because the
+    variants differ: Llama-style RMSNorm multiplies by `weight` (initialised to ones) while
+    Gemma-style multiplies by `1 + weight` (initialised to zeros). Reading `norm.weight` directly
+    would be silently wrong by exactly one on half the architectures this tool supports.
+    """
+    probe = torch.ones(1, 1, H, device=device, dtype=dtype)
+    return norm(probe).float().reshape(-1)
+
+
+def fold_norm_gain(R, g):
+    """Re-express directions so that ablating them BEFORE a norm zeroes them AFTER it.
+
+    For a post-sublayer norm, the residual actually receives `y = (x / rms(x)) * g`, where `x` is
+    what the edited weight produces. So
+
+        R . y  =  (1 / rms(x)) * ((R * g) . x)
+
+    and since `rms(x)` is a positive scalar it cannot change whether that is zero. Therefore
+
+        R . y == 0   for every row of R   <=>   x is orthogonal to every row of (R * g)
+
+    So the subspace to remove from `x` is the span of the gain-weighted directions, not of R
+    itself. This is exact rather than an approximation: the normalisation's input-dependent scale
+    divides out of the orthogonality condition entirely.
+
+    The rows are re-orthonormalised because `R * g` is not orthonormal even when R is, and the
+    bake's `R^T (R W)` is a projection only for an orthonormal basis. QR preserves the span, which
+    is the thing that has to be right.
+    """
+    M = R.float() * g.to(R.device).float()
+    q, _ = torch.linalg.qr(M.T)
+    out = q.T[: M.shape[0]]
+    # A row of R that was already zero (an unused direction slot) must stay zero rather than be
+    # replaced by whatever QR puts in an empty column, which would ablate an arbitrary direction.
+    keep = M.norm(dim=1) > 1e-8
+    return out * keep.unsqueeze(1).to(out.dtype)
 
 
 def _decoder_layers(model):
@@ -1262,6 +1356,18 @@ class Abliterator:
             out[j] = v / n if n > 1e-6 else v * 0.0
         return out.to(torch.bfloat16)                     # [KMAX, H]
 
+    def _fold_for(self, R, norm):
+        """R, or the gain-folded equivalent when a norm intercepts the write.
+
+        Cached per (norm, R version) would be premature: the gain probe is one forward pass
+        through a single RMSNorm on a [1,1,H] tensor, which is negligible beside the matmuls this
+        sits between, and caching it would need invalidating whenever the direction set changes.
+        """
+        if norm is None:
+            return R
+        g = norm_gain(norm, self.H, self.dev, torch.float32)
+        return fold_norm_gain(R, g)
+
     def active_dirs(self, idx, K):
         # The K unit directions to ablate at layer `idx` under the current dir_mode:
         #   per_layer -> that layer's own set (dirs_multi[idx+1])
@@ -1334,18 +1440,25 @@ class Abliterator:
                 continue
             R = self.active_dirs(idx, K).to(self.dev).float()   # [K, H]
             R = R / R.norm(dim=1, keepdim=True).clamp_min(1e-8)  # renormalize (interp/GS drift); zero rows stay ~0
+            # On Gemma-2/3 and Olmo-2 a learned-gain norm sits between these weights and the
+            # residual stream, so removing span(R) here is not removing it from the stream. Fold
+            # the gain in so the post-norm write is what ends up orthogonal to R. On every other
+            # architecture both norms are None and R is used unchanged.
+            attn_norm, mlp_norm = post_sublayer_norms(layer)
+            R_attn = self._fold_for(R, attn_norm)
+            R_mlp = self._fold_for(R, mlp_norm)
             if wo > 0.0:
                 op = _attn_outproj(layer)
-                self._mark_dirty(op); orthogonalize_np_(op, R, wo, sp)
+                self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp)
             if wd > 0.0:
                 for kind, obj in layer_downproj(layer):         # every residual-writing down-proj
                     if kind == "fused3d":
-                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R, wd, sp)
+                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R_mlp, wd, sp)
                     elif kind == "list":
                         for W in obj:
-                            self._mark_dirty(W); orthogonalize_np_(W, R, wd, sp)
+                            self._mark_dirty(W); orthogonalize_np_(W, R_mlp, wd, sp)
                     else:  # dense
-                        self._mark_dirty(obj); orthogonalize_np_(obj, R, wd, sp)
+                        self._mark_dirty(obj); orthogonalize_np_(obj, R_mlp, wd, sp)
 
     @torch.no_grad()
     def bake(self, P, wmax, wmin, D, K=1, mode="per_layer", didx=None):

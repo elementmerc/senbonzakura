@@ -147,6 +147,13 @@ for S in 42 43 44 45 46; do
     # The track is mounted at /corpus and the source at /work/senbon-src, both read-only, exactly
     # as they are for the other tool. The output directory is the one writable path, which is
     # where every artefact this run produces now goes.
+    #
+    # `--resume` is not optional here. holst retries a job whose LAUNCH fails, and over a run this
+    # long a dropped connection is a certainty rather than a risk. Without it the retry meets the
+    # study its own first attempt created and dies with Optuna's DuplicatedStudyError, taking the
+    # rest of the run with it as a failed dependency. The rehearsal found exactly that on its
+    # first outing. The guard above skips a seed that FINISHED; this is what carries a seed that
+    # was halfway.
     BENCH_IMAGE=senbon-bench:senbonzakura "$BENCH/run-isolated.sh" \\
         --tool senbonzakura \\
         --model "$HOME/bench-models/Qwen3-1.7B" \\
@@ -156,7 +163,7 @@ for S in 42 43 44 45 46; do
         --out "$OUT/senbon-seed$S" \\
         -- python -u -m senbonzakura kageyoshi \\
              --model /model --track /corpus \\
-             --trials 200 --patience 0 --device cuda --seed "$S" \\
+             --trials 200 --patience 0 --device cuda --seed "$S" --resume \\
              --out /work/out || { echo "seed $S FAILED"; exit 1; }
 done
 echo SENBON_OK

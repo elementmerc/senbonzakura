@@ -54,13 +54,50 @@ if senbonzakura wins with its selection advantages removed, the win is about the
 Concretely:
 
 - Heretic runs its search normally. Its Optuna study retains every trial.
-- Its top six candidates by the same scalarisation senbonzakura uses are re-scored on the same
-  held-out slice, with the same generation budget per candidate.
-- The winner of that re-score is Heretic's reported arm.
+- Its top six candidates are re-scored on the same held-out slice senbonzakura's six are re-scored
+  on, with the same generation budget per candidate.
+- The winner of that re-score, picked by the same weighted knee scalar, is Heretic's reported arm.
 
-This is implemented **outside Heretic's code**, reading its study, so nothing about the tool is
-modified and the comparison is still of the tool as its author wrote it plus a selection pass we
-added to match our own.
+This is implemented **outside Heretic's code** (`bench/best_of_n_heretic.py`), reading its study,
+so nothing about the tool is modified and the comparison is still of the tool as its author wrote
+it plus a selection pass we added to match our own.
+
+### How each tool's six are chosen
+
+*Amended 2026-08-05, before any arm ran, when the pass was implemented.* The paragraph above
+originally said Heretic's six would be picked "by the same scalarisation senbonzakura uses". That
+is not implementable at any budget worth spending, and the correction matters enough to state
+rather than quietly fix.
+
+Our scalariser reads measurements. Applying it to Heretic's 200 trials would mean rebuilding and
+re-scoring all 200 models, which is the entire search over again and would hand Heretic several
+times the compute nothing else in the comparison gets. Worse, it would not be the equivalent
+procedure: senbonzakura's own six are nominated from the numbers *its* search already measured, not
+from a fresh pass over every trial.
+
+So each tool nominates its six the way it ranks its own front, from its own in-search scores. The
+pass is equivalent where it has to be: **the same six-candidate depth, the same larger held-out
+slice, the same rulers, the same knee scalar, and KL taken from the trial in both cases** (the
+re-score refreshes the refusal axes on more evidence and leaves the coherence axis alone, which is
+what ours does).
+
+### Both scorers read our slices, and that is not a workaround
+
+Heretic's two scorers each own an evaluation prompt set, separate from the corpus the directions
+are fitted on, and both default to a Hugging Face dataset. Inside a box with no network those
+defaults cannot load at all. They are pointed instead at the slices senbonzakura is scored on,
+written by `bench/stage_eval_slices.py` from the same code that builds them for our own arm.
+
+This is a comparability requirement, not a concession to the isolation. A tool's search is steered
+by whatever its scorers measure. Two tools optimising against different prompts have not been given
+the same problem, and the resulting table would compare evaluation sets while claiming to compare
+tools.
+
+### Heretic's unaided pick is reported alongside
+
+The pass records which trial Heretic's own menu offers first, saves that model too, and scores it
+with the same instrument. A reader can therefore see whether the selection we added is what moved
+the number, rather than having to take our word that it was applied fairly.
 
 **Trials are matched at 200 for both**, which raises ours from its default of 60. Matching upward
 rather than down: capping Heretic at 60 would hand us a result that depends on starving the
@@ -95,3 +132,7 @@ else is matched.
 Written before any arm runs. If the numbers come back badly for senbonzakura, this file does not
 change: it is committed first precisely so that it cannot. Any later amendment appears in the git
 history of this file, where anyone can see it.
+
+**Amendments so far.** One, on 2026-08-05, before any arm ran: how each tool's six candidates are
+nominated (see above). It is recorded in the file rather than only in the history, because an
+amendment a reader has to go looking for is an amendment that was half hidden.

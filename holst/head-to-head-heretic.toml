@@ -48,8 +48,10 @@ test -x "$BENCH/run-isolated.sh" || { echo "MISSING run-isolated.sh"; exit 1; }
 docker image inspect senbon-bench:heretic >/dev/null 2>&1 || { echo "MISSING senbon-bench:heretic; build it first"; exit 1; }
 
 # The isolation is re-proved every run rather than assumed from the last one. Cheap, and the flags
-# are lost one at a time by someone debugging a failing arm.
+# are lost one at a time by someone debugging a failing arm. The source mount goes in here too so
+# the self-test checks it is read-only and that the shared ruler imports inside Heretic's image.
 "$BENCH/run-isolated.sh" --tool selftest --model "$HOME/bench-models" --out "$OUT/selftest" \\
+    --eval "$HOME/bench-eval" --senbon-src "$RUN/src" \\
     -- python /work/bench/selftest.py || { echo "ISOLATION SELF-TEST FAILED"; exit 1; }
 
 # Both tools must read the SAME corpus or the comparison is between corpora. Heretic takes a path
@@ -57,8 +59,28 @@ docker image inspect senbon-bench:heretic >/dev/null 2>&1 || { echo "MISSING sen
 test -d "$HOME/track-heldout/bad_ds" || { echo "MISSING corpus bad_ds"; exit 1; }
 test -d "$HOME/track-heldout/good_ds" || { echo "MISSING corpus good_ds"; exit 1; }
 
-# Weights staged locally: the sealed box cannot download them.
+# The eval slices, written once and read by both tools. Heretic's two scorers own their own prompt
+# sets and both default to a Hub dataset, which a box with no network cannot fetch: without this
+# the Heretic arms die at scorer initialisation before their first trial. Beyond that, a tool's
+# search is steered by whatever its scorers measure, so scoring the two on different prompts would
+# not be giving them the same problem.
 PY=$HOME/track2/venv/bin/python
+PYTHONPATH="$RUN/src" "$PY" "$BENCH/stage_eval_slices.py" \\
+    --track "$HOME/track-heldout" --out "$HOME/bench-eval" \\
+    --dir-prompts 256 --eval-refusal 64 --eval-refusal-final 128 --eval-kl 64 \\
+    || { echo "SLICE STAGING FAILED"; exit 1; }
+
+# Fifteen saved models at roughly 3.4 GB each (five senbonzakura arms; for Heretic, both its own
+# first offer and the best-of-N winner), plus the staged weights. Checked before the first arm
+# rather than discovered when the twelfth save fails halfway and leaves a partial checkpoint.
+avail=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc '0-9')
+if [ "$avail" -lt 80 ]; then
+    echo "INSUFFICIENT DISK: ${avail}G free under $HOME, need about 80G for 15 saved models plus weights"
+    exit 1
+fi
+echo "disk: ${avail}G free"
+
+# Weights staged locally: the sealed box cannot download them.
 PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
 import os
 from huggingface_hub import snapshot_download
@@ -123,13 +145,23 @@ set -euo pipefail
 exec 2>&1
 BENCH=$HOME/bench
 OUT=$HOME/bench-out/h2h
+PY=$HOME/track2/venv/bin/python
 exec 8>"$HOME/senbon-run/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 for S in 42 43 44 45 46; do
-    if [ -f "$OUT/heretic-seed$S/STATUS" ] && [ "$(cat "$OUT/heretic-seed$S/STATUS")" = "OK" ]; then
+    # Two container runs per seed, so two guards. A single STATUS file cannot serve both: the
+    # selection pass overwrites it, and a seed whose search finished but whose selection failed
+    # would then look unstarted and burn 200 trials again. Each stage is guarded on the artefact
+    # that stage produces.
+    if [ -f "$OUT/heretic-seed$S/best_of_n.json" ]; then
         echo "  seed $S already complete"; continue
     fi
+    if [ -f "$OUT/heretic-seed$S/budget.json" ] &&
+       [ "$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['exit_code'])" \\
+              "$OUT/heretic-seed$S/budget.json" 2>/dev/null)" = "0" ]; then
+        echo "  seed $S search already complete, selection pass still owed"
+    else
     echo "  heretic seed $S"
     # The corpus is mounted read-only at /corpus and Heretic is pointed at it, so both tools read
     # the same prompts. Its own defaults would pull mlabonne sets from the Hub, which the sealed
@@ -138,10 +170,32 @@ for S in 42 43 44 45 46; do
         --tool heretic --ref v1.4.0 \\
         --model "$HOME/bench-models/Qwen3-1.7B" \\
         --corpus "$HOME/track-heldout" \\
+        --eval "$HOME/bench-eval" \\
+        --senbon-src "$HOME/senbon-run/src" \\
         --out "$OUT/heretic-seed$S" \\
         -- python /work/bench/run_heretic.py --seed "$S" --trials 200 \\
              --model /model --good /corpus/good_ds --bad /corpus/bad_ds \\
+             --keyword-prompts /corpus-eval/keyword_prompts.txt \\
+             --kl-prompts /corpus-eval/kl_prompts.txt \\
              --out /work/out || { echo "seed $S FAILED"; exit 1; }
+    fi
+
+    # The equal-budget definition promises Heretic the same best-of-N selection senbonzakura gives
+    # itself, and an arm without it is not the matched comparison the gate asks for. A separate
+    # container run, because the search and the selection are separate spends and the budget file
+    # records them separately. `budget.json` carries best_of_n_applied, which the report reads.
+    "$BENCH/run-isolated.sh" \\
+        --tool heretic-best-of-n --ref v1.4.0 \\
+        --model "$HOME/bench-models/Qwen3-1.7B" \\
+        --corpus "$HOME/track-heldout" \\
+        --eval "$HOME/bench-eval" \\
+        --senbon-src "$HOME/senbon-run/src" \\
+        --out "$OUT/heretic-seed$S" \\
+        -- python /work/bench/best_of_n_heretic.py \\
+             --out /work/out --top-n 6 \\
+             --final-prompts /corpus-eval/final_prompts.txt \\
+             --keyword-prompts /corpus-eval/keyword_prompts.txt \\
+             || { echo "seed $S BEST-OF-N FAILED"; exit 1; }
 done
 echo HERETIC_OK
 """
@@ -168,16 +222,28 @@ flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 21600 8 || { echo "GPU_WAIT_T
 
 # Every arm from both tools goes through the SAME scorer, including senbonzakura's own, so the
 # table is not partly a comparison of judges. Heretic ships its own and it is not used here.
-for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
-    [ -d "$D" ] || continue
-    name=$(basename "$D")
+#
+# Each Heretic seed contributes TWO models: `model` is the winner of the best-of-N pass the equal
+# budget promises it, and `model-heretic-own` is the trial Heretic's own menu offers first. Both
+# are scored so a reader can see for themselves whether the selection pass we added is what moved
+# the number, instead of having to take the claim on trust.
+score_one() {
+    local dir="$1" name="$2"
+    [ -d "$dir" ] || return 0
     if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model=Qwen/Qwen3-1.7B >/dev/null 2>&1; then
-        echo "  $name already scored"; continue
+        echo "  $name already scored"; return 0
     fi
     echo "  scoring $name"
     PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
-        --model "$D/model" --track "$HOME/track-heldout" --skip-harmful \\
+        --model "$dir" --track "$HOME/track-heldout" --skip-harmful \\
         --device cuda --out "$OUT/scored-$name.json" || echo "  $name scoring FAILED"
+}
+
+for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
+    [ -d "$D" ] || continue
+    name=$(basename "$D")
+    score_one "$D/model" "$name"
+    score_one "$D/model-heretic-own" "$name-own-pick"
 done
 echo SCORE_OK
 """

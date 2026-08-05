@@ -24,7 +24,7 @@ _SPEC.loader.exec_module(rh)
 def args(**kw):
     base = dict(model="/model", seed=42, trials=200, good="/corpus/good_ds",
                 bad="/corpus/bad_ds", keyword_prompts="/corpus-eval/keyword_prompts.txt",
-                kl_prompts="/corpus-eval/kl_prompts.txt")
+                kl_prompts="/corpus-eval/kl_prompts.txt", dir_prompts=256)
     base.update(kw)
     return types.SimpleNamespace(**base)
 
@@ -60,6 +60,17 @@ def test_no_hub_dataset_survives_in_the_configuration(tmp_path):
 def test_the_direction_corpus_is_ours(tmp_path):
     text = config(tmp_path)
     assert "/corpus/good_ds" in text and "/corpus/bad_ds" in text
+
+
+def test_both_tools_fit_their_directions_on_the_same_number_of_prompts(tmp_path):
+    """Unsliced, Heretic reads the whole harmless partition: 4982 prompts against our 256.
+
+    Found by a dry run. Nothing fails; the two tools simply fit their directions on corpora an
+    order of magnitude apart, and the table would report that difference as a difference between
+    tools.
+    """
+    text = config(tmp_path, dir_prompts=256)
+    assert text.count('split = "train[:256]"') == 2
 
 
 # ── only settings v1.4.0 actually accepts ─────────────────────────────────────────────

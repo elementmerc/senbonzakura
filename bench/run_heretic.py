@@ -58,14 +58,19 @@ n_trials = {args.trials}
 # OUR corpus, mounted read-only. Heretic's defaults would fetch prompt sets from the Hub, which
 # the sealed box cannot reach, so pointing it here is what makes the two tools comparable rather
 # than merely co-located. `column` is the field name our track writer uses.
+#
+# THE SLICE IS AS LOAD-BEARING AS THE PATH. Handed the whole harmless partition, Heretic fits its
+# directions on 4982 prompts where senbonzakura fits on {args.dir_prompts}, which is a different
+# experiment wearing the same corpus. Both tools now read the same first {args.dir_prompts} rows of
+# each side, which is what senbonzakura's --dir-prompts selects.
 [good_prompts]
 dataset = "{args.good}"
-split = "train"
+split = "train[:{args.dir_prompts}]"
 column = "text"
 
 [bad_prompts]
 dataset = "{args.bad}"
-split = "train"
+split = "train[:{args.dir_prompts}]"
 column = "text"
 
 # THE EVALUATION PROMPTS ARE A SEPARATE PAIR OF TABLES from the two above, and left at their
@@ -130,6 +135,10 @@ def main():
                     help="the coherence eval slice, one prompt per line; disjoint from the prompts "
                          "the directions are fitted on")
     ap.add_argument("--out", required=True, help="writable output directory")
+    ap.add_argument("--dir-prompts", type=int, default=256,
+                    help="how many prompts per side the directions are fitted on, matched to "
+                         "senbonzakura's --dir-prompts. Left unmatched, the two tools fit their "
+                         "directions on differently sized corpora and the comparison is of that.")
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--trials", type=int, default=200,
                     help="matched to Heretic's own default rather than to our lower one, because "

@@ -173,7 +173,7 @@ for S in 42 43 44 45 46; do
         --eval "$HOME/bench-eval" \\
         --senbon-src "$HOME/senbon-run/src" \\
         --out "$OUT/heretic-seed$S" \\
-        -- python /work/bench/run_heretic.py --seed "$S" --trials 200 \\
+        -- python /work/bench/run_heretic.py --seed "$S" --trials 200 --dir-prompts 256 \\
              --model /model --good /corpus/good_ds --bad /corpus/bad_ds \\
              --keyword-prompts /corpus-eval/keyword_prompts.txt \\
              --kl-prompts /corpus-eval/kl_prompts.txt \\

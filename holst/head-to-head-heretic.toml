@@ -280,16 +280,26 @@ flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 21600 8 || { echo "GPU_WAIT_T
 # budget promises it, and `model-heretic-own` is the trial Heretic's own menu offers first. Both
 # are scored so a reader can see for themselves whether the selection pass we added is what moved
 # the number, instead of having to take the claim on trust.
+# `--skip-harmful 128` takes a COUNT, not a bare flag. Passed bare it consumed the next argument
+# and argparse rejected the lot, so every arm failed to score while the job still reported
+# success. 128 drops the head of the harmful set, which is where the search selected its winner
+# from, so what remains is held out from the selection.
+failed=0
+scored=0
 score_one() {
     local dir="$1" name="$2"
     [ -d "$dir" ] || return 0
     if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model=Qwen/Qwen3-1.7B >/dev/null 2>&1; then
-        echo "  $name already scored"; return 0
+        echo "  $name already scored"; scored=$((scored + 1)); return 0
     fi
     echo "  scoring $name"
-    PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
-        --model "$dir" --track "$HOME/track-heldout" --skip-harmful \\
-        --device cuda --out "$OUT/scored-$name.json" || echo "  $name scoring FAILED"
+    if PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
+        --model "$dir" --track "$HOME/track-heldout" --skip-harmful 128 \\
+        --device cuda --out "$OUT/scored-$name.json"; then
+        scored=$((scored + 1))
+    else
+        echo "  $name scoring FAILED"; failed=$((failed + 1))
+    fi
 }
 
 for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
@@ -298,6 +308,19 @@ for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
     score_one "$D/model" "$name"
     score_one "$D/model-heretic-own" "$name-own-pick"
 done
+
+# THE NEEDLE IS EARNED, NOT PRINTED REGARDLESS. This job used to echo SCORE_OK on the way out
+# whatever had happened, so a rehearsal in which every single arm failed to score came back green
+# with five jobs done. A success predicate that a total failure satisfies is not a predicate.
+echo "scored $scored, failed $failed"
+if [ "$failed" -ne 0 ]; then
+    echo "SCORING FAILED for $failed model(s); the table cannot be built from a partial set"
+    exit 1
+fi
+if [ "$scored" -eq 0 ]; then
+    echo "NOTHING WAS SCORED: no arm directories matched, so there is no table to build"
+    exit 1
+fi
 echo SCORE_OK
 """
 
@@ -318,9 +341,24 @@ cd "$RUN"
 
 # The verdict comes from the harness, never from a fresh argmin here. A gap smaller than the
 # spread is a tie, and the gate says so explicitly.
-PYTHONPATH=src "$PY" tools/report_bands.py \\
-    $(for f in "$OUT"/scored-*.json; do [ -f "$f" ] && printf '%s=%s ' "$(basename "$f" .json)" "$f"; done) \\
-    || echo "some arms produced nothing readable"
+#
+# THE ARGUMENT LIST IS CHECKED BEFORE IT IS USED. When every arm failed to score, this expanded to
+# nothing, report_bands refused for want of arguments, the `||` swallowed it and the job printed
+# REPORT_OK anyway. A run that measured nothing came back green.
+ARGS=""
+for f in "$OUT"/scored-*.json; do
+    [ -f "$f" ] || continue
+    ARGS="$ARGS $(basename "$f" .json)=$f"
+done
+if [ -z "$ARGS" ]; then
+    echo "NOTHING TO REPORT: no scored arms under $OUT. The score job should have caught this."
+    exit 1
+fi
+echo "reporting on $(printf '%s' "$ARGS" | wc -w) scored arm(s)"
+PYTHONPATH=src "$PY" tools/report_bands.py $ARGS || {
+    echo "REPORT FAILED: the harness could not read the arms it was given"
+    exit 1
+}
 
 echo
 echo "Read against bench/EQUAL-BUDGET.md: senbonzakura's arms were warm-started and Heretic's"

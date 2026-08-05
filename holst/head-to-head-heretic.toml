@@ -145,9 +145,8 @@ for S in 42 43 44 45 46; do
     fi
     echo "  senbonzakura seed $S"
     # The track is mounted at /corpus and the source at /work/senbon-src, both read-only, exactly
-    # as they are for the other tool. The output directory is the one writable path, which is why
-    # --study-db is passed: our default puts the Optuna study inside the track, and a read-only
-    # corpus then kills the run at study creation with a SQLAlchemy error that names nothing.
+    # as they are for the other tool. The output directory is the one writable path, which is
+    # where every artefact this run produces now goes.
     BENCH_IMAGE=senbon-bench:senbonzakura "$BENCH/run-isolated.sh" \\
         --tool senbonzakura \\
         --model "$HOME/bench-models/Qwen3-1.7B" \\
@@ -158,7 +157,6 @@ for S in 42 43 44 45 46; do
         -- python -u -m senbonzakura kageyoshi \\
              --model /model --track /corpus \\
              --trials 200 --patience 0 --device cuda --seed "$S" \\
-             --study-db /work/out/senbon-study.db \\
              --out /work/out || { echo "seed $S FAILED"; exit 1; }
 done
 echo SENBON_OK

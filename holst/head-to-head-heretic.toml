@@ -168,6 +168,11 @@ id = "heretic-arms"
 name = "Heretic, five seeds, same corpus, sealed box"
 machine = "rog"
 deps = ["senbon-arms"]
+# MEASURED, not guessed. A dry run of one eight-trial arm on 2026-08-05 gave 406s of fixed setup
+# (model load, batch-size probe, residual collection, baseline count) and 13.7s per trial, so a
+# 200-trial seed is about 52 minutes and five seeds about 4.4 hours. The selection pass adds
+# roughly 11 minutes a seed. Call it 5.3 hours, and this ceiling is a little over four times that,
+# which leaves room for a slower card without letting a genuine hang run all day.
 timeout_secs = 86400
 resources = { needs_gpu = true, ram_gb = 6 }
 success = { type = "stdout-contains", needle = "HERETIC_OK" }

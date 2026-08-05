@@ -28,6 +28,15 @@
 #     senbonzakura's own, so the comparison is not partly between judges.
 #   * A stale artefact reused. Every guard names the configuration it will accept.
 #   * An arm that ran on CPU. run-isolated.sh proves the GPU is reachable inside the box first.
+#   * A CARD THAT DROPS MID-RUN. This is the one that nearly cost a night. When WSL2 goes away
+#     under a running arm, the work stops but the ssh channel does not close, so holst sees a job
+#     that is neither finished nor failed: it is running, and it will go on running until the
+#     wall-clock timeout. A rehearsal on 2026-08-05 sat like that for two and a half hours after
+#     the arm had already written its artefacts and exited. Every GPU job therefore carries
+#     `stall_secs`: no new output for that long and holst cuts the job and retries it, which with
+#     `--resume` continues the seed rather than restarting it. The wall-clock timeouts are sized
+#     from the measured cost too, so even a stall the watchdog somehow misses is bounded in hours
+#     rather than a day.
 run = "head-to-head-heretic-2026-08-05"
 
 [[job]]
@@ -124,8 +133,8 @@ id = "senbon-arms"
 name = "senbonzakura, five seeds, equal budget, same sealed box"
 machine = "rog"
 deps = ["setup"]
-timeout_secs = 86400
-resources = { needs_gpu = true, ram_gb = 6 }
+timeout_secs = 43200
+resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
 success = { type = "stdout-contains", needle = "SENBON_OK" }
 command = """
 set -euo pipefail
@@ -181,8 +190,8 @@ deps = ["senbon-arms"]
 # 200-trial seed is about 52 minutes and five seeds about 4.4 hours. The selection pass adds
 # roughly 11 minutes a seed. Call it 5.3 hours, and this ceiling is a little over four times that,
 # which leaves room for a slower card without letting a genuine hang run all day.
-timeout_secs = 86400
-resources = { needs_gpu = true, ram_gb = 6 }
+timeout_secs = 43200
+resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
 success = { type = "stdout-contains", needle = "HERETIC_OK" }
 command = """
 set -euo pipefail
@@ -252,7 +261,7 @@ name = "score every model with the same instrument"
 machine = "rog"
 deps = ["heretic-arms"]
 timeout_secs = 43200
-resources = { needs_gpu = true, ram_gb = 6 }
+resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
 success = { type = "stdout-contains", needle = "SCORE_OK" }
 command = """
 set -euo pipefail

@@ -98,3 +98,34 @@ def test_the_entry_modules_run_without_a_double_import_warning(module):
     assert r.returncode == 0, r.stderr
     assert "RuntimeWarning" not in r.stderr, r.stderr
     assert "found in sys.modules" not in r.stderr, r.stderr
+
+
+# ── the licence notice has to be in the artefact, not only in the repository ───────────
+def test_the_statement_of_modification_ships_inside_the_distribution():
+    """AGPL section 5(a) asks the DISTRIBUTED work to say it is modified, not the git tree.
+
+    Senbonzakura includes code copied from Heretic, so the whole project is AGPL and section 5(a)
+    requires a prominent notice of modification. That notice lives in THIRD-PARTY-NOTICES.md. The
+    0.3.0 wheel on PyPI listed LICENSE alone, so anyone who installed it received the licence and
+    no statement that this is a modified work: the statement existed exactly where it was not
+    needed. This asserts the file is listed for packaging AND still contains the section it is
+    listed for.
+    """
+    from pathlib import Path
+
+    import tomllib
+
+    root = Path(__file__).resolve().parent.parent
+    with open(root / "pyproject.toml", "rb") as f:
+        cfg = tomllib.load(f)
+
+    listed = cfg["project"]["license-files"]
+    assert "THIRD-PARTY-NOTICES.md" in listed, (
+        "the statement of modification is not packaged, so an installed copy carries none")
+
+    for name in listed:
+        assert (root / name).is_file(), f"{name} is listed for packaging but does not exist"
+
+    notice = (root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8")
+    assert "5(a)" in notice, "the notice no longer carries the statement it is packaged for"
+    assert "Heretic" in notice, "the notice no longer names the work this one is derived from"

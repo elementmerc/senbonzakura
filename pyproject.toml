@@ -9,7 +9,12 @@ description = "Multi-direction refusal abliteration for transformer language mod
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+# THIRD-PARTY-NOTICES.md carries the AGPL section 5(a) statement of modification: this work
+# includes code from Heretic and is not Heretic. Listing it here is what puts it INSIDE the
+# wheel. The 0.3.0 release on PyPI shipped LICENSE alone, so the statement existed in the
+# repository and was absent from the artefact anyone actually installs, which is the only place
+# section 5(a) asks for it.
+license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [

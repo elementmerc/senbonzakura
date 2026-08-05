@@ -438,10 +438,10 @@ def matched_refusal_table(rows, tolerance=0.05):
     For each K, take the arm with the LOWEST KL among those reaching the target refusal removal.
     A K that never reaches the target has no entry rather than a flattering one.
     """
-    out = {}
+    out, ranking = {}, {}
     fitted = [r for r in rows if not r["random_extras"]]
     if not fitted:
-        return {"targets": out, "note": "no fitted arms"}
+        return {"targets": out, "ranking": ranking, "note": "no fitted arms"}
 
     # Prefer the true unablated anchor (strength 0) when it exists. Falling back to the
     # least-ablated ARM was a real distortion in the first run: its weakest arm had already
@@ -467,7 +467,7 @@ def matched_refusal_table(rows, tolerance=0.05):
                 if cur is None or key < (abs(cur["harmful_refusal"] - target), cur["kl"]):
                     best[r["K"]] = r
         if best:
-            out[f"{int(target_frac * 100)}%_removed"] = {
+            entries = {
                 str(K): {"kl": r["kl"], "strength": r["strength"],
                          "harmful_refusal": r["harmful_refusal"],
                          # How far past the target this arm landed. Two arms with very different
@@ -475,9 +475,64 @@ def matched_refusal_table(rows, tolerance=0.05):
                          # as one; the report says so rather than leaving it to be noticed.
                          "overshoot": round(target - r["harmful_refusal"], 4)}
                 for K, r in sorted(best.items())}
-    return {"targets": out, "baseline_refusal": baseline,
+            band = f"{int(target_frac * 100)}%_removed"
+            out[band] = entries
+            # Deliberately a SIBLING of `targets` rather than extra keys inside a band. Mixing
+            # verdict keys in with the per-K arms means every consumer that iterates a band trips
+            # over them, which is a worse defect than the one being fixed.
+            ranking[band] = rank_band(entries, baseline, tolerance)
+    return {"targets": out, "ranking": ranking, "baseline_refusal": baseline,
             "baseline_is_unablated": bool(anchors),
             "target_tolerance": tolerance}
+
+
+# Two arms whose KL differs by less than this fraction are a tie, not a winner. On 2026-08-04 a
+# report crowned "MULTI WINS" from KL 0.0088 against 0.0089, a difference of about one percent
+# that is well inside the run-to-run noise of a 64-prompt KL estimate.
+TIE_FRACTION = 0.05
+
+
+def rank_band(entries, baseline, tolerance):
+    """Decide whether a band's arms may be ranked at all, and by how much the winner won.
+
+    Two separate failures on 2026-08-04, both of which printed a confident verdict:
+
+    1. Arms that were not at the same refusal level were ranked anyway. Membership of a band
+       allows a spread of up to twice `tolerance * baseline`, so two arms can both be "in" the
+       50% band while one has removed materially more refusal than the other. More ablation
+       always costs more KL, so ranking those compares the strengths, not the directions.
+    2. A one-percent KL difference was reported as a win.
+
+    Returns the keys to merge into the band. `comparable` false means the numbers are still worth
+    reading individually but must not be turned into a ranking, and `reason` says why.
+    """
+    arms = dict(entries)
+    if len(arms) < 2:
+        return {"comparable": False, "reason": "only one arm reached this band, so there is "
+                                               "nothing to compare it against", "spread": 0.0}
+
+    refusals = [e["harmful_refusal"] for e in arms.values()]
+    spread = max(refusals) - min(refusals)
+    # Half the band's own width. Beyond this the arms are at genuinely different refusal levels
+    # and the whole premise of a matched comparison has gone.
+    allowed = tolerance * baseline
+    if spread > allowed:
+        return {"comparable": False, "spread": round(spread, 4),
+                "reason": (f"the arms span {spread:.4f} in refusal, more than the {allowed:.4f} "
+                           f"this band allows, so they are not at a matched level and their KL "
+                           f"cannot be ranked")}
+
+    order = sorted(arms.items(), key=lambda kv: kv[1]["kl"])
+    (best_k, best_e), (next_k, next_e) = order[0], order[1]
+    if best_e["kl"] <= 0 or (next_e["kl"] - best_e["kl"]) <= TIE_FRACTION * next_e["kl"]:
+        return {"comparable": True, "spread": round(spread, 4), "cheapest": None,
+                "reason": (f"K={best_k} and K={next_k} are within {TIE_FRACTION:.0%} on KL "
+                           f"({best_e['kl']} against {next_e['kl']}), which is a tie rather than "
+                           f"a win")}
+    return {"comparable": True, "spread": round(spread, 4), "cheapest": int(best_k),
+            "margin": round(next_e["kl"] / best_e["kl"], 3),
+            "reason": (f"K={best_k} is cheapest at a matched refusal level, "
+                       f"{next_e['kl'] / best_e['kl']:.2f}x below the next best")}
 
 
 def degenerate_reason(rows):
@@ -503,6 +558,19 @@ def degenerate_reason(rows):
     return None
 
 
+def floor_direction_counts(ks):
+    """Which direction counts get a random-direction control arm, bounded in cost.
+
+    Always the largest. It used to be the first two above 1 and nothing else, which left the
+    HIGHEST K unfloored: on 2026-08-04 the headline arm was K=4 while the only random controls
+    were K=2 and K=3, so the one number a writeup would quote had to be compared against a floor
+    at a different direction count. The largest K is exactly the arm a claim gets made about, so
+    it is the one that can least afford to go without.
+    """
+    multi = [k for k in ks if k > 1]
+    return sorted(set(multi[:2] + multi[-1:]))
+
+
 def experiment_4(a, log, strengths):
     """The K sweep with headroom: every K at every strength, then compared at matched refusal."""
     rows = []
@@ -517,9 +585,14 @@ def experiment_4(a, log, strengths):
     rows.extend(_measure(a, f"fitted-K{K}-s{s:g}", K, log, strength=s)
                 for K in ks for s in strengths)
     # The random control at the same strengths, so "fitted beats random" is judged with headroom.
+    # The largest K is always covered. It used to be the first two K above 1 and nothing else,
+    # which left the HIGHEST K without a floor: on 2026-08-04 the headline arm was K=4 and the
+    # only random arms were K=2 and K=3, so the one number the writeup would quote had to be
+    # compared against a random control at a different direction count. The largest K is precisely
+    # the arm a claim gets made about, so it is the one that can least afford to go unfloored.
     rows.extend(_measure(a, f"random-K{K}-s{s:g}", K, log,
                          randomise_extras=True, seed=a.args.seed + K, strength=s)
-                for K in [k for k in ks if k > 1][:2] for s in strengths)
+                for K in floor_direction_counts(ks) for s in strengths)
 
     bad = degenerate_reason(rows)
     if bad:

@@ -860,3 +860,78 @@ def test_directions_of_comparable_magnitude_are_not_blamed_on_size():
 def test_the_primary_direction_is_its_own_reference():
     r = dv.projection_magnitude(_mag_case(0.5), lambda m: None, K=2)
     assert r["per_direction"]["0"]["fraction_of_primary"] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_the_random_floor_always_covers_the_largest_direction_count():
+    """The arm a headline quotes is the highest K, so it is the one that most needs a floor.
+
+    It used to be the first two K above 1 and nothing else. On 2026-08-04 that left the K=4
+    headline compared against random controls at K=2 and K=3, a different direction count.
+    """
+    for ks, want in (([1, 2, 3, 4], {2, 3, 4}),
+                     ([1, 2, 3, 5, 8], {2, 3, 8}),
+                     ([1, 2], {2}),
+                     ([1], set())):
+        floor_ks = dv.floor_direction_counts(ks)
+        assert set(floor_ks) == want, (ks, floor_ks)
+        multi = [k for k in ks if k > 1]
+        if multi:
+            assert max(multi) in floor_ks, f"the largest K went unfloored for {ks}"
+        assert len(floor_ks) <= 3, "the floor must stay bounded in cost"
+
+
+# ── the comparison gate (added 2026-08-05) ────────────────────────────────────────────
+def _band(*pairs):
+    """A band of (K, refusal, kl) triples in the shape matched_refusal_table emits."""
+    return {str(K): {"kl": kl, "strength": 1.0, "harmful_refusal": ref, "overshoot": 0.0}
+            for K, ref, kl in pairs}
+
+
+def test_arms_at_different_refusal_levels_are_refused_a_ranking():
+    """More ablation always costs more KL, so ranking unmatched arms compares strengths."""
+    # Baseline 0.8, tolerance 0.05 -> arms may span at most 0.04 in refusal. These span 0.10.
+    v = dv.rank_band(_band((1, 0.10, 0.90), (2, 0.20, 0.10)), baseline=0.8, tolerance=0.05)
+    assert v["comparable"] is False
+    assert "not at a matched level" in v["reason"]
+    assert "cheapest" not in v, "an unrankable band must not name a winner"
+
+
+def test_a_one_percent_kl_difference_is_a_tie_not_a_win():
+    """The exact shape of the 2026-08-04 report: 0.0088 against 0.0089, crowned MULTI WINS."""
+    v = dv.rank_band(_band((1, 0.15, 0.0089), (2, 0.15, 0.0088)), baseline=0.8, tolerance=0.05)
+    assert v["comparable"] is True
+    assert v["cheapest"] is None, "a 1% difference was reported as a winner"
+    assert "tie" in v["reason"]
+
+
+def test_a_real_advantage_is_ranked_and_its_margin_reported():
+    v = dv.rank_band(_band((1, 0.15, 0.80), (4, 0.16, 0.10)), baseline=0.8, tolerance=0.05)
+    assert v["comparable"] is True and v["cheapest"] == 4
+    assert v["margin"] == pytest.approx(8.0, abs=0.01)
+
+
+def test_a_band_only_one_arm_reached_is_not_a_comparison():
+    v = dv.rank_band(_band((4, 0.15, 0.10)), baseline=0.8, tolerance=0.05)
+    assert v["comparable"] is False and "nothing to compare" in v["reason"]
+
+
+def test_a_zero_kl_arm_cannot_win_by_division():
+    """A degenerate 0.0 KL would otherwise divide by zero or claim an infinite margin."""
+    v = dv.rank_band(_band((1, 0.15, 0.0), (2, 0.15, 0.5)), baseline=0.8, tolerance=0.05)
+    assert v["cheapest"] is None
+
+
+def test_the_ranking_travels_beside_the_table_not_inside_the_bands():
+    """Verdict keys mixed in with the arms break every consumer that iterates a band."""
+    rows = [{"arm": "unablated-K1-s0", "K": 1, "strength": 0.0, "random_extras": False,
+             "harmful_refusal": 0.8, "harmless_refusal": 0.0, "kl": 0.0}]
+    for K, ref, kl in ((1, 0.20, 0.9), (2, 0.21, 0.1)):
+        rows.append({"arm": f"fitted-K{K}", "K": K, "strength": 1.0, "random_extras": False,
+                     "harmful_refusal": ref, "harmless_refusal": 0.0, "kl": kl})
+    t = dv.matched_refusal_table(rows)
+    assert "ranking" in t
+    for band, entries in t["targets"].items():
+        for key, entry in entries.items():
+            assert key.isdigit(), f"{key!r} is not a direction count"
+            assert set(entry) == {"kl", "strength", "harmful_refusal", "overshoot"}
+        assert band in t["ranking"]

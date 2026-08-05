@@ -1,0 +1,52 @@
+# Heretic, installed at a pinned tag, in a box that cannot reach the network when it runs.
+#
+# THE BUILD/RUN SPLIT, AND WHY IT IS NOT A HOLE
+#
+# Dependencies have to arrive somehow, and `pip install` needs a network, so the build has one.
+# The RUN does not (`run-isolated.sh` passes `--network none`), and that is where the distinction
+# earns its keep: at build time the box contains nothing of ours, no weights, no corpus, no
+# credentials, nothing to take. By the time it holds our data it has no way to send it anywhere.
+#
+# The build is also where the supply chain is pinned. Heretic is cloned at a tag, that tag's
+# commit is recorded in the image, and the run records the image digest, so a published row can
+# be traced to the exact code that produced it. Someone disputing a number can check what we ran.
+#
+# WHY HERETIC IS NOT INSTALLED INTO THE SHARED BASE
+#
+# Each tool gets its own layer on the shared base, because their dependency trees conflict:
+# Heretic wants transformers ~=5.6 and other tools pin differently. One image per tool keeps each
+# comparison honest about the environment it ran in, instead of resolving a compromise none of the
+# authors chose.
+#
+# Build:
+#   docker build -f bench/Dockerfile.heretic --build-arg HERETIC_REF=v1.4.0 -t senbon-bench:heretic .
+FROM senbon-bench:tool
+
+# Pinned by tag, and the tag's commit is recorded below. v1.4.0 is the current release as of
+# 2026-08-05. Never `master`: a benchmark whose subject moves between arms is not a benchmark.
+ARG HERETIC_REF=v1.4.0
+
+USER root
+WORKDIR /opt
+
+RUN git clone --quiet --branch "$HERETIC_REF" --depth 1 \
+      https://github.com/p-e-w/heretic.git /opt/heretic \
+ && git -C /opt/heretic rev-parse HEAD > /opt/heretic-commit.txt \
+ && cat /opt/heretic-commit.txt
+
+# --no-deps on torch specifically: the base pins torch 2.5.1+cu124 to match the driver on the card,
+# and Heretic deliberately leaves its torch version unspecified. Letting pip resolve it here would
+# quietly swap the CUDA build for whichever wheel the resolver likes, and the two tools would then
+# be benchmarked on different torch builds while the table claimed one environment.
+RUN pip install --no-cache-dir /opt/heretic \
+ && python -c "import torch; assert torch.__version__.startswith('2.5.1'), torch.__version__" \
+ && python -c "import heretic; print('heretic imports')"
+
+USER bench
+WORKDIR /work
+
+# Recorded so a result can name its subject without the operator having to remember.
+ENV BENCH_TOOL=heretic \
+    BENCH_TOOL_REF=$HERETIC_REF
+
+CMD ["python", "-c", "import heretic, torch; print('heretic ready, torch', torch.__version__, 'cuda', torch.cuda.is_available())"]

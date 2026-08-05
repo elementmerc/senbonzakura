@@ -1,0 +1,211 @@
+# Task 27: the Qwen3-1.7B head to head against Heretic. A v0.4 exit gate.
+#
+# The gate is word for word as strict as v0.7's, deliberately, because an earlier draft was not
+# and that put the losable experiment behind the weaker gate. It requires: both tools run by us on
+# current code, a held-out eval slice, five seeds per arm, intervals on every arm, a gap smaller
+# than the spread reported as a tie, and a pre-registration committed BEFORE the run so it is
+# checkable by someone other than its author. Whatever it says goes in the README.
+#
+# The pre-commitments are already in the repository and were committed before this spec ran:
+#   bench/CONTRACT.md      what is measured, how, one judge for both, and what would make it wrong
+#   bench/EQUAL-BUDGET.md  what each tool was given, and the one asymmetry left standing
+#
+# WHO OWNS WHAT
+#
+# holst owns the arms: the queue, the card lock, the dependency order, resume, streaming. Each arm
+# calls bench/run-isolated.sh for its ONE container, and that script owns the isolation flags. The
+# split is deliberate: a hand-rolled loop would re-implement the queue badly, and putting the
+# isolation inline in every job would let one job drift from the others.
+#
+# Heretic runs with NO NETWORK. Everything it needs is staged first, by us, which is the friction
+# that makes the run reproducible: nothing can be fetched mid-run that was not staged before it.
+#
+# WHAT WOULD MAKE THIS RUN MEANINGLESS, and is therefore guarded
+#
+#   * Different corpora per tool. Heretic accepts a path to a dataset on disk, so both tools read
+#     the same one. Checked in setup rather than assumed.
+#   * Different judges. Every model is scored by senbonzakura's compass afterwards, including
+#     senbonzakura's own, so the comparison is not partly between judges.
+#   * A stale artefact reused. Every guard names the configuration it will accept.
+#   * An arm that ran on CPU. run-isolated.sh proves the GPU is reachable inside the box first.
+run = "head-to-head-heretic-2026-08-05"
+
+[[job]]
+id = "setup"
+name = "stage every input, because the runs have no network"
+machine = "rog"
+timeout_secs = 3600
+success = { type = "stdout-contains", needle = "SETUP_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+BENCH=$HOME/bench
+OUT=$HOME/bench-out/h2h
+mkdir -p "$OUT" "$HOME/bench-models"
+
+test -x "$BENCH/run-isolated.sh" || { echo "MISSING run-isolated.sh"; exit 1; }
+docker image inspect senbon-bench:heretic >/dev/null 2>&1 || { echo "MISSING senbon-bench:heretic; build it first"; exit 1; }
+
+# The isolation is re-proved every run rather than assumed from the last one. Cheap, and the flags
+# are lost one at a time by someone debugging a failing arm.
+"$BENCH/run-isolated.sh" --tool selftest --model "$HOME/bench-models" --out "$OUT/selftest" \\
+    -- python /work/bench/selftest.py || { echo "ISOLATION SELF-TEST FAILED"; exit 1; }
+
+# Both tools must read the SAME corpus or the comparison is between corpora. Heretic takes a path
+# on disk, so this is possible; it is checked here rather than discovered mid-run.
+test -d "$HOME/track-heldout/bad_ds" || { echo "MISSING corpus bad_ds"; exit 1; }
+test -d "$HOME/track-heldout/good_ds" || { echo "MISSING corpus good_ds"; exit 1; }
+
+# Weights staged locally: the sealed box cannot download them.
+PY=$HOME/track2/venv/bin/python
+PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
+import os
+from huggingface_hub import snapshot_download
+p = snapshot_download("Qwen/Qwen3-1.7B", local_dir=os.path.expanduser("~/bench-models/Qwen3-1.7B"))
+print("staged:", p)
+EOF
+test -f "$HOME/bench-models/Qwen3-1.7B/config.json" || { echo "MISSING staged weights"; exit 1; }
+
+PYTHONPATH="$RUN/src" "$PY" -c "from senbonzakura import cli; print('code_version:', cli.code_version())"
+echo SETUP_OK
+"""
+
+# ── The senbonzakura arms ─────────────────────────────────────────────────────────────
+# Five seeds. `--trials 200` matches Heretic's own default rather than our 60: matching upward,
+# because capping Heretic at our number would buy a result by starving the comparison.
+# `--patience 0` because with trials matched an early stop makes trials and wall-clock disagree.
+
+[[job]]
+id = "senbon-arms"
+name = "senbonzakura, five seeds, equal budget"
+machine = "rog"
+deps = ["setup"]
+timeout_secs = 86400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SENBON_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+OUT=$HOME/bench-out/h2h
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+for S in 42 43 44 45 46; do
+    if "$PY" tools/artefact_ok.py "$OUT/senbon-seed$S/abliteration.json" \\
+         model=Qwen/Qwen3-1.7B seed="$S" >/dev/null 2>&1; then
+        echo "  seed $S already complete"; continue
+    fi
+    echo "  senbonzakura seed $S"
+    PYTHONPATH=src "$PY" -u -m senbonzakura kageyoshi \\
+        --model "$HOME/bench-models/Qwen3-1.7B" --track "$HOME/track-heldout" \\
+        --trials 200 --patience 0 --device cuda --seed "$S" \\
+        --out "$OUT/senbon-seed$S" || { echo "seed $S FAILED"; exit 1; }
+done
+echo SENBON_OK
+"""
+
+# ── The Heretic arms ──────────────────────────────────────────────────────────────────
+
+[[job]]
+id = "heretic-arms"
+name = "Heretic, five seeds, same corpus, sealed box"
+machine = "rog"
+deps = ["senbon-arms"]
+timeout_secs = 86400
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "HERETIC_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+BENCH=$HOME/bench
+OUT=$HOME/bench-out/h2h
+exec 8>"$HOME/senbon-run/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+for S in 42 43 44 45 46; do
+    if [ -f "$OUT/heretic-seed$S/STATUS" ] && [ "$(cat "$OUT/heretic-seed$S/STATUS")" = "OK" ]; then
+        echo "  seed $S already complete"; continue
+    fi
+    echo "  heretic seed $S"
+    # The corpus is mounted read-only at /corpus and Heretic is pointed at it, so both tools read
+    # the same prompts. Its own defaults would pull mlabonne sets from the Hub, which the sealed
+    # box cannot reach: the isolation forces the comparability rather than merely permitting it.
+    "$BENCH/run-isolated.sh" \\
+        --tool heretic --ref v1.4.0 \\
+        --model "$HOME/bench-models/Qwen3-1.7B" \\
+        --corpus "$HOME/track-heldout" \\
+        --out "$OUT/heretic-seed$S" \\
+        -- python /work/bench/run_heretic.py --seed "$S" --trials 200 \\
+             --model /model --good /corpus/good_ds --bad /corpus/bad_ds \\
+             --out /work/out || { echo "seed $S FAILED"; exit 1; }
+done
+echo HERETIC_OK
+"""
+
+# ── One judge for every model, ours, applied afterwards ───────────────────────────────
+
+[[job]]
+id = "score"
+name = "score every model with the same instrument"
+machine = "rog"
+deps = ["heretic-arms"]
+timeout_secs = 43200
+resources = { needs_gpu = true, ram_gb = 6 }
+success = { type = "stdout-contains", needle = "SCORE_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+OUT=$HOME/bench-out/h2h
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+exec 8>"$RUN/abl/gpu.lock"
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 21600 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+
+# Every arm from both tools goes through the SAME scorer, including senbonzakura's own, so the
+# table is not partly a comparison of judges. Heretic ships its own and it is not used here.
+for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
+    [ -d "$D" ] || continue
+    name=$(basename "$D")
+    if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model=Qwen/Qwen3-1.7B >/dev/null 2>&1; then
+        echo "  $name already scored"; continue
+    fi
+    echo "  scoring $name"
+    PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
+        --model "$D/model" --track "$HOME/track-heldout" --skip-harmful \\
+        --device cuda --out "$OUT/scored-$name.json" || echo "  $name scoring FAILED"
+done
+echo SCORE_OK
+"""
+
+[[job]]
+id = "report"
+name = "read it, and publish whatever it says"
+machine = "rog"
+deps = ["score"]
+timeout_secs = 1800
+success = { type = "stdout-contains", needle = "REPORT_OK" }
+command = """
+set -euo pipefail
+exec 2>&1
+RUN=$HOME/senbon-run
+OUT=$HOME/bench-out/h2h
+PY=$HOME/track2/venv/bin/python
+cd "$RUN"
+
+# The verdict comes from the harness, never from a fresh argmin here. A gap smaller than the
+# spread is a tie, and the gate says so explicitly.
+PYTHONPATH=src "$PY" tools/report_bands.py \\
+    $(for f in "$OUT"/scored-*.json; do [ -f "$f" ] && printf '%s=%s ' "$(basename "$f" .json)" "$f"; done) \\
+    || echo "some arms produced nothing readable"
+
+echo
+echo "Read against bench/EQUAL-BUDGET.md: senbonzakura's arms were warm-started and Heretic's"
+echo "were not, which is the one asymmetry left standing and is disclosed rather than removed."
+echo "Everything else was matched. Whatever this says goes in the README."
+echo REPORT_OK
+"""

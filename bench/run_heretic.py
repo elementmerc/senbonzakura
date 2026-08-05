@@ -38,6 +38,25 @@ model = "{args.model}"
 seed = {args.seed}
 n_trials = {args.trials}
 
+# HERETIC IS INTERACTIVE BY DEFAULT and the container has no terminal to answer it with. Once the
+# search finishes it asks which trial to use and what to do with the model, and an unanswered
+# question inside a batch job is a hang that looks like a slow run. Every one of these settings is
+# Heretic's own documented way to answer in advance; none of them changes what it computes.
+#
+#   trial_index = 0     the first entry of ITS OWN sorted Pareto front, which is what its menu
+#                       offers first. This is Heretic's unaided pick, saved separately, so the
+#                       published table can show whether our best-of-N pass changed the answer.
+#   model_action        save to disk rather than upload; the box has no network in any case.
+#   export_strategy     merge the adapter into the weights, so the saved model is a plain model
+#                       that our scorer can read the same way it reads senbonzakura's.
+#   checkpoint_action   resume an interrupted study rather than ask. A GPU arm that dies at trial
+#                       180 must not silently start again from zero on the retry.
+trial_index = 0
+model_action = "save"
+export_strategy = "merge"
+checkpoint_action = "continue"
+save_directory = "{args.own_pick_out}"
+
 # OUR corpus, mounted read-only. Heretic's defaults would fetch prompt sets from the Hub, which
 # the sealed box cannot reach, so pointing it here is what makes the two tools comparable rather
 # than merely co-located. `column` is the field name our track writer uses.
@@ -50,6 +69,20 @@ column = "text"
 dataset = "{args.bad}"
 split = "train"
 column = "text"
+
+# THE SCORERS OWN THEIR OWN PROMPT SETS, and those are separate from the two tables above.
+# Left at their defaults they fetch `mlabonne/harmful_behaviors` and `mlabonne/harmless_alpaca`
+# from the Hub, so inside a box with no network the run dies at scorer initialisation before it
+# runs a single trial. Beyond that: a tool's search is steered by whatever its scorers measure,
+# so two tools scored on different prompts have not been given the same problem. These files are
+# the slices senbonzakura is scored on, written by bench/stage_eval_slices.py from the same code
+# that builds them for our own arm. Heretic reads a plain text file as one prompt per line, and
+# `split`/`column` are not needed for that form.
+[scorer.KeywordRate.prompts]
+dataset = "{args.keyword_prompts}"
+
+[scorer.KLDivergence.prompts]
+dataset = "{args.kl_prompts}"
 """
     path = os.path.join(workdir, "config.toml")
     with open(path, "w", encoding="utf-8") as f:
@@ -57,23 +90,50 @@ column = "text"
     return path
 
 
+def study_path(model, workdir):
+    """Where Heretic leaves its Optuna study, derived the way Heretic derives it.
+
+    `study_checkpoint_dir` defaults to `checkpoints` relative to the working directory, and the
+    file within it is the model identifier with every character that is not alphanumeric, an
+    underscore or a hyphen replaced by a double hyphen (heretic/main.py, the study checkpoint
+    block). Recording the path here means the best-of-N pass finds the study by being told, rather
+    than by guessing at a naming rule that could change under it.
+    """
+    stem = "".join(c if (c.isalnum() or c in ("_", "-")) else "--" for c in model)
+    return os.path.join(workdir, "checkpoints", stem + ".jsonl")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="path to the staged weights, mounted read-only")
     ap.add_argument("--good", required=True, help="harmless prompts, on disk")
     ap.add_argument("--bad", required=True, help="harmful prompts, on disk")
+    ap.add_argument("--keyword-prompts", required=True,
+                    help="the refusal eval slice, one prompt per line; the same slice senbonzakura's "
+                         "search is scored on")
+    ap.add_argument("--kl-prompts", required=True,
+                    help="the coherence eval slice, one prompt per line; disjoint from the prompts "
+                         "the directions are fitted on")
     ap.add_argument("--out", required=True, help="writable output directory")
+    ap.add_argument("--own-pick-out", default=None,
+                    help="where Heretic saves the trial IT would have offered first; defaults to "
+                         "<out>/model-heretic-own. Kept apart from the best-of-N winner so the two "
+                         "are never confused for one another in a table.")
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--trials", type=int, default=200,
                     help="matched to Heretic's own default rather than to our lower one, because "
                          "capping it at ours would buy a result by starving the comparison")
     a = ap.parse_args()
+    a.own_pick_out = a.own_pick_out or os.path.join(a.out, "model-heretic-own")
 
     os.makedirs(a.out, exist_ok=True)
+    os.makedirs(a.own_pick_out, exist_ok=True)
     # Heretic reads config.toml from the CURRENT directory, and only this path is writable.
     os.chdir(a.out)
 
-    for label, path in (("model", a.model), ("good prompts", a.good), ("bad prompts", a.bad)):
+    for label, path in (("model", a.model), ("good prompts", a.good), ("bad prompts", a.bad),
+                        ("keyword eval slice", a.keyword_prompts),
+                        ("KL eval slice", a.kl_prompts)):
         if not os.path.exists(path):
             print(f"run_heretic: {label} not found at {path}. Inputs are staged before the run "
                   f"because this container has no network to fetch them with.", file=sys.stderr)
@@ -100,7 +160,12 @@ def main():
         "model": a.model,
         "good_prompts": a.good,
         "bad_prompts": a.bad,
+        "keyword_prompts": a.keyword_prompts,
+        "kl_prompts": a.kl_prompts,
         "config_written": cfg_path,
+        "study": study_path(a.model, a.out),
+        "own_pick_model": a.own_pick_out,
+        "own_pick_trial_index": 0,
         # Stated rather than implied: this arm has not yet had the best-of-N selection pass that
         # `bench/EQUAL-BUDGET.md` promises it, and a row read before that pass is applied is not
         # the matched comparison the gate asks for.

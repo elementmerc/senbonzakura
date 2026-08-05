@@ -130,6 +130,8 @@ docker run --rm \
   -v "$MODEL:/model:ro" \
   "${CORPUS_ARGS[@]}" \
   -v "$OUT:/work/out:rw" \
+  `# this directory read-only, so selftest.py and any per-tool adapter are reachable inside` \
+  -v "$(cd "$(dirname "$0")" && pwd):/work/bench:ro" \
   --tmpfs /work/cache:rw,size=4g \
   -e TOOL_REF="${REF:-}" \
   "$IMAGE" "$@"

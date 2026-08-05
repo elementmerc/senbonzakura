@@ -1,0 +1,63 @@
+# senbonzakura, in the same sealed box its competitors run in.
+#
+# WHY OUR OWN TOOL GETS A CONTAINER TOO
+#
+# The isolation exists to protect the card from somebody else's dependency tree, and by that
+# argument our own arms did not need one: we wrote the code, and it runs on the host venv. Running
+# them there anyway would have left a difference underneath the table that no column showed.
+#
+# The host venv carries torch 2.13.0+cu130. The benchmark base pins torch 2.5.1+cu124, because
+# that is what the competing tools are pinned to. Two arms on two torch builds are two sets of
+# kernels, two sets of numerics, and a KL divergence measured against a slightly different
+# baseline. `bench/EQUAL-BUDGET.md` said "Card: same", which was true and which quietly meant
+# less than a reader would take it to mean.
+#
+# So both tools now run on one image, one torch, one CUDA build, with the same flags, the same
+# read-only mounts and the same absent network. It also means our own arm is audited by the same
+# self-test as everybody else's, which is the answer to a fair question a rival author would ask:
+# why is the isolation only applied to other people's code.
+#
+# WHAT IS BAKED IN, AND WHAT IS NOT
+#
+# The dependencies are baked; the source is NOT. `bench/run-isolated.sh --senbon-src` mounts the
+# working tree read-only at /work/senbon-src, so an arm runs the code that is checked out right
+# now and `cli.code_version()` reports it. Baking the source would mean rebuilding the image to
+# change one line, and would make the version in the image and the version in the repository two
+# things that have to be kept in step by hand.
+#
+# Build:
+#   docker build -f bench/Dockerfile.senbonzakura -t senbon-bench:senbonzakura .
+FROM senbon-bench:tool
+
+USER root
+
+# Everything senbonzakura imports, EXCEPT torch, which the base already pins. `--no-deps` is not
+# used here: these packages' own dependency trees are wanted, and torch is simply not asked for
+# again, so pip has nothing to resolve it against and cannot swap the CUDA build underneath.
+#
+# Pinned exactly rather than floated, for the same reason the base pins torch: a benchmark whose
+# numeric or tokenisation stack moves between arms is not a benchmark. The floors these satisfy
+# are in pyproject.toml, with the reason each floor exists. The exact versions are the ones the
+# development environment runs, so they are the set the test suite is green against rather than
+# whatever a resolver picks on build day.
+#
+# The torch assertion is the load-bearing line. Any of these packages may pull a different torch
+# as a dependency, and it would look like a successful build while silently undoing the whole
+# reason this image exists.
+RUN pip install --no-cache-dir \
+      transformers==5.14.1 \
+      accelerate==1.14.0 \
+      datasets==5.0.1 \
+      optuna==4.9.0 \
+ && python -c "import torch; assert torch.__version__.startswith('2.5.1'), torch.__version__" \
+ && python -c "import transformers, datasets, optuna, accelerate; print('senbonzakura deps ready')"
+
+USER bench
+WORKDIR /work
+
+# The source arrives as a read-only mount rather than a layer, so this is where Python looks for
+# it. An arm therefore runs the checkout, not a copy of it made at build time.
+ENV PYTHONPATH=/work/senbon-src \
+    BENCH_TOOL=senbonzakura
+
+CMD ["python", "-c", "import sys; sys.path.insert(0, '/work/senbon-src'); import torch; from senbonzakura import cli; print('senbonzakura', cli.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())"]

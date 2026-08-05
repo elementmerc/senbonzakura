@@ -93,6 +93,20 @@ by whatever its scorers measure. Two tools optimising against different prompts 
 the same problem, and the resulting table would compare evaluation sets while claiming to compare
 tools.
 
+### Both tools run in the same sealed box, on the same torch
+
+*Added 2026-08-05, before any arm ran.* The isolation was built to protect the card from somebody
+else's dependency tree, so on that argument our own arms did not need it and would have run on the
+host environment. That would have left senbonzakura on torch 2.13.0+cu130 and Heretic on the
+pinned 2.5.1+cu124: different kernels, different numerics, and a KL divergence measured against a
+slightly different baseline. The table would have said "same card", which is true and which a
+reader would reasonably take to mean more than it did.
+
+Both tools now run in containers built from one base, and the run refuses to start if the two
+images do not carry the same torch. Our own arm is audited by the same self-test as everybody
+else's, which is also the answer to a fair question: why would the isolation apply only to other
+people's code.
+
 ### Heretic's unaided pick is reported alongside
 
 The pass records which trial Heretic's own menu offers first, saves that model too, and scores it
@@ -122,7 +136,9 @@ longer applies.
 | Best-of-N selection | 6 | **6, added by us** |
 | Judge | ours | ours |
 | Corpus | both | both |
+| Direction-fit prompts | 256 per side | 256 per side |
 | Card | same | same |
+| Container, torch, CUDA | same | same |
 
 **The warm start is the one asymmetry left**, and it is disclosed rather than hidden. Everything
 else is matched.
@@ -133,6 +149,11 @@ Written before any arm runs. If the numbers come back badly for senbonzakura, th
 change: it is committed first precisely so that it cannot. Any later amendment appears in the git
 history of this file, where anyone can see it.
 
-**Amendments so far.** One, on 2026-08-05, before any arm ran: how each tool's six candidates are
-nominated (see above). It is recorded in the file rather than only in the history, because an
-amendment a reader has to go looking for is an amendment that was half hidden.
+**Amendments so far.** Three, all on 2026-08-05 and all before any arm ran: how each tool's six
+candidates are nominated, that both tools read our evaluation slices, and that both now run in the
+same container on the same torch. They are recorded in the file rather than only in the history,
+because an amendment a reader has to go looking for is an amendment that was half hidden.
+
+Every one of them came from building the thing and then running one short arm end to end. That is
+the argument for a dry run: the pre-registration was written carefully and was still wrong in
+three places that only running it could show.

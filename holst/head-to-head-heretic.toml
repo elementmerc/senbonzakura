@@ -45,7 +45,22 @@ OUT=$HOME/bench-out/h2h
 mkdir -p "$OUT" "$HOME/bench-models"
 
 test -x "$BENCH/run-isolated.sh" || { echo "MISSING run-isolated.sh"; exit 1; }
-docker image inspect senbon-bench:heretic >/dev/null 2>&1 || { echo "MISSING senbon-bench:heretic; build it first"; exit 1; }
+# One image per tool, both on the same base, so both arms run on one torch and one CUDA build.
+for IMG in senbon-bench:heretic senbon-bench:senbonzakura; do
+    docker image inspect "$IMG" >/dev/null 2>&1 || { echo "MISSING $IMG; build it first"; exit 1; }
+done
+
+# Both images must carry the SAME torch, or the point of putting our own arms in a container is
+# lost while the spec still claims it. Checked rather than assumed, because the two images are
+# built from separate Dockerfiles and only one of them pins torch directly.
+TV_H=$(docker run --rm --network none senbon-bench:heretic python -c "import torch;print(torch.__version__)")
+TV_S=$(docker run --rm --network none senbon-bench:senbonzakura python -c "import torch;print(torch.__version__)")
+if [ "$TV_H" != "$TV_S" ]; then
+    echo "TORCH MISMATCH: heretic has $TV_H, senbonzakura has $TV_S. The two arms would be run on"
+    echo "different kernels while the table reported one environment."
+    exit 1
+fi
+echo "torch: $TV_S in both images"
 
 # The isolation is re-proved every run rather than assumed from the last one. Cheap, and the flags
 # are lost one at a time by someone debugging a failing arm. The source mount goes in here too so
@@ -94,13 +109,19 @@ echo SETUP_OK
 """
 
 # ── The senbonzakura arms ─────────────────────────────────────────────────────────────
-# Five seeds. `--trials 200` matches Heretic's own default rather than our 60: matching upward,
-# because capping Heretic at our number would buy a result by starving the comparison.
-# `--patience 0` because with trials matched an early stop makes trials and wall-clock disagree.
+# Five seeds, IN THE SAME SEALED BOX Heretic runs in. Our own tool does not need protecting from,
+# but running it on the host venv would have put it on torch 2.13.0+cu130 while Heretic ran on the
+# pinned 2.5.1+cu124: two sets of kernels, two sets of numerics, and a KL divergence measured
+# against a slightly different baseline. One image, one torch, one CUDA build, for both.
+#
+# `--trials 200` matches Heretic's own default rather than our 60: matching upward, because
+# capping Heretic at our number would buy a result by starving the comparison. `--patience 0`
+# because with trials matched an early stop makes trials and wall-clock disagree. Both flags are
+# now honoured by kageyoshi rather than silently replaced by its own auto-scaled budget.
 
 [[job]]
 id = "senbon-arms"
-name = "senbonzakura, five seeds, equal budget"
+name = "senbonzakura, five seeds, equal budget, same sealed box"
 machine = "rog"
 deps = ["setup"]
 timeout_secs = 86400
@@ -110,6 +131,7 @@ command = """
 set -euo pipefail
 exec 2>&1
 RUN=$HOME/senbon-run
+BENCH=$HOME/bench
 OUT=$HOME/bench-out/h2h
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
@@ -122,10 +144,19 @@ for S in 42 43 44 45 46; do
         echo "  seed $S already complete"; continue
     fi
     echo "  senbonzakura seed $S"
-    PYTHONPATH=src "$PY" -u -m senbonzakura kageyoshi \\
-        --model "$HOME/bench-models/Qwen3-1.7B" --track "$HOME/track-heldout" \\
-        --trials 200 --patience 0 --device cuda --seed "$S" \\
-        --out "$OUT/senbon-seed$S" || { echo "seed $S FAILED"; exit 1; }
+    # The track is mounted at /corpus and the source at /work/senbon-src, both read-only, exactly
+    # as they are for the other tool. The output directory is the one writable path.
+    BENCH_IMAGE=senbon-bench:senbonzakura "$BENCH/run-isolated.sh" \\
+        --tool senbonzakura \\
+        --model "$HOME/bench-models/Qwen3-1.7B" \\
+        --corpus "$HOME/track-heldout" \\
+        --eval "$HOME/bench-eval" \\
+        --senbon-src "$RUN/src" \\
+        --out "$OUT/senbon-seed$S" \\
+        -- python -u -m senbonzakura kageyoshi \\
+             --model /model --track /corpus \\
+             --trials 200 --patience 0 --device cuda --seed "$S" \\
+             --out /work/out || { echo "seed $S FAILED"; exit 1; }
 done
 echo SENBON_OK
 """

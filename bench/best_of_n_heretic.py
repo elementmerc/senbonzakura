@@ -266,6 +266,14 @@ def main(argv=None):
                          "confuse the two.")
     a = ap.parse_args(argv)
 
+    # HERETIC'S SETTINGS OBJECT PARSES sys.argv, and it does so on construction, from a source it
+    # installs in `settings_customise_sources`. So the moment this pass builds one it meets OUR
+    # flags, does not recognise them, prints its own usage and exits 2. Nothing about that names
+    # the real cause. Blanked here, after our own parsing is done, so everything downstream sees an
+    # empty command line and reads its configuration from the study alone, which is where this
+    # pass wants it to come from anyway.
+    sys.argv = sys.argv[:1]
+
     save_to = a.save_to or os.path.join(a.out, "model")
     a.own_pick_out = a.own_pick_out or os.path.join(a.out, "model-heretic-own")
     budget_path = os.path.join(a.out, "budget.json")

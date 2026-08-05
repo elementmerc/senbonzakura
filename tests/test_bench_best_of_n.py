@@ -200,3 +200,19 @@ def test_a_missing_recorded_score_fails_the_check():
     """Nothing to check against is not the same as a check that passed."""
     ok, drift = bon.reconstruction_ok(None, 0.30)
     assert not ok and drift is None
+
+
+# ── the other tool's own argument parsing ─────────────────────────────────────────────
+def test_the_command_line_is_blanked_before_heretics_settings_are_built():
+    """Heretic's Settings parses sys.argv the moment one is constructed.
+
+    Found by a dry run: it met this pass's own flags, did not recognise them, printed its usage and
+    exited 2, several minutes into a GPU job and naming nothing about the real cause.
+    """
+    source = (Path(__file__).resolve().parent.parent / "bench" / "best_of_n_heretic.py").read_text()
+    body = source.split("def main(")[1]
+    blank = body.index("sys.argv = sys.argv[:1]")
+    assert blank < body.index("open_study("), \
+        "argv must be blanked before anything constructs Heretic's Settings"
+    assert blank > body.index("ap.parse_args("), \
+        "argv must survive until this pass has parsed its own flags"

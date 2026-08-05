@@ -30,15 +30,28 @@
 #                         --out /work/out/heretic-seed42 -- <command to run inside>
 set -euo pipefail
 
-IMAGE="${BENCH_IMAGE:-senbon-bench:tool}"
+# The image is chosen FROM THE TOOL NAME rather than defaulted, because the silent failure here is
+# expensive and quiet: run an arm in the shared base image and it starts, loads torch, and dies on
+# the first import of something only that tool's layer carries. A run set up by hand without the
+# environment variable does exactly that, which is how this rule was found.
+image_for() {
+  case "$1" in
+    heretic|heretic-*) echo "senbon-bench:heretic";;
+    senbonzakura|senbon-*) echo "senbon-bench:senbonzakura";;
+    selftest|probe|probe2) echo "";;   # environment-agnostic: whatever BENCH_IMAGE names, or the base
+    *) echo "";;
+  esac
+}
 TIMEOUT="${BENCH_TIMEOUT:-21600}"          # 6h; a search that runs longer is a hang, not progress
 MEM="${BENCH_MEM:-24g}"
 PIDS="${BENCH_PIDS:-512}"
 
-TOOL="" REF="" MODEL="" CORPUS="" OUT="" SENBON_SRC="" EVAL=""
+TOOL="" REF="" MODEL="" CORPUS="" OUT="" SENBON_SRC="" EVAL="" IMAGE_OVERRIDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)   TOOL="$2"; shift 2;;
+    # Explicit override for a one-off. The tool name picks the image otherwise.
+    --image)  IMAGE_OVERRIDE="$2"; shift 2;;
     --ref)    REF="$2"; shift 2;;
     --model)  MODEL="$2"; shift 2;;
     --corpus) CORPUS="$2"; shift 2;;
@@ -60,6 +73,14 @@ done
 die() { echo "run-isolated: $*" >&2; exit 2; }
 
 [ -n "$TOOL" ] || die "--tool is required; it names the row this run produces"
+
+# Precedence: an explicit --image, then BENCH_IMAGE, then the image the tool name maps to, then
+# the shared base. The mapping is what makes a hand-run arm land in the right box; without it a
+# senbonzakura arm starts happily in the base image and dies on `import optuna` minutes later.
+IMAGE="${IMAGE_OVERRIDE:-${BENCH_IMAGE:-$(image_for "$TOOL")}}"
+IMAGE="${IMAGE:-senbon-bench:tool}"
+docker image inspect "$IMAGE" >/dev/null 2>&1 \
+  || die "no image $IMAGE for tool '$TOOL'. Build it first (bench/Dockerfile.*), or name one with --image."
 [ -n "$MODEL" ] || die "--model is required and must already exist on disk (nothing is downloaded)"
 [ -n "$OUT" ]   || die "--out is required"
 [ $# -gt 0 ]    || die "no command given after --"

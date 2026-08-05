@@ -35,14 +35,23 @@ TIMEOUT="${BENCH_TIMEOUT:-21600}"          # 6h; a search that runs longer is a 
 MEM="${BENCH_MEM:-24g}"
 PIDS="${BENCH_PIDS:-512}"
 
-TOOL="" REF="" MODEL="" CORPUS="" OUT=""
+TOOL="" REF="" MODEL="" CORPUS="" OUT="" SENBON_SRC="" EVAL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)   TOOL="$2"; shift 2;;
     --ref)    REF="$2"; shift 2;;
     --model)  MODEL="$2"; shift 2;;
     --corpus) CORPUS="$2"; shift 2;;
+    # The staged evaluation slices, mounted apart from the corpus because they are derived from it
+    # rather than part of it, and a reader disputing a row should be able to see which is which.
+    --eval)   EVAL="$2"; shift 2;;
     --out)    OUT="$2"; shift 2;;
+    # Our package source, mounted read-only, so a pass running inside the box can IMPORT our
+    # rulers rather than carry a copy of them. Only `senbonzakura.metrics` is imported and that
+    # module imports nothing, so this adds no dependency to the tool's own environment. It is
+    # read-only like every other input: the tool under test cannot alter the ruler it is measured
+    # with.
+    --senbon-src) SENBON_SRC="$2"; shift 2;;
     --)       shift; break;;
     *) echo "run-isolated: unknown argument $1" >&2; exit 2;;
   esac
@@ -89,6 +98,18 @@ fi
 CORPUS_ARGS=()
 [ -n "$CORPUS" ] && CORPUS_ARGS=(-v "$CORPUS:/corpus:ro")
 
+EVAL_ARGS=()
+if [ -n "$EVAL" ]; then
+  [ -d "$EVAL" ] || die "--eval $EVAL does not exist. The slices are written by bench/stage_eval_slices.py before the arms start, because the container has no network and no corpus loader."
+  EVAL_ARGS=(-v "$EVAL:/corpus-eval:ro")
+fi
+
+SRC_ARGS=()
+if [ -n "$SENBON_SRC" ]; then
+  [ -d "$SENBON_SRC/senbonzakura" ] || die "--senbon-src $SENBON_SRC does not hold a senbonzakura package directory. Point it at the repository's src/, not at the repository root."
+  SRC_ARGS=(-v "$SENBON_SRC:/work/senbon-src:ro")
+fi
+
 # Provenance beside the result, not in a tag. A row whose tool version is unknown cannot be
 # defended when its author disputes it, and this benchmark is published with an invitation to
 # dispute it.
@@ -100,6 +121,8 @@ cat > "$OUT/run-meta.json" <<META
   "image_digest": "$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || echo unknown)",
   "model": "$MODEL",
   "corpus": "${CORPUS:-none}",
+  "eval_slices": "${EVAL:-none}",
+  "senbon_src": "${SENBON_SRC:-none}",
   "network": "none",
   "command": "$*"
 }
@@ -129,6 +152,8 @@ docker run --rm \
   "${GPU_ARGS[@]}" \
   -v "$MODEL:/model:ro" \
   "${CORPUS_ARGS[@]}" \
+  "${EVAL_ARGS[@]}" \
+  "${SRC_ARGS[@]}" \
   -v "$OUT:/work/out:rw" \
   `# this directory read-only, so selftest.py and any per-tool adapter are reachable inside` \
   -v "$(cd "$(dirname "$0")" && pwd):/work/bench:ro" \

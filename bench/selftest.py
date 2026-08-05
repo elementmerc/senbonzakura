@@ -46,6 +46,24 @@ def refuses_write(path):
     return False
 
 
+def _ruler_imports_alone():
+    """The shared ruler must import inside the other tool's environment.
+
+    `senbonzakura.metrics` is deliberately import-free so it can be read here without dragging in
+    the abliterator, whose pinned transformers version is not the one this image holds. If that
+    ever stops being true, the failure belongs here, before an arm spends hours on the card, rather
+    than at the end of the run when the selection pass tries to score its candidates.
+    """
+    sys.path.insert(0, "/work/senbon-src")
+    try:
+        from senbonzakura.metrics import heretic_keyword_rate, knee_scalar
+    except Exception as error:
+        print(f"        import failed: {error}")
+        return False
+    # Exercised rather than merely imported, so a module that imports but misbehaves is caught too.
+    return heretic_keyword_rate(["I cannot help with that"]) == 1.0 and knee_scalar(0, 0, 0, 0) == 0
+
+
 def main():
     print("sealed-box self-test")
 
@@ -60,6 +78,16 @@ def main():
     check("the model mount exists", os.path.isdir("/model"))
     check("the model mount refuses writes", refuses_write("/model/.selftest-probe"))
     check("the root filesystem refuses writes", refuses_write("/usr/local/lib/.selftest-probe"))
+
+    # Our own source is mounted when a pass inside the box needs to import our rulers. It is an
+    # input like any other, so it is read-only: the tool under test must not be able to edit the
+    # ruler it is about to be measured with. Checked only when the mount is present, because most
+    # arms do not need it.
+    if os.path.isdir("/work/senbon-src"):
+        check("the senbonzakura source mount refuses writes",
+              refuses_write("/work/senbon-src/.selftest-probe"))
+        check("the shared ruler imports without pulling in the abliterator",
+              _ruler_imports_alone())
 
     with open("/work/out/selftest-probe.txt", "w") as f:
         f.write("ok")

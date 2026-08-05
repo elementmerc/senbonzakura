@@ -1,3 +1,11 @@
+# SUPERSEDED 2026-08-05. Do not re-run this spec to produce numbers.
+#
+# Its resume guards test only whether an output file PARSES, and its outputs exist, so every job
+# short-circuits and the run reports success having measured nothing. Its report block recomputes
+# a winner with min() instead of reading the harness's `ranking` verdict, so it can crown an arm
+# the harness refused to rank. Both are fixed in tools/artefact_ok.py and tools/report_bands.py,
+# which this spec predates. Kept for the record of what was run, not as a thing to run.
+#
 # Do the extra refusal directions carry refusal, or do they carry topic?
 #
 # The clustered extractor now finds up to eight directions per layer where the old one always
@@ -79,7 +87,7 @@ PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 2700 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model Qwen/Qwen3-1.7B --track "$HOME/track-heldout" \\
@@ -106,7 +114,7 @@ PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 2700 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 PYTHONPATH=src "$PY" -u tools/direction_validation.py \\
     --model google/gemma-2-2b-it --track "$HOME/track-heldout" \\
@@ -136,7 +144,7 @@ PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 export SENBONZAKURA_COMMIT="$(cat "$RUN/COMMIT")"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 # Already complete is a success, not work to repeat: this is the long job and an interrupted
 # night should not throw away a finished one. The test is that the file PARSES.

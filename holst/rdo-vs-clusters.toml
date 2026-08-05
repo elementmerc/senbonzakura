@@ -1,3 +1,11 @@
+# SUPERSEDED 2026-08-05. Do not re-run this spec to produce numbers.
+#
+# Its resume guards test only whether an output file PARSES, and its outputs exist, so every job
+# short-circuits and the run reports success having measured nothing. Its report block recomputes
+# a winner with min() instead of reading the harness's `ranking` verdict, so it can crown an arm
+# the harness refused to rank. Both are fixed in tools/artefact_ok.py and tools/report_bands.py,
+# which this spec predates. Kept for the record of what was run, not as a thing to run.
+#
 # Directions chosen for their effect, against directions chosen for their appearance.
 #
 # Last night's grid said the cluster extractor's extra directions are worse than useless: at
@@ -67,7 +75,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 7200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 # Loadable, not merely present. A `[ -f ]` test accepts a torch file truncated by a killed
 # run, and the next job would then score whatever half a tensor decodes to. The JSON guards
@@ -104,7 +112,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/rdo/score-gemma-rdo.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo SCORE_OK; exit 0
@@ -134,7 +142,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/rdo/score-gemma-clusters.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo SCORE_OK; exit 0
@@ -163,7 +171,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 7200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 # Loadable, not merely present. A `[ -f ]` test accepts a torch file truncated by a killed
 # run, and the next job would then score whatever half a tensor decodes to. The JSON guards
@@ -200,7 +208,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 20000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/rdo/score-qwen3-rdo.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo SCORE_OK; exit 0

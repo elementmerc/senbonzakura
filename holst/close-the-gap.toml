@@ -1,3 +1,11 @@
+# SUPERSEDED 2026-08-05. Do not re-run this spec to produce numbers.
+#
+# Its resume guards test only whether an output file PARSES, and its outputs exist, so every job
+# short-circuits and the run reports success having measured nothing. Its report block recomputes
+# a winner with min() instead of reading the harness's `ranking` verdict, so it can crown an arm
+# the harness refused to rank. Both are fixed in tools/artefact_ok.py and tools/report_bands.py,
+# which this spec predates. Kept for the record of what was run, not as a thing to run.
+#
 # Why do optimised directions underperform a plain difference-of-means?
 #
 # RDO reaches 73.4% refusal on gemma where the difference-of-means reaches 14.8%. Directions
@@ -67,7 +75,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 5400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/gap/transfer-gemma.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo T_OK; exit 0
@@ -96,7 +104,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 5400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/gap/transfer-gemma-clusters.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo T_OK; exit 0
@@ -133,7 +141,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "
 import torch
@@ -164,7 +172,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 10800 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/gap/score-gemma-long.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo SCORE_OK; exit 0
@@ -205,7 +213,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed42.json'))" >/dev/null 2>&1; then
     echo "SEED 42 ALREADY_COMPLETE"; echo SEED_OK; exit 0
@@ -240,7 +248,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 for S in 43 44; do
     if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed$S.json'))" >/dev/null 2>&1; then
@@ -276,7 +284,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 for S in 45 46; do
     if "$PY" -c "import json; json.load(open('$RUN/gap/qwen3-seed$S.json'))" >/dev/null 2>&1; then

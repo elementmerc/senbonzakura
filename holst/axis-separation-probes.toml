@@ -1,3 +1,11 @@
+# SUPERSEDED 2026-08-05. Do not re-run this spec to produce numbers.
+#
+# Its resume guards test only whether an output file PARSES, and its outputs exist, so every job
+# short-circuits and the run reports success having measured nothing. Its report block recomputes
+# a winner with min() instead of reading the harness's `ranking` verdict, so it can crown an arm
+# the harness refused to rank. Both are fixed in tools/artefact_ok.py and tools/report_bands.py,
+# which this spec predates. Kept for the record of what was run, not as a thing to run.
+#
 # Is refusal one direction here, or is a constant saying so?
 #
 # On 2026-08-03 a five-seed, pre-registered, held-out comparison of K=1 against K=3 produced

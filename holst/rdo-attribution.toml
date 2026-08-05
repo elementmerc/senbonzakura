@@ -93,7 +93,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 7200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/baseline-qwen3.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo B_OK; exit 0
@@ -124,7 +124,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/a3.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
@@ -162,7 +162,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/a0.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
@@ -198,7 +198,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/a1.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
@@ -234,7 +234,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/a2.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
@@ -274,7 +274,7 @@ RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 40000 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
+flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
 if "$PY" -c "import json; json.load(open('$RUN/attrib/a3-gemma.json'))" >/dev/null 2>&1; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0

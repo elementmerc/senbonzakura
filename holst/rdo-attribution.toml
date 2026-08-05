@@ -95,7 +95,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 7200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/baseline-qwen3.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/baseline-qwen3.json" \
+    model=Qwen/Qwen3-1.7B seed=42 directions_from=None max_directions=4 eval_refusal=128; then
     echo "ALREADY_COMPLETE"; echo B_OK; exit 0
 fi
 
@@ -126,7 +129,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/a3.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/a3.json" \
+    model=Qwen/Qwen3-1.7B seed=42 directions_meta.init=mean-diff directions_meta.score=per-token directions_meta.induce=0.2 directions_meta.k=4 directions_meta.steps=200; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
 fi
 
@@ -164,7 +170,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/a0.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/a0.json" \
+    model=Qwen/Qwen3-1.7B seed=42 directions_meta.init=random directions_meta.score=summed directions_meta.induce=0.0 directions_meta.k=4 directions_meta.steps=200; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
 fi
 
@@ -200,7 +209,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/a1.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/a1.json" \
+    model=Qwen/Qwen3-1.7B seed=42 directions_meta.init=random directions_meta.score=per-token directions_meta.induce=0.0 directions_meta.k=4 directions_meta.steps=200; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
 fi
 
@@ -236,7 +248,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/a2.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/a2.json" \
+    model=Qwen/Qwen3-1.7B seed=42 directions_meta.init=random directions_meta.score=per-token directions_meta.induce=0.2 directions_meta.k=4 directions_meta.steps=200; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
 fi
 
@@ -276,7 +291,10 @@ cd "$RUN"
 exec 8>"$RUN/abl/gpu.lock"
 flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 14400 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
 
-if "$PY" -c "import json; json.load(open('$RUN/attrib/a3-gemma.json'))" >/dev/null 2>&1; then
+# A guard that states WHICH configuration it will accept. The parse-only form this
+# replaces reported success on any file that happened to be valid JSON.
+if "$PY" tools/artefact_ok.py "$RUN/attrib/a3-gemma.json" \
+    model=google/gemma-2-2b-it seed=42 directions_meta.init=mean-diff directions_meta.score=per-token directions_meta.induce=0.2 directions_meta.k=4 directions_meta.steps=200; then
     echo "ALREADY_COMPLETE"; echo ARM_OK; exit 0
 fi
 
@@ -307,57 +325,25 @@ set -euo pipefail
 exec 2>&1
 RUN=$HOME/senbon-run
 PY=$HOME/track2/venv/bin/python
+cd "$RUN"
 
-PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
-import json, os, sys
-sys.path.insert(0, os.path.expanduser("~/senbon-run/src"))
-from senbonzakura.validate import matched_refusal_table
+# The verdict comes from the harness, never from a fresh min() in this file. Every spec here used
+# to draw its own conclusion with an argmin that had never heard of the guards in
+# matched_refusal_table, which is how a one percent KL difference got printed as a win.
+#
+# report_bands exits non-zero when an arm produced nothing, and REPORT_OK is only echoed on
+# success, so a report that found six missing arms can no longer satisfy the needle.
+PYTHONPATH=src "$PY" tools/report_bands.py \\
+    "A0  control (pre-2026-08-04)=$RUN/attrib/a0.json" \\
+    "A1  + per-token score=$RUN/attrib/a1.json" \\
+    "A2  + induction=$RUN/attrib/a2.json" \\
+    "A3  + warm start (shipped)=$RUN/attrib/a3.json" \\
+    "B   difference-of-means=$RUN/attrib/baseline-qwen3.json" \\
+    "C   A3 on gemma=$RUN/attrib/a3-gemma.json"
 
-RUN = os.path.expanduser("~/senbon-run")
-LADDER = [("A0  control (pre-2026-08-04)", "a0"), ("A1  + per-token score", "a1"),
-          ("A2  + induction", "a2"), ("A3  + warm start (shipped)", "a3"),
-          ("B   difference-of-means", "baseline-qwen3"), ("C   A3 on gemma", "a3-gemma")]
-
-
-def load(name):
-    try:
-        with open(f"{RUN}/attrib/{name}.json", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
-
-
-print("\\n=== KL at matched refusal removal, by arm ===")
-print("Lower KL at the SAME refusal level is better. An arm missing from a band could not reach")
-print("it at any strength on the grid, which is itself a result and not a gap in the table.\\n")
-
-for label, name in LADDER:
-    r = load(name)
-    print(f"--- {label}")
-    if not r or "e4" not in r:
-        print("    MISSING\\n"); continue
-    e4 = r["e4"]
-    if e4.get("degenerate_reason"):
-        print(f"    UNREADABLE: {e4['degenerate_reason']}\\n"); continue
-    t = matched_refusal_table(e4["rows"])
-    if not t.get("baseline_is_unablated"):
-        print("    DROPPED: no unablated anchor, so its bands are not comparable\\n"); continue
-    print(f"    baseline refusal {t['baseline_refusal']:.4f} (unablated)")
-    for band, entries in t["targets"].items():
-        parts = []
-        for K, e in sorted(entries.items(), key=lambda kv: int(kv[0])):
-            parts.append(f"K={K}:{e['kl']:.4f}(over {e['overshoot']:+.3f})")
-        kls = {int(K): e["kl"] for K, e in entries.items()}
-        best = min(kls, key=kls.get)
-        print(f"    {band:<14} " + "  ".join(parts) + f"   cheapest K={best}")
-    print()
-
-print("How to read it. Each rung adds ONE change to the rung above, so the difference between")
-print("adjacent rows is that change's contribution and nothing else. If A0 and A3 are alike, the")
-print("three fixes did not matter and the RDO underperformance is somewhere we have not looked.")
-print("If any arm beats B at a matched band, an optimised direction has beaten the simplest")
-print("direction in the tool for the first time. If none does, that is publishable as it stands,")
-print("and it is one seed either way.")
-EOF
+echo
+echo "Each rung adds ONE change to the rung above, so the difference between adjacent rows is"
+echo "that change and nothing else. Bands the harness refused to rank print their reason instead"
+echo "of a winner; do not read past that line. Everything here is one seed."
 echo REPORT_OK
 """

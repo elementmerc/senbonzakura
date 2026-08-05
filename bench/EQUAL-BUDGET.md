@@ -1,0 +1,97 @@
+# Equal budget, defined before the run
+
+**Committed before the head-to-head executes**, so it is checkable by someone other than its
+author. The v0.4 exit gate requires this and requires it in three units, because a single unit
+hides the advantage.
+
+## Why one number is not enough
+
+"Two hundred trials each" sounds equal and is not. A trial is not a fixed amount of work, and a
+search is not the only place a tool spends effort. Senbonzakura spends effort in three places
+Heretic does not, and every one of them is invisible in a trial count.
+
+### What senbonzakura gets that Heretic does not
+
+Read from `src/senbonzakura/cli.py`:
+
+| Advantage | Where | What it buys |
+|---|---|---|
+| **Warm start** | `:1855-1873`, `--warm-start` on by default | The search is seeded with a difference-of-means configuration before any random sampling, so trial one is already a working answer rather than a draw from the prior |
+| **Patience early stop** | `:537`, `:1830-1842`, `patience = max(20, trials // 3)` | The search stops once the front stops improving, so its trials are spent where they help. With the default 60 trials that is a patience of 20 |
+| **Re-scoring pass** | `:536`, `:1945`, `top_rescore = 6` | The best six candidates are re-scored and the winner picked from that second look. This is a best-of-six selection stage that costs generations and appears in no trial count |
+
+The third is the one that matters most. A best-of-six pass over a noisy objective is worth a
+noticeable amount on its own, and a benchmark that ignores it is measuring our selection procedure
+and calling it our method.
+
+### What Heretic gets that senbonzakura does not
+
+Stated for symmetry, because a one-sided accounting is not an accounting:
+
+- **200 trials by default** (`config.default.toml: n_trials = 200`) against our 60. On trial count
+  alone Heretic is given more than three times the search.
+- **Two scorers on a Pareto front** (keyword rate, KL divergence), the same shape as ours.
+- Heretic is the upstream this project derives from, so its defaults have had far more exposure to
+  real models than ours have.
+
+## The definition
+
+A run's budget is the triple, all three recorded per arm:
+
+1. **Trials.** Every objective evaluation, including any that early-stopping skipped, reported as
+   both "trials configured" and "trials actually run".
+2. **Wall clock.** Seconds from tool invocation to final artefact, on the same card, with nothing
+   else on it. The GPU lock is held for the whole arm.
+3. **Total generations.** Every prompt generated during the entire run, *including the re-scoring
+   stage*. This is the unit that catches selection passes, and it is the one a trial count hides.
+
+## How the arms are equalised
+
+**Heretic is given an equivalent best-of-N pass.** The operator chose this over the gate's other
+option, which was to state the advantage and leave it in place. Equalising is the stronger result:
+if senbonzakura wins with its selection advantages removed, the win is about the method.
+
+Concretely:
+
+- Heretic runs its search normally. Its Optuna study retains every trial.
+- Its top six candidates by the same scalarisation senbonzakura uses are re-scored on the same
+  held-out slice, with the same generation budget per candidate.
+- The winner of that re-score is Heretic's reported arm.
+
+This is implemented **outside Heretic's code**, reading its study, so nothing about the tool is
+modified and the comparison is still of the tool as its author wrote it plus a selection pass we
+added to match our own.
+
+**Trials are matched at 200 for both**, which raises ours from its default of 60. Matching upward
+rather than down: capping Heretic at 60 would hand us a result that depends on starving the
+comparison, and 200 is Heretic's own default so it is the number its author considers adequate.
+
+**The warm start stays on, and is reported.** It cannot be given to Heretic without modifying its
+search, and switching it off would benchmark a configuration nobody ships. So the table states
+that senbonzakura's arm was warm-started and Heretic's was not, and `--no-warm-start` exists, so a
+second row can be added later if the difference is disputed.
+
+**Patience is switched off for both** (`--patience 0`). An early stop makes wall-clock and trials
+disagree, and with trials matched at 200 the point of the stop, which is not wasting a budget, no
+longer applies.
+
+## What remains unequal, stated plainly
+
+| | senbonzakura | Heretic |
+|---|---|---|
+| Trials | 200 | 200 |
+| Warm start | **yes** | no |
+| Patience early stop | off | off |
+| Best-of-N selection | 6 | **6, added by us** |
+| Judge | ours | ours |
+| Corpus | both | both |
+| Card | same | same |
+
+**The warm start is the one asymmetry left**, and it is disclosed rather than hidden. Everything
+else is matched.
+
+## The pre-commitment
+
+Written before any arm runs. If the numbers come back badly for senbonzakura, this file does not
+change: it is committed first precisely so that it cannot. Any later amendment appears in the git
+history of this file, where anyone can see it.

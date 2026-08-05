@@ -12,6 +12,23 @@ this does is:
   * leave the Optuna study on disk so the best-of-N pass required by the equal-budget definition
     can be applied to it afterwards, from outside Heretic's code.
 
+WHAT THIS DOES NOT DO: SAVE A MODEL
+
+v1.4.0 is interactive once its search finishes. It presents its Pareto front, asks which trial to
+use, then asks what to do with it, and it has no setting that answers either question in advance
+(the release after this one adds them; v1.4.0 is the current release and is what people install).
+A batch job has no terminal to answer with.
+
+That is not a problem, because the search is the tool and the save is only serialisation. Optuna
+writes the study to disk as the search runs, so by the time the menu appears every trial is
+already on disk. `bench/best_of_n_heretic.py` reads it, rebuilds the candidates, and saves both
+Heretic's own first offer and the winner of the best-of-N pass. Heretic's search runs exactly as
+released; nothing about it is modified.
+
+So the exit code here is not the measure of success. **The study is.** Heretic will exit non-zero,
+or exit zero having done nothing, once it reaches a question it cannot ask. What matters is
+whether the study on disk holds the trials that were asked for, and that is what is checked.
+
 WHY A CONFIG FILE AND NOT FLAGS
 
 Heretic reads, in precedence order, CLI arguments, then `HERETIC_` environment variables, then a
@@ -38,25 +55,6 @@ model = "{args.model}"
 seed = {args.seed}
 n_trials = {args.trials}
 
-# HERETIC IS INTERACTIVE BY DEFAULT and the container has no terminal to answer it with. Once the
-# search finishes it asks which trial to use and what to do with the model, and an unanswered
-# question inside a batch job is a hang that looks like a slow run. Every one of these settings is
-# Heretic's own documented way to answer in advance; none of them changes what it computes.
-#
-#   trial_index = 0     the first entry of ITS OWN sorted Pareto front, which is what its menu
-#                       offers first. This is Heretic's unaided pick, saved separately, so the
-#                       published table can show whether our best-of-N pass changed the answer.
-#   model_action        save to disk rather than upload; the box has no network in any case.
-#   export_strategy     merge the adapter into the weights, so the saved model is a plain model
-#                       that our scorer can read the same way it reads senbonzakura's.
-#   checkpoint_action   resume an interrupted study rather than ask. A GPU arm that dies at trial
-#                       180 must not silently start again from zero on the retry.
-trial_index = 0
-model_action = "save"
-export_strategy = "merge"
-checkpoint_action = "continue"
-save_directory = "{args.own_pick_out}"
-
 # OUR corpus, mounted read-only. Heretic's defaults would fetch prompt sets from the Hub, which
 # the sealed box cannot reach, so pointing it here is what makes the two tools comparable rather
 # than merely co-located. `column` is the field name our track writer uses.
@@ -70,18 +68,17 @@ dataset = "{args.bad}"
 split = "train"
 column = "text"
 
-# THE SCORERS OWN THEIR OWN PROMPT SETS, and those are separate from the two tables above.
-# Left at their defaults they fetch `mlabonne/harmful_behaviors` and `mlabonne/harmless_alpaca`
-# from the Hub, so inside a box with no network the run dies at scorer initialisation before it
-# runs a single trial. Beyond that: a tool's search is steered by whatever its scorers measure,
-# so two tools scored on different prompts have not been given the same problem. These files are
-# the slices senbonzakura is scored on, written by bench/stage_eval_slices.py from the same code
-# that builds them for our own arm. Heretic reads a plain text file as one prompt per line, and
-# `split`/`column` are not needed for that form.
-[scorer.KeywordRate.prompts]
+# THE EVALUATION PROMPTS ARE A SEPARATE PAIR OF TABLES from the two above, and left at their
+# defaults they fetch from the Hub, which a box with no network cannot reach. Beyond that: a
+# tool's search is steered by whatever it is scored on, so two tools scored on different prompts
+# have not been given the same problem, and a table built from that would compare evaluation sets
+# while claiming to compare tools. These files are the slices senbonzakura is scored on, written
+# by bench/stage_eval_slices.py from the same code that builds them for our own arm. Heretic reads
+# a plain text file as one prompt per line, so `split` and `column` are not needed for that form.
+[bad_evaluation_prompts]
 dataset = "{args.keyword_prompts}"
 
-[scorer.KLDivergence.prompts]
+[good_evaluation_prompts]
 dataset = "{args.kl_prompts}"
 """
     path = os.path.join(workdir, "config.toml")
@@ -103,6 +100,24 @@ def study_path(model, workdir):
     return os.path.join(workdir, "checkpoints", stem + ".jsonl")
 
 
+def count_trials(study_file):
+    """How many trials the study on disk actually holds.
+
+    Imported here rather than at module scope so this file stays readable, and testable, outside
+    the container where Optuna lives.
+    """
+    import optuna
+    from optuna.storages import JournalStorage
+    from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
+
+    storage = JournalStorage(JournalFileBackend(study_file,
+                                                lock_obj=JournalFileOpenLock(study_file)))
+    studies = storage.get_all_studies()
+    if not studies:
+        return 0
+    return len(optuna.load_study(study_name=studies[0].study_name, storage=storage).trials)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="path to the staged weights, mounted read-only")
@@ -115,19 +130,13 @@ def main():
                     help="the coherence eval slice, one prompt per line; disjoint from the prompts "
                          "the directions are fitted on")
     ap.add_argument("--out", required=True, help="writable output directory")
-    ap.add_argument("--own-pick-out", default=None,
-                    help="where Heretic saves the trial IT would have offered first; defaults to "
-                         "<out>/model-heretic-own. Kept apart from the best-of-N winner so the two "
-                         "are never confused for one another in a table.")
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--trials", type=int, default=200,
                     help="matched to Heretic's own default rather than to our lower one, because "
                          "capping it at ours would buy a result by starving the comparison")
     a = ap.parse_args()
-    a.own_pick_out = a.own_pick_out or os.path.join(a.out, "model-heretic-own")
 
     os.makedirs(a.out, exist_ok=True)
-    os.makedirs(a.own_pick_out, exist_ok=True)
     # Heretic reads config.toml from the CURRENT directory, and only this path is writable.
     os.chdir(a.out)
 
@@ -144,7 +153,15 @@ def main():
 
     started = time.time()
     # Heretic's own entry point, unmodified, running as its author wrote it.
-    proc = subprocess.run([sys.executable, "-m", "heretic.main"], check=False)
+    #
+    # NOT `-m heretic.main`. That module has no `if __name__ == "__main__"` block, because Heretic
+    # ships as a console script declared in its pyproject (`heretic = "heretic.main:main"`). Run
+    # with `-m` it imports cleanly, runs nothing, and EXITS 0 after fourteen seconds. Nothing about
+    # that reads as a failure: no traceback, no message, a successful exit code and a budget file
+    # recording a completed arm. It was caught by a dry run, and the check below is what catches it
+    # if it ever happens for a different reason.
+    proc = subprocess.run(
+        [sys.executable, "-c", "from heretic.main import main; main()"], check=False)
     elapsed = time.time() - started
 
     # The budget, in the three units the equal-budget definition requires. Trials and wall clock
@@ -164,8 +181,6 @@ def main():
         "kl_prompts": a.kl_prompts,
         "config_written": cfg_path,
         "study": study_path(a.model, a.out),
-        "own_pick_model": a.own_pick_out,
-        "own_pick_trial_index": 0,
         # Stated rather than implied: this arm has not yet had the best-of-N selection pass that
         # `bench/EQUAL-BUDGET.md` promises it, and a row read before that pass is applied is not
         # the matched comparison the gate asks for.
@@ -175,7 +190,33 @@ def main():
         json.dump(budget, f, indent=2)
 
     print(f"run_heretic: exit {proc.returncode} after {elapsed:.0f}s")
-    return proc.returncode
+
+    # THE STUDY IS THE MEASURE OF SUCCESS, NOT THE EXIT CODE, and both directions of that matter.
+    #
+    # A non-zero exit is expected here: v1.4.0 ends with an interactive menu it cannot ask in a
+    # container, and it reaches that menu only after every trial is already on disk. Treating that
+    # as a failed arm would throw away a completed search.
+    #
+    # A zero exit is equally not evidence that a search happened. `-m heretic.main` exits 0 having
+    # run nothing at all, and a configuration error exits 0 too. So the file Heretic writes as it
+    # goes is what gets checked, in both cases.
+    study = budget["study"]
+    if not os.path.isfile(study):
+        print(f"run_heretic: FAILED. No study was written to {study}, so no search ran. Heretic "
+              f"writes one as it goes, so this means it never started rather than that it "
+              f"finished badly. Read the output above for the reason.", file=sys.stderr)
+        return 3
+
+    # Counted through Optuna rather than by pattern-matching the journal, because the journal is
+    # an internal format and a guess at its shape would fail silently the day it changes.
+    trials = count_trials(study)
+    print(f"run_heretic: study at {study} ({trials} of {a.trials} trials)")
+    if trials < a.trials:
+        print(f"run_heretic: FAILED. The search was configured for {a.trials} trials and the study "
+              f"holds {trials}. A short arm is not an equal-budget arm, so it is reported as a "
+              f"failure rather than recorded as a row.", file=sys.stderr)
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

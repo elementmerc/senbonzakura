@@ -24,8 +24,7 @@ _SPEC.loader.exec_module(rh)
 def args(**kw):
     base = dict(model="/model", seed=42, trials=200, good="/corpus/good_ds",
                 bad="/corpus/bad_ds", keyword_prompts="/corpus-eval/keyword_prompts.txt",
-                kl_prompts="/corpus-eval/kl_prompts.txt",
-                own_pick_out="/work/out/model-heretic-own")
+                kl_prompts="/corpus-eval/kl_prompts.txt")
     base.update(kw)
     return types.SimpleNamespace(**base)
 
@@ -36,15 +35,15 @@ def config(tmp_path, **kw):
 
 
 # ── the prompt sets, all four of them ─────────────────────────────────────────────────
-def test_both_scorers_are_pointed_at_our_slices(tmp_path):
+def test_the_evaluation_prompts_are_pointed_at_our_slices(tmp_path):
     """Left at their defaults these fetch from the Hub and the sealed box cannot reach it.
 
     They are also what steers each tool's search, so two tools scored on different prompts have not
     been given the same problem. This is the check that the head-to-head is a comparison of tools.
     """
     text = config(tmp_path)
-    assert "[scorer.KeywordRate.prompts]" in text
-    assert "[scorer.KLDivergence.prompts]" in text
+    assert "[bad_evaluation_prompts]" in text
+    assert "[good_evaluation_prompts]" in text
     assert "/corpus-eval/keyword_prompts.txt" in text
     assert "/corpus-eval/kl_prompts.txt" in text
 
@@ -63,25 +62,19 @@ def test_the_direction_corpus_is_ours(tmp_path):
     assert "/corpus/good_ds" in text and "/corpus/bad_ds" in text
 
 
-# ── nothing may ask a question ────────────────────────────────────────────────────────
-def test_every_interactive_prompt_is_answered_in_advance(tmp_path):
-    """Heretic asks four questions after its search. A batch job cannot answer any of them."""
-    text = config(tmp_path)
-    for key in ("trial_index", "model_action", "export_strategy", "checkpoint_action",
-                "save_directory"):
-        assert f"{key} =" in text, f"{key} is unanswered and the arm would hang waiting for it"
+# ── only settings v1.4.0 actually accepts ─────────────────────────────────────────────
+def test_no_setting_from_a_later_release_is_written(tmp_path):
+    """v1.4.0 rejects unknown keys, and rejects the WHOLE file when it meets one.
 
-
-def test_the_run_resumes_rather_than_restarting(tmp_path):
-    """An arm that dies at trial 180 must not silently begin again at zero on the retry."""
-    assert 'checkpoint_action = "continue"' in config(tmp_path)
-
-
-def test_heretics_own_pick_is_saved_apart_from_the_best_of_n_winner(tmp_path):
-    """Two models per seed, and a table that confused them would be reporting the wrong arm."""
-    text = config(tmp_path, own_pick_out="/work/out/model-heretic-own")
-    assert 'save_directory = "/work/out/model-heretic-own"' in text
-    assert "trial_index = 0" in text
+    These five exist on Heretic's development branch and not in the release the benchmark pins.
+    Written here, they take the entire configuration down with them, and Heretic reports the error
+    and then exits 0, which reads as a successful arm.
+    """
+    settings = [ln for ln in config(tmp_path).splitlines() if not ln.lstrip().startswith("#")]
+    for key in ("trial_index", "model_action", "checkpoint_action", "save_directory",
+                "[scorer."):
+        assert not [ln for ln in settings if ln.startswith(key)], \
+            f"{key} is not a v1.4.0 setting and would invalidate the whole file"
 
 
 def test_the_budget_is_what_the_caller_asked_for(tmp_path):
@@ -99,3 +92,27 @@ def test_the_study_path_matches_heretics_own_naming_rule():
 def test_the_study_path_is_under_the_writable_output(tmp_path):
     """The container's root filesystem is read-only; a study written anywhere else is lost."""
     assert rh.study_path("/model", str(tmp_path)).startswith(str(tmp_path))
+
+
+def test_a_mounted_model_path_still_yields_a_usable_study_name():
+    """The model arrives as a mount point, not a Hub identifier, so the stem is short and odd."""
+    assert rh.study_path("/model", "/work/out") == "/work/out/checkpoints/--model.jsonl"
+
+
+# ── the silent success ────────────────────────────────────────────────────────────────
+def test_heretic_is_not_invoked_through_a_module_that_has_no_main_guard():
+    """`python -m heretic.main` imports, runs nothing, and exits 0.
+
+    Heretic ships as a console script (`heretic = "heretic.main:main"`), so its main module has no
+    `__main__` block. A dry run spent fourteen seconds producing a clean exit code, an empty study
+    and a budget file describing a completed arm. Nothing about that reads as a failure.
+    """
+    source = (Path(__file__).resolve().parent.parent / "bench" / "run_heretic.py").read_text()
+    assert '"-m", "heretic.main"' not in source
+    assert "from heretic.main import main; main()" in source
+
+
+def test_the_trial_count_is_read_through_optuna_not_matched_out_of_the_journal():
+    """The journal is an internal format; a pattern guess at its shape fails silently on change."""
+    source = (Path(__file__).resolve().parent.parent / "bench" / "run_heretic.py").read_text()
+    assert "optuna.load_study" in source

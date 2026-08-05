@@ -18,9 +18,9 @@ HOW THE SIX ARE CHOSEN, AND WHY NOT BY OUR SCALARISER
 
 Each tool nominates its own six using its own in-search scores, because that is what senbonzakura
 does. Our top six come from the numbers OUR search measured; Heretic's come from the numbers ITS
-search measured. Ranking Heretic's 200 trials by our scalariser instead would mean materialising
-and re-scoring all 200, which is the entire search over again and would hand Heretic a budget
-nothing else in the comparison gets.
+search measured, through the same front construction its own menu uses. Ranking Heretic's 200
+trials by our scalariser instead would mean materialising and re-scoring all 200, which is the
+entire search over again and would hand Heretic a budget nothing else in the comparison gets.
 
 The pass then does to those six exactly what ours does to ours:
 
@@ -30,6 +30,17 @@ The pass then does to those six exactly what ours does to ours:
   * pick the winner with the same weighted knee scalar, taking KL from the trial exactly as ours
     does (the re-score refreshes the refusal axes, not the coherence one);
   * save that winner as the arm's reported model.
+
+IT ALSO DOES THE SAVING, FOR BOTH PICKS
+
+Heretic v1.4.0 is interactive once its search ends: it shows its Pareto front, asks which trial to
+use, and asks what to do with it, with no setting that answers either in advance. A container has
+no terminal. But Optuna writes the study as the search runs, so by the time the menu appears every
+trial is on disk and nothing is lost.
+
+So this saves both models: the winner of the pass, and the trial Heretic's own menu offers first.
+The second costs one more save and answers the question a hostile reader asks first, which is
+whether the selection we added is what moved the number.
 
 THE RECONSTRUCTION IS CHECKED, NOT ASSUMED
 
@@ -45,6 +56,7 @@ Runs inside the sealed container, where Heretic and its dependency tree live.
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -78,10 +90,12 @@ from senbonzakura.metrics import (
 # direction would produce.
 RECONSTRUCTION_TOLERANCE = 0.02
 
-# The names Heretic's two default scorers report under (`score_name` in each scorer module). Named
-# constants because a rename upstream must fail here loudly rather than degrade to a missing value.
-KEYWORD_SCORE_NAME = "Keywords"
-KL_SCORE_NAME = "KL divergence"
+# What v1.4.0 records on every trial (`trial.set_user_attr` in its objective). `refusals` is a
+# COUNT, not a rate, and `n_bad_prompts` is what it is a count out of. Named here because a rename
+# upstream must fail loudly rather than degrade to a missing value that reads as zero.
+REFUSAL_COUNT = "refusals"
+KL_ATTR = "kl_divergence"
+N_EVAL_ATTR = "n_bad_prompts"
 
 
 def _text_file_spec(path):
@@ -89,12 +103,17 @@ def _text_file_spec(path):
     return DatasetSpecification(dataset=path)
 
 
-def score_name(trial, name):
-    """A named score out of a Heretic trial's recorded score records."""
-    for score in trial.user_attrs.get("scores", []):
-        if score["name"] == name:
-            return score["score"]["value"]
-    return None
+def attr(trial, name):
+    """One of the values Heretic recorded on a trial, or None when it did not record it."""
+    return trial.user_attrs.get(name)
+
+
+def refusal_fraction(trial):
+    """The recorded refusal COUNT as a fraction, which is the unit everything else here uses."""
+    count, total = attr(trial, REFUSAL_COUNT), attr(trial, N_EVAL_ATTR)
+    if count is None or not total:
+        return None
+    return count / total
 
 
 def open_study(path):
@@ -132,31 +151,46 @@ def residual_directions_for(settings, model, good_prompts, bad_prompts):
     return directions
 
 
-def nominate(front, complete, objective_names, top_n):
-    """The candidates Heretic puts forward, ranked the way Heretic ranks its own front.
+def heretic_front(complete):
+    """Heretic's own Pareto front, in the order its own menu offers it.
+
+    Reproduced from v1.4.0's trial loop rather than taken from `study.best_trials`, and its source
+    says why: the objective it hands Optuna is a scalarised score, not the pure refusal count and
+    KL divergence, so Optuna's own front is over different quantities than the ones the menu shows.
+    It sorts every completed trial by (refusal count, KL divergence) and then walks that order
+    keeping each trial that improves on the lowest KL seen so far.
+
+    Getting this wrong would not fail. It would nominate a different six, and the published arm
+    would be a comparison against a Heretic nobody runs.
+    """
+    ranked = []
+    for trial in complete:
+        refusals, kl = attr(trial, REFUSAL_COUNT), attr(trial, KL_ATTR)
+        if refusals is None or kl is None:
+            raise SystemExit(
+                f"best_of_n: trial {attr(trial, 'index') or trial.number} recorded no "
+                f"'{REFUSAL_COUNT}' or '{KL_ATTR}', so the front cannot be built the way Heretic "
+                f"builds it. This study was not written by the version this pass reads.")
+        ranked.append((refusals, kl, trial))
+    ranked.sort(key=lambda r: (r[0], r[1]))
+
+    front, lowest_kl = [], math.inf
+    for _, kl, trial in ranked:
+        if kl < lowest_kl:
+            lowest_kl = kl
+            front.append(trial)
+    return front
+
+
+def nominate(complete, top_n):
+    """The candidates Heretic puts forward, in the order its own menu puts them forward.
 
     Separated from the run so it can be tested without a GPU or a container: this function decides
     which six models get built, and a mistake here is a mistake in the published arm.
     """
-    pool = [t for t in front if t.user_attrs] or complete
-    if not pool:
+    if not complete:
         raise SystemExit("best_of_n: the study holds no completed trial to select from.")
-
-    def rank_key(trial):
-        # A trial missing one of the recorded score names would otherwise sort None against a
-        # float and raise from inside sorted(), several minutes into a GPU job, with a traceback
-        # that names neither the trial nor the score.
-        values = [score_name(trial, n) for n in objective_names]
-        missing = [n for n, v in zip(objective_names, values, strict=True) if v is None]
-        if missing:
-            raise SystemExit(
-                f"best_of_n: trial {trial.user_attrs.get('index', getattr(trial, 'number', '?'))} "
-                f"has no recorded value for {', '.join(missing)}, so the front cannot be ranked the "
-                f"way Heretic ranks it. The study was written by a Heretic whose scorers differ "
-                f"from the ones this arm configured.")
-        return tuple(values)
-
-    return sorted(pool, key=rank_key)[:max(1, top_n)]
+    return heretic_front(complete)[:max(1, top_n)]
 
 
 def rescore(candidates, responses_for):
@@ -169,14 +203,14 @@ def rescore(candidates, responses_for):
     for trial in candidates:
         responses = responses_for(trial)
         generations += len(responses)
-        kl = score_name(trial, KL_SCORE_NAME)
+        kl = attr(trial, KL_ATTR)
         if kl is None:
             raise SystemExit(
-                f"best_of_n: trial {trial.user_attrs['index']} recorded no '{KL_SCORE_NAME}'. The "
-                f"knee scalar surcharges KL above a target, so treating a missing value as zero "
-                f"would quietly rank a damaged candidate as an intact one.")
+                f"best_of_n: trial {attr(trial, 'index')} recorded no '{KL_ATTR}'. The knee scalar "
+                f"surcharges KL above a target, so treating a missing value as zero would quietly "
+                f"rank a damaged candidate as an intact one.")
         row = {
-            "trial": trial.user_attrs["index"],
+            "trial": attr(trial, "index"),
             "refusals": refusal_rate(responses),
             "soft": soft_refusal_rate(responses),
             "heretic": heretic_keyword_rate(responses),
@@ -219,16 +253,21 @@ def main(argv=None):
     ap.add_argument("--final-prompts", required=True,
                     help="the larger held-out slice both tools' winners are chosen on")
     ap.add_argument("--keyword-prompts", required=True,
-                    help="the slice Heretic's own KeywordRate scorer was given, used to check that "
+                    help="the slice Heretic's own search was scored on, used to check that "
                          "rebuilding a trial reproduces the score the search recorded for it")
     ap.add_argument("--top-n", type=int, default=6,
                     help="how many candidates to re-score; 6 is what senbonzakura gives itself "
                          "(cli.py --top-rescore), so 6 is what Heretic gets")
     ap.add_argument("--save-to", default=None,
                     help="where to save the winner; defaults to <out>/model")
+    ap.add_argument("--own-pick-out", default=None,
+                    help="where to save the trial Heretic's own menu offers first; defaults to "
+                         "<out>/model-heretic-own. Kept apart from the winner so a table can never "
+                         "confuse the two.")
     a = ap.parse_args(argv)
 
     save_to = a.save_to or os.path.join(a.out, "model")
+    a.own_pick_out = a.own_pick_out or os.path.join(a.out, "model-heretic-own")
     budget_path = os.path.join(a.out, "budget.json")
     if not os.path.isfile(budget_path):
         raise SystemExit(
@@ -237,11 +276,10 @@ def main(argv=None):
     with open(budget_path, encoding="utf-8") as f:
         budget = json.load(f)
 
-    if budget.get("exit_code") not in (0, None):
-        raise SystemExit(
-            f"best_of_n: the Heretic arm exited {budget['exit_code']}, so its study is incomplete. "
-            f"Selecting from a truncated search would report a budget the run never spent.")
-
+    # The arm's exit code is deliberately NOT a gate here. v1.4.0 ends at an interactive menu it
+    # cannot ask inside a container, and it reaches that menu only after every trial is on disk, so
+    # a non-zero exit is the expected shape of a completed search. The study is what gets checked,
+    # and `run_heretic.py` has already refused to record an arm whose study is short.
     study = open_study(budget["study"])
     # The settings RECORDED IN THE STUDY, not the config file on disk. Heretic resolves two values
     # at run time before it records them: the batch size (config default 0, meaning "benchmark the
@@ -260,12 +298,9 @@ def main(argv=None):
         raise SystemExit("best_of_n: the study holds no completed trial to select from.")
     print(f"best_of_n: {len(complete)} completed trials in the study")
 
-    # Heretic nominates its six the way it ranks its own front: the Pareto-optimal trials, sorted
-    # by their recorded objective values. Falling back to every completed trial when the front is
-    # somehow empty keeps the pass from silently selecting nothing.
-    objective_names = [s["name"] for s in complete[0].user_attrs["scores"]]
-    candidates = nominate(study.best_trials, complete, objective_names, a.top_n)
-    print(f"best_of_n: re-scoring the top {len(candidates)} of Heretic's front")
+    candidates = nominate(complete, a.top_n)
+    print(f"best_of_n: re-scoring the top {len(candidates)} of Heretic's own front "
+          f"(trials {', '.join(str(attr(t, 'index')) for t in candidates)})")
 
     model = Model(settings)
     good_prompts = load_prompts(settings, settings.good_prompts)
@@ -275,21 +310,21 @@ def main(argv=None):
     # The reconstruction check, before any candidate is trusted. Heretic's own eval slice, Heretic's
     # own metric, our byte-identical copy of its marker list, against the number the trial recorded.
     probe = candidates[0]
-    recorded = score_name(probe, KEYWORD_SCORE_NAME)
+    recorded = refusal_fraction(probe)
     apply_trial(model, directions, probe)
     keyword_slice = load_prompts(settings, _text_file_spec(a.keyword_prompts))
     measured = heretic_keyword_rate(model.get_responses_batched(keyword_slice))
     ok, drift = reconstruction_ok(recorded, measured)
-    print(f"best_of_n: reconstruction check on trial {probe.user_attrs['index']}: "
+    print(f"best_of_n: reconstruction check on trial {attr(probe, 'index')}: "
           f"recorded {recorded}, measured {measured:.4f}")
     if not ok:
         raise SystemExit(
-            f"best_of_n: rebuilding trial {probe.user_attrs['index']} does not reproduce the score "
-            f"the search recorded for it (recorded {recorded}, measured {measured:.4f}, drift "
+            f"best_of_n: rebuilding trial {attr(probe, 'index')} does not reproduce the refusal "
+            f"rate the search recorded for it (recorded {recorded}, measured {measured:.4f}, drift "
             f"{drift}). Every candidate would still produce a model and a number, and the number "
             f"would be of something other than what Heretic ran. Refusing rather than publishing "
             f"it. The usual cause is a change to Heretic's direction computation that this pass "
-            f"mirrors; compare residual_directions_for against heretic/main.py.")
+            f"mirrors; compare residual_directions_for against its main module.")
 
     final_prompts = load_prompts(settings, _text_file_spec(a.final_prompts))
     print(f"best_of_n: re-scoring on {len(final_prompts)} held-out prompts")
@@ -299,15 +334,27 @@ def main(argv=None):
         return model.get_responses_batched(final_prompts)
 
     rows, winner, generations = rescore(candidates, responses_for)
-    chosen = next(t for t in candidates if t.user_attrs["index"] == winner["trial"])
+    own_pick = attr(candidates[0], "index")
+    chosen = next(t for t in candidates if attr(t, "index") == winner["trial"])
     print(f"best_of_n: WINNER trial {winner['trial']} (knee {winner['knee']:.4f}); "
-          f"Heretic's own first offer was trial {candidates[0].user_attrs['index']}")
+          f"Heretic's own first offer was trial {own_pick}")
 
-    apply_trial(model, directions, chosen)
-    merged = model.get_merged_model()
-    merged.save_pretrained(save_to, max_shard_size=settings.max_shard_size)
-    model.tokenizer.save_pretrained(save_to)
-    print(f"best_of_n: saved to {save_to}")
+    def save(trial, path):
+        apply_trial(model, directions, trial)
+        merged = model.get_merged_model()
+        merged.save_pretrained(path, max_shard_size=settings.max_shard_size)
+        model.tokenizer.save_pretrained(path)
+        print(f"best_of_n: saved trial {attr(trial, 'index')} to {path}")
+
+    save(chosen, save_to)
+    # Heretic's unaided pick is saved too, and scored by the same instrument afterwards, so a
+    # reader can see whether the selection we added is what moved the number instead of taking it
+    # on trust. v1.4.0 cannot save it itself without a terminal, so it is saved from here, from the
+    # same study, by the same code path as the winner.
+    if own_pick != winner["trial"]:
+        save(candidates[0], a.own_pick_out)
+    else:
+        print("best_of_n: the pass did not change the pick, so there is no second model to save")
 
     record = {
         "tool": "heretic",
@@ -319,12 +366,13 @@ def main(argv=None):
         "winner": winner,
         # Heretic's unaided pick, so a reader can see whether our added selection changed the
         # answer at all rather than having to take the claim on trust.
-        "own_first_offer": candidates[0].user_attrs["index"],
-        "changed_the_pick": winner["trial"] != candidates[0].user_attrs["index"],
+        "own_first_offer": own_pick,
+        "changed_the_pick": winner["trial"] != own_pick,
         "generations": generations,
-        "reconstruction_check": {"trial": probe.user_attrs["index"], "recorded": recorded,
+        "reconstruction_check": {"trial": attr(probe, "index"), "recorded": recorded,
                                  "measured": measured, "tolerance": RECONSTRUCTION_TOLERANCE},
         "model": save_to,
+        "own_pick_model": a.own_pick_out if own_pick != winner["trial"] else save_to,
     }
     with open(os.path.join(a.out, "best_of_n.json"), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2)

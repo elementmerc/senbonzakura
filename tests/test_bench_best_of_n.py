@@ -54,65 +54,86 @@ bon = _load()
 
 
 class FakeTrial:
-    """A frozen Optuna trial as this pass reads one: an index and recorded score records."""
+    """A frozen Optuna trial as v1.4.0 records one.
 
-    def __init__(self, index, keywords=None, kl=None, scores=None):
+    `refusals` is a COUNT out of `n_bad_prompts`, not a rate; reading it as a rate would make every
+    candidate look far worse than it is and would flip the ranking.
+    """
+
+    def __init__(self, index, refusals=None, kl=None, n_eval=64, attrs=None):
         self.number = index
-        records = scores if scores is not None else [
-            {"name": "Keywords", "score": {"value": keywords}},
-            {"name": "KL divergence", "score": {"value": kl}},
-        ]
-        self.user_attrs = {"index": index, "scores": records,
-                           "direction_index": 12.0, "parameters": {}}
+        self.user_attrs = {"index": index, "direction_index": 12.0, "parameters": {}}
+        if attrs is None:
+            self.user_attrs.update({"refusals": refusals, "kl_divergence": kl,
+                                    "n_bad_prompts": n_eval})
+        else:
+            self.user_attrs.update(attrs)
 
 
-NAMES = ["Keywords", "KL divergence"]
+# ── reading what the trial recorded ───────────────────────────────────────────────────
+def test_the_refusal_count_is_read_as_a_fraction_of_the_eval_set():
+    """v1.4.0 records a COUNT. Reading it as a rate would make 32/64 look like 3200%."""
+    assert bon.refusal_fraction(FakeTrial(1, refusals=32, kl=0.08, n_eval=64)) == 0.5
 
 
-# ── reading a trial's recorded scores ─────────────────────────────────────────────────
-def test_a_named_score_is_read_out_of_the_records():
-    trial = FakeTrial(1, keywords=0.25, kl=0.08)
-    assert bon.score_name(trial, "Keywords") == 0.25
-    assert bon.score_name(trial, "KL divergence") == 0.08
-    assert bon.score_name(trial, "Nothing By That Name") is None
+def test_a_trial_with_no_recorded_count_has_no_fraction():
+    assert bon.refusal_fraction(FakeTrial(1, attrs={"kl_divergence": 0.1})) is None
+
+
+def test_a_zero_eval_set_does_not_divide_by_zero():
+    assert bon.refusal_fraction(FakeTrial(1, refusals=0, kl=0.1, n_eval=0)) is None
 
 
 # ── which candidates are nominated ────────────────────────────────────────────────────
-def test_the_front_is_ranked_the_way_heretic_ranks_it():
-    """Heretic's menu sorts its Pareto front by the recorded objective values, lowest first."""
-    front = [FakeTrial(3, 0.30, 0.05), FakeTrial(1, 0.10, 0.20), FakeTrial(2, 0.20, 0.10)]
-    got = bon.nominate(front, front, NAMES, top_n=3)
-    assert [t.user_attrs["index"] for t in got] == [1, 2, 3]
+def test_the_front_is_built_the_way_heretic_builds_it():
+    """Sort by (refusal count, KL), then keep each trial that improves on the lowest KL so far.
+
+    Reproduced from v1.4.0's own trial loop rather than taken from Optuna's `best_trials`, because
+    the objective Heretic hands Optuna is a scalarised score rather than these two quantities. A
+    different front would nominate a different six and publish a comparison against a Heretic
+    nobody runs.
+    """
+    trials = [
+        FakeTrial(1, refusals=2, kl=0.30),   # fewest refusals, but the worst KL
+        FakeTrial(2, refusals=5, kl=0.20),   # more refusals, better KL: on the front
+        FakeTrial(3, refusals=8, kl=0.25),   # dominated by trial 2, so not on the front
+        FakeTrial(4, refusals=9, kl=0.05),   # most refusals, best KL: on the front
+    ]
+    assert [t.user_attrs["index"] for t in bon.heretic_front(trials)] == [1, 2, 4]
+
+
+def test_a_dominated_trial_never_reaches_the_candidates():
+    trials = [FakeTrial(1, refusals=2, kl=0.10), FakeTrial(2, refusals=6, kl=0.40)]
+    assert [t.user_attrs["index"] for t in bon.nominate(trials, top_n=6)] == [1]
+
+
+def test_ties_on_refusals_are_broken_by_kl():
+    trials = [FakeTrial(1, refusals=4, kl=0.30), FakeTrial(2, refusals=4, kl=0.10)]
+    assert [t.user_attrs["index"] for t in bon.heretic_front(trials)] == [2]
 
 
 def test_only_the_top_n_are_nominated():
-    front = [FakeTrial(i, keywords=i / 10, kl=0.1) for i in range(1, 10)]
-    assert len(bon.nominate(front, front, NAMES, top_n=6)) == 6
+    trials = [FakeTrial(i, refusals=i, kl=1.0 / i) for i in range(1, 10)]
+    assert len(bon.nominate(trials, top_n=6)) == 6
 
 
 def test_a_top_n_of_zero_still_nominates_one():
     """A candidate list of length zero would make the pass silently select nothing at all."""
-    front = [FakeTrial(1, 0.1, 0.1)]
-    assert len(bon.nominate(front, front, NAMES, top_n=0)) == 1
-
-
-def test_an_empty_front_falls_back_to_every_completed_trial():
-    complete = [FakeTrial(1, 0.1, 0.1), FakeTrial(2, 0.2, 0.1)]
-    assert len(bon.nominate([], complete, NAMES, top_n=6)) == 2
+    assert len(bon.nominate([FakeTrial(1, refusals=1, kl=0.1)], top_n=0)) == 1
 
 
 def test_no_trials_at_all_is_refused():
     with pytest.raises(SystemExit) as e:
-        bon.nominate([], [], NAMES, top_n=6)
+        bon.nominate([], top_n=6)
     assert "no completed trial" in str(e.value)
 
 
-def test_a_trial_missing_a_score_is_named_rather_than_raising_from_inside_sorted():
-    front = [FakeTrial(1, 0.1, 0.1), FakeTrial(2, scores=[{"name": "Keywords",
-                                                           "score": {"value": 0.2}}])]
+def test_a_trial_missing_an_attribute_is_named_rather_than_raising_from_inside_sorted():
+    trials = [FakeTrial(1, refusals=1, kl=0.1),
+              FakeTrial(2, attrs={"refusals": 3})]
     with pytest.raises(SystemExit) as e:
-        bon.nominate(front, front, NAMES, top_n=6)
-    assert "trial 2" in str(e.value) and "KL divergence" in str(e.value)
+        bon.nominate(trials, top_n=6)
+    assert "trial 2" in str(e.value) and "kl_divergence" in str(e.value)
 
 
 # ── the re-score, and who wins it ─────────────────────────────────────────────────────
@@ -122,7 +143,7 @@ REFUSING = ["I'm sorry, I cannot help with that."] * 10
 
 def test_the_winner_is_the_lowest_knee_not_the_first_offered():
     """The whole point of the pass: the front's first entry need not survive a larger eval."""
-    first, second = FakeTrial(1, 0.05, 0.05), FakeTrial(2, 0.30, 0.05)
+    first, second = FakeTrial(1, refusals=3, kl=0.05), FakeTrial(2, refusals=19, kl=0.05)
     responses = {1: REFUSING, 2: COMPLIANT}
     rows, winner, generations = bon.rescore([first, second],
                                             lambda t: responses[t.user_attrs["index"]])
@@ -133,30 +154,26 @@ def test_the_winner_is_the_lowest_knee_not_the_first_offered():
 
 def test_kl_comes_from_the_trial_and_not_from_the_rescore():
     """Ours refreshes the refusal axes on more evidence and leaves coherence alone; so does this."""
-    trial = FakeTrial(1, 0.05, 0.42)
-    rows, winner, _ = bon.rescore([trial], lambda t: COMPLIANT)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.42)], lambda t: COMPLIANT)
     assert rows[0]["kl"] == 0.42
     assert rows[0]["kl_source"] == "trial"
 
 
 def test_the_knee_is_the_shared_one_not_a_local_copy():
-    trial = FakeTrial(1, 0.05, 0.3)
-    rows, _, _ = bon.rescore([trial], lambda t: REFUSING)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.3)], lambda t: REFUSING)
     r = rows[0]
     assert r["knee"] == knee_scalar(r["refusals"], r["soft"], r["heretic"], r["kl"])
 
 
 def test_a_trial_with_no_recorded_kl_is_refused_rather_than_scored_as_zero():
     """Zero would read as perfectly intact, which is the most flattering possible substitution."""
-    trial = FakeTrial(1, scores=[{"name": "Keywords", "score": {"value": 0.1}}])
     with pytest.raises(SystemExit) as e:
-        bon.rescore([trial], lambda t: COMPLIANT)
+        bon.rescore([FakeTrial(1, attrs={"refusals": 3})], lambda t: COMPLIANT)
     assert "recorded no" in str(e.value)
 
 
 def test_a_broken_candidate_is_measured_as_broken():
-    trial = FakeTrial(1, 0.0, 0.05)
-    rows, _, _ = bon.rescore([trial], lambda t: [""] * 10)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=0, kl=0.05)], lambda t: [""] * 10)
     assert rows[0]["broken"] == 1.0
     # Heretic counts an empty response as a keyword match, so a wrecked model cannot win by
     # producing nothing at all.

@@ -38,7 +38,8 @@ from pathlib import Path
 ARM_MANIFEST = "arm.json"
 
 # The prompt files every tool is scored on, staged once so no tool brings its own.
-SLICE_FILES = ("good.txt", "bad.txt", "keyword_prompts.txt", "kl_prompts.txt")
+SLICE_FILES = ("good.txt", "bad.txt", "keyword_prompts.txt", "final_prompts.txt",
+               "kl_prompts.txt")
 SLICE_PROVENANCE = "slices.json"
 
 
@@ -246,7 +247,7 @@ def isolate_argv(argv, *, image: str, mounts, workdir="/work") -> list[str]:
 
 # ── preflight ─────────────────────────────────────────────────────────────────────────
 def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images,
-              slices=None) -> list[str]:
+              slices=None, score=False, harmful=None, harmless=None) -> list[str]:
     """Everything checkable before the first GPU second is spent, returned as complaints.
 
     A long run that dies forty minutes in on something knowable at the start is the most expensive
@@ -285,6 +286,15 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
             if missing:
                 problems.append(f"--eval-slices {slices} is missing {', '.join(missing)}")
             problems.extend(slices_match_track(Path(slices), Path(track)))
+    # The scoring inputs are checked here rather than after the arms have run, because
+    # discovering them missing costs the whole run's GPU time and nothing else.
+    if score:
+        for flag, path in (("--harmful", harmful), ("--harmless", harmless)):
+            if not path:
+                problems.append(f"{flag} is needed to score the models; pass it, or --no-score "
+                                f"to run the arms and score them later")
+            elif not Path(path).exists():
+                problems.append(f"{flag} points at {path}, which is not there")
     if isolate == "docker":
         if not docker_available():
             problems.append(
@@ -384,6 +394,64 @@ def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", ima
     return results
 
 
+# ── scoring: one instrument, over every model both tools produced ─────────────────────
+def score_argv(*, model: Path, harmful: Path, harmless: Path, out: Path, label: str,
+               skip_harmful: int, batch: int) -> list[str]:
+    """The compass, invoked the one right way.
+
+    On 2026-08-05 this was invoked three wrong ways at once from a shell loop, and one of them hid
+    the other two: it was passed a `--track` the compass does not have, `--skip-harmful` was passed
+    with no count so it swallowed the next argument, and the two tools save their models in
+    different shapes so one tool's arms were scored against nothing at all. There is one call site
+    now and a test asserting each of those three cannot recur.
+    """
+    return ["python", "-u", "-m", "senbonzakura", "compass",
+            "--model", str(model), "--harmful", str(harmful), "--harmless", str(harmless),
+            "--out", str(out), "--label", label,
+            "--skip-harmful", str(skip_harmful), "--batch", str(batch)]
+
+
+def arm_model_dir(result: ArmResult, adapter: Adapter) -> Path:
+    """Where this tool actually left its model.
+
+    The two disagree and neither is wrong: senbonzakura writes straight into the output directory
+    it was given, so the arm directory IS the model, while Heretic's comes out of the selection
+    pass in a subdirectory. Assuming one shape scored the other tool's arms against nothing.
+    """
+    return Path(result.arm) / adapter.model_subdir if adapter.model_subdir else Path(result.arm)
+
+
+def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmful=128, batch=16,
+               runner=None, log=print, force=False) -> list[dict]:
+    """Score every model that exists, and say plainly which ones did not."""
+    runner = runner or default_runner
+    scored = []
+    for r in results:
+        adapter = ADAPTERS[r.tool]
+        model = arm_model_dir(r, adapter)
+        label = f"{r.tool}-seed{r.seed}"
+        target = Path(out) / f"scored-{label}.json"
+        if not (model / "config.json").is_file():
+            log(f"  {label}: NO MODEL at {model}; the arm produced none")
+            scored.append({"label": label, "ok": False, "reason": f"no model at {model}"})
+            continue
+        if target.is_file() and not force:
+            log(f"  {label}: already scored")
+            scored.append({"label": label, "ok": True, "reason": "already scored",
+                           "path": str(target)})
+            continue
+        code = runner(score_argv(model=model, harmful=harmful, harmless=harmless, out=target,
+                                 label=label, skip_harmful=skip_harmful, batch=batch), log=log)
+        # Exit zero is not a score. The file is.
+        ok = code == 0 and target.is_file()
+        scored.append({"label": label, "ok": ok,
+                       "reason": "scored" if ok else f"scoring failed (exit {code})",
+                       "path": str(target) if ok else None})
+        if not ok:
+            log(f"  {label}: SCORING FAILED")
+    return scored
+
+
 def summarise(results) -> dict:
     """What happened, in a shape a caller can act on and a reader can check."""
     return {
@@ -422,10 +490,37 @@ def build_parser():
                    help="directory of staged prompt files every tool scores on: good.txt, "
                         "bad.txt, keyword_prompts.txt, kl_prompts.txt. Required for any tool "
                         "that would otherwise bring its own evaluation set")
+    h.add_argument("--harmful", default="",
+                   help="held-out harmful dataset the compass scores every model on. Required "
+                        "unless --no-score is given")
+    h.add_argument("--harmless", default="",
+                   help="held-out harmless dataset for the compass's other arm")
+    h.add_argument("--skip-harmful", dest="skip_harmful", type=int, default=128,
+                   help="how many harmful rows the search already saw, and the compass must "
+                        "therefore skip. A count, never a bare flag (default: 128)")
+    h.add_argument("--batch", type=int, default=16,
+                   help="scoring batch size, held fixed across every arm so no two arms are "
+                        "measured under different conditions")
+    h.add_argument("--no-score", dest="score", action="store_false",
+                   help="run the arms and stop, leaving scoring and the report for later")
     h.add_argument("--force", action="store_true",
                    help="re-run arms that are already complete instead of skipping them")
     h.add_argument("--arg", action="append", default=[], metavar="ARG",
                    help="extra argument passed through to every arm. Repeatable")
+
+    st = sub.add_parser("stage", help="cut the prompt slices every tool is scored on")
+    st.add_argument("--track", required=True, help="the track holding bad_ds / good_ds / bad_eval_ds")
+    st.add_argument("--out", required=True, help="directory to write the slices into")
+    st.add_argument("--dir-prompts", type=int, default=256)
+    st.add_argument("--eval-refusal", type=int, default=64)
+    st.add_argument("--eval-refusal-final", type=int, default=128)
+    st.add_argument("--eval-kl", type=int, default=64)
+
+    r = sub.add_parser("report", help="read a finished head-to-head and say what it found")
+    r.add_argument("run_dir", help="the directory the arms and their scores were written to")
+    r.add_argument("--allow-unreadable", action="store_true",
+                   help="report over the arms that are readable instead of refusing. An "
+                        "incomplete set is not a table, so this has to be asked for")
     return ap
 
 
@@ -454,13 +549,24 @@ def _parse_seeds(text):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if a.operation == "stage":
+        from . import benchstage
+        raise SystemExit(benchstage.main([
+            "--track", a.track, "--out", a.out,
+            "--dir-prompts", str(a.dir_prompts), "--eval-refusal", str(a.eval_refusal),
+            "--eval-refusal-final", str(a.eval_refusal_final), "--eval-kl", str(a.eval_kl)]))
+    if a.operation == "report":
+        from . import benchreport
+        args = [a.run_dir] + (["--allow-unreadable"] if a.allow_unreadable else [])
+        raise SystemExit(benchreport.main(args))
     tools = [t.strip() for t in a.tools.split(",") if t.strip()]
     seeds = _parse_seeds(a.seeds)
     images = _parse_images(a.image)
 
     slices = Path(a.eval_slices) if a.eval_slices else None
     problems = preflight(tools=tools, track=Path(a.track), out=Path(a.out), model=a.model,
-                         isolate=a.isolate, images=images, slices=slices)
+                         isolate=a.isolate, images=images, slices=slices, score=a.score,
+                         harmful=a.harmful, harmless=a.harmless)
     if problems:
         print("BENCH REFUSED: nothing was run, because this comparison would not be trustworthy:",
               file=sys.stderr)
@@ -479,10 +585,28 @@ def main(argv=None):
     print(f"BENCH {summary['ran']} ran, {summary['skipped']} skipped, {summary['failed']} failed")
     for f in summary["failures"]:
         print(f"  FAILED {f['tool']} seed {f['seed']}: {f['reason']}")
+
+    if a.score:
+        print("scoring every model, with one instrument")
+        scored = score_arms([r for r in results if r.ok], harmful=Path(a.harmful),
+                            harmless=Path(a.harmless), out=Path(a.out),
+                            skip_harmful=a.skip_harmful, batch=a.batch, force=a.force)
+        summary["scored"] = scored
+        summary["unscored"] = [s["label"] for s in scored if not s["ok"]]
+
     Path(a.out, "bench-summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                                  encoding="utf-8")
-    if summary["failed"]:
+
+    if summary["failed"] or summary.get("unscored"):
+        # A partial set is not a table. Say which arms are missing and stop, rather than
+        # reporting over whatever happened to survive.
+        for label in summary.get("unscored", []):
+            print(f"  UNSCORED {label}")
         raise SystemExit(1)
+
+    if a.score:
+        from . import benchreport
+        benchreport.main([str(a.out)])
     return summary
 
 

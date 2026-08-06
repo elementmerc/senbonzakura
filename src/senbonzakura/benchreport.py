@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Read a finished head-to-head and say what it found, without saying more than it found.
 
 WHY THIS IS NOT `report_bands.py`
@@ -39,8 +38,15 @@ outcome; a winner declared inside the noise is not.
 With fewer than three seeds a spread is not an estimate of anything, so the verdict says so and
 declines rather than dividing by a number it does not have.
 
+WHY IT LIVES IN THE PACKAGE
+
+It was a script under `tools/`, which meant it did not ship in the wheel, so the only thing that
+could read a published head-to-head was a checkout of this repository. That is the same defect as
+the compass shipping in no released artefact, and it matters more here: a reader's whole recourse
+against a table they doubt is being able to re-derive it.
+
 Usage:
-    python tools/report_head_to_head.py <run-directory>
+    senbonzakura bench report <run-directory>
 """
 import argparse
 import json
@@ -249,12 +255,12 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if not os.path.isdir(a.run_dir):
-        raise SystemExit(f"report_head_to_head: no directory at {a.run_dir}")
+        raise SystemExit(f"bench report: no directory at {a.run_dir}")
 
     arms = collect(a.run_dir)
     if not arms:
         raise SystemExit(
-            f"report_head_to_head: no scored arms under {a.run_dir}. Expected files named "
+            f"bench report: no scored arms under {a.run_dir}. Expected files named "
             f"scored-<tool>-seed<N>.json, which is what the score job writes.")
 
     text, had_unreadable, n_readable = render(arms)

@@ -36,19 +36,12 @@ SUBSTITUTIONS = [
      re.compile(r'^run = "([^"]+)"$', re.MULTILINE), 'run = "\\1-DRYRUN"', 1),
     ("the output directory, so a rehearsal never touches the real run's artefacts",
      re.compile(r"\$HOME/bench-out/h2h\b"), "$HOME/bench-out/h2h-dryrun", None),
+    ("the staged slices, so a rehearsal cannot overwrite the real run's inputs",
+     re.compile(r"\$HOME/bench-eval\b"), "$HOME/bench-eval-dryrun", None),
     ("the seed list, down to one",
-     re.compile(r"^for S in 42 43 44 45 46; do$", re.MULTILINE), "for S in 42; do", 2),
-    # Anchored on what follows, so the prose that explains WHY the budget is 200 keeps saying 200.
-    # A bare `--trials 200` also matches that comment, and rewriting it would leave the miniature
-    # asserting that six is Heretic's own default.
-    ("the trial count on the senbonzakura arm",
-     re.compile(r"--trials 200 --patience 0\b"), "--trials 6 --patience 0", 1),
-    ("the trial count on the Heretic arm",
-     re.compile(r"--trials 200 --dir-prompts\b"), "--trials 6 --dir-prompts", 1),
-    ("the candidate depth for the selection pass",
-     re.compile(r"--top-n 6\b"), "--top-n 3", 1),
-    ("the disk floor, since one seed needs a fraction of the space",
-     re.compile(r'\[ "\$avail" -lt 80 \]'), '[ "$avail" -lt 20 ]', 1),
+     re.compile(r"--seeds 42,43,44,45,46\b"), "--seeds 42", 1),
+    ("the trial count",
+     re.compile(r"--trials 200\b"), "--trials 6", 1),
 ]
 
 

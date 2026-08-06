@@ -1,23 +1,15 @@
-"""Tests for tools/report_head_to_head.py, which turns a finished head-to-head into a claim.
+"""Tests for `senbonzakura bench report`, which turns a finished head-to-head into a claim.
 
 The tests are about the claims, not the layout: that a gap inside the noise is called a tie, that
 two seeds cannot buy a verdict, that a missing arm fails the report rather than shrinking the
 table quietly, and above all that the two tools' own KL figures are never presented as one
 comparable column. That last one is the error this project withdrew four claims for.
 """
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "report_head_to_head",
-    Path(__file__).resolve().parent.parent / "tools" / "report_head_to_head.py")
-rh = importlib.util.module_from_spec(_SPEC)
-sys.modules["report_head_to_head"] = rh
-_SPEC.loader.exec_module(rh)
+from senbonzakura import benchreport as rh
 
 
 @pytest.fixture

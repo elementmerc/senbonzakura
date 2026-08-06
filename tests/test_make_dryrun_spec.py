@@ -56,11 +56,10 @@ def test_the_refusal_names_every_substitution_that_broke():
 # ── the budget shrinks ────────────────────────────────────────────────────────────────
 def test_the_rehearsal_runs_one_seed_and_a_handful_of_trials(real_spec):
     out = mds.transform(real_spec)
-    assert "for S in 42 43 44 45 46" not in out
-    assert out.count("for S in 42; do") == 2
-    assert "--trials 200 --patience 0" not in out
-    assert "--trials 200 --dir-prompts" not in out
-    assert "--trials 6 --patience 0" in out and "--trials 6 --dir-prompts" in out
+    assert "--seeds 42,43,44,45,46" not in out
+    assert "--seeds 42" in out
+    assert "--trials 200" not in out
+    assert "--trials 6" in out
 
 
 def test_the_rehearsal_writes_somewhere_else_entirely(real_spec):
@@ -71,22 +70,23 @@ def test_the_rehearsal_writes_somewhere_else_entirely(real_spec):
     assert out.count('-DRYRUN"') == 1
 
 
-def test_the_reasoning_for_the_real_budget_is_left_alone(real_spec):
-    """The comment explaining why 200 is the number must not be rewritten to claim it is six."""
+def test_the_rehearsal_stages_its_own_slices(real_spec):
+    """Sharing a slice directory would let a rehearsal overwrite the inputs of the real run."""
     out = mds.transform(real_spec)
-    assert "`--trials 200` matches Heretic's own default" in out
+    assert "bench-eval-dryrun" in out
+    assert '$HOME/bench-eval"' not in out
 
 
 # ── everything that is not the budget survives ────────────────────────────────────────
 @pytest.mark.parametrize("guarantee", [
-    "--network none",                    # named in the isolation prose, which must survive
-    "TORCH MISMATCH",                    # the two images must still be checked against each other
-    "ISOLATION SELF-TEST FAILED",        # the self-test still runs
-    "SLICE STAGING FAILED",              # the shared eval slices are still staged
-    "best_of_n.json",                    # the selection pass still guards on its own artefact
-    "artefact_ok.py",                    # the resume guards still name their configuration
-    "senbon-bench:senbonzakura",         # our arm still runs sealed
-    "report_head_to_head.py",            # the verdict still comes from the harness
+    "--isolate docker",                  # both arms still run sealed
+    "senbon-bench:senbonzakura",         # our arm still runs in its own image
+    "senbon-bench:heretic",              # and Heretic in its own
+    "--tools senbon,heretic",            # it is still a head-to-head and not one arm
+    "--eval-slices",                     # both tools are still scored on one staged set
+    "--skip-harmful 128",                # the compass still skips what the search saw
+    "bench stage",                       # the slices are still cut rather than assumed
+    "--track",                           # one corpus, still named
 ])
 def test_the_rehearsal_keeps_what_can_actually_be_wrong(real_spec, guarantee):
     assert guarantee in mds.transform(real_spec), \
@@ -95,7 +95,7 @@ def test_the_rehearsal_keeps_what_can_actually_be_wrong(real_spec, guarantee):
 
 def test_the_job_graph_is_untouched(real_spec):
     out = mds.transform(real_spec)
-    for job in ("setup", "senbon-arms", "heretic-arms", "score", "report"):
+    for job in ("stage", "bench"):
         assert f'id = "{job}"' in out
     assert out.count("[[job]]") == real_spec.count("[[job]]")
     assert out.count("deps = ") == real_spec.count("deps = ")
@@ -122,9 +122,9 @@ def test_the_full_on_card_variant_keeps_the_real_budget(real_spec):
     rehearsal published as a result.
     """
     out = mds.transform_on_card_only(real_spec)
-    assert "for S in 42 43 44 45 46" in out
-    assert "--trials 200 --patience 0" in out and "--trials 200 --dir-prompts" in out
-    assert "--top-n 6" in out
+    assert "--seeds 42,43,44,45,46" in out
+    assert "--trials 200" in out
+    assert "bench-out/h2h-dryrun" not in out
     assert 'machine = "local"' in out and 'machine = "rog"' not in out
 
 

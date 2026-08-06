@@ -1,421 +1,100 @@
 # Task 27: the Qwen3-1.7B head to head against Heretic. A v0.4 exit gate.
 #
-# The gate is word for word as strict as v0.7's, deliberately, because an earlier draft was not
-# and that put the losable experiment behind the weaker gate. It requires: both tools run by us on
-# current code, a held-out eval slice, five seeds per arm, intervals on every arm, a gap smaller
-# than the spread reported as a tie, and a pre-registration committed BEFORE the run so it is
-# checkable by someone other than its author. Whatever it says goes in the README.
+# THIS FILE USED TO BE 421 LINES AND IS NOW TWO JOBS.
 #
-# The pre-commitments are already in the repository and were committed before this spec ran:
-#   bench/CONTRACT.md      what is measured, how, one judge for both, and what would make it wrong
-#   bench/EQUAL-BUDGET.md  what each tool was given, and the one asymmetry left standing
+# It carried the whole benchmark as shell embedded in configuration: the arms, their resume
+# guards, the scoring, the report, and about a dozen invariants asserted by hand. Of the fifteen
+# defects found on 2026-08-05 and 06, most were in that shell rather than in either tool. Two
+# resume guards asked their artefacts for a key those artefacts never carried, so neither could
+# ever fire. A success marker was printed whether or not the work happened, so a rehearsal
+# reported five jobs done having measured nothing, and the fix for that was undone by a careless
+# splice a few hours later. The scorer was invoked three wrong ways at once.
 #
-# WHO OWNS WHAT
+# None of that is a coincidence: configuration cannot be tested, and it does not ship in a wheel,
+# so nobody outside this machine could run the benchmark at all. Decision Q-5 moved the operation
+# into the tool, where it has 73 tests and a `--help`. What is left here is the part an
+# orchestrator is genuinely for.
 #
-# holst owns the arms: the queue, the card lock, the dependency order, resume, streaming. Each arm
-# calls bench/run-isolated.sh for its ONE container, and that script owns the isolation flags. The
-# split is deliberate: a hand-rolled loop would re-implement the queue badly, and putting the
-# isolation inline in every job would let one job drift from the others.
+# WHO OWNS WHAT, NOW
 #
-# Heretic runs with NO NETWORK. Everything it needs is staged first, by us, which is the friction
-# that makes the run reproducible: nothing can be fetched mid-run that was not staged before it.
+#   senbonzakura owns the OPERATION: which arms, the equal budget, the resume guards, the
+#   artefact contracts, one judge over both tools, the tie rule, the report. All of it testable,
+#   all of it runnable by a stranger with `pip install senbonzakura` and no orchestrator at all.
 #
-# WHAT WOULD MAKE THIS RUN MEANINGLESS, and is therefore guarded
+#   holst owns the MACHINE: which box, the GPU lock, the wall-clock ceiling, the stall watchdog,
+#   retries across a dropped link, and streaming the log somewhere durable. None of that is part
+#   of the method, which is why none of it is in the public tool.
 #
-#   * Different corpora per tool. Heretic accepts a path to a dataset on disk, so both tools read
-#     the same one. Checked in setup rather than assumed.
-#   * Different judges. Every model is scored by senbonzakura's compass afterwards, including
-#     senbonzakura's own, so the comparison is not partly between judges.
-#   * A stale artefact reused. Every guard names the configuration it will accept.
-#   * An arm that ran on CPU. run-isolated.sh proves the GPU is reachable inside the box first.
-#   * A CARD THAT DROPS MID-RUN. This is the one that nearly cost a night. When WSL2 goes away
-#     under a running arm, the work stops but the ssh channel does not close, so holst sees a job
-#     that is neither finished nor failed: it is running, and it will go on running until the
-#     wall-clock timeout. A rehearsal on 2026-08-05 sat like that for two and a half hours after
-#     the arm had already written its artefacts and exited. Every GPU job therefore carries
-#     `stall_secs`: no new output for that long and holst cuts the job and retries it, which with
-#     `--resume` continues the seed rather than restarting it. The wall-clock timeouts are sized
-#     from the measured cost too, so even a stall the watchdog somehow misses is bounded in hours
-#     rather than a day.
+# The rule this file now satisfies by construction: a spec may not contain bash beyond a single
+# command invocation. There is nothing here for a careless splice to break.
+#
+# WHAT WOULD MAKE THIS RUN MEANINGLESS is still guarded, but by the tool rather than by this file:
+# different corpora per tool (the staged slices record which corpus they were cut from, and the
+# run refuses a pair that disagree), different judges (one compass over every model), a stale
+# artefact reused (a manifest must agree on tool, seed, model and budget AND every artefact must
+# be present), and an arm that exits cleanly having produced nothing (a failure, and it leaves no
+# manifest, so the next run retries rather than inheriting the silence).
+#
+# A CARD THAT DROPS MID-RUN remains holst's problem and is why `stall_secs` is set: when WSL2 goes
+# away under a running arm the work stops but the ssh channel does not close, so the job is
+# neither finished nor failed. A rehearsal once sat like that for two and a half hours after its
+# arm had already written every artefact and exited.
 run = "head-to-head-heretic-2026-08-05"
 
 [[job]]
-id = "setup"
-name = "stage every input, because the runs have no network"
+id = "stage"
+name = "cut the evaluation slices both tools are scored on"
 machine = "rog"
 timeout_secs = 3600
 success = { type = "all", of = [
     { type = "exit-zero" },
-    { type = "stdout-contains", needle = "SETUP_OK" },
+    { type = "stdout-contains", needle = "STAGE_OK" },
     { type = "stdout-lacks", needle = "FAILED" },
     { type = "not-timed-out" },
 ] }
 command = """
 set -euo pipefail
 exec 2>&1
-RUN=$HOME/senbon-run
-BENCH=$HOME/bench
-OUT=$HOME/bench-out/h2h
-mkdir -p "$OUT" "$HOME/bench-models"
-
-test -x "$BENCH/run-isolated.sh" || { echo "MISSING run-isolated.sh"; exit 1; }
-# One image per tool, both on the same base, so both arms run on one torch and one CUDA build.
-for IMG in senbon-bench:heretic senbon-bench:senbonzakura; do
-    docker image inspect "$IMG" >/dev/null 2>&1 || { echo "MISSING $IMG; build it first"; exit 1; }
-done
-
-# Both images must carry the SAME torch, or the point of putting our own arms in a container is
-# lost while the spec still claims it. Checked rather than assumed, because the two images are
-# built from separate Dockerfiles and only one of them pins torch directly.
-TV_H=$(docker run --rm --network none senbon-bench:heretic python -c "import torch;print(torch.__version__)")
-TV_S=$(docker run --rm --network none senbon-bench:senbonzakura python -c "import torch;print(torch.__version__)")
-if [ "$TV_H" != "$TV_S" ]; then
-    echo "TORCH MISMATCH: heretic has $TV_H, senbonzakura has $TV_S. The two arms would be run on"
-    echo "different kernels while the table reported one environment."
-    exit 1
-fi
-echo "torch: $TV_S in both images"
-
-# The isolation is re-proved every run rather than assumed from the last one. Cheap, and the flags
-# are lost one at a time by someone debugging a failing arm. The source mount goes in here too so
-# the self-test checks it is read-only and that the shared ruler imports inside Heretic's image.
-"$BENCH/run-isolated.sh" --tool selftest --model "$HOME/bench-models" --out "$OUT/selftest" \\
-    --eval "$HOME/bench-eval" --senbon-src "$RUN/src" \\
-    -- python /work/bench/selftest.py || { echo "ISOLATION SELF-TEST FAILED"; exit 1; }
-
-# Both tools must read the SAME corpus or the comparison is between corpora. Heretic takes a path
-# on disk, so this is possible; it is checked here rather than discovered mid-run.
-test -d "$HOME/track-heldout/bad_ds" || { echo "MISSING corpus bad_ds"; exit 1; }
-test -d "$HOME/track-heldout/good_ds" || { echo "MISSING corpus good_ds"; exit 1; }
-
-# The eval slices, written once and read by both tools. Heretic's two scorers own their own prompt
-# sets and both default to a Hub dataset, which a box with no network cannot fetch: without this
-# the Heretic arms die at scorer initialisation before their first trial. Beyond that, a tool's
-# search is steered by whatever its scorers measure, so scoring the two on different prompts would
-# not be giving them the same problem.
-PY=$HOME/track2/venv/bin/python
-PYTHONPATH="$RUN/src" "$PY" "$BENCH/stage_eval_slices.py" \\
+PYTHONPATH=$HOME/senbon-run/src $HOME/track2/venv/bin/python -m senbonzakura.bench stage \\
     --track "$HOME/track-heldout" --out "$HOME/bench-eval" \\
-    --dir-prompts 256 --eval-refusal 64 --eval-refusal-final 128 --eval-kl 64 \\
-    || { echo "SLICE STAGING FAILED"; exit 1; }
-
-# Fifteen saved models at roughly 3.4 GB each (five senbonzakura arms; for Heretic, both its own
-# first offer and the best-of-N winner), plus the staged weights. Checked before the first arm
-# rather than discovered when the twelfth save fails halfway and leaves a partial checkpoint.
-avail=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc '0-9')
-if [ "$avail" -lt 80 ]; then
-    echo "INSUFFICIENT DISK: ${avail}G free under $HOME, need about 80G for 15 saved models plus weights"
-    exit 1
-fi
-echo "disk: ${avail}G free"
-
-# Weights staged locally: the sealed box cannot download them.
-PYTHONPATH="$RUN/src" "$PY" - <<'EOF'
-import os
-from huggingface_hub import snapshot_download
-p = snapshot_download("Qwen/Qwen3-1.7B", local_dir=os.path.expanduser("~/bench-models/Qwen3-1.7B"))
-print("staged:", p)
-EOF
-test -f "$HOME/bench-models/Qwen3-1.7B/config.json" || { echo "MISSING staged weights"; exit 1; }
-
-PYTHONPATH="$RUN/src" "$PY" -c "from senbonzakura import cli; print('code_version:', cli.code_version())"
-echo SETUP_OK
+    --dir-prompts 256 --eval-refusal 64 --eval-refusal-final 128 --eval-kl 64
+echo STAGE_OK
 """
 
-# ── The senbonzakura arms ─────────────────────────────────────────────────────────────
-# Five seeds, IN THE SAME SEALED BOX Heretic runs in. Our own tool does not need protecting from,
-# but running it on the host venv would have put it on torch 2.13.0+cu130 while Heretic ran on the
-# pinned 2.5.1+cu124: two sets of kernels, two sets of numerics, and a KL divergence measured
-# against a slightly different baseline. One image, one torch, one CUDA build, for both.
-#
-# `--trials 200` matches Heretic's own default rather than our 60: matching upward, because
-# capping Heretic at our number would buy a result by starving the comparison. `--patience 0`
-# because with trials matched an early stop makes trials and wall-clock disagree. Both flags are
-# now honoured by kageyoshi rather than silently replaced by its own auto-scaled budget.
-
 [[job]]
-id = "senbon-arms"
-name = "senbonzakura, five seeds, equal budget, same sealed box"
+id = "bench"
+name = "both tools, five seeds each, scored by one instrument, reported"
 machine = "rog"
-deps = ["setup"]
-timeout_secs = 43200
-resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
+deps = ["stage"]
+# Measured, not guessed: 13.7s a trial for Heretic and about 19s for ours, five seeds each at 200
+# trials, plus roughly 11 minutes a seed for Heretic's selection pass and the scoring afterwards.
+# That is a little over ten hours; this ceiling is a shade over four times it.
+timeout_secs = 172800
+max_retries = 3
 success = { type = "all", of = [
     { type = "exit-zero" },
-    { type = "stdout-contains", needle = "SENBON_OK" },
+    { type = "stdout-contains", needle = "BENCH_OK" },
     { type = "stdout-lacks", needle = "FAILED" },
     { type = "not-timed-out" },
 ] }
 command = """
 set -euo pipefail
 exec 2>&1
-RUN=$HOME/senbon-run
-BENCH=$HOME/bench
-OUT=$HOME/bench-out/h2h
-PY=$HOME/track2/venv/bin/python
-cd "$RUN"
-exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
-
-for S in 42 43 44 45 46; do
-    if "$PY" tools/artefact_ok.py "$OUT/senbon-seed$S/abliteration.json" \\
-         model=/model model_id=Qwen/Qwen3-1.7B seed="$S" >/dev/null 2>&1; then
-        echo "  seed $S already complete"; continue
-    fi
-    echo "  senbonzakura seed $S"
-    # The track is mounted at /corpus and the source at /work/senbon-src, both read-only, exactly
-    # as they are for the other tool. The output directory is the one writable path, which is
-    # where every artefact this run produces now goes.
-    #
-    # `--resume` is not optional here. holst retries a job whose LAUNCH fails, and over a run this
-    # long a dropped connection is a certainty rather than a risk. Without it the retry meets the
-    # study its own first attempt created and dies with Optuna's DuplicatedStudyError, taking the
-    # rest of the run with it as a failed dependency. The rehearsal found exactly that on its
-    # first outing. The guard above skips a seed that FINISHED; this is what carries a seed that
-    # was halfway.
-    BENCH_IMAGE=senbon-bench:senbonzakura "$BENCH/run-isolated.sh" \\
-        --tool senbonzakura \\
-        --model "$HOME/bench-models/Qwen3-1.7B" \\
-        --corpus "$HOME/track-heldout" \\
-        --eval "$HOME/bench-eval" \\
-        --senbon-src "$RUN/src" \\
-        --out "$OUT/senbon-seed$S" \\
-        -- python -u -m senbonzakura kageyoshi \\
-             --model /model --track /corpus \\
-             --trials 200 --patience 0 --device cuda --seed "$S" --resume \\
-             --out /work/out || { echo "seed $S FAILED"; exit 1; }
-done
-echo SENBON_OK
+PYTHONPATH=$HOME/senbon-run/src $HOME/track2/venv/bin/python -m senbonzakura.bench head-to-head \\
+    --tools senbon,heretic --seeds 42,43,44,45,46 --trials 200 \\
+    --model "$HOME/bench-models/Qwen3-1.7B" --track "$HOME/track-heldout" \\
+    --eval-slices "$HOME/bench-eval" \\
+    --harmful "$HOME/track-heldout/bad_eval_ds" --harmless "$HOME/track-heldout/good_ds" \\
+    --skip-harmful 128 --batch 16 \\
+    --isolate docker --image senbon=senbon-bench:senbonzakura --image heretic=senbon-bench:heretic \\
+    --out "$HOME/bench-out/h2h"
+echo BENCH_OK
 """
 
-# ── The Heretic arms ──────────────────────────────────────────────────────────────────
-
-[[job]]
-id = "heretic-arms"
-name = "Heretic, five seeds, same corpus, sealed box"
-machine = "rog"
-deps = ["senbon-arms"]
-# MEASURED, not guessed. A dry run of one eight-trial arm on 2026-08-05 gave 406s of fixed setup
-# (model load, batch-size probe, residual collection, baseline count) and 13.7s per trial, so a
-# 200-trial seed is about 52 minutes and five seeds about 4.4 hours. The selection pass adds
-# roughly 11 minutes a seed. Call it 5.3 hours, and this ceiling is a little over four times that,
-# which leaves room for a slower card without letting a genuine hang run all day.
-timeout_secs = 43200
-resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
-success = { type = "all", of = [
-    { type = "exit-zero" },
-    { type = "stdout-contains", needle = "HERETIC_OK" },
-    { type = "stdout-lacks", needle = "FAILED" },
-    { type = "not-timed-out" },
-] }
-command = """
-set -euo pipefail
-exec 2>&1
-BENCH=$HOME/bench
-OUT=$HOME/bench-out/h2h
-PY=$HOME/track2/venv/bin/python
-exec 8>"$HOME/senbon-run/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
-
-for S in 42 43 44 45 46; do
-    # Two container runs per seed, so two guards. A single STATUS file cannot serve both: the
-    # selection pass overwrites it, and a seed whose search finished but whose selection failed
-    # would then look unstarted and burn 200 trials again. Each stage is guarded on the artefact
-    # that stage produces.
-    if [ -f "$OUT/heretic-seed$S/best_of_n.json" ]; then
-        echo "  seed $S already complete"; continue
-    fi
-    if [ -f "$OUT/heretic-seed$S/budget.json" ] &&
-       [ "$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['exit_code'])" \\
-              "$OUT/heretic-seed$S/budget.json" 2>/dev/null)" = "0" ]; then
-        echo "  seed $S search already complete, selection pass still owed"
-    else
-    echo "  heretic seed $S"
-    # The corpus is mounted read-only at /corpus and Heretic is pointed at it, so both tools read
-    # the same prompts. Its own defaults would pull mlabonne sets from the Hub, which the sealed
-    # box cannot reach: the isolation forces the comparability rather than merely permitting it.
-    "$BENCH/run-isolated.sh" \\
-        --tool heretic --ref v1.4.0 \\
-        --model "$HOME/bench-models/Qwen3-1.7B" \\
-        --corpus "$HOME/track-heldout" \\
-        --eval "$HOME/bench-eval" \\
-        --senbon-src "$HOME/senbon-run/src" \\
-        --out "$OUT/heretic-seed$S" \\
-        -- python /work/bench/run_heretic.py --seed "$S" --trials 200 --dir-prompts 256 \\
-             --model /model --good /corpus/good_ds --bad /corpus/bad_ds \\
-             --keyword-prompts /corpus-eval/keyword_prompts.txt \\
-             --kl-prompts /corpus-eval/kl_prompts.txt \\
-             --out /work/out || { echo "seed $S FAILED"; exit 1; }
-    fi
-
-    # The equal-budget definition promises Heretic the same best-of-N selection senbonzakura gives
-    # itself, and an arm without it is not the matched comparison the gate asks for. A separate
-    # container run, because the search and the selection are separate spends and the budget file
-    # records them separately. `budget.json` carries best_of_n_applied, which the report reads.
-    "$BENCH/run-isolated.sh" \\
-        --tool heretic-best-of-n --ref v1.4.0 \\
-        --model "$HOME/bench-models/Qwen3-1.7B" \\
-        --corpus "$HOME/track-heldout" \\
-        --eval "$HOME/bench-eval" \\
-        --senbon-src "$HOME/senbon-run/src" \\
-        --out "$OUT/heretic-seed$S" \\
-        -- python /work/bench/best_of_n_heretic.py \\
-             --out /work/out --top-n 6 \\
-             --final-prompts /corpus-eval/final_prompts.txt \\
-             --keyword-prompts /corpus-eval/keyword_prompts.txt \\
-             || { echo "seed $S BEST-OF-N FAILED"; exit 1; }
-done
-echo HERETIC_OK
-"""
-
-# ── One judge for every model, ours, applied afterwards ───────────────────────────────
-
-[[job]]
-id = "score"
-name = "score every model with the same instrument"
-machine = "rog"
-deps = ["heretic-arms"]
-timeout_secs = 43200
-resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
-success = { type = "all", of = [
-    { type = "exit-zero" },
-    { type = "stdout-contains", needle = "SCORE_OK" },
-    { type = "stdout-lacks", needle = "FAILED" },
-    { type = "not-timed-out" },
-] }
-command = """
-set -euo pipefail
-exec 2>&1
-RUN=$HOME/senbon-run
-OUT=$HOME/bench-out/h2h
-PY=$HOME/track2/venv/bin/python
-cd "$RUN"
-exec 8>"$RUN/abl/gpu.lock"
-flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 21600 8 || { echo "GPU_WAIT_TIMEOUT"; exit 1; }; }
-
-# Every arm from both tools goes through the SAME scorer, including senbonzakura's own, so the
-# table is not partly a comparison of judges. Heretic ships its own and it is not used here.
-#
-# Each Heretic seed contributes TWO models: `model` is the winner of the best-of-N pass the equal
-# budget promises it, and `model-heretic-own` is the trial Heretic's own menu offers first. Both
-# are scored so a reader can see for themselves whether the selection pass we added is what moved
-# the number, instead of having to take the claim on trust.
-# THE COMPASS TAKES DATASET PATHS, NOT A TRACK. `--harmful` and `--harmless` are required and
-# name dataset directories; there is no `--track`. And `--skip-harmful` takes a COUNT: passed
-# bare it consumed the next argument and argparse rejected the whole invocation. 128 drops the
-# head of the harmful set, which is where the search picked its winner, so what remains is held
-# out from the selection. 320 (the default) does the same for the harmless side, covering the 256
-# prompts the directions were fitted on.
-#
-# THE TWO TOOLS SAVE THEIR MODELS IN DIFFERENT SHAPES, which cost a rehearsal to notice.
-# senbonzakura writes its model straight into --out, so the arm directory IS the model.
-# Heretic's models come from the selection pass, which writes the winner to `model/` and, when it
-# differs, Heretic's own first offer to `model-heretic-own/`. A loop that assumed one shape
-# scored nothing at all for one of the tools.
-HARMFUL="$HOME/track-heldout/bad_eval_ds"
-HARMLESS="$HOME/track-heldout/good_ds"
-failed=0
-scored=0
-
-score_one() {
-    local dir="$1" name="$2" required="$3"
-    if [ ! -f "$dir/config.json" ]; then
-        if [ "$required" = "required" ]; then
-            echo "  $name: NO MODEL at $dir; the arm did not save one"
-            failed=$((failed + 1))
-        fi
-        return 0
-    fi
-    # The compass records the model it was POINTED AT, which is the arm directory, not a hub
-    # identifier. Guarding on the hub name asked for a value this file has never carried, so the
-    # branch below never fired and every retry re-scored every arm from scratch. `$dir` is both
-    # what the file actually holds and the thing worth checking: it says this score came from
-    # THIS arm rather than from some other run that happened to leave a readable file here.
-    if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model="$dir" label="$name" >/dev/null 2>&1; then
-        echo "  $name already scored"; scored=$((scored + 1)); return 0
-    fi
-    echo "  scoring $name"
-    if PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
-        --model "$dir" --harmful "$HARMFUL" --harmless "$HARMLESS" \\
-        --skip-harmful 128 --label "$name" \\
-        --device cuda --out "$OUT/scored-$name.json"; then
-        scored=$((scored + 1))
-    else
-        echo "  $name scoring FAILED"; failed=$((failed + 1))
-    fi
-}
-
-for D in "$OUT"/senbon-seed*; do
-    [ -d "$D" ] || continue
-    score_one "$D" "$(basename "$D")" required
-done
-for D in "$OUT"/heretic-seed*; do
-    [ -d "$D" ] || continue
-    n=$(basename "$D")
-    score_one "$D/model" "$n" required
-    # Optional: the selection pass only writes this when its pick differed from Heretic's own.
-    score_one "$D/model-heretic-own" "$n-own-pick" optional
-done
-
-# THE NEEDLE IS EARNED, NOT PRINTED REGARDLESS. This job used to emit its success marker on the
-# way out whatever had happened, so a rehearsal in which every single arm failed to score came
-# back green with five jobs done. A success predicate that a total failure satisfies is not a
-# predicate. The marker is deliberately NOT written anywhere in this prose: a comment naming it
-# is one careless edit away from becoming an echo of it, which is exactly how it got printed
-# unconditionally a second time on 2026-08-06.
-echo "scored $scored, failed $failed"
-if [ "$failed" -ne 0 ]; then
-    echo "SCORING FAILED for $failed model(s); the table cannot be built from a partial set"
-    exit 1
-fi
-if [ "$scored" -eq 0 ]; then
-    echo "NOTHING WAS SCORED: no arm directories matched, so there is no table to build"
-    exit 1
-fi
-echo SCORE_OK
-"""
-
-# ── The report ────────────────────────────────────────────────────────────────────────
-#
-# NOT `report_bands.py`. That reads the K-comparison grid `senbonzakura validate` writes: one
-# model, several direction budgets, ranked within a matched-refusal band. A head-to-head is a
-# different shape, so pointed at compass scores it correctly reported that it could see no grid,
-# and then, because the job swallowed the failure, printed success anyway.
-
-[[job]]
-id = "report"
-name = "read it, and publish whatever it says"
-machine = "rog"
-deps = ["score"]
-timeout_secs = 1800
-success = { type = "all", of = [
-    { type = "exit-zero" },
-    { type = "stdout-contains", needle = "REPORT_OK" },
-    { type = "stdout-lacks", needle = "FAILED" },
-    { type = "not-timed-out" },
-] }
-command = """
-set -euo pipefail
-exec 2>&1
-RUN=$HOME/senbon-run
-OUT=$HOME/bench-out/h2h
-PY=$HOME/track2/venv/bin/python
-cd "$RUN"
-
-# The verdict comes from the harness, never from a fresh argmin here. It compares the two tools on
-# the ONE axis where a comparison means something (our compass, run by us over every model from
-# both tools, on the same held-out prompts) and applies the gate's own tie rule: a gap smaller
-# than the spread is a tie. It prints each tool's self-reported refusal and KL beside that, in
-# labelled rows rather than a shared column, because those come from different estimators on
-# different slices and one column would repeat the error that withdrew four claims on 2026-08-05.
-PYTHONPATH=src "$PY" tools/report_head_to_head.py "$OUT" || {
-    echo "REPORT FAILED: see above. An incomplete set of arms is not a table."
-    exit 1
-}
-
-echo
-echo "Read against bench/EQUAL-BUDGET.md: senbonzakura's arms were warm-started and Heretic's"
-echo "were not, which is the one asymmetry left standing and is disclosed rather than removed."
-echo "Everything else was matched. Whatever this says goes in the README."
-echo REPORT_OK
-"""
+# The stall watchdog belongs here rather than beside `timeout_secs`, and writing it at the job's
+# top level is how a ten-hour GPU job ended up with none at all: serde accepted the key and threw
+# it away. holst now refuses an unknown key rather than dropping it, which is what makes this note
+# a note rather than a trap. No new output for 45 minutes means the card has gone, not that a
+# trial is slow: the slowest single step measured is the save, at under a minute.
+[job.resources]
+stall_secs = 2700

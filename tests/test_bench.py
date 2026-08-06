@@ -29,11 +29,15 @@ def runner():
         def __call__(self, argv, *, cwd=None, log=print):
             self.calls.append(list(argv))
             if self.produce:
-                # Find the arm directory the way a real arm does: it is told where to write.
-                out = argv[argv.index("--out") + 1]
                 from pathlib import Path
-                for name in ("abliteration.json", "config.json", "best_of_n.json"):
-                    (Path(out) / name).write_text("{}", encoding="utf-8")
+                out = Path(argv[argv.index("--out") + 1])
+                if "compass" in argv:
+                    # The compass writes one results file, not a directory of artefacts.
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text("{}", encoding="utf-8")
+                else:
+                    for name in ("abliteration.json", "config.json", "best_of_n.json"):
+                        (out / name).write_text("{}", encoding="utf-8")
             return self.code
     return Fake()
 
@@ -304,8 +308,8 @@ def test_running_unsealed_warns_rather_than_proceeding_quietly(tmp_path, monkeyp
     (tmp_path / "track").mkdir()
     with pytest.raises(SystemExit):
         bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
-                    "--out", str(tmp_path / "o"), "--seeds", "42",
-                    "--eval-slices", str(_slices(tmp_path))])
+                    "--out", str(tmp_path / "o"), "--seeds", "42", "--no-score",
+                    "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
     assert "run unsealed" in capsys.readouterr().err
 
 
@@ -335,8 +339,8 @@ def test_a_finished_run_writes_a_summary_that_traces_to_a_file(tmp_path, monkeyp
     (tmp_path / "track").mkdir()
     out = tmp_path / "o"
     summary = bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
-                          "--out", str(out), "--seeds", "42",
-                          "--eval-slices", str(_slices(tmp_path))])
+                          "--out", str(out), "--seeds", "42", "--no-score",
+                          "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
     assert json.loads((out / "bench-summary.json").read_text(encoding="utf-8")) == summary
     assert summary["failed"] == 0 and summary["ran"] == 2
 
@@ -347,8 +351,8 @@ def test_a_run_with_a_failed_arm_exits_non_zero(tmp_path, monkeypatch, runner):
     (tmp_path / "track").mkdir()
     with pytest.raises(SystemExit):
         bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
-                    "--out", str(tmp_path / "o"), "--seeds", "42",
-                    "--eval-slices", str(_slices(tmp_path))])
+                    "--out", str(tmp_path / "o"), "--seeds", "42", "--no-score",
+                    "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
 
 
 # ── the adapters are data, and the two tools genuinely differ ─────────────────────────
@@ -384,3 +388,109 @@ def test_an_unreadable_artefact_is_a_loud_error_not_an_empty_reading(tmp_path):
     (arm / "abliteration.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(bench.BenchError):
         bench.ADAPTERS["senbon"].self_report(arm)
+
+
+# ── scoring: the three wrong ways it was invoked, each now impossible ─────────────────
+def test_the_compass_is_never_passed_a_track_it_does_not_have(tmp_path):
+    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+                            label="x", skip_harmful=128, batch=16)
+    assert "--track" not in argv, "the compass has no --track; passing one killed it outright"
+    assert "--harmful" in argv and "--harmless" in argv
+
+
+def test_skip_harmful_carries_its_count_and_never_travels_bare(tmp_path):
+    """Passed bare, it swallowed the next argument and the run was measured on the wrong slice."""
+    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+                            label="x", skip_harmful=128, batch=16)
+    assert argv[argv.index("--skip-harmful") + 1] == "128"
+
+
+def test_each_tools_model_is_looked_for_where_that_tool_puts_it(tmp_path):
+    """Assuming one shape scored a whole tool's arms against nothing at all."""
+    senbon = bench.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
+    heretic = bench.ArmResult("heretic", 42, tmp_path / "heretic-seed42", True, True, "")
+    assert bench.arm_model_dir(senbon, bench.ADAPTERS["senbon"]) == tmp_path / "senbon-seed42"
+    assert bench.arm_model_dir(heretic, bench.ADAPTERS["heretic"]) == \
+        tmp_path / "heretic-seed42" / "model"
+
+
+def test_an_arm_with_no_model_is_named_rather_than_skipped_quietly(tmp_path, runner):
+    r = bench.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
+    (tmp_path / "senbon-seed42").mkdir()
+    scored = bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    assert scored[0]["ok"] is False and "no model" in scored[0]["reason"]
+    assert not runner.calls, "the compass was run against a directory holding no model"
+
+
+def test_scoring_that_exits_zero_without_writing_a_file_is_a_failure(tmp_path, runner):
+    arm = tmp_path / "senbon-seed42"
+    arm.mkdir()
+    (arm / "config.json").write_text("{}", encoding="utf-8")
+    runner.produce = False
+    r = bench.ArmResult("senbon", 42, arm, True, True, "")
+    scored = bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    assert scored[0]["ok"] is False
+
+
+def test_an_already_scored_arm_is_not_scored_again(tmp_path, runner):
+    arm = tmp_path / "senbon-seed42"
+    arm.mkdir()
+    (arm / "config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "scored-senbon-seed42.json").write_text("{}", encoding="utf-8")
+    r = bench.ArmResult("senbon", 42, arm, True, True, "")
+    bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    assert not runner.calls
+
+
+def test_every_arm_is_scored_at_the_same_batch_size(tmp_path, runner):
+    """Two arms of one comparison measured under different conditions is the mistake the
+    console is scheduled to remove; it should not be reachable here in the first place.
+    """
+    results = []
+    for seed in (42, 43):
+        arm = tmp_path / f"senbon-seed{seed}"
+        arm.mkdir()
+        (arm / "config.json").write_text("{}", encoding="utf-8")
+        results.append(bench.ArmResult("senbon", seed, arm, True, True, ""))
+    bench.score_arms(results, harmful="h", harmless="g", out=tmp_path, runner=runner, batch=8)
+    batches = [c[c.index("--batch") + 1] for c in runner.calls]
+    assert batches == ["8", "8"]
+
+
+def test_scoring_inputs_are_checked_before_any_gpu_time_is_spent(tmp_path):
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=_slices(tmp_path, tmp_path),
+                        score=True, harmful="", harmless="")
+    assert any("--harmful" in x for x in p) and any("--harmless" in x for x in p)
+
+
+def test_a_scoring_input_that_is_not_there_is_caught_at_preflight(tmp_path):
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=_slices(tmp_path, tmp_path),
+                        score=True, harmful=tmp_path / "nowhere", harmless=tmp_path)
+    assert any("not there" in x for x in p)
+
+
+def test_no_score_leaves_the_scoring_inputs_unrequired(tmp_path):
+    assert bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                           model="m", isolate="none", images={},
+                           slices=_slices(tmp_path, tmp_path), score=False) == []
+
+
+# ── the report is reachable from the installed tool, not only from a checkout ─────────
+def test_the_report_is_a_subcommand_rather_than_a_script_in_the_repository(tmp_path):
+    """It lived under tools/, so it did not ship in the wheel.
+
+    A reader's whole recourse against a table they doubt is being able to re-derive it, and the
+    only thing that could read a published head-to-head was a checkout of this repository. Same
+    defect as the compass shipping in no released artefact, and it matters more here.
+    """
+    with pytest.raises(SystemExit) as e:
+        bench.main(["report", str(tmp_path)])
+    assert "no scored arms" in str(e.value)
+
+
+def test_the_report_refuses_a_directory_that_is_not_there(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        bench.main(["report", str(tmp_path / "nowhere")])
+    assert "no directory" in str(e.value)

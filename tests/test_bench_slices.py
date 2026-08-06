@@ -1,24 +1,15 @@
-"""Tests for bench/stage_eval_slices.py, the shared evaluation slices.
+"""Tests for `senbonzakura bench stage`, the shared evaluation slices.
 
 The head-to-head is only a comparison of two tools if both are scored on the same prompts. These
 slices are what make that true, and every check here is written around a way they could quietly
 stop being the same list rather than around the happy path: a line break that splits one prompt
 into two, a blank row that Heretic drops and we keep, padding that Heretic strips and we do not.
 """
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 from datasets import Dataset
 
+from senbonzakura import benchstage as ses
 from senbonzakura.cli import kl_eval_slice
-
-_SPEC = importlib.util.spec_from_file_location(
-    "stage_eval_slices", Path(__file__).resolve().parent.parent / "bench" / "stage_eval_slices.py")
-ses = importlib.util.module_from_spec(_SPEC)
-sys.modules["stage_eval_slices"] = ses
-_SPEC.loader.exec_module(ses)
 
 
 @pytest.fixture
@@ -30,6 +21,11 @@ def track(tmp_path):
         Dataset.from_dict({"text": bad}).save_to_disk(str(root / "bad_eval_ds"))
         Dataset.from_dict({"text": [f"harmless prompt {i}" for i in range(n_good)]}).save_to_disk(
             str(root / "good_ds"))
+        # The fitting partition. A real track has always had it; the fixture did not, because
+        # nothing read it until the staging step began writing the prompts Heretic extracts its
+        # directions from. A fixture narrower than the thing it stands in for hides exactly this.
+        Dataset.from_dict({"text": [f"fit harmful {i}" for i in range(n_bad)]}).save_to_disk(
+            str(root / "bad_ds"))
         return root
     return build
 
@@ -52,6 +48,41 @@ def test_writes_three_slices_at_the_requested_sizes(track, tmp_path):
     assert len(lines(out / "keyword_prompts.txt")) == 8
     assert len(lines(out / "final_prompts.txt")) == 16
     assert len(lines(out / "kl_prompts.txt")) == 6
+
+
+def test_the_fitting_prompts_are_staged_too(track, tmp_path):
+    """Heretic takes these as files; we read them from the track. Same rows, or the two tools
+    fitted their directions on different evidence and nothing in either tool's own reporting
+    would ever say so.
+    """
+    out = tmp_path / "eval"
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    assert len(lines(out / "bad.txt")) == 10
+    assert len(lines(out / "good.txt")) == 10
+
+
+def test_the_slices_record_the_corpus_they_were_cut_from(track, tmp_path):
+    """Otherwise slices from corpus A beside a run pointed at corpus B is silent."""
+    import json
+
+    from senbonzakura import bench
+    t = track()
+    out = tmp_path / "eval"
+    run(t, out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    recorded = json.loads((out / bench.SLICE_PROVENANCE).read_text(encoding="utf-8"))
+    assert recorded["track"] == str(t.resolve())
+    assert bench.slices_match_track(out, t) == []
+
+
+def test_every_file_the_benchmark_expects_is_written(track, tmp_path):
+    """The staging step and the runner must agree about the filenames, or preflight refuses a
+    correctly staged directory and nobody can tell which half is wrong.
+    """
+    from senbonzakura import bench
+    out = tmp_path / "eval"
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    for name in bench.SLICE_FILES:
+        assert (out / name).is_file(), f"{name} is expected by the runner and never written"
 
 
 def test_the_kl_slice_is_disjoint_from_the_extraction_prompts(track, tmp_path):

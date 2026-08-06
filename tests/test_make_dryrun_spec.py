@@ -152,9 +152,9 @@ def _jobs(spec_text):
     doc = tomllib.loads(spec_text)
     out = []
     for job in doc.get("job", []):
-        for leaf in _leaves(job.get("success")):
-            if leaf.get("type") == "stdout-contains" and leaf.get("needle"):
-                out.append((job["id"], leaf["needle"], job["command"]))
+        out.extend((job["id"], leaf["needle"], job["command"])
+                   for leaf in _leaves(job.get("success"))
+                   if leaf.get("type") == "stdout-contains" and leaf.get("needle"))
     return out
 
 

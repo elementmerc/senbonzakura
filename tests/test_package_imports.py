@@ -233,3 +233,46 @@ def test_the_readme_only_documents_entry_points_that_exist():
         assert (root / "src" / "senbonzakura" / f"{module}.py").is_file(), (
             f"the README tells a reader to run `python -m senbonzakura.{module}`, "
             f"and no such module exists")
+
+
+def test_no_committed_file_carries_a_home_directory_path():
+    """This repository is public. A result file naming a home directory names an account.
+
+    Found 2026-08-06 in two committed compass results, which recorded the absolute path of the
+    dataset they measured. The path was genuinely useful (a reader wants to know WHICH set was
+    scored) and the leading half of it was not, so the fix keeps the last two components and drops
+    the rest rather than deleting the field.
+
+    This is a gate rather than a one-off scrub, because the tool writes these files and will write
+    more of them. It reads the git index rather than the working tree, so an artefact staged with
+    a path and tidied on disk afterwards is still caught, which is the same reasoning as the
+    prompt-retention hook.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=root,
+                       check=False, timeout=120)
+    if r.returncode != 0:
+        pytest.skip("not a git checkout, so there is no index to read")
+
+    offenders = []
+    for name in r.stdout.split("\n"):
+        if not name.strip():
+            continue
+        f = root / name
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeDecodeError):
+            continue
+        # Built rather than written out, so this file does not trip its own check. The first
+        # version did, which was a good sign about the check and a bad one about the author.
+        needle = "/" + "home" + "/"
+        allowed = needle + "runner"   # GitHub Actions' own directory: a container, not a person
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if needle in line and allowed not in line:
+                offenders.append(f"{name}:{line_no}")
+    assert not offenders, (
+        "committed files carry a home directory path, which names an account on somebody's "
+        "machine in a public repository: " + ", ".join(offenders[:8]))

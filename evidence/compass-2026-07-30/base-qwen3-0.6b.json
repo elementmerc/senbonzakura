@@ -136,7 +136,7 @@
     }
   },
   "topic_matched": {
-    "source": "/home/mercury/track-matched/good_matched_ds",
+    "source": "<local>/track-matched/good_matched_ds",
     "n": 280,
     "skip": 0,
     "auc": 0.7104,

@@ -1,0 +1,386 @@
+"""Tests for `senbonzakura bench head-to-head`, the operation that used to be a run spec.
+
+The defects this module exists to have fixed are all from 2026-08-05 and 06, and every one of them
+lived in shell embedded in orchestrator configuration rather than in either tool: a resume guard
+that asked its artefact for a key the artefact had never carried, so it could never fire; a success
+marker printed whether or not the work happened, so a rehearsal reported five jobs done having
+measured nothing; a scorer invoked three wrong ways at once. Configuration cannot be tested. These
+tests are the argument for moving the operation into code.
+
+No test here starts a container, touches a GPU, or runs a model. The subprocess boundary is
+injected, which is the whole reason the operation is worth having in Python.
+"""
+import json
+
+import pytest
+
+from senbonzakura import bench
+
+
+@pytest.fixture
+def runner():
+    """A fake arm runner: records what it was asked to run, and can be told to fail or to lie."""
+    class Fake:
+        def __init__(self):
+            self.calls = []
+            self.code = 0
+            self.produce = True
+
+        def __call__(self, argv, *, cwd=None, log=print):
+            self.calls.append(list(argv))
+            if self.produce:
+                # Find the arm directory the way a real arm does: it is told where to write.
+                out = argv[argv.index("--out") + 1]
+                from pathlib import Path
+                for name in ("abliteration.json", "config.json", "best_of_n.json"):
+                    (Path(out) / name).write_text("{}", encoding="utf-8")
+            return self.code
+    return Fake()
+
+
+SLICE_FILES = bench.SLICE_FILES
+
+
+def _slices(tmp_path, track=None):
+    """The staged prompt files every tool scores on. One set, or the arms are not comparable."""
+    d = tmp_path / "slices"
+    d.mkdir(exist_ok=True)
+    for f in SLICE_FILES:
+        (d / f).write_text("a prompt\n", encoding="utf-8")
+    bench.write_slice_provenance(d, track if track is not None else tmp_path / "track")
+    return d
+
+
+def _args(tmp_path, **over):
+    track = tmp_path / "track"
+    track.mkdir(exist_ok=True)
+    base = dict(model="/models/qwen", track=track, out=tmp_path / "out", trials=200,
+                slices=_slices(tmp_path))
+    base.update(over)
+    return base
+
+
+# ── the resume guard, which is the defect this file most exists for ───────────────────
+def test_a_finished_arm_is_skipped_on_a_second_run(tmp_path, runner):
+    a = _args(tmp_path)
+    first = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert first.ran and first.ok
+    second = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert not second.ran and second.ok
+    assert len(runner.calls) == 1, "the finished arm was run again"
+
+
+def test_an_arm_from_a_different_configuration_is_not_reused(tmp_path, runner):
+    """"A file is here" is what a guard says when it has stopped guarding."""
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    a["trials"] = 60
+    again = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert again.ran, "an arm searched for 200 trials was reused for a 60-trial run"
+
+
+def test_a_different_model_is_not_reused_either(tmp_path, runner):
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    a["model"] = "/models/somethingelse"
+    assert bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a).ran
+
+
+def test_a_manifest_without_its_artefacts_does_not_count_as_done(tmp_path, runner):
+    """The manifest is a claim; the artefacts are the evidence. Both, or it runs again."""
+    a = _args(tmp_path)
+    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    (r.arm / "abliteration.json").unlink()
+    again = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert again.ran
+
+
+def test_the_guard_always_says_why(tmp_path):
+    """A guard that reports only true or false cannot be debugged when it is wrong."""
+    arm = tmp_path / "senbon-seed42"
+    arm.mkdir()
+    expected = bench.arm_manifest(bench.ADAPTERS["senbon"], 42, "/m", 200)
+    done, why = bench.arm_is_done(arm, expected, bench.ADAPTERS["senbon"])
+    assert not done and "no manifest" in why
+
+
+def test_force_re_runs_a_finished_arm(tmp_path, runner):
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, force=True, **a)
+    assert len(runner.calls) == 2
+
+
+# ── exit zero is not success ──────────────────────────────────────────────────────────
+def test_an_arm_that_exits_zero_producing_nothing_is_a_failure(tmp_path, runner):
+    """The 2026-08-05 rehearsal's arms exited 0 having written nothing at all."""
+    runner.produce = False
+    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    assert not r.ok and "produced no" in r.reason
+
+
+def test_a_failed_arm_writes_no_manifest(tmp_path, runner):
+    """Otherwise the next run would skip it and the failure would become permanent and silent."""
+    runner.produce = False
+    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    assert not (r.arm / bench.ARM_MANIFEST).exists()
+
+
+def test_a_nonzero_exit_is_a_failure_and_names_the_code(tmp_path, runner):
+    runner.code = 137
+    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    assert not r.ok and "137" in r.reason
+
+
+# ── the arms are given the same problem ───────────────────────────────────────────────
+def test_every_arm_gets_the_same_trial_budget(tmp_path, runner):
+    """An equal-budget claim is the whole comparison, and it used to live in a bash loop."""
+    bench.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner,
+                       **_args(tmp_path))
+    budgets = [c[c.index("--trials") + 1] for c in runner.calls]
+    assert budgets == ["200"] * 4
+
+
+def test_every_arm_reads_prompts_traceable_to_one_corpus(tmp_path, runner):
+    """The two tools no longer name the corpus the same way, so the invariant moved.
+
+    senbonzakura is pointed at the track; Heretic is pointed at prompt files cut from it. Once
+    that is true, "both tools read the same corpus" is no longer visible in either command line,
+    and becomes an invariant something has to check rather than one a reader can see.
+    """
+    a = _args(tmp_path)
+    bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    senbon, heretic = runner.calls
+    assert senbon[senbon.index("--track") + 1] == str(a["track"])
+    assert str(a["slices"]) in " ".join(heretic)
+    assert bench.slices_match_track(a["slices"], a["track"]) == []
+
+
+def test_slices_cut_from_another_corpus_are_refused(tmp_path):
+    """Every arm would finish, every artefact would be present, and the table would mean nothing."""
+    other = tmp_path / "othercorpus"
+    other.mkdir()
+    d = _slices(tmp_path, track=other)
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=d)
+    assert any("different corpora" in x for x in p)
+
+
+def test_slices_that_cannot_say_where_they_came_from_are_refused(tmp_path):
+    d = _slices(tmp_path)
+    (d / bench.SLICE_PROVENANCE).unlink()
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=d)
+    assert any("which corpus" in x for x in p)
+
+
+def test_each_seed_reaches_its_arm(tmp_path, runner):
+    bench.head_to_head(tools=["senbon"], seeds=[42, 43, 44], runner=runner, **_args(tmp_path))
+    assert [c[c.index("--seed") + 1] for c in runner.calls] == ["42", "43", "44"]
+
+
+def test_a_failing_arm_does_not_stop_the_others(tmp_path, runner):
+    """One bad seed should cost that seed, not the night."""
+    runner.code = 1
+    results = bench.head_to_head(tools=["senbon"], seeds=[42, 43], runner=runner,
+                                 **_args(tmp_path))
+    assert len(results) == 2 and bench.summarise(results)["failed"] == 2
+
+
+# ── isolation ─────────────────────────────────────────────────────────────────────────
+def test_the_sealed_box_drops_the_network_and_the_capabilities():
+    argv = bench.isolate_argv(["python", "run.py"], image="img",
+                              mounts=[("/tmp", "/corpus", "ro")])
+    for flag in ("--network", "none", "--read-only", "--cap-drop", "ALL", "no-new-privileges"):
+        assert flag in argv, f"{flag} missing, so the box is not sealed"
+
+
+def test_inputs_are_mounted_read_only_and_output_is_not(tmp_path):
+    argv = bench.isolate_argv(["x"], image="img",
+                              mounts=[(tmp_path, "/corpus", "ro"), (tmp_path, "/work/out", "rw")])
+    joined = " ".join(argv)
+    assert "/corpus:ro" in joined and "/work/out:rw" in joined
+
+
+def test_the_command_survives_wrapping_intact():
+    argv = bench.isolate_argv(["python", "-m", "x", "--flag", "a b"], image="img", mounts=[])
+    assert argv[-5:] == ["python", "-m", "x", "--flag", "a b"]
+
+
+def test_an_arm_command_is_a_list_so_a_path_with_a_space_stays_one_argument(tmp_path, runner):
+    a = _args(tmp_path, model="/models/my model")
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert "/models/my model" in runner.calls[0]
+
+
+# ── preflight ─────────────────────────────────────────────────────────────────────────
+def test_one_tool_is_not_a_head_to_head(tmp_path):
+    p = bench.preflight(tools=["senbon"], track=tmp_path, out=tmp_path / "o", model="m",
+                        isolate="none", images={})
+    assert any("needs two" in x for x in p)
+
+
+def test_an_unknown_tool_is_named_rather_than_ignored(tmp_path):
+    p = bench.preflight(tools=["senbon", "nosuchtool"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="none", images={})
+    assert any("nosuchtool" in x for x in p)
+
+
+def test_a_missing_corpus_is_caught_before_the_first_gpu_second(tmp_path):
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "nowhere",
+                        out=tmp_path / "o", model="m", isolate="none", images={})
+    assert any("no corpus" in x for x in p)
+
+
+def test_an_unwritable_output_directory_is_caught(tmp_path):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("i am a file, not a directory", encoding="utf-8")
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=blocked, model="m",
+                        isolate="none", images={})
+    assert any("cannot write" in x for x in p)
+
+
+def test_asking_for_isolation_without_an_image_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "docker_available", lambda: True)
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="docker", images={"senbon": "img"})
+    assert any("heretic" in x and "image" in x for x in p)
+
+
+def test_asking_for_isolation_without_docker_says_what_the_alternative_costs(tmp_path,
+                                                                             monkeypatch):
+    monkeypatch.setattr(bench, "docker_available", lambda: False)
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="docker", images={})
+    assert any("credentials" in x for x in p)
+
+
+def test_a_clean_setup_has_no_complaints(tmp_path):
+    assert bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                           model="m", isolate="none", images={},
+                           slices=_slices(tmp_path, track=tmp_path)) == []
+
+
+def test_a_tool_that_would_bring_its_own_prompts_is_refused_without_staged_slices(tmp_path):
+    """A tool steered by its own scorer is solving a different problem from ours."""
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=None)
+    assert any("eval-slices" in x for x in p)
+
+
+def test_an_incomplete_slice_directory_names_what_is_missing(tmp_path):
+    d = _slices(tmp_path, track=tmp_path)
+    (d / "kl_prompts.txt").unlink()
+    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+                        model="m", isolate="none", images={}, slices=d)
+    assert any("kl_prompts.txt" in x for x in p)
+
+
+def test_heretic_is_given_the_staged_prompts_rather_than_fetching_its_own(tmp_path, runner):
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, **a)
+    argv = runner.calls[0]
+    for flag in ("--good", "--bad", "--keyword-prompts", "--kl-prompts"):
+        assert flag in argv, f"heretic was not told where {flag} is, so it would fetch its own"
+
+
+def test_running_heretic_with_no_slices_fails_loudly_rather_than_silently(tmp_path, runner):
+    a = _args(tmp_path, slices=None)
+    with pytest.raises(bench.BenchError) as e:
+        bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, **a)
+    assert "eval-slices" in str(e.value)
+
+
+# ── the command line ──────────────────────────────────────────────────────────────────
+def test_a_refused_preflight_runs_nothing(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        bench.main(["head-to-head", "--tools", "senbon", "--model", "m",
+                    "--track", str(tmp_path), "--out", str(tmp_path / "o")])
+    assert "BENCH REFUSED" in capsys.readouterr().err
+
+
+def test_running_unsealed_warns_rather_than_proceeding_quietly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(bench, "default_runner", lambda *a, **k: 0)
+    (tmp_path / "track").mkdir()
+    with pytest.raises(SystemExit):
+        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+                    "--out", str(tmp_path / "o"), "--seeds", "42",
+                    "--eval-slices", str(_slices(tmp_path))])
+    assert "run unsealed" in capsys.readouterr().err
+
+
+def test_a_repeated_seed_is_refused(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+                    "--out", str(tmp_path / "o"), "--seeds", "42,42"])
+    assert "repeats a value" in str(e.value)
+
+
+def test_a_seed_that_is_not_a_number_is_refused(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+                    "--out", str(tmp_path / "o"), "--seeds", "42,forty-three"])
+    assert "whole numbers" in str(e.value)
+
+
+def test_a_malformed_image_argument_is_refused(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+                    "--out", str(tmp_path / "o"), "--image", "justanimage"])
+    assert "TOOL=IMAGE" in str(e.value)
+
+
+def test_a_finished_run_writes_a_summary_that_traces_to_a_file(tmp_path, monkeypatch, runner):
+    monkeypatch.setattr(bench, "default_runner", runner)
+    (tmp_path / "track").mkdir()
+    out = tmp_path / "o"
+    summary = bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+                          "--out", str(out), "--seeds", "42",
+                          "--eval-slices", str(_slices(tmp_path))])
+    assert json.loads((out / "bench-summary.json").read_text(encoding="utf-8")) == summary
+    assert summary["failed"] == 0 and summary["ran"] == 2
+
+
+def test_a_run_with_a_failed_arm_exits_non_zero(tmp_path, monkeypatch, runner):
+    runner.code = 1
+    monkeypatch.setattr(bench, "default_runner", runner)
+    (tmp_path / "track").mkdir()
+    with pytest.raises(SystemExit):
+        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+                    "--out", str(tmp_path / "o"), "--seeds", "42",
+                    "--eval-slices", str(_slices(tmp_path))])
+
+
+# ── the adapters are data, and the two tools genuinely differ ─────────────────────────
+def test_the_two_tools_disagree_about_where_the_model_lands():
+    """Scoring one tool's arms against nothing at all cost a night on 2026-08-05."""
+    assert bench.ADAPTERS["senbon"].model_subdir == ""
+    assert bench.ADAPTERS["heretic"].model_subdir == "model"
+
+
+def test_every_adapter_declares_what_proves_it_ran():
+    for name, a in bench.ADAPTERS.items():
+        assert a.produces, f"{name} declares no artefact, so nothing can check it"
+
+
+def test_each_tool_reports_its_own_estimator_by_name(tmp_path):
+    """Two tools' KL figures come from different estimators; one column would repeat a withdrawn claim."""
+    arm = tmp_path / "arm"
+    arm.mkdir()
+    (arm / "abliteration.json").write_text(
+        json.dumps({"post_bake_refusals": 0.03, "post_bake_kl": 0.2}), encoding="utf-8")
+    r = bench.ADAPTERS["senbon"].self_report(arm)
+    assert "senbonzakura" in r["kl_estimator"]
+    (arm / "best_of_n.json").write_text(
+        json.dumps({"winner": {"refusals": 0.05, "kl": 0.004}}), encoding="utf-8")
+    h = bench.ADAPTERS["heretic"].self_report(arm)
+    assert "Heretic" in h["kl_estimator"]
+    assert r["kl_estimator"] != h["kl_estimator"]
+
+
+def test_an_unreadable_artefact_is_a_loud_error_not_an_empty_reading(tmp_path):
+    arm = tmp_path / "arm"
+    arm.mkdir()
+    (arm / "abliteration.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(bench.BenchError):
+        bench.ADAPTERS["senbon"].self_report(arm)

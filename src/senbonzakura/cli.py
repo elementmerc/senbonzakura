@@ -2190,12 +2190,12 @@ class Abliterator:
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-DELEGATED = ("compass", "score", "coherence", "track", "validate")
+DELEGATED = ("bench", "compass", "score", "coherence", "track", "validate")
 
 
 def _delegate(name):
-    from . import coherence, margin, score, track, validate
-    return {"compass": margin.main, "score": score.main,
+    from . import bench, coherence, margin, score, track, validate
+    return {"bench": bench.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "track": track.main,
             "validate": validate.main}[name]
 

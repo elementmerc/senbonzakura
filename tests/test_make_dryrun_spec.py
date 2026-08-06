@@ -129,16 +129,73 @@ def test_the_full_on_card_variant_keeps_the_real_budget(real_spec):
 
 
 # ── the needle is the predicate, so it must appear exactly once and never in prose ────
+def _leaves(pred):
+    """Every leaf predicate inside a possibly-nested `all` / `any`.
+
+    Predicates nest. Reading `success["needle"]` finds the needle of a bare `stdout-contains`
+    and nothing at all once that job is strengthened to `{type = "all", of = [...]}`, which is
+    how the three guards below quietly became vacuous on 2026-08-06 the moment the specs were
+    hardened. They kept passing over an empty list, which is the same defect they exist to
+    catch, one layer up. `test_the_guards_below_actually_found_the_jobs` is the fix that makes
+    a repeat loud.
+    """
+    if not isinstance(pred, dict):
+        return []
+    if "of" in pred:
+        return [leaf for sub in pred["of"] for leaf in _leaves(sub)]
+    return [pred]
+
+
 def _jobs(spec_text):
     """(id, needle, command) for every job in a spec, parsed with the stdlib TOML reader."""
     import tomllib
     doc = tomllib.loads(spec_text)
     out = []
     for job in doc.get("job", []):
-        needle = (job.get("success") or {}).get("needle")
-        if needle:
-            out.append((job["id"], needle, job["command"]))
+        for leaf in _leaves(job.get("success")):
+            if leaf.get("type") == "stdout-contains" and leaf.get("needle"):
+                out.append((job["id"], leaf["needle"], job["command"]))
     return out
+
+
+def _spec_jobs(spec_text):
+    import tomllib
+    return tomllib.loads(spec_text).get("job", [])
+
+
+def test_the_guards_below_actually_found_the_jobs(real_spec):
+    """A guard that iterates an empty list passes without checking anything.
+
+    Which is precisely what happened when the success predicates were strengthened: the helper
+    read one key, the key moved inside a nested predicate, and three assertions went green over
+    nothing. This asserts the reader still sees every job before any of them are checked.
+    """
+    found = {job_id for job_id, _, _ in _jobs(real_spec)}
+    declared = {j["id"] for j in _spec_jobs(real_spec)}
+    assert found == declared, f"the marker guards can only see {found} of {declared}"
+
+
+def test_every_job_demands_more_than_a_string_it_printed(real_spec):
+    """A marker is a string, and anything that can print it can pass the job.
+
+    A rehearsal came back five jobs done having measured nothing, because two jobs printed their
+    marker unconditionally. holst has carried richer predicates all along and this spec used the
+    weakest one available for every job. So each now also has to exit cleanly, must not have
+    printed a failure, and must not have been cut off at its timeout.
+    """
+    for job in _spec_jobs(real_spec):
+        types = {leaf.get("type") for leaf in _leaves(job.get("success"))}
+        missing = {"exit-zero", "stdout-contains", "stdout-lacks", "not-timed-out"} - types
+        assert not missing, f"{job['id']}: its success predicate is missing {sorted(missing)}"
+
+
+def test_the_failure_word_the_predicate_watches_for_is_the_one_the_jobs_print(real_spec):
+    """`stdout-lacks FAILED` only guards anything if the jobs say FAILED when they fail."""
+    for job in _spec_jobs(real_spec):
+        lacks = [leaf["needle"] for leaf in _leaves(job.get("success"))
+                 if leaf.get("type") == "stdout-lacks"]
+        assert lacks == ["FAILED"], f"{job['id']}: guards against {lacks}, not FAILED"
+    assert "FAILED" in real_spec, "no job announces failure, so the guard watches for nothing"
 
 
 @pytest.mark.parametrize("on_card", [False, True])

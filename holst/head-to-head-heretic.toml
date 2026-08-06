@@ -44,7 +44,12 @@ id = "setup"
 name = "stage every input, because the runs have no network"
 machine = "rog"
 timeout_secs = 3600
-success = { type = "stdout-contains", needle = "SETUP_OK" }
+success = { type = "all", of = [
+    { type = "exit-zero" },
+    { type = "stdout-contains", needle = "SETUP_OK" },
+    { type = "stdout-lacks", needle = "FAILED" },
+    { type = "not-timed-out" },
+] }
 command = """
 set -euo pipefail
 exec 2>&1
@@ -135,7 +140,12 @@ machine = "rog"
 deps = ["setup"]
 timeout_secs = 43200
 resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
-success = { type = "stdout-contains", needle = "SENBON_OK" }
+success = { type = "all", of = [
+    { type = "exit-zero" },
+    { type = "stdout-contains", needle = "SENBON_OK" },
+    { type = "stdout-lacks", needle = "FAILED" },
+    { type = "not-timed-out" },
+] }
 command = """
 set -euo pipefail
 exec 2>&1
@@ -192,7 +202,12 @@ deps = ["senbon-arms"]
 # which leaves room for a slower card without letting a genuine hang run all day.
 timeout_secs = 43200
 resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
-success = { type = "stdout-contains", needle = "HERETIC_OK" }
+success = { type = "all", of = [
+    { type = "exit-zero" },
+    { type = "stdout-contains", needle = "HERETIC_OK" },
+    { type = "stdout-lacks", needle = "FAILED" },
+    { type = "not-timed-out" },
+] }
 command = """
 set -euo pipefail
 exec 2>&1
@@ -262,7 +277,12 @@ machine = "rog"
 deps = ["heretic-arms"]
 timeout_secs = 43200
 resources = { needs_gpu = true, ram_gb = 6, stall_secs = 2700 }
-success = { type = "stdout-contains", needle = "SCORE_OK" }
+success = { type = "all", of = [
+    { type = "exit-zero" },
+    { type = "stdout-contains", needle = "SCORE_OK" },
+    { type = "stdout-lacks", needle = "FAILED" },
+    { type = "not-timed-out" },
+] }
 command = """
 set -euo pipefail
 exec 2>&1
@@ -368,7 +388,12 @@ name = "read it, and publish whatever it says"
 machine = "rog"
 deps = ["score"]
 timeout_secs = 1800
-success = { type = "stdout-contains", needle = "REPORT_OK" }
+success = { type = "all", of = [
+    { type = "exit-zero" },
+    { type = "stdout-contains", needle = "REPORT_OK" },
+    { type = "stdout-lacks", needle = "FAILED" },
+    { type = "not-timed-out" },
+] }
 command = """
 set -euo pipefail
 exec 2>&1

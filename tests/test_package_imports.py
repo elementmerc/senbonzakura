@@ -236,7 +236,7 @@ def test_the_readme_only_documents_entry_points_that_exist():
 
 
 def test_no_committed_file_carries_a_home_directory_path():
-    """This repository is public. A result file naming a home directory names an account.
+    """A public repository must not carry a home directory path, which names an account.
 
     Found 2026-08-06 in two committed compass results, which recorded the absolute path of the
     dataset they measured. The path was genuinely useful (a reader wants to know WHICH set was

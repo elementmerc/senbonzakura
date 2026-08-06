@@ -183,3 +183,53 @@ def test_the_two_places_the_date_is_written_agree():
     assert src.group(1) == notices.group(1), (
         f"metrics.py says {src.group(1)} and THIRD-PARTY-NOTICES.md says {notices.group(1)}; "
         f"an installed copy would carry two different answers to the same question")
+
+
+def test_every_module_in_the_source_tree_reaches_the_distribution():
+    """The compass shipped in no released artefact, and nothing would have said so.
+
+    `pip install senbonzakura` at 0.3.0 gets a package with no `margin.py`, so the measurement
+    this project is about cannot be run from the thing anyone installs. That particular case is
+    an accident of timing rather than of packaging: the tag predates the compass, and the fix is
+    the next release rather than a code change. Verified 2026-08-06 by building a wheel from this
+    tree and reading it, which carried all twelve modules and both licence files.
+
+    This asserts the property that fix depends on: nothing in the package directory is excluded
+    from packaging. setuptools includes a found package wholesale today, so the guard is against
+    a future `exclude` rule, a `MANIFEST.in`, or a move to a build backend that does not, any of
+    which would drop a module silently and produce exactly the same symptom again.
+    """
+    from pathlib import Path
+
+    import tomllib
+
+    root = Path(__file__).resolve().parent.parent
+    with open(root / "pyproject.toml", "rb") as f:
+        cfg = tomllib.load(f)
+
+    find = cfg["tool"]["setuptools"].get("packages", {}).get("find", {})
+    assert not find.get("exclude"), (
+        f"packaging excludes {find['exclude']}, so a module in the source tree may not reach an "
+        f"installed copy. Every module here is part of the tool; none is a test fixture.")
+    assert not (root / "MANIFEST.in").exists(), (
+        "a MANIFEST.in has appeared; it can narrow what ships, and this project has already "
+        "released a wheel missing the module its central claim depends on")
+
+    on_disk = {p.stem for p in (root / "src" / "senbonzakura").glob("*.py")}
+    for required in ("margin", "crashsafe", "track", "validate", "metrics", "cli"):
+        assert required in on_disk, f"{required}.py has left the package directory"
+
+
+def test_the_readme_only_documents_entry_points_that_exist():
+    """A documented command that imports nothing is a bug report waiting to be filed."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    documented = set(re.findall(r"python -m senbonzakura\.([a-z_]+)",
+                                (root / "README.md").read_text(encoding="utf-8")))
+    assert documented, "the README documents no module entry points at all any more"
+    for module in documented:
+        assert (root / "src" / "senbonzakura" / f"{module}.py").is_file(), (
+            f"the README tells a reader to run `python -m senbonzakura.{module}`, "
+            f"and no such module exists")

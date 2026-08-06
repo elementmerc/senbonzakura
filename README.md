@@ -1,18 +1,38 @@
+<div align="center">
+
+<img src="icon.svg" alt="Senbonzakura logo" width="96" height="96">
+
 # Senbonzakura
 
-**Multi-direction refusal abliteration for transformer language models.**
+**Multi-direction refusal abliteration, and the instruments to tell whether it worked**
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
+<p>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/pypi/v/senbonzakura?labelColor=2b3038&color=3d4d6b" alt="PyPI" /></a>
+  <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3d4d6b?labelColor=2b3038" alt="Python 3.10 to 3.14" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura"><img src="https://img.shields.io/badge/tested%20on-Linux%20%7C%20macOS%20%7C%20Windows-3d4d6b?labelColor=2b3038" alt="Tested on Linux, macOS and Windows" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-c77b5a?labelColor=2b3038" alt="AGPL-3.0-or-later" /></a>
+</p>
+<p>
+  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/every%20figure-has%20an%20interval-3d4d6b?labelColor=2b3038" alt="Every published figure carries a confidence interval" /></a>
+  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/comparison-KL%20at%20matched%20refusal-c77b5a?labelColor=2b3038" alt="Compared at matched refusal removal" /></a>
+  <a href="https://elementmerc.github.io/senbonzakura/guide/the-track"><img src="https://img.shields.io/badge/evaluation-held%20out%2C%20three--way%20split-3d4d6b?labelColor=2b3038" alt="Held-out evaluation, three-way split" /></a>
+  <a href="https://elementmerc.github.io/senbonzakura/guide/contamination"><img src="https://img.shields.io/badge/benchmarks-contamination%20checked-3d4d6b?labelColor=2b3038" alt="Contamination checked against public benchmarks" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-957-3d4d6b?labelColor=2b3038" alt="957 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95.6%25-3d4d6b?labelColor=2b3038" alt="95.6% branch coverage, gated in CI" /></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=main&style=flat-square&label=CI&labelColor=2b3038&color=3d4d6b"></a>
-  <a href="https://pypi.org/project/senbonzakura/"><img alt="PyPI" src="https://img.shields.io/pypi/v/senbonzakura?style=flat-square&labelColor=2b3038&color=3d4d6b"></a>
-  <a href="https://pypi.org/project/senbonzakura/"><img alt="Python" src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.14-3d4d6b?style=flat-square&labelColor=2b3038"></a>
-  <a href="LICENSE"><img alt="Licence" src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-c77b5a?style=flat-square&labelColor=2b3038"></a>
-  <a href="https://elementmerc.github.io/senbonzakura"><img alt="Documentation" src="https://img.shields.io/badge/docs-elementmerc.github.io-3d4d6b?style=flat-square&labelColor=2b3038"></a>
-</p>
+<a href="https://elementmerc.github.io/senbonzakura"><strong>Documentation</strong></a>
+&nbsp;·&nbsp;
+<a href="CHANGELOG.md">Changelog</a>
+&nbsp;·&nbsp;
+<a href="https://elementmerc.github.io/senbonzakura/guide/what-we-know">What is and is not established</a>
+
+<img src="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
+
+</div>
+
+---
 
 Senbonzakura removes the refusal behaviour from an open-weight language model by
 finding the *directions* in its activation space that carry "I can't help with

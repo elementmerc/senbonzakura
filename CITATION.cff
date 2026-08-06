@@ -1,0 +1,51 @@
+# Citation metadata. GitHub reads this and renders a "Cite this repository" button, and it is one
+# of the artefacts JOSS checks for at intake, so it exists now rather than at submission time.
+cff-version: 1.2.0
+message: >-
+  If you use Senbonzakura in your work, please cite it. If you cite a number produced by it,
+  please also read the limitations page: several published figures have been withdrawn and the
+  multi-direction claim is not yet supported by this project's own evidence.
+title: "Senbonzakura: multi-direction refusal abliteration, and the instruments to measure it"
+abstract: >-
+  Senbonzakura removes refusal behaviour from open-weight transformer language models by
+  identifying directions in activation space that mediate refusal and orthogonalising them out of
+  the weights. It ships the measurement alongside the edit: a harm-recognition score with held-out
+  arms and seeded bootstrap intervals, null controls printed beside every result, a corpus builder
+  that refuses to write a leaking split, and a contamination check against public benchmarks.
+type: software
+authors:
+  - family-names: Iwugo
+    given-names: Daniel
+    email: daniel@themalwarefiles.com
+repository-code: "https://github.com/elementmerc/senbonzakura"
+url: "https://elementmerc.github.io/senbonzakura"
+license: AGPL-3.0-or-later
+keywords:
+  - abliteration
+  - refusal direction
+  - mechanistic interpretability
+  - AI safety
+  - model evaluation
+  - large language models
+references:
+  - type: article
+    title: "Refusal in Language Models Is Mediated by a Single Direction"
+    authors:
+      - family-names: Arditi
+        given-names: Andy
+      - family-names: Obeso
+        given-names: Oscar
+    year: 2024
+    url: "https://arxiv.org/abs/2406.11717"
+    notes: >-
+      The single-direction method this work builds on and extends.
+  - type: software
+    title: Heretic
+    authors:
+      - family-names: Weidmann
+        given-names: Philipp Emanuel
+    license: AGPL-3.0-or-later
+    repository-code: "https://github.com/p-e-w/heretic"
+    notes: >-
+      The automated, KL-guarded search this work refines. A keyword metric is copied verbatim from
+      it, which is why Senbonzakura is AGPL; see THIRD-PARTY-NOTICES.md.

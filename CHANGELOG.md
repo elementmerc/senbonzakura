@@ -54,6 +54,12 @@ not comparable to what this version produces.
   one is refused rather than quietly allowed.
 - Per-prompt margins and generations are kept, so the next question does not need the GPU
   back, and a guard refuses to commit any file containing prompts.
+- `--contamination` reports how much of a public benchmark a track has already been fitted or
+  searched on, which is what decides whether a figure on that benchmark would be in-sample.
+  It compares requests rather than strings, counts rows and never prints one, and names how
+  many rows could still be reported cleanly. Add `--fail-on-contamination` to gate on it.
+- The evaluation track's card now records that AdvBench is inside the track, that how much of
+  it reached the fitting side is unmeasured, and how to check before quoting such a figure.
 
 ### Engine
 

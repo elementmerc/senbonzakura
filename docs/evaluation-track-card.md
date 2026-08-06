@@ -84,6 +84,21 @@ These are recorded because a measuring instrument with undisclosed limits is wor
   baseline as a null.
 - **The topic-matched harmless set is not partitioned**, so results using it are not held out
   in the same sense as the rest.
+- **AdvBench is inside this track, and how much of it reached the fitting side has not been
+  measured.** About 430 rows of the harmful side are AdvBench, arriving through
+  `mlabonne/harmful_behaviors` as described above. If any of those rows sit in the `fit` or
+  `search` partitions, then a model tuned with this track was tuned on requests AdvBench would
+  later mark it against, and any AdvBench figure from it is in-sample rather than held out.
+  Nobody has run that check yet, so this card does not tell you the answer; it tells you the
+  question is open. Run it yourself before relying on any such figure:
+
+  ```sh
+  python -m senbonzakura.track --out <this track> --contamination advbench.txt \
+      --contamination-name AdvBench
+  ```
+
+  The same applies to any other public set assembled from the same upstream sources, which is
+  most of them.
 
 ## Citing
 

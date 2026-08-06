@@ -280,21 +280,39 @@ flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 21600 8 || { echo "GPU_WAIT_T
 # budget promises it, and `model-heretic-own` is the trial Heretic's own menu offers first. Both
 # are scored so a reader can see for themselves whether the selection pass we added is what moved
 # the number, instead of having to take the claim on trust.
-# `--skip-harmful 128` takes a COUNT, not a bare flag. Passed bare it consumed the next argument
-# and argparse rejected the lot, so every arm failed to score while the job still reported
-# success. 128 drops the head of the harmful set, which is where the search selected its winner
-# from, so what remains is held out from the selection.
+# THE COMPASS TAKES DATASET PATHS, NOT A TRACK. `--harmful` and `--harmless` are required and
+# name dataset directories; there is no `--track`. And `--skip-harmful` takes a COUNT: passed
+# bare it consumed the next argument and argparse rejected the whole invocation. 128 drops the
+# head of the harmful set, which is where the search picked its winner, so what remains is held
+# out from the selection. 320 (the default) does the same for the harmless side, covering the 256
+# prompts the directions were fitted on.
+#
+# THE TWO TOOLS SAVE THEIR MODELS IN DIFFERENT SHAPES, which cost a rehearsal to notice.
+# senbonzakura writes its model straight into --out, so the arm directory IS the model.
+# Heretic's models come from the selection pass, which writes the winner to `model/` and, when it
+# differs, Heretic's own first offer to `model-heretic-own/`. A loop that assumed one shape
+# scored nothing at all for one of the tools.
+HARMFUL="$HOME/track-heldout/bad_eval_ds"
+HARMLESS="$HOME/track-heldout/good_ds"
 failed=0
 scored=0
+
 score_one() {
-    local dir="$1" name="$2"
-    [ -d "$dir" ] || return 0
+    local dir="$1" name="$2" required="$3"
+    if [ ! -f "$dir/config.json" ]; then
+        if [ "$required" = "required" ]; then
+            echo "  $name: NO MODEL at $dir; the arm did not save one"
+            failed=$((failed + 1))
+        fi
+        return 0
+    fi
     if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model=Qwen/Qwen3-1.7B >/dev/null 2>&1; then
         echo "  $name already scored"; scored=$((scored + 1)); return 0
     fi
     echo "  scoring $name"
     if PYTHONPATH=src "$PY" -u -m senbonzakura compass \\
-        --model "$dir" --track "$HOME/track-heldout" --skip-harmful 128 \\
+        --model "$dir" --harmful "$HARMFUL" --harmless "$HARMLESS" \\
+        --skip-harmful 128 --label "$name" \\
         --device cuda --out "$OUT/scored-$name.json"; then
         scored=$((scored + 1))
     else
@@ -302,14 +320,31 @@ score_one() {
     fi
 }
 
-for D in "$OUT"/senbon-seed* "$OUT"/heretic-seed*; do
+for D in "$OUT"/senbon-seed*; do
     [ -d "$D" ] || continue
-    name=$(basename "$D")
-    score_one "$D/model" "$name"
-    score_one "$D/model-heretic-own" "$name-own-pick"
+    score_one "$D" "$(basename "$D")" required
+done
+for D in "$OUT"/heretic-seed*; do
+    [ -d "$D" ] || continue
+    n=$(basename "$D")
+    score_one "$D/model" "$n" required
+    # Optional: the selection pass only writes this when its pick differed from Heretic's own.
+    score_one "$D/model-heretic-own" "$n-own-pick" optional
 done
 
 # THE NEEDLE IS EARNED, NOT PRINTED REGARDLESS. This job used to echo SCORE_OK on the way out
+# whatever had happened, so a rehearsal in which every single arm failed to score came back green
+# with five jobs done. A success predicate that a total failure satisfies is not a predicate.
+echo "scored $scored, failed $failed"
+if [ "$failed" -ne 0 ]; then
+    echo "SCORING FAILED for $failed model(s); the table cannot be built from a partial set"
+    exit 1
+fi
+if [ "$scored" -eq 0 ]; then
+    echo "NOTHING WAS SCORED: no arm directories matched, so there is no table to build"
+    exit 1
+fi
+echo SCORE_OK on the way out
 # whatever had happened, so a rehearsal in which every single arm failed to score came back green
 # with five jobs done. A success predicate that a total failure satisfies is not a predicate.
 echo "scored $scored, failed $failed"

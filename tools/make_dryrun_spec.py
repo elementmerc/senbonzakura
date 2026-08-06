@@ -22,7 +22,7 @@ the torch-parity check, the corpus checks, the staging, the scoring and the repo
 those is a thing that can be wrong, and every one runs here exactly as it will run tonight.
 
 Usage:
-    python tools/make_dryrun_spec.py holst/head-to-head-heretic.toml holst/dryrun.toml
+    python tools/make_dryrun_spec.py private/holst/head-to-head-heretic.toml private/holst/dryrun.toml
 """
 import argparse
 import re

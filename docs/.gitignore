@@ -1,0 +1,6 @@
+# npm lives here and nowhere else. Nothing under this directory reaches the wheel or the sdist:
+# the package is built from `src/`, and `[tool.setuptools.packages.find] where = ["src"]` cannot
+# see this tree at all. Keeping the boundary visible is the point of writing it down.
+node_modules/
+.vitepress/dist/
+.vitepress/cache/

@@ -142,3 +142,38 @@ jobs:
           senbonzakura --help > /dev/null
       - name: Test
         run: pytest
+
+  docs:
+    # The documentation site, built and link-checked on every change.
+    #
+    # It is a separate job on purpose. npm lives in docs/ and nowhere else: the Python package is
+    # built from src/ and cannot see this tree, so a node_modules cannot reach a wheel. Keeping
+    # the boundary visible in the job list is half the point of it.
+    #
+    # Per hephaestus ADR 75 this build MUST fail on a broken link. VitePress exits non-zero on a
+    # dead internal link, so no extra checker is needed; `ignoreDeadLinks` is deliberately unset
+    # in the config, and a build that only warns is a build nobody reads the output of.
+    name: Docs build and link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v5.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Install, from the lockfile only
+        # `npm ci` refuses to run if package.json and the lockfile disagree, which is the
+        # property that makes a committed lockfile worth having (baseline section 5).
+        working-directory: docs
+        run: npm ci
+      - name: Build, which fails on a dead link
+        working-directory: docs
+        run: npm run build
+      - name: Nothing from the docs tree reached the package
+        # A guard rather than a comment. If npm ever installs into the repository root, or a
+        # docs dependency finds its way under src/, the wheel would carry it.
+        run: |
+          test ! -d node_modules || { echo "node_modules at the repository root"; exit 1; }
+          test ! -d src/node_modules || { echo "node_modules inside the package"; exit 1; }
+          ! git ls-files | grep -q '^docs/node_modules' || { echo "node_modules is tracked"; exit 1; }

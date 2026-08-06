@@ -20,7 +20,10 @@ mds = importlib.util.module_from_spec(_SPEC)
 sys.modules["make_dryrun_spec"] = mds
 _SPEC.loader.exec_module(mds)
 
-REAL = _ROOT / "holst" / "head-to-head-heretic.toml"
+# The run specs are the operator's private runner configuration and are not in the public
+# repository (they name machines and home paths, and the operation they used to carry now lives
+# in `senbonzakura bench`). The fixture skips when they are absent, so a clone can run the suite.
+REAL = _ROOT / "private" / "holst" / "head-to-head-heretic.toml"
 
 
 @pytest.fixture

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Senbonzakura">
+  <title>Senbonzakura</title>
+  <!-- A thousand blades in formation, reduced to five. The sword scatters; the mark should not
+       try to draw a thousand of anything at 24 pixels. -->
+  <g fill="none" stroke-linecap="round" stroke-width="4">
+    <path d="M32 6 L32 58" stroke="#3d4d6b"/>
+    <path d="M18 14 L18 50" stroke="#3d4d6b" opacity="0.75"/>
+    <path d="M46 14 L46 50" stroke="#3d4d6b" opacity="0.75"/>
+    <path d="M8 24 L8 40" stroke="#c77b5a" opacity="0.9"/>
+    <path d="M56 24 L56 40" stroke="#c77b5a" opacity="0.9"/>
+  </g>
+</svg>

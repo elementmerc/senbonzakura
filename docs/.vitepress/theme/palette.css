@@ -1,0 +1,146 @@
+/*
+ * Senbonzakura documentation palette.
+ *
+ * Taken from hephaestus `tools/cover-gen`'s palette map rather than picked here, so the docs,
+ * the article covers and the rest of the portfolio read as one identity. The categories are that
+ * tool's own: `ai-security` is this project's, `writing` is the accent it pairs with, and `ink`
+ * is the near-black both sit on.
+ *
+ *   ai-security  #3d4d6b   the brand blue: navigation, links, the primary button
+ *   writing      #c77b5a   the warm accent: highlights, the one thing on a page that is not blue
+ *   ink          #2b3038   near-black, for surfaces that are not quite the background
+ *
+ * Low saturation on purpose. This is an editorial palette, not a product one: the reader is here
+ * to understand a measurement, and a page that shouts at them is working against that.
+ */
+
+:root {
+  /* Brand ramp, from the cover palette outward. */
+  --sz-blue-lightest: #eef1f6;
+  --sz-blue-lighter:  #b9c4d6;
+  --sz-blue-light:    #6d81a6;
+  --sz-blue:          #3d4d6b;
+  --sz-blue-dark:     #2f3c54;
+  --sz-blue-darker:   #232c3e;
+
+  --sz-accent:        #c77b5a;
+  --sz-accent-soft:   #e0a488;
+  --sz-ink:           #2b3038;
+
+  /* VitePress brand hooks. */
+  --vp-c-brand-1: var(--sz-blue);
+  --vp-c-brand-2: var(--sz-blue-dark);
+  --vp-c-brand-3: var(--sz-blue-darker);
+  --vp-c-brand-soft: rgba(61, 77, 107, 0.14);
+
+  /* The one warm thing on the page, used sparingly and never for a whole block. */
+  --vp-c-tip-1: var(--sz-blue);
+  --vp-c-warning-1: var(--sz-accent);
+
+  --vp-button-brand-bg: var(--sz-blue);
+  --vp-button-brand-hover-bg: var(--sz-blue-dark);
+  --vp-button-brand-active-bg: var(--sz-blue-darker);
+  --vp-button-brand-border: transparent;
+
+  --vp-home-hero-name-color: var(--sz-blue);
+  --vp-home-hero-image-background-image:
+    linear-gradient(-45deg, rgba(61, 77, 107, 0.55) 45%, rgba(199, 123, 90, 0.45) 55%);
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #9db0d0;      /* lifted for contrast on a dark surface, same hue family */
+  --vp-c-brand-2: #b6c5de;
+  --vp-c-brand-3: var(--sz-blue-light);
+  --vp-c-brand-soft: rgba(157, 176, 208, 0.16);
+
+  --vp-c-bg: #12151b;           /* the cover tool's deep ground */
+  --vp-c-bg-alt: #0e1014;
+  --vp-c-bg-soft: #1a1d24;
+
+  --vp-home-hero-name-color: #b6c5de;
+  --vp-button-brand-bg: var(--sz-blue-light);
+  --vp-button-brand-hover-bg: #7d92b8;
+  --vp-button-brand-active-bg: var(--sz-blue);
+}
+
+/*
+ * Typography. Measure and rhythm are the whole difference between documentation that reads as
+ * considered and documentation that reads as dumped, and both are one line each.
+ */
+:root {
+  --vp-font-family-base:
+    'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --vp-font-family-mono:
+    'JetBrains Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  --vp-layout-max-width: 1440px;
+  --vp-code-font-size: 0.86em;
+}
+
+.vp-doc {
+  /* A comfortable line length. The default runs wide enough that a long paragraph loses the
+     reader's place on the way back to the left margin. */
+  --vp-content-max-width: 760px;
+}
+
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.75;
+}
+
+.vp-doc h2 {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc h3 {
+  margin-top: 2.25rem;
+  letter-spacing: -0.005em;
+}
+
+/* Tables carry most of this project's honest content: budgets, trade-offs, what is measured
+   against what is assumed. They should read as first-class, not as an afterthought. */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  font-size: 0.94em;
+}
+
+.vp-doc th {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.vp-doc tr:nth-child(2n) {
+  background-color: var(--vp-c-bg-soft);
+}
+
+/* A caveat block that looks like a caveat. This project publishes numbers with conditions
+   attached, and a condition set in the same grey as the prose is a condition nobody reads. */
+.vp-doc .custom-block.warning {
+  border-left-width: 4px;
+  border-left-color: var(--sz-accent);
+}
+
+.vp-doc .custom-block.danger {
+  border-left-width: 4px;
+}
+
+/* Terminal recordings and diagrams sit on their own line with room to breathe. */
+.vp-doc img,
+.vp-doc video {
+  border-radius: 8px;
+  margin: 1.75rem auto;
+  display: block;
+  max-width: 100%;
+}
+
+.vp-doc figure figcaption {
+  text-align: center;
+  font-size: 0.86em;
+  color: var(--vp-c-text-2);
+  margin-top: -0.75rem;
+}

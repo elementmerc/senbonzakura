@@ -332,21 +332,12 @@ for D in "$OUT"/heretic-seed*; do
     score_one "$D/model-heretic-own" "$n-own-pick" optional
 done
 
-# THE NEEDLE IS EARNED, NOT PRINTED REGARDLESS. This job used to echo SCORE_OK on the way out
-# whatever had happened, so a rehearsal in which every single arm failed to score came back green
-# with five jobs done. A success predicate that a total failure satisfies is not a predicate.
-echo "scored $scored, failed $failed"
-if [ "$failed" -ne 0 ]; then
-    echo "SCORING FAILED for $failed model(s); the table cannot be built from a partial set"
-    exit 1
-fi
-if [ "$scored" -eq 0 ]; then
-    echo "NOTHING WAS SCORED: no arm directories matched, so there is no table to build"
-    exit 1
-fi
-echo SCORE_OK on the way out
-# whatever had happened, so a rehearsal in which every single arm failed to score came back green
-# with five jobs done. A success predicate that a total failure satisfies is not a predicate.
+# THE NEEDLE IS EARNED, NOT PRINTED REGARDLESS. This job used to emit its success marker on the
+# way out whatever had happened, so a rehearsal in which every single arm failed to score came
+# back green with five jobs done. A success predicate that a total failure satisfies is not a
+# predicate. The marker is deliberately NOT written anywhere in this prose: a comment naming it
+# is one careless edit away from becoming an echo of it, which is exactly how it got printed
+# unconditionally a second time on 2026-08-06.
 echo "scored $scored, failed $failed"
 if [ "$failed" -ne 0 ]; then
     echo "SCORING FAILED for $failed model(s); the table cannot be built from a partial set"

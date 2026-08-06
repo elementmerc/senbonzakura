@@ -126,3 +126,52 @@ def test_the_full_on_card_variant_keeps_the_real_budget(real_spec):
     assert "--trials 200 --patience 0" in out and "--trials 200 --dir-prompts" in out
     assert "--top-n 6" in out
     assert 'machine = "local"' in out and 'machine = "rog"' not in out
+
+
+# ── the needle is the predicate, so it must appear exactly once and never in prose ────
+def _jobs(spec_text):
+    """(id, needle, command) for every job in a spec, parsed with the stdlib TOML reader."""
+    import tomllib
+    doc = tomllib.loads(spec_text)
+    out = []
+    for job in doc.get("job", []):
+        needle = (job.get("success") or {}).get("needle")
+        if needle:
+            out.append((job["id"], needle, job["command"]))
+    return out
+
+
+@pytest.mark.parametrize("on_card", [False, True])
+def test_each_success_marker_is_emitted_exactly_once(real_spec, on_card):
+    """A job succeeds, as far as holst is concerned, when a string appears in its output.
+
+    So the string is the predicate, and anything that can print it can pass the job. On 2026-08-06
+    a careless splice left `echo SCORE_OK on the way out` as a live command in the middle of the
+    job, orphaned from a comment that had named the marker. It landed after the guards, so it was
+    not a hole that day; one line higher and it would have been.
+    """
+    text = mds.transform(real_spec, on_card=on_card) if on_card else real_spec
+    for job_id, needle, command in _jobs(text):
+        emitted = [ln for ln in command.splitlines()
+                   if needle in ln and not ln.lstrip().startswith("#")]
+        assert len(emitted) == 1, (
+            f"{job_id}: its marker {needle!r} appears on {len(emitted)} executable lines; "
+            f"exactly one line may emit it, or the predicate stops meaning success")
+
+
+def test_no_success_marker_is_written_into_a_comment(real_spec):
+    """A comment naming the marker is one careless edit away from becoming an echo of it."""
+    for job_id, needle, command in _jobs(real_spec):
+        in_prose = [ln for ln in command.splitlines()
+                    if ln.lstrip().startswith("#") and needle in ln]
+        assert not in_prose, (
+            f"{job_id}: its marker {needle!r} is written into prose:\n  " + "\n  ".join(in_prose))
+
+
+def test_the_marker_is_the_last_thing_a_job_does(real_spec):
+    """Emitted early, it would report success for work that had not happened yet."""
+    for job_id, needle, command in _jobs(real_spec):
+        lines = [ln for ln in command.splitlines() if ln.strip()]
+        assert needle in lines[-1], (
+            f"{job_id}: its marker {needle!r} is not on the job's last line, so the job can "
+            f"report success and then go on to do something that fails")

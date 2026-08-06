@@ -443,7 +443,68 @@ def _mlp_downprojs(mlp):
             out.append(("dense", _owned_weight(sh, "down_proj")))
     if not out and hasattr(mlp, "down_proj"):                    # plain dense MLP
         out.append(("dense", _owned_weight(mlp, "down_proj")))
+    if not out and hasattr(mlp, "w2"):                           # LFM2 dense feed-forward
+        # Mixtral's name in a dense position: `w2` is the down-projection, `w1`/`w3` the gate and
+        # up. Reached only after the expert branches above have declined, so a fused `w2` expert
+        # stack is still classified as one rather than being read as a dense matrix here.
+        out.append(("dense", _owned_weight(mlp, "w2")))
     return out
+
+
+def residual_writers(layer, hidden_size):
+    """Every matrix in this decoder layer that writes the residual stream, and what we did not see.
+
+    Returns `(recognised_count, unrecognised)`, where `unrecognised` names each child module that
+    looks like it writes the residual and that the walker above does not handle.
+
+    WHY THIS EXISTS, and why it landed in the same commit as LFM2 support rather than after it.
+
+    Until now an unknown container raised loudly per layer, so an unsupported architecture failed
+    cleanly at load. Teaching the walker one new container inverts that: the layer stops raising
+    while some OTHER residual-writing matrix in it stays invisible, and the run completes having
+    edited part of a layer and reported success. LFM2 is exactly that shape. Half its layers carry
+    no attention at all: they hold a short convolution whose `out_proj` writes the residual stream
+    just as an attention output projection does. Ablating what we recognise and staying quiet
+    about the rest is how every gemma number came to be withdrawn, in a different disguise.
+
+    The test is deliberately crude, because a subtle one would be the thing at fault. A module is
+    a residual writer if it contains a 2-D weight whose output width is the hidden size: that is
+    what "writes into the residual stream" means dimensionally. Norms are skipped (1-D), and so
+    are the containers the walker already reads.
+    """
+    known = {"self_attn", "attention", "self_attention", "attn",
+             "mlp", "block_sparse_moe", "feed_forward"}
+    unrecognised = []
+    for name, child in layer.named_children():
+        if name in known:
+            continue
+        writes = any(
+            getattr(p, "dim", lambda: 0)() == 2 and p.shape[0] == hidden_size
+            for _, p in child.named_parameters(recurse=True))
+        if writes:
+            unrecognised.append(f"{name} ({type(child).__name__})")
+    return len(known & {n for n, _ in layer.named_children()}), unrecognised
+
+
+def refuse_unrecognised_writers(layers, hidden_size):
+    """Refuse a model whose layers write the residual through something we do not ablate.
+
+    Loud and early, naming the layer and the module, because the alternative is a run that
+    finishes, reports a refusal rate, and has left a live refusal write-path untouched.
+    """
+    missed = {}
+    for i, layer in enumerate(layers):
+        _, unrecognised = residual_writers(layer, hidden_size)
+        if unrecognised:
+            missed[i] = unrecognised
+    if missed:
+        shown = "; ".join(f"layer {i}: {', '.join(v)}" for i, v in list(missed.items())[:4])
+        more = "" if len(missed) <= 4 else f" (and {len(missed) - 4} more layers)"
+        raise ValueError(
+            f"{len(missed)} of {len(layers)} decoder layers write the residual stream through a "
+            f"module this tool does not ablate, so an abliteration would edit part of each one "
+            f"and report success: {shown}{more}. Refusing rather than producing a model whose "
+            f"refusal behaviour was only partly removed.")
 
 
 def layer_downproj(layer):
@@ -455,12 +516,15 @@ def layer_downproj(layer):
     # rather than silently leaving a live refusal write-path.
     entries = _mlp_downprojs(getattr(layer, "block_sparse_moe", None))
     entries += _mlp_downprojs(getattr(layer, "mlp", None))
+    # LFM2 and its mixture-of-experts variant call the block `feed_forward`, and their dense
+    # layers name the down-projection `w2` on it directly (Mixtral's naming in a dense position).
+    entries += _mlp_downprojs(getattr(layer, "feed_forward", None))
     if not entries:
         raise ValueError(
             f"could not locate a residual-writing down-projection on this decoder layer "
             f"(type {type(layer).__name__}); architecture not supported. Supported: dense, "
-            "Qwen3-MoE / Granite-MoE (fused), Mixtral (fused or unfused), OLMoE (unfused), and "
-            "shared-expert MoE (Qwen2-MoE / DeepSeek).")
+            "Qwen3-MoE / Granite-MoE (fused), Mixtral (fused or unfused), OLMoE (unfused), "
+            "shared-expert MoE (Qwen2-MoE / DeepSeek), and LFM2 / LFM2-MoE (feed_forward).")
     return entries
 
 
@@ -1036,6 +1100,11 @@ class Abliterator:
         # Architecture label = the distinct down-proj kinds present (e.g. "fused3d" or "fused3d+dense"
         # when a routed stack sits beside a shared expert). Raises loud here if the arch is unsupported.
         _dp = layer_downproj(self.layers[0])
+        # EVERY layer, not just the first. A hybrid architecture interleaves block types, so a
+        # first layer that resolves cleanly says nothing about the twentieth: LFM2 puts its
+        # convolution blocks first and its attention blocks after, and either order would have
+        # let a per-model probe pass while half the residual writers stayed invisible.
+        refuse_unrecognised_writers(self.layers, self.H)
         self.arch = "+".join(dict.fromkeys(k for k, _ in _dp)) or "dense"
         self.ne = getattr(model.config, "num_experts", None) or getattr(model.config, "num_local_experts", None)
         self.KMAX = max(1, args.max_directions)

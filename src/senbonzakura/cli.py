@@ -51,6 +51,7 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
     disk_verdict,
     free_bytes_for,
     provenance,
+    remaining_budget,
     search_already_done,
     study_db_path,
     torch_version_ok,
@@ -1903,6 +1904,28 @@ class Abliterator:
         if skip_search:
             log("resumed study already finished its search; skipping to bake + save")
 
+        # `--trials` is a BUDGET, not a per-invocation quota. Optuna's `n_trials` counts only the
+        # trials THIS call runs, so a resumed search that had already spent 168 of its 200 ran 200
+        # more and finished at 368 while every artefact still said 200. In a comparison whose whole
+        # claim is a matched budget, that silently hands one arm most of an extra run, so the
+        # remainder is worked out here. Trials that failed still spent their time, so they count.
+        trial_budget = args.trials
+        if args.resume and not skip_search:
+            # Only trials that FINISHED count against the budget. A study interrupted mid-trial
+            # leaves that trial RUNNING for ever (nothing ever revisits it), and charging the arm
+            # for a trial that produced no result would leave it a trial short of the tool it is
+            # being compared against. A failed trial did produce a result, so it counts.
+            spent = len(study.get_trials(deepcopy=False, states=(
+                optuna.trial.TrialState.COMPLETE,
+                optuna.trial.TrialState.FAIL,
+                optuna.trial.TrialState.PRUNED)))
+            trial_budget = remaining_budget(args.trials, spent, args.resume)
+            if spent:
+                log(f"resume: {spent} of {args.trials} trials already spent; running {trial_budget} more")
+                if trial_budget == 0:
+                    log("the trial budget is already spent; skipping to bake + save")
+                    skip_search = True
+
         # Early stop (lever 4): stop once the best scalarised score (non-compliance + 0.5*keyword under
         # the KL/broken guards) hasn't improved for --patience consecutive trials, on the theory that the
         # frontier is mapped and more sampling of the same space won't help.
@@ -1921,7 +1944,7 @@ class Abliterator:
 
         # Per-trial progress with an ETA that discounts any time the governor spent paused for VRAM,
         # so the estimate stays honest even when a game is opened mid-run.
-        progress = SearchProgress(args.trials, log, governor=self.gov)
+        progress = SearchProgress(trial_budget, log, governor=self.gov)
         def _progress_cb(study, trial):
             progress.tick()
 
@@ -1951,13 +1974,17 @@ class Abliterator:
                 except Exception as e:
                     log(f"warm-start seed skipped ({e}); searching cold")
             try:
-                study.optimize(self.objective, n_trials=args.trials, callbacks=[_patience_cb, _progress_cb],
+                study.optimize(self.objective, n_trials=trial_budget, callbacks=[_patience_cb, _progress_cb],
                                catch=(RuntimeError,))
             finally:
                 self.restore_weights()
             # Mark the search finished (budget spent or early-stopped) so a later --resume skips it
             # instead of re-searching. Persisted with the study, so it survives a crash after the search.
             study.set_user_attr("search_done", True)
+        self.trials_ran = len(study.get_trials(deepcopy=False, states=(
+            optuna.trial.TrialState.COMPLETE,
+            optuna.trial.TrialState.FAIL,
+            optuna.trial.TrialState.PRUNED)))
         return study, db
 
     def _select_knee(self, study, db, TR):
@@ -2117,6 +2144,12 @@ class Abliterator:
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.
                        "seed": args.seed, "search": args.search, "trials": args.trials,
+                       # `trials` is what was ASKED for; this is what the study actually holds.
+                       # They came apart on 2026-08-06, when a resumed arm ran its full budget a
+                       # second time and every artefact it wrote still reported the budget. An
+                       # equal-budget claim that cannot be checked against the artefact is not a
+                       # claim, so the count that settles it is recorded beside the request.
+                       "trials_ran": getattr(self, "trials_ran", None),
                        "warm_start": args.warm_start, "good_orth": not args.no_good_orth,
                        "chat_template": getattr(self.tok, "senbon_chat_template", None),
                        # The K actually applied at each layer, which is not always the K asked

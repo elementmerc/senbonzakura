@@ -161,6 +161,23 @@ def search_already_done(user_attrs):
     return bool((user_attrs or {}).get("search_done"))
 
 
+def remaining_budget(trials, spent, resume):
+    """How many trials a search may still run, given how many the study has already spent.
+
+    `--trials` names a BUDGET for the search, not a quota per invocation, and Optuna's `n_trials`
+    means the latter. A resumed search that had spent 168 of its 200 therefore ran 200 more and
+    finished at 368 with every artefact still reporting 200. Against a rival tool held to a matched
+    budget that quietly hands one arm most of a second run, so the remainder is computed here.
+
+    A fresh run (or one not resuming) gets the whole budget. Trials that failed still spent their
+    time on the card, so they count against it. The floor is zero: an over-spent study runs nothing
+    more rather than a negative count, and the caller treats that as a finished search.
+    """
+    if not resume:
+        return trials
+    return max(0, trials - max(0, spent))
+
+
 def winning_config(bpr, K, mode, di):
     """Serialisable record of the winning ablation config. Written BEFORE the crash-prone save so a
     lost save is a minutes-long direct re-bake (--bake-config), not a full re-search.

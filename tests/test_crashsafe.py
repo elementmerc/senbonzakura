@@ -8,6 +8,7 @@ from senbonzakura import crashsafe
 from senbonzakura.crashsafe import (
     MIN_TORCH,
     config_to_bake_args,
+    remaining_budget,
     search_already_done,
     study_db_path,
     torch_version_ok,
@@ -71,6 +72,35 @@ class TestSearchAlreadyDone:
 
     def test_falsey_value_not_done(self):
         assert search_already_done({"search_done": False}) is False
+
+
+class TestRemainingBudget:
+    """`--trials` is a budget for the search, and Optuna's `n_trials` is a quota per call.
+
+    Conflating the two is how a resumed arm ran 368 trials against a rival held to 200 while every
+    artefact it wrote still said 200. These tests are about the budget, not the arithmetic.
+    """
+
+    def test_a_fresh_search_gets_the_whole_budget(self):
+        assert remaining_budget(200, 0, resume=True) == 200
+
+    def test_a_resumed_search_only_gets_what_is_left(self):
+        assert remaining_budget(200, 168, resume=True) == 32
+
+    def test_a_spent_budget_buys_nothing_more(self):
+        assert remaining_budget(200, 200, resume=True) == 0
+
+    def test_an_overspent_study_never_returns_a_negative_count(self):
+        # A negative n_trials would raise; a finished search must read as zero remaining.
+        assert remaining_budget(200, 260, resume=True) == 0
+
+    def test_without_resume_the_budget_is_untouched(self):
+        # A fresh study cannot have spent anything, and a run that is not resuming must not have
+        # its budget clipped by whatever happened to be lying in a study file.
+        assert remaining_budget(200, 168, resume=False) == 200
+
+    def test_a_negative_spend_is_treated_as_none_spent(self):
+        assert remaining_budget(200, -3, resume=True) == 200
 
 
 class TestWinningConfigRoundtrip:

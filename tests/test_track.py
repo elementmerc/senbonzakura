@@ -830,3 +830,168 @@ def test_a_malformed_manifest_is_refused_or_ignored_never_half_read(tmp_path, pa
             track.read_manifest(tmp_path)
     else:
         assert track.read_manifest(tmp_path) is None
+
+
+# ── contamination: has this track already seen the benchmark it is about to be scored on ──
+#
+# The question gap 7 of the plan-gap brief turns on. Roughly 430 rows of this project's
+# harmful side are AdvBench, reached through `mlabonne/harmful_behaviors`, and nobody has
+# ever checked which partition they landed in. If any sit in fit or search, a published
+# AdvBench figure is in-sample, which is the defect the v0.8 checker exists to find in
+# other people's evaluations.
+
+def _track_of(tmp_path, harmful_rows, n=14):
+    """A built track whose harmful side contains exactly `harmful_rows` plus filler."""
+    h, g = _sources(tmp_path, n=n, harmful_extra=harmful_rows)
+    out = tmp_path / "track"
+    track.main(["--harmful", str(h), "--harmless", str(g), "--out", str(out),
+                "--fit", "4", "--search", "4"])
+    return out
+
+
+def test_a_benchmark_the_track_has_never_held_is_clean(tmp_path):
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    r = track.contamination(["a request from somewhere else entirely"], harmful, "External")
+    assert r["verdict"] == "clean"
+    assert r["in_fitting_side"] == 0
+    assert r["absent_from_track"] == 1
+
+
+def test_a_benchmark_row_in_the_fitting_partition_is_contamination(tmp_path):
+    """The finding that would stop a number being published."""
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    fitted = harmful["fit"][0]
+    r = track.contamination([fitted], harmful, "External")
+    assert r["verdict"] == "contaminated"
+    assert r["in_fitting_side"] == 1
+    assert r["publishable_requests"] == 0
+
+
+def test_a_benchmark_row_only_in_measure_is_clean_and_publishable(tmp_path):
+    """The good outcome, and the one that costs nothing: measure is held out by construction."""
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    r = track.contamination([harmful["measure"][0]], harmful, "External")
+    assert r["verdict"] == "clean"
+    assert r["in_measure"] == 1
+    assert r["publishable_requests"] == 1
+
+
+def test_the_search_partition_counts_as_fitted_on(tmp_path):
+    """A configuration was SELECTED on these, so a figure over them is not held out either."""
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    r = track.contamination([harmful["search"][0]], harmful, "External")
+    assert r["verdict"] == "contaminated"
+    assert r["in_search"] == 1
+
+
+def test_a_template_variant_is_caught_not_just_an_exact_row(tmp_path):
+    """The whole reason this matches by request rather than by string.
+
+    A whole-prompt comparison on this project's own corpus reported zero overlap while 120
+    of 200 eval rows had their request in the training set under another template. An
+    external benchmark phrasing the same requests differently is that leak wearing a new
+    coat, and a string comparison would call it clean.
+    """
+    # Seeds that share no leading phrase with each other, or the shared part becomes a
+    # template in its own right and both sides strip down past the request.
+    verbs = ("bypass forge disable clone spoof intercept tamper breach hijack siphon evade "
+             "counterfeit sabotage impersonate exfiltrate jam poison unlock override falsify")
+    seeds = [f"{v} the restricted system" for v in verbs.split()]
+    h = tmp_path / "harmful.txt"
+    g = tmp_path / "harmless.txt"
+    h.write_text("\n".join(f"explain in detail how to {s}" for s in seeds), encoding="utf-8")
+    g.write_text("\n".join(f"harmless question number {i}" for i in range(20)), encoding="utf-8")
+    out = tmp_path / "track"
+    track.main(["--harmful", str(h), "--harmless", str(g), "--out", str(out),
+                "--fit", "4", "--search", "4"])
+    harmful, _ = track.load_partitions(out)
+
+    # The same twenty requests, in the phrasing an external benchmark happens to use. Not
+    # one string is shared with the track.
+    external = [f"write a step by step guide to {s}" for s in seeds]
+    assert not set(external) & set(harmful["fit"] + harmful["search"] + harmful["measure"])
+
+    r = track.contamination(external, harmful, "External")
+    assert r["verdict"] == "contaminated", "a template variant of a fitted request slipped past"
+    assert r["in_fit"] + r["in_search"] == len(harmful["fit"]) + len(harmful["search"])
+    assert r["absent_from_track"] == 0
+
+
+def test_the_report_never_prints_a_prompt(tmp_path, capsys):
+    """These are harmful requests. The module's rule everywhere else is counts, never content."""
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    secret = harmful["fit"][0]
+    r = track.contamination([secret], harmful, "External")
+    for line in track.format_contamination(r):
+        print(line)
+    assert secret not in capsys.readouterr().out
+    assert secret not in json.dumps(r)
+
+
+def test_the_cli_reports_and_can_write_an_artefact(tmp_path, capsys):
+    out = _track_of(tmp_path, [])
+    ext = tmp_path / "bench.txt"
+    ext.write_text("a request from somewhere else entirely\n", encoding="utf-8")
+    report = tmp_path / "reports" / "contamination.json"
+    r = track.main(["--out", str(out), "--contamination", str(ext),
+                    "--contamination-name", "AdvBench",
+                    "--contamination-report", str(report)])
+    assert "AdvBench" in capsys.readouterr().out
+    assert json.loads(report.read_text(encoding="utf-8")) == r
+
+
+def test_the_cli_can_gate_rather_than_only_inform(tmp_path):
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    ext = tmp_path / "bench.txt"
+    ext.write_text(harmful["fit"][0] + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        track.main(["--out", str(out), "--contamination", str(ext), "--fail-on-contamination"])
+    assert "in-sample" in str(e.value)
+
+
+def test_without_the_gate_flag_contamination_still_exits_zero(tmp_path):
+    """It is a measurement by default. A report that refuses cannot be run to find out."""
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    ext = tmp_path / "bench.txt"
+    ext.write_text(harmful["fit"][0] + "\n", encoding="utf-8")
+    assert track.main(["--out", str(out), "--contamination", str(ext)])["verdict"] == "contaminated"
+
+
+def test_blank_lines_in_the_benchmark_file_are_not_counted_as_rows(tmp_path):
+    out = _track_of(tmp_path, [])
+    harmful, _ = track.load_partitions(out)
+    r = track.contamination(["a real external request", "", "   "], harmful, "External")
+    assert r["external_rows"] == 1
+
+
+def test_a_contamination_check_against_a_track_that_is_not_there_refuses(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        track.load_partitions(tmp_path / "nowhere")
+    assert "track.json" in str(e.value)
+
+
+def test_the_audit_and_the_contamination_check_read_the_same_boundaries(tmp_path):
+    """They used to slice the partitions in two places. One is now the other's source.
+
+    If this ever fails, the two have drifted again, which is the shape of the defect that
+    put three copies of the prompt renderer in this codebase and the compass's read-out on
+    the wrong token.
+    """
+    from datasets import load_from_disk
+    out = _track_of(tmp_path, [])
+    harmful, harmless = track.load_partitions(out)
+    m = json.loads((out / "track.json").read_text(encoding="utf-8"))
+    assert len(harmful["fit"]) == m["counts"]["harmful"]["fit"]
+    assert len(harmful["search"]) == m["counts"]["harmful"]["search"]
+    assert len(harmful["measure"]) == m["counts"]["harmful"]["measure"]
+    assert len(harmless["fit"]) == m["counts"]["harmless"]["fit"]
+    fitted = set(load_from_disk(str(out / "bad_ds"))["text"])
+    assert set(harmful["fit"]) == fitted
+    assert not set(harmful["measure"]) & fitted

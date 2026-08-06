@@ -540,17 +540,34 @@ def build_parser():
                          "small one contains any particular category")
     ap.add_argument("--audit", action="store_true",
                     help="run the checks against an existing track and write nothing")
+    ap.add_argument("--contamination", default="",
+                    help="text file of an external benchmark's prompts, one per line. Reports "
+                         "how many of its requests this track has already fitted or searched "
+                         "on, which is what decides whether a figure on that benchmark would "
+                         "be in-sample. Reads the track and writes nothing")
+    ap.add_argument("--contamination-name", default="",
+                    help="what to call the external set in the report (default: the filename)")
+    ap.add_argument("--contamination-report", default="",
+                    help="also write the counts to this path as JSON, so a published claim "
+                         "about the overlap traces to a file rather than to a terminal")
+    ap.add_argument("--fail-on-contamination", action="store_true",
+                    help="exit non-zero when any of the external set was fitted or searched "
+                         "on, so the check can gate a run rather than only inform one")
     return ap
 
 
-def audit(track: Path, labels=None) -> list[str]:
-    """Re-run the checks on a track that already exists, using its recorded boundaries.
+def load_partitions(track: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """The three partitions per side, sliced back out of an existing track.
 
-    `labels` matters more than it looks. The recorded counts are the ONLY thing that says
-    where a partition boundary falls in an existing track, and the strata check is the one
-    that catches the mirror image of leakage: an arm narrower than the number claims. Audit
-    without labels cannot run it, so a hand-built track passes an audit that never asked
-    the question.
+    The boundaries are RECORDED, not derivable: `bad_eval_ds` is search followed by measure
+    in one file, and only `track.json` says where one ends. So a manifest that disagrees
+    with the files beside it does not make the slicing approximate, it makes every row land
+    in the wrong partition, and anything reading them answers a question about a track that
+    does not exist. Refuse rather than report.
+
+    Extracted so the audit and the contamination check cannot drift apart. Two copies of
+    boundary arithmetic is the shape of this codebase's recurring defect: three copies of
+    the prompt renderer disagreed and put the compass's read-out on the wrong token.
     """
     from datasets import load_from_disk
     try:
@@ -564,9 +581,6 @@ def audit(track: Path, labels=None) -> list[str]:
     good = [r["text"] for r in load_from_disk(str(track / "good_ds"))]
     hs, gf, gs = counts["harmful"]["search"], counts["harmless"]["fit"], counts["harmless"]["search"]
 
-    # The boundaries are recorded, not derivable, so a manifest that disagrees with the
-    # files makes every slice below the wrong rows and the audit answers a question about a
-    # track that does not exist. Refuse rather than report on the wrong partitions.
     expected = {
         "bad_ds": (len(bad_fit), counts["harmful"]["fit"]),
         "bad_eval_ds": (len(bad_eval), counts["harmful"]["search"] + counts["harmful"]["measure"]),
@@ -580,16 +594,120 @@ def audit(track: Path, labels=None) -> list[str]:
             f"partition boundaries cannot be trusted and neither could an audit using them: "
             + "; ".join(wrong))
 
-    return check(
+    return (
         {"fit": bad_fit, "search": bad_eval[:hs], "measure": bad_eval[hs:]},
         {"fit": good[:gf], "search": good[gf:gf + gs], "measure": good[gf + gs:]},
-        labels,
     )
+
+
+def contamination(external: list[str], partitions: dict[str, list[str]], name="external") -> dict:
+    """How much of an external benchmark this track has already seen, and where.
+
+    The question a published number depends on. Every abliteration tool quotes AdvBench, so
+    a figure on it is what lets a reader place this project against the literature at all,
+    and roughly 430 rows of this corpus's harmful side ARE AdvBench, reached through
+    `mlabonne/harmful_behaviors`. If any of them sit in `fit` or `search`, the model was
+    tuned on the benchmark it is being scored against and the figure is in-sample: exactly
+    the defect this project is building a checker to find in other people's evaluations.
+
+    **Matched by request, never by string.** Seven templates share one seed here, and on
+    this project's own corpus a whole-prompt comparison once reported zero overlap while
+    120 of 200 eval rows had their request in the training set wearing another template.
+    Templates are discovered over the UNION of both sides, because a frame stripped from
+    one and left on the other would make identical requests look different, which fails in
+    the direction that hides a leak.
+
+    Returns counts only. The inputs are harmful text and nothing here prints a row.
+    """
+    ext_rows = [r for r in external if r.strip()]
+    track_rows = [r for part in partitions.values() for r in part]
+    templates = discover_templates(ext_rows + track_rows)
+
+    ext_keys = {request_key(r, templates) for r in ext_rows}
+    where = {part: {request_key(r, templates) for r in rows} for part, rows in partitions.items()}
+
+    seen = {part: len(ext_keys & keys) for part, keys in where.items()}
+    fitting = ext_keys & (where.get("fit", set()) | where.get("search", set()))
+    measure_only = (ext_keys & where.get("measure", set())) - fitting
+    absent = ext_keys - set().union(*where.values()) if where else ext_keys
+
+    return {
+        "external": name,
+        "external_rows": len(ext_rows),
+        "external_requests": len(ext_keys),
+        "templates_discovered": len(templates),
+        "in_fit": seen.get("fit", 0),
+        "in_search": seen.get("search", 0),
+        "in_measure": seen.get("measure", 0),
+        # The number the decision turns on. Anything here was fitted or searched on, so it
+        # cannot appear in a published figure about this benchmark.
+        "in_fitting_side": len(fitting),
+        # What a clean figure could be computed over today, without changing anything.
+        "publishable_requests": len(measure_only),
+        # Rows of the benchmark this corpus has never held at all. They are already a
+        # held-out external slice and cost nothing to start using.
+        "absent_from_track": len(absent),
+        "verdict": "contaminated" if fitting else "clean",
+    }
+
+
+def format_contamination(r: dict) -> list[str]:
+    """The report, in the words a reader needs rather than a dump of the dict."""
+    lines = [
+        f"contamination: {r['external']} against this track",
+        (f"  {r['external_rows']} rows, {r['external_requests']} distinct requests "
+         f"(templates discovered: {r['templates_discovered']})"),
+        (f"  in fit {r['in_fit']}, in search {r['in_search']}, in measure {r['in_measure']}, "
+         f"absent {r['absent_from_track']}"),
+    ]
+    if r["verdict"] == "contaminated":
+        lines += [
+            f"  CONTAMINATED: {r['in_fitting_side']} of its requests were fitted or searched on.",
+            ("  A figure on this benchmark would be in-sample. Either drop those requests and "
+             "rebuild the split, or report only the clean part and say so in those words."),
+        ]
+    else:
+        lines.append("  CLEAN: no request of this benchmark was fitted or searched on.")
+    lines.append(
+        f"  publishable today: {r['publishable_requests']} requests from the measure partition, "
+        f"plus {r['absent_from_track']} this track has never held.")
+    return lines
+
+
+def audit(track: Path, labels=None) -> list[str]:
+    """Re-run the checks on a track that already exists, using its recorded boundaries.
+
+    `labels` matters more than it looks. The recorded counts are the ONLY thing that says
+    where a partition boundary falls in an existing track, and the strata check is the one
+    that catches the mirror image of leakage: an arm narrower than the number claims. Audit
+    without labels cannot run it, so a hand-built track passes an audit that never asked
+    the question.
+    """
+    harmful, harmless = load_partitions(track)
+    return check(harmful, harmless, labels)
 
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
     out = Path(a.out)
+
+    if a.contamination:
+        ext_path = Path(a.contamination)
+        harmful, _ = load_partitions(out)
+        r = contamination(read_prompts(ext_path), harmful,
+                          a.contamination_name or ext_path.stem)
+        for line in format_contamination(r):
+            print(line)
+        if a.contamination_report:
+            report = Path(a.contamination_report)
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(json.dumps(r, indent=2) + "\n", encoding="utf-8")
+            print(f"  written to {report}")
+        if a.fail_on_contamination and r["verdict"] == "contaminated":
+            raise SystemExit(
+                f"{r['in_fitting_side']} requests of {r['external']} were fitted or searched "
+                f"on, so a figure on it from this track would be in-sample")
+        return r
 
     if a.audit:
         failures = audit(out, read_labels(a.labels) if a.labels else None)

@@ -2143,6 +2143,16 @@ class Abliterator:
                        "sparsity": float(args.sparsity),
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.
+                       # WHAT THIS RESULT IS ABOUT. The record carried the seed, the search, the
+                       # trial count and the whole dependency tree, and never once said which
+                       # model it had edited. Every resume guard in the run specs asks
+                       # `model=...` of this file and can only ever get a miss, so the "already
+                       # complete" branch they all carry has never fired. `model` is the path as
+                       # given, which inside a sealed container is a mount point rather than an
+                       # identity; `model_id` is what the checkpoint calls itself, which is the
+                       # part a stranger can look up.
+                       "model": args.model,
+                       "model_id": getattr(getattr(self.model, "config", None), "_name_or_path", None),
                        "seed": args.seed, "search": args.search, "trials": args.trials,
                        # `trials` is what was ASKED for; this is what the study actually holds.
                        # They came apart on 2026-08-06, when a resumed arm ran its full budget a

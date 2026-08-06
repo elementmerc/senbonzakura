@@ -149,7 +149,7 @@ flock -n 8 || { echo "GPU_BUSY: waiting"; flock -w 43200 8 || { echo "GPU_WAIT_T
 
 for S in 42 43 44 45 46; do
     if "$PY" tools/artefact_ok.py "$OUT/senbon-seed$S/abliteration.json" \\
-         model=Qwen/Qwen3-1.7B seed="$S" >/dev/null 2>&1; then
+         model=/model model_id=Qwen/Qwen3-1.7B seed="$S" >/dev/null 2>&1; then
         echo "  seed $S already complete"; continue
     fi
     echo "  senbonzakura seed $S"
@@ -306,7 +306,12 @@ score_one() {
         fi
         return 0
     fi
-    if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model=Qwen/Qwen3-1.7B >/dev/null 2>&1; then
+    # The compass records the model it was POINTED AT, which is the arm directory, not a hub
+    # identifier. Guarding on the hub name asked for a value this file has never carried, so the
+    # branch below never fired and every retry re-scored every arm from scratch. `$dir` is both
+    # what the file actually holds and the thing worth checking: it says this score came from
+    # THIS arm rather than from some other run that happened to leave a readable file here.
+    if "$PY" tools/artefact_ok.py "$OUT/scored-$name.json" model="$dir" label="$name" >/dev/null 2>&1; then
         echo "  $name already scored"; scored=$((scored + 1)); return 0
     fi
     echo "  scoring $name"

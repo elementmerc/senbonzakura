@@ -129,3 +129,57 @@ def test_the_statement_of_modification_ships_inside_the_distribution():
     notice = (root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8")
     assert "5(a)" in notice, "the notice no longer carries the statement it is packaged for"
     assert "Heretic" in notice, "the notice no longer names the work this one is derived from"
+
+
+def test_the_modification_date_is_not_older_than_the_code_it_describes():
+    """AGPL section 5(a) asks for a notice of modification AND a relevant date.
+
+    A date is only a date if it is true. The notice recorded 2026-07-29 while the file carrying
+    it had been modified on 2026-08-05, so the shipped artefact told a reader the work had not
+    been touched for a week when it had. Nobody would have noticed, because nothing checked: the
+    date was maintained by remembering, which is the same mechanism that let the notice itself
+    ship outside the wheel for a whole release.
+
+    The assertion is one-sided on purpose. The recorded date may run ahead of the last commit,
+    since the commit that updates the notice is itself the modification being described, and a
+    working tree can legitimately be ahead of git. What it may never do is fall behind.
+    """
+    import datetime
+    import re
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    carrier = root / "src" / "senbonzakura" / "metrics.py"
+
+    text = carrier.read_text(encoding="utf-8")
+    m = re.search(r"last modified (\d{4}-\d{2}-\d{2})", text)
+    assert m, "the section 5(a) notice in metrics.py no longer records a modification date"
+    recorded = datetime.date.fromisoformat(m.group(1))
+
+    r = subprocess.run(
+        ["git", "log", "-1", "--format=%cd", "--date=short", "--", str(carrier)],
+        capture_output=True, text=True, cwd=root, check=False, timeout=60)
+    if r.returncode != 0 or not r.stdout.strip():
+        pytest.skip("no git history here, so the recorded date cannot be checked against it")
+    committed = datetime.date.fromisoformat(r.stdout.strip())
+
+    assert recorded >= committed, (
+        f"the notice says the file was last modified {recorded}, but it was committed on "
+        f"{committed}. Section 5(a) asks for a relevant date and this one is stale.")
+
+
+def test_the_two_places_the_date_is_written_agree():
+    """It appears in the source notice and in the packaged statement, and both are distributed."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    src = re.search(r"last modified (\d{4}-\d{2}-\d{2})",
+                    (root / "src" / "senbonzakura" / "metrics.py").read_text(encoding="utf-8"))
+    notices = re.search(r"Most recent modification to the file carrying it:\*\* (\d{4}-\d{2}-\d{2})",
+                        (root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8"))
+    assert src and notices, "one of the two statements of modification no longer carries a date"
+    assert src.group(1) == notices.group(1), (
+        f"metrics.py says {src.group(1)} and THIRD-PARTY-NOTICES.md says {notices.group(1)}; "
+        f"an installed copy would carry two different answers to the same question")

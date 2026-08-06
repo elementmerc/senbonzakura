@@ -68,6 +68,22 @@ percentage: at 15% refusal on 128 prompts that is about 6 points, and a comparis
 apart than that is not a comparison. Where no arm reaches a band, the cell says so rather than
 borrowing the nearest arm.
 
+**NOT YET DELIVERED, and stated here rather than discovered by a reader.** The first
+head-to-head produces, for every arm of both tools, a harm-recognition score from one instrument
+applied afterwards, plus each tool's own self-reported refusal and KL. That supports a comparison
+on harm recognition, which `tools/report_head_to_head.py` makes with the tie rule above. It does
+**not** yet support the matched-refusal band comparison this section describes, because reading
+two tools at the same refusal level needs each tool's frontier materialised and re-measured with
+one KL estimator, and the arms as run give one configuration per seed rather than a sweep.
+
+The two tools' own KL figures are not a substitute and are not presented as one: ours comes from
+our estimator on our coherence slice, Heretic's from its own evaluation, and a column containing
+both would be the error this project withdrew four claims for on 2026-08-05.
+
+So this section describes what the benchmark is for, and the first run is a step towards it rather
+than the whole of it. The work is recorded in `DEFERRED.md`. Nothing published from the first run
+will claim a matched-refusal comparison.
+
 ### 2.4 A random-direction floor, where the method admits one
 
 Tools that work by removing directions get a control arm in which some of those directions are
@@ -117,8 +133,15 @@ reported as a tie**, not as a win.
 
 ### 2.9 Isolation, and why it is part of the contract
 
-Each third-party tool runs in a container with **no network**, inputs mounted read-only, no
+**Every tool runs in a container, ours included**, with no network, inputs mounted read-only, no
 credentials of any kind, and a wall-clock bound. See `run-isolated.sh`.
+
+*Amended 2026-08-06.* This used to say "each third-party tool", which was the original intent: the
+container exists to protect the card from somebody else's dependency tree, and by that argument
+our own arms did not need one. Running them outside it would have put senbonzakura on the host's
+torch and the other tool on the image's pinned build, which is two sets of kernels underneath a
+table claiming one environment. The run now refuses to start if the two images disagree about
+which torch they carry, and our arm is audited by the same self-test as everybody else's.
 
 This is in the contract rather than in a footnote because it constrains the measurement: a tool
 that cannot reach the network cannot download anything mid-run, so every input is staged in

@@ -85,8 +85,8 @@ def test_the_reasoning_for_the_real_budget_is_left_alone(real_spec):
     "SLICE STAGING FAILED",              # the shared eval slices are still staged
     "best_of_n.json",                    # the selection pass still guards on its own artefact
     "artefact_ok.py",                    # the resume guards still name their configuration
-    "report_bands.py",                   # the verdict still comes from the harness
     "senbon-bench:senbonzakura",         # our arm still runs sealed
+    "report_head_to_head.py",            # the verdict still comes from the harness
 ])
 def test_the_rehearsal_keeps_what_can_actually_be_wrong(real_spec, guarantee):
     assert guarantee in mds.transform(real_spec), \

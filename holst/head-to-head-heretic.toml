@@ -359,6 +359,13 @@ fi
 echo SCORE_OK
 """
 
+# ── The report ────────────────────────────────────────────────────────────────────────
+#
+# NOT `report_bands.py`. That reads the K-comparison grid `senbonzakura validate` writes: one
+# model, several direction budgets, ranked within a matched-refusal band. A head-to-head is a
+# different shape, so pointed at compass scores it correctly reported that it could see no grid,
+# and then, because the job swallowed the failure, printed success anyway.
+
 [[job]]
 id = "report"
 name = "read it, and publish whatever it says"
@@ -374,24 +381,14 @@ OUT=$HOME/bench-out/h2h
 PY=$HOME/track2/venv/bin/python
 cd "$RUN"
 
-# The verdict comes from the harness, never from a fresh argmin here. A gap smaller than the
-# spread is a tie, and the gate says so explicitly.
-#
-# THE ARGUMENT LIST IS CHECKED BEFORE IT IS USED. When every arm failed to score, this expanded to
-# nothing, report_bands refused for want of arguments, the `||` swallowed it and the job printed
-# REPORT_OK anyway. A run that measured nothing came back green.
-ARGS=""
-for f in "$OUT"/scored-*.json; do
-    [ -f "$f" ] || continue
-    ARGS="$ARGS $(basename "$f" .json)=$f"
-done
-if [ -z "$ARGS" ]; then
-    echo "NOTHING TO REPORT: no scored arms under $OUT. The score job should have caught this."
-    exit 1
-fi
-echo "reporting on $(printf '%s' "$ARGS" | wc -w) scored arm(s)"
-PYTHONPATH=src "$PY" tools/report_bands.py $ARGS || {
-    echo "REPORT FAILED: the harness could not read the arms it was given"
+# The verdict comes from the harness, never from a fresh argmin here. It compares the two tools on
+# the ONE axis where a comparison means something (our compass, run by us over every model from
+# both tools, on the same held-out prompts) and applies the gate's own tie rule: a gap smaller
+# than the spread is a tie. It prints each tool's self-reported refusal and KL beside that, in
+# labelled rows rather than a shared column, because those come from different estimators on
+# different slices and one column would repeat the error that withdrew four claims on 2026-08-05.
+PYTHONPATH=src "$PY" tools/report_head_to_head.py "$OUT" || {
+    echo "REPORT FAILED: see above. An incomplete set of arms is not a table."
     exit 1
 }
 

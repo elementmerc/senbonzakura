@@ -61,6 +61,22 @@ not comparable to what this version produces.
 - The evaluation track's card now records that AdvBench is inside the track, that how much of
   it reached the fitting side is unmeasured, and how to check before quoting such a figure.
 
+### Benchmark
+
+- `senbonzakura bench` runs a matched head-to-head between abliteration tools on one machine:
+  `stage` cuts the prompt slices every tool is scored on, `head-to-head` runs every arm and
+  scores every model with one instrument, `report` reads a finished run.
+- Both tools get the same corpus, the same budget and the same prompt slices, and the slices
+  record which corpus they came from so a mismatched pair is refused rather than run.
+- `--isolate docker` runs each arm with no network, read-only inputs and no credentials.
+  Without it the run warns, because a third-party tool otherwise runs with yours.
+- An arm is skipped only when a manifest agrees with the run's tool, seed, model and budget and
+  every artefact it declared is present. An arm that exits cleanly having produced nothing is a
+  failure and leaves no manifest, so the next run retries it.
+- Adding another tool is an adapter: how to invoke it, what proves it ran, where it leaves a
+  model, how to read its own figures.
+- Fewer than three seeds gets no verdict, and a gap smaller than the spread is reported as a tie.
+
 ### Engine
 
 - The search can be given a fixed prompt format instead of inventing one when a model has no

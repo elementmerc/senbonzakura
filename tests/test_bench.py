@@ -494,3 +494,151 @@ def test_the_report_refuses_a_directory_that_is_not_there(tmp_path):
     with pytest.raises(SystemExit) as e:
         bench.main(["report", str(tmp_path / "nowhere")])
     assert "no directory" in str(e.value)
+
+
+# ── end to end: the whole operation, no GPU, no docker, no model ──────────────────────
+def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys):
+    """Every unit above passes and the operation could still be wired wrong.
+
+    That is the lesson of 2026-08-05: five jobs reported done, each one individually plausible,
+    and nothing had been measured. So this drives `main` the way the spec drives it, through
+    preflight, the arms, the manifests, the scoring and the report, with only the subprocess
+    boundary replaced. Anything between those steps that does not line up fails here.
+    """
+    track = tmp_path / "track"
+    track.mkdir()
+    (track / "bad_eval_ds").mkdir()
+    (track / "good_ds").mkdir()
+    out = tmp_path / "out"
+
+    def fake(argv, *, cwd=None, log=print):
+        from pathlib import Path
+        target = Path(argv[argv.index("--out") + 1])
+        if "compass" in argv:
+            label = argv[argv.index("--label") + 1]
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            # Vary by seed. Identical scores across every seed are what a seed that reaches
+            # nothing looks like, and the report says so rather than naming a winner, so a stub
+            # that returned one number would have tested the refusal instead of the verdict.
+            seed = int(label.rsplit("seed", 1)[1])
+            auc = (0.95 if tool == "senbon" else 0.60) + (seed - 43) * 0.01
+            target.write_text(json.dumps({
+                "label": label, "auc": auc, "auc_ci": [auc - 0.01, auc + 0.01],
+                "controls": {"length_only_auc": 0.55}}), encoding="utf-8")
+        else:
+            # Each stub leaves its model where that tool really leaves it. senbonzakura writes
+            # straight into the directory it was given; Heretic's comes out of the selection pass
+            # in a subdirectory. A stub that ignored the difference would pass this test and hide
+            # the mistake that scored a whole tool's arms against nothing on 2026-08-05.
+            tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
+            model = target / bench.ADAPTERS[tool].model_subdir
+            model.mkdir(parents=True, exist_ok=True)
+            (model / "config.json").write_text("{}", encoding="utf-8")
+            (target / "abliteration.json").write_text(
+                json.dumps({"post_bake_refusals": 0.02, "post_bake_kl": 0.21}), encoding="utf-8")
+            (target / "best_of_n.json").write_text(
+                json.dumps({"winner": {"refusals": 0.04, "kl": 0.005}}), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(bench, "default_runner", fake)
+    summary = bench.main([
+        "head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+        "--model", "/models/qwen", "--track", str(track), "--out", str(out),
+        "--eval-slices", str(_slices(tmp_path, track)),
+        "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
+        "--trials", "6"])
+
+    assert summary["failed"] == 0 and summary["ran"] == 6
+    # Six arms, six scores, and a verdict that reads them.
+    for tool in ("senbon", "heretic"):
+        for seed in (42, 43, 44):
+            assert (out / f"{tool}-seed{seed}" / bench.ARM_MANIFEST).is_file()
+            assert (out / f"scored-{tool}-seed{seed}.json").is_file()
+    printed = capsys.readouterr().out
+    assert "senbon scores higher on harm recognition than heretic" in printed
+    assert "NOT a comparison" in printed, "the two tools' own figures lost their warning"
+    assert "length-only" in printed, "the null control did not reach the table"
+
+
+def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_path, monkeypatch,
+                                                                        capsys):
+    """Re-running an operation must be safe, and must not silently re-do ten hours of work."""
+    track = tmp_path / "track"
+    track.mkdir()
+    (track / "bad_eval_ds").mkdir()
+    (track / "good_ds").mkdir()
+    out = tmp_path / "out"
+    calls = []
+
+    def fake(argv, *, cwd=None, log=print):
+        from pathlib import Path
+        calls.append(list(argv))
+        target = Path(argv[argv.index("--out") + 1])
+        if "compass" in argv:
+            label = argv[argv.index("--label") + 1]
+            target.write_text(json.dumps({
+                "label": label, "auc": 0.9 + int(label.rsplit("seed", 1)[1]) * 0.001,
+                "controls": {}}), encoding="utf-8")
+        else:
+            tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
+            model = target / bench.ADAPTERS[tool].model_subdir
+            model.mkdir(parents=True, exist_ok=True)
+            (model / "config.json").write_text("{}", encoding="utf-8")
+            for n in ("abliteration.json", "best_of_n.json"):
+                (target / n).write_text("{}", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(bench, "default_runner", fake)
+    argv = ["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+            "--model", "/models/qwen", "--track", str(track), "--out", str(out),
+            "--eval-slices", str(_slices(tmp_path, track)),
+            "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
+            "--trials", "6"]
+    bench.main(argv)
+    first = len(calls)
+    capsys.readouterr()
+
+    second = bench.main(argv)
+    assert len(calls) == first, "a completed run re-ran its arms"
+    assert second["ran"] == 0 and second["skipped"] == 6
+    assert "harm recognition" in capsys.readouterr().out, "the second run produced no report"
+
+
+def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_path, monkeypatch,
+                                                                         capsys):
+    """A spread of zero across seeds is usually a seed that never reached the search.
+
+    This is the half of the tie rule most easily lost: the gap can be enormous and the result
+    still worthless. The reporter has always known it; this asserts the whole operation still
+    surfaces it rather than printing a winner.
+    """
+    track = tmp_path / "track"
+    track.mkdir()
+    (track / "bad_eval_ds").mkdir()
+    (track / "good_ds").mkdir()
+
+    def fake(argv, *, cwd=None, log=print):
+        from pathlib import Path
+        target = Path(argv[argv.index("--out") + 1])
+        if "compass" in argv:
+            label = argv[argv.index("--label") + 1]
+            auc = 0.95 if label.startswith("senbon") else 0.60   # identical for every seed
+            target.write_text(json.dumps({"label": label, "auc": auc, "controls": {}}),
+                              encoding="utf-8")
+        else:
+            tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
+            model = target / bench.ADAPTERS[tool].model_subdir
+            model.mkdir(parents=True, exist_ok=True)
+            (model / "config.json").write_text("{}", encoding="utf-8")
+            for n in ("abliteration.json", "best_of_n.json"):
+                (target / n).write_text("{}", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(bench, "default_runner", fake)
+    bench.main(["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+                "--model", "/m", "--track", str(track), "--out", str(tmp_path / "out"),
+                "--eval-slices", str(_slices(tmp_path, track)),
+                "--harmful", str(track / "bad_eval_ds"),
+                "--harmless", str(track / "good_ds"), "--trials", "6"])
+    printed = capsys.readouterr().out
+    assert "spread is exactly" in printed and "never varied anything" in printed

@@ -1,45 +1,105 @@
 # Your first run
 
+Right. Let's actually edit a model.
 
-The fast path, if you just want the best result and no knob-twiddling:
+You'll need a GPU, a model, and a track. The track is the pile of prompts the tool learns from,
+and if you don't have one yet, skip to [the track](/guide/the-track) and come back. It takes a
+couple of minutes to build.
 
-```sh
-senbonzakura kageyoshi --model <hf-model-or-path> --out <dir> --track <dir> --device cuda
-```
-
-`kageyoshi` is the ultimate balanced-effort mode. It detects the
-architecture (dense, fused MoE, or expert-list) and parameter count, scales the
-search budget accordingly, and switches on every quality lever, so you supply only
-the paths. "Balanced" is the point here. It picks the most uncensored config that stays
-coherent (the KL ceiling and coherence penalty guard it), not the most aggressive
-one. It owns the search knobs; manual `--trials` / `--max-directions` and friends
-are ignored in this mode. If a `hedge_ds/` sits in your track directory it folds the
-hedging axis in automatically.
-
-For full manual control:
+## The one command
 
 ```sh
-senbonzakura --model <hf-model-or-path> --out <dir> \
-    --track <dir-holding-bad_ds-good_ds-bad_eval_ds> \
-    --search pareto --max-directions 6 --trials 200 --device cuda \
-    --eval-refusal-final 256 --patience 40
+senbonzakura kageyoshi \
+    --model Qwen/Qwen3-1.7B \
+    --track mytrack \
+    --out my-abliterated-model \
+    --device cuda
 ```
 
-Score any model on a held-out evaluation set with the same ruler:
+Then go and make a cup of tea. On a 6 GB card a 1.7B model takes about an hour.
+
+That's genuinely it. No configuration file, no tuning, no eight knobs to guess at.
+
+::: tip Why "kageyoshi"?
+Senbonzakura Kageyoshi is the sword's second release: the point where a thousand blades become
+a great many more. It's the mode that does the searching for you, so it got the bigger name.
+
+Naming a CLI subcommand after an anime power-up is either the best or the worst decision in this
+codebase and I've made peace with not knowing which.
+:::
+
+## What it's doing while you wait
+
+It runs a few hundred attempts at abliterating your model, each with different settings, and scores
+every one on three things at once: how many refusals are left, how far the model has drifted from
+the original, and whether the output has turned to mush.
+
+Then it picks the best trade-off, applies it properly, and saves the result.
+
+You'll see something like this scrolling past:
+
+```
+trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% heretic=12.5% broken=0% KL=0.19
+```
+
+Left to right: which attempt, the shape of the cut it tried, how many directions, then the four
+numbers that decide whether it was any good. `refusals` is the one you came for. `KL` is what it
+cost you.
+
+## It picks the knobs itself, and it means it
+
+`kageyoshi` owns the search settings. If you pass `--trials` or `--max-directions` alongside it,
+they're ignored, and it'll tell you so rather than pretending.
+
+That's deliberate. The whole point of the mode is that it sizes the search to your model: a 1.7B
+gets a different budget from a 12B, and a mixture-of-experts model gets different handling from a
+dense one. Half-overriding that gives you the worst of both.
+
+If you want the knobs, use the manual mode below.
+
+## Doing it by hand
 
 ```sh
-python -m senbonzakura.score --model <dir> --eval <eval-dataset> --out results.json --label mymodel
+senbonzakura abliterate \
+    --model Qwen/Qwen3-1.7B \
+    --track mytrack \
+    --out my-abliterated-model \
+    --device cuda \
+    --trials 200 \
+    --max-directions 3
 ```
 
-Measure its coherence on the same loader, the other half of the ruler (the
-perplexity the model assigns to one fixed neutral passage, lower is better):
+Same thing, except you're deciding the budget and the direction count. See
+[flags worth knowing](/reference/flags) for the ones that actually change what a run means, as
+opposed to the ones that just change how long it takes.
+
+## When it finishes
+
+You get a model directory you can load with `transformers` like any other, plus an
+`abliteration.json` next to it recording exactly what was done: the winning configuration, the
+seed, how many trials actually ran, the package versions, the commit.
+
+That file matters more than it looks. It's the difference between "this model is abliterated" and
+"this model was abliterated on 2026-08-14 with these settings, and here's how to do it again".
+
+## Now check whether you broke it
+
+This is the step most people skip, and it's the interesting one.
+
+Your model has stopped refusing. Has it also stopped *understanding* that some requests are
+dangerous? Those are different things, and only one of them is a problem.
 
 ```sh
-python -m senbonzakura.coherence --model <dir> --out coherence.json --label mymodel --load-in-4bit
+senbonzakura compass --model my-abliterated-model \
+    --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds \
+    --out compass.json
 ```
 
-`senbonzakura.metrics` is that shared ruler: hard refusal, soft refusal (the "I
-can't, but here's a lecture" hedge), broken output, and the Heretic keyword rate
-(copied verbatim, so the numbers are directly comparable to Heretic's published
-figures).
+[The compass](/guide/compass) explains what the number means and, more importantly, what it
+doesn't.
 
+## So what?
+
+One command gets you an edited model. The second command tells you what it cost. Running the first
+without the second is how people end up publishing a refusal rate for a model that has quietly
+been lobotomised, and it happens more than you'd think.

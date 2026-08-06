@@ -1,6 +1,22 @@
 # Contamination
 
-Whether the corpus you fitted on already contains the benchmark you are about to quote.
+You want to report your model's score on AdvBench, the benchmark everyone in this field quotes.
+Sensible. It's how a reader places you against the literature.
+
+One problem: is AdvBench already *inside* the corpus you fitted on?
+
+If it is, you tuned the model on the exam paper. The number is still a number, it just doesn't
+mean what it says.
+
+::: warning This is not a hypothetical for us either
+About **430 rows** of this project's harmful corpus **are AdvBench**, arriving through
+`mlabonne/harmful_behaviors` without anybody choosing to put them there.
+
+Public corpora are assembled from each other. A benchmark can be inside yours and nothing will
+mention it.
+:::
+
+## Ask the tool
 
 ## The problem
 

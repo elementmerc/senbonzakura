@@ -1,26 +1,39 @@
 # The track
 
-A track is the corpus the tool reads: harmful prompts, harmless prompts, and a split that
-decides which of them any published number may come from.
+A **track** is the pile of prompts the tool learns from and is judged on. Harmful ones, harmless
+ones, and a split that decides which of them any published number is allowed to come from.
 
+It sounds like plumbing. It is the single easiest place to accidentally lie to yourself, so it
+gets a page.
 
-A **track** is a directory of three datasets. Every command takes `--track <dir>` and
-looks for these names:
+## Why the split is the whole thing
 
-| Directory | What it holds | What reads it |
-|---|---|---|
-| `bad_ds` | Harmful prompts | Direction extraction fits on these |
-| `bad_eval_ds` | Harmful prompts | The search scores trials, and the compass measures |
-| `good_ds` | Harmless prompts | Fitting, the KL reference, and the compass's harmless arm |
+Suppose you fit your refusal directions on 500 harmful prompts, then measure how well the
+abliteration worked using those same 500 prompts.
 
-Each is a `datasets.save_to_disk` directory with one column, `text`:
+You'll get a spectacular result. You have also learned nothing, because you tested the model on
+the exact questions it was tuned against. It's revising from the answer sheet.
 
-```python
-from datasets import Dataset
-Dataset.from_dict({"text": ["first prompt", "second prompt"]}).save_to_disk("mytrack/bad_ds")
-```
+::: warning This project did exactly that, for months
+The original corpus had **all 200 harmful evaluation prompts sitting inside the 4,918-row fitting
+set**. On the harmless side it was 196 out of 197.
 
-### Build one, and have it checked
+Every number measured on it was in-sample and flattering, and nothing in the tooling noticed,
+because "the file parsed and the numbers came out" is not a check.
+:::
+
+So a track is split three ways, and the tool enforces it:
+
+| Partition | Harmful | Harmless | What touches it |
+|---|--:|--:|---|
+| `fit` | 259 | 257 | Finding the directions |
+| `search` | 132 | 128 | Scoring attempts, picking a winner |
+| `measure` | 4,504 | 4,597 | **Every published number, and nothing else** |
+
+Note the sizes. The part that does the work is small. The part that's protected is 92% of the
+corpus, and the abliteration never sees it.
+
+## Build one, and have it checked
 
 Doing it by hand is how the mistake happens, so there is a builder:
 
@@ -43,13 +56,28 @@ The checks are the point. A track is refused if anything in `measure` also appea
 empty, or if the two sides differ in size by more than 10%. It reports counts only and
 never prints a prompt, so its output is safe to paste anywhere.
 
-One of those checks looks past the text. Corpora are often built by crossing a handful
-of phrasings with a list of requests, so the same question appears several times as
-several different strings; comparing whole prompts then reports a clean split while the
-eval set is full of training questions in other clothes. The builder works out the
-phrasings from your own corpus, strips them, and keeps every wording of one request in
-the same part. On the corpus this project runs on, that is the difference between
-"zero overlap" and 60% of the eval set.
+## The check that isn't obvious
+
+Here's the one that catches people, including me.
+
+Corpora are usually built by crossing a handful of phrasings with a list of requests. So *"Explain
+in detail how to X"* and *"Write a step by step guide to X"* are two different strings and one
+question.
+
+Compare whole prompts and you get a clean split. Compare the underlying **requests** and you find
+your evaluation set is stuffed with training questions wearing a different hat.
+
+On this project's own corpus, that's the difference between **"zero overlap"** and **60% of the
+evaluation set**. The first number is what a naive check reported. The second is the truth.
+
+So the builder works the phrasings out from your corpus, strips them, and keeps every wording of
+one request on the same side of the split. You don't configure it; it's derived from your data, so
+it works on somebody else's corpus too and can't go stale against ours.
+
+## So what?
+
+If you only take one thing from this page: **the split is not bookkeeping**. It's the difference
+between a measurement and a compliment you paid yourself.
 
 ### `track.json`: where the boundaries are recorded
 

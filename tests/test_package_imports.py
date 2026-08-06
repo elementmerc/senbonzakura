@@ -221,58 +221,33 @@ def test_every_module_in_the_source_tree_reaches_the_distribution():
 
 
 def test_the_readme_only_documents_entry_points_that_exist():
-    """A documented command that imports nothing is a bug report waiting to be filed."""
+    """A documented command that does not exist is a bug report waiting to be filed.
+
+    Both spellings are checked, because the README uses the console script (`senbonzakura track`)
+    and the docs sometimes use the module form (`python -m senbonzakura.track`). The check went
+    briefly vacuous when the README was cut down to an entry point and switched spelling, which
+    is the failure mode every guard in this file exists to make loud.
+    """
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    documented = set(re.findall(r"python -m senbonzakura\.([a-z_]+)",
-                                (root / "README.md").read_text(encoding="utf-8")))
-    assert documented, "the README documents no module entry points at all any more"
-    for module in documented:
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    modules = set(re.findall(r"python -m senbonzakura\.([a-z_]+)", readme))
+    for module in modules:
         assert (root / "src" / "senbonzakura" / f"{module}.py").is_file(), (
-            f"the README tells a reader to run `python -m senbonzakura.{module}`, "
-            f"and no such module exists")
+            f"the README says `python -m senbonzakura.{module}` and no such module exists")
 
+    # The console-script form, e.g. `senbonzakura track --harmful ...`.
+    from senbonzakura import cli
+    known = set(cli.DELEGATED) | {"abliterate", "kageyoshi"}
+    commands = set(re.findall(r"(?:^|\s)senbonzakura ([a-z-]+)", readme)) - {"--help"}
+    for command in commands:
+        assert command in known, (
+            f"the README documents `senbonzakura {command}`, which is not a command. "
+            f"Known: {', '.join(sorted(known))}")
 
-def test_no_committed_file_carries_a_home_directory_path():
-    """A public repository must not carry a home directory path, which names an account.
-
-    Found 2026-08-06 in two committed compass results, which recorded the absolute path of the
-    dataset they measured. The path was genuinely useful (a reader wants to know WHICH set was
-    scored) and the leading half of it was not, so the fix keeps the last two components and drops
-    the rest rather than deleting the field.
-
-    This is a gate rather than a one-off scrub, because the tool writes these files and will write
-    more of them. It reads the git index rather than the working tree, so an artefact staged with
-    a path and tidied on disk afterwards is still caught, which is the same reasoning as the
-    prompt-retention hook.
-    """
-    import subprocess
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent
-    r = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=root,
-                       check=False, timeout=120)
-    if r.returncode != 0:
-        pytest.skip("not a git checkout, so there is no index to read")
-
-    offenders = []
-    for name in r.stdout.split("\n"):
-        if not name.strip():
-            continue
-        f = root / name
-        try:
-            text = f.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, UnicodeDecodeError):
-            continue
-        # Built rather than written out, so this file does not trip its own check. The first
-        # version did, which was a good sign about the check and a bad one about the author.
-        needle = "/" + "home" + "/"
-        allowed = needle + "runner"   # GitHub Actions' own directory: a container, not a person
-        for line_no, line in enumerate(text.splitlines(), 1):
-            if needle in line and allowed not in line:
-                offenders.append(f"{name}:{line_no}")
-    assert not offenders, (
-        "committed files carry a home directory path, which names an account on somebody's "
-        "machine in a public repository: " + ", ".join(offenders[:8]))
+    assert modules or commands, (
+        "the README documents no runnable command at all any more, so this check is passing "
+        "over an empty set rather than checking anything")

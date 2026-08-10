@@ -38,6 +38,14 @@ from pathlib import Path
 # rehearsal once reported five jobs done having measured nothing.
 ARM_MANIFEST = "arm.json"
 
+# Where the sealed box mounts each input. An arm's command is built against THESE rather than
+# against this machine's paths, because the two are not the same and the difference is invisible
+# until the container starts and cannot find its own model.
+GUEST_MODEL = "/model"
+GUEST_CORPUS = "/corpus"
+GUEST_EVAL = "/corpus-eval"
+GUEST_OUT = "/work/out"
+
 # The prompt files every tool is scored on, staged once so no tool brings its own.
 SLICE_FILES = ("good.txt", "bad.txt", "keyword_prompts.txt", "final_prompts.txt",
                "kl_prompts.txt")
@@ -251,7 +259,10 @@ def find_run_isolated() -> Path | None:
         p = Path(override)
         return p if p.is_file() else None
     here = Path(__file__).resolve()
-    for root in (here.parent.parent.parent, Path.cwd()):
+    # A checkout has it beside the package; a machine the code was shipped to has it wherever the
+    # shipping put it, which on this project's card is ~/bench rather than beside the source.
+    roots = (here.parent.parent.parent, Path.cwd(), Path.home())
+    for root in roots:
         candidate = root / "bench" / "run-isolated.sh"
         if candidate.is_file():
             return candidate
@@ -384,8 +395,21 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
             return ArmResult(adapter.name, seed, arm, ran=False, ok=True, reason=why)
 
     arm.mkdir(parents=True, exist_ok=True)
-    argv = adapter.argv(model=model, track=track, out=arm, seed=seed, trials=trials,
-                        slices=slices, extra=list(extra))
+
+    # THE ARM IS GIVEN THE PATHS IT WILL SEE, NOT THE ONES WE SEE.
+    #
+    # A container mounts the model at /model and the corpus at /corpus, so an arm handed
+    # `--model /home/<user>/bench-models/Qwen3-1.7B` looks for a directory that does not exist
+    # inside the box and dies on its first line. The rehearsal on 2026-08-10 caught exactly that:
+    # every arm failed instantly with "No module named senbonzakura", because the command was
+    # built against this machine's layout and run somewhere with a different one.
+    if isolate == "docker":
+        paths = dict(model=GUEST_MODEL, track=GUEST_CORPUS, out=GUEST_OUT,
+                     slices=(GUEST_EVAL if slices else None))
+    else:
+        paths = dict(model=model, track=track, out=arm, slices=slices)
+
+    argv = adapter.argv(seed=seed, trials=trials, extra=list(extra), **paths)
     if isolate == "docker":
         script = find_run_isolated()
         if script is not None:

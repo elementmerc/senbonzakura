@@ -17,6 +17,25 @@ import pytest
 from senbonzakura import bench
 
 
+def _host_out(argv):
+    """Where an arm's artefacts land on THIS machine.
+
+    An isolated arm is told `/work/out`, which is where it will see its output directory from
+    inside the container; the host side of that mount is in the `--volume` argument. A stub that
+    ignored the difference would write to a path that does not exist and would also hide the very
+    mistake the mapping exists to prevent.
+    """
+    candidate = None
+    for i, a in enumerate(argv):
+        if a == "--volume" and argv[i + 1].endswith(":/work/out:rw"):
+            return argv[i + 1].rsplit(":/work/out:rw", 1)[0]
+        # run-isolated.sh takes the host output directory as its own `--out`, before the `--`
+        # that separates its flags from the command it will run inside.
+        if a == "--out" and i + 1 < len(argv) and candidate is None:
+            candidate = argv[i + 1]
+    return candidate
+
+
 @pytest.fixture
 def runner():
     """A fake arm runner: records what it was asked to run, and can be told to fail or to lie."""
@@ -30,7 +49,7 @@ def runner():
             self.calls.append(list(argv))
             if self.produce:
                 from pathlib import Path
-                out = Path(argv[argv.index("--out") + 1])
+                out = Path(_host_out(argv))
                 if "compass" in argv:
                     # The compass writes one results file, not a directory of artefacts.
                     out.parent.mkdir(parents=True, exist_ok=True)
@@ -691,3 +710,39 @@ def test_without_the_wrapper_it_falls_back_to_a_plain_sealed_box(tmp_path, runne
     argv = runner.calls[0]
     assert argv[0] == "docker"
     assert "--network" in argv and "none" in argv
+
+
+def test_an_isolated_arm_is_given_the_paths_it_will_see(tmp_path, runner, monkeypatch):
+    """A container mounts the model at /model. An arm told the host path dies on its first line.
+
+    The 2026-08-10 rehearsal failed exactly this way: every arm exited 1 with "No module named
+    senbonzakura", because the command was built against this machine's layout and then run
+    somewhere with a different one. Nothing in the unit tests noticed, because they never crossed
+    the boundary where the two layouts differ.
+    """
+    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+                  image="img", **a)
+    argv = runner.calls[0]
+    assert argv[argv.index("--model") + 1] == bench.GUEST_MODEL
+    assert argv[argv.index("--track") + 1] == bench.GUEST_CORPUS
+    assert argv[argv.index("--out") + 1] == bench.GUEST_OUT
+    assert str(a["model"]) not in " ".join(argv[argv.index("img"):]), (
+        "a host path reached the command that runs inside the box")
+
+
+def test_an_unisolated_arm_still_gets_the_real_paths(tmp_path, runner):
+    """The mapping applies only where there is a boundary to cross."""
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    argv = runner.calls[0]
+    assert argv[argv.index("--model") + 1] == str(a["model"])
+
+
+def test_heretics_staged_slices_are_addressed_inside_the_box(tmp_path, runner, monkeypatch):
+    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
+    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
+                  image="img", **_args(tmp_path))
+    argv = runner.calls[0]
+    assert argv[argv.index("--good") + 1] == f"{bench.GUEST_EVAL}/good.txt"

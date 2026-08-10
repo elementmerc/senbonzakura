@@ -51,3 +51,7 @@ optuna*.db
 # generator exists to prevent.
 holst/*-dryrun.toml
 holst/*-oncard.toml
+
+# Terminal captures used only to verify a recording caught what it claims.
+# Not published, and the banner it captures is randomised, so it is not a golden file.
+docs/tapes/captured/

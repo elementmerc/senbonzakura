@@ -143,6 +143,11 @@ Including one somebody assembled by hand, or one of yours from six months ago:
 python -m senbonzakura.track --out mytrack --audit
 ```
 
+![The track audit running against the committed toy track](/media/track-audit.gif)
+
+That's the real thing, recorded against `examples/toy-track` which ships in the repository, so
+you can run the exact command above and get the exact output above.
+
 If you've got a `label<TAB>prompt` file for the corpus, pass `--labels` as well. It buys
 you the one check that can't be run without it: whether every category in the track
 actually reaches the `measure` slice. A category that doesn't is the mirror image of

@@ -205,7 +205,11 @@ ignore = [
 # were noise that any genuinely new warning would have hidden in. It is affordable
 # because, once fixed, this suite emits no warnings of any kind, so the setting costs
 # nothing today and turns the next leak into a failure instead of more noise.
-addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning"
+# -rs prints why every skipped test skipped. A skip is a test that did not run, and in a
+# 963-dot stream it looks exactly like a test that did. Twenty-one of these were skipping on
+# the CPU box for months because the route there strips `private/`, and the tests that guard
+# the rehearsal spec were the ones being dropped. The reason has to be on the screen.
+addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs"
 
 [tool.coverage.run]
 source = ["senbonzakura"]              # without this, a run measures whatever happened to import

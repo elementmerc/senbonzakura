@@ -74,12 +74,12 @@ So the builder works the phrasings out from your corpus, strips them, and keeps 
 one request on the same side of the split. You don't configure it; it's derived from your data, so
 it works on somebody else's corpus too and can't go stale against ours.
 
-## So what?
+::: warning If you take one thing from this page
+**The split isn't bookkeeping.** It's the difference between a measurement and a compliment
+you paid yourself.
+:::
 
-If you only take one thing from this page: **the split is not bookkeeping**. It's the difference
-between a measurement and a compliment you paid yourself.
-
-### `track.json`: where the boundaries are recorded
+## `track.json`: where the boundaries are recorded
 
 The three partitions are stored end to end inside each dataset, so `bad_ds` is the fit rows
 followed by nothing else, while `bad_eval_ds` is the search rows followed by the measure
@@ -123,7 +123,7 @@ begins**, so the builder writes it down:
 A track with no `track.json` still runs. It simply gets none of the above, and every
 boundary becomes something you have to keep right by hand.
 
-### The optional fourth and fifth directories
+## The optional fourth and fifth directories
 
 | Directory | What it holds | What reads it |
 |---|---|---|
@@ -135,31 +135,33 @@ answers "is the compass reading refusal, or is it reading topic?" by holding the
 matter still. `hedge_ds` has no public dataset behind it anywhere, which is why the
 single-versus-multi comparison is two arms rather than three.
 
-Those numbers are also written to `mytrack/track.json`, so a reader can check the split
-a year later rather than take it on trust. To re-check a track you already have,
-including one assembled by hand:
+## Re-checking a track you already have
+
+Including one somebody assembled by hand, or one of yours from six months ago:
 
 ```sh
 python -m senbonzakura.track --out mytrack --audit
 ```
 
-If you have a `label<TAB>prompt` file for the corpus, pass `--labels` to the audit too.
-It adds the one check that cannot be run without it: whether every category present in
-the track actually reaches the `measure` part. A category that does not is the mirror
-image of leakage, a number narrower than it looks rather than better than it should be.
+If you've got a `label<TAB>prompt` file for the corpus, pass `--labels` as well. It buys
+you the one check that can't be run without it: whether every category in the track
+actually reaches the `measure` slice. A category that doesn't is the mirror image of
+leakage. Leakage makes your number better than it should be; this makes it **narrower than
+it looks**, a score on eight topics being reported as a score on twelve.
 
-Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites
-that backup.
+Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites that
+backup. So a rebuild you regret costs you nothing, and a second rebuild you regret can't
+quietly eat the good copy.
 
-`track.json` is also read at the start of a run, and a run whose flags would reach past a
-recorded boundary stops before the model loads. Each dataset is read as its first N rows,
-and the search rows come immediately before the measured ones, so asking for a larger
-selection set than the track keeps aside would quietly select on the rows the published
-number comes from. A track without a `track.json`, one assembled by hand, runs as before:
-its boundaries are unknown, so there is nothing to check against.
+## A toy track to try it on
 
-### A toy track to try it on
-
-`examples/toy-track/` is committed and runnable straight from a clone. Its prompts are
+`examples/toy-track/` is committed and runs straight from a clone. Its prompts are
 synthetic placeholders rather than real harmful text, because it exists to show the
-plumbing works, not to measure anything.
+plumbing works, not to measure anything. Point the tool at it, break something on purpose,
+watch the audit complain.
+
+## Where next
+
+- [Contamination](/guide/contamination) to check whether the benchmark you want to quote is
+  already sitting inside your fit rows.
+- [The compass](/guide/compass) for what to point at the `measure` slice once you have one.

@@ -18,21 +18,15 @@ mention it.
 
 ## Ask the tool
 
-## The problem
-
-Suppose you want to report a number on a public benchmark. If any of that benchmark's
-requests are in the part of your track the directions were fitted on, the model was
-tuned on the questions it is being marked against, and the number says nothing. This
-is easy to do by accident: public corpora are assembled from each other, so a benchmark
-can be inside yours without anybody choosing to put it there.
+Point it at the benchmark you're about to quote. One prompt per line, same format as the
+corpus builder takes. It reads your track and writes nothing to it, so there's no way to
+make things worse by asking.
 
 ```sh
 python -m senbonzakura.track --out mytrack \
     --contamination advbench.txt --contamination-name AdvBench \
     --contamination-report contamination-advbench.json
 ```
-
-One prompt per line, same as the builder. It reads the track and writes nothing to it.
 
 ```
 contamination: AdvBench against this track
@@ -41,23 +35,53 @@ contamination: AdvBench against this track
   CONTAMINATED: 5 of its requests were fitted or searched on.
 ```
 
-Three things to know about how it counts:
+Five rows out of 520. Small enough to shrug at, and it's still the difference between a
+number you can publish and one you can't.
 
-- **It matches requests, not strings.** A benchmark that phrases the same question
-  differently from your corpus still counts as overlap, for the reason in the paragraph
-  above. Comparing text alone would report a clean result and be wrong.
-- **`measure` is not contamination.** That part is held out by design, so a benchmark
-  row found only there can be reported. The tool tells you how many rows qualify.
-- **It reports counts and never a prompt**, so the output is safe to paste anywhere.
+## Three things to know about how it counts
 
-Add `--fail-on-contamination` to make it exit non-zero instead of just reporting, which
-is what you want in a script. Without the flag it always exits cleanly, because a check
-that refuses cannot be run to find out.
+**It matches requests, not strings.** A benchmark that asks the same question in different
+words still counts as overlap, and it should: your model didn't learn the punctuation, it
+learned the request. Comparing raw text would have come back clean here and been wrong.
 
-It finishes by telling you the flags that put the compass on the held-out rows:
+::: tip New word: template
+Corpora love a wrapper. "How do I X" and "Write a guide explaining how to X" are one
+request in two costumes. The tool works out the wrappers your corpus uses and strips them
+before comparing, which is why the output above mentions seven of them.
+:::
+
+**`measure` is not contamination.** That slice is held out by design, so a benchmark row
+found only there is fine to report, and the tool tells you how many rows qualify. Overlap
+with `fit` or `search` is the fatal kind.
+
+**It reports counts and never a prompt.** The output is safe to paste into an issue, a
+paper or a group chat without accidentally publishing a list of harmful requests.
+
+## Making it a gate rather than a note
+
+```sh
+--fail-on-contamination
+```
+
+Exits non-zero instead of merely reporting, which is what you want inside a script or a CI
+job. Without the flag it always exits cleanly, on purpose: a check that refuses by default
+is a check people stop running, and then you find out nothing at all.
+
+## What it leaves you with
+
+It finishes by handing you the flags that point the compass at the held-out rows, so you
+don't have to work the arithmetic out yourself:
 
 ```
 TRACK_BUILT mytrack  harmful {'fit': 256, 'search': 128, 'measure': 616}
   measure with: --skip-harmful 128 --skip-harmless 384 --n 616
 ```
+
+**So what:** copy that second line into your compass command and whatever it reports is
+measured on prompts the model was never fitted or searched on. That's the whole game.
+
+## Where next
+
+- [The track](/guide/the-track) for how the three slices get cut in the first place.
+- [The compass](/guide/compass) for what to do with the held-out rows.
 

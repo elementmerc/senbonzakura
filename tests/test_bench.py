@@ -642,3 +642,52 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
                 "--harmless", str(track / "good_ds"), "--trials", "6"])
     printed = capsys.readouterr().out
     assert "spread is exactly" in printed and "never varied anything" in printed
+
+
+# ── isolation reuses the proven wrapper rather than reimplementing its flags ──────────
+def test_a_checkout_runs_arms_through_the_proven_wrapper(tmp_path, runner, monkeypatch):
+    """`bench/run-isolated.sh` owns the isolation, and it needs seven mounts and a device.
+
+    A WSL2 container needs `/dev/dxg` AND `/usr/lib/wsl/lib` AND `/usr/lib/wsl/drivers` to see a
+    GPU; miss the driver store and libcuda loads, fails to initialise NVML and reports zero
+    devices, which reads as "no GPU here" rather than "one bind mount short". `bench/selftest.py`
+    verifies nine invariants about that set from inside the box. Reimplementing it in Python would
+    be a second copy of a list this project has already been bitten by having three copies of.
+    """
+    script = tmp_path / "run-isolated.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("SENBON_RUN_ISOLATED", str(script))
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
+                  image="senbon-bench:heretic", **a)
+    argv = runner.calls[0]
+    assert argv[0] == str(script), "the arm did not go through run-isolated.sh"
+    assert "--tool" in argv and argv[argv.index("--tool") + 1] == "heretic"
+    assert "--senbon-src" in argv, "the shared ruler would not be importable inside the box"
+    assert "--eval" in argv, "the staged slices would not be mounted"
+    assert "--" in argv, "the inner command was not separated from the wrapper's own flags"
+
+
+def test_the_wrapper_is_given_the_image_for_that_tool(tmp_path, runner, monkeypatch):
+    """Running an arm in the shared base image starts, loads torch, and dies on a missing
+    dependency far from the cause.
+    """
+    script = tmp_path / "run-isolated.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("SENBON_RUN_ISOLATED", str(script))
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+                  image="senbon-bench:senbonzakura", **_args(tmp_path))
+    argv = runner.calls[0]
+    assert argv[argv.index("--image") + 1] == "senbon-bench:senbonzakura"
+
+
+def test_without_the_wrapper_it_falls_back_to_a_plain_sealed_box(tmp_path, runner, monkeypatch):
+    """An installed wheel has no `bench/` directory. The fallback is the minimum sealed box, so a
+    stranger still gets no network and read-only inputs rather than nothing.
+    """
+    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
+    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+                  image="img", **_args(tmp_path))
+    argv = runner.calls[0]
+    assert argv[0] == "docker"
+    assert "--network" in argv and "none" in argv

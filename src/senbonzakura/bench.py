@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -231,10 +232,8 @@ def docker_available() -> bool:
 def isolate_argv(argv, *, image: str, mounts, workdir="/work") -> list[str]:
     """Wrap a command so it runs sealed: no network, read-only inputs, no capabilities.
 
-    The flags are the ones proved by `bench/selftest.py` from inside the box rather than assumed
-    from the outside: nine invariants, including that the GPU works and that both mounts refuse a
-    write. `--network none` is the one that matters most, because it is what makes a run
-    reproducible: nothing can be fetched mid-run that was not staged before it.
+    Used when `bench/run-isolated.sh` is not available. It is the minimum sealed box and it is
+    deliberately not the one this project runs its own arms in: see `isolation_wrapper`.
     """
     out = ["docker", "run", "--rm", "--network", "none", "--read-only",
            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -245,7 +244,46 @@ def isolate_argv(argv, *, image: str, mounts, workdir="/work") -> list[str]:
     return out
 
 
-# ── preflight ─────────────────────────────────────────────────────────────────────────
+def find_run_isolated() -> Path | None:
+    """`bench/run-isolated.sh`, if this is a checkout rather than an installed wheel."""
+    override = os.environ.get("SENBON_RUN_ISOLATED")
+    if override:
+        p = Path(override)
+        return p if p.is_file() else None
+    here = Path(__file__).resolve()
+    for root in (here.parent.parent.parent, Path.cwd()):
+        candidate = root / "bench" / "run-isolated.sh"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, out) -> list[str]:
+    """Run an arm through `bench/run-isolated.sh`, which owns the isolation.
+
+    THE FLAGS ARE NOT REIMPLEMENTED HERE, and that is the point.
+
+    A sealed box for this benchmark needs more than "no network, read-only, no capabilities". On
+    WSL2, a GPU inside a container needs `/dev/dxg` AND `/usr/lib/wsl/lib` AND
+    `/usr/lib/wsl/drivers`; miss the driver store and libcuda loads, reports that it cannot
+    initialise NVML, and returns zero devices, which reads as "no GPU here" rather than "one bind
+    mount short". It also needs the corpus, the staged eval slices, our package source so a pass
+    running inside can import the shared ruler, and the bench directory so the tool's own entry
+    point is importable.
+
+    That is seven mounts and a device, and `bench/selftest.py` verifies nine invariants about them
+    from INSIDE the box. Rebuilding that list in Python would mean maintaining two copies of a
+    thing this project has already been bitten by having three copies of, and the copy that drifts
+    is the one nobody re-verifies.
+    """
+    return [str(script), "--tool", tool, "--image", image,
+            "--model", str(model), "--corpus", str(track), "--out", str(out),
+            *(["--eval", str(slices)] if slices else []),
+            "--senbon-src", str(Path(__file__).resolve().parent.parent),
+            "--", *argv]
+
+
+# ── preflight # ── preflight ─────────────────────────────────────────────────────────────────────────
 def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images,
               slices=None, score=False, harmful=None, harmless=None) -> list[str]:
     """Everything checkable before the first GPU second is spent, returned as complaints.
@@ -349,9 +387,15 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     argv = adapter.argv(model=model, track=track, out=arm, seed=seed, trials=trials,
                         slices=slices, extra=list(extra))
     if isolate == "docker":
-        argv = isolate_argv(
-            argv, image=image,
-            mounts=[(model, "/model", "ro"), (track, "/corpus", "ro"), (arm, "/work/out", "rw")])
+        script = find_run_isolated()
+        if script is not None:
+            argv = isolation_wrapper(script, argv, tool=adapter.name, image=image, model=model,
+                                     track=track, slices=slices, out=arm)
+        else:
+            argv = isolate_argv(
+                argv, image=image,
+                mounts=[(model, "/model", "ro"), (track, "/corpus", "ro"),
+                        (arm, "/work/out", "rw")])
 
     log(f"  {adapter.name} seed {seed}: running")
     code = runner(argv, log=log)

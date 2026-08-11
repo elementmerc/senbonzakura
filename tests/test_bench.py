@@ -818,3 +818,20 @@ def test_an_arm_that_produced_nothing_cannot_pass_on_a_previous_run_s_output(tmp
     assert "earlier run" in failed[0].reason, failed[0].reason
     assert not (arm / bench.ARM_MANIFEST).exists(), \
         "a manifest was written vouching for a file this arm did not produce"
+
+
+def test_the_scorer_runs_under_this_interpreter_not_a_bare_name():
+    """The arms run in a container; the scorer runs on the host, and the two are not the same box.
+
+    A literal "python" is fine inside the tool images and absent on the machine that dispatches
+    them: the card has `python3` only. Scoring died there with "could not start 'python'" the
+    first time it ran against an empty output directory, having been masked for days by finding a
+    previous run's results and reporting "already scored".
+    """
+    import sys
+
+    argv = bench.score_argv(model="m", harmful="h", harmless="g", out="o",
+                            label="x", skip_harmful=0, batch=8)
+    assert argv[0] == sys.executable, \
+        "the compass must run under the interpreter the harness was started from"
+    assert argv[0] != "python"

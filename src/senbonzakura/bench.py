@@ -567,7 +567,17 @@ def score_argv(*, model: Path, harmful: Path, harmless: Path, out: Path, label: 
     different shapes so one tool's arms were scored against nothing at all. There is one call site
     now and a test asserting each of those three cannot recur.
     """
-    return ["python", "-u", "-m", "senbonzakura", "compass",
+    # `sys.executable`, NOT "python". The scorer runs on the HOST, unlike the arms, which run
+    # inside a container where `python` exists. The card this benchmark runs on has `python3` and
+    # no `python` at all, so a literal "python" dies with "could not start 'python'" the moment
+    # scoring is actually reached. It went unnoticed because scoring had always found a previous
+    # run's results and reported "already scored"; the first rehearsal with a genuinely empty
+    # output directory hit it immediately (2026-08-11).
+    #
+    # It is also the correct interpreter on its own merits: the compass must run with the same
+    # senbonzakura the harness was started from, or `-m senbonzakura` resolves to a different
+    # install than the one being tested.
+    return [sys.executable, "-u", "-m", "senbonzakura", "compass",
             "--model", str(model), "--harmful", str(harmful), "--harmless", str(harmless),
             "--out", str(out), "--label", label,
             "--skip-harmful", str(skip_harmful), "--batch", str(batch)]

@@ -89,39 +89,41 @@ for tape in "${SELECTED[@]}"; do
     gif="$MEDIA/$name.gif"
     [ -f "$gif" ] || { echo "   FAILED: no GIF produced" >&2; FAILED=1; continue; }
 
-    # ── the ffmpeg pass ───────────────────────────────────────────────────────────────────
+    # ── the ffmpeg pass: scale down, then take the still ─────────────────────────────
     # Two jobs, and the first one is not cosmetic.
     #
-    # 1. THE STILL. VHS's own `Screenshot` writes the bare terminal: no margin, no window bar, no
-    #    rounded corners, none of the theme. It is a different image from the one in the GIF, which
-    #    is not what anyone wants when the still and the animation sit on the same page. Pulling
-    #    the frame out of the finished GIF is the only way to get a still that matches it.
-    # 2. THE PALETTE. A GIF holds 256 colours. Choosing them from the whole clip at once
-    #    (`stats_mode=diff` weights the pixels that actually change) beats choosing them per frame,
-    #    and `diff_mode=rectangle` only rewrites the region that moved. Kept only if it is
-    #    genuinely smaller, because an "optimisation" that grows the file is just a different file.
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
 
-    if ! ffmpeg -y -v error -sseof -0.4 -i "$gif" -frames:v 1 "$MEDIA/$name.png"; then
-        echo "   FAILED to pull the still out of the GIF" >&2
+    # THE DOWNSCALE IS THE QUALITY STEP, not a size step. Tapes render at twice their published
+    # width; averaging several rendered pixels into each published one is what makes glyph edges
+    # smooth rather than stair-stepped. It also comes out SMALLER, because smooth edges compress
+    # better than hard ones (89 KB against 103 KB on this clip, 2026-08-11), so there is no
+    # trade-off to weigh here.
+    width="$(sed -n 's/^# width: //p' "$tape" | head -1)"
+    [ -n "$width" ] || width=1240
+
+    before=$(stat -c %s "$gif")
+    if ffmpeg -y -v error -i "$gif" -vf "scale=$width:-1:flags=lanczos,palettegen=stats_mode=diff" "$tmp/palette.png" \
+       && ffmpeg -y -v error -i "$gif" -i "$tmp/palette.png" \
+            -lavfi "scale=$width:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a" "$tmp/out.gif"; then
+        mv "$tmp/out.gif" "$gif"
+        after=$(stat -c %s "$gif")
+        echo "   gif ${width}px wide, $((before / 1024)) KB -> $((after / 1024)) KB"
+    else
+        echo "   FAILED to scale the GIF down to ${width}px; it is still at render size" >&2
         FAILED=1
         continue
     fi
 
-    before=$(stat -c %s "$gif")
-    if ffmpeg -y -v error -i "$gif" -vf "palettegen=stats_mode=diff" "$tmp/palette.png" \
-       && ffmpeg -y -v error -i "$gif" -i "$tmp/palette.png" \
-            -lavfi "paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle" "$tmp/out.gif"; then
-        after=$(stat -c %s "$tmp/out.gif")
-        if [ "$after" -lt "$before" ]; then
-            mv "$tmp/out.gif" "$gif"
-            echo "   gif $((before / 1024)) KB -> $((after / 1024)) KB, still + text written"
-        else
-            echo "   gif $((before / 1024)) KB kept (the re-palette came out larger), still + text written"
-        fi
-    else
-        echo "   note: the palette pass failed; keeping VHS's own GIF" >&2
+    # THE STILL. VHS's own `Screenshot` writes the bare terminal: no margin, no window bar, no
+    # rounded corners, none of the theme. It would be a different image from the animation beside
+    # it on the page. Pulling the frame out of the finished GIF is the only way to get one that
+    # matches, and it has to happen AFTER the downscale or the still is twice the size.
+    if ! ffmpeg -y -v error -sseof -0.4 -i "$gif" -frames:v 1 "$MEDIA/$name.png"; then
+        echo "   FAILED to pull the still out of the GIF" >&2
+        FAILED=1
+        continue
     fi
     rm -rf "$tmp"
     trap - EXIT

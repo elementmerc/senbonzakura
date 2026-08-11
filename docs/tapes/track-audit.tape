@@ -4,6 +4,7 @@
 # and cannot drift from a corpus that only one machine has.
 #
 # expect: TRACK_AUDIT_OK
+# width: 1240
 #
 # Two things about this file are load-bearing and neither is obvious:
 #
@@ -24,8 +25,8 @@ Source docs/tapes/common.tape
 Output docs/public/media/track-audit.gif
 Output docs/tapes/captured/track-audit.txt
 
-Set Width 1240
-Set Height 620
+Set Width 2480
+Set Height 1240
 
 Hide
 Type "PS1='$ ' && clear"

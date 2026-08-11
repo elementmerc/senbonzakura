@@ -1,18 +1,26 @@
-# Shared look for every recording on this site. Sourced by each tape, so the palette,
-# the chrome and the typing speed are defined once and cannot drift between pages.
+# Shared look for every recording on this site. Sourced by each tape, so the palette, the
+# chrome and the typing speed are defined once and cannot drift between pages.
 #
-# The colours are the docs palette from docs/.vitepress/theme/palette.css, so a recording
-# sits on the page as part of it rather than as a screenshot of somebody else's terminal.
+# The colours are the docs palette from docs/.vitepress/theme/palette.css, so a recording sits
+# on the page as part of it rather than as a screenshot of somebody else's terminal.
+#
+# EVERYTHING HERE IS AT TWICE THE SIZE IT IS PUBLISHED AT. Each tape renders at 2x and
+# tools/record-docs.sh scales the result down with lanczos, which is what supersampling is: the
+# downscale averages several rendered pixels into each published one, so glyph edges come out
+# smooth instead of stair-stepped. Measured on the track-audit clip, 2026-08-11: the supersampled
+# GIF is both visibly crisper AND smaller, 89 KB against 103 KB, because smooth edges compress
+# better than hard ones. Doubling the numbers below without doubling a tape's Width and Height
+# would simply produce a very large font in a small window.
 
 Set Shell bash
 Set FontFamily "JetBrains Mono"
-Set FontSize 26
-Set Padding 24
-Set Margin 56
+Set FontSize 52
+Set Padding 48
+Set Margin 112
 Set MarginFill "#3d4d6b"
-Set BorderRadius 12
+Set BorderRadius 24
 Set WindowBar Colorful
-Set WindowBarSize 44
+Set WindowBarSize 88
 Set TypingSpeed 45ms
 Set CursorBlink false
 Set Framerate 30

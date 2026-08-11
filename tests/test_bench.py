@@ -50,12 +50,27 @@ def runner():
             if self.produce:
                 from pathlib import Path
                 out = Path(_host_out(argv))
+                joined = " ".join(argv)
                 if "compass" in argv:
                     # The compass writes one results file, not a directory of artefacts.
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("{}", encoding="utf-8")
+                elif "best_of_n_heretic.py" in joined:
+                    # ONLY THE SELECTION PASS WRITES best_of_n.json, because only it can.
+                    #
+                    # The fake used to write every artefact on every call, which made a Heretic
+                    # arm look complete whether or not the pass that finishes it ran at all. That
+                    # is how decision Q-5 dropped the pass without a single test noticing, and the
+                    # real run then spent 53 minutes an arm producing no model. A fake that is not
+                    # faithful about WHICH step produces WHAT cannot catch a missing step.
+                    (out / "best_of_n.json").write_text("{}", encoding="utf-8")
+                elif "run_heretic" in joined:
+                    # Heretic's own search leaves its bookkeeping and no model: v1.4.0 ends at an
+                    # interactive menu it cannot reach in a container.
+                    for name in ("budget.json", "config.toml"):
+                        (out / name).write_text("{}", encoding="utf-8")
                 else:
-                    for name in ("abliteration.json", "config.json", "best_of_n.json"):
+                    for name in ("abliteration.json", "config.json"):
                         (out / name).write_text("{}", encoding="utf-8")
             return self.code
     return Fake()
@@ -160,7 +175,9 @@ def test_every_arm_gets_the_same_trial_budget(tmp_path, runner):
     """An equal-budget claim is the whole comparison, and it used to live in a bash loop."""
     bench.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner,
                        **_args(tmp_path))
-    budgets = [c[c.index("--trials") + 1] for c in runner.calls]
+    # The selection pass carries no trial budget: it re-scores candidates the search already
+    # spent its budget producing, so it is filtered out rather than expected to declare one.
+    budgets = [c[c.index("--trials") + 1] for c in runner.calls if "--trials" in c]
     assert budgets == ["200"] * 4
 
 
@@ -173,7 +190,7 @@ def test_every_arm_reads_prompts_traceable_to_one_corpus(tmp_path, runner):
     """
     a = _args(tmp_path)
     bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
-    senbon, heretic = runner.calls
+    senbon, heretic = runner.calls[0], runner.calls[1]
     assert senbon[senbon.index("--track") + 1] == str(a["track"])
     assert str(a["slices"]) in " ".join(heretic)
     assert bench.slices_match_track(a["slices"], a["track"]) == []
@@ -746,3 +763,58 @@ def test_heretics_staged_slices_are_addressed_inside_the_box(tmp_path, runner, m
                   image="img", **_args(tmp_path))
     argv = runner.calls[0]
     assert argv[argv.index("--good") + 1] == f"{bench.GUEST_EVAL}/good.txt"
+
+
+# ── the pass that finishes an arm the tool cannot finish itself ───────────────────────
+def test_heretic_gets_the_selection_pass_that_writes_its_only_artefact(tmp_path, runner):
+    """Heretic's search cannot save; the arm is not finished until the pass runs.
+
+    v1.4.0 ends at an interactive menu it cannot reach in a container, so it leaves a complete
+    study and no model. `bench/EQUAL-BUDGET.md` promises it the same best-of-N selection
+    senbonzakura gives itself, and that pass is also what does the saving.
+
+    Decision Q-5 moved the arms out of a run spec and into this command, and left the pass behind
+    in the spec it replaced. Nothing failed: the adapter went on declaring `best_of_n.json` for
+    five days while nothing could write it, and the first real run after that spent 53 minutes an
+    arm producing no model at all. This test is the one that would have said so in three seconds.
+    """
+    bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **_args(tmp_path))
+    passes = [c for c in runner.calls if "best_of_n_heretic.py" in " ".join(c)]
+    assert len(passes) == 1, "Heretic's arm ran without the selection pass that saves its model"
+    argv = " ".join(passes[0])
+    assert "--top-n 6" in argv, "the pass must consider the same six candidates ours does"
+    assert "final_prompts.txt" in argv and "keyword_prompts.txt" in argv, \
+        "both tools' winners are chosen on the same held-out slice, or it is not a comparison"
+
+
+def test_our_own_arm_needs_no_second_pass(tmp_path, runner):
+    """Senbonzakura saves its own winner, so a pass here would be a second spend nothing asked for."""
+    bench.head_to_head(tools=["senbon"], seeds=[42], runner=runner, **_args(tmp_path))
+    assert len(runner.calls) == 1
+
+
+def test_an_arm_that_produced_nothing_cannot_pass_on_a_previous_run_s_output(tmp_path, runner):
+    """Existence was the check, and existence is what a stale file has.
+
+    On 2026-08-11 a rehearsal passed on a model five days old: the tool ran, saved nothing, and
+    the previous run's output was still in the directory, so the artefact check found what it was
+    looking for and the arm was written up as a success with a fresh manifest vouching for it. The
+    gate that exists to prove the pipeline works was reading files from the pipeline it was meant
+    to be testing.
+    """
+    a = _args(tmp_path)
+    arm = a["out"] / "heretic-seed42"
+    arm.mkdir(parents=True)
+    stale = arm / "best_of_n.json"
+    stale.write_text('{"winner": "from last week"}', encoding="utf-8")
+    import os
+    old = 1_600_000_000                      # comfortably before this arm starts
+    os.utime(stale, (old, old))
+
+    runner.produce = False                   # the tool runs and writes nothing, as Heretic does
+    results = bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
+    failed = [r for r in results if not r.ok]
+    assert len(failed) == 1, "an arm that produced nothing was reported as a success"
+    assert "earlier run" in failed[0].reason, failed[0].reason
+    assert not (arm / bench.ARM_MANIFEST).exists(), \
+        "a manifest was written vouching for a file this arm did not produce"

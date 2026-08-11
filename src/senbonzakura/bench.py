@@ -30,6 +30,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -79,6 +80,15 @@ class Adapter:
     # across tools: two tools' KL figures come from different estimators on different slices, and
     # putting them in one column is the error four claims were withdrawn for.
     self_report: object = None
+    # An OPTIONAL second pass, run after the tool's own search and before the artefacts are
+    # checked, in the same isolation. It exists because one tool cannot finish its own arm:
+    # Heretic v1.4.0 ends at an interactive menu it cannot ask in a container, so it never saves,
+    # and the equal-budget selection this comparison promises it has to be applied from outside.
+    # It lives on the adapter rather than in a runner spec because the adapter is what DECLARES
+    # the artefact the pass produces. Split across two files, the declaration outlived the step:
+    # decision Q-5 moved the arms into this command and left the pass behind in the spec it
+    # replaced, so for five days `produces=("best_of_n.json",)` named a file nothing could write.
+    finalise: object = None
     notes: str = ""
 
 
@@ -120,6 +130,43 @@ def _heretic_argv(*, model, track, out, seed, trials, slices, extra):
             "--seed", str(seed), "--trials", str(trials), *extra]
 
 
+def _heretic_finalise(*, out, slices, **_):
+    """The equal-budget selection pass, applied to Heretic from outside its own code.
+
+    senbonzakura does not report the best trial its search found: it re-scores its top six on a
+    larger held-out slice and reports the winner of that second look. A comparison that skips the
+    equivalent for Heretic measures our selection procedure and calls it our method, which is why
+    `bench/EQUAL-BUDGET.md` commits us to this pass. It also does the saving, because v1.4.0
+    cannot save without a terminal.
+    """
+    if not slices:
+        raise BenchError(
+            "heretic's selection pass needs the staged evaluation slices; pass --eval-slices. "
+            "They are what make both tools' winners chosen on the same prompts")
+    s = Path(slices)
+    return ["python", str(_bench_dir_for(out) / "best_of_n_heretic.py"),
+            "--out", str(out), "--top-n", "6",
+            "--final-prompts", str(s / "final_prompts.txt"),
+            "--keyword-prompts", str(s / "keyword_prompts.txt")]
+
+
+def _bench_dir_for(out) -> Path:
+    """Where `bench/` is, as the pass will see it.
+
+    Inside the container it is mounted at /work/bench; outside it sits beside the package. The
+    caller tells us which by the output path it passed, because that is already the guest-or-host
+    decision run_arm made.
+    """
+    if str(out) == GUEST_OUT:
+        return Path("/work/bench")
+    here = Path(__file__).resolve()
+    for root in (here.parent.parent.parent, Path.cwd(), Path.home()):
+        candidate = root / "bench"
+        if (candidate / "best_of_n_heretic.py").is_file():
+            return candidate
+    return Path("bench")
+
+
 def _heretic_report(arm: Path):
     doc = _read_json(arm / "best_of_n.json")
     winner = doc.get("winner") or {}
@@ -147,6 +194,7 @@ ADAPTERS: dict[str, Adapter] = {
         produces=("best_of_n.json",),
         model_subdir="model",
         self_report=_heretic_report,
+        finalise=_heretic_finalise,
         notes="p-e-w/heretic, run through the equal-budget selection pass",
     ),
 }
@@ -422,18 +470,64 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
                         (arm, "/work/out", "rw")])
 
     log(f"  {adapter.name} seed {seed}: running")
+    # WHEN THIS ARM STARTED, so the artefact check can tell what this arm produced from what was
+    # simply lying in the directory. See the staleness check below.
+    started = time.time() - 1          # a second of slack for filesystem timestamp granularity
     code = runner(argv, log=log)
     if code != 0:
         return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
                          reason=f"exited {code}", argv=list(argv))
 
+    # THE SECOND PASS, when the tool cannot finish its own arm.
+    #
+    # Heretic ends at an interactive menu, so its search leaves a complete study and no model. The
+    # pass below reads that study, applies the same best-of-N selection senbonzakura applies to
+    # itself, and saves the winner. Without it the arm runs for the full budget and produces
+    # nothing to score, which is precisely what 2026-08-11 spent four hours doing.
+    if adapter.finalise is not None:
+        final_argv = adapter.finalise(**paths)
+        if isolate == "docker":
+            script = find_run_isolated()
+            if script is not None:
+                final_argv = isolation_wrapper(
+                    script, final_argv, tool=f"{adapter.name}-best-of-n", image=image,
+                    model=model, track=track, slices=slices, out=arm)
+            else:
+                final_argv = isolate_argv(
+                    final_argv, image=image,
+                    mounts=[(model, "/model", "ro"), (track, "/corpus", "ro"),
+                            (arm, "/work/out", "rw")])
+        log(f"  {adapter.name} seed {seed}: selection pass")
+        code = runner(final_argv, log=log)
+        if code != 0:
+            return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
+                             reason=f"the selection pass exited {code}", argv=list(final_argv))
+
     # EXIT ZERO IS NOT SUCCESS. It says the process ended, not that it produced anything: the
     # 2026-08-05 rehearsal's arms exited 0 having written nothing at all. The artefacts decide.
-    missing = [p for p in adapter.produces if not (arm / p).exists()]
-    if missing:
+    #
+    # AND AN ARTEFACT THIS ARM DID NOT WRITE IS NOT THIS ARM'S ARTEFACT. Existence alone was the
+    # check until 2026-08-11, and it let a rehearsal pass on a model five days old: the tool ran,
+    # saved nothing, and the previous run's output was still in the directory, so the check found
+    # what it was looking for and the arm was written up as a success with a fresh manifest
+    # vouching for it. The rehearsal exists to prove the pipeline works and it was reading files
+    # from the pipeline it was meant to be testing.
+    missing, stale = [], []
+    for name in adapter.produces:
+        artefact = arm / name
+        if not artefact.exists():
+            missing.append(name)
+        elif artefact.stat().st_mtime < started:
+            stale.append(name)
+    if missing or stale:
+        why = []
+        if missing:
+            why.append(f"produced no {', '.join(missing)}")
+        if stale:
+            why.append(f"left {', '.join(stale)} untouched from an earlier run, so this arm "
+                       f"produced nothing and would have been scored on stale output")
         return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
-                         reason=f"exited 0 but produced no {', '.join(missing)}",
-                         argv=list(argv))
+                         reason="exited 0 but " + " and ".join(why), argv=list(argv))
     write_arm_manifest(arm, expected)
     return ArmResult(adapter.name, seed, arm, ran=True, ok=True, reason="produced every artefact",
                      argv=list(argv))

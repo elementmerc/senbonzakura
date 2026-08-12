@@ -179,6 +179,22 @@ def _heretic_report(arm: Path):
     }
 
 
+def _senbon_k_argv(k: int):
+    """Our tool with its direction budget PINNED rather than searched.
+
+    The whole claim on the tin is that refusal lives in more than one direction, and the search
+    treats the budget as one parameter among nine, so a run that picks its own K measures the
+    search rather than the thesis. On 2026-08-12 the five arms of the head-to-head chose K=1 three
+    times and K=2 twice, which is a mixture and says nothing either way.
+
+    Pinning it is what turns "does multi-direction help" into an experiment: identical corpus,
+    identical budget, identical seeds, one parameter different.
+    """
+    def build(**kw):
+        return [*_senbon_argv(**kw), "--max-directions", str(k)]
+    return build
+
+
 ADAPTERS: dict[str, Adapter] = {
     "senbon": Adapter(
         name="senbon",
@@ -187,6 +203,24 @@ ADAPTERS: dict[str, Adapter] = {
         model_subdir="",
         self_report=_senbon_report,
         notes="this tool; writes the model straight into the arm directory",
+    ),
+    # The controlled arms of the multi-direction experiment. Identical to `senbon` in every
+    # respect except the pinned budget, so the pair is a comparison rather than two runs.
+    "senbon-k1": Adapter(
+        name="senbon-k1",
+        argv=_senbon_k_argv(1),
+        produces=("abliteration.json", "config.json"),
+        model_subdir="",
+        self_report=_senbon_report,
+        notes="this tool, one direction per layer: the original single-direction method",
+    ),
+    "senbon-k2": Adapter(
+        name="senbon-k2",
+        argv=_senbon_k_argv(2),
+        produces=("abliteration.json", "config.json"),
+        model_subdir="",
+        self_report=_senbon_report,
+        notes="this tool, two directions per layer: the claim under test",
     ),
     "heretic": Adapter(
         name="heretic",

@@ -1032,3 +1032,43 @@ def test_a_short_harmless_set_is_announced_rather_than_silently_shrinking(tmp_pa
     path = bench.drift_prompt_slice(tmp_path / "good_ds", tmp_path / "out", log=said.append)
     assert len(path.read_text(encoding="utf-8").strip().split("\n")) == 20
     assert any("only 20" in m for m in said)
+
+
+# ── the multi-direction experiment: the same tool, one parameter apart ────────────────
+def test_the_k_arms_differ_only_in_the_direction_budget(tmp_path, runner):
+    """The claim on the tin, turned into an experiment.
+
+    The search treats the direction budget as one parameter among nine, so a run that picks its
+    own K measures the search rather than the thesis: on 2026-08-12 five arms chose K=1 three
+    times and K=2 twice, which says nothing either way. These two adapters pin it and change
+    nothing else, which is what makes the pair a comparison.
+    """
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon-k1"], seed=42, runner=runner, **a)
+    bench.run_arm(bench.ADAPTERS["senbon-k2"], seed=42, runner=runner, **a)
+    k1, k2 = runner.calls
+    assert k1[k1.index("--max-directions") + 1] == "1"
+    assert k2[k2.index("--max-directions") + 1] == "2"
+    def without(argv, *flags):
+        """The command minus the flags that are ALLOWED to differ, and their values.
+
+        `--out` is one of them: each arm needs its own directory or the second would be skipped as
+        though the first had already run it. Everything else must match, which is the whole basis
+        of the experiment.
+        """
+        drop = set(flags)
+        return [x for i, x in enumerate(argv) if x not in drop and argv[i - 1] not in drop]
+
+    assert (without(k1, "--max-directions", "--out")
+            == without(k2, "--max-directions", "--out")), \
+        "the two arms differ by more than the direction budget"
+
+
+def test_the_k_arms_do_not_collide_with_each_other_or_with_a_searched_run(tmp_path, runner):
+    """Three families of arm in one output directory, and none may reuse another's work."""
+    a = _args(tmp_path)
+    for tool in ("senbon", "senbon-k1", "senbon-k2"):
+        bench.run_arm(bench.ADAPTERS[tool], seed=42, runner=runner, **a)
+    assert len(runner.calls) == 3, "one arm was skipped as though another had already run it"
+    for tool in ("senbon", "senbon-k1", "senbon-k2"):
+        assert (a["out"] / f"{tool}-seed42" / bench.ARM_MANIFEST).is_file()

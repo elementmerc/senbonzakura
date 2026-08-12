@@ -607,6 +607,9 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
         return 0
 
     monkeypatch.setattr(bench, "default_runner", fake)
+    # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
+    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+                        lambda d, n: [f"harmless {i}" for i in range(n)])
     summary = bench.main([
         "head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
         "--model", "/models/qwen", "--track", str(track), "--out", str(out),
@@ -671,6 +674,9 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
         return 0
 
     monkeypatch.setattr(bench, "default_runner", fake)
+    # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
+    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+                        lambda d, n: [f"harmless {i}" for i in range(n)])
     argv = ["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
             "--model", "/models/qwen", "--track", str(track), "--out", str(out),
             "--eval-slices", str(_slices(tmp_path, track)),
@@ -733,6 +739,9 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
         return 0
 
     monkeypatch.setattr(bench, "default_runner", fake)
+    # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
+    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+                        lambda d, n: [f"harmless {i}" for i in range(n)])
     bench.main(["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
                 "--model", "/m", "--track", str(track), "--out", str(tmp_path / "out"),
                 "--eval-slices", str(_slices(tmp_path, track)),
@@ -994,3 +1003,32 @@ def test_refusals_are_counted_on_the_same_rows_the_compass_reads():
     argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
     assert argv[argv.index("--n") + 1] == "200"
     assert argv[argv.index("--skip") + 1] == "128"
+
+
+def test_drift_is_measured_on_prompts_neither_tool_has_seen(tmp_path, monkeypatch):
+    """`kl_prompts.txt` was the obvious slice and it is the wrong one.
+
+    That file is handed to Heretic during its search as the set its own KL is computed on, so
+    measuring drift there asks each tool how it did on prompts one of them tuned against. It
+    biased toward Heretic and Heretic still came out worse, but a confound that points the other
+    way is still a confound. The measure partition, after the same skip the compass uses, is the
+    slice no tool has seen.
+    """
+    rows = [f"harmless prompt {i}" for i in range(600)]
+    monkeypatch.setattr("senbonzakura.benchstage.load_texts", lambda d, n: rows[:n])
+    out = tmp_path / "out"
+    path = bench.drift_prompt_slice(tmp_path / "good_ds", out)
+    written = path.read_text(encoding="utf-8").strip().split("\n")
+    assert len(written) == bench.DRIFT_EVAL_N
+    assert written[0] == rows[bench.DRIFT_SKIP_HARMLESS], "the skip did not reach the measure rows"
+    assert "kl_prompts" not in str(path), "drift fell back to the slice Heretic was tuned on"
+
+
+def test_a_short_harmless_set_is_announced_rather_than_silently_shrinking(tmp_path, monkeypatch):
+    """A slice quietly smaller than asked for is a table with less power than its caption claims."""
+    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+                        lambda d, n: [f"p{i}" for i in range(340)])
+    said = []
+    path = bench.drift_prompt_slice(tmp_path / "good_ds", tmp_path / "out", log=said.append)
+    assert len(path.read_text(encoding="utf-8").strip().split("\n")) == 20
+    assert any("only 20" in m for m in said)

@@ -637,6 +637,37 @@ def drift_argv(*, model: Path, base: Path, prompts: Path, out: Path, label: str,
             "--base-cache", str(cache)]
 
 
+DRIFT_SKIP_HARMLESS = 320
+DRIFT_EVAL_N = 200
+
+
+def drift_prompt_slice(harmless: Path, out: Path, skip=DRIFT_SKIP_HARMLESS, n=DRIFT_EVAL_N,
+                       log=print) -> Path:
+    """The harmless prompts drift is measured on: the ones NEITHER tool has seen.
+
+    The obvious slice to reuse was `kl_prompts.txt`, and it is the wrong one. That file is handed
+    to Heretic during its search as the set its own KL is computed on, so measuring drift there
+    asks each tool how it did on prompts one of them tuned against. It biased toward Heretic and
+    Heretic still came out worse, but a confound that happens to point the other way is still a
+    confound.
+
+    So this takes harmless rows after the same skip the compass uses, which is the measure
+    partition: held out from direction fitting by the track's own boundaries, and never shown to
+    either tool. All three axes then read the same exam.
+    """
+    from .benchstage import load_texts
+
+    target = Path(out) / "drift-prompts.txt"
+    prompts = load_texts(str(harmless), skip + n)[skip:skip + n]
+    if len(prompts) < n:
+        log(f"  NOTE only {len(prompts)} harmless rows are available after a skip of {skip}; "
+            f"drift is measured on those")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(prompts) + "\n", encoding="utf-8")
+    log(f"  drift is measured on {len(prompts)} harmless prompts neither tool has seen")
+    return target
+
+
 def drift_arms(results, *, base: Path, prompts: Path, out: Path, batch=16,
                runner=None, log=print, force=False) -> list[dict]:
     """Measure every model's drift from the base with ONE instrument, after the fact.
@@ -884,7 +915,7 @@ def main(argv=None):
         # slice, one batch size, every model.
         print("measuring drift from the base, with one instrument")
         drifted = drift_arms([r for r in results if r.ok], base=Path(a.model),
-                             prompts=Path(a.eval_slices) / "kl_prompts.txt",
+                             prompts=drift_prompt_slice(Path(a.harmless), Path(a.out)),
                              out=Path(a.out), batch=a.batch, force=a.force)
         summary["drift"] = drifted
         summary["undrifted"] = [d["label"] for d in drifted if not d["ok"]]

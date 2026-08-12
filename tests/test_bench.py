@@ -55,6 +55,9 @@ def runner():
                     # The compass writes one results file, not a directory of artefacts.
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("{}", encoding="utf-8")
+                elif "score" in argv and "--eval" in argv:
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text('{"refusal": 0.0, "n": 200}', encoding="utf-8")
                 elif "drift" in argv:
                     # So does the drift pass, and it is a separate spend from the compass: a
                     # fake that conflated them would hide a missing one of the two.
@@ -561,7 +564,14 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
     def fake(argv, *, cwd=None, log=print):
         from pathlib import Path
         target = Path(argv[argv.index("--out") + 1])
-        if "drift" in argv:
+        if "score" in argv and "--eval" in argv:
+            label = argv[argv.index("--label") + 1]
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "refusal": 0.0 if tool == "senbon" else 0.03,
+                "noncompliant": 0.01, "heretic": 0.02, "broken": 0.0, "n": 200}),
+                encoding="utf-8")
+        elif "drift" in argv:
             # The one-instrument coherence pass. A separate spend from the compass, so it gets a
             # separate branch: conflating them would let a missing drift pass go unnoticed.
             label = argv[argv.index("--label") + 1]
@@ -630,7 +640,14 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
         from pathlib import Path
         calls.append(list(argv))
         target = Path(argv[argv.index("--out") + 1])
-        if "drift" in argv:
+        if "score" in argv and "--eval" in argv:
+            label = argv[argv.index("--label") + 1]
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "refusal": 0.0 if tool == "senbon" else 0.03,
+                "noncompliant": 0.01, "heretic": 0.02, "broken": 0.0, "n": 200}),
+                encoding="utf-8")
+        elif "drift" in argv:
             # The one-instrument coherence pass. A separate spend from the compass, so it gets a
             # separate branch: conflating them would let a missing drift pass go unnoticed.
             label = argv[argv.index("--label") + 1]
@@ -685,7 +702,14 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
     def fake(argv, *, cwd=None, log=print):
         from pathlib import Path
         target = Path(argv[argv.index("--out") + 1])
-        if "drift" in argv:
+        if "score" in argv and "--eval" in argv:
+            label = argv[argv.index("--label") + 1]
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "refusal": 0.0 if tool == "senbon" else 0.03,
+                "noncompliant": 0.01, "heretic": 0.02, "broken": 0.0, "n": 200}),
+                encoding="utf-8")
+        elif "drift" in argv:
             # The one-instrument coherence pass. A separate spend from the compass, so it gets a
             # separate branch: conflating them would let a missing drift pass go unnoticed.
             label = argv[argv.index("--label") + 1]
@@ -931,4 +955,30 @@ def test_the_drift_pass_runs_under_this_interpreter():
     import sys
     argv = bench.drift_argv(model="m", base="b", prompts="p", out="o", label="x",
                             batch=16, cache="c")
+    assert argv[0] == sys.executable
+
+
+def test_refusals_are_counted_by_one_ruler_on_one_slice(tmp_path, runner):
+    """The axis the tool exists to move, and the last of the three to become comparable.
+
+    Before 2026-08-12 both tools' refusal figures used senbonzakura's rulers and DIFFERENT
+    prompts, one on our search evaluation and one on the shared re-score slice. Same ruler,
+    different exam, so the sentence the whole benchmark is for ("removed at least as many
+    refusals and drifted less") could not be written at all.
+    """
+    a = _args(tmp_path)
+    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    runner.calls.clear()
+    counted = bench.refusal_arms(results, harmful=tmp_path / "bad_eval_ds", out=a["out"],
+                                 skip=128, batch=16, runner=runner)
+    assert [c["ok"] for c in counted] == [True, True]
+    evals = {argv[argv.index("--eval") + 1] for argv in runner.calls}
+    skips = {argv[argv.index("--skip") + 1] for argv in runner.calls}
+    assert len(evals) == 1, "the two tools were counted on different prompt sets"
+    assert skips == {"128"}, "the held-out boundary moved between arms"
+
+
+def test_the_refusal_pass_runs_under_this_interpreter():
+    import sys
+    argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
     assert argv[0] == sys.executable

@@ -679,6 +679,56 @@ def drift_arms(results, *, base: Path, prompts: Path, out: Path, batch=16,
     return measured
 
 
+def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
+                 skip: int, batch: int, n: int = 0) -> list[str]:
+    """The refusal ruler, invoked the one right way, on the host for the same reason as the rest."""
+    return [sys.executable, "-u", "-m", "senbonzakura", "score",
+            "--model", str(model), "--eval", str(harmful), "--out", str(out),
+            "--label", label, "--skip", str(skip), "--n", str(n), "--batch", str(batch)]
+
+
+def refusal_arms(results, *, harmful: Path, out: Path, skip=128, batch=16, n=0,
+                 runner=None, log=print, force=False) -> list[dict]:
+    """Count every model's refusals with ONE ruler on ONE slice.
+
+    THE LAST AXIS TO BECOME COMPARABLE, and the one the tool exists to move. The compass made
+    harm recognition comparable and `drift_arms` made coherence comparable, and refusal was still
+    two self-reports: both computed with senbonzakura's rulers, and both on different prompts, one
+    on our search evaluation and one on the shared re-score slice. Same ruler, different exam, so
+    still not a column.
+
+    Without this the interesting sentence cannot be written at all. "Removed at least as many
+    refusals AND drifted less" needs both halves measured the same way, and until now only the
+    drift half was.
+    """
+    runner = runner or default_runner
+    measured = []
+    for r in results:
+        adapter = ADAPTERS[r.tool]
+        model = arm_model_dir(r, adapter)
+        label = f"{r.tool}-seed{r.seed}"
+        target = Path(out) / f"refusal-{label}.json"
+        if not (model / "config.json").is_file():
+            log(f"  {label}: NO MODEL at {model}; the arm produced none")
+            measured.append({"label": label, "ok": False, "reason": f"no model at {model}"})
+            continue
+        if target.is_file() and not force:
+            log(f"  {label}: refusals already counted")
+            measured.append({"label": label, "ok": True, "reason": "already counted",
+                             "path": str(target)})
+            continue
+        code = runner(refusal_argv(model=model, harmful=harmful, out=target, label=label,
+                                   skip=skip, batch=batch, n=n), log=log)
+        # Exit zero is not a count. The file is.
+        ok = code == 0 and target.is_file()
+        measured.append({"label": label, "ok": ok,
+                         "reason": "counted" if ok else f"refusal scoring failed (exit {code})",
+                         "path": str(target) if ok else None})
+        if not ok:
+            log(f"  {label}: REFUSAL SCORING FAILED")
+    return measured
+
+
 def summarise(results) -> dict:
     """What happened, in a shape a caller can act on and a reader can check."""
     return {
@@ -831,16 +881,28 @@ def main(argv=None):
         summary["drift"] = drifted
         summary["undrifted"] = [d["label"] for d in drifted if not d["ok"]]
 
+        # THE AXIS THE TOOL EXISTS TO MOVE, finally on one ruler and one slice. The same
+        # held-out rows the compass reads, so all three axes describe the same exam.
+        print("counting refusals, with one ruler on one slice")
+        refused = refusal_arms([r for r in results if r.ok], harmful=Path(a.harmful),
+                               out=Path(a.out), skip=a.skip_harmful, batch=a.batch,
+                               force=a.force)
+        summary["refusal"] = refused
+        summary["uncounted"] = [x["label"] for x in refused if not x["ok"]]
+
     Path(a.out, "bench-summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                                  encoding="utf-8")
 
-    if summary["failed"] or summary.get("unscored") or summary.get("undrifted"):
+    if (summary["failed"] or summary.get("unscored") or summary.get("undrifted")
+            or summary.get("uncounted")):
         # A partial set is not a table. Say which arms are missing and stop, rather than
         # reporting over whatever happened to survive.
         for label in summary.get("unscored", []):
             print(f"  UNSCORED {label}")
         for label in summary.get("undrifted", []):
             print(f"  NO DRIFT MEASUREMENT {label}")
+        for label in summary.get("uncounted", []):
+            print(f"  NO REFUSAL COUNT {label}")
         raise SystemExit(1)
 
     if a.score:

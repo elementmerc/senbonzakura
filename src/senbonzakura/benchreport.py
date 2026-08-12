@@ -119,8 +119,26 @@ def collect(run_dir):
         }
         arm.update(own_numbers(run_dir, m["tool"], m["seed"]))
         arm.update(one_ruler_drift(run_dir, m["tool"], m["seed"], m["variant"]))
+        arm.update(one_ruler_refusal(run_dir, m["tool"], m["seed"], m["variant"]))
         arms.append(arm)
     return arms
+
+
+def one_ruler_refusal(run_dir, tool, seed, variant):
+    """Refusals counted by us, on one slice, for every model.
+
+    The axis the tool exists to move, and the last of the three to become comparable. `own_refusals`
+    below is each tool's self-report: same rulers, different prompts, so not a column.
+    """
+    label = f"{tool}-seed{seed}{variant or ''}"
+    d = load_json(os.path.join(run_dir, f"refusal-{label}.json")) or {}
+    return {
+        "one_refusal": d.get("refusal"),
+        "one_noncompliant": d.get("noncompliant"),
+        "one_keyword": d.get("heretic"),
+        "one_broken": d.get("broken"),
+        "one_refusal_n": d.get("n"),
+    }
 
 
 def one_ruler_drift(run_dir, tool, seed, variant):
@@ -239,6 +257,41 @@ def render(arms):
     lines.append("")
     lines.append("=== Verdict ===")
     lines.append(verdict(by_tool))
+
+    lines.append("")
+    lines.append("=== Refusals removed, one ruler over every model ===")
+    lines.append("Counted by us on the same held-out prompts for both tools, so this is the")
+    lines.append("comparable version of the axis the tool exists to move. `noncompliant` is hard")
+    lines.append("refusal plus hedging; `broken` is output that is not English, and a low refusal")
+    lines.append("rate beside a high broken rate is a wrecked model, not a good result.")
+    lines.append("")
+    lines.append(f"{'arm':<28} {'refusal':>8} {'noncomp':>8} {'keyword':>8} {'broken':>7} {'n':>5}")
+    have_ref = False
+    for a in sorted(readable, key=lambda a: (a["tool"], a["seed"], a["variant"])):
+        r = a.get("one_refusal")
+        if r is not None:
+            have_ref = True
+        def _pc(v):
+            return f"{v*100:.1f}%" if v is not None else "-"
+        lines.append(f"{a['name']:<28} {_pc(r):>8} {_pc(a.get('one_noncompliant')):>8} "
+                     f"{_pc(a.get('one_keyword')):>8} {_pc(a.get('one_broken')):>7} "
+                     f"{(a.get('one_refusal_n') or '-'):>5}")
+    if not have_ref:
+        lines.append("")
+        lines.append("  No refusal files found. This axis is still two self-reports on different")
+        lines.append("  prompts, so no sentence may be written across the tools about it.")
+    else:
+        by_tool_ref = {}
+        for a in readable:
+            if a["variant"] or a.get("one_refusal") is None:
+                continue
+            by_tool_ref.setdefault(a["tool"], []).append(a["one_refusal"])
+        lines.append("")
+        for tool in sorted(by_tool_ref):
+            xs = by_tool_ref[tool]
+            spread = f"{stdev(xs)*100:.1f}%" if len(xs) > 1 else "-"
+            lines.append(f"  {tool:<10} n={len(xs)}  mean refusal {mean(xs)*100:.1f}%  "
+                         f"spread {spread}")
 
     lines.append("")
     lines.append("=== Coherence drift, one instrument over every model ===")

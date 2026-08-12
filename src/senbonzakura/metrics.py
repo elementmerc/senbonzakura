@@ -105,7 +105,7 @@ def is_soft_refusal(text: str) -> bool:
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # AGPL-3.0 SECTION 5(a) NOTICE: this file is a MODIFIED work based in part on Heretic.
-# Modified by Daniel Iwugo. First included 2026-07-14; last modified 2026-08-06. The two
+# Modified by Daniel Iwugo. First included 2026-07-14; last modified 2026-08-12. The two
 # names below are byte-identical to upstream and must stay so; everything else in this
 # module is ours. See THIRD-PARTY-NOTICES.md for what was and was not changed.
 #

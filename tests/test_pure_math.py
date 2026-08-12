@@ -521,3 +521,30 @@ def test_the_two_layer_shapes_are_told_apart():
     assert cli.post_sublayer_norms(Standard()) == (None, None)
     attn, mlp = cli.post_sublayer_norms(PostSublayer())
     assert attn is not None and mlp is not None
+
+
+# ── the coherence ceiling a caller can aim at (2026-08-12) ────────────────────────────
+def test_the_knee_surcharge_starts_where_the_caller_says():
+    """`--max-kl` moves where coherence starts costing, not just where it is rejected.
+
+    Until 2026-08-12 the surcharge began at a fixed 0.1 and the hard filter at 0.25, so a run
+    landed wherever the frontier's knee sat: on Qwen3-1.7B, a drift of 0.15 to 0.21. That is a
+    choice, and it was one nobody could change. Heretic's comparable setting defaults far tighter,
+    which is most of why its published drift is two orders of magnitude smaller while it leaves
+    more refusals standing.
+    """
+    from senbonzakura.metrics import knee_scalar
+
+    # Same trial, two ceilings. Under a tight ceiling its drift is surcharged; under a loose one
+    # it is free, so the same configuration must not score the same both ways.
+    tight = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.01)
+    loose = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.50)
+    assert tight > loose, "the ceiling did not change what the drift costs"
+    assert loose == 0.0, "drift below the target should carry no surcharge at all"
+
+
+def test_the_default_ceiling_is_unchanged_for_callers_who_set_nothing():
+    """A new knob must not silently move every existing run's answer."""
+    from senbonzakura.metrics import KL_TARGET, knee_scalar
+
+    assert knee_scalar(0.1, 0.0, 0.0, kl=0.3) == knee_scalar(0.1, 0.0, 0.0, kl=0.3, kl_target=KL_TARGET)

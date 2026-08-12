@@ -20,7 +20,7 @@ SAVE_HEADROOM_FRAC = 0.05
 
 
 @contextlib.contextmanager
-def atomic_write(path, encoding="utf-8"):
+def atomic_write(path, encoding="utf-8", binary=False):
     """Open `path` for writing so that it is never observed half-written.
 
     Every result this project produces is the output of a run that costs GPU hours, and a
@@ -47,7 +47,11 @@ def atomic_write(path, encoding="utf-8"):
     # cost is the collision handled below.
     tmp = path.with_name(path.name + ".part")
     try:
-        with open(tmp, "w", encoding=encoding) as f:
+        # `binary` is for artefacts that are not text: the drift pass caches a tensor of the
+        # base model's distributions, and it wants the same never-half-written guarantee as
+        # every JSON result here rather than a hand-rolled temp-and-rename beside it.
+        with open(tmp, "wb" if binary else "w",
+                  **({} if binary else {"encoding": encoding})) as f:
             yield f
             f.flush()
             os.fsync(f.fileno())

@@ -624,6 +624,61 @@ def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmfu
     return scored
 
 
+def drift_argv(*, model: Path, base: Path, prompts: Path, out: Path, label: str,
+               batch: int, cache: Path) -> list[str]:
+    """The one coherence ruler, invoked the one right way.
+
+    `sys.executable` for the same reason the compass uses it: this runs on the host that dispatches
+    the arms, not inside a tool's container, and the card has no `python`.
+    """
+    return [sys.executable, "-u", "-m", "senbonzakura", "drift",
+            "--model", str(model), "--base", str(base), "--prompts", str(prompts),
+            "--out", str(out), "--label", label, "--batch", str(batch),
+            "--base-cache", str(cache)]
+
+
+def drift_arms(results, *, base: Path, prompts: Path, out: Path, batch=16,
+               runner=None, log=print, force=False) -> list[dict]:
+    """Measure every model's drift from the base with ONE instrument, after the fact.
+
+    THE AXIS THE BENCHMARK WAS MISSING. Each tool reports a KL of its own, computed on its own
+    slice during its own search, and on 2026-08-12 those two numbers came out a hundredfold apart
+    with no honest sentence available across them. `score_arms` solved exactly this shape for harm
+    recognition; this is the same answer for coherence, and the two together are what make the
+    comparison a comparison rather than two self-reports side by side.
+
+    Every model is measured on the SAME prompts against the SAME base at the SAME batch size,
+    because all three change the number.
+    """
+    runner = runner or default_runner
+    measured = []
+    cache = Path(out) / "drift-base-logprobs.pt"
+    for r in results:
+        adapter = ADAPTERS[r.tool]
+        model = arm_model_dir(r, adapter)
+        label = f"{r.tool}-seed{r.seed}"
+        target = Path(out) / f"drift-{label}.json"
+        if not (model / "config.json").is_file():
+            log(f"  {label}: NO MODEL at {model}; the arm produced none")
+            measured.append({"label": label, "ok": False, "reason": f"no model at {model}"})
+            continue
+        if target.is_file() and not force:
+            log(f"  {label}: drift already measured")
+            measured.append({"label": label, "ok": True, "reason": "already measured",
+                             "path": str(target)})
+            continue
+        code = runner(drift_argv(model=model, base=base, prompts=prompts, out=target,
+                                 label=label, batch=batch, cache=cache), log=log)
+        # Exit zero is not a measurement. The file is.
+        ok = code == 0 and target.is_file()
+        measured.append({"label": label, "ok": ok,
+                         "reason": "measured" if ok else f"drift failed (exit {code})",
+                         "path": str(target) if ok else None})
+        if not ok:
+            log(f"  {label}: DRIFT MEASUREMENT FAILED")
+    return measured
+
+
 def summarise(results) -> dict:
     """What happened, in a shape a caller can act on and a reader can check."""
     return {
@@ -766,14 +821,26 @@ def main(argv=None):
         summary["scored"] = scored
         summary["unscored"] = [s["label"] for s in scored if not s["ok"]]
 
+        # THE THIRD AXIS. Harm recognition alone leaves coherence as two self-reports that cannot
+        # be read across, which is what the 2026-08-12 table had to admit. One base, one prompt
+        # slice, one batch size, every model.
+        print("measuring drift from the base, with one instrument")
+        drifted = drift_arms([r for r in results if r.ok], base=Path(a.model),
+                             prompts=Path(a.eval_slices) / "kl_prompts.txt",
+                             out=Path(a.out), batch=a.batch, force=a.force)
+        summary["drift"] = drifted
+        summary["undrifted"] = [d["label"] for d in drifted if not d["ok"]]
+
     Path(a.out, "bench-summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                                  encoding="utf-8")
 
-    if summary["failed"] or summary.get("unscored"):
+    if summary["failed"] or summary.get("unscored") or summary.get("undrifted"):
         # A partial set is not a table. Say which arms are missing and stop, rather than
         # reporting over whatever happened to survive.
         for label in summary.get("unscored", []):
             print(f"  UNSCORED {label}")
+        for label in summary.get("undrifted", []):
+            print(f"  NO DRIFT MEASUREMENT {label}")
         raise SystemExit(1)
 
     if a.score:

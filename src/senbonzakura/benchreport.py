@@ -118,8 +118,26 @@ def collect(run_dir):
             "unreadable": False,
         }
         arm.update(own_numbers(run_dir, m["tool"], m["seed"]))
+        arm.update(one_ruler_drift(run_dir, m["tool"], m["seed"], m["variant"]))
         arms.append(arm)
     return arms
+
+
+def one_ruler_drift(run_dir, tool, seed, variant):
+    """Drift from the base, measured by US, on one slice, for every model.
+
+    The counterpart of the compass and the reason this report can finally say something about
+    coherence. `own_kl` below is each tool's self-report and is not comparable across rows; this
+    one is, because every row came from the same instrument, the same base, the same prompts and
+    the same batch size.
+    """
+    label = f"{tool}-seed{seed}{variant or ''}"
+    d = load_json(os.path.join(run_dir, f"drift-{label}.json")) or {}
+    return {
+        "drift_kl": d.get("kl"),
+        "drift_prompts": d.get("prompts"),
+        "drift_n": d.get("n_prompts"),
+    }
 
 
 def own_numbers(run_dir, tool, seed):
@@ -133,7 +151,7 @@ def own_numbers(run_dir, tool, seed):
         return {
             "own_refusals": d.get("post_bake_refusals"),
             "own_kl": d.get("post_bake_kl"),
-            "own_kl_estimator": "senbonzakura, our coherence slice",
+            "own_kl_estimator": "senbonzakura, our coherence slice (held back from fitting)",
             "own_refusal_estimator": "senbonzakura rulers, our search eval",
         }
     d = load_json(os.path.join(run_dir, f"heretic-seed{seed}", "best_of_n.json")) or {}
@@ -142,7 +160,7 @@ def own_numbers(run_dir, tool, seed):
         "own_refusals": winner.get("refusals"),
         "own_kl": winner.get("kl"),
         # Named precisely, because this is the pairing that must never be read as one column.
-        "own_kl_estimator": "Heretic, its own evaluation",
+        "own_kl_estimator": "Heretic, its own evaluation (its full harmless set)",
         "own_refusal_estimator": "senbonzakura rulers, shared re-score slice",
     }
 
@@ -223,10 +241,48 @@ def render(arms):
     lines.append(verdict(by_tool))
 
     lines.append("")
+    lines.append("=== Coherence drift, one instrument over every model ===")
+    lines.append("KL(base || edited) on first-token distributions, same prompts and same batch")
+    lines.append("size for every model, measured by us afterwards. THIS column is comparable.")
+    lines.append("Lower is less collateral damage. Read it beside the refusal rates below: a tool")
+    lines.append("that left refusals standing has paid less for its coherence, so a lower number")
+    lines.append("here is only a better result at a matched refusal rate.")
+    lines.append("")
+    lines.append(f"{'arm':<28} {'drift KL':>10} {'prompts':>9}")
+    have_drift = False
+    for a in sorted(readable, key=lambda a: (a["tool"], a["seed"], a["variant"])):
+        dk, dn = a.get("drift_kl"), a.get("drift_n")
+        if dk is not None:
+            have_drift = True
+        lines.append(f"{a['name']:<28} {(f'{dk:.4f}' if dk is not None else '-'):>10} "
+                     f"{(dn if dn is not None else '-'):>9}")
+    if not have_drift:
+        lines.append("")
+        lines.append("  No drift files found. Run `senbonzakura bench head-to-head` with scoring")
+        lines.append("  enabled, or `senbonzakura drift` per model, to fill this in.")
+    else:
+        by_tool_drift = {}
+        for a in readable:
+            if a["variant"] or a.get("drift_kl") is None:
+                continue
+            by_tool_drift.setdefault(a["tool"], []).append(a["drift_kl"])
+        lines.append("")
+        for tool in sorted(by_tool_drift):
+            xs = by_tool_drift[tool]
+            spread = f"{stdev(xs):.4f}" if len(xs) > 1 else "-"
+            lines.append(f"  {tool:<10} n={len(xs)}  mean drift {mean(xs):.4f}  spread {spread}")
+
+    lines.append("")
     lines.append("=== What each tool reported about itself ===")
     lines.append("NOT a comparison. The two KL figures come from different estimators on different")
     lines.append("slices, and putting them in one column is the error four claims were withdrawn")
     lines.append("for on 2026-08-05. Read each row against its own label, never across rows.")
+    lines.append("The comparable coherence number is the drift column above, not these.")
+    lines.append("")
+    lines.append("The slices differ in a way that matters and does not favour us: ours is measured")
+    lines.append("on harmless prompts HELD BACK from direction fitting, while Heretic's is measured")
+    lines.append("on the harmless prompts it was given, its directions included. Ours is therefore")
+    lines.append("the harder ground, which is one more reason these two numbers are not a column.")
     for a in sorted(readable, key=lambda a: (a["tool"], a["seed"], a["variant"])):
         if a["variant"]:
             continue

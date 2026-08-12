@@ -59,6 +59,7 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
 )
 from .metrics import (
     KL_CEIL,  # the hard "too damaged" line; a trial above it is excluded outright
+    KL_TARGET,  # where the knee's coherence surcharge starts, and what --max-kl moves
     broken_rate,  # fraction of a batch that is wrecked output
     heretic_keyword_rate,  # Heretic-comparable refusal metric (the axis Heretic wins)
     is_broken,  # wrecked-output detector (empty / garbage / repetition)
@@ -787,6 +788,15 @@ def build_parser():
     ap.add_argument("--clean-ds", default=None,
                     help="dir of CLEAN (disclaimer-free) compliance for the hedged contrast; "
                          "defaults to --good-ds / <track>/good_ds.")
+    ap.add_argument("--max-kl", dest="max_kl", type=float, default=None,
+                    help="the most coherence drift you will accept, as KL. Sets both the hard "
+                         "intactness filter and where the knee's coherence surcharge begins, so "
+                         "the search returns the biggest refusal reduction it can manage UNDER "
+                         "this figure rather than wherever the frontier's knee happens to sit "
+                         f"(default: filter at {KL_CEIL}, surcharge above {KL_TARGET}). If no "
+                         "configuration meets it the run refuses rather than quietly returning "
+                         "one that does not. Heretic's comparable setting defaults far tighter, "
+                         "so this is the flag that puts the two tools at one operating point.")
     ap.add_argument("--patience", type=int, default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
@@ -2081,8 +2091,9 @@ class Abliterator:
         # overwrite each other's table with nothing said.
         with atomic_write(f"{self.args.out}/trials.json") as f:
             json.dump(rows, f, indent=2)
-        log("frontier (lowest refusals first, intact = KL under ceiling AND broken≈0):")
-        for r in [x for x in rows if x["kl"] <= KL_CEIL and x["broken"] <= 0.1][:8]:
+        _ceil_for_log = args.max_kl if args.max_kl is not None else KL_CEIL
+        log(f"frontier (lowest refusals first, intact = KL <= {_ceil_for_log} AND broken≈0):")
+        for r in [x for x in rows if x["kl"] <= _ceil_for_log and x["broken"] <= 0.1][:8]:
             di_s = "" if r["di"] is None else f" di={r['di']}"
             log(f"   o(P={r['oP']},wmax={r['owmax']},D={r['oD']}) d(P={r['dP']},wmax={r['dwmax']},D={r['dD']}) "
                 f"K={r['K']} {r['mode']}{di_s} refusals={r['refusals']*100:.1f}% heretic={r['heretic']*100:.1f}% "
@@ -2111,7 +2122,21 @@ class Abliterator:
                 f"generation, a model that will not generate at all, or an eval set that loaded "
                 f"empty.{where} Fix the cause and re-run with --resume to keep the completed work, "
                 f"or use --bake-config to save a known configuration without searching.")
-        _intact = [t for t in _cand if t.user_attrs["kl"] <= KL_CEIL and t.user_attrs.get("broken", 0.0) <= 0.1]
+        # THE CEILING IS THE CALLER'S IF THEY SET ONE. `--max-kl` is not advisory: a run asked to
+        # stay under a drift and then handed a model above it has answered a different question.
+        ceiling = args.max_kl if args.max_kl is not None else KL_CEIL
+        surcharge_from = args.max_kl if args.max_kl is not None else KL_TARGET
+        _intact = [t for t in _cand
+                   if t.user_attrs["kl"] <= ceiling and t.user_attrs.get("broken", 0.0) <= 0.1]
+        if args.max_kl is not None and not _intact:
+            best_kl = min(t.user_attrs["kl"] for t in _cand)
+            raise SystemExit(
+                f"no configuration met --max-kl {args.max_kl}: of {len(_cand)} scored trials the "
+                f"least drift any of them achieved was {best_kl:.4f}, and every trial under the "
+                f"limit was incoherent. Nothing is baked, because a model above the ceiling you "
+                f"asked for is not the thing you asked for. Either raise --max-kl (a value near "
+                f"{best_kl:.3f} is reachable on this model), search longer with more --trials, or "
+                f"re-run with --resume to keep this study and widen the limit.")
 
         # Re-score the top candidates on a LARGER bad-eval before choosing, so the knee isn't overfit to
         # the small search eval (lever 5). Held in a local dict; the trials themselves aren't mutated.
@@ -2147,7 +2172,7 @@ class Abliterator:
             ref = f["refusals"] if f else ua["refusals"]
             soft = f["soft"] if f else ua.get("soft", 0.0)
             her = f["heretic"] if f else ua.get("heretic", 0.0)
-            return knee_scalar(ref, soft, her, ua["kl"])
+            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from)
 
         best = min(_pool, key=_knee_key)
         bp = best.params
@@ -2259,13 +2284,13 @@ class Abliterator:
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-DELEGATED = ("bench", "compass", "score", "coherence", "track", "validate")
+DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate")
 
 
 def _delegate(name):
-    from . import bench, coherence, margin, score, track, validate
+    from . import bench, coherence, drift, margin, score, track, validate
     return {"bench": bench.main, "compass": margin.main, "score": score.main,
-            "coherence": coherence.main, "track": track.main,
+            "coherence": coherence.main, "drift": drift.main, "track": track.main,
             "validate": validate.main}[name]
 
 

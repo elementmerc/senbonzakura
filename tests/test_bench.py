@@ -55,7 +55,18 @@ def runner():
                     # The compass writes one results file, not a directory of artefacts.
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("{}", encoding="utf-8")
+                elif "drift" in argv:
+                    # So does the drift pass, and it is a separate spend from the compass: a
+                    # fake that conflated them would hide a missing one of the two.
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text('{"kl": 0.01, "n_prompts": 128}', encoding="utf-8")
                 elif "best_of_n_heretic.py" in joined:
+                    # The pass saves the winner as a MODEL DIRECTORY, which is what everything
+                    # downstream looks for: `model_subdir="model"` for this tool, so a fake that
+                    # only wrote the json would leave both the compass and the drift pass
+                    # reporting "no model" for every Heretic arm.
+                    (out / "model").mkdir(parents=True, exist_ok=True)
+                    (out / "model" / "config.json").write_text("{}", encoding="utf-8")
                     # ONLY THE SELECTION PASS WRITES best_of_n.json, because only it can.
                     #
                     # The fake used to write every artefact on every call, which made a Heretic
@@ -450,7 +461,7 @@ def test_each_tools_model_is_looked_for_where_that_tool_puts_it(tmp_path):
         tmp_path / "heretic-seed42" / "model"
 
 
-def test_an_arm_with_no_model_is_named_rather_than_skipped_quietly(tmp_path, runner):
+def test_the_drift_pass_names_an_arm_with_no_model(tmp_path, runner):
     r = bench.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
     (tmp_path / "senbon-seed42").mkdir()
     scored = bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
@@ -550,7 +561,16 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
     def fake(argv, *, cwd=None, log=print):
         from pathlib import Path
         target = Path(argv[argv.index("--out") + 1])
-        if "compass" in argv:
+        if "drift" in argv:
+            # The one-instrument coherence pass. A separate spend from the compass, so it gets a
+            # separate branch: conflating them would let a missing drift pass go unnoticed.
+            label = argv[argv.index("--label") + 1]
+            seed = int(label.rsplit("seed", 1)[1])
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "kl": (0.20 if tool == "senbon" else 0.003) + (seed - 43) * 0.001,
+                "n_prompts": 128, "prompts": "kl_prompts.txt"}), encoding="utf-8")
+        elif "compass" in argv:
             label = argv[argv.index("--label") + 1]
             tool = "senbon" if label.startswith("senbon") else "heretic"
             # Vary by seed. Identical scores across every seed are what a seed that reaches
@@ -610,7 +630,16 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
         from pathlib import Path
         calls.append(list(argv))
         target = Path(argv[argv.index("--out") + 1])
-        if "compass" in argv:
+        if "drift" in argv:
+            # The one-instrument coherence pass. A separate spend from the compass, so it gets a
+            # separate branch: conflating them would let a missing drift pass go unnoticed.
+            label = argv[argv.index("--label") + 1]
+            seed = int(label.rsplit("seed", 1)[1])
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "kl": (0.20 if tool == "senbon" else 0.003) + (seed - 43) * 0.001,
+                "n_prompts": 128, "prompts": "kl_prompts.txt"}), encoding="utf-8")
+        elif "compass" in argv:
             label = argv[argv.index("--label") + 1]
             target.write_text(json.dumps({
                 "label": label, "auc": 0.9 + int(label.rsplit("seed", 1)[1]) * 0.001,
@@ -656,7 +685,16 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
     def fake(argv, *, cwd=None, log=print):
         from pathlib import Path
         target = Path(argv[argv.index("--out") + 1])
-        if "compass" in argv:
+        if "drift" in argv:
+            # The one-instrument coherence pass. A separate spend from the compass, so it gets a
+            # separate branch: conflating them would let a missing drift pass go unnoticed.
+            label = argv[argv.index("--label") + 1]
+            seed = int(label.rsplit("seed", 1)[1])
+            tool = "senbon" if label.startswith("senbon") else "heretic"
+            target.write_text(json.dumps({
+                "label": label, "kl": (0.20 if tool == "senbon" else 0.003) + (seed - 43) * 0.001,
+                "n_prompts": 128, "prompts": "kl_prompts.txt"}), encoding="utf-8")
+        elif "compass" in argv:
             label = argv[argv.index("--label") + 1]
             auc = 0.95 if label.startswith("senbon") else 0.60   # identical for every seed
             target.write_text(json.dumps({"label": label, "auc": auc, "controls": {}}),
@@ -835,3 +873,62 @@ def test_the_scorer_runs_under_this_interpreter_not_a_bare_name():
     assert argv[0] == sys.executable, \
         "the compass must run under the interpreter the harness was started from"
     assert argv[0] != "python"
+
+
+# ── the third axis: one coherence ruler over every model ──────────────────────────────
+def test_every_model_gets_the_same_coherence_ruler(tmp_path, runner):
+    """The axis the 2026-08-12 table had to leave blank.
+
+    Both tools report a KL of their own, computed on their own slice during their own search, and
+    those two numbers came out a hundredfold apart with no honest sentence available across them.
+    This is the compass's answer applied to coherence: one instrument, one base, one prompt slice,
+    one batch size, run by us afterwards over whatever each tool produced.
+    """
+    a = _args(tmp_path)
+    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    runner.calls.clear()
+    measured = bench.drift_arms(results, base="/models/qwen",
+                                prompts=a["slices"] / "kl_prompts.txt",
+                                out=a["out"], batch=16, runner=runner)
+    assert [m["ok"] for m in measured] == [True, True]
+    assert len(runner.calls) == 2, "one model went unmeasured"
+    for argv in runner.calls:
+        joined = " ".join(argv)
+        assert "drift" in argv
+        assert "--base /models/qwen" in joined, "a model was compared to the wrong reference"
+        assert "kl_prompts.txt" in joined, "the slice both tools are measured on went missing"
+        assert "--batch 16" in joined, "batch size changes the number, so it must be pinned"
+
+
+def test_the_two_tools_are_measured_against_one_base_and_one_slice(tmp_path, runner):
+    """If either differs between arms, the column is not a column."""
+    a = _args(tmp_path)
+    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner, **a)
+    runner.calls.clear()
+    bench.drift_arms(results, base="/models/qwen", prompts=a["slices"] / "kl_prompts.txt",
+                     out=a["out"], batch=16, runner=runner)
+    bases = {argv[argv.index("--base") + 1] for argv in runner.calls}
+    slices = {argv[argv.index("--prompts") + 1] for argv in runner.calls}
+    batches = {argv[argv.index("--batch") + 1] for argv in runner.calls}
+    assert len(bases) == 1 and len(slices) == 1 and len(batches) == 1
+
+
+def test_a_drift_pass_names_an_arm_with_no_model_rather_than_skipping_it(tmp_path, runner):
+    """A missing model must reach the summary, or the table is short and nothing says why."""
+    a = _args(tmp_path)
+    results = bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
+    import shutil
+    shutil.rmtree(results[0].arm / "model")
+    measured = bench.drift_arms(results, base="/models/qwen",
+                                prompts=a["slices"] / "kl_prompts.txt",
+                                out=a["out"], batch=16, runner=runner)
+    assert measured[0]["ok"] is False
+    assert "no model" in measured[0]["reason"]
+
+
+def test_the_drift_pass_runs_under_this_interpreter():
+    """Same reason as the compass: it runs on the host, and the card has no bare `python`."""
+    import sys
+    argv = bench.drift_argv(model="m", base="b", prompts="p", out="o", label="x",
+                            batch=16, cache="c")
+    assert argv[0] == sys.executable

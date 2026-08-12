@@ -196,13 +196,21 @@ KNEE_W_KEYWORD = 1.0         # Heretic keyword rate (its own axis, now steered a
 KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
 
 
-def knee_scalar(ref: float, soft: float, heretic: float, kl: float) -> float:
+def knee_scalar(ref: float, soft: float, heretic: float, kl: float,
+                kl_target: float = KL_TARGET) -> float:
+    # `kl_target` is where the coherence surcharge starts, and it moves with `--max-kl`. Left at
+    # the default, the search lands wherever the frontier's knee is, which on Qwen3-1.7B is a drift
+    # of about 0.15 to 0.21: comfortably under the ceiling and mildly surcharged. That is a CHOICE,
+    # not a limit, and until 2026-08-12 it was one a caller could not change. Heretic's equivalent
+    # setting defaults far tighter, which is most of why its published drift figures are two orders
+    # of magnitude smaller than ours while it leaves more refusals standing.
+    #
     # The weighted knee score (P2): lower is better. The keyword/hedging axis carries real weight so
     # the final pick reflects the axis the search already optimises, instead of the old lexicographic
     # tuple where it only broke exact ties. KL surcharges only above the comfortably-intact target.
     return (KNEE_W_NONCOMPLIANCE * (ref + soft)
             + KNEE_W_KEYWORD * heretic
-            + KNEE_W_KL * max(0.0, kl - KL_TARGET))
+            + KNEE_W_KL * max(0.0, kl - kl_target))
 
 
 # --- Harm recognition (the "compass" axis) --------------------------------------

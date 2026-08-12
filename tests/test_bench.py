@@ -982,3 +982,15 @@ def test_the_refusal_pass_runs_under_this_interpreter():
     import sys
     argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
     assert argv[0] == sys.executable
+
+
+def test_refusals_are_counted_on_the_same_rows_the_compass_reads():
+    """One exam, or the three axes describe three different measurements of three things.
+
+    `--n 0` means every remaining row, which on this corpus is 4,504 of them: forty-five minutes a
+    model and seven and a half hours for one table, measured on rows the other two axes never saw.
+    The compass evaluates 200 after the same skip, so this does too.
+    """
+    argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
+    assert argv[argv.index("--n") + 1] == "200"
+    assert argv[argv.index("--skip") + 1] == "128"

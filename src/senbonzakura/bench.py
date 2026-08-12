@@ -679,15 +679,23 @@ def drift_arms(results, *, base: Path, prompts: Path, out: Path, batch=16,
     return measured
 
 
+# THE SAME ROWS THE COMPASS READS. The compass evaluates 200 harmful prompts after the same skip,
+# and matching it is what makes "one exam" true rather than a turn of phrase. Left at `--n 0` this
+# scores every remaining row, which on this project's corpus is 4,504 of them: forty-five minutes a
+# model, seven and a half hours for a table, and measured on different rows from the other two axes.
+REFUSAL_EVAL_N = 200
+
+
 def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
-                 skip: int, batch: int, n: int = 0) -> list[str]:
+                 skip: int, batch: int, n: int = REFUSAL_EVAL_N) -> list[str]:
     """The refusal ruler, invoked the one right way, on the host for the same reason as the rest."""
     return [sys.executable, "-u", "-m", "senbonzakura", "score",
             "--model", str(model), "--eval", str(harmful), "--out", str(out),
             "--label", label, "--skip", str(skip), "--n", str(n), "--batch", str(batch)]
 
 
-def refusal_arms(results, *, harmful: Path, out: Path, skip=128, batch=16, n=0,
+def refusal_arms(results, *, harmful: Path, out: Path, skip=128, batch=16,
+                 n=REFUSAL_EVAL_N,
                  runner=None, log=print, force=False) -> list[dict]:
     """Count every model's refusals with ONE ruler on ONE slice.
 

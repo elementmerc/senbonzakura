@@ -2079,7 +2079,14 @@ class Abliterator:
                                  "min_weight": 0.0, "min_weight_distance": dist})
                 try:
                     study.enqueue_trial(seed, skip_if_exists=True)
-                    log(f"warm-start: seeded the search with a diff-of-means config (P={pos}, wmax=1.0, K=1)")
+                    # THE VALUE, not a constant. This line hardcoded "K=1" while the seed itself
+                    # used the pinned budget, so on a K=2 arm it reported a warm start outside the
+                    # search space that had in fact been seeded correctly. It is the exact line
+                    # somebody reads to check that very thing, which makes a wrong one worse than
+                    # none: found in the rehearsal of 2026-08-12, one arm after the ceiling bug it
+                    # was written to guard against.
+                    log(f"warm-start: seeded the search with a diff-of-means config "
+                        f"(P={pos}, wmax=1.0, K={seed['num_directions']})")
                 except Exception as e:
                     log(f"warm-start seed skipped ({e}); searching cold")
             try:

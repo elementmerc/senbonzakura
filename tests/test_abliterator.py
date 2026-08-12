@@ -1633,3 +1633,20 @@ def test_a_pinned_budget_is_announced_as_pinned():
     cli._apply_kageyoshi(args, _TinyModel(), "dense", None, 28, log=said.append,
                          explicit=("min_directions", "max_directions"))
     assert any("K=2 (pinned)" in m for m in said), said
+
+
+def test_the_warm_start_reports_the_budget_it_actually_seeded():
+    """The line somebody reads to check the warm start must not be a constant.
+
+    It hardcoded "K=1" while the seed itself used the pinned budget, so on a K=2 arm it announced
+    a warm start outside the search space that had in fact been seeded correctly. A wrong
+    verification line is worse than none: found in the rehearsal of 2026-08-12, one arm after the
+    ceiling bug it exists to guard against.
+    """
+    import re
+
+    src = Path(cli.__file__).read_text(encoding="utf-8")
+    assert "wmax=1.0, K=1)" not in src, \
+        "the warm-start line reports a constant rather than the budget it seeded"
+    assert re.search(r"K=\{seed\[.num_directions.\]\}", src), \
+        "the warm-start line no longer interpolates the seeded budget"

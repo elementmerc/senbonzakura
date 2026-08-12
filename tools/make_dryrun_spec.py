@@ -34,8 +34,12 @@ import sys
 SUBSTITUTIONS = [
     ("the run name",
      re.compile(r'^run = "([^"]+)"$', re.MULTILINE), 'run = "\\1-DRYRUN"', 1),
+    # Matches ANY run's output directory rather than one spec's, because there is more than one
+    # spec now: the head-to-head and the multi-direction experiment. Hard-coding `h2h` here meant
+    # the second spec's rehearsal would have written into the real run's artefacts, which is the
+    # precise accident this substitution exists to prevent.
     ("the output directory, so a rehearsal never touches the real run's artefacts",
-     re.compile(r"\$HOME/bench-out/h2h\b"), "$HOME/bench-out/h2h-dryrun", None),
+     re.compile(r"\$HOME/bench-out/([A-Za-z0-9._-]+)\b"), "$HOME/bench-out/\\1-dryrun", None),
     ("the staged slices, so a rehearsal cannot overwrite the real run's inputs",
      re.compile(r"\$HOME/bench-eval\b"), "$HOME/bench-eval-dryrun", None),
     ("the seed list, down to one",

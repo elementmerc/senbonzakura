@@ -1602,3 +1602,34 @@ def test_an_unwritable_output_is_refused_before_the_search(base_args, tiny_model
     with pytest.raises(SystemExit) as e:
         abl.preflight_writable()
     assert "cannot write to" in str(e.value)
+
+
+class _TinyModel:
+    """Just enough model for the preset, which only asks how many parameters there are."""
+
+    def parameters(self):
+        return [torch.zeros(1000)]
+
+
+# ── the direction budget as a pin rather than a ceiling (2026-08-12) ──────────────────
+def test_an_inverted_direction_budget_is_refused():
+    """"--min 3 --max 2" means somebody wanted three and would otherwise quietly get two."""
+    args = cli.build_parser().parse_args(
+        ["--model", "m", "--track", "/tmp", "--min-directions", "3", "--max-directions", "2"])
+    with pytest.raises(SystemExit, match="no direction budget satisfies both"):
+        # `explicit` is what the real path computes from argv, so a budget the caller named is
+        # kept rather than replaced by the preset's own K.
+        cli._apply_kageyoshi(args, _TinyModel(), "dense", None, 28, log=lambda *a: None,
+                             explicit=("min_directions", "max_directions"))
+
+
+def test_a_pinned_budget_is_announced_as_pinned():
+    """"K<=2" and "K=2" are different experiments and the difference is invisible in the
+    artefacts until somebody reads the winning configuration.
+    """
+    said = []
+    args = cli.build_parser().parse_args(
+        ["--model", "m", "--track", "/tmp", "--min-directions", "2", "--max-directions", "2"])
+    cli._apply_kageyoshi(args, _TinyModel(), "dense", None, 28, log=said.append,
+                         explicit=("min_directions", "max_directions"))
+    assert any("K=2 (pinned)" in m for m in said), said

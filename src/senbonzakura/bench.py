@@ -191,7 +191,11 @@ def _senbon_k_argv(k: int):
     identical budget, identical seeds, one parameter different.
     """
     def build(**kw):
-        return [*_senbon_argv(**kw), "--max-directions", str(k)]
+        # BOTH bounds, because --max-directions is a ceiling and the search picks anywhere
+        # beneath it. The rehearsal on 2026-08-12 caught this before the real run: the "K=2" arm
+        # spent two of its first three trials at K=1 and its frontier was topped by a K=1 config,
+        # so it would have shipped a one-direction model under a two-direction label.
+        return [*_senbon_argv(**kw), "--min-directions", str(k), "--max-directions", str(k)]
     return build
 
 

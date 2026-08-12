@@ -1047,8 +1047,14 @@ def test_the_k_arms_differ_only_in_the_direction_budget(tmp_path, runner):
     bench.run_arm(bench.ADAPTERS["senbon-k1"], seed=42, runner=runner, **a)
     bench.run_arm(bench.ADAPTERS["senbon-k2"], seed=42, runner=runner, **a)
     k1, k2 = runner.calls
-    assert k1[k1.index("--max-directions") + 1] == "1"
-    assert k2[k2.index("--max-directions") + 1] == "2"
+    # BOTH bounds. `--max-directions` alone is a ceiling and the search picks anywhere beneath it,
+    # so "up to two" is not "two": the 2026-08-12 rehearsal's K=2 arm spent two of its first three
+    # trials at K=1 and its frontier was topped by a K=1 config. It would have shipped a
+    # one-direction model under a two-direction label, all night, on ten arms.
+    for argv, k in ((k1, "1"), (k2, "2")):
+        assert argv[argv.index("--max-directions") + 1] == k
+        assert argv[argv.index("--min-directions") + 1] == k, \
+            "the budget is a ceiling, not a pin, so this arm may use fewer directions than it says"
     def without(argv, *flags):
         """The command minus the flags that are ALLOWED to differ, and their values.
 
@@ -1059,8 +1065,8 @@ def test_the_k_arms_differ_only_in_the_direction_budget(tmp_path, runner):
         drop = set(flags)
         return [x for i, x in enumerate(argv) if x not in drop and argv[i - 1] not in drop]
 
-    assert (without(k1, "--max-directions", "--out")
-            == without(k2, "--max-directions", "--out")), \
+    assert (without(k1, "--min-directions", "--max-directions", "--out")
+            == without(k2, "--min-directions", "--max-directions", "--out")), \
         "the two arms differ by more than the direction budget"
 
 

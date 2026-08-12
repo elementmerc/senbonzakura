@@ -648,10 +648,26 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=()):
     # the residual keyword gap Heretic wins on); silently skip it when absent.
     if not args.hedge_ds and os.path.isdir(f"{args.track}/hedge_ds"):
         args.hedge_ds = f"{args.track}/hedge_ds"
+    # AN INVERTED PAIR IS A TYPO, NOT A SEARCH SPACE. Caught here rather than clamped silently,
+    # because "--min-directions 3 --max-directions 2" means somebody wanted three and would
+    # otherwise get two with nothing said.
+    # `getattr` rather than attribute access throughout: this is called with a namespace built by
+    # hand in several tests, and a new flag must not make an existing caller crash on a field it
+    # has never needed to set.
+    k_min = getattr(args, "min_directions", 1)
+    if k_min > args.max_directions:
+        raise SystemExit(
+            f"--min-directions {k_min} is above --max-directions "
+            f"{args.max_directions}, so no direction budget satisfies both. Set them equal to pin "
+            f"the budget, or raise the ceiling.")
     hedge_note = f"hedging={args.hedge_ds}" if args.hedge_ds else "hedging=none (no hedge_ds in track)"
+    # Said plainly in the banner, because "K<=2" and "K=2" are different experiments and the
+    # difference is invisible in the artefacts until somebody reads the winning config.
+    k_note = (f"K={args.max_directions} (pinned)" if k_min == args.max_directions
+              else f"K<={args.max_directions}")
     log("BANKAI. Senbonzakura Kageyoshi — scatter, a thousand blades.")
     log(f"  {b:.1f}B params, down-proj={arch}{'' if ne is None else f'/{ne}e'}, {NL} layers -> "
-        f"{args.trials} trials, K<={args.max_directions}, eval {args.eval_refusal}/{args.eval_refusal_final}, "
+        f"{args.trials} trials, {k_note}, eval {args.eval_refusal}/{args.eval_refusal_final}, "
         f"patience={args.patience}, {hedge_note}")
 
 
@@ -788,6 +804,12 @@ def build_parser():
     ap.add_argument("--clean-ds", default=None,
                     help="dir of CLEAN (disclaimer-free) compliance for the hedged contrast; "
                          "defaults to --good-ds / <track>/good_ds.")
+    ap.add_argument("--min-directions", dest="min_directions", type=int, default=1,
+                    help="the FEWEST directions a trial may use. --max-directions is a ceiling "
+                         "and the search picks anywhere beneath it, so 'up to two' is not 'two': "
+                         "set both to the same number to pin the budget. That is what turns a "
+                         "K comparison into an experiment rather than a mixture, and a run on "
+                         "2026-08-12 chose one direction on three seeds of five when left free.")
     ap.add_argument("--max-kl", dest="max_kl", type=float, default=None,
                     help="the most coherence drift you will accept, as KL. Sets both the hard "
                          "intactness filter and where the knee's coherence surcharge begins, so "
@@ -1118,6 +1140,10 @@ class Abliterator:
         self.arch = "+".join(dict.fromkeys(k for k, _ in _dp)) or "dense"
         self.ne = getattr(model.config, "num_experts", None) or getattr(model.config, "num_local_experts", None)
         self.KMAX = max(1, args.max_directions)
+        # PINNED when they are equal, which is the point of having both. Clamped rather than
+        # rejected here because the parser has already refused an inverted pair; this is the
+        # invariant restated where the search reads it.
+        self.KMIN = min(max(1, getattr(args, "min_directions", 1)), self.KMAX)
         log(f"model up: hidden={self.H} layers={self.NL} down-proj={self.arch} experts={self.ne}")
 
         # Offload awareness: when the model is bigger than VRAM, accelerate places some layers on CPU
@@ -1656,7 +1682,7 @@ class Abliterator:
         # Search the windowed profile PER COMPONENT (peak position + peak/edge strengths + window
         # width for attn.o_proj and mlp.down_proj independently), not a single (layer, strength).
         args, log = self.args, self.log
-        K = trial.suggest_int("num_directions", 1, self.KMAX)     # refinement 5: how many directions
+        K = trial.suggest_int("num_directions", self.KMIN, self.KMAX)  # refinement 5: how many
         mode = trial.suggest_categorical("dir_mode", ["per_layer", "single"])
         didx = trial.suggest_float("direction_index", self.lo, self.hi) if mode == "single" else None  # refinement 6
         pr = self._suggest_profiles(trial)
@@ -2038,7 +2064,11 @@ class Abliterator:
                 # has trials); wrapped so a param-range mismatch degrades to a cold search, not a crash.
                 pos = min(max(int(self.NL * 0.6), self.lo), self.hi)
                 dist = max(2, self.NL // 4)
-                seed = {"num_directions": 1, "dir_mode": "per_layer"}
+                # The warm start must be INSIDE the search space. With the budget pinned above 1
+                # a seed of 1 is out of range, and Optuna's mismatch handling degrades the whole
+                # search to cold random sampling: a quiet loss of the good starting point rather
+                # than an error.
+                seed = {"num_directions": self.KMIN, "dir_mode": "per_layer"}
                 if args.per_component:
                     seed.update({"o_max_weight_position": pos, "o_max_weight": 1.0,
                                  "o_min_weight": 0.0, "o_min_weight_distance": dist,

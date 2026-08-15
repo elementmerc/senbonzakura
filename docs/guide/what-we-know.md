@@ -7,10 +7,10 @@ Here's the summary, and I'd rather you got it from me in the first paragraph tha
 out from the appendix.
 
 ::: warning The short version
-**Nobody should believe the multi-direction claim on this project's evidence yet, us
-included.** The feature was rewritten on 2026-08-03 after it turned out never to have
-worked at all. What changed that day is that the question can now be *asked*. It hasn't
-been answered.
+**We tested it, and on the one model we can measure properly the claim is false.** Two
+directions did about twice the collateral damage of one at the same refusal rate, across five
+seeds a side. The feature had also never worked at all until it was rewritten on 2026-08-03,
+which is why the question could not be asked before then.
 :::
 
 The rest of this page is how we got there, because the failures are more instructive than
@@ -93,18 +93,51 @@ harmless prompts partly *because it's about explosives*, not because of anything
 refusal. Cut along it and you haven't removed the model's reluctance, you've removed its
 chemistry.
 
-**Does removing several directions beat removing one?** The comparison meant to show this
-is withdrawn, per the top of this page, and re-running it needs the question above settled
-first. Otherwise you're back to measuring the wrong thing with more seeds.
+**Does removing several directions beat removing one?** We ran it, and the answer on the one
+model we can measure properly is **no**. See the next section.
+
+## The answer, measured on 2026-08-13
+
+One direction against two. Same tool, same corpus, same search budget, same five seeds, one
+parameter apart, with the direction budget pinned at both ends so neither arm could drift into
+the other's territory. Every resulting model was then scored by one instrument on 200 prompts
+that nothing was fitted or selected on.
+
+| Direction budget | Coherence drift | Hard refusal | Noncompliance |
+|---|---|---|---|
+| One | **0.0497** (spread 0.0177) | 0.1% | 3.8% |
+| Two | 0.0932 (spread 0.0482) | 0.3% | 4.2% |
+
+Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
+at matched refusal, where the only thing left to differ is the price paid for it. Two directions
+did roughly **twice the collateral damage and bought nothing**, and they were less predictable
+seed to seed (the spread is nearly three times as wide).
+
+The gap, 0.0435, clears the pooled spread of 0.0363 by about a fifth. That's real but slim.
+Drop the worst two-direction seed as an outlier and the result gets *stronger*, not weaker
+(0.0719 against 0.0497, now 1.6 times the spread), so it doesn't rest on one bad run.
+
+**What it doesn't say.** This is Qwen3-1.7B alone. Refusal geometry may differ on larger models
+or on other families, and the honest position is that the question is open elsewhere and closed
+here. It also doesn't rescue the threshold problem above: these directions were still selected
+by a filter that rejects nothing, so "two directions" means "two directions this tool chose",
+not "two directions known to carry refusal".
+
+**Why publish a negative result about your own headline feature?** Because the alternative is
+waiting for a friendlier model, and a project whose whole argument is that other people's
+numbers deserve scrutiny doesn't get to make an exception for its own.
 
 ## So where does that leave the project
 
 Honestly: with a working single-direction abliterator, an unusually good
-[measurement suite](/guide/compass), and its headline claim still open.
+[measurement suite](/guide/compass), and a headline claim that its own measurements do not
+support on the model it can measure best.
 
 That's a less exciting sentence than the README of most tools in this space, and it's the
-true one. The multi-direction result, if it comes, will arrive with its seeds, its held-out
-evaluation and its controls attached, or it won't be published.
+true one. The tool keeps the multi-direction capability because the question is genuinely open
+on architectures we can't yet reach, and because being able to *test* the idea is worth more
+than believing it. By default the search chooses its own budget between one and three
+directions, and left to itself on this model it picks one more often than not.
 
 ## Where next
 

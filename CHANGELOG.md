@@ -20,6 +20,23 @@ same as showing they carry refusal, and this release does not show that. Any dir
 from a version before this one is not trustworthy, and the comparison that was meant to prove
 several directions beat one is withdrawn.
 
+**And when we finally ran that comparison properly, more directions lost.** One direction
+against two, five seeds each, everything else held still, every model scored afterwards by one
+instrument on 200 prompts nothing was fitted or selected on:
+
+| Direction budget | Coherence drift | Hard refusal |
+|---|---|---|
+| One direction | 0.0497, spread 0.0177 | 0.1% |
+| Two directions | 0.0932, spread 0.0482 | 0.3% |
+
+Both budgets removed hard refusal, so this is a comparison at matched refusal. Two directions
+did roughly twice the collateral damage and bought nothing for it, and they were less
+predictable run to run. The gap clears the pooled spread by about a fifth, which is real but
+slim; dropping the worst two-direction seed makes it wider rather than narrower, so it doesn't
+rest on one bad run. This is one model, Qwen3-1.7B, and it does not settle the question for
+every architecture. It does mean the project's central idea is unsupported where we can
+currently measure it, and we would rather publish that than wait for a friendlier model.
+
 **If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
 not comparable to what this version produces.
@@ -76,6 +93,14 @@ not comparable to what this version produces.
 - Adding another tool is an adapter: how to invoke it, what proves it ran, where it leaves a
   model, how to read its own figures.
 - Fewer than three seeds gets no verdict, and a gap smaller than the spread is reported as a tie.
+  A gap equal to the spread is a tie too, as is one that clears it by less than the report prints,
+  because a margin the reader can't see in the figures given is not a margin they can check.
+- `senbonzakura drift` measures coherence the way the compass measures harm recognition: one
+  instrument, run by us afterwards, on held-out prompts, over every model whoever made it. Two
+  tools' self-reported divergences are two measurements wearing one name, and this release found
+  they can disagree by a hundredfold and reverse order once put on one ruler.
+- `--max-kl` searches for the fewest refusals under a coherence ceiling, which is the question
+  other tools ask. It refuses rather than falling back when no configuration meets the ceiling.
 
 ### Engine
 

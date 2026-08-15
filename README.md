@@ -38,27 +38,36 @@ Senbonzakura removes the refusal behaviour from an open-weight language model by
 finding the *directions* in its activation space that carry "I can't help with
 that" and orthogonalising them out of the weights. It builds on the
 single-direction method of Arditi et al. and the automated search of Heretic, and
-adds the one thing that moved the needle in my own runs: cutting in **several
-directions at once**, not just one.
+can cut in **several directions at once** rather than one.
 
 Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand
-blades. Refusal is not one blade. It's many.
+blades.
 
-## Why multi-direction
-
-## Why multi-direction
+## Why multi-direction, and what happened when we tested it
 
 Refusal in a language model is *mostly* one direction in its activation space
-([Arditi et al., 2024](https://arxiv.org/abs/2406.11717)). Mostly. The last stubborn few percent
-lives in a small handful of nearby directions the single-arrow method never sees. Senbonzakura
-searches for the whole subspace and orthogonalises all of it out of the weights.
+([Arditi et al., 2024](https://arxiv.org/abs/2406.11717)). Mostly. The idea this project was
+built on is that the last stubborn few percent lives in a small handful of nearby directions the
+single-arrow method never sees, so it searches for the whole subspace and orthogonalises all of
+it out of the weights.
 
-> **Read this before quoting anything.** The multi-direction feature had never worked until
-> 2026-08-03: the check deciding whether a candidate direction carried refusal could not accept
-> any direction, on any model, at any setting. Every run before that applied exactly one
-> direction. It has been rewritten and now finds up to eight per layer, but **finding more
-> directions is not the same as showing they carry refusal**, and that has not been shown. The
-> headline claim is currently unsupported by this project's own evidence.
+> **Read this before quoting anything. On the one model where we can measure it properly, that
+> idea does not hold.** One direction against two, five seeds each, everything else held still,
+> every model scored afterwards by one instrument on prompts nothing was fitted or selected on:
+> both budgets removed hard refusal, and two directions did about **twice the collateral damage**
+> for no refusal benefit (drift 0.093 against 0.050). More directions cost more and bought
+> nothing.
+>
+> That is one model, Qwen3-1.7B, and it isn't the last word for every architecture. It is enough
+> to say the headline idea is **unsupported by this project's own evidence**, and we would rather
+> you heard it here than found it out yourself.
+>
+> The feature also had never worked until 2026-08-03: the check deciding whether a candidate
+> direction carried refusal could not accept any direction, on any model, at any setting, so every
+> run before that applied exactly one direction whatever it was asked for.
+>
+> **What this tool is actually good at is the measurement**, and that part survived the same
+> scrutiny: [the head-to-head](https://elementmerc.github.io/senbonzakura/guide/benchmark).
 >
 > The full account is in the documentation:
 > [what is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know).

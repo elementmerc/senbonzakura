@@ -116,6 +116,18 @@ different shapes, and abliteration is weight surgery: you have to know which dra
 are in.
 :::
 
+::: warning Quantised uploads can't be abliterated, and the popular ones are quantised
+Abliteration is weight surgery: it rewrites real matrices in place. A 4-bit or 8-bit upload
+doesn't store those matrices in a form that can be rewritten, so the tool refuses it rather than
+pretending. That includes the GGUF files most local runners use, and it includes the
+`bnb-4bit` uploads that repackage popular models at half the size.
+
+This catches people out because those uploads have a well-earned reputation for being smaller at
+no cost to quality, so they're the natural thing to reach for. Start from the original
+full-precision repository instead. You can quantise afterwards; you can't abliterate a
+quantisation.
+:::
+
 An architecture it doesn't recognise **fails loudly at load** with the layer type named. It
 would be easy to make it shrug and carry on, and the result would be a model that came back
 looking abliterated and wasn't, because the edit never reached the layers that mattered.

@@ -20,7 +20,9 @@ failure survives longest.
 
 THE HYBRID CASE IS THE POINT OF THE FILE
 
-LFM2 writes the residual stream through a short convolution on most of its layers. The two tests
+LFM2 writes the residual stream through a short convolution on most of its layers (10 of 16 on
+the 350M, which is 31% of all residual writers once the MLP down-projections are counted). The
+two tests
 that matter most here are that those convolutions genuinely change under a normal run, and that
 under `--skip-conv-ablation` they genuinely do NOT while everything else still does. The second
 is what makes the control arm of the hybrid experiment a control rather than a coincidence.
@@ -290,9 +292,14 @@ def test_a_narrow_profile_edits_a_window_and_leaves_the_rest_alone(plan, base_ar
 
 
 @pytest.mark.parametrize("plan", sorted(REAL_PLANS), ids=sorted(REAL_PLANS))
-def test_the_convolutions_are_the_majority_of_a_real_plan(plan):
+def test_the_convolutions_outnumber_the_attention_layers_in_a_real_plan(plan):
     """The claim task 36 rests on, asserted against the real configs rather than repeated from
     a model card. If a future LFM2 inverts this, the argument for the feature changes with it.
+
+    Note the denominator. This is about the ATTENTION-POSITION writers, where the convolutions are
+    10 of 16 on the 350M. Every layer also carries an MLP down-projection that any tool edits, so
+    of ALL 32 residual writers the convolutions are 10, which is 31% rather than a majority.
+    Earlier drafts said "most of the residual writers" and that overstates it twofold.
     """
     types = REAL_PLANS[plan]
     assert types.count("conv") > types.count("full_attention")

@@ -134,11 +134,35 @@ def collect(run_dir):
             "length_only_auc": (scored.get("controls") or {}).get("length_only_auc"),
             "unreadable": False,
         }
+        arm["partial"] = partial_ablation(run_dir, m["tool"], m["seed"], m["variant"])
         arm.update(own_numbers(run_dir, m["tool"], m["seed"]))
         arm.update(one_ruler_drift(run_dir, m["tool"], m["seed"], m["variant"]))
         arm.update(one_ruler_refusal(run_dir, m["tool"], m["seed"], m["variant"]))
         arms.append(arm)
     return arms
+
+
+def partial_ablation(run_dir, tool, seed, variant):
+    """The layers this arm's model deliberately left unedited, or None if it is a whole one.
+
+    WHY THE REPORT ASKS, rather than the run being trusted to keep control arms out of it.
+
+    A control arm exists on hybrid architectures: to learn whether refusal travels through the
+    convolution path, one arm has to leave it alone, and that arm's model is a partial abliteration
+    by construction. Guarding the WEIGHTS is not enough, because the thing that actually escapes is
+    a NUMBER. A refusal rate that lands in a comparison table is read weeks later by somebody
+    holding neither the flag, the warning nor the run log, and one aggregation that does not filter
+    is all it takes.
+
+    So the exclusion is structural and it happens here, at the point where rows become a table. It
+    reads the arm's own `abliteration.json`, which travels with the model directory, rather than
+    trusting a naming convention that a copy can strip.
+    """
+    label = f"{tool}-seed{seed}{variant or ''}"
+    doc = load_json(os.path.join(run_dir, label, "abliteration.json"))
+    if not doc or doc.get("ablate_conv", True):
+        return None
+    return doc.get("partially_ablated_layers") or []
 
 
 def one_ruler_refusal(run_dir, tool, seed, variant):
@@ -246,7 +270,24 @@ def verdict(by_tool):
 def render(arms):
     lines = []
     unreadable = [a for a in arms if a["unreadable"]]
-    readable = [a for a in arms if not a["unreadable"]]
+    # Control arms are pulled out BEFORE any table is built, so no row of theirs can reach a
+    # column, a per-tool mean or the verdict. They are announced rather than dropped: a silently
+    # shorter table is its own defect, and the reader has to be able to see that an arm ran.
+    controls = [a for a in arms if not a["unreadable"] and a.get("partial") is not None]
+    readable = [a for a in arms if not a["unreadable"] and a.get("partial") is None]
+
+    if controls:
+        lines.append("=== Control arms, EXCLUDED from every table and the verdict ===")
+        lines.append("These models are PARTIAL abliterations by construction: named layers write")
+        lines.append("the residual stream through a module the run was told to leave alone. Their")
+        lines.append("numbers answer whether that path carries refusal and are not results about")
+        lines.append("any model. Read them from the arm's own directory, deliberately.")
+        for a in sorted(controls, key=lambda a: (a["tool"], a["seed"])):
+            skipped = a["partial"]
+            lines.append(f"  {a['name']:<28} {len(skipped)} layer(s) unedited: "
+                         f"{', '.join(str(i) for i in skipped[:8])}"
+                         f"{'...' if len(skipped) > 8 else ''}")
+        lines.append("")
 
     lines.append("=== Harm recognition, one instrument over every model ===")
     lines.append("Our compass, run after the fact on the same held-out prompts for both tools.")

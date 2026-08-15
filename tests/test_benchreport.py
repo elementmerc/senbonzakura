@@ -207,3 +207,49 @@ def test_a_spread_of_identical_floats_is_treated_as_zero():
     """
     assert rh.stdev([0.95, 0.95, 0.95]) != 0.0
     assert rh.stdev([0.95, 0.95, 0.95]) < rh.SPREAD_IS_ZERO
+
+
+# ── control arms: the number escapes more easily than the weights ─────────────────────
+def _make_control(directory, tool, seed, layers=(0, 1)):
+    """An arm whose model directory declares itself a partial abliteration."""
+    import os
+    d = directory / f"{tool}-seed{seed}"
+    os.makedirs(d, exist_ok=True)
+    (d / "abliteration.json").write_text(
+        json.dumps({"ablate_conv": False, "partially_ablated_layers": list(layers)}),
+        encoding="utf-8")
+
+
+def test_a_partial_ablation_is_kept_out_of_every_table_and_the_verdict(run_dir):
+    """Guarding the weights is not enough. A refusal rate that reaches a comparison table is read
+    later by somebody holding neither the flag, the warning nor the run log.
+    """
+    d = run_dir([0.95, 0.94, 0.96, 0.95, 0.94], [0.60, 0.61, 0.59, 0.60, 0.62])
+    _make_control(d, "heretic", 42)
+    out = report(d)
+    assert "scored-heretic-seed42" not in out.split("=== Harm recognition")[1]
+    assert "EXCLUDED from every table and the verdict" in out
+    # The per-tool line counts four, not five: the control's AUC reached no mean and no spread.
+    assert "heretic    n=4" in out
+    assert "senbon     n=5" in out
+
+
+def test_an_excluded_control_is_announced_rather_than_dropped(run_dir):
+    """A silently shorter table is its own defect: the reader has to see that the arm ran."""
+    d = run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59])
+    _make_control(d, "senbon", 43, layers=(0, 1, 3, 4))
+    out = report(d)
+    assert "scored-senbon-seed43" in out
+    assert "4 layer(s) unedited: 0, 1, 3, 4" in out
+
+
+def test_a_whole_abliteration_is_not_mistaken_for_a_control(run_dir):
+    """`ablate_conv: true`, and the absence of the file at all, both mean a whole model."""
+    import os
+    d = run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59])
+    whole = d / "senbon-seed42"
+    os.makedirs(whole, exist_ok=True)
+    (whole / "abliteration.json").write_text(json.dumps({"ablate_conv": True}), encoding="utf-8")
+    out = report(d)
+    assert "EXCLUDED" not in out
+    assert "scored-senbon-seed42" in out

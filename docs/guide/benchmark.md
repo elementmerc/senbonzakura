@@ -38,6 +38,14 @@ order reverses.
   is the one Heretic tunes against. It biases the comparison *toward* Heretic, which still lost
   it, but a figure measured on a competitor's home ground is not the one to publish, and the
   re-measurement on held-out prompts is pending.
+- **Some of these prompts are probably ones Heretic was fitted on, and we have not yet measured
+  how many.** Heretic's shipped defaults fit on `mlabonne/harmful_behaviors` `train[:400]`, which
+  is 400 of that split's 416 rows, and roughly 430 rows of our own harmful pool come from the same
+  dataset. So an unknown share of our evaluation is Heretic's training data. This flatters
+  Heretic, in a comparison Heretic mostly lost, so it does not put our conclusion at risk. It sits
+  directly on the axis we lose, though: the keyword rate is measured by a ruler built from the
+  same dataset family, and Heretic optimises against that ruler by default. Counting the overlap
+  is queued work.
 
 The recipe below is the same command that produced the table, so you do not have to take our word
 for any of it.

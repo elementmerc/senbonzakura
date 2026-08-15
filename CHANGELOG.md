@@ -106,6 +106,14 @@ not comparable to what this version produces.
 
 - The search can be given a fixed prompt format instead of inventing one when a model has no
   chat template.
+- Hybrid architectures are supported. On models where some layers hold a short convolution
+  instead of attention, that convolution writes the model's running state just as attention
+  does, and it is now edited too. Editing only part of a layer and reporting success is how
+  every Gemma figure in this project came to be withdrawn.
+- Every saved model carries a record of what produced it, in both its configuration file and
+  the weight files themselves, so copying a single file out of the folder does not lose it. It
+  names the version, the settings, and above all whether the model is a complete abliteration
+  or a deliberately partial one.
 - Sparse surgery restricts the ablation to the rows that write refusal.
 - The search can warm-start from a difference-of-means seed.
 - A disk-space check runs before the search rather than during the save, so a long run cannot

@@ -44,6 +44,7 @@ import torch.nn.functional as F
 from datasets import load_from_disk
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from . import marker  # what a saved checkpoint says it is; NOT crashsafe.provenance
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
     atomic_write,
@@ -2350,6 +2351,18 @@ class Abliterator:
         # failed write loses less. Nothing downstream cares how many shards there are.
         self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size="4GB")
         self.tok.save_pretrained(args.out)
+        # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
+        # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a
+        # model that must never pass for the second, and the second losing a provenance line is
+        # not worth killing a save whose GPU work is already spent.
+        marker.stamp(
+            args.out,
+            marker.fields(
+                version=__version__, ablate_conv=self.ablate_conv,
+                partial_layers=self.partial_layers, num_directions=b_K, dir_mode=b_mode,
+                seed=args.seed,
+                base_model=getattr(getattr(self.model, "config", None), "_name_or_path", None)),
+            required=bool(self.partial_layers), log=log)
         with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump({"per_component": args.per_component,
                        "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],

@@ -407,6 +407,58 @@ def _attn_outproj(layer):
         f"(type {type(layer).__name__}); architecture not supported.")
 
 
+def _conv_outproj(layer):
+    """A short convolution block's output projection, or None if this layer has no such block.
+
+    LFM2 and its mixture-of-experts variant are hybrids: roughly half their decoder layers carry
+    no attention at all, holding instead a `conv` block whose `out_proj` writes into the residual
+    stream in exactly the position an attention `o_proj` occupies. Dimensionally it is the same
+    object, a `[hidden, hidden]` Linear, so the row-wise norm-preserving bake applies to it
+    unchanged.
+    """
+    conv = getattr(layer, "conv", None)
+    if conv is None:
+        return None
+    p = getattr(conv, "out_proj", None)
+    if p is not None and hasattr(p, "weight") and _real_tensor(p, "weight").dim() == 2:
+        return _real_tensor(p, "weight")
+    return None
+
+
+def _has_attention(layer):
+    return any(getattr(layer, n, None) is not None
+               for n in ("self_attn", "attention", "self_attention", "attn"))
+
+
+def layer_attn_writers(layer, ablate_conv=True):
+    """EVERY matrix in this layer that writes the residual stream from the attention position.
+
+    On an ordinary architecture that is one tensor and this is `_attn_outproj` with a list around
+    it. On a hybrid it is one OR the other per layer, and skipping the convolution ones is the
+    gemma failure in a new costume: an edit that never reaches half the residual stream, reported
+    as a successful run.
+    """
+    out = []
+    if _has_attention(layer):
+        out.append(_attn_outproj(layer))
+    if ablate_conv:
+        conv = _conv_outproj(layer)
+        if conv is not None:
+            out.append(conv)
+    if not out:
+        # Empty because the caller asked for the control arm and this layer's only writer here is
+        # the convolution it was told to leave alone. That is a deliberate, warned, recorded
+        # choice made in `refuse_unrecognised_writers`, not an unsupported layout.
+        if not ablate_conv and _conv_outproj(layer) is not None:
+            return out
+        raise ValueError(
+            f"no residual-writing projection found in the attention position of this layer "
+            f"(type {type(layer).__name__}); architecture not supported. Supported: an attention "
+            "output projection (o_proj / out_proj / dense) and a short-convolution out_proj "
+            "(LFM2 / LFM2-MoE).")
+    return out
+
+
 def _classify(w):
     # Infer the bake kind from the tensor rank: 3D = fused expert stack [E, out, in], else 2D dense.
     return "fused3d" if w.dim() == 3 else "dense"
@@ -452,7 +504,7 @@ def _mlp_downprojs(mlp):
     return out
 
 
-def residual_writers(layer, hidden_size):
+def residual_writers(layer, hidden_size, ablate_conv=True):
     """Every matrix in this decoder layer that writes the residual stream, and what we did not see.
 
     Returns `(recognised_count, unrecognised)`, where `unrecognised` names each child module that
@@ -460,13 +512,17 @@ def residual_writers(layer, hidden_size):
 
     WHY THIS EXISTS, and why it landed in the same commit as LFM2 support rather than after it.
 
-    Until now an unknown container raised loudly per layer, so an unsupported architecture failed
+    Until then an unknown container raised loudly per layer, so an unsupported architecture failed
     cleanly at load. Teaching the walker one new container inverts that: the layer stops raising
     while some OTHER residual-writing matrix in it stays invisible, and the run completes having
     edited part of a layer and reported success. LFM2 is exactly that shape. Half its layers carry
     no attention at all: they hold a short convolution whose `out_proj` writes the residual stream
     just as an attention output projection does. Ablating what we recognise and staying quiet
     about the rest is how every gemma number came to be withdrawn, in a different disguise.
+
+    `ablate_conv` is what the convolution blocks are being counted AS. When they are being ablated
+    they are recognised; when `--skip-conv-ablation` has deliberately excluded them they are not,
+    and this guard is what turns that into a refusal the caller has to opt out of in writing.
 
     The test is deliberately crude, because a subtle one would be the thing at fault. A module is
     a residual writer if it contains a 2-D weight whose output width is the hidden size: that is
@@ -475,6 +531,8 @@ def residual_writers(layer, hidden_size):
     """
     known = {"self_attn", "attention", "self_attention", "attn",
              "mlp", "block_sparse_moe", "feed_forward"}
+    if ablate_conv:
+        known.add("conv")
     unrecognised = []
     for name, child in layer.named_children():
         if name in known:
@@ -487,25 +545,42 @@ def residual_writers(layer, hidden_size):
     return len(known & {n for n, _ in layer.named_children()}), unrecognised
 
 
-def refuse_unrecognised_writers(layers, hidden_size):
+def refuse_unrecognised_writers(layers, hidden_size, ablate_conv=True, accept_partial=False,
+                                log=print):
     """Refuse a model whose layers write the residual through something we do not ablate.
 
     Loud and early, naming the layer and the module, because the alternative is a run that
     finishes, reports a refusal rate, and has left a live refusal write-path untouched.
+
+    `accept_partial` is the one way past it and exists for a single purpose: the controlled
+    comparison that asks whether the convolution path carries refusal at all needs an arm that
+    deliberately leaves it alone. That arm is not silent. It warns at every layer it skipped and
+    the choice is recorded in the result file, so a partial ablation can never be mistaken for a
+    whole one after the fact.
+
+    Returns the layers it left untouched, keyed by index, so the caller can record them.
     """
     missed = {}
     for i, layer in enumerate(layers):
-        _, unrecognised = residual_writers(layer, hidden_size)
+        _, unrecognised = residual_writers(layer, hidden_size, ablate_conv=ablate_conv)
         if unrecognised:
             missed[i] = unrecognised
-    if missed:
-        shown = "; ".join(f"layer {i}: {', '.join(v)}" for i, v in list(missed.items())[:4])
-        more = "" if len(missed) <= 4 else f" (and {len(missed) - 4} more layers)"
-        raise ValueError(
-            f"{len(missed)} of {len(layers)} decoder layers write the residual stream through a "
-            f"module this tool does not ablate, so an abliteration would edit part of each one "
-            f"and report success: {shown}{more}. Refusing rather than producing a model whose "
-            f"refusal behaviour was only partly removed.")
+    if not missed:
+        return missed
+    shown = "; ".join(f"layer {i}: {', '.join(v)}" for i, v in list(missed.items())[:4])
+    more = "" if len(missed) <= 4 else f" (and {len(missed) - 4} more layers)"
+    if accept_partial:
+        log(f"  WARNING: PARTIAL ABLATION. {len(missed)} of {len(layers)} decoder layers write the "
+            f"residual stream through a module this run is deliberately NOT editing: "
+            f"{shown}{more}.")
+        log("  This model's refusal behaviour is only partly removed by construction. It is a "
+            "control arm, not a result, and the choice is recorded in the result file.")
+        return missed
+    raise ValueError(
+        f"{len(missed)} of {len(layers)} decoder layers write the residual stream through a "
+        f"module this tool does not ablate, so an abliteration would edit part of each one "
+        f"and report success: {shown}{more}. Refusing rather than producing a model whose "
+        f"refusal behaviour was only partly removed.")
 
 
 def layer_downproj(layer):
@@ -778,6 +853,15 @@ def build_parser():
                          "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
                          "toggles off the projection grimjim calls 'projected abliteration'; on by "
                          "default. For measuring whether the projection helps or hurts the search.")
+    ap.add_argument("--skip-conv-ablation", dest="skip_conv_ablation", action="store_true",
+                    help="CONTROL ARM ONLY. Leave short-convolution output projections untouched "
+                         "on a hybrid architecture such as LFM2, where roughly half the decoder "
+                         "layers carry no attention and write the residual stream through a "
+                         "convolution instead. The resulting model is a PARTIAL abliteration by "
+                         "construction: it exists to answer whether refusal travels through the "
+                         "convolution path at all, by comparison against a run without this flag. "
+                         "Every skipped layer is warned about and the choice is recorded in the "
+                         "result file, so the model cannot later be mistaken for a whole one.")
     ap.add_argument("--seed", type=int, default=42,
                     help="seed for the Optuna sampler (default 42). Vary it to measure run-to-run "
                          "spread: a single run tells you nothing about whether a gap between two "
@@ -1136,7 +1220,10 @@ class Abliterator:
         # first layer that resolves cleanly says nothing about the twentieth: LFM2 puts its
         # convolution blocks first and its attention blocks after, and either order would have
         # let a per-model probe pass while half the residual writers stayed invisible.
-        refuse_unrecognised_writers(self.layers, self.H)
+        self.ablate_conv = not getattr(args, "skip_conv_ablation", False)
+        self.partial_layers = refuse_unrecognised_writers(
+            self.layers, self.H, ablate_conv=self.ablate_conv,
+            accept_partial=not self.ablate_conv, log=log)
         self.arch = "+".join(dict.fromkeys(k for k, _ in _dp)) or "dense"
         self.ne = getattr(model.config, "num_experts", None) or getattr(model.config, "num_local_experts", None)
         self.KMAX = max(1, args.max_directions)
@@ -1537,7 +1624,7 @@ class Abliterator:
         self._pristine.clear(); self._dirty.clear()
         targets = []
         for layer in self.layers:
-            targets.append(_attn_outproj(layer))
+            targets += layer_attn_writers(layer, ablate_conv=self.ablate_conv)
             for kind, obj in layer_downproj(layer):
                 targets += obj if kind == "list" else [obj]
         need = sum(W.numel() * W.element_size() for W in targets)
@@ -1598,8 +1685,10 @@ class Abliterator:
             R_attn = self._fold_for(R, attn_norm)
             R_mlp = self._fold_for(R, mlp_norm)
             if wo > 0.0:
-                op = _attn_outproj(layer)
-                self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp)
+                # Every residual writer in the attention position, which on a hybrid is the
+                # convolution's out_proj on the layers that have no attention at all.
+                for op in layer_attn_writers(layer, ablate_conv=self.ablate_conv):
+                    self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp)
             if wd > 0.0:
                 for kind, obj in layer_downproj(layer):         # every residual-writing down-proj
                     if kind == "fused3d":
@@ -2269,6 +2358,14 @@ class Abliterator:
                                      "min_weight": bpr[6], "min_weight_distance": bpr[7]},
                        "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
                        "max_directions": self.KMAX,
+                       # WHETHER THIS MODEL IS A WHOLE ABLITERATION OR A CONTROL ARM. On a hybrid
+                       # architecture the convolution blocks write the residual stream too, and a
+                       # run told to leave them alone produces a model whose refusal behaviour is
+                       # only partly removed. That is a legitimate arm of one experiment and an
+                       # indefensible thing to publish unlabelled, so the flag and the layers it
+                       # skipped are both recorded rather than inferred from the log.
+                       "ablate_conv": self.ablate_conv,
+                       "partially_ablated_layers": sorted(self.partial_layers),
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
                        "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
                        "sparsity": float(args.sparsity),

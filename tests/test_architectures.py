@@ -72,25 +72,118 @@ def test_the_fused_expert_tensor_is_the_layout_the_bake_assumes():
     assert w.shape[1] == 64, "second axis should be the hidden size, which is what it writes into"
 
 
-# ── the guard, which is why the above is allowed to exist ────────────────────────────
-def test_a_layer_writing_through_a_convolution_is_refused_not_half_edited():
-    """Half of LFM2's layers carry no attention at all: a short convolution writes the residual
-    stream through its own output projection. Ablating only what we recognise would leave that
-    path live while the run reported success, which is the withdrawn-gemma failure in a new
-    disguise.
+# ── the convolution blocks, which are half the residual writers on this family ───────
+#
+# Until 2026-08-15 a hybrid LFM2 was REFUSED here rather than edited, because the tool could not
+# reach the convolution path and a partial edit reported as a whole one is the withdrawn-gemma
+# failure in a new disguise. Task 36 resolved that the other way: `conv.out_proj` is a
+# `[hidden, hidden]` Linear in the same position an attention `o_proj` occupies, so the same
+# row-wise norm-preserving bake applies to it unchanged and the family is now editable. The
+# refusal is kept, one flag away, as the control arm of the experiment that asks whether refusal
+# travels through the convolution path at all.
+def test_a_convolution_output_projection_is_found_as_a_residual_writer():
+    m = _lfm2_dense(layer_types=("conv", "full_attention"))
+    conv_layer, attn_layer = m.model.layers[0], m.model.layers[1]
+    assert cli._conv_outproj(conv_layer) is not None
+    assert cli._conv_outproj(attn_layer) is None, "an attention layer has no conv block"
+
+
+def test_every_layer_of_a_hybrid_yields_exactly_one_attention_side_writer():
+    """One or the other per layer, never neither: a layer with nothing here would be a layer the
+    bake silently skips.
+    """
+    m = _lfm2_moe(layer_types=("conv", "conv", "full_attention", "full_attention"))
+    for i, layer in enumerate(m.model.layers):
+        writers = cli.layer_attn_writers(layer)
+        assert len(writers) == 1, f"layer {i}"
+        assert writers[0].shape == (64, 64)
+
+
+def test_the_conv_writer_is_the_convolutions_own_out_proj():
+    m = _lfm2_dense(layer_types=("conv",))
+    layer = m.model.layers[0]
+    assert cli.layer_attn_writers(layer)[0] is cli._real_tensor(layer.conv.out_proj, "weight")
+
+
+def test_an_ordinary_model_is_unchanged_by_the_hybrid_path():
+    """The new walker must return exactly what the old single-tensor one did on every
+    architecture that has attention in every layer.
+    """
+    for layer in _qwen3().model.layers:
+        assert cli.layer_attn_writers(layer) == [cli._attn_outproj(layer)]
+
+
+def test_a_hybrid_is_no_longer_refused_now_that_the_convolutions_are_edited():
+    cli.refuse_unrecognised_writers(_lfm2_moe().model.layers, 64)
+
+
+def test_skipping_the_convolutions_still_refuses_unless_it_is_asked_for_in_writing():
+    """The control arm has to be deliberate. A run that merely forgets the conv blocks is the
+    failure this guard exists for and still gets a refusal naming the layers.
     """
     with pytest.raises(ValueError) as e:
-        cli.refuse_unrecognised_writers(_lfm2_moe().model.layers, 64)
-    assert "conv" in str(e.value)
-
-
-def test_the_refusal_names_the_layers_and_counts_them():
-    """A refusal that says only "unsupported" leaves the reader nothing to act on."""
-    with pytest.raises(ValueError) as e:
-        cli.refuse_unrecognised_writers(_lfm2_moe().model.layers, 64)
+        cli.refuse_unrecognised_writers(_lfm2_moe().model.layers, 64, ablate_conv=False)
     message = str(e.value)
     assert "2 of 4 decoder layers" in message
     assert "layer 0" in message and "Lfm2MoeShortConv" in message
+
+
+def test_the_control_arm_is_allowed_but_never_quiet():
+    """It warns per run, names the layers, and hands the caller the list to record."""
+    said = []
+    missed = cli.refuse_unrecognised_writers(
+        _lfm2_moe().model.layers, 64, ablate_conv=False, accept_partial=True, log=said.append)
+    assert sorted(missed) == [0, 1]
+    joined = " ".join(said)
+    assert "PARTIAL ABLATION" in joined and "layer 0" in joined
+    assert "control arm, not a result" in joined
+
+
+def test_the_control_arm_leaves_the_convolutions_out_of_the_bake():
+    m = _lfm2_dense(layer_types=("conv", "full_attention"))
+    conv_layer = m.model.layers[0]
+    assert cli.layer_attn_writers(conv_layer, ablate_conv=False) == []
+
+
+def test_a_layer_with_neither_attention_nor_a_convolution_is_refused():
+    """The genuinely unsupported case, which must stay distinguishable from the deliberate skip:
+    one returns an empty list, the other raises.
+    """
+    class _Bare(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mlp = torch.nn.Linear(8, 8)
+
+    with pytest.raises(ValueError) as e:
+        cli.layer_attn_writers(_Bare())
+    assert "architecture not supported" in str(e.value)
+
+
+def test_a_convolution_block_without_a_two_dimensional_out_proj_is_not_claimed():
+    """A `conv` container that does not hold an editable `[out, in]` matrix is not something to
+    orthogonalise, and quietly treating it as one would edit the wrong tensor.
+    """
+    class _Conv(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.out_proj = torch.nn.Conv1d(4, 4, 3)      # a 3-D weight, not a Linear
+
+    class _Layer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = _Conv()
+
+    assert cli._conv_outproj(_Layer()) is None
+
+
+def test_an_attention_layer_is_edited_either_way():
+    """Only the convolution path is under test in the comparison; everything else must be held
+    still, or the two arms differ by more than the thing being measured.
+    """
+    m = _lfm2_dense(layer_types=("conv", "full_attention"))
+    attn_layer = m.model.layers[1]
+    assert (cli.layer_attn_writers(attn_layer, ablate_conv=False)
+            == cli.layer_attn_writers(attn_layer, ablate_conv=True))
 
 
 def test_an_all_attention_lfm2_is_not_refused():

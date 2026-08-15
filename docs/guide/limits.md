@@ -11,7 +11,7 @@ before quoting us, read this one.
 ::: warning The one-line version
 Everything measured before 2026-07-30 was measured with a broken ruler, every Gemma number
 is withdrawn, nothing has been tested above 3B parameters, and the headline multi-direction
-claim is [not established](/guide/what-we-know).
+claim was tested and [it lost](/guide/what-we-know).
 :::
 
 ## The measurements taken with a broken ruler
@@ -102,11 +102,12 @@ That's a claim, not a measurement.
 It's now `senbonzakura bench`, it ships inside the wheel, and it has its own tests. See
 [Benchmarking against another tool](/guide/benchmark).
 
-**No head-to-head against Heretic is published yet.** Several correctness fixes to direction
-extraction, the multi-direction basis and knee selection moved the numbers substantially in
-Senbonzakura's favour on the keyword axis, which is exactly the situation where you should
-be most suspicious of your own result. So the comparison gets run under the corrected code,
-on identical ground, before any of it goes on a page.
+**The head-to-head against Heretic is published but provisional.** It ran on 2026-08-12 under
+the corrected code, five seeds each, both tools driven by us. Two conditions are still attached
+and both are on [the benchmark page](/guide/benchmark) beside the table: we lose the keyword
+axis we ourselves optimise, which is usually a ruler problem rather than a model one, and the
+coherence figures were measured on a 64-prompt slice that Heretic tunes against, where the other
+axes use 200 held-out prompts.
 
 ## The headline table's own conditions
 

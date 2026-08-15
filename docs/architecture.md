@@ -12,11 +12,17 @@ al. showed that steering is mostly a single *direction* in the model's activatio
 space. Find that direction and subtract it out of the weights, and the model stops
 refusing without being retrained.
 
-Senbonzakura's one difference from the single-direction method: refusal is not one
-direction but a small *subspace*. It finds several refusal directions at once and
-orthogonalises all of them out, which clears the stubborn residual the single
-arrow leaves behind. Everything below is in service of finding the right subspace
-and cutting it without breaking the model.
+Senbonzakura's one difference from the single-direction method is that it can treat
+refusal as a small *subspace* rather than one direction, finding several at once and
+orthogonalising all of them out. **Whether that helps is a question this project has
+now answered, against itself:** on Qwen3-1.7B, two directions cost about twice the
+coherence of one at the same refusal rate and bought nothing. The capability stays
+because the question is open on architectures we cannot yet measure, but the default
+posture is that one direction is what works. See
+[what is and is not established](/guide/what-we-know).
+
+Everything below is in service of finding directions and cutting them without
+breaking the model, whether that is one of them or several.
 
 ## The pipeline
 

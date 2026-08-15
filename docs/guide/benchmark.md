@@ -1,19 +1,46 @@
 # Benchmarking against another tool
 
-There's no results table on this page yet, and that's not an oversight.
+The head-to-head against [Heretic](https://github.com/p-e-w/heretic), the other open-source
+abliteration tool with an automated search, has been run: five seeds each, both tools driven by
+us on one machine, every model scored afterwards by our instruments on prompts neither tool was
+fitted on.
 
-A head-to-head against [Heretic](https://github.com/p-e-w/heretic), the other open-source
-abliteration tool with an automated search, is built and tested and hasn't been run to
-completion. When it has, the table goes here. Until then this page is the recipe, so you
-can run it yourself and not have to take our word for anything.
-
-::: tip Why the delay is the honest option
-Several correctness fixes landed recently in direction extraction, the multi-direction
-basis and knee selection, and they moved our own numbers noticeably in our favour. That is
-precisely the moment to slow down. A comparison run on code you've just improved, against a
-competitor you haven't touched, is not a comparison. So it gets re-run under the corrected
-code, on identical ground, and then published whichever way it falls.
+::: warning These numbers are provisional, and two things are still open
+They are published here because the alternative is a page that says nothing while we know
+something. Both open items are named below the table. Neither is hidden and neither is settled.
 :::
+
+| Axis | Senbonzakura | Heretic |
+|---|---|---|
+| Hard refusal | 0.0% | 0.0% |
+| Noncompliance (refusal plus hedging) | 3.6% | **1.9%** |
+| Keyword rate | 16.1% | **9.6%** |
+| Coherence drift | **0.191** | 0.341 |
+| Harm recognition | 0.9807 | 0.9821 (tie) |
+
+**Both tools took hard refusal to zero, which is what makes the rest readable.** At the same
+refusal rate the only thing left to compare is the price paid for it, and we did roughly half the
+collateral damage. Heretic left less hedging behind and won its own keyword metric.
+
+**The reversal is the interesting part.** Heretic self-reports a coherence divergence of 0.0014 to
+0.0032 against our 0.157 to 0.212, a hundredfold apart, and reading those two as a comparison is
+the mistake this whole page exists to avoid: each tool measured its own model on its own prompts
+during its own search. Measured afterwards on one instrument, on prompts held back from both, the
+order reverses.
+
+### What is still open
+
+- **We lose the keyword axis that we ourselves optimise**, 16.1% against 9.6%, and our spread on
+  it is three times theirs. A number moving the wrong way on your own objective is usually the
+  ruler rather than the model, and that is being investigated before this table is treated as
+  settled.
+- **The drift figures were measured on 64 prompts** where the other axes use 200, and that slice
+  is the one Heretic tunes against. It biases the comparison *toward* Heretic, which still lost
+  it, but a figure measured on a competitor's home ground is not the one to publish, and the
+  re-measurement on held-out prompts is pending.
+
+The recipe below is the same command that produced the table, so you do not have to take our word
+for any of it.
 
 ## Run it yourself
 

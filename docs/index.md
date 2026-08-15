@@ -2,10 +2,10 @@
 layout: home
 hero:
   name: Senbonzakura
-  text: Refusal is not one direction
+  text: Abliteration you can check
   tagline: >
-    Multi-direction refusal abliteration for open-weight language models, and the instruments
-    to tell you whether it actually worked.
+    Refusal abliteration for open-weight language models, and the instruments to tell you
+    whether it worked. Including the runs where the answer was no.
   image:
     src: /mark.svg
     alt: Senbonzakura
@@ -21,12 +21,13 @@ hero:
       link: https://github.com/elementmerc/senbonzakura
 
 features:
-  - title: Cuts in several directions at once
+  - title: Tested its own headline idea, and published the loss
     details: >
-      The single-direction method leaves the last stubborn few percent standing. Senbonzakura
-      searches for a refusal subspace and orthogonalises all of it out of the weights.
-    link: /guide/how-it-works
-    linkText: How the method works
+      The tool can cut in several directions at once. Asked whether that beats cutting in one,
+      five seeds a side, the answer was no: two directions cost twice the collateral damage for
+      no gain. The capability stays, the claim does not.
+    link: /guide/what-we-know
+    linkText: What the run found
   - title: Ships its own instruments
     details: >
       A compass that asks whether the model still recognises harm, held-out arms, seeded

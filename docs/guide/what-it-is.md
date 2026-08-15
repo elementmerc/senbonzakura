@@ -76,11 +76,17 @@ So for several months the tool named after a sword that splits into a thousand b
 fact, using one blade. 🥲
 
 That's been rewritten. It now finds up to eight directions per layer where it used to find one.
-But finding more directions is **not** the same as showing they carry refusal, and this project
-has not shown that yet.
 
-Which means the headline claim, the one on the tin, is currently unsupported by its own evidence.
-I'd rather you heard it from me than worked it out yourself.
+**And then we tested whether the extra blades help, and they didn't.** One direction against two,
+five seeds each, everything else held still, both models scored afterwards on prompts neither was
+fitted on. Both removed the model's refusals. Two directions did about **twice** the collateral
+damage to everything else for no gain.
+
+So the name is the thesis and the thesis lost, on the one model we can measure properly. It's one
+model, Qwen3-1.7B, so it isn't the last word for every architecture, and the capability stays in
+the tool because being able to *test* an idea is worth more than believing it. But the headline
+claim, the one on the tin, is **unsupported by this project's own evidence**, and I'd rather you
+heard it from me than worked it out yourself. 🥲
 
 [What is and is not established](/guide/what-we-know) has the full account: what was measured,
 what was withdrawn, and why.

@@ -102,7 +102,11 @@ the same check across the whole tree, but by the time CI sees it, the commit exi
 - Mixtral, fused or unfused.
 - OLMoE.
 - Shared-expert MoE: Qwen2-MoE, DeepSeek-MoE.
-- LFM2, including its MoE variant.
+- LFM2, including its MoE variant. These are **hybrids**: some of their layers hold a short
+  convolution where other models hold attention, and that convolution writes into the model's
+  running state exactly as attention does. On LFM2.5-350M it is 10 layers out of 16. Those are
+  edited too, because editing the other six and reporting success would be an abliteration that
+  never reached most of the model.
 
 ::: tip New words: dense and mixture-of-experts
 A **dense** model runs every one of its weights on every token. A **mixture-of-experts**

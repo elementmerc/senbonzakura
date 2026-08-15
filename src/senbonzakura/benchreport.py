@@ -35,6 +35,10 @@ takes the two tools' means and compares the gap against the pooled spread, and p
 the gap does not clear it. "Still suggestive, now with a spread" is an acceptable and publishable
 outcome; a winner declared inside the noise is not.
 
+The comparison is strictly greater, and by a margin the report can actually show. A gap EQUAL to
+the spread is a tie, and so is a gap that differs from it only in a decimal place the reader is
+never shown: a margin nobody can see is not a margin.
+
 With fewer than three seeds a spread is not an estimate of anything, so the verdict says so and
 declines rather than dividing by a number it does not have.
 
@@ -68,6 +72,14 @@ ARM = re.compile(
 #: freedom, whose interval already runs from about half to six times the point estimate; the gate
 #: asks for five. Two is arithmetic dressed as statistics.
 MIN_SEEDS_FOR_A_SPREAD = 3
+
+#: The precision the verdict prints its own numbers at. A win has to be visible in the figures the
+#: reader is shown: on 2026-08-13 the K experiment printed "gap 0.0010 against a pooled spread of
+#: 0.0010" and named a winner, because the raw gap exceeded the raw spread in the twelfth decimal.
+#: Every number in that sentence supported a tie and the sentence declared a result, which is this
+#: project's own recurring defect (a surface claiming more confidence than its numbers carry) in
+#: the one place it is least affordable. A margin the reader cannot see is not a margin.
+DISPLAY_PRECISION = 1e-4
 
 #: A spread this small is zero, and the distinction matters because it is not reachable by `== 0`.
 #: `stdev([0.95, 0.95, 0.95])` is 2.7e-16, not 0.0: the mean of three identical floats is not
@@ -219,10 +231,13 @@ def verdict(by_tool):
                 f"zero. Check that the seed reaches the search before reading the gap: a spread "
                 f"of zero across five seeds is not a tight measurement, it is usually a seed that "
                 f"never varied anything.")
-    if gap < spread:
+    # Strictly greater, and by a margin that survives being printed. `gap < spread` alone let a gap
+    # EQUAL to the spread through, and a gap that differs from it only past the fourth decimal is
+    # equal as far as anyone reading the report can tell.
+    if gap - spread <= DISPLAY_PRECISION:
         return (f"TIE on harm recognition: {a} {ma:.4f}, {b} {mb:.4f}, gap {gap:.4f}, pooled "
-                f"spread {spread:.4f}. The gap is smaller than the spread, and the gate says that "
-                f"is a tie.")
+                f"spread {spread:.4f}. The gap does not clear the spread by a margin this report "
+                f"could show you, and the gate says that is a tie.")
     winner, loser = (a, b) if ma > mb else (b, a)
     return (f"{winner} scores higher on harm recognition than {loser}: {max(ma, mb):.4f} against "
             f"{min(ma, mb):.4f}, gap {gap:.4f} against a pooled spread of {spread:.4f}.")

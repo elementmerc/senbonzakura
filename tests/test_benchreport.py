@@ -52,6 +52,28 @@ def test_a_gap_smaller_than_the_spread_is_a_tie(run_dir):
     assert "TIE on harm recognition" in report(d)
 
 
+def test_a_gap_equal_to_the_spread_is_a_tie(run_dir):
+    """The regression from 2026-08-13, where the K experiment named a winner on a tie.
+
+    Both arms have a standard deviation of 0.01 and their means are 0.01 apart, so the gap and the
+    pooled spread are the same number. Floating point put the gap a few parts in a quadrillion
+    above the spread, `gap < spread` was therefore false, and the report printed "gap 0.0010
+    against a pooled spread of 0.0010" and declared a result.
+    """
+    d = run_dir([0.90, 0.91, 0.92], [0.89, 0.90, 0.91])
+    assert "TIE on harm recognition" in report(d)
+
+
+def test_a_margin_too_small_to_print_is_a_tie(run_dir):
+    """A win the reader cannot verify from the figures shown is not a win.
+
+    The gap clears the spread here, but by far less than the fourth decimal both are printed to, so
+    the verdict sentence would read as two identical numbers with a winner between them.
+    """
+    d = run_dir([0.900001, 0.910001, 0.920001], [0.89, 0.90, 0.91])
+    assert "TIE on harm recognition" in report(d)
+
+
 def test_a_gap_clearing_the_spread_names_a_winner(run_dir):
     d = run_dir([0.95, 0.94, 0.96, 0.95, 0.94], [0.60, 0.61, 0.59, 0.60, 0.62])
     out = report(d)

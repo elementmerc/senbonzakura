@@ -1078,3 +1078,51 @@ def test_the_k_arms_do_not_collide_with_each_other_or_with_a_searched_run(tmp_pa
     assert len(runner.calls) == 3, "one arm was skipped as though another had already run it"
     for tool in ("senbon", "senbon-k1", "senbon-k2"):
         assert (a["out"] / f"{tool}-seed42" / bench.ARM_MANIFEST).is_file()
+
+
+# ── the hybrid experiment's arms (task 40) ────────────────────────────────────────────
+def test_the_conv_arms_differ_by_exactly_one_flag(tmp_path, runner):
+    """The basis of the whole comparison. If the two commands differ anywhere else, the run
+    measures that difference too and the result is uninterpretable.
+    """
+    a = _args(tmp_path)
+    bench.run_arm(bench.ADAPTERS["senbon-conv"], seed=42, runner=runner, **a)
+    bench.run_arm(bench.ADAPTERS["senbon-noconv"], seed=42, runner=runner, **a)
+    whole, control = runner.calls
+
+    assert "--skip-conv-ablation" not in whole
+    assert "--skip-conv-ablation" in control
+
+    def without_out(argv):
+        """The command minus --out and its value, which each arm needs its own of."""
+        return [x for i, x in enumerate(argv) if x != "--out" and argv[i - 1] != "--out"]
+
+    # `--skip-conv-ablation` takes no value, so it is dropped on its own rather than with the
+    # token after it. Dropping a valueless flag as though it had a value eats the next argument
+    # and makes two identical commands look different, which is what the first draft of this
+    # test did.
+    assert (without_out(whole)
+            == [x for x in without_out(control) if x != "--skip-conv-ablation"]), \
+        "the two arms differ by more than the convolution flag"
+
+
+def test_the_conv_arms_do_not_collide_with_each_other_or_anything_else(tmp_path, runner):
+    a = _args(tmp_path)
+    for tool in ("senbon", "senbon-conv", "senbon-noconv"):
+        bench.run_arm(bench.ADAPTERS[tool], seed=42, runner=runner, **a)
+    assert len(runner.calls) == 3, "one arm was skipped as though another had already run it"
+    for tool in ("senbon", "senbon-conv", "senbon-noconv"):
+        assert (a["out"] / f"{tool}-seed42" / bench.ARM_MANIFEST).is_file()
+
+
+def test_the_control_arm_is_labelled_as_one_in_the_registry():
+    """Whoever reads `--tools` for the first time should not have to infer which is the control."""
+    assert "CONTROL" in bench.ADAPTERS["senbon-noconv"].notes.upper()
+    assert "partial" in bench.ADAPTERS["senbon-noconv"].notes.lower()
+
+
+def test_the_report_recognises_both_conv_arms():
+    from senbonzakura import benchreport
+    for tool in ("senbon-conv", "senbon-noconv"):
+        m = benchreport.ARM.match(f"scored-{tool}-seed42")
+        assert m and m["tool"] == tool, f"{tool} would be unmatched or swallowed by `senbon`"

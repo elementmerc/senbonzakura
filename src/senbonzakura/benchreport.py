@@ -60,13 +60,15 @@ import re
 import sys
 
 #: Recognises `senbon-seed42` / `heretic-seed42`, the pinned-budget arms of the multi-direction
-#: experiment (`senbon-k1`, `senbon-k2`), and the `-own-pick` variant the selection pass writes
+#: experiment (`senbon-k1`, `senbon-k2`), the arms of the hybrid experiment (`senbon-conv`,
+#: `senbon-noconv`), and the `-own-pick` variant the selection pass writes
 #: when its choice differed from Heretic's own first offer.
 #:
 #: The k-arms are listed BEFORE the bare `senbon`, because an alternation is first-match and
 #: `senbon` would otherwise swallow `senbon-k1` and leave `-k1-seed42` unmatched.
 ARM = re.compile(
-    r"^scored-(?P<tool>senbon-k1|senbon-k2|senbon|heretic)-seed(?P<seed>\d+)(?P<variant>-own-pick)?$")
+    r"^scored-(?P<tool>senbon-k1|senbon-k2|senbon-conv|senbon-noconv|senbon|heretic)"
+    r"-seed(?P<seed>\d+)(?P<variant>-own-pick)?$")
 
 #: Below this many seeds a spread is not an estimate. Three gives a variance with two degrees of
 #: freedom, whose interval already runs from about half to six times the point estimate; the gate

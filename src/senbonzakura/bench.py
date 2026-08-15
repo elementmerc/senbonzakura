@@ -199,6 +199,26 @@ def _senbon_k_argv(k: int):
     return build
 
 
+def _senbon_conv_argv(ablate_conv: bool):
+    """Our tool on a hybrid architecture, with the convolution path edited or deliberately not.
+
+    On LFM2 most decoder layers hold a short convolution instead of attention, and its `out_proj`
+    writes the residual stream in the same position an attention `o_proj` does. No other
+    abliteration tool edits it. On LFM2.5-350M that is 10 of 32 residual writers, 31%.
+
+    The control arm produces a PARTIAL abliteration by construction, which is the point: it is the
+    only way to ask whether refusal travels through that path at all. Everything that keeps that
+    model from being mistaken for a result lives elsewhere and is deliberate: the run warns per
+    layer, `abliteration.json` records `ablate_conv` and the skipped layers, the checkpoint carries
+    the same in its config and its safetensors header, and `bench report` excludes any arm that
+    declares itself partial before a single table is built.
+    """
+    def build(**kw):
+        argv = _senbon_argv(**kw)
+        return argv if ablate_conv else [*argv, "--skip-conv-ablation"]
+    return build
+
+
 ADAPTERS: dict[str, Adapter] = {
     "senbon": Adapter(
         name="senbon",
@@ -225,6 +245,24 @@ ADAPTERS: dict[str, Adapter] = {
         model_subdir="",
         self_report=_senbon_report,
         notes="this tool, two directions per layer: the claim under test",
+    ),
+    # The controlled arms of the hybrid experiment (task 40). Identical to `senbon` and to each
+    # other in every respect except whether the convolution output projections are edited.
+    "senbon-conv": Adapter(
+        name="senbon-conv",
+        argv=_senbon_conv_argv(True),
+        produces=("abliteration.json", "config.json"),
+        model_subdir="",
+        self_report=_senbon_report,
+        notes="this tool, whole: attention, MLP and the convolution output projections",
+    ),
+    "senbon-noconv": Adapter(
+        name="senbon-noconv",
+        argv=_senbon_conv_argv(False),
+        produces=("abliteration.json", "config.json"),
+        model_subdir="",
+        self_report=_senbon_report,
+        notes="CONTROL ARM, a partial abliteration: the convolution path is left untouched",
     ),
     "heretic": Adapter(
         name="heretic",

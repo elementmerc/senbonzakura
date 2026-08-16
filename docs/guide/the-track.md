@@ -56,6 +56,24 @@ The checks are the point. A track is refused if anything in `measure` also appea
 empty, or if the two sides differ in size by more than 10%. It reports counts only and
 never prints a prompt, so its output is safe to paste anywhere.
 
+### What it writes, if you want to build one yourself
+
+Each partition is a HuggingFace dataset saved with `save_to_disk`, holding exactly one
+column named `text`, one prompt per row:
+
+```python
+from datasets import Dataset
+Dataset.from_dict({"text": ["first prompt", "second prompt"]}).save_to_disk("mytrack/bad_ds")
+```
+
+That is the whole schema. Anything the tool reads, it reads from a `text` column, so a
+dataset built any other way loads and then scores nothing. The directories it expects are
+`bad_ds`, `good_ds` and `bad_eval_ds`, with `good_eval_ds` and `good_matched_ds` optional
+(see below).
+
+Use the builder anyway if you can. Writing the directories by hand skips every check
+above, and the checks are the reason the split is worth anything.
+
 ## The check that isn't obvious
 
 Here's the one that catches people, including me.

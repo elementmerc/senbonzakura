@@ -18,8 +18,8 @@
   <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/comparison-KL%20at%20matched%20refusal-c77b5a?labelColor=2b3038" alt="Compared at matched refusal removal" /></a>
   <a href="https://elementmerc.github.io/senbonzakura/guide/the-track"><img src="https://img.shields.io/badge/evaluation-held%20out%2C%20three--way%20split-3d4d6b?labelColor=2b3038" alt="Held-out evaluation, three-way split" /></a>
   <a href="https://elementmerc.github.io/senbonzakura/guide/contamination"><img src="https://img.shields.io/badge/benchmarks-contamination%20checked-3d4d6b?labelColor=2b3038" alt="Contamination checked against public benchmarks" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-957-3d4d6b?labelColor=2b3038" alt="957 tests" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95.6%25-3d4d6b?labelColor=2b3038" alt="95.6% branch coverage, gated in CI" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-1090-3d4d6b?labelColor=2b3038" alt="1090 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95.4%25-3d4d6b?labelColor=2b3038" alt="95.4% branch coverage, gated in CI" /></a>
 </p>
 
 <a href="https://elementmerc.github.io/senbonzakura"><strong>Documentation</strong></a>

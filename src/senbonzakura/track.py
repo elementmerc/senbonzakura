@@ -48,6 +48,8 @@ import unicodedata
 from itertools import zip_longest
 from pathlib import Path
 
+from . import dataset  # every accepted way of saying "the prompts are here"
+
 # Rows shorter than this after normalisation are dropped as noise rather than prompts.
 # Four is deliberate and low: "What is 2+2?" is a legitimate harmless prompt at twelve
 # characters, and a threshold set by intuition rather than evidence throws away real data.
@@ -83,13 +85,30 @@ def normalise(text: str) -> str:
     return collapsed.rstrip(".?!,;: ")
 
 
-def read_prompts(path: Path) -> list[str]:
-    """One prompt per line. Original text is preserved; only the key is normalised."""
+def read_prompts(path) -> list[str]:
+    """The prompts at `path`, in whatever shape they arrive in.
+
+    A plain file is still read line by line and verbatim, because that is the format this
+    builder documents and a corpus should not change under a user who did nothing. Anything
+    else, a CSV with a `goal` column, a Hub id, a DatasetDict, goes through the shared resolver
+    so `senbonzakura track` accepts exactly what every other command accepts.
+    """
+    p = Path(path)
+    # A missing file that plainly IS meant to be a file keeps the direct error. Routing it to the
+    # resolver would answer a typo in a filename with a paragraph about Hub dataset ids.
+    if (not p.exists() and p.suffix and p.suffix.lower() not in dataset.TABLE_SUFFIXES
+            and not dataset.looks_like_hub_id(str(path))):
+        raise SystemExit(f"could not read {p}: no such file")
+    if p.exists() and p.is_file() and p.suffix.lower() not in dataset.TABLE_SUFFIXES:
+        try:
+            raw = p.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            raise SystemExit(f"could not read {p}: {e}") from e
+        return [line.strip() for line in raw.splitlines()]
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        raise SystemExit(f"could not read {path}: {e}") from e
-    return [line.strip() for line in raw.splitlines()]
+        return dataset.resolve(str(path), what="prompt source")
+    except dataset.DatasetError as e:
+        raise SystemExit(str(e)) from e
 
 
 def dedupe(rows: list[str]) -> tuple[list[str], dict[str, int]]:

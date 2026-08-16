@@ -50,7 +50,9 @@ fact deciding what a track built from it may be used for.
 ::: warning The track itself is published, gated, under CC BY-NC 4.0
 Every row came from somewhere else, so the track carries the strictest term in its chain forward:
 attribution to every source, non-commercial use only. Access is gated so taking it is a
-deliberate act with a record.
+deliberate act: you accept the acceptable-use terms first, and a crawler sweeping the Hub does
+not pick it up in passing. Nothing about you is collected beyond what the Hub needs to run the
+gate.
 
 The builder above is for anyone who would rather fetch the sources themselves. It rebuilds a pool
 of the same *shape* rather than the identical one: the harmless top-ups added to the original

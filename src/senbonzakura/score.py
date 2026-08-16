@@ -11,7 +11,6 @@ import argparse
 import json
 
 import torch
-from datasets import load_from_disk
 
 from . import metrics
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
@@ -23,7 +22,14 @@ def build_parser():
         prog="senbonzakura.score",
         description="Score a model's refusal / coherence on a fixed eval set.",
         parents=[loader_parser()])
-    ap.add_argument("--eval", required=True, help="path to eval-fixed dataset (column 'text')")
+    ap.add_argument("--eval", required=True,
+                    help="the prompts to score: a save_to_disk directory, a "
+                         ".txt/.csv/.json/.jsonl/.parquet file, or a Hub id, optionally with "
+                         "'::split[:N]'")
+    ap.add_argument("--text-column", dest="text_column", default=None,
+                    help="column holding the prompt, when detection cannot work it out")
+    ap.add_argument("--hf-token", dest="hf_token", default=None,
+                    help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="")
     ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
@@ -126,8 +132,13 @@ def main(argv=None):
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
-    ds = load_from_disk(a.eval)
-    prompts = [r["text"] for r in ds]
+    from senbonzakura import dataset
+    try:
+        prompts = dataset.resolve(a.eval, text_column=getattr(a, "text_column", None) or None,
+                                  token=getattr(a, "hf_token", None) or None,
+                                  what="evaluation set")
+    except dataset.DatasetError as e:
+        raise SystemExit(str(e)) from e
     if a.skip:
         if a.skip >= len(prompts):
             raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(prompts)} prompts")

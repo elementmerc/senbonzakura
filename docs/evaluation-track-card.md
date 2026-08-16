@@ -11,9 +11,11 @@ any harmful request. It is a measuring instrument, not a corpus of harm.
 **The rows are published as a gated dataset, not inside this repository.** Every row came from
 somewhere else, so the track carries the upstream terms forward: it is distributed under
 **CC BY-NC 4.0**, the most restrictive licence in its chain, with attribution to every source
-named below. Access is gated so that taking it is a deliberate act with a record, rather than a
-drive-by download. `tools/build_track.py` rebuilds a pool of the same shape from the same
-upstreams for anyone who would rather fetch the sources themselves.
+named below. Access is gated so that taking it is a deliberate act: a reader accepts the
+acceptable-use terms before downloading, and an automated scraper does not get it by accident.
+The gate collects nothing about you beyond what HuggingFace needs to operate it; it exists to
+make the agreement intentional, not to build a list. `tools/build_track.py` rebuilds a pool of
+the same shape from the same upstreams for anyone who would rather fetch the sources themselves.
 
 ## What it is
 
@@ -41,8 +43,8 @@ questions in other clothes.
 ## Where the rows came from, and what is known about each licence
 
 This is the part worth reading slowly. **Two of the three direct sources declare no licence at
-all**, and the probable root of the harmless side is non-commercial. That combination is why
-this track ships as a recipe rather than as rows; see "What is actually published" below.
+all**, and the probable root of the harmless side is non-commercial. That combination is what
+sets the terms this track is distributed under; see "What this track is distributed under" below.
 
 Every position in the table was read from the HuggingFace dataset API on **2026-08-16**, and the
 revision each was read at is recorded so a later reader can tell a changed card from a wrong one.

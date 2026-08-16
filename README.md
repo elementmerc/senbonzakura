@@ -143,8 +143,8 @@ By design, this is methods and results, not a loaded weapon:
 
 - **No pre-abliterated model weights.** Run the tool yourself.
 - **No harmful prompt sets in this repository.** The evaluation track is published separately as
-  a **gated dataset** under CC BY-NC 4.0, so checking our numbers is possible and taking the data
-  is a deliberate act rather than a drive-by download. It holds prompts only: no completions, no
+  a **gated dataset** under CC BY-NC 4.0, so checking our numbers is possible while taking the
+  data means accepting the terms first rather than a crawler sweeping it up in passing. It holds prompts only: no completions, no
   answers, nothing a model could be trained to imitate. Its licence chain, including the two
   links that are inferred rather than stated, is in the
   [dataset card](docs/evaluation-track-card.md), and `tools/build_track.py` rebuilds an

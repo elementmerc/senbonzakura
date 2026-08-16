@@ -23,6 +23,8 @@ Usage:
     python tools/fetch_model.py <repo> --out <dir> --verify-only
 """
 import argparse
+import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -87,6 +89,48 @@ def verify(directory, expected, log=print):
     return bad
 
 
+@contextlib.contextmanager
+def exclusive(directory, log=print):
+    """Hold a lock for this destination, so two fetchers cannot race into one path.
+
+    A sister project lost a day to a 987 MB fragment of a 5.16 GB GGUF that passed an
+    "exists and is non-empty" check, and the cause was two copies of the fetcher writing the
+    same file. Hashing catches a bad result AFTER the download; this stops the second writer
+    starting at all, which is cheaper and removes the case where both finish and the hash is of
+    a file neither of them wrote alone.
+
+    The lock is advisory and process-scoped: it protects against this tool racing itself, which
+    is the failure that actually happened, not against an unrelated program writing the same
+    directory.
+    """
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, ".senbon-fetch.lock")
+    try:
+        import fcntl
+    except ImportError:              # Windows: no fcntl, so no lock and an honest warning
+        log("fetch: NOTE file locking is unavailable on this platform, so two fetchers writing "
+            "the same directory would not be stopped. Run one at a time.")
+        yield
+        return
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            if e.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            raise SystemExit(
+                f"fetch: another fetch is already writing {directory} (lock held on {path}). "
+                f"Two fetchers racing into one path is how a truncated checkpoint gets written, "
+                f"so this one stops rather than joining in. Wait for it, or choose another "
+                f"--out.") from e
+        os.write(fd, f"{os.getpid()}\n".encode())
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="fetch_model",
@@ -111,8 +155,9 @@ def main(argv=None):
             raise SystemExit(
                 "fetch: huggingface_hub is not installed, so there is nothing to download with. "
                 "Install it, or download separately and re-run with --verify-only.") from None
-        print(f"fetch: downloading into {a.out}")
-        snapshot_download(repo_id=a.repo, local_dir=a.out, token=token)
+        with exclusive(a.out):
+            print(f"fetch: downloading into {a.out}")
+            snapshot_download(repo_id=a.repo, local_dir=a.out, token=token)
 
     print("fetch: verifying")
     bad = verify(a.out, expected)

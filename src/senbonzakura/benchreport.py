@@ -269,6 +269,60 @@ def verdict(by_tool):
             f"{min(ma, mb):.4f}, gap {gap:.4f} against a pooled spread of {spread:.4f}.")
 
 
+def partial_comparison(controls, whole):
+    """The one place a control arm's numbers are allowed to be read, and only against its pair.
+
+    WHY THIS SECTION HAD TO EXIST, found by a rehearsal on 2026-08-16.
+
+    Excluding partial arms from every table (which is right, and is what stops a half-abliterated
+    model's refusal rate being quoted as a model result) has a consequence nobody noticed until an
+    experiment arrived whose WHOLE DESIGN is one arm against its own control: the report dropped
+    the control, found one tool left, and printed "a head-to-head needs two". The safety property
+    was correct and it made the experiment unreadable.
+
+    So the numbers appear here, once, framed as what they are: not a claim about either model, but
+    the difference between editing a path and not. Both halves matter. A reader who takes the
+    control's refusal rate out of this block and puts it in a sentence about LFM2 has been warned
+    in the only place the number appears.
+
+    The comparison is per seed, because that is the only pairing where nothing else differs.
+    """
+    if not controls:
+        return []
+    by_seed = {}
+    for a in whole:
+        if not a["variant"]:
+            by_seed.setdefault(a["seed"], []).append(a)
+
+    lines = ["=== The partial-ablation comparison, which is NOT a result about any model ===",
+             "One arm edited a residual-writing path, its pair deliberately did not, and nothing",
+             "else differs. What the pair measures is whether that path carries refusal. Neither",
+             "row is a claim about the model: the control is half-abliterated by construction.",
+             ""]
+    lines.append(f"{'seed':>5}  {'arm':<28} {'refusal':>8} {'noncomp':>8} {'drift KL':>9}")
+    for c in sorted(controls, key=lambda a: a["seed"]):
+        rows = [*by_seed.get(c["seed"], []), c]
+        for a in rows:
+            mark = "  CONTROL" if a.get("partial") is not None else ""
+            lines.append(
+                f"{a['seed']:>5}  {a['name']:<28} {_pct(a.get('one_refusal')):>8} "
+                f"{_pct(a.get('one_noncompliant')):>8} {_num(a.get('drift_kl')):>9}{mark}")
+        lines.append("")
+    lines.append("Read refusal and drift together. An arm that removed more refusal while drifting")
+    lines.append("further has not necessarily done better: it has moved further along the same")
+    lines.append("trade, and only a comparison at matched drift separates the two.")
+    lines.append("")
+    return lines
+
+
+def _pct(v):
+    return "-" if v is None else f"{100 * v:.1f}%"
+
+
+def _num(v):
+    return "-" if v is None else f"{v:.4f}"
+
+
 def render(arms):
     lines = []
     unreadable = [a for a in arms if a["unreadable"]]
@@ -290,6 +344,7 @@ def render(arms):
                          f"{', '.join(str(i) for i in skipped[:8])}"
                          f"{'...' if len(skipped) > 8 else ''}")
         lines.append("")
+        lines.extend(partial_comparison(controls, readable))
 
     lines.append("=== Harm recognition, one instrument over every model ===")
     lines.append("Our compass, run after the fact on the same held-out prompts for both tools.")

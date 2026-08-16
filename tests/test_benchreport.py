@@ -253,3 +253,48 @@ def test_a_whole_abliteration_is_not_mistaken_for_a_control(run_dir):
     out = report(d)
     assert "EXCLUDED" not in out
     assert "scored-senbon-seed42" in out
+
+
+def _with_numbers(directory, tool, seed, refusal, noncompliant, drift):
+    """The refusal and drift artefacts an arm produces, which the pair section reads."""
+    (directory / f"refusal-{tool}-seed{seed}.json").write_text(
+        json.dumps({"refusal": refusal, "noncompliant": noncompliant, "n": 200}), encoding="utf-8")
+    (directory / f"drift-{tool}-seed{seed}.json").write_text(
+        json.dumps({"kl": drift, "prompts": "p.txt", "n_prompts": 200}), encoding="utf-8")
+
+
+def test_a_control_and_its_pair_are_shown_together_somewhere(run_dir):
+    """The regression found by the 2026-08-16 rehearsal.
+
+    Excluding partial arms from every table is right, and on an experiment whose whole design is
+    one arm against its own control it left one tool standing and printed "a head-to-head needs
+    two". The safety property was correct and it made the experiment unreadable.
+    """
+    d = run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59])
+    _make_control(d, "heretic", 42)
+    _with_numbers(d, "senbon", 42, 0.05, 0.07, 0.0623)
+    _with_numbers(d, "heretic", 42, 0.005, 0.005, 0.1154)
+    out = report(d)
+
+    assert "The partial-ablation comparison, which is NOT a result about any model" in out
+    block = out.split("The partial-ablation comparison")[1].split("=== Harm recognition")[0]
+    assert "scored-senbon-seed42" in block and "scored-heretic-seed42" in block
+    assert "CONTROL" in block
+    assert "5.0%" in block and "0.5%" in block
+    assert "0.0623" in block and "0.1154" in block
+
+
+def test_the_pair_section_says_what_the_numbers_are_not(run_dir):
+    """A reader taking a half-abliterated model's refusal rate out of this block and putting it
+    in a sentence has been warned in the only place the number appears.
+    """
+    d = run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59])
+    _make_control(d, "heretic", 42)
+    out = report(d)
+    assert "half-abliterated by construction" in out
+    assert "only a comparison at matched drift separates the two" in out
+
+
+def test_no_pair_section_when_nothing_is_partial(run_dir):
+    out = report(run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59]))
+    assert "partial-ablation comparison" not in out

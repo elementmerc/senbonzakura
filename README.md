@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="icon.svg" alt="Senbonzakura logo" width="96" height="96">
-
-# Senbonzakura
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/assets/brand/readme-banner-dark.png">
+  <img src="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/assets/brand/readme-banner.png" width="820"
+       alt="Senbonzakura: multi-direction refusal abliteration">
+</picture>
 
 **Multi-direction refusal abliteration, and the instruments to tell whether it worked**
 
@@ -27,8 +29,6 @@
 <a href="CHANGELOG.md">Changelog</a>
 &nbsp;·&nbsp;
 <a href="https://elementmerc.github.io/senbonzakura/guide/what-we-know">What is and is not established</a>
-
-<img src="https://raw.githubusercontent.com/elementmerc/senbonzakura/main/docs/senbonzakura-kageyoshi.png" width="760" alt="Senbonzakura Kageyoshi: a thousand blades in formation">
 
 </div>
 

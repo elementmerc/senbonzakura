@@ -9,6 +9,10 @@
 // link, and a build that warns instead of failing is a build nobody reads the output of.
 
 const BASE = process.env.DOCS_BASE || '/senbonzakura/'
+// og:image has to be an absolute URL: a social card served from a relative path is fetched by a
+// crawler that has no page context and simply does not resolve, so the preview falls back to
+// nothing and the failure is invisible from inside the site.
+const SITE = process.env.DOCS_SITE || 'https://elementmerc.github.io'
 
 export default {
   title: 'Senbonzakura',
@@ -31,14 +35,25 @@ export default {
   srcExclude: ['writeups/**', 'private/**', '**/VOICE.md', 'node_modules/**'],
 
   head: [
+    // SVG first for anything modern, .ico for the browsers and feed readers that still ask for
+    // one by that name, and a 32px PNG for the ones that do neither.
     ['link', { rel: 'icon', href: `${BASE}favicon.svg`, type: 'image/svg+xml' }],
-    ['meta', { name: 'theme-color', content: '#3d4d6b' }],
+    ['link', { rel: 'icon', href: `${BASE}favicon.ico`, sizes: '48x48' }],
+    ['link', { rel: 'icon', href: `${BASE}favicon-32.png`, type: 'image/png', sizes: '32x32' }],
+    ['link', { rel: 'apple-touch-icon', href: `${BASE}apple-touch-icon.png`, sizes: '180x180' }],
+    ['link', { rel: 'manifest', href: `${BASE}manifest.webmanifest` }],
+    // Deep navy, the brand's dark ground. It tints the browser chrome on mobile, so a value that
+    // does not match the page reads as a rendering fault rather than a choice.
+    ['meta', { name: 'theme-color', content: '#0E1330' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'Senbonzakura' }],
     ['meta', {
       property: 'og:description',
       content: 'Multi-direction refusal abliteration, and the instruments to tell whether it worked.',
     }],
+    ['meta', { property: 'og:image', content: `${SITE}${BASE}social-card.png` }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: `${SITE}${BASE}social-card.png` }],
   ],
 
   themeConfig: {

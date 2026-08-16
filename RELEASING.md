@@ -58,6 +58,17 @@ The second line is not ceremony. `package-data` in `pyproject.toml` is what puts
 wheel, and a packaging change that drops it produces a wheel that installs, imports, runs
 everything except `--track default`, and fails only for users.
 
+## The README banner resolves against `main`, not against your branch
+
+`readme = "README.md"` in `pyproject.toml`, so the README is what PyPI renders, and PyPI cannot
+resolve a relative image path. The banner is therefore an absolute
+`raw.githubusercontent.com/.../main/assets/brand/...` URL, exactly as the previous hero image was.
+
+**That means the banner shows as a broken image on any branch until `main` carries the file.**
+It is not broken; it is pointing at a commit `main` does not have yet. Promote `main` BEFORE
+publishing to PyPI and it renders correctly in both places. Publish to PyPI first and the
+package page ships with a broken image that cannot be fixed without a new release.
+
 ## The codename
 
 Every release tag carries one, chosen by the operator, and `pre-push` refuses an annotated `v*`
@@ -77,6 +88,7 @@ one.
 1. Pack the track.
 2. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
 3. Build the wheel; confirm the blob is inside it.
+3a. Fast-forward `main` **before** the PyPI step, or the README banner ships broken.
 4. CHANGELOG entry, with the codename in the header.
 5. Panel artefact covering the range.
 6. Annotated tag with the `Codename:` line.

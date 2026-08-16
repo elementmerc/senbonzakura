@@ -30,7 +30,9 @@ import sys
 
 #: (description, pattern, replacement, expected match count). The count is asserted, so a
 #: substitution that starts matching more or fewer places than it did fails loudly rather than
-#: quietly rewriting something new.
+#: quietly rewriting something new. `None` means "one or more, however many there are"; the
+#: sentinel OPTIONAL means "zero or more", for a construct only some specs carry.
+OPTIONAL = "optional"
 SUBSTITUTIONS = [
     ("the run name",
      re.compile(r'^run = "([^"]+)"$', re.MULTILINE), 'run = "\\1-DRYRUN"', 1),
@@ -51,6 +53,15 @@ SUBSTITUTIONS = [
      re.compile(r"--seeds 42,43,44,45,46\b"), "--seeds 42", None),
     ("the trial count, in every job",
      re.compile(r"--trials 200\b"), "--trials 6", None),
+    # The completeness check a job runs before earning its success marker counts the arms it was
+    # supposed to produce. It has to shrink with the seed list or every rehearsal fails on a count
+    # that was never going to be reached. Written as its own substitution rather than derived from
+    # the flag, so the generator asserts it matched rather than assuming the spec's shape.
+    # OPTIONAL because only the specs that earn their success marker by counting artefacts carry
+    # it. Mandatory here would refuse every older spec, and a generator that refuses a spec is a
+    # spec that gets run without a rehearsal.
+    ("the completeness check's seed list, which must agree with the shrunk run",
+     re.compile(r'EXPECT_SEEDS="42 43 44 45 46"'), 'EXPECT_SEEDS="42"', OPTIONAL),
 ]
 
 
@@ -75,9 +86,11 @@ def transform(text, on_card=False):
     for label, pattern, replacement, expected in SUBSTITUTIONS + (ON_CARD if on_card else []):
         found = len(pattern.findall(text))
         if found == 0:
+            if expected == OPTIONAL:
+                continue
             problems.append(f"  {label}: pattern {pattern.pattern!r} matched nothing")
             continue
-        if expected is not None and found != expected:
+        if expected not in (None, OPTIONAL) and found != expected:
             problems.append(
                 f"  {label}: pattern {pattern.pattern!r} matched {found} times, expected {expected}")
             continue

@@ -121,6 +121,69 @@ def disk_verdict(need_bytes, free_bytes, *, headroom_frac=SAVE_HEADROOM_FRAC):
                    f"somewhere else")
 
 
+#: Shard size the save retries at after a space-exhaustion failure. Peak disk during a write is the
+#: finished shards plus the one being built, so a smaller shard lowers the high-water mark; the same
+#: holds for the host-RAM buffer safetensors assembles per shard.
+RETRY_SHARD_SIZE = "1GB"
+
+#: Substrings that mark a write as having run out of somewhere to put the bytes, rather than having
+#: hit a logic error. Matched case-insensitively against str(exc). "no space left on device" is
+#: ENOSPC, "disk quota exceeded" is EDQUOT (the one that actually bit on a 120 GB volume), and the
+#: CUDA phrasing covers the fused-MoE reshape that needs VRAM on the way out.
+_SPACE_MARKERS = (
+    "no space left on device",
+    "disk quota exceeded",
+    "out of memory",
+    "not enough memory",
+    "cannot allocate memory",
+    "insufficient space",
+)
+
+
+def is_space_exhaustion(exc):
+    """Did this write fail for want of room, rather than for a reason a retry cannot fix?
+
+    Pure and string-based, deliberately. The alternative is matching exception types, and the
+    types differ across safetensors, torch and the OS for what is the same condition from the
+    operator's point of view. A retry costs minutes; misclassifying a logic error as a space
+    error costs one wasted retry and still reports honestly afterwards, so this errs towards
+    retrying. It does NOT err towards retrying on an empty message: an exception that says
+    nothing is not evidence of a full disk.
+    """
+    if isinstance(exc, OSError) and exc.errno in (28, 122):   # ENOSPC, EDQUOT
+        return True
+    text = str(exc).lower()
+    return any(m in text for m in _SPACE_MARKERS)
+
+
+def save_failure_report(exc, out, *, free_bytes, cuda_free=None, retried=False):
+    """The message an operator meets when the save dies with the GPU work already spent.
+
+    Pure, so every branch is testable without inducing a real disk failure. It has one job
+    beyond naming the error: say that the run is NOT lost, and give the exact command that
+    turns it back into a model. `best-config.json` is written before the save precisely so
+    this recovery exists, and an operator who does not know that will re-run the search.
+    """
+    lines = [f"saving the baked model to {out} failed: {exc}"]
+    if free_bytes is not None:
+        lines.append(f"free space where it was writing: {free_bytes / 1e9:.1f} GB")
+    else:
+        lines.append("free space where it was writing: could not be measured")
+    if cuda_free is not None:
+        lines.append(f"free VRAM at the time: {cuda_free / 1e9:.1f} GB")
+    if retried:
+        lines.append(f"already retried once at {RETRY_SHARD_SIZE} shards, which also failed")
+    lines.append("")
+    lines.append("THE SEARCH IS NOT LOST. The winning configuration was written before the save "
+                 "was attempted, so re-baking it is minutes of work rather than another search:")
+    lines.append("")
+    lines.append(f"    senbonzakura kageyoshi --bake-config {out}/best-config.json \\")
+    lines.append("        --model <the same model> --out <somewhere with room>")
+    lines.append("")
+    lines.append("Free space or point --out at a larger volume first.")
+    return "\n".join(lines)
+
+
 def torch_version_ok(version, minimum=MIN_TORCH):
     """True if a torch version string parses to >= (major, minor). Unknown strings are treated as
     too old (fail closed), so a weird build fails loud at startup rather than at bake time.

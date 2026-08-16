@@ -97,6 +97,11 @@ senbonzakura compass --model abliterated \
     --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds --out compass.json
 ```
 
+Nothing to hand? The compass runs on a toy track committed to this repository, with no corpus to
+build and no model to edit first, in
+[one command](https://elementmerc.github.io/senbonzakura/guide/compass). Its answer is a perfect
+score you should not believe, and the controls printed beside it say why.
+
 ## Documentation
 
 **[elementmerc.github.io/senbonzakura](https://elementmerc.github.io/senbonzakura)**

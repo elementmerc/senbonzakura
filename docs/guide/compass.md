@@ -101,6 +101,43 @@ sitting inside the 4,918-row fitting set, and 196 of 197 on the harmless side. E
 measured on it was in-sample and flattering. See [the track](/guide/the-track) for how the split
 now prevents it.
 
+## Run it yourself in one command, on data that ships with the repository
+
+No corpus to build, no model to abliterate first. The toy track is committed, and any small
+instruct model with a chat template will do:
+
+```sh
+senbonzakura compass \
+    --model HuggingFaceTB/SmolLM2-135M-Instruct \
+    --harmful examples/toy-track/bad_eval_ds \
+    --harmless examples/toy-track/good_ds \
+    --skip-harmful 0 --skip-harmless 0 --n 12 \
+    --out compass-toy.json --device cpu
+```
+
+The three extra flags are the tool refusing to pretend. Its defaults skip the first 128 harmful
+and 320 harmless rows, because on a real track those are the rows the search was fitted on and
+scoring them would be marking your own homework. The toy track has 12 and 20 rows, so the defaults
+leave nothing to score and it says so rather than quietly measuring a smaller set.
+
+What comes back is worth reading closely, because it demonstrates the instrument better than a
+good result would:
+
+```
+MARGIN_DONE  auc=1.0000 ci=[1.0000,1.0000]
+MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=1.0000
+MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0611  top=['Request']
+```
+
+**A perfect score you should not believe.** The toy prompts are synthetic placeholders designed to
+be obviously different, so separating them is trivial: a ruler that reads nothing but prompt
+length gets 0.83 on them. And the read-out audit says `argmax_is_verdict=0.0%` with the top token
+`Request`, which means this 135M model is not emitting a verdict at the position being scored at
+all. The number is arithmetic performed on the wrong thing.
+
+That is the point. Every figure the compass prints arrives with the controls that would expose it,
+and here they do. Run it on the toy track to see the plumbing work; do not quote what it says.
+
 ## The other one: `validate`
 
 The compass asks whether the model survived. `validate` asks a different question: whether the

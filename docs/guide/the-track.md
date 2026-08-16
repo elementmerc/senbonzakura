@@ -33,6 +33,31 @@ So a track is split three ways, and the tool enforces it:
 Note the sizes. The part that does the work is small. The part that's protected is 92% of the
 corpus, and the abliteration never sees it.
 
+## Getting the prompts in the first place
+
+If you want the corpus this project measured on, you have to fetch it yourself, and there is a
+tool that does it:
+
+```sh
+python tools/build_track.py --out corpus
+```
+
+It fetches the public datasets at **pinned revisions**, writes `harmful.txt` and `harmless.txt`
+one prompt per line, and records what it fetched in `sources.json`. It refuses to run if any
+upstream's declared licence has moved since the recipe was written, because that is the single
+fact deciding what a track built from it may be used for.
+
+::: warning No prompt rows ship in this repository, and that is a licence position
+Two of the three upstream datasets declare **no licence at all**, and the probable root of the
+harmless side is **CC BY-NC 4.0**, which is non-commercial. An absent licence is not a permissive
+one; it is the default, which reserves the rights. So this project publishes the recipe and the
+citations rather than a copy of somebody else's rows.
+
+It also **cannot rebuild the exact corpus behind the published numbers**. Harmless top-ups were
+added to that one by hand and never recorded, so a rebuild is the same shape and not the same
+rows. The [dataset card](/evaluation-track-card) is blunt about both.
+:::
+
 ## Build one, and have it checked
 
 Doing it by hand is how the mistake happens, so there is a builder:

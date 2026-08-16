@@ -727,10 +727,12 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=()):
     # AN INVERTED PAIR IS A TYPO, NOT A SEARCH SPACE. Caught here rather than clamped silently,
     # because "--min-directions 3 --max-directions 2" means somebody wanted three and would
     # otherwise get two with nothing said.
-    # `getattr` rather than attribute access throughout: this is called with a namespace built by
-    # hand in several tests, and a new flag must not make an existing caller crash on a field it
-    # has never needed to set.
-    k_min = getattr(args, "min_directions", 1)
+    # Direct attribute access, not `getattr` with a default. A default here would mean a flag that
+    # never reached this code silently behaves as though it were set to something reasonable, and
+    # the whole point of an inverted-pair check is to catch a budget that is not what was asked
+    # for. Every caller now builds its namespace from `build_parser()`, so a missing field is a
+    # bug in the caller and should say so.
+    k_min = args.min_directions
     if k_min > args.max_directions:
         raise SystemExit(
             f"--min-directions {k_min} is above --max-directions "
@@ -1221,7 +1223,7 @@ class Abliterator:
         # first layer that resolves cleanly says nothing about the twentieth: LFM2 puts its
         # convolution blocks first and its attention blocks after, and either order would have
         # let a per-model probe pass while half the residual writers stayed invisible.
-        self.ablate_conv = not getattr(args, "skip_conv_ablation", False)
+        self.ablate_conv = not args.skip_conv_ablation
         self.partial_layers = refuse_unrecognised_writers(
             self.layers, self.H, ablate_conv=self.ablate_conv,
             accept_partial=not self.ablate_conv, log=log)
@@ -1231,7 +1233,7 @@ class Abliterator:
         # PINNED when they are equal, which is the point of having both. Clamped rather than
         # rejected here because the parser has already refused an inverted pair; this is the
         # invariant restated where the search reads it.
-        self.KMIN = min(max(1, getattr(args, "min_directions", 1)), self.KMAX)
+        self.KMIN = min(max(1, args.min_directions), self.KMAX)
         log(f"model up: hidden={self.H} layers={self.NL} down-proj={self.arch} experts={self.ne}")
 
         # Offload awareness: when the model is bigger than VRAM, accelerate places some layers on CPU

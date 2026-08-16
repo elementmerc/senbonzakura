@@ -619,10 +619,25 @@ def test_every_subcommand_is_listed_in_the_help():
 
 
 # ── kageyoshi preset ─────────────────────────────────────────────────────────────────
+def _kage_args(**overrides):
+    """A namespace for the preset, DERIVED from the parser rather than written by hand.
+
+    Hand-built namespaces are how a new flag becomes invisible: the code reads it through a
+    `getattr` default, the test never sets it, and nothing anywhere notices that the flag is not
+    reaching the thing it configures. Both are exit-gate items for v0.4 and they are the same
+    item twice, so these build from `build_parser()` and override only what the test is about.
+    """
+    args = cli.build_parser().parse_args(["--model", "m", "--out", "o"])
+    args.track = "/tmp/does-not-exist"
+    args.hedge_ds = None
+    for k, v in overrides.items():
+        setattr(args, k, v)
+    return args
+
+
 def test_apply_kageyoshi(tiny_model):
-    args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,
-                                 trials=0, search="scalar", per_component=False, mlp_off=True,
-                                 kl_scale=1.0, top_rescore=0, patience=0)
+    args = _kage_args(max_directions=1, trials=0, search="scalar", per_component=False,
+                      mlp_off=True, kl_scale=1.0, top_rescore=0, patience=0)
     cli._apply_kageyoshi(args, tiny_model, "dense", None, tiny_model._NL, lambda m: None)
     assert args.search == "pareto"          # kageyoshi forces the full-frontier search
     assert args.max_directions == 3         # ablate the subspace
@@ -649,9 +664,8 @@ def test_kageyoshi_keeps_a_budget_the_caller_set(tiny_model):
     published table all said 200, which is the precise failure an equal-budget comparison cannot
     survive. So an explicitly-set knob is kept, and the log says the preset stood down.
     """
-    args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,
-                                 trials=200, search="scalar", per_component=False, mlp_off=True,
-                                 kl_scale=1.0, top_rescore=0, patience=0)
+    args = _kage_args(max_directions=1, trials=200, search="scalar", per_component=False,
+                      mlp_off=True, kl_scale=1.0, top_rescore=0, patience=0)
     lines = []
     cli._apply_kageyoshi(args, tiny_model, "dense", None, tiny_model._NL, lines.append,
                          explicit={"trials", "patience"})
@@ -663,9 +677,8 @@ def test_kageyoshi_keeps_a_budget_the_caller_set(tiny_model):
 
 def test_kageyoshi_patience_follows_a_trial_count_the_caller_set(tiny_model):
     """Left unset, patience is derived AFTER trials settles, so it tracks the real budget."""
-    args = types.SimpleNamespace(track="/tmp/does-not-exist", hedge_ds=None, max_directions=1,
-                                 trials=200, search="scalar", per_component=False, mlp_off=True,
-                                 kl_scale=1.0, top_rescore=0, patience=0)
+    args = _kage_args(max_directions=1, trials=200, search="scalar", per_component=False,
+                      mlp_off=True, kl_scale=1.0, top_rescore=0, patience=0)
     cli._apply_kageyoshi(args, tiny_model, "dense", None, tiny_model._NL, lambda m: None,
                          explicit={"trials"})
     assert args.patience == max(20, 200 // 3)

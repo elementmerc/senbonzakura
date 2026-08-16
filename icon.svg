@@ -1,26 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Senbonzakura">
-  <defs>
-    <linearGradient id="pn" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#F98DB0"/><stop offset="38%" stop-color="#E06A9C"/>
-      <stop offset="66%" stop-color="#8B4791"/><stop offset="100%" stop-color="#141A42"/>
-    </linearGradient>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Senbonzakura"><defs><linearGradient id="pn" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#F98DB0"/><stop offset="38%" stop-color="#E06A9C"/>
+    <stop offset="66%" stop-color="#8B4791"/><stop offset="100%" stop-color="#141A42"/></linearGradient>
     <linearGradient id="pns" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#F27FA6"/><stop offset="55%" stop-color="#7E4490"/>
-      <stop offset="100%" stop-color="#141A42"/>
-    </linearGradient>
-    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity=".6"/>
-      <stop offset="55%" stop-color="#FFFFFF" stop-opacity=".06"/>
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient></defs>
-  
-  <g transform="translate(71.68,71.68) scale(2.4576)">
-    <g transform="translate(75,88)">
-      <g transform="rotate(-50)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g>
-      <g transform="rotate(50)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g>
-      <g transform="rotate(0)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g>
-      <g transform="rotate(-25) translate(0,-38)"><path d="M0,-3 C6,-15 6,-25 0,-30 C-6,-25 -6,-15 0,-3 Z" fill="url(#pns)"/></g>
-      <g transform="rotate(25) translate(0,-38)"><path d="M0,-3 C6,-15 6,-25 0,-30 C-6,-25 -6,-15 0,-3 Z" fill="url(#pns)"/></g>
-    </g>
-  </g>
-</svg>
+    <stop offset="0%" stop-color="#F27FA6"/><stop offset="55%" stop-color="#7E4490"/>
+    <stop offset="100%" stop-color="#141A42"/></linearGradient><linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity=".6"/>
+        <stop offset="55%" stop-color="#FFFFFF" stop-opacity=".06"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient></defs><g transform="translate(-30.034,63.595) scale(3.8138)"><g transform="translate(75,88)"><g transform="rotate(-50)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g><g transform="rotate(50)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g><g transform="rotate(0)"><path d="M0,-8 C13,-28 13,-52 0,-70 C-13,-52 -13,-28 0,-8 Z" fill="url(#pn)"/><path d="M-3,-16 C3,-32 3,-52 -1,-62 C-7,-46 -8,-30 -3,-16 Z" fill="url(#gloss)"/></g><g transform="rotate(-25) translate(0,-38)"><path d="M0,-3 C6,-15 6,-25 0,-30 C-6,-25 -6,-15 0,-3 Z" fill="url(#pns)"/></g><g transform="rotate(25) translate(0,-38)"><path d="M0,-3 C6,-15 6,-25 0,-30 C-6,-25 -6,-15 0,-3 Z" fill="url(#pns)"/></g></g></g></svg>

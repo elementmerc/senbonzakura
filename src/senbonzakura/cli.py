@@ -852,6 +852,9 @@ def build_parser():
             "  coherence    perplexity of a fixed neutral passage, the coherence cost\n"
             "  track        build an evaluation track with a checked fit / search / measure split\n"
             "  auto         alias for kageyoshi, for anyone who has not met the name\n"
+            "  interactive  a guided walk through the handful of choices that decide whether a "
+            "run means anything. It prints the exact command it is about to run before running "
+            "it, so the second time you can type that instead\n"
             "  validate     ask whether a direction set carries refusal or carries topic: "
             "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
             "direction count against ablation strength compared at matched refusal removal\n"
@@ -2605,14 +2608,15 @@ class Abliterator:
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate")
+DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate",
+             "interactive")
 
 
 def _delegate(name):
-    from . import bench, coherence, drift, margin, score, track, validate
+    from . import bench, coherence, drift, interactive, margin, score, track, validate
     return {"bench": bench.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "drift": drift.main, "track": track.main,
-            "validate": validate.main}[name]
+            "validate": validate.main, "interactive": interactive.run}[name]
 
 
 def main(argv=None):

@@ -49,12 +49,15 @@ from . import (
 )
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
+    RETRY_SHARD_SIZE,
     atomic_write,
     config_to_bake_args,
     disk_verdict,
     free_bytes_for,
+    is_space_exhaustion,
     provenance,
     remaining_budget,
+    save_failure_report,
     search_already_done,
     study_db_path,
     torch_version_ok,
@@ -71,7 +74,7 @@ from .metrics import (
     knee_scalar,  # the weighted selection rule over those rulers
     validate_ruler,  # refuses to measure with a ruler that misreads its own cases
 )
-from .resources import ResourceGovernor, SearchProgress  # adaptive VRAM throttle + ETA
+from .resources import ResourceGovernor, SearchProgress, cuda_free_total  # VRAM throttle + ETA
 from .track import (  # the recorded partition boundaries, and the flags that would cross them
     flag_violations,
     read_manifest,
@@ -392,6 +395,7 @@ def fold_norm_gain(R, g):
     The rows are re-orthonormalised because `R * g` is not orthonormal even when R is, and the
     bake's `R^T (R W)` is a projection only for an orthonormal basis. QR preserves the span, which
     is the thing that has to be right.
+
     """
     M = R.float() * g.to(R.device).float()
     q, _ = torch.linalg.qr(M.T)
@@ -2046,6 +2050,63 @@ class Abliterator:
         if str(self.dev).startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def _save_weights(self):
+        """Write the baked model, and survive the one failure mode that costs the most.
+
+        The save is the crash-prone step and it runs when every expensive thing is already
+        done: the search, the bake and the post-bake measurement. A traceback here has, twice,
+        meant hours of GPU time producing nothing an operator could use, because the run died
+        without saying that `best-config.json` had already been written and makes the whole
+        thing re-bakeable in minutes.
+
+        So: one retry at smaller shards when the failure looks like running out of room, and
+        an exit that names the recovery either way. The retry is narrow on purpose. Peak disk
+        during a write is the finished shards plus the one being assembled, so smaller shards
+        genuinely lower the high-water mark, and the same holds for the host-RAM buffer; a
+        retry at the SAME size would just fail again more slowly.
+        """
+        args, log = self.args, self.log
+
+        def _write(shard_size):
+            # 4 GB rather than the 5 GB default even on the first attempt: a failed write loses
+            # less, and nothing downstream cares how many shards there are.
+            self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size=shard_size)
+            self.tok.save_pretrained(args.out)
+
+        try:
+            _write("4GB")
+        except Exception as first:
+            free = free_bytes_for(args.out)
+            # cuda_free_total returns None off a cuda device or when the query fails; it is
+            # context for the report, so an unmeasurable card is reported as unmeasured
+            # rather than allowed to mask the real error.
+            vram = cuda_free_total(str(self.dev))
+            cuda_free = vram[0] if vram else None
+            log(f"  SAVE FAILED: {first}")
+            if not is_space_exhaustion(first):
+                # Not a space problem, so a smaller shard changes nothing and retrying would
+                # only delay the report.
+                raise SystemExit(save_failure_report(
+                    first, args.out, free_bytes=free, cuda_free=cuda_free)) from first
+
+            log(f"  the failure looks like exhausted space, so retrying once at "
+                f"{RETRY_SHARD_SIZE} shards")
+            # Everything the first attempt allocated is still held until this runs, and a
+            # partial shard from the failed write is dead weight the retry does not need.
+            gc.collect()
+            if str(self.dev).startswith("cuda") and torch.cuda.is_available():
+                with contextlib.suppress(Exception):
+                    torch.cuda.empty_cache()
+            try:
+                _write(RETRY_SHARD_SIZE)
+            except Exception as second:
+                raise SystemExit(save_failure_report(
+                    second, args.out, free_bytes=free_bytes_for(args.out),
+                    cuda_free=cuda_free, retried=True)) from second
+            log(f"  the retry at {RETRY_SHARD_SIZE} shards succeeded")
+        else:
+            return
+
     @contextlib.contextmanager
     def _study_storage_scope(self):
         """Hold the Optuna study storage for one run, and release its pool on the way out.
@@ -2510,11 +2571,7 @@ class Abliterator:
 
         self.free_before_save()
         log(f"saving to {args.out}")
-        # 4 GB shards rather than the 5 GB default: peak disk during the write is base plus
-        # one shard, so smaller shards lower the high-water mark on a tight volume, and a
-        # failed write loses less. Nothing downstream cares how many shards there are.
-        self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size="4GB")
-        self.tok.save_pretrained(args.out)
+        self._save_weights()
         # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
         # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a
         # model that must never pass for the second, and the second losing a provenance line is

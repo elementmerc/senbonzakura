@@ -42,10 +42,15 @@ SUBSTITUTIONS = [
      re.compile(r"\$HOME/bench-out/([A-Za-z0-9._-]+)\b"), "$HOME/bench-out/\\1-dryrun", None),
     ("the staged slices, so a rehearsal cannot overwrite the real run's inputs",
      re.compile(r"\$HOME/bench-eval\b"), "$HOME/bench-eval-dryrun", None),
-    ("the seed list, down to one",
-     re.compile(r"--seeds 42,43,44,45,46\b"), "--seeds 42", 1),
-    ("the trial count",
-     re.compile(r"--trials 200\b"), "--trials 6", 1),
+    # `None` rather than 1, because a spec may carry several jobs: the hybrid experiment runs the
+    # same pair on two model sizes, and asserting one occurrence made the generator refuse the
+    # moment a second rung was added. What matters is that EVERY arm is shrunk, not that there is
+    # exactly one; an unshrunk arm in a rehearsal would run the full budget and stop being a
+    # rehearsal.
+    ("the seed list, down to one, in every job",
+     re.compile(r"--seeds 42,43,44,45,46\b"), "--seeds 42", None),
+    ("the trial count, in every job",
+     re.compile(r"--trials 200\b"), "--trials 6", None),
 ]
 
 

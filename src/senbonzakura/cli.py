@@ -376,6 +376,78 @@ def norm_gain(norm, H, device, dtype):
     return norm(probe).float().reshape(-1)
 
 
+#: How far the Gram matrix of the returned basis may drift from the identity before the basis is
+#: rejected. The rows go through QR (or Gram-Schmidt) in float32 on clouds of a few thousand
+#: residuals, so exact orthonormality is not on offer; 1e-4 is roughly three orders of magnitude
+#: looser than the drift a healthy decomposition produces here and three tighter than the point
+#: where `R^T (R W)` stops behaving like a projection.
+ORTHONORMAL_TOL = 1e-4
+
+
+def _modified_gram_schmidt(M):
+    """Orthonormalise the rows of M by a genuinely different algorithm from QR, in float64.
+
+    Not a retry of the same computation: LAPACK's Householder QR and modified Gram-Schmidt fail
+    on different inputs, which is the whole point of having a second route. Float64 because the
+    rows arrive gain-weighted and a small gain can leave a row many orders of magnitude below its
+    neighbours, which is exactly where float32 orthogonalisation loses the property.
+
+    A row that is (numerically) in the span of the ones before it yields zero rather than noise.
+    An arbitrary unit vector there would be a direction nothing asked to ablate.
+    """
+    rows = []
+    for row in M.double():
+        v = row
+        for q in rows:
+            v = v - (v @ q) * q
+        n = v.norm()
+        rows.append(v / n if n > 1e-10 else torch.zeros_like(v))
+    return torch.stack(rows) if rows else M.double().reshape(0, M.shape[-1])
+
+
+def _orthonormal_rows(M, want, li=None, log=None):
+    """An orthonormal basis for the row space of M, or a loud stop.
+
+    Returns `want` rows. QR first, modified Gram-Schmidt if it raises, and then a check that the
+    result is actually orthonormal, because a basis that merely *returned* is not evidence of one
+    that is usable: the bake's `R^T (R W)` is a projection only when `R R^T == I`, and a silently
+    non-orthonormal basis removes a subspace nobody chose while reporting the K that was asked for.
+    """
+    _log = log or (lambda _m: None)
+    where = f"layer {li}: " if li is not None else ""
+    try:
+        q, _ = torch.linalg.qr(M.T)
+        out = q.T[:want]
+    except torch.linalg.LinAlgError as first:
+        _log(f"  {where}QR did not converge ({first}); retrying via modified Gram-Schmidt")
+        try:
+            out = _modified_gram_schmidt(M)[:want].to(M.dtype)
+        except torch.linalg.LinAlgError as second:
+            raise SystemExit(
+                f"{where}could not orthonormalise the gain-folded directions. QR failed "
+                f"({first}) and so did Gram-Schmidt ({second}). Both routes failing points at a "
+                f"degenerate direction set rather than at bad luck in one algorithm: lower "
+                f"--max-directions so fewer near-parallel axes are asked for, or widen the "
+                f"corpus so the directions are estimated from a less collinear cloud. Nothing "
+                f"has been baked.") from second
+
+    # The rows that were zero on the way in are zero on the way out and are excluded: they are
+    # unused direction slots, and requiring them to be orthonormal would fail every short basis.
+    live = out[M.norm(dim=1) > 1e-8] if out.shape[0] == M.shape[0] else out
+    if live.shape[0]:
+        gram = (live @ live.T).float()
+        drift = (gram - torch.eye(gram.shape[0], device=gram.device, dtype=gram.dtype)).abs().max()
+        if not torch.isfinite(drift) or drift > ORTHONORMAL_TOL:
+            raise SystemExit(
+                f"{where}the orthonormalised directions are not orthonormal (worst deviation from "
+                f"the identity: {drift:.2e}, tolerance {ORTHONORMAL_TOL:.0e}). Ablating with this "
+                f"basis would remove a subspace that was never chosen, while the artefact recorded "
+                f"the direction count that was requested. That is the failure this check exists to "
+                f"prevent, so nothing has been baked. Lower --max-directions, or widen the corpus "
+                f"so the directions are less collinear.")
+    return out
+
+
 def fold_norm_gain(R, g):
     """Re-express directions so that ablating them BEFORE a norm zeroes them AFTER it.
 
@@ -396,10 +468,15 @@ def fold_norm_gain(R, g):
     bake's `R^T (R W)` is a projection only for an orthonormal basis. QR preserves the span, which
     is the thing that has to be right.
 
+    That last sentence is a load-bearing claim, so it is checked rather than assumed. This is the
+    successor to the non-converging SVD fixed in 6f87937: the decomposition that chooses what gets
+    ablated used to fall back to a weaker basis and report the strength it had asked for, so a K=3
+    run applied K=1 at some layers with nothing on record saying so. QR is a different algorithm
+    with the same failure surface, and the same rule applies to it. Two routes, then a verification
+    of the property the bake depends on, then a loud stop.
     """
     M = R.float() * g.to(R.device).float()
-    q, _ = torch.linalg.qr(M.T)
-    out = q.T[: M.shape[0]]
+    out = _orthonormal_rows(M, R.shape[0])
     # A row of R that was already zero (an unused direction slot) must stay zero rather than be
     # replaced by whatever QR puts in an empty column, which would ablate an arbitrary direction.
     keep = M.norm(dim=1) > 1e-8

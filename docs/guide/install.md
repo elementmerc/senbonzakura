@@ -14,6 +14,23 @@ gigabyte and takes a few minutes on a decent connection. If you'd rather type
 A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your
 system picks up manuals from wherever pip put them. Mine doesn't. Yours might.
 
+## If you're checking our numbers rather than using the tool
+
+Install against the pinned set instead:
+
+```sh
+pip install . -c constraints.txt
+```
+
+`constraints.txt` is the exact version of every dependency the published numbers were measured
+with, read off the machine that produced them rather than resolved fresh. The ordinary install
+above uses version *ranges*, which tell you what a run could have used; this tells you what it
+did.
+
+One thing it deliberately doesn't pin is torch's CUDA build suffix, so the file installs on a
+machine without a GPU. The version is the part that changes arithmetic; the suffix changes how
+many seconds it takes.
+
 ## Do you need a GPU?
 
 For editing a model, yes, realistically. For everything else, no.

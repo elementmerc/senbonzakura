@@ -41,10 +41,12 @@ from pathlib import Path
 import optuna
 import torch
 import torch.nn.functional as F
-from datasets import load_from_disk
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from . import marker  # what a saved checkpoint says it is; NOT crashsafe.provenance
+from . import (
+    dataset,  # every accepted way of saying "the prompts are here"
+    marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
+)
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
     atomic_write,
@@ -903,6 +905,15 @@ def build_parser():
                                                               "ablation + print refusals, no search")
     ap.add_argument("--track", default="track", help="dir holding bad_ds / good_ds / bad_eval_ds")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
+    # Every dataset argument above accepts a save_to_disk directory, a .txt/.csv/.json/.jsonl/
+    # .parquet file, or a Hub id, optionally with `::split[:N]`. These two are the knobs the
+    # detection cannot work out on its own.
+    ap.add_argument("--text-column", dest="text_column", default=None,
+                    help="column holding the prompt, when it is not one of the names this "
+                         "detects (text, prompt, instruction, goal, behavior, question, ...)")
+    ap.add_argument("--hf-token", dest="hf_token", default=None,
+                    help="token for a gated or private Hub dataset; defaults to $HF_TOKEN. "
+                         "Prefer the environment variable: an argument is visible in `ps`.")
     ap.add_argument("--attn-impl", dest="attn_impl", default=None,
                     help="attention implementation to request (eager / sdpa / flash_attention_2); "
                          "default lets transformers choose (sdpa).")
@@ -1351,27 +1362,28 @@ class Abliterator:
 
     # ── data + prompt formatting ────────────────────────────────────────────────
     def load(self, d, n):
-        # Load the first n prompts from a datasets.save_to_disk directory (column "text").
-        # Fails with a readable message on a missing dir or a missing column, and warns rather
-        # than silently truncating when the dataset is smaller than requested.
+        # The first n prompts from wherever they are: a save_to_disk directory, a text/CSV/JSON
+        # file, or a Hub id, with the split and column worked out by `dataset.resolve`. Every
+        # reader in the project goes through that one function so a user's error does not depend
+        # on which command they happened to run.
+        #
+        # The exception types are preserved rather than simplified. FileNotFoundError and KeyError
+        # are what callers and tests here have always caught, and turning a resolver error into a
+        # different type at the boundary is cheaper than changing every catch site.
         try:
-            ds = load_from_disk(d)
-        except Exception as e:
-            raise FileNotFoundError(
-                f"could not load dataset at {d}: {e}. Expected a datasets.save_to_disk directory "
-                f"with a 'text' column. Build a whole track with "
-                f"`python -m senbonzakura.track --harmful <file> --harmless <file> --out <dir>`, "
-                f"or one dataset by hand with "
-                f"datasets.Dataset.from_dict({{'text': [...]}}).save_to_disk('{d}').") from e
-        avail = len(ds)
+            rows = dataset.resolve(
+                d,
+                text_column=getattr(self.args, "text_column", None) or None,
+                token=getattr(self.args, "hf_token", None) or None,
+                what="prompt set")
+        except dataset.DatasetError as e:
+            if "column" in str(e):
+                raise KeyError(str(e)) from e
+            raise FileNotFoundError(str(e)) from e
+        avail = len(rows)
         if avail < n:
             self.log(f"  note: {d} holds {avail} prompts, fewer than the {n} requested; using all {avail}")
-        take = min(n, avail)
-        try:
-            return [ds[i]["text"] for i in range(take)]
-        except KeyError as e:
-            raise KeyError(
-                f"dataset at {d} has no 'text' column (columns: {getattr(ds, 'column_names', '?')})") from e
+        return rows[:n]
 
     def chat(self, p):
         return render_chat(self.tok, p)

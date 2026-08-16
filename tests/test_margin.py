@@ -873,12 +873,18 @@ def test_an_empty_dataset_names_itself(loaded, tmp_path):
                      "--skip-harmless", "0", "--device", "cpu"])
 
 
-def test_a_dataset_without_a_text_column_says_which_columns_it_has(loaded, tmp_path):
+def test_a_dataset_whose_columns_are_all_unrecognisable_lists_them(loaded, tmp_path):
+    """`prompt` USED to fail here and now works, which is the point of the resolver.
+
+    So the failing case has to be a column no detector recognises. What must still hold is that
+    the error names the columns that are actually there and the flag that fixes it, rather than
+    asserting the absence of one hard-coded name.
+    """
     from datasets import Dataset
     bad, _ = _track(tmp_path)
     wrong = str(tmp_path / "wrong")
-    Dataset.from_dict({"prompt": ["a", "b"]}).save_to_disk(wrong)
-    with pytest.raises(SystemExit, match="no 'text' column"):
+    Dataset.from_dict({"zzz_unknown": ["a", "b"]}).save_to_disk(wrong)
+    with pytest.raises(SystemExit, match="--text-column"):
         margin.main(["--model", "x", "--harmful", bad, "--harmless", wrong,
                      "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",
                      "--skip-harmless", "0", "--device", "cpu"])
@@ -915,7 +921,8 @@ def test_a_dataset_that_loads_but_holds_nothing_is_refused(loaded, tmp_path, mon
             return iter(())
 
     bad, good = _track(tmp_path)
-    monkeypatch.setattr(margin, "load_from_disk", lambda _p: _Empty())
+    from senbonzakura import dataset as _dataset
+    monkeypatch.setattr(_dataset, "_from_disk", lambda *_a, **_k: ([], ["text"]))
     with pytest.raises(SystemExit, match=r"harmful dataset .* is empty"):
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "r.json"), "--n", "1", "--skip-harmful", "0",

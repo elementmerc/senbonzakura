@@ -29,7 +29,6 @@ import json
 from pathlib import Path
 
 import torch
-from datasets import load_from_disk
 
 from .cli import (
     accelerator_name,
@@ -427,28 +426,19 @@ def _fmt(value):
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def load_prompts(path, what):
-    """Read the 'text' column of a save_to_disk dataset, failing readably at the boundary.
+def load_prompts(path, what, *, text_column=None, token=None):
+    """Read prompts from wherever they are, failing readably at the boundary.
 
-    load_from_disk raises a bare IndexError on an empty dataset and a KeyError on a
-    missing column, neither of which names the file or the flag that pointed at it.
+    Routed through `dataset.resolve` since 2026-08-16 so a CSV, a Hub id or a DatasetDict works
+    here exactly as it does everywhere else. SystemExit is preserved as the failure mode because
+    that is what this command's callers expect and what its tests assert.
     """
+    from . import dataset
     try:
-        ds = load_from_disk(path)
-    except Exception as e:
-        raise SystemExit(f"could not load the {what} dataset at {path}: {e}. Expected a "
-                         f"datasets.save_to_disk directory with a 'text' column.") from e
-    cols = list(getattr(ds, "column_names", None) or [])
-    if "text" not in cols:
-        raise SystemExit(f"the {what} dataset at {path} has columns {cols} and no 'text' column")
-    rows = [r["text"] for r in ds]
-    if not rows:
-        # Reachable, and only on part of the supported range: datasets 5.x raises inside
-        # load_from_disk on an empty save_to_disk directory, while 2.15 loads it happily
-        # and hands back nothing. Without this the same input produces a different error
-        # depending on the installed version, which the dependency-floor job caught.
-        raise SystemExit(f"the {what} dataset at {path} is empty")
-    return rows
+        return dataset.resolve(path, text_column=text_column, token=token,
+                               what=f"{what} dataset")
+    except dataset.DatasetError as e:
+        raise SystemExit(str(e)) from e
 
 
 def load_margins_jsonl(path, harmful_prompts, harmless_prompts):

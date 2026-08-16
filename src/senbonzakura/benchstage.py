@@ -39,21 +39,21 @@ import argparse
 import sys
 from pathlib import Path
 
-from datasets import load_from_disk
-
 from senbonzakura.cli import kl_eval_slice
 
 
-def load_texts(directory, n):
-    ds = load_from_disk(directory)
-    if "text" not in getattr(ds, "column_names", []):
-        raise SystemExit(f"bench stage: {directory} has no 'text' column "
-                         f"(columns: {getattr(ds, 'column_names', '?')})")
-    take = min(n, len(ds))
-    if take < n:
-        print(f"bench stage: NOTE {directory} holds {len(ds)} rows, fewer than the {n} "
-              f"requested; using all {len(ds)}", file=sys.stderr)
-    return [ds[i]["text"] for i in range(take)]
+def load_texts(directory, n, *, text_column=None, token=None):
+    """The first n prompts from a dataset, in whatever shape it arrives in."""
+    from senbonzakura import dataset
+    try:
+        rows = dataset.resolve(directory, text_column=text_column, token=token,
+                               strip=False, what="bench stage input")
+    except dataset.DatasetError as e:
+        raise SystemExit(f"bench stage: {e}") from e
+    if len(rows) < n:
+        print(f"bench stage: NOTE {directory} holds {len(rows)} rows, fewer than the {n} "
+              f"requested; using all {len(rows)}", file=sys.stderr)
+    return rows[:n]
 
 
 def write_slice(path, prompts, label):

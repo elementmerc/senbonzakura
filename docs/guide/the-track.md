@@ -47,15 +47,30 @@ one prompt per line, and records what it fetched in `sources.json`. It refuses t
 upstream's declared licence has moved since the recipe was written, because that is the single
 fact deciding what a track built from it may be used for.
 
-::: warning No prompt rows ship in this repository, and that is a licence position
-Two of the three upstream datasets declare **no licence at all**, and the probable root of the
-harmless side is **CC BY-NC 4.0**, which is non-commercial. An absent licence is not a permissive
-one; it is the default, which reserves the rights. So this project publishes the recipe and the
-citations rather than a copy of somebody else's rows.
+::: warning The track itself is published, gated, under CC BY-NC 4.0
+Every row came from somewhere else, so the track carries the strictest term in its chain forward:
+attribution to every source, non-commercial use only. Access is gated so taking it is a
+deliberate act with a record.
 
-It also **cannot rebuild the exact corpus behind the published numbers**. Harmless top-ups were
-added to that one by hand and never recorded, so a rebuild is the same shape and not the same
-rows. The [dataset card](/evaluation-track-card) is blunt about both.
+The builder above is for anyone who would rather fetch the sources themselves. It rebuilds a pool
+of the same *shape* rather than the identical one: the harmless top-ups added to the original
+pool were never recorded, so that part of its assembly cannot be reproduced. The
+[dataset card](/evaluation-track-card) is blunt about that, and about the two licence links that
+are inferred rather than stated.
+:::
+
+::: danger If you hold a copy of this track from before 2026-07-30, check it
+An earlier export was labelled "clean" and was not. Measured on 2026-08-16: **189 of its 200
+harmful evaluation rows, and all 196 harmless ones, were sitting inside its own fitting set**.
+The repair landed on 2026-07-30 and that export was never refreshed, so for six weeks its name
+promised the opposite of its contents.
+
+The published track is the repaired one, verified at zero overlap on both sides. Check any copy
+you already have rather than trusting what it is called:
+
+```sh
+python -m senbonzakura.track --out mytrack --audit
+```
 :::
 
 ## Build one, and have it checked

@@ -142,14 +142,13 @@ tool, and every condition attached to every number this project has published.
 By design, this is methods and results, not a loaded weapon:
 
 - **No pre-abliterated model weights.** Run the tool yourself.
-- **No harmful prompt sets.** The contrast and evaluation data you supply are your
-  own; none ship here. What does ship is the *recipe*: `tools/build_track.py` fetches the
-  public datasets this project measured on, at pinned revisions, and writes the two prompt
-  files the track builder splits. That is a deliberate choice rather than caution. Two of the
-  three upstream datasets declare no licence at all, and the probable root of the harmless side
-  is CC BY-NC 4.0, so redistributing the rows is not something this repository can grant anybody.
-  The full chain, and what is inferred rather than stated, is in the
-  [dataset card](docs/evaluation-track-card.md).
+- **No harmful prompt sets in this repository.** The evaluation track is published separately as
+  a **gated dataset** under CC BY-NC 4.0, so checking our numbers is possible and taking the data
+  is a deliberate act rather than a drive-by download. It holds prompts only: no completions, no
+  answers, nothing a model could be trained to imitate. Its licence chain, including the two
+  links that are inferred rather than stated, is in the
+  [dataset card](docs/evaluation-track-card.md), and `tools/build_track.py` rebuilds an
+  equivalent pool from the public sources for anyone who would rather fetch them directly.
 - **No harmful outputs.**
 
 Abliteration removes safety guardrails wholesale. That is both the point and the

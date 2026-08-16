@@ -8,10 +8,12 @@ every row came from, and what they are allowed to do with it.
 from existing public datasets. It contains no model outputs, no completions, and no answers to
 any harmful request. It is a measuring instrument, not a corpus of harm.
 
-**No prompt rows are distributed with this repository.** Every row in the track came from
-somewhere else, and two of the three sources grant no redistribution rights because they declare
-no licence. What ships instead is the recipe, the boundaries and the citations. The reasoning is
-in "Where the rows came from" below, and the tool is `tools/build_track.py`.
+**The rows are published as a gated dataset, not inside this repository.** Every row came from
+somewhere else, so the track carries the upstream terms forward: it is distributed under
+**CC BY-NC 4.0**, the most restrictive licence in its chain, with attribution to every source
+named below. Access is gated so that taking it is a deliberate act with a record, rather than a
+drive-by download. `tools/build_track.py` rebuilds a pool of the same shape from the same
+upstreams for anyone who would rather fetch the sources themselves.
 
 ## What it is
 
@@ -72,21 +74,28 @@ the dataset cards make.** They are recorded here rather than quietly relied on. 
 a licensing decision that depends on either, verify it yourself rather than taking this card's
 word for it. If an upstream maintainer tells us this is wrong, we will correct the card.
 
-### What is actually published, and why it is not the rows
+### What this track is distributed under, and why
 
-The gate this project holds itself to says that a corpus derived from public sets is published as
-**the builder and the citation, not as a copy**. The licence findings above turn that from a
-preference into the only defensible option:
+Every licence in the chain permits redistribution; they differ in what they attach to it. Taking
+the most restrictive of them and applying it to the whole is the only position that satisfies all
+three at once, so the track is distributed under **CC BY-NC 4.0**: attribution required,
+non-commercial use only.
 
-- Two of the three direct upstreams grant nothing, because they say nothing. An absent licence is
-  not a permissive one; it is the default position, which reserves the rights.
-- The harmless side's probable root is non-commercial, so redistributing it would attach a
-  restriction we cannot lift and many readers would not want.
+| Slice | Upstream terms | What redistribution requires |
+|---|---|---|
+| Most of the harmful side | Apache-2.0 | Carry the notice |
+| About 430 harmful rows | MIT, inferred | Attribute Zou et al. |
+| The harmless side | CC BY-NC 4.0, inferred | Attribute, and non-commercial |
 
-So **no prompt rows are redistributed here**. What ships is the assembly recipe, the split
-boundaries, the counts and the citations, which is enough to rebuild a track of the same shape
-from sources the reader fetches under their own licence position. See
-`tools/build_track.py`.
+Two of the direct upstreams declare nothing at all, which is why the table reads through to the
+roots rather than stopping at them. Most of this corpus is also machine-generated (Bahushruth's
+card describes synthetic prompts; Alpaca was model-generated), and content with no human author
+attracts thin or no copyright in many jurisdictions, so a good deal of it may carry no
+restriction whatsoever. That argument is not relied on here. Attributing everything and shipping
+under the strictest term costs nothing and settles the question without needing it.
+
+For anyone who would rather fetch the sources themselves, `tools/build_track.py` assembles a pool
+of the same shape from the same upstreams at pinned revisions.
 
 ### Attribution
 
@@ -111,13 +120,21 @@ instructions with answers, and there is nothing here to imitate.
 
 These are recorded because a measuring instrument with undisclosed limits is worse than none.
 
-- **The exact track behind the published numbers cannot be rebuilt, by us or by anyone.** The
-  builder below reconstructs a track of the same shape from the same named upstreams, but the
-  harmless "top-ups" that were added later were never recorded: not their source, not their count,
-  not the revision they came from. So a rebuild will resemble the measured track without being it,
-  and the difference is unquantified. This is the most serious limitation on this page, because it
-  means the published figures rest on an artefact that no longer has a recipe. Anything measured
-  from here on is built with the tool and its manifest, so this cannot recur.
+- **The prompt pool's provenance is recorded; the pool's own assembly is not.** The track itself
+  is fully described: `track.json` records where every boundary fell, and the split can be
+  rebuilt from the pool exactly. What was never written down is how the pool was assembled from
+  its upstreams, specifically the harmless "top-ups" added after the first build: not their
+  source, not their count, not the revision they came from. So `tools/build_track.py` reconstructs
+  a pool of the same shape from the same named upstreams rather than the identical one, and the
+  difference is unquantified. Anything built from here on carries a manifest, so this cannot
+  recur.
+- **A copy of this track distributed before 2026-07-30 leaks, badly, and was labelled "clean".**
+  Measured 2026-08-16: in that earlier export, 189 of 200 harmful evaluation rows and 196 of 196
+  harmless ones were sitting inside the fitting set. The repair landed on 2026-07-30 and the
+  export was never refreshed, so its name promised the opposite of its contents for six weeks.
+  The track published here is the repaired one, verified at 0 overlap on both sides by exact
+  match and by request key. If you hold an earlier copy, check it rather than trusting its name;
+  `python -m senbonzakura.track --out <track> --audit` is the check.
 - **The corpus is not axis-balanced** despite the "35axis" name. Later top-ups were not
   distributed evenly across categories, so per-category rates are not comparable to each other.
 - **Some prompts in the harmful pool may not be harmful.** The pool was assembled from upstream
@@ -164,12 +181,11 @@ harmful knowledge.
 purpose, or the correctness of any number measured with it. The known limitations above are the
 ones that have been found, not the ones that exist.
 
-**Responsibility for use sits with the user.** Building this track means fetching the upstream
-datasets yourself and taking on whatever obligations attach to them: the licence positions
-recorded above, including the ones that are absent and the one that is non-commercial, the
-acceptable-use terms of any model it is pointed at, and the law where you are. Neither the author
-of this repository nor the authors of the upstream sources are responsible for what anyone does
-with it, or with any model measured or modified using it.
+**Responsibility for use sits with the user.** Taking this track means accepting what attaches to
+it: CC BY-NC 4.0, attribution to every source named above, the acceptable-use terms of any model
+it is pointed at, and the law where you are. Neither the author of this repository nor the authors
+of the upstream sources are responsible for what anyone does with it, or with any model measured
+or modified using it.
 
 **Abliteration removes safety behaviour wholesale.** That is what it is for and it is the reason
 to be careful. A model with its refusals removed will answer things a deployed model should not,

@@ -110,7 +110,9 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 - **Do not trust a 100% score.** Check what the model says about harmless prompts. If it flags those too, the score means nothing.
 - **Do not count verdicts on small models.** Four of my seven have a pinned threshold. Score the logits instead.
 - **Keep the raw outputs.** Both of my bugs were invisible in the percentages and obvious in the text.
-- **Every model here is under 2B.** None of this is proven to hold at 30B or 70B.
+- **Every model here is under 3B, and six of the seven are under 2B.** The exception matters:
+  gemma-2-2b-it is 2.61B and carries the strongest result in the set, so the largest model is
+  doing most of the work in the headline. None of this is proven to hold at 30B or 70B.
 
 ## Everything here is checkable
 

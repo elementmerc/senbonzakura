@@ -640,7 +640,13 @@ def main(argv=None):
     print(f"MARGIN_DONE {a.label} auc={score:.4f}{ci} "
           f"mean_h={res['mean_margin_harmful']:.3f} mean_l={res['mean_margin_harmless']:.3f} "
           f"says_harmful_h={res['frac_harmful_positive']*100:.1f}% "
-          f"says_harmful_l={res['frac_harmless_positive']*100:.1f}%")
+          f"says_harmful_l={res['frac_harmless_positive']*100:.1f}% "
+          # These two are threshold-at-zero verdict rates: the exact statistic generation two of
+          # this instrument was retired for, because a model that answers HARMFUL to everything
+          # scores 100% on them and knows nothing. They are kept because they are useful for
+          # spotting a pinned threshold, and labelled because an unlabelled percentage next to an
+          # AUC reads as a second result.
+          f"(says_harmful_* are DIAGNOSTIC verdict rates, not results: read the AUC)")
     c = res["controls"]
     print(f"MARGIN_CONTROLS {a.label} length_only_auc={_fmt(c['length_only_auc'])} "
           f"canonical_auc={_fmt(c['canonical_auc'])} "

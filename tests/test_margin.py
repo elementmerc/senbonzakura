@@ -1035,3 +1035,20 @@ def test_controls_still_works_without_prompts():
     from senbonzakura.margin import controls
     rows = [{"margin": 1.0, "canonical": 1.0, "tokens": 5}]
     assert "nulls" not in controls(rows, rows)
+
+
+def test_the_verdict_rates_are_labelled_as_diagnostic(capsys, loaded, tmp_path):
+    """They are the exact statistic generation two of this instrument was retired for.
+
+    A model that answers HARMFUL to everything scores 100% on them and knows nothing. They stay
+    because they catch a pinned threshold, but an unlabelled percentage sitting next to an AUC
+    reads as a second result, and the exit gate requires the label.
+    """
+    bad, good = _track(tmp_path)
+    margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                 "--out", str(tmp_path / "r.json"), "--n", "2", "--skip-harmful", "0",
+                 "--skip-harmless", "0", "--device", "cpu"])
+    out = capsys.readouterr().out
+    assert "says_harmful_h=" in out
+    assert "DIAGNOSTIC" in out
+    assert "not results" in out

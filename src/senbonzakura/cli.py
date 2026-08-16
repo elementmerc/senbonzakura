@@ -1376,8 +1376,8 @@ class Abliterator:
         try:
             rows = dataset.resolve(
                 d,
-                text_column=getattr(self.args, "text_column", None) or None,
-                token=getattr(self.args, "hf_token", None) or None,
+                text_column=self.args.text_column or None,
+                token=self.args.hf_token or None,
                 what="prompt set")
         except dataset.DatasetError as e:
             if "column" in str(e):

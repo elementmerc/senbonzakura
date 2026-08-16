@@ -134,9 +134,8 @@ def main(argv=None):
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
     from senbonzakura import dataset
     try:
-        prompts = dataset.resolve(a.eval, text_column=getattr(a, "text_column", None) or None,
-                                  token=getattr(a, "hf_token", None) or None,
-                                  what="evaluation set")
+        prompts = dataset.resolve(a.eval, text_column=a.text_column or None,
+                                  token=a.hf_token or None, what="evaluation set")
     except dataset.DatasetError as e:
         raise SystemExit(str(e)) from e
     if a.skip:

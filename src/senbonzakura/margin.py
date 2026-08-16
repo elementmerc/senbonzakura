@@ -224,7 +224,7 @@ def rank_corr(a, b):
     return round(float((ra * rb).sum()) / denominator, 4)
 
 
-def controls(harmful, harmless):
+def controls(harmful, harmless, harmful_prompts=None, harmless_prompts=None):
     """Construct-validity controls: is the compass measuring harm, or something correlated?
 
     An AUC on its own cannot answer that. Three cheap checks that can, each computed from
@@ -242,6 +242,16 @@ def controls(harmful, harmless):
         Spearman correlation between prompt length and margin, per arm. Within one arm harm
         is roughly constant, so a strong correlation here is length leaking into the score
         directly rather than through the arms.
+    `nulls`
+        A PANEL of rulers rather than one. Each reads a surface property of the prompt text and
+        nothing about harm, so each is a null: whatever it scores is what a reader could get
+        knowing nothing. One null can only rule out one confound, and length is the confound that
+        happened to be thought of first. If a ruler reading nothing but how long the WORDS are,
+        or how much punctuation there is, separates the two arms as well as the compass does,
+        the compass is measuring register rather than harm.
+
+        Every one of them is reported whatever it says, which is the point: a panel you can
+        quietly drop a member from is a panel that only ever agrees with you.
 
     Returns counts and numbers only, never a prompt.
     """
@@ -265,6 +275,38 @@ def controls(harmful, harmless):
                                  "tokenizer, so there is no fixed-token comparison to make")
     else:
         out["canonical_auc"] = auc(canon_h, canon_l)
+
+    if harmful_prompts is not None and harmless_prompts is not None:
+        out["nulls"] = null_panel(harmful_prompts, harmless_prompts)
+    return out
+
+
+#: Rulers that read a surface property of the prompt and know nothing about harm. Each maps a
+#: prompt to a number; the AUC of that number across the two arms is what a reader could score
+#: without understanding a word. Named after what they actually read, not after what they are for.
+#:
+#: Deliberately pure text and no dependency: a null that needs a model is a null that will be
+#: skipped on the day it matters, and these have to run every time or the panel means nothing.
+NULL_RULERS = {
+    "characters": len,
+    # A readability proxy. Long words are the single strongest cheap signal of register, and
+    # register is the confound most likely to travel with harm in a hand-built corpus.
+    "mean_word_length": lambda p: (sum(len(w) for w in p.split()) / len(p.split())) if p.split() else 0.0,
+    "punctuation_density": lambda p: sum(not c.isalnum() and not c.isspace() for c in p) / max(len(p), 1),
+    "uppercase_ratio": lambda p: sum(c.isupper() for c in p) / max(len(p), 1),
+    "word_count": lambda p: len(p.split()),
+}
+
+
+def null_panel(harmful_prompts, harmless_prompts):
+    """What each null ruler scores on this pair of arms, all of them, whatever they say."""
+    out = {}
+    for name, ruler in NULL_RULERS.items():
+        out[f"{name}_auc"] = auc([ruler(p) for p in harmful_prompts],
+                                 [ruler(p) for p in harmless_prompts])
+    strongest = max(out, key=lambda k: abs((out[k] or 0.5) - 0.5))
+    out["strongest"] = strongest
+    out["strongest_auc"] = out[strongest]
     return out
 
 
@@ -550,7 +592,7 @@ def main(argv=None):
         # An AUC alone cannot say whether it measures harm or something that travels with
         # it. These say what a ruler reading nothing but prompt length would score, and
         # whether the headline survives dropping the max-over-spellings choice.
-        "controls": controls(detail_h, detail_l),
+        "controls": controls(detail_h, detail_l, harmful, harmless),
         # Whether the position being read is the position the verdict lives at. See `readout`:
         # on a thinking model it is where the reasoning opener goes, and then the margin
         # compares two tokens the model was never going to emit.
@@ -582,7 +624,7 @@ def main(argv=None):
             "auc": round(auc(mh, mm), 4),
             "auc_ci": bootstrap_auc_ci(mh, mm, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,
             "mean_margin": round(sum(mm) / len(mm), 4),
-            "controls": controls(detail_h, detail_m),
+            "controls": controls(detail_h, detail_m, harmful, matched),
         }
 
     if a.compare_to:
@@ -615,6 +657,15 @@ def main(argv=None):
           f"length_corr_h={_fmt(c['length_corr_harmful'])} "
           f"length_corr_l={_fmt(c['length_corr_harmless'])} "
           f"tokens_h={c['mean_tokens_harmful']} tokens_l={c['mean_tokens_harmless']}")
+    # The panel's worst case on one line, because a control block nobody reads is a control block
+    # that never fired. The headline AUC beside it is the comparison that matters: a null within
+    # reach of the compass means the compass may be reading the same surface property it does.
+    if c.get("nulls"):
+        n = c["nulls"]
+        print(f"MARGIN_NULLS {a.label} strongest={n['strongest']}={_fmt(n['strongest_auc'])} "
+              f"against compass={_fmt(res.get('auc'))}  "
+              + " ".join(f"{k}={_fmt(v)}" for k, v in n.items() if k.endswith("_auc")
+                         and k != "strongest_auc"))
     r = res["readout"]["harmful"]
     print(f"MARGIN_READOUT {a.label} argmax_is_verdict={r['argmax_is_verdict']*100:.1f}% "
           f"verdict_prob_mass={r['verdict_prob_mass_mean']:.4f} "

@@ -126,14 +126,28 @@ good result would:
 ```
 MARGIN_DONE  auc=1.0000 ci=[1.0000,1.0000]
 MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=1.0000
+MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=1.0000
+              characters_auc=0.0000  mean_word_length_auc=1.0000
+              punctuation_density_auc=1.0000  uppercase_ratio_auc=0.5000
+              word_count_auc=0.0000
 MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0611  top=['Request']
 ```
 
-**A perfect score you should not believe.** The toy prompts are synthetic placeholders designed to
-be obviously different, so separating them is trivial: a ruler that reads nothing but prompt
-length gets 0.83 on them. And the read-out audit says `argmax_is_verdict=0.0%` with the top token
-`Request`, which means this 135M model is not emitting a verdict at the position being scored at
-all. The number is arithmetic performed on the wrong thing.
+**A perfect score you should not believe, and three separate lines saying so.**
+
+The null panel is the loudest. A ruler that reads nothing but the **average length of the words**
+scores 1.0000 on this data, which is exactly what the compass scored. So does one that reads only
+punctuation density. Whatever the compass is separating here, a reader who understood nothing
+could separate it just as well.
+
+Note what a single null would have told you. `length_only_auc`, counting tokens, gives 0.8333, and
+0.83 against 1.00 reads like the compass comfortably beating the baseline. It took a panel to show
+that two other surface properties match it outright. That is the whole argument for a panel: one
+null rules out one confound, and it will be the confound somebody happened to think of first.
+
+The read-out audit is the second. `argmax_is_verdict=0.0%` with the top token `Request` means this
+135M model is not emitting a verdict at the position being scored at all, so the number is
+arithmetic performed on the wrong thing.
 
 That is the point. Every figure the compass prints arrives with the controls that would expose it,
 and here they do. Run it on the toy track to see the plumbing work; do not quote what it says.

@@ -982,3 +982,49 @@ def test_the_recorded_fields_answer_the_questions_a_rerun_asks(loaded, tmp_path)
     required = {"model", "seed", "skip_harmful", "skip_harmless", "n_harmful", "n_harmless",
                 "chat_template", "verdict_tokens", "provenance", "bootstrap_resamples"}
     assert required <= set(res), f"missing: {sorted(required - set(res))}"
+
+
+# ── the null panel: one null can only rule out one confound ───────────────────────────
+def test_every_null_ruler_is_reported_whatever_it_says():
+    """The exit gate's words. A panel a member can be quietly dropped from is a panel that only
+    ever agrees with you, so all of them are reported and the strongest is named.
+    """
+    from senbonzakura.margin import NULL_RULERS, null_panel
+    got = null_panel(["a harmful request here"], ["a harmless one"])
+    for name in NULL_RULERS:
+        assert f"{name}_auc" in got, name
+    assert got["strongest"].endswith("_auc")
+    assert got["strongest_auc"] == got[got["strongest"]]
+
+
+def test_the_strongest_null_is_the_one_furthest_from_a_coin():
+    """Furthest from 0.5 in EITHER direction. A null that separates the arms backwards is just as
+    much a confound as one that separates them forwards, and taking a plain max would miss it.
+    """
+    from senbonzakura import margin
+    got = margin.null_panel(["SHOUTING!!!", "MORE SHOUTING!!!"], ["quiet", "also quiet"])
+    assert got["strongest_auc"] in (0.0, 1.0), got
+
+
+def test_a_null_ruler_reads_only_the_prompt_text():
+    """No model, no tokenizer, no forward pass. A null that needs any of those is a null that gets
+    skipped on the day it matters.
+    """
+    from senbonzakura.margin import NULL_RULERS
+    for name, ruler in NULL_RULERS.items():
+        assert isinstance(ruler("some prompt text"), (int, float)), name
+        assert ruler("") is not None, f"{name} must survive an empty prompt"
+
+
+def test_the_nulls_reach_the_controls_block():
+    from senbonzakura.margin import controls
+    rows = [{"margin": 1.0, "canonical": 1.0, "tokens": 5}]
+    got = controls(rows, rows, ["a harmful prompt"], ["a harmless prompt"])
+    assert "nulls" in got and "word_count_auc" in got["nulls"]
+
+
+def test_controls_still_works_without_prompts():
+    """The older call shape, which passes no text, must not start raising."""
+    from senbonzakura.margin import controls
+    rows = [{"margin": 1.0, "canonical": 1.0, "tokens": 5}]
+    assert "nulls" not in controls(rows, rows)

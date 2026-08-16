@@ -7,11 +7,25 @@ and report a number for it, which is the failure mode this project exists to cat
 """
 import io
 import json
+import os
 import tarfile
 
 import pytest
 
 from senbonzakura import bundled
+
+#: The blob is packed at RELEASE time, not committed, so a clone and every CI job run without
+#: one. Those tests skip rather than fail.
+#:
+#: Skipping quietly is the danger, not the skip: a release that forgot to pack would go out with
+#: no corpus and a green suite. So the release job sets SENBON_REQUIRE_BUNDLED=1 and the same
+#: tests become hard failures there. A skip is a statement about a source checkout; in a release
+#: it is a defect.
+_REQUIRE = os.environ.get("SENBON_REQUIRE_BUNDLED") == "1"
+needs_blob = pytest.mark.skipif(
+    not bundled.is_available() and not _REQUIRE,
+    reason="no packed track in this checkout; it is built at release time by "
+           "tools/pack_track.py. Set SENBON_REQUIRE_BUNDLED=1 to make this a failure.")
 
 
 @pytest.fixture(autouse=True)
@@ -134,11 +148,13 @@ def test_the_notice_prints_once_per_process():
 
 
 # ── the installed blob ───────────────────────────────────────────────────────────
+@needs_blob
 def test_a_track_ships_with_the_package():
     assert bundled.is_available(), (
         "no bundled track is installed; run `python tools/pack_track.py --track <dir>`")
 
 
+@needs_blob
 def test_the_manifest_records_the_licence_and_the_counts():
     m = bundled.manifest()
     assert m["schema"] == "senbonzakura-bundled/1"
@@ -147,6 +163,7 @@ def test_the_manifest_records_the_licence_and_the_counts():
     assert len(m["sha256_of_tar"]) == 64
 
 
+@needs_blob
 def test_the_bundled_track_is_the_repaired_three_way_split():
     """A regression guard on WHICH corpus ships.
 
@@ -160,6 +177,7 @@ def test_the_bundled_track_is_the_repaired_three_way_split():
     assert m["counts"]["good_ds"] == 4982
 
 
+@needs_blob
 def test_the_packed_tar_carries_a_track_manifest():
     raw = bundled.unpack(bundled.data_path().read_bytes())
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
@@ -168,6 +186,7 @@ def test_the_packed_tar_carries_a_track_manifest():
     assert any(n.endswith("track.json") for n in names)
 
 
+@needs_blob
 def test_extract_writes_a_usable_track(tmp_path):
     out = bundled.extract(tmp_path / "x", log=lambda *a: None)
     track = out / "track"
@@ -177,6 +196,7 @@ def test_extract_writes_a_usable_track(tmp_path):
     assert manifest["counts"]["harmful"]["fit"] == 259
 
 
+@needs_blob
 def test_extract_prints_the_notice(tmp_path):
     said = []
     bundled.extract(tmp_path / "x", log=said.append)
@@ -190,16 +210,19 @@ def test_a_missing_blob_says_what_to_run(monkeypatch, tmp_path):
 
 
 # ── the resolver alias ───────────────────────────────────────────────────────────
+@needs_blob
 def test_the_default_alias_resolves_to_the_bundled_track():
     from senbonzakura import dataset
     assert len(dataset.resolve("default/bad_ds")) == 259
 
 
+@needs_blob
 def test_a_partition_of_the_default_alias_resolves():
     from senbonzakura import dataset
     assert len(dataset.resolve("default/good_ds")) == 4982
 
 
+@needs_blob
 def test_a_local_directory_called_default_cannot_shadow_the_bundled_track(tmp_path, monkeypatch):
     """A stray directory must not silently change which corpus a published number came from."""
     from datasets import Dataset
@@ -211,11 +234,13 @@ def test_a_local_directory_called_default_cannot_shadow_the_bundled_track(tmp_pa
     assert len(dataset.resolve("default/bad_ds")) == 259
 
 
+@needs_blob
 def test_the_alias_is_sliceable():
     from senbonzakura import dataset
     assert len(dataset.resolve("default/bad_ds::train[:5]")) == 5
 
 
+@needs_blob
 def test_the_boundary_check_follows_the_alias():
     """Otherwise the one corpus most users run is the one with no boundary enforcement.
 
@@ -232,6 +257,7 @@ def test_the_boundary_check_follows_the_alias():
 
 
 # ── ensure(), the cached extraction ──────────────────────────────────────────────
+@needs_blob
 def test_ensure_extracts_once_and_reuses_it(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     first = bundled.ensure(log=lambda *a: None)
@@ -242,6 +268,7 @@ def test_ensure_extracts_once_and_reuses_it(tmp_path, monkeypatch):
     assert (second / "track.json").stat().st_mtime_ns == stamp, "it re-extracted needlessly"
 
 
+@needs_blob
 def test_ensure_recovers_from_an_abandoned_unpack(tmp_path, monkeypatch):
     """A run killed mid-extraction must not wedge every later run."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
@@ -254,6 +281,7 @@ def test_ensure_recovers_from_an_abandoned_unpack(tmp_path, monkeypatch):
     assert not stale.exists()
 
 
+@needs_blob
 def test_ensure_replaces_a_cache_without_a_manifest(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     target = bundled.cache_dir()

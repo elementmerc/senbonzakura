@@ -62,13 +62,15 @@ are inferred rather than stated.
 :::
 
 ::: danger If you hold a copy of this track from before 2026-07-30, check it
-An earlier export was labelled "clean" and was not. Measured on 2026-08-16: **189 of its 200
+An earlier export, `ops-malware/senbon-track-35axis-clean`, was labelled "clean" and was not. Measured on 2026-08-16: **189 of its 200
 harmful evaluation rows, and all 196 harmless ones, were sitting inside its own fitting set**.
 The repair landed on 2026-07-30 and that export was never refreshed, so for six weeks its name
 promised the opposite of its contents.
 
-The published track is the repaired one, verified at zero overlap on both sides. Check any copy
-you already have rather than trusting what it is called:
+The published track,
+[`ops-malware/senbonzakura-dataset`](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset),
+is the repaired one, verified at zero overlap on both sides. Check any copy you already have
+rather than trusting what it is called:
 
 ```sh
 python -m senbonzakura.track --out mytrack --audit

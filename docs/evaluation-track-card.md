@@ -8,7 +8,8 @@ every row came from, and what they are allowed to do with it.
 from existing public datasets. It contains no model outputs, no completions, and no answers to
 any harmful request. It is a measuring instrument, not a corpus of harm.
 
-**The rows are published as a gated dataset, not inside this repository.** Every row came from
+**The rows are published as a gated dataset, not inside this repository:**
+[`ops-malware/senbonzakura-dataset`](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset). Every row came from
 somewhere else, so the track carries the upstream terms forward: it is distributed under
 **CC BY-NC 4.0**, the most restrictive licence in its chain, with attribution to every source
 named below. Access is gated so that taking it is a deliberate act: a reader accepts the

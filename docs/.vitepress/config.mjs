@@ -87,6 +87,7 @@ export default {
           text: 'Read this before quoting a number',
           items: [
             { text: 'What is and is not established', link: '/guide/what-we-know' },
+            { text: 'Who got here first', link: '/guide/prior-art' },
             { text: 'Limits and known defects', link: '/guide/limits' },
           ],
         },

@@ -85,6 +85,27 @@ Both tools get the same corpus, the same trial budget and the same prompt slices
 every model either tool produces is scored afterwards **by one instrument**: our compass, on
 held-out prompts, run by us. Nobody grades their own homework.
 
+::: warning "Same trial budget" is not the same as "same budget", and we had the advantage
+An equal trial count sounds like a fair fight. It isn't quite, because senbonzakura's search
+gets three things Heretic's does not, and all three spend effort a trial count doesn't show:
+
+| What we get | What it does |
+|---|---|
+| A warm-start trial | One configuration is enqueued before the search begins, so trial 1 is an informed guess rather than a random draw |
+| A patience early-stop | The search can stop once the front stops moving, so an equal trial count may not be an equal number of trials *run* |
+| A re-score pass over the top candidates | The best few are measured again and the winner is picked from that, which is a best-of-N selection Heretic has no equivalent of |
+
+So budget is reported three ways rather than one: **trials requested, trials actually run, and
+total generations consumed**. Those are in every arm's artefact, and the third is the one that
+survives all three differences above, because a generation is the unit of work both tools
+actually spend.
+
+**Heretic was not given an equivalent best-of-N pass.** We are saying so rather than adjusting
+for it: the honest position is that our arm had a selection advantage the other did not, and any
+result where we win by less than that advantage is not a result. Where the two tied, this matters
+less; where we lead, read it with this paragraph in mind.
+:::
+
 The slices record which corpus they were cut from, and the run refuses to start if that
 doesn't match the corpus you passed. That guard exists because of a hole found while writing
 the tests: once one tool reads the corpus directly and the other reads slices cut from it,

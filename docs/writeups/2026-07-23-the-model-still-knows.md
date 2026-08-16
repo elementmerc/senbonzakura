@@ -6,6 +6,13 @@ The obvious worry: have you also deleted the part that understood *why* it was r
 
 I tested that. It took three tries, because the first two tests were broken. This writeup covers what I found, what I got wrong, and how I fixed it.
 
+> **These seven numbers are IN-SAMPLE and are not comparable with anything measured since.**
+> They were scored on prompts that the fitting set also contained, before the corpus was
+> repaired on 2026-07-30 and before the harmful arm was held out. Any table placing them beside
+> a held-out figure is comparing two different measurements. They are kept here because the
+> writeup is a record of what was believed at the time, not because they are usable.
+
+
 ## How the test works
 
 - Take 200 harmful requests and 200 harmless ones.

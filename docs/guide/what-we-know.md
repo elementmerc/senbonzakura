@@ -82,16 +82,32 @@ it previously found one.
 The feature now does something. That is not the same as the claim being true, and the
 README won't say otherwise until two things are measured.
 
-**Do the extra directions carry refusal, or do they carry topic?** The threshold that was
-meant to answer this now rejects nothing at all: all 678 candidates scored between 0.90 and
-9.02 against a bar of 0.5. It has swapped failure modes, not started working. A metal
-detector that beeps continuously is no more useful than one that never beeps.
+**Do the extra directions carry refusal, or do they carry topic?** Still open, but for a
+narrower reason than before.
 
-Underneath the missing check sits a real hazard. Cluster your harmful
-prompts and one cluster will be about, say, explosives. That cluster separates from the
-harmless prompts partly *because it's about explosives*, not because of anything to do with
-refusal. Cut along it and you haven't removed the model's reluctance, you've removed its
-chemistry.
+The threshold meant to answer this rejected nothing at all: all 678 candidates scored between
+0.90 and 9.02 against a bar of 0.5. On 2026-08-16 we found out why, and it wasn't leniency. A
+candidate direction is a cluster's mean minus the harmless mean, and the score judging it was a
+difference of those same means, computed on those same rows. It was asking whether the quantity
+a vector was built to maximise is large along that vector. It cannot come out small. The bar was
+never doing anything, on any run, ever.
+
+That's fixed. Each candidate is now fitted on half its rows and scored on the half it never saw,
+and the threshold has a measured floor beside it: directions built from random subsets of the
+harmful prompts, carrying nothing, scored through the identical path. A candidate has to beat
+the best of them.
+
+**What's still open is the part the fix doesn't reach.** A held-out score says a direction
+separates harmful prompts from harmless ones. It doesn't say *why*. Cluster your harmful prompts
+and one cluster will be about, say, explosives. That cluster separates from the harmless prompts
+partly because it's about explosives, not because of anything to do with refusal, and it
+separates just as well on rows it never saw. Cut along it and you haven't removed the model's
+reluctance, you've removed its chemistry.
+
+Telling those apart needs a harmless set matched to the harmful one by *topic*, so the subject
+matter is held still and refusal is the only thing left to vary. The hook exists
+(`--harmless-matched`); the partitioned set behind it does not yet. Until it does, this question
+stays open and nothing here claims otherwise.
 
 **Does removing several directions beat removing one?** We ran it, and the answer on the one
 model we can measure properly is **no**. See the next section.
@@ -119,9 +135,11 @@ Drop the worst two-direction seed as an outlier and the result gets *stronger*, 
 
 **What it doesn't say.** This is Qwen3-1.7B alone. Refusal geometry may differ on larger models
 or on other families, and the honest position is that the question is open elsewhere and closed
-here. It also doesn't rescue the threshold problem above: these directions were still selected
-by a filter that rejects nothing, so "two directions" means "two directions this tool chose",
-not "two directions known to carry refusal".
+here. It also doesn't rescue the threshold problem above: these arms ran before the held-out
+score existed, so their directions were selected by a filter that could not reject anything at
+all. "Two directions" means "two directions this tool chose", not "two directions known to carry
+refusal". A re-run under the fixed filter may select different directions, and this table is the
+old filter's answer until it does.
 
 **Why publish a negative result about your own headline feature?** Because the alternative is
 waiting for a friendlier model, and a project whose whole argument is that other people's

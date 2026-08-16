@@ -171,6 +171,27 @@ direction** measured the same way, because a number with no floor beside it can'
 **Do the fitted directions beat random ones?** Same run, extra directions replaced with random
 ones. If random does as well, the fitted ones weren't carrying anything.
 
+::: tip The same idea, one layer deeper, inside the extractor
+Before a direction is ever ablated, it has to get past a filter that asks whether it separates
+harmful prompts from harmless ones. That filter printed *"rejected NONE of 109 candidates"* on
+every run this project ever did, and that was read as a generous threshold.
+
+It wasn't. A candidate direction is a cluster's mean minus the harmless mean, and the score
+judging it was a difference of those same means over those same rows. It was asking whether the
+quantity a vector was built to maximise is large along that vector. It always is.
+
+So the score is now **held out**: each candidate is fitted on half the rows and scored on the
+half it never saw. And the threshold now has a **measured floor** beside it, exactly like the
+compass's null panel: directions built from random subsets of the harmful prompts, carrying
+nothing, are scored through the identical path, and a candidate must beat the best of them.
+Both numbers land in `abliteration.json`.
+
+What that buys is narrower than it sounds, and the run says so: it establishes that a kept
+direction separates held-out harmful prompts from held-out harmless ones. **It still does not
+establish that the direction carries refusal rather than topic.** That needs a topic-matched
+harmless set, which holds the subject matter still; `--harmless-matched` is where that goes.
+:::
+
 **Is removing several better than removing one?** Direction count swept against cut strength, and
 compared **at matched refusal removal**.
 

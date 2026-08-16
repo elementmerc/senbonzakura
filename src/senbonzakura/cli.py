@@ -141,6 +141,17 @@ STRUCTURAL_ZERO_FRACTION = 1e-3
 #: and ablating it would strip whatever they happen to be about.
 MIN_CLUSTER_ROWS = 8
 
+#: Each side of the held-out split needs at least this many rows before a Cohen's d computed over
+#: it means anything. A cluster at MIN_CLUSTER_ROWS splits into exactly two halves of this size,
+#: so the two constants are deliberately in step: raising MIN_CLUSTER_ROWS without raising this
+#: buys nothing, and raising this without raising that silently rejects every smallest cluster.
+MIN_HELD_OUT_ROWS = 4
+
+#: How many meaningless directions are measured per layer to give the threshold a floor. Each one
+#: costs a mean and a projection, no forward pass, so this is cheap; four is enough for the
+#: maximum to be a stable summary without the per-layer cost becoming visible.
+NULL_DIRECTIONS_PER_LAYER = 4
+
 # The "worse than anything real" score, used to keep damaged / unmeasured trials out of the running
 # for best. A true infinity so no finite objective can ever tie or beat it.
 WORST_SCORE = float("inf")
@@ -164,6 +175,75 @@ def _axis_separation(bad, good, v):
     md = (pb.mean() - pg.mean()).abs()
     pooled = ((pb.var(unbiased=False) + pg.var(unbiased=False)) / 2).clamp_min(1e-12).sqrt()
     return (md / pooled).item()
+
+
+def _halves(n, seed):
+    """Split n row indices into two disjoint halves, the same way every time for a given seed.
+
+    Seeded through an explicit generator rather than the global RNG, because the caller runs
+    inside a search whose own draws would otherwise decide which rows a direction was fitted on,
+    making a rerun of the same trial a different measurement.
+    """
+    g = torch.Generator().manual_seed(int(seed) & 0x7FFFFFFF)
+    perm = torch.randperm(int(n), generator=g)
+    return perm[: int(n) // 2], perm[int(n) // 2:]
+
+
+def _held_out_separation(bad_rows, good_fit, good_score, basis, seed):
+    """How well the direction these rows propose separates rows it was NOT fitted on.
+
+    THE DEFECT THIS REPLACES, because it is the whole reason the filter was worthless.
+
+    A cluster's candidate direction is its own mean minus the harmless mean. Scoring that
+    direction with a difference of those same means, on those same rows, asks whether the
+    quantity a vector was built to maximise is large along that vector. It is, always, by
+    construction. That is why every run printed "rejected NONE of N candidates": the threshold
+    was not lenient, it was measuring something that cannot come out small.
+
+    So the direction is fitted on half the cluster's rows against half the harmless rows, and
+    scored on the halves it never saw. A direction that encodes a real contrast survives the
+    move; one that encodes the particular rows it was shown does not.
+
+    Returns None when either half is too small to mean anything, so the caller drops the
+    candidate rather than reading a Cohen's d computed over three rows.
+    """
+    n = int(bad_rows.shape[0])
+    fit_idx, score_idx = _halves(n, seed)
+    if len(fit_idx) < MIN_HELD_OUT_ROWS or len(score_idx) < MIN_HELD_OUT_ROWS:
+        return None
+    v = _orth_to(bad_rows[fit_idx].mean(0) - good_fit.mean(0), basis)
+    norm = v.norm()
+    if norm < 1e-6:
+        return None
+    return _axis_separation(bad_rows[score_idx], good_score, v / norm)
+
+
+def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null):
+    """What a direction carrying nothing scores, measured through the identical path.
+
+    The threshold above it was picked once and never checked against a measurement, which is the
+    same failure the compass had before its null panel: a number with no floor beside it cannot
+    be read. So the floor is measured rather than assumed.
+
+    A null candidate is built from a RANDOM subset of the harmful rows of the same size as the
+    clusters being judged. Its mean is the harmful cloud's mean plus sampling noise, so once it
+    is orthogonalised against the basis, which already holds the global difference-of-means, what
+    remains is noise and nothing else. Whatever such a direction scores is what this statistic
+    hands out for free, and a real candidate has to beat it.
+
+    Returns (floor, samples). The floor is the BEST any null reached, not their average: a
+    candidate that merely beats a typical meaningless direction is not evidence, and with a
+    handful of draws the maximum is the honest summary.
+    """
+    seps = []
+    for j in range(n_null):
+        g = torch.Generator().manual_seed((int(seed) + 7919 * (j + 1)) & 0x7FFFFFFF)
+        idx = torch.randperm(int(bad_all.shape[0]), generator=g)[:size]
+        s = _held_out_separation(bad_all[idx], good_fit, good_score, basis,
+                                 int(seed) + 104729 * (j + 1))
+        if s is not None:
+            seps.append(float(s))
+    return (max(seps) if seps else 0.0), seps
 
 
 def _available_ram_bytes():
@@ -1364,6 +1444,12 @@ class Abliterator:
         # axis can clear the threshold has to come from all of them, not from the first few.
         axes_measured_total = 0
         axes_rejected_total = 0
+        # Of those rejections, the ones that cleared the fixed constant and still lost to a
+        # direction carrying nothing. Recorded apart because it is the only number that says the
+        # null floor did any work; a total alone cannot distinguish a filter with a measured floor
+        # from a filter with a lucky constant.
+        axes_rejected_by_null = 0
+        layer_null_floors = [None] * (NL + 1)
         hedge_applied = [False] * (NL + 1)
         max_sep_seen = 0.0
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
@@ -1433,6 +1519,19 @@ class Abliterator:
                 # separates BY CONSTRUCTION, and what survives orthogonalisation against d0 is
                 # precisely the part of that cluster's refusal the global mean difference misses.
                 # That residue is what a second direction is supposed to be.
+                # The harmless rows are split once per layer and the halves are used for every
+                # candidate at that layer, so two candidates are judged against the same rows and
+                # their scores are comparable. Splitting per candidate would make each score a
+                # measurement on a different exam.
+                gi_fit, gi_score = _halves(int(Rg[li].shape[0]), args.seed)
+                good_fit, good_score = Rg[li][gi_fit], Rg[li][gi_score]
+                held_out_usable = (len(gi_fit) >= MIN_HELD_OUT_ROWS
+                                   and len(gi_score) >= MIN_HELD_OUT_ROWS)
+                if not held_out_usable and li == self.lo:
+                    log(f"  NOTE: {int(Rg[li].shape[0])} harmless prompts cannot be split into "
+                        f"two halves of {MIN_HELD_OUT_ROWS}, so candidate directions are scored "
+                        f"IN SAMPLE and the refusal-separation filter is not evidence about "
+                        f"them. Raise --dir-prompts to at least {2 * MIN_HELD_OUT_ROWS}.")
                 labels = _kmeans_labels(Rb[li], n_clusters, args.seed + li)
                 # Largest clusters first, ties broken by cluster id, so the candidate ORDER does
                 # not depend on dictionary iteration or on how many directions were requested.
@@ -1443,27 +1542,56 @@ class Abliterator:
                 # rather than first-past-the-post is what makes a K comparison honest: the
                 # candidate SET is identical whatever K is, so K is a budget and nothing else.
                 # The withdrawn five-seed comparison failed for exactly the opposite reason.
-                scored, dropped = [], 0
-                for size, c in sizes:
-                    if size < MIN_CLUSTER_ROWS:
-                        continue      # a mean over three rows is noise wearing a direction's hat
+                eligible = [(size, c) for size, c in sizes if size >= MIN_CLUSTER_ROWS]
+                # The floor a candidate has to clear, measured rather than assumed. Nulls are
+                # drawn at the size of a typical eligible cluster so they are judged at the same
+                # scale: Cohen's d over 8 rows is noisier than over 80, and a floor measured at
+                # the wrong size would be a floor for a different question.
+                null_floor = 0.0
+                if held_out_usable and eligible:
+                    null_size = sorted(s for s, _ in eligible)[len(eligible) // 2]
+                    null_floor, _null_samples = _null_separation_floor(
+                        Rb[li], good_fit, good_score, basis, null_size,
+                        args.seed + li, NULL_DIRECTIONS_PER_LAYER)
+                    layer_null_floors[li] = round(float(null_floor), 4)
+                threshold = max(MIN_AXIS_SEPARATION, float(null_floor))
+
+                scored, dropped, dropped_by_null = [], 0, 0
+                for _size, c in eligible:
                     rows = Rb[li][labels == c]
+                    # Judged out of sample, then fitted on everything. The decision has to be made
+                    # on rows the candidate never saw or it is not a decision; the direction that
+                    # is actually applied should still use every row available to estimate it.
+                    if held_out_usable:
+                        sep = _held_out_separation(rows, good_fit, good_score, basis,
+                                                   args.seed + li + int(c))
+                        if sep is None:
+                            continue
+                    else:
+                        # No usable harmless split. Scored in sample, which the note above already
+                        # said is not evidence; kept rather than skipped so a small-corpus run
+                        # still produces directions instead of silently becoming a K=1 run.
+                        v_probe = _orth_to(rows.mean(0) - mg[li], basis)
+                        if v_probe.norm() < 1e-6:
+                            continue
+                        sep = _axis_separation(rows, Rg[li], v_probe / v_probe.norm())
                     v = _orth_to(rows.mean(0) - mg[li], basis)
                     n = v.norm()
                     if n < 1e-6:
                         continue      # this cluster's refusal is entirely inside what d0 already cuts
                     v = v / n
-                    # Scored against the CLUSTER's rows, not the whole harmful cloud. Against the
-                    # whole cloud the global mean is orthogonal to v by construction and the score
-                    # collapses to zero again, which is the trap the old code fell into.
-                    sep = _axis_separation(rows, Rg[li], v)
                     axes_measured_total += 1
                     max_sep_seen = max(max_sep_seen, abs(float(sep)))
                     if len(axis_seps[li]) < MAX_RECORDED_AXES:
                         axis_seps[li].append(round(float(sep), 4))
-                    if sep < MIN_AXIS_SEPARATION:
+                    if sep < threshold:
                         dropped += 1
                         axes_rejected_total += 1
+                        if sep >= MIN_AXIS_SEPARATION:
+                            # Cleared the fixed constant and lost to a direction carrying nothing.
+                            # Counted apart because it is the case the null was added to catch.
+                            dropped_by_null += 1
+                            axes_rejected_by_null += 1
                         continue
                     scored.append((float(sep), int(c), v))
 
@@ -1482,8 +1610,10 @@ class Abliterator:
                     kept.append(w); basis.append(w)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
                     log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
-                        f"refusal-separation threshold (d<{MIN_AXIS_SEPARATION}); they carried "
-                        f"content, not refusal")
+                        f"refusal-separation threshold (d<{threshold:.4f}, the larger of the "
+                        f"fixed {MIN_AXIS_SEPARATION} and a measured null floor of "
+                        f"{null_floor:.4f}); {dropped_by_null} of them cleared the constant and "
+                        f"lost to a direction carrying nothing")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         self.dirs_multi = dirs_multi.to(torch.bfloat16)      # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)
@@ -1514,6 +1644,10 @@ class Abliterator:
         rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
         self.best_rejected_separation = max(rejected) if rejected else None
         self.axes_rejected_total = axes_rejected_total
+        self.axes_rejected_by_null = axes_rejected_by_null
+        self.layer_null_floors = layer_null_floors
+        floors = [f for f in layer_null_floors if f is not None]
+        self.null_separation_floor = max(floors) if floors else None
         self.hedge_applied_layers = int(sum(hedge_applied))
         if hedge_md is not None and self.hedge_applied_layers < NL + 1:
             log(f"  NOTE: the hedging direction was applied at {self.hedge_applied_layers} of "
@@ -1527,14 +1661,27 @@ class Abliterator:
         # first for the project's whole history and the second within an hour of fixing it. The
         # rejection rate is therefore reported on every run rather than inspected when something
         # already looks wrong, because "the filter exists" was taken for "the filter works" twice.
+        # The floor the threshold was actually held to, printed on every run whatever the outcome.
+        # Until 2026-08-16 the threshold was a constant nobody had ever compared against a
+        # measurement, and the filter it governed rejected nothing on every run for the project's
+        # whole history. A floor that is never shown is a floor nobody checks.
+        if self.null_separation_floor is not None:
+            log(f"  null-direction floor: a direction built from a random subset of the harmful "
+                f"rows, carrying nothing, scores up to {self.null_separation_floor:.4f} through "
+                f"the same held-out path. Candidates were held to "
+                f"max({MIN_AXIS_SEPARATION}, that), and {axes_rejected_by_null} cleared the "
+                f"constant but not the floor.")
         if axes_measured_total:
             reject_rate = axes_rejected_total / axes_measured_total
             if reject_rate == 0.0:
                 log(f"  NOTE: the refusal-separation filter rejected NONE of "
-                    f"{axes_measured_total} candidate directions (all scored above "
-                    f"{MIN_AXIS_SEPARATION}). It is not discriminating, so it is not evidence "
-                    f"that the kept directions carry refusal rather than topic. See "
-                    f"private/research/2026-08-03-the-clustered-extractor.md.")
+                    f"{axes_measured_total} candidate directions. Every one beat both the fixed "
+                    f"{MIN_AXIS_SEPARATION} and the measured null floor on rows it was not "
+                    f"fitted on, which is a stronger statement than this note used to carry, but "
+                    f"a filter that rejects nothing still discriminates nothing. It is evidence "
+                    f"the candidates separate held-out harmful from held-out harmless prompts; "
+                    f"it is NOT evidence they carry refusal rather than topic, which needs a "
+                    f"topic-matched harmless set (--harmless-matched).")
             elif reject_rate == 1.0:
                 log(f"  NOTE: the refusal-separation filter rejected ALL "
                     f"{axes_measured_total} candidate directions, so no candidate could be kept "
@@ -2421,6 +2568,19 @@ class Abliterator:
                        "max_axis_separation": getattr(self, "max_axis_separation", None),
                        "best_rejected_separation": getattr(self, "best_rejected_separation", None),
                        "axes_rejected_total": getattr(self, "axes_rejected_total", None),
+                       # The floor the threshold was measured against, and how much work it did.
+                       # `axis_separation_threshold` alone records a constant that was chosen
+                       # once and never checked; these record what a direction carrying nothing
+                       # scored on the same rows, which is the only thing that makes the constant
+                       # readable. Per layer as well as overall, because a floor that varies by
+                       # layer and a floor that does not are different findings.
+                       "null_separation_floor": getattr(self, "null_separation_floor", None),
+                       "null_separation_floor_per_layer": getattr(self, "layer_null_floors", None),
+                       "axes_rejected_by_null": getattr(self, "axes_rejected_by_null", None),
+                       # Candidate directions are fitted on half the rows and scored on the other
+                       # half. Recorded because every separation figure written before this was
+                       # in-sample and therefore could not come out small.
+                       "separation_held_out": True,
                        # How many layers actually got the hedging direction. It is gated on a
                        # free slot, so K=1 gets none of it and a K comparison would be confounded.
                        "hedge_applied_layers": getattr(self, "hedge_applied_layers", None),

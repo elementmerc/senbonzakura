@@ -1149,6 +1149,11 @@ def test_a_filter_that_rejects_nothing_says_so(base_args, tiny_model, tiny_tok, 
     4.99 against a threshold of 0.5. A guard that accepts everything is not evidence that what
     it accepted carries refusal, and nobody was reading the rejection rate because the guard
     existed and was assumed to work.
+
+    The 2026-08-16 rework made the score held out and gave the threshold a measured null floor,
+    which makes a zero rejection rate a stronger statement than it was. It does not make it
+    evidence, and the note has to keep saying so: separating held-out harmful from held-out
+    harmless prompts is not the same claim as carrying refusal rather than topic.
     """
     lines = []
     base_args.max_directions = 3
@@ -1160,7 +1165,8 @@ def test_a_filter_that_rejects_nothing_says_so(base_args, tiny_model, tiny_tok, 
     assert a.axes_rejected_total == 0
     joined = "\n".join(lines)
     assert "rejected NONE" in joined
-    assert "not discriminating" in joined
+    assert "discriminates nothing" in joined
+    assert "refusal rather than topic" in joined
 
 
 def test_a_filter_that_rejects_everything_says_so(base_args, tiny_model, tiny_tok, monkeypatch):
@@ -1194,6 +1200,71 @@ def test_a_discriminating_filter_says_nothing(base_args, tiny_model, tiny_tok, m
     assert 0 < a.axes_rejected_total < a.axes_measured_total
     joined = "\n".join(lines)
     assert "rejected NONE" not in joined and "rejected ALL" not in joined
+
+
+def test_the_null_floor_is_measured_and_reported(base_args, tiny_model, tiny_tok, monkeypatch):
+    """The threshold was a constant nobody had checked against a measurement. Now it has a floor.
+
+    Reported on every run whatever the outcome, because a floor that only prints when something
+    already looks wrong is a floor nobody reads. That is the same mistake the compass made with
+    its single length null.
+    """
+    lines = []
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert a.null_separation_floor is not None
+    assert "null-direction floor" in "\n".join(lines)
+    measured = [f for f in a.layer_null_floors if f is not None]
+    assert measured, "no layer measured a floor, so the threshold is still unchecked"
+
+
+def test_a_candidate_that_beats_the_constant_and_loses_to_the_null_is_counted_apart(
+        base_args, tiny_model, tiny_tok, monkeypatch):
+    """The one number that says the null floor did any work.
+
+    Every separation is pinned above the fixed threshold, so nothing can be rejected by the
+    constant. Anything rejected here was rejected because a direction carrying nothing scored
+    the same, which is exactly the case the constant alone could never catch.
+    """
+    lines = []
+    base_args.max_directions = 3
+    _sep_sequence(monkeypatch, [cli.MIN_AXIS_SEPARATION + 1.0])
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+
+    # With every score identical the null floor equals the candidate score, so nothing is below
+    # it and the count is zero. The property under test is that the counter exists and is exact,
+    # not that this fixture trips it.
+    assert a.axes_rejected_by_null == 0
+    assert a.axes_rejected_by_null <= a.axes_rejected_total
+
+
+def test_a_corpus_too_small_to_hold_out_says_the_filter_is_not_evidence(
+        base_args, tiny_model, tiny_tok, monkeypatch):
+    """Degrading to an in-sample score is allowed; doing it quietly is not.
+
+    A run on a small corpus should still produce directions rather than silently collapsing to
+    K=1. What it must not do is report a separation figure that reads like the held-out one.
+    """
+    lines = []
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    # Harmless rows too few to split into two usable halves.
+    a.Rg_rows = None
+    orig = cli._halves
+
+    def stingy(n, seed):
+        return orig(min(int(n), 3), seed)
+
+    monkeypatch.setattr(cli, "_halves", stingy)
+    a.extract_directions("bad", "good", None, "good")
+
+    assert "IN SAMPLE" in "\n".join(lines)
 
 
 def test_the_separation_of_every_rejected_axis_is_recorded(

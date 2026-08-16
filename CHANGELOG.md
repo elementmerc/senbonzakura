@@ -20,6 +20,15 @@ same as showing they carry refusal, and this release does not show that. Any dir
 from a version before this one is not trustworthy, and the comparison that was meant to prove
 several directions beat one is withdrawn.
 
+**The check itself was then found to be measuring nothing, for a second reason.** It scored each
+candidate direction on the very rows the direction was built from, so it was asking whether the
+quantity a vector was built to maximise is large along that vector. It always is, which is why
+the filter accepted every candidate on every run. Candidates are now fitted on half their rows
+and scored on the half they never saw, and the threshold has a floor measured from directions
+that carry nothing, so a candidate has to beat what the statistic hands out for free. Both
+numbers are recorded in every result file. This still does not show a direction carries refusal
+rather than topic, and the run says so in those words.
+
 **And when we finally ran that comparison properly, more directions lost.** One direction
 against two, five seeds each, everything else held still, every model scored afterwards by one
 instrument on 200 prompts nothing was fitted or selected on:
@@ -77,6 +86,16 @@ not comparable to what this version produces.
   many rows could still be reported cleanly. Add `--fail-on-contamination` to gate on it.
 - The evaluation track's card now records that AdvBench is inside the track, that how much of
   it reached the fitting side is unmeasured, and how to check before quoting such a figure.
+- `tools/build_track.py` fetches the public corpora this project measures on, at pinned
+  revisions, and writes the two prompt files the track builder splits. No prompt rows ship in
+  this repository: two of the three upstream datasets declare no licence at all and the
+  probable root of the harmless side is non-commercial, so the recipe is what can honestly be
+  published. It refuses to run if an upstream's declared licence has moved since the recipe was
+  written.
+- The dataset card now traces every source to what it actually declares, checked against the
+  Hub rather than remembered, and records which links are inferred. It also records that the
+  exact corpus behind the published numbers cannot be rebuilt by anyone: harmless top-ups were
+  added by hand and never recorded.
 
 ### Benchmark
 

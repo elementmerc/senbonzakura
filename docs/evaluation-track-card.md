@@ -104,3 +104,29 @@ These are recorded because a measuring instrument with undisclosed limits is wor
 
 If you use the track, cite AdvBench (above) and this repository. If you publish numbers from
 it, publish the harmless arm beside them.
+
+## Disclaimer
+
+This track is measurement material. It exists so that a claim about refusal removal can be
+checked by somebody who does not trust the person making it, which is the only kind of checking
+worth having.
+
+**What is supplied is prompts, not answers.** Every row is a request. There are no completions,
+no harmful outputs, and nothing here that a model could be trained to imitate. The harmful
+partition is useful for asking a model a question and seeing what it does; it is not a corpus of
+harmful knowledge.
+
+**No warranty of any kind is given**, on the data's accuracy, its labelling, its fitness for any
+purpose, or the correctness of any number measured with it. The known limitations above are the
+ones that have been found, not the ones that exist.
+
+**Responsibility for use sits with the user.** Downloading this track means taking on whatever
+obligations attach to it: the upstream licences recorded above, the acceptable-use terms of any
+model it is pointed at, and the law where the user is. Neither the author of this repository nor
+the authors of the upstream sources are responsible for what anyone does with it, or with any
+model measured or modified using it.
+
+**Abliteration removes safety behaviour wholesale.** That is what it is for and it is the reason
+to be careful. A model with its refusals removed will answer things a deployed model should not,
+and putting one in front of users is a decision with consequences that belong to whoever makes
+it.

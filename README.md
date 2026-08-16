@@ -149,6 +149,13 @@ By design, this is methods and results, not a loaded weapon:
 Abliteration removes safety guardrails wholesale. That is both the point and the
 danger. Use it accordingly.
 
+**Disclaimer.** This software is provided without warranty of any kind, on its correctness, its
+fitness for any purpose, or the accuracy of any number it produces. Responsibility for what is
+done with it, and with any model modified or measured using it, sits with whoever does it. A
+model with its refusals removed will answer things a deployed model should not; putting one in
+front of other people is a decision with consequences that belong to whoever makes it. The
+licence terms of any base model you edit continue to apply to the result.
+
 Note on licences: this tool is **AGPL-3.0-or-later** (it embeds a keyword metric copied from
 Heretic, which is AGPL). Separately, a model
 you abliterate keeps the **base model's** licence and use restrictions: redistributing an

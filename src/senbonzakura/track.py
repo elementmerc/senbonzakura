@@ -437,7 +437,15 @@ def read_manifest(track_dir):
     exists, an older build reading it would take the fields it recognised, ignore whatever
     changed, and slice the datasets confidently at the wrong offsets. Every number
     downstream would come from the wrong rows and nothing would say so.
+
+    `default` resolves to the bundled track, or the boundary check would silently switch off for
+    the one corpus most users will run: the literal path "default/track.json" does not exist, and
+    a missing manifest is a legal state meaning "boundaries unknown". A track that HAS recorded
+    boundaries must never be read as though it had none.
     """
+    if str(track_dir) == dataset.BUNDLED_ALIAS:
+        from . import bundled
+        track_dir = bundled.ensure()
     try:
         m = json.loads((Path(track_dir) / "track.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

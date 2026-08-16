@@ -84,6 +84,12 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The bundled evaluation track. Without this the wheel installs the code and no corpus, and
+# `--track default` fails on an installed package while working in a source checkout, which is
+# the worst shape of bug: it only appears for users.
+[tool.setuptools.package-data]
+senbonzakura = ["data/*.bin"]
+
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]
 

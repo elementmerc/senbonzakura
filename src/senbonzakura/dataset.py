@@ -56,6 +56,10 @@ TABLE_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".parquet"}
 #: `C:\corpus` without guessing.
 _SPLIT_RE = re.compile(r"^(?P<body>.+?)::(?P<split>[A-Za-z0-9_.-]+)(?:\[(?P<slice>[^\]]*)\])?$")
 
+#: The alias for the evaluation track packed inside the package. Checked before the filesystem,
+#: so a directory that happens to be called "default" cannot quietly stand in for it.
+BUNDLED_ALIAS = "default"
+
 #: A Hub id is `owner/name`, optionally `owner/name/subdir`. Anything with a suffix, a leading
 #: dot or an absolute root is a path.
 _HUB_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
@@ -332,6 +336,16 @@ def resolve(spec, *, text_column=None, token=None, streaming=False, limit=None,
     """
     body, split, slice_expr = parse_spec(spec)
     token = token or os.environ.get("HF_TOKEN") or None
+
+    # `default` and `default/<partition>` reach the track packed inside the package. Resolved
+    # before the path check so a stray directory called "default" in the working directory
+    # cannot silently shadow it and change which corpus a published number came from.
+    if body == BUNDLED_ALIAS or body.startswith(BUNDLED_ALIAS + "/"):
+        from . import bundled
+        root = bundled.ensure()
+        rest = body[len(BUNDLED_ALIAS) + 1:] if "/" in body else ""
+        body = str(root / rest) if rest else str(root)
+
     path = Path(body).expanduser()
 
     if path.exists():

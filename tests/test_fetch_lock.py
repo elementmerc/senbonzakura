@@ -53,9 +53,8 @@ def test_a_second_fetcher_refuses_rather_than_joining_in(tmp_path):
     p.start()
     try:
         assert ready.wait(15), "the holder never acquired the lock"
-        with pytest.raises(SystemExit) as e:
-            with fm.exclusive(d, log=lambda *a: None):
-                pass
+        with pytest.raises(SystemExit) as e, fm.exclusive(d, log=lambda *a: None):
+            pass
         msg = str(e.value)
         assert "already writing" in msg
         assert "truncated checkpoint" in msg

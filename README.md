@@ -55,8 +55,8 @@ it out of the weights.
 > idea does not hold.** One direction against two, five seeds each, everything else held still,
 > every model scored afterwards by one instrument on prompts nothing was fitted or selected on:
 > both budgets removed hard refusal, and two directions did about **twice the collateral damage**
-> for no refusal benefit (drift 0.093 against 0.050). More directions cost more and bought
-> nothing.
+> for no refusal benefit: drift 0.093 with a spread of 0.048, against 0.050 with a spread of
+> 0.018. More directions cost more and bought nothing.
 >
 > That is one model, Qwen3-1.7B, and it isn't the last word for every architecture. It is enough
 > to say the headline idea is **unsupported by this project's own evidence**, and we would rather
@@ -72,9 +72,37 @@ it out of the weights.
 > The full account is in the documentation:
 > [what is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know).
 
-The other half of the project is the measurement. Removing a model's refusals is easy; knowing
-whether you also removed its ability to *recognise* harm is not, and that is what the compass is
-for.
+## The compass, which is the half that works
+
+Removing a model's refusals is easy. Knowing whether you also removed its ability to *recognise*
+harm is not, and a tool that cannot tell the two apart will report a lobotomy as a success.
+
+So the compass asks a different question from "did it comply". It puts a harmful request and a
+harmless one to the model and measures how far apart it holds them, then reports the **area under
+the ROC curve**: the chance that a randomly chosen harmful prompt scores above a randomly chosen
+harmless one. 1.0 is perfect separation, 0.5 is a coin.
+
+**Why that rather than counting verdicts.** A model that answers "harmful" to everything scores
+100% on a verdict count and knows nothing. AUC cannot be fooled that way, because it reads the
+ordering rather than the label.
+
+**Every figure carries a seeded bootstrap interval**, and the interval is over *prompt sampling*,
+which is the uncertainty that actually dominates. Re-running on the same machine measures
+floating-point reduction order and lands near zero, which would be a reassuring number about the
+wrong thing.
+
+**Every figure also arrives with the controls that would expose it.** The most useful is a ruler
+that reads nothing but prompt length: if it separates the two arms as well as the compass does,
+the compass is measuring how long the sentences are.
+
+**The honest ceiling.** Nothing has been measured above 3B parameters, and most of the set is
+under 2B. The strongest result in it comes from a 2.61B model, so the ceiling is a real limit on
+what any of this generalises to, not a formality. And below roughly 1B the instrument stops
+working at all: on a 350M model it scored 0.54 with an interval straddling chance, while the
+length-only ruler scored 0.71.
+
+[The compass page](https://elementmerc.github.io/senbonzakura/guide/compass) has the method, and
+a command you can run on data committed to this repository.
 
 ## Install
 

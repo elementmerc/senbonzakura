@@ -77,6 +77,41 @@ tag whose message lacks a `Codename:` line. Ask; never invent one.
 It goes in three places: the annotated tag message, the GitHub Release title
 (`vX.Y.Z — <Codename>`), and the CHANGELOG entry header.
 
+## Refresh the vendored pins. Every release, not when someone remembers.
+
+```sh
+python tools/check_vendor_pins.py
+```
+
+The wheel ships third-party artefacts, and every one of them is pinned. Pinning is what makes a
+build reproducible; it is also how a project comes to ship a year-old dependency with a year of
+known bugs in it. Baseline Section 5's cooldown only says what **not** to adopt, so the operator's
+rule of 2026-08-17 supplies the other half:
+
+> Adopt nothing younger than the cooldown. Adopt everything that has aged past it, at every
+> release.
+
+The check reports one of four things per pin.
+
+| | Meaning | Blocks a release |
+|---|---|---|
+| `ok` | The pin is the newest release that has cleared the cooldown | no |
+| `DUE` | Something newer has aged past the cooldown. Refresh it now | no, but this is the step |
+| `STOP` | The pin is over 90 days old | **yes** |
+| `??` | The upstream could not be reached | no, and it is never read as `ok` |
+
+`DUE` is advisory rather than blocking because the obligation is per release and releases are not
+daily. `STOP` is the backstop for a pin nobody has looked at in a season, which is what
+"we will do it next release" reliably becomes. `??` is a network problem, not a stale pin, and
+failing on it would only teach people to skip the check.
+
+To refresh: update `tag` and `published` in `src/senbonzakura/vendor/pins.json` to what the check
+names, re-run the vendoring tool so the hashes come from files it actually downloaded, and re-run
+this check until it reads `ok`. Never paste a hash from a web page: a hash nobody verified is
+indistinguishable from a correct one right up to the moment it matters.
+
+**Do this before the tests**, since a refreshed binary is a thing the suite should run against.
+
 ## The panel
 
 A promotion to the release branch needs a multi-persona review artefact covering the promoted
@@ -86,10 +121,11 @@ one.
 ## Order
 
 1. Pack the track.
-2. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
-3. Build the wheel; confirm the blob is inside it.
-3a. Fast-forward `main` **before** the PyPI step, or the README banner ships broken.
-4. CHANGELOG entry, with the codename in the header.
-5. Panel artefact covering the range.
-6. Annotated tag with the `Codename:` line.
-7. Push, publish, paste the CHANGELOG into the GitHub Release.
+2. `python tools/check_vendor_pins.py`; refresh any pin it reports as `DUE`.
+3. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
+4. Build the wheel; confirm the blob is inside it.
+4a. Fast-forward `main` **before** the PyPI step, or the README banner ships broken.
+5. CHANGELOG entry, with the codename in the header.
+6. Panel artefact covering the range.
+7. Annotated tag with the `Codename:` line.
+8. Push, publish, paste the CHANGELOG into the GitHub Release.

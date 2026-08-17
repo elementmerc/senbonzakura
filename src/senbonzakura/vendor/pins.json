@@ -1,0 +1,85 @@
+{
+  "schema": "senbonzakura-vendor-pins/1",
+  "cooldown_days": 7,
+  "stale_after_days": 90,
+  "_policy": [
+    "Every pin here is refreshed at every release to the newest upstream version that has",
+    "cleared the cooldown. Adopt nothing young; adopt everything that has aged. The arithmetic",
+    "is in senbonzakura/vendoring.py and the release check is tools/check_vendor_pins.py, so",
+    "this obligation does not depend on anyone remembering it.",
+    "Hashes are recorded by the vendoring tool from what it actually downloaded, never",
+    "transcribed from a web page: a hash copied by hand or by a summarising model is a hash",
+    "nobody verified, and it would be indistinguishable from a correct one until it failed."
+  ],
+  "pins": {
+    "llama.cpp": {
+      "name": "llama.cpp release binaries (llama-quantize)",
+      "repo": "ggml-org/llama.cpp",
+      "tag": "b10355",
+      "published": "2026-08-10T23:15:19Z",
+      "licence": "MIT",
+      "why": [
+        "llama-quantize is the only route to a k-quant. The gguf pip package implements",
+        "quantisation for Q4_0, Q8_0 and BF16 but only DEQUANTISATION for Q4_K, Q5_K and Q6_K",
+        "(checked against gguf 0.19.0), and a Q4_K_M is a mixture of Q4_K and Q6_K. So the",
+        "k-quant algorithms exist in C++ and nowhere else we can reach.",
+        "Reimplementing them in numpy was considered and rejected: the failure mode is a model",
+        "that loads and is quietly slightly worse, which is the defect class this project has",
+        "withdrawn results over twice."
+      ],
+      "assets": {
+        "linux-x86_64": {
+          "file": "llama-b10355-bin-ubuntu-x64.tar.gz",
+          "size": 16544604
+        },
+        "linux-aarch64": {
+          "file": "llama-b10355-bin-ubuntu-arm64.tar.gz",
+          "size": 13415414
+        },
+        "macos-arm64": {
+          "file": "llama-b10355-bin-macos-arm64.tar.gz",
+          "size": 11040935
+        },
+        "macos-x86_64": {
+          "file": "llama-b10355-bin-macos-x64.tar.gz",
+          "size": 11321528
+        },
+        "windows-x86_64": {
+          "file": "llama-b10355-bin-win-cpu-x64.zip",
+          "size": 18427275
+        },
+        "windows-arm64": {
+          "file": "llama-b10355-bin-win-cpu-arm64.zip",
+          "size": 12263344
+        }
+      },
+      "sha256": {},
+      "note": [
+        "CPU archives only. Quantisation is CPU work, so the CUDA, Vulkan, SYCL and ROCm builds",
+        "would add hundreds of megabytes per wheel for nothing."
+      ],
+      "chosen_by": "tools/check_vendor_pins.py on 2026-08-17: the newest release that had cleared the 7-day cooldown. It was chosen over b10250, which a human had picked by eye, and over b10456, which was hours old."
+    },
+    "convert_hf_to_gguf": {
+      "name": "llama.cpp convert_hf_to_gguf.py",
+      "repo": "ggml-org/llama.cpp",
+      "tag": "b10355",
+      "published": "2026-08-10T23:15:19Z",
+      "licence": "MIT",
+      "why": [
+        "Not shipped in the gguf pip package (checked: its scripts/ holds only the dump, hash,",
+        "endian, metadata and editor tools). It is a single pure-Python file that depends on the",
+        "gguf package, so vendoring it costs a file rather than a toolchain.",
+        "The cost of vendoring is that architecture support freezes at the pinned version, which",
+        "is exactly why the refresh-every-release rule applies to it: a new architecture landing",
+        "upstream reaches us at the next release rather than never."
+      ],
+      "assets": {
+        "any": {
+          "file": "convert_hf_to_gguf.py"
+        }
+      },
+      "sha256": {}
+    }
+  }
+}

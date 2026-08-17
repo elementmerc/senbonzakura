@@ -40,6 +40,8 @@ a log, or an issue.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import hashlib
 import json
 import re
 import shutil
@@ -49,6 +51,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 from . import dataset  # every accepted way of saying "the prompts are here"
+from .crashsafe import atomic_write, provenance
 
 # Rows shorter than this after normalisation are dropped as noise rather than prompts.
 # Four is deliberate and low: "What is 2+2?" is a legitimate harmless prompt at twelve
@@ -714,7 +717,133 @@ def audit(track: Path, labels=None) -> list[str]:
     return check(harmful, harmless, labels)
 
 
+#: What a promotion stamp is called, inside the track it describes.
+PROMOTED = "PROMOTED.json"
+
+
+def dataset_digest(path):
+    """A stable digest of a dataset directory's contents, for the promotion stamp.
+
+    Over the FILE BYTES, sorted by name, not over the rows read back through `datasets`. Reading
+    rows would make the digest depend on the library version that read them, and the question a
+    stamp answers is "are these the same bytes I checked", which is a question about the disk.
+    """
+    h = hashlib.sha256()
+    for f in sorted(Path(path).rglob("*")):
+        if f.is_file():
+            h.update(f.relative_to(path).as_posix().encode())
+            h.update(f.read_bytes())
+    return h.hexdigest()
+
+
+def promote(track, *, labels=None, force=False, now=None, log=print):
+    """Re-verify a built track and stamp it as the one measurements may come from.
+
+    PROMOTION IS A GATE, NOT A COPY. Nothing is moved and nothing is duplicated; what it produces
+    is a statement that on this date, this track passed the same checks the builder applies, with
+    these row counts and these digests.
+
+    That is the whole point. `senbon-track-35axis-clean` was the corpus this project measured on
+    for months, and 189 of its 200 harmful eval rows sat inside its own fitting set. It had been
+    built before the checks existed, so nothing ever re-asked the question, and every refusal rate
+    taken through it described memorisation. A stamp that has to be earned is what makes "the
+    promoted track" mean something other than "the track we happen to be using".
+
+    It re-runs the checks rather than trusting the build, because the failure being guarded is a
+    track that was fine when written and is not fine now: rebuilt in place, partially copied,
+    or a manifest edited to make a flag violation go away.
+    """
+    track = Path(track)
+    m = read_manifest(track)
+    if m is None:
+        raise SystemExit(
+            f"{track} records no track.json, so where its partition boundaries fall is unknown "
+            f"and nothing can be verified about it. A track built before the builder existed "
+            f"cannot be promoted; rebuild it.")
+
+    failures = audit(track, labels)
+    if failures:
+        log(f"PROMOTE_REFUSED {track}: this track is not one a published number may come from:")
+        for f in failures:
+            log(f"  {f}")
+        if not force:
+            raise SystemExit(1)
+        # --force exists for a track whose only failure is one an operator has looked at and
+        # accepted in writing. The stamp records that it was forced, so a reader of the artefact
+        # can tell a clean promotion from an overridden one.
+        log("  --force given: promoting anyway, and recording that it was forced")
+
+    if labels is None:
+        # Said out loud because an audit without labels cannot run the strata check, which is the
+        # mirror image of leakage: an arm narrower than its count claims. Passing without having
+        # asked is not the same as passing.
+        log("  note: no --labels, so the per-stratum coverage check did not run")
+
+    counts = (m.get("counts") or {})
+    stamp = {
+        "schema": "senbonzakura-track-promotion/1",
+        "promoted_at": now or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "track": str(track.resolve()),
+        "counts": counts,
+        "skip_harmful": m.get("skip_harmful"),
+        "skip_harmless": m.get("skip_harmless"),
+        "forced": bool(failures) and force,
+        "failures_accepted": failures if (failures and force) else [],
+        "labels_checked": labels is not None,
+        "digests": {name: dataset_digest(track / name)
+                    for name in ("bad_ds", "bad_eval_ds", "good_ds")
+                    if (track / name).is_dir()},
+        "provenance": provenance(),
+    }
+    with atomic_write(track / PROMOTED) as f:
+        json.dump(stamp, f, indent=2, sort_keys=True)
+    log(f"TRACK_PROMOTED {track}")
+    log(f"  harmful {counts.get('harmful')}  harmless {counts.get('harmless')}")
+    log(f"  measure with: --skip-harmful {m.get('skip_harmful')} "
+        f"--skip-harmless {m.get('skip_harmless')}")
+    log(f"  stamp: {track / PROMOTED}")
+    return stamp
+
+
+def promotion_of(track):
+    """The promotion stamp on a track, or None. None means unpromoted, which is a real state."""
+    p = Path(track) / PROMOTED
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return doc if doc.get("schema", "").startswith("senbonzakura-track-promotion/") else None
+
+
+def promotion_is_current(track):
+    """Does the stamp still describe the bytes on disk? Returns (ok, reason).
+
+    A stamp is a claim about a moment. Rebuilding a track in place leaves the stamp behind saying
+    the old thing passed, which is worse than no stamp: it is a check that has stopped checking
+    while still reading as green.
+    """
+    stamp = promotion_of(track)
+    if stamp is None:
+        return False, "not promoted"
+    for name, recorded in (stamp.get("digests") or {}).items():
+        d = Path(track) / name
+        if not d.is_dir():
+            return False, f"{name} is gone since promotion"
+        if dataset_digest(d) != recorded:
+            return False, (f"{name} has changed since it was promoted on "
+                           f"{stamp.get('promoted_at', '?')}, so the stamp describes a track that "
+                           f"is no longer here")
+    return True, f"promoted {stamp.get('promoted_at', '?')}"
+
+
 def main(argv=None):
+    # Subcommands, added without disturbing the flat form. Every run spec and every README
+    # example says `senbonzakura track --harmful X --out Y`, and a tool that renames its own
+    # entry point breaks the record of what was already run.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("promote", "verify"):
+        return _promote_main(argv)
+
     a = build_parser().parse_args(argv)
     out = Path(a.out)
 
@@ -777,6 +906,42 @@ def main(argv=None):
     print(f"  measure with: --skip-harmful {m['skip_harmful']} --skip-harmless {m['skip_harmless']} "
           f"--n {min(m['n_harmful'], m['n_harmless'])}")
     return m
+
+
+def _promote_main(argv):
+    sub = argv[0]
+    ap = argparse.ArgumentParser(
+        prog=f"senbonzakura track {sub}",
+        description=("Re-verify a track and stamp it as one measurements may come from."
+                     if sub == "promote" else
+                     "Re-verify a track and report, changing nothing."))
+    ap.add_argument("track", help="the track directory")
+    ap.add_argument("--labels", default="",
+                    help="the axis-label TSV, so the per-stratum coverage check can run. Without "
+                         "it that check is skipped and the output says so")
+    if sub == "promote":
+        ap.add_argument("--force", action="store_true",
+                        help="promote a track that failed a check. The stamp records that it was "
+                             "forced and which failures were accepted")
+    a = ap.parse_args(argv[1:])
+    labels = read_labels(a.labels) if a.labels else None
+
+    if sub == "verify":
+        _ok, why = promotion_is_current(a.track)
+        failures = audit(Path(a.track), labels)
+        for f in failures:
+            print(f"  {f}", file=sys.stderr)
+        print(f"promotion: {why}")
+        if labels is None:
+            print("  note: no --labels, so the per-stratum coverage check did not run")
+        if failures:
+            print(f"TRACK_VERIFY_FAILED {a.track}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"TRACK_VERIFY_OK {a.track}")
+        return 0
+
+    promote(a.track, labels=labels, force=a.force)
+    return 0
 
 
 if __name__ == "__main__":   # pragma: no cover

@@ -111,6 +111,63 @@ def first_token_logprobs(model, tok, prompts, batch=16, log=None):
     return torch.stack(rows, 0)
 
 
+#: Below this, a KL computed from bf16 logits is not precise enough to quote.
+#:
+#: MEASURED, not assumed (2026-08-17). The same edit scored in float32 and in bfloat16, on matched
+#: inputs, at four edit strengths:
+#:
+#:     KL 0.00074   bf16 differs by 0.7%
+#:     KL 0.00290   bf16 differs by 0.2%
+#:     KL 0.01039   bf16 differs by 0.0%
+#:     KL 0.02935   bf16 differs by 0.0%
+#:
+#: So above roughly 1e-3 the dtype is irrelevant and the published figures (~0.06) are unaffected.
+#: Below it the gap grows as the KL shrinks, because bf16 carries eight bits of mantissa and the
+#: quantity being summed gets smaller than its resolution. A drift of 0.0005 quoted from a bf16 run
+#: is a number about the arithmetic rather than about the model.
+#:
+#: This exists because a second implementation of this measurement turned up (`kl_llama.py`) which
+#: used float32 throughout. Its formula was identical, so the two agree wherever the figure is large
+#: enough to matter, and that agreement is only knowable because it was checked.
+BF16_KL_FLOOR = 1e-3
+
+
+def logits_dtype_of(model):
+    """The dtype this model computes in, or "unknown".
+
+    Read off the model rather than assumed, because the loader's choice is what decides whether a
+    small figure is a measurement or an artefact of the arithmetic. "unknown" is a real answer and
+    is recorded as one: a model shape this cannot read is not evidence of reduced precision, and
+    flagging on ignorance would fire on every stub while telling nobody anything.
+    """
+    dt = getattr(model, "dtype", None)
+    if dt is None:
+        try:
+            dt = next(model.parameters()).dtype
+        except (AttributeError, StopIteration, TypeError):
+            return "unknown"
+    return str(dt).replace("torch.", "")
+
+
+def precision_verdict(value, dtype_name, *, floor=BF16_KL_FLOOR):
+    """Is this KL large enough for the precision it was computed in? Returns (ok, note).
+
+    Pure, so the boundary is testable without a model. `ok` False does not mean the number is
+    wrong; it means it is smaller than the arithmetic that produced it can resolve, and quoting it
+    to four decimal places would claim a precision nothing supports.
+    """
+    low = str(dtype_name).lower()
+    reduced = any(t in low for t in ("bfloat16", "bf16", "float16", "fp16"))
+    if not reduced or value >= floor:
+        return True, None
+    return False, (
+        f"this drift of {value:.2e} was computed from {dtype_name} logits, and below {floor:.0e} "
+        f"that arithmetic cannot resolve the quantity being summed: the same edit measured in "
+        f"float32 and bfloat16 diverges by under 0.1% at 0.01 and by 0.7% at 0.0007, growing as "
+        f"the figure shrinks. Treat it as 'below {floor:.0e}' rather than as a value, or re-run "
+        f"the pair in float32 if the exact number matters.")
+
+
 def kl(base_lp, cand_lp):
     """KL(base || candidate), summed over the vocabulary, averaged over prompts.
 
@@ -172,6 +229,9 @@ def main(argv=None):
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)
     value = kl(base_lp, cand_lp)
 
+    dtype_name = logits_dtype_of(cand)
+    precise, note = precision_verdict(value, dtype_name)
+
     res = {
         "label": a.label,
         "model": a.model,
@@ -183,11 +243,24 @@ def main(argv=None):
         "batch": int(a.batch),
         "fingerprint": fp,
         "kl": value,
+        # WHAT PRECISION SUPPORTS THAT FIGURE. Recording the dtype and the verdict means a reader
+        # does not have to know about mantissa widths to avoid quoting a number this run cannot
+        # support. `kl_llama.py` computed the same quantity in float32; the two agree above the
+        # floor and diverge below it.
+        "logits_dtype": dtype_name,
+        "precision_ok": precise,
+        "precision_floor": BF16_KL_FLOOR,
+        "precision_note": note,
         "instrument": "senbonzakura.drift, KL(base||candidate) on first-token distributions",
     }
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
-    print(f"DRIFT_DONE {a.label} kl={value:.4f} n={len(prompts)} batch={a.batch}")
+    if not precise:
+        # In the same breath as the number, because this is exactly the caveat that gets lost
+        # between an artefact and a table.
+        print(f"DRIFT_BELOW_PRECISION {a.label}: {note}")
+    print(f"DRIFT_DONE {a.label} kl={value:.4f} n={len(prompts)} batch={a.batch} "
+          f"dtype={dtype_name}{'' if precise else ' PRECISION-LIMITED'}")
     return res
 
 

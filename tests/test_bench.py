@@ -11,6 +11,7 @@ No test here starts a container, touches a GPU, or runs a model. The subprocess 
 injected, which is the whole reason the operation is worth having in Python.
 """
 import json
+import types
 
 import pytest
 
@@ -441,11 +442,27 @@ def test_an_unreadable_artefact_is_a_loud_error_not_an_empty_reading(tmp_path):
 
 
 # ── scoring: the three wrong ways it was invoked, each now impossible ─────────────────
-def test_the_compass_is_never_passed_a_track_it_does_not_have(tmp_path):
+def test_the_compass_gets_no_track_when_there_is_none_to_give(tmp_path):
+    """Half of the original 2026-08-05 defect: a `--track` the compass could not take.
+
+    The compass takes one now, so the invariant has changed shape rather than gone: a track is
+    passed when there IS one and omitted when there is not. A bare `--track` with nothing after
+    it is what killed the original run.
+    """
     argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
                             label="x", skip_harmful=128, batch=16)
-    assert "--track" not in argv, "the compass has no --track; passing one killed it outright"
+    assert "--track" not in argv
     assert "--harmful" in argv and "--harmless" in argv
+
+
+def test_the_compass_is_handed_the_track_so_it_can_read_the_real_boundary(tmp_path):
+    """The fix for the 128-against-132 contamination: the manifest travels to the scorer."""
+    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+                            label="x", skip_harmful=None, batch=16, track=tmp_path / "trk")
+    assert argv[argv.index("--track") + 1] == str(tmp_path / "trk")
+    # No skip count: unset means "read it from the track", and sending both invites the two to
+    # disagree about the corpus.
+    assert "--skip-harmful" not in argv
 
 
 def test_skip_harmful_carries_its_count_and_never_travels_bare(tmp_path):
@@ -1126,3 +1143,52 @@ def test_the_report_recognises_both_conv_arms():
     for tool in ("senbon-conv", "senbon-noconv"):
         m = benchreport.ARM.match(f"scored-{tool}-seed42")
         assert m and m["tool"] == tool, f"{tool} would be unmatched or swallowed by `senbon`"
+
+
+# ── a hung arm must not hold the sweep open ──────────────────────────────────────────
+def test_the_runner_passes_a_timeout_to_the_subprocess(monkeypatch):
+    """There is no wait-forever setting. A sweep is a sequence, and one hung arm stops the rest."""
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    bench.default_runner(["true"], log=lambda _m: None)
+    assert seen.get("timeout") == bench.ARM_TIMEOUT_S
+    assert seen["timeout"] > 0
+
+
+def test_a_timed_out_arm_raises_the_distinct_error(monkeypatch):
+    def fake_run(argv, **kw):
+        raise bench.subprocess.TimeoutExpired(cmd=argv, timeout=kw["timeout"])
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    with pytest.raises(bench.ArmTimeoutError) as e:
+        bench.default_runner(["sleep"], log=lambda _m: None, timeout=1)
+    assert "hung rather than slow" in str(e.value)
+
+
+def test_a_timeout_fails_only_that_arm_and_not_the_sweep(tmp_path):
+    """Blast radius. A hung arm says nothing about the arms behind it."""
+    def hanging_runner(argv, log=None):
+        raise bench.ArmTimeoutError("ran for 12.0 hours without finishing and was killed.")
+
+    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
+                      track=tmp_path / "t", out=tmp_path / "o", trials=2,
+                      runner=hanging_runner, log=lambda _m: None)
+    assert r.ran is True
+    assert r.ok is False
+    assert "timed out" in r.reason
+
+
+def test_a_non_timeout_bench_error_still_stops_everything(tmp_path):
+    """"Could not start heretic" will meet the next arm identically, so it must not be swallowed."""
+    def broken_runner(argv, log=None):
+        raise bench.BenchError("could not start 'python'")
+
+    with pytest.raises(bench.BenchError):
+        bench.run_arm(bench.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
+                      track=tmp_path / "t", out=tmp_path / "o", trials=2,
+                      runner=broken_runner, log=lambda _m: None)

@@ -668,6 +668,28 @@ def _mlp_downprojs(mlp):
     return out
 
 
+def _writes_residual(p, hidden_size):
+    """Does this parameter write into the residual stream, at either rank?
+
+    2-D `[hidden, inter]` is a dense down-projection or an attention output projection. 3-D
+    `[experts, hidden, inter]` is a fused expert stack, where the hidden dimension sits in the
+    MIDDLE because the leading axis indexes experts. Anything else (norms at 1-D, convolution
+    kernels at 3-D with a width of 1) is not one.
+    """
+    dim = getattr(p, "dim", None)
+    if dim is None:
+        return False
+    rank = dim()
+    if rank == 2:
+        return p.shape[0] == hidden_size
+    if rank == 3:
+        # A Conv1d kernel is also 3-D, as [channels, in/groups, kernel]. Requiring the hidden
+        # size in the middle rather than anywhere keeps a depthwise convolution over the residual
+        # width ([hidden, 1, L]) from being read as an expert stack.
+        return p.shape[1] == hidden_size and p.shape[0] > 1
+    return False
+
+
 def residual_writers(layer, hidden_size, ablate_conv=True):
     """Every matrix in this decoder layer that writes the residual stream, and what we did not see.
 
@@ -689,9 +711,18 @@ def residual_writers(layer, hidden_size, ablate_conv=True):
     and this guard is what turns that into a refusal the caller has to opt out of in writing.
 
     The test is deliberately crude, because a subtle one would be the thing at fault. A module is
-    a residual writer if it contains a 2-D weight whose output width is the hidden size: that is
-    what "writes into the residual stream" means dimensionally. Norms are skipped (1-D), and so
-    are the containers the walker already reads.
+    a residual writer if it contains a weight whose output width is the hidden size: that is what
+    "writes into the residual stream" means dimensionally. Norms are skipped (1-D), and so are the
+    containers the walker already reads.
+
+    BOTH ranks count, and the 3-D case is the one that nearly got away. A dense down-projection is
+    2-D `[hidden, inter]`, but a FUSED mixture-of-experts stack is 3-D `[experts, hidden, inter]`
+    and every expert in it writes the residual. Testing only for 2-D made this guard's whole
+    coverage rest on the container NAME being in `known`: LFM2-MoE's `Lfm2MoeExperts` holds
+    `down_proj` as a bare 3-D Parameter, and an architecture that put an equivalent stack under an
+    unfamiliar name would have passed the guard while going unablated, reporting success. That is
+    precisely the gemma failure this function exists to prevent, so it must not be reachable
+    through a tensor rank the test does not look at.
     """
     known = {"self_attn", "attention", "self_attention", "attn",
              "mlp", "block_sparse_moe", "feed_forward"}
@@ -701,9 +732,8 @@ def residual_writers(layer, hidden_size, ablate_conv=True):
     for name, child in layer.named_children():
         if name in known:
             continue
-        writes = any(
-            getattr(p, "dim", lambda: 0)() == 2 and p.shape[0] == hidden_size
-            for _, p in child.named_parameters(recurse=True))
+        writes = any(_writes_residual(p, hidden_size)
+                     for _, p in child.named_parameters(recurse=True))
         if writes:
             unrecognised.append(f"{name} ({type(child).__name__})")
     return len(known & {n for n, _ in layer.named_children()}), unrecognised
@@ -2127,6 +2157,37 @@ class Abliterator:
         if str(self.dev).startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def eval_provenance(self):
+        """Which rows the run's refusal figures came from, and what they may therefore be used for.
+
+        The track splits harmful prompts into fit / search / measure and records where the
+        boundaries fell, precisely so "held out" is a property of the files rather than an
+        arithmetic convention. The abliterator reads the head of `bad_eval_ds`, which is the search
+        partition followed by the measure partition, and `flag_violations` stops it reaching past
+        the first. All of that is correct. What was missing is any statement of it in the output:
+        the numbers were selection-set numbers and looked exactly like published ones.
+        """
+        args = self.args
+        manifest = read_manifest(args.track) if args.track else None
+        counts = ((manifest or {}).get("counts") or {}).get("harmful") or {}
+        search_rows = counts.get("search")
+        n = len(self.bad_eval)
+        return {
+            "track": str(args.track) if args.track else None,
+            "dataset": "bad_eval_ds",
+            "rows_scored": n,
+            # None when there is no manifest to check against, which is honest: a bare prompt file
+            # has no partition and claiming one would be worse than admitting we cannot tell.
+            "partition": None if search_rows is None else ("search" if n <= search_rows else
+                                                           "search+measure"),
+            "search_partition_rows": search_rows,
+            "held_out": False if search_rows is not None else None,
+            "note": ("These are SELECTION-SET figures: the search chose its winner by scoring these "
+                     "same rows, so they are the maximum of N draws rather than a measurement. For "
+                     "a publishable number, score the measure partition with "
+                     "`--skip-harmful <track.json skip_harmful>`."),
+        }
+
     def _save_weights(self):
         """Write the baked model, and survive the one failure mode that costs the most.
 
@@ -2679,6 +2740,19 @@ class Abliterator:
                        "partially_ablated_layers": sorted(self.partial_layers),
                        "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
                        "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+                       # WHAT THOSE REFUSAL FIGURES ARE, which the artefact could not previously say.
+                       # They come from `bad_eval_ds`, whose head is the track's SELECTION partition:
+                       # the rows the search scored 200 trials against. That is the correct set to
+                       # search on and the wrong set to publish from, because the winner is the best
+                       # of N draws over exactly these prompts. A run's 0.0% travelled as a measured
+                       # refusal rate on 2026-08-16 because nothing here said otherwise.
+                       "refusal_eval": self.eval_provenance(),
+                       # HOW THEY WERE PRODUCED. Generation is greedy, so there is no sampling noise,
+                       # but the batch floats with free VRAM and left-padding makes batch composition
+                       # part of the numerics. A reader comparing two runs needs to know whether the
+                       # machinery was pinned; `--no-throttle` pins it.
+                       "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
+                                      **self.gov.report()},
                        "sparsity": float(args.sparsity),
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.

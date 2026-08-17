@@ -7,6 +7,7 @@ exactly the wiring that produced the withdrawn gemma numbers.
 """
 import pytest
 import torch
+from torch import nn
 
 from senbonzakura import cli
 
@@ -222,3 +223,63 @@ def test_a_module_that_cannot_write_the_residual_is_ignored():
     layer.add_module("router", torch.nn.Linear(64, 8))
     _, unrecognised = cli.residual_writers(layer, 64)
     assert unrecognised == []
+
+
+# ── the unrecognised-writer guard must see a FUSED stack, not only a 2-D matrix ──────
+def test_a_hidden_fused_expert_stack_is_flagged_as_an_unrecognised_writer():
+    """THE REGRESSION GUARD, and the gemma failure's newest disguise.
+
+    `residual_writers` used to flag an unknown container only when it held a 2-D weight of the
+    hidden width. A fused mixture-of-experts stack is 3-D, so the test could not see one at all,
+    and the guard's whole coverage rested on the container NAME being in the known set. An
+    architecture putting an equivalent stack under an unfamiliar name would have passed the guard
+    and gone unablated, reporting success.
+    """
+    H, E, I = 64, 4, 32
+    layer = nn.Module()
+    layer.self_attn = nn.Module()
+    layer.self_attn.o_proj = nn.Linear(H, H)
+    # A container the walker does not know, holding a fused expert stack [E, hidden, inter].
+    layer.secret_experts = nn.Module()
+    layer.secret_experts.down_proj = nn.Parameter(torch.randn(E, H, I))
+
+    _, unrecognised = cli.residual_writers(layer, H)
+    assert any("secret_experts" in u for u in unrecognised), (
+        "a fused expert stack under an unknown name went unseen, which is exactly how a model "
+        "comes out partly ablated while the run reports success")
+
+
+def test_a_depthwise_convolution_kernel_is_not_read_as_an_expert_stack():
+    """A Conv1d kernel is 3-D too, as [channels, in/groups, width]. Requiring the hidden size in
+    the MIDDLE keeps a depthwise convolution over the residual width from tripping the guard.
+    """
+    H = 64
+    layer = nn.Module()
+    layer.self_attn = nn.Module()
+    layer.self_attn.o_proj = nn.Linear(H, H)
+    layer.some_filter = nn.Module()
+    layer.some_filter.weight = nn.Parameter(torch.randn(H, 1, 3))   # depthwise, hidden leading
+
+    _, unrecognised = cli.residual_writers(layer, H)
+    assert unrecognised == []
+
+
+def test_a_two_dimensional_writer_is_still_caught():
+    """The original behaviour, unchanged by widening the test to 3-D."""
+    H = 64
+    layer = nn.Module()
+    layer.self_attn = nn.Module()
+    layer.self_attn.o_proj = nn.Linear(H, H)
+    layer.mystery = nn.Module()
+    layer.mystery.proj = nn.Linear(32, H)
+
+    _, unrecognised = cli.residual_writers(layer, H)
+    assert any("mystery" in u for u in unrecognised)
+
+
+def test_the_real_lfm2_moe_has_no_unrecognised_writers():
+    """The whole point of the widening is that it must not start refusing a model we support."""
+    model = _lfm2_moe()
+    for layer in model.model.layers:
+        _, unrecognised = cli.residual_writers(layer, model.config.hidden_size)
+        assert unrecognised == []

@@ -650,10 +650,19 @@ def test_main_records_both_skips(loaded, tmp_path):
 
 
 def test_the_default_skips_hold_out_both_arms():
-    """A default of 0 on either arm would publish a selection-set number by accident."""
+    """A default of 0 on either arm would publish a selection-set number by accident.
+
+    The parser now defaults both to None so that "unset" is distinguishable from "set to a
+    number", which is what lets a track's recorded boundary win over a guess. The invariant the
+    test was written for is unchanged and is asserted where it now lives: what a run with no
+    flags at all actually skips.
+    """
     a = margin.build_parser().parse_args(["--model", "m", "--harmful", "h", "--harmless", "l", "--out", "o"])
-    assert a.skip_harmless == 320     # dir_prompts 256 plus the drift check
-    assert a.skip_harmful == 128      # the largest --eval-refusal-final any auto preset uses
+    assert a.skip_harmful is None and a.skip_harmless is None, "unset must stay distinguishable"
+    skip_h, skip_l = margin.resolve_skips(a.track, a.skip_harmful, a.skip_harmless)
+    assert skip_l == 320      # dir_prompts 256 plus the drift check
+    assert skip_h == 128      # the legacy guess, kept only for a bare pair of prompt files
+    assert skip_h > 0 and skip_l > 0
 
 
 @pytest.mark.parametrize(("flag", "n_harmful", "n_harmless"), [

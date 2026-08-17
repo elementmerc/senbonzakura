@@ -142,6 +142,11 @@ class ResourceGovernor:
         # Active only when asked AND there is a real cuda card to police.
         self.enabled = bool(enabled) and self._mem_fn() is not None
         self.paused_s = 0.0                        # cumulative time spent paused this run (for ETA)
+        # What actually happened, for the run's artefact. A number produced under a floating batch
+        # is not reproducible on that axis, and the artefact has to be able to say so.
+        self.batch_sizes = {}                      # realised chunk size -> how many chunks
+        self.oom_shrinks = 0                       # times an OOM halved the working batch
+        self.pauses = 0                            # times generation yielded the card
         self._ok_streak = 0                        # consecutive full-size successes, gates growth
         self._calibrated = False                   # has the startup VRAM baseline been announced
 
@@ -233,6 +238,7 @@ class ResourceGovernor:
                     self.log(f"  paused: another app is using the card, only ~{usable_gb:.1f} GB usable; "
                              "waiting for it to free up")
                 announced = True
+                self.pauses += 1
             # empty_cache here also hands senbon's own idle cache back to the driver, so a foreground
             # game gets a little VRAM too while generation is paused (compute yield, partial VRAM relief).
             self._empty_cache()
@@ -264,6 +270,7 @@ class ResourceGovernor:
         # Halve the working batch after an out-of-memory; returns True if there was room to shrink.
         if self.cur_batch > 1:
             self.cur_batch = max(1, self.cur_batch // 2)
+            self.oom_shrinks += 1
             self.log(f"  VRAM tight: batch -> {self.cur_batch}")
             return True
         return False
@@ -283,6 +290,8 @@ class ResourceGovernor:
             # but skip the pause/shrink/grow machinery entirely.
             out = []
             for i in range(0, len(items), self.max_batch):
+                bs = len(items[i:i + self.max_batch])
+                self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
                 out.extend(fn(items[i:i + self.max_batch]))
             return out
         self._calibrate_once()
@@ -306,9 +315,29 @@ class ResourceGovernor:
                     self._forced_pause()
                 continue
             out.extend(res)
+            self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
             i += bs
             self._grow_maybe(bs)
         return out
+
+    def report(self):
+        """What this governor actually did, for the run's artefact.
+
+        Generation is greedy, so there is no sampling noise; but left-padding means the batch a
+        prompt travelled in changes its numerics, and this governor picks that batch from live
+        free VRAM. Two runs of the same command on the same machine can therefore differ because
+        something else was on the card. That is a real property of the measurement and belongs
+        beside it: a reader comparing two numbers needs to know whether the machinery was pinned.
+
+        `throttled=False` means the batch was fixed and the run is reproducible on this axis.
+        """
+        return {
+            "throttled": bool(self.enabled),
+            "max_batch": self.max_batch,
+            "batch_sizes_used": dict(sorted(self.batch_sizes.items())),
+            "oom_shrinks": self.oom_shrinks,
+            "pauses": self.pauses,
+        }
 
     def _forced_pause(self):
         # Wait for a comfortable margin (grow-fraction, not just the min) after a batch=1 OOM.

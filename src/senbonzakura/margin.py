@@ -40,6 +40,61 @@ from .cli import (
 from .crashsafe import atomic_write, provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
+from .track import read_manifest
+
+#: What to skip when there is no manifest to read the boundary out of. These are the values this
+#: command carried as hard defaults until 2026-08-17, kept only so an invocation with a bare pair
+#: of prompt files behaves as it always did.
+#:
+#: They are a GUESS and they were once wrong. 128 was reasoned from "the largest
+#: --eval-refusal-final any auto preset uses", which is a statement about this tool's flags rather
+#: than about the corpus; the track that actually shipped holds 132 harmful rows for selection, and
+#: `flag_violations` permits a run to use all of them and recommends exactly that. A run that took
+#: the recommendation had rows 128 to 131 scored here as though they were held out. The manifest
+#: knows the real boundary, `track.json` records it for this purpose, and reading it is the fix.
+LEGACY_SKIP_HARMFUL = 128
+LEGACY_SKIP_HARMLESS = 320
+
+
+def resolve_skips(track, skip_harmful, skip_harmless, log=None):
+    """Where the held-out rows begin: from the track's own manifest, or an explicit override.
+
+    Precedence is deliberate. An explicit flag always wins, because scoring the selection set on
+    purpose (`--skip-harmful 0`) is a legitimate thing to want and the tool must not overrule it.
+    A manifest beats a default, because it is a record of where the rows actually went. A default
+    is a guess and says so out loud.
+
+    An explicit value that CONTRADICTS a manifest is refused rather than silently preferred: the
+    two disagreeing means one of them is wrong about the corpus, and picking either would produce
+    a number whose partition nobody could later establish.
+    """
+    _log = log or (lambda _m: None)
+    m = read_manifest(track) if track else None
+    out = {}
+    for name, given, key, legacy in (
+            ("--skip-harmful", skip_harmful, "skip_harmful", LEGACY_SKIP_HARMFUL),
+            ("--skip-harmless", skip_harmless, "skip_harmless", LEGACY_SKIP_HARMLESS)):
+        recorded = (m or {}).get(key)
+        if given is not None and recorded is not None and given != recorded:
+            raise SystemExit(
+                f"{name} {given} contradicts the track, which records {key} = {recorded}. The "
+                f"manifest is where the rows actually went, so one of these is wrong about the "
+                f"corpus and a number scored under the wrong one cannot be traced to a partition "
+                f"afterwards. Drop {name} to use the recorded boundary, or drop --track if these "
+                f"prompts did not come from it.")
+        if given is not None:
+            out[key] = given
+            if recorded is None and track:
+                _log(f"  {name} {given}: the track records no {key}, so this is unverified")
+        elif recorded is not None:
+            out[key] = recorded
+            _log(f"  {name} {recorded}, read from the track's recorded boundary")
+        else:
+            out[key] = legacy
+            _log(f"  WARNING: {name} defaulting to {legacy}, which is a guess rather than a "
+                 f"measured boundary. Pass --track so the real one is read, or this number may "
+                 f"include rows the search selected on.")
+    return out["skip_harmful"], out["skip_harmless"]
 
 
 def build_parser():
@@ -61,14 +116,19 @@ def build_parser():
                     help="do not retain the per-prompt margins")
     ap.add_argument("--label", default="")
     ap.add_argument("--n", type=int, default=200)
-    ap.add_argument("--skip-harmless", type=int, default=320,
-                    help="drop the head of the harmless set, which is where the abliteration "
-                         "directions and the drift check were fitted from")
-    ap.add_argument("--skip-harmful", type=int, default=128,
-                    help="drop the head of the harmful set, which is where the search selected "
-                         "its winning trial from. 128 is the largest --eval-refusal-final any "
-                         "auto preset uses, so it covers every prompt the search could have seen "
-                         "(0 to score the selection set too, which is not a held-out number)")
+    ap.add_argument("--track", default=None,
+                    help="the track these prompts came from. Its track.json records where the "
+                         "partition boundaries actually fell, and passing it is the only way to "
+                         "skip exactly the rows the search could see rather than a guess at them")
+    ap.add_argument("--skip-harmless", type=int, default=None,
+                    help=f"drop the head of the harmless set, which is where the abliteration "
+                         f"directions and the drift check were fitted from. Read from --track when "
+                         f"given; otherwise defaults to {LEGACY_SKIP_HARMLESS}")
+    ap.add_argument("--skip-harmful", type=int, default=None,
+                    help=f"drop the head of the harmful set, which is where the search selected "
+                         f"its winning trial from. Read from --track when given; otherwise "
+                         f"defaults to {LEGACY_SKIP_HARMFUL} "
+                         f"(0 to score the selection set too, which is not a held-out number)")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seed", type=int, default=42,
                     help="seed for the bootstrap resampling, recorded in the result")
@@ -493,6 +553,11 @@ def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    # Before the model loads, deliberately. A contradicted boundary is a mistake about which rows
+    # this number describes, and finding that out after a multi-gigabyte load wastes the minutes
+    # that make an operator skip the check next time.
+    a.skip_harmful, a.skip_harmless = resolve_skips(a.track, a.skip_harmful, a.skip_harmless,
+                                                    log=print)
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
                                           load_in_4bit=a.load_in_4bit,
                                           trust_remote_code=a.trust_remote_code,
@@ -555,8 +620,12 @@ def main(argv=None):
         "label": a.label, "model": a.model, "mode": "logit_margin",
         "n_harmful": len(mh), "n_harmless": len(ml),
         # Both skips, recorded, because "held out" is a claim about these two numbers
-        # and a reader cannot recover them from the AUC.
+        # and a reader cannot recover them from the AUC. WHERE they came from is recorded
+        # too: a boundary read from the track's manifest is a fact about the corpus, and one
+        # taken from this command's default is a guess that has been wrong before.
         "skip_harmful": a.skip_harmful, "skip_harmless": a.skip_harmless,
+        "skip_source": "track" if a.track else "default",
+        "track": str(a.track) if a.track else None,
         "margins_path": margins_path,
         "auc": round(score, 4),
         "auc_ci": bootstrap_auc_ci(mh, ml, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,

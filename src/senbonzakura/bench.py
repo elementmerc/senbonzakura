@@ -57,6 +57,16 @@ class BenchError(RuntimeError):
     """A failure the operator can act on, phrased for a person rather than a stack trace."""
 
 
+class ArmTimeoutError(BenchError):
+    """One arm hung and was killed. Deliberately distinct from every other BenchError.
+
+    The distinction is about blast radius, not about wording. "Could not start heretic" means
+    every remaining arm will fail the same way, so it should stop the sweep; one arm hanging says
+    nothing about the arms behind it, and taking them down with it turns a lost arm into a lost
+    night. So this one, and only this one, is caught per arm and recorded as a failure.
+    """
+
+
 @dataclass(frozen=True)
 class Adapter:
     """How to run one tool, and how to tell afterwards whether it really ran.
@@ -493,13 +503,38 @@ class ArmResult:
     argv: list = field(default_factory=list)
 
 
-def default_runner(argv, *, cwd=None, log=print) -> int:
-    """Run one arm to completion, streaming its output. Returns the exit code."""
+#: Hours an arm may run before it is killed. An arm is a whole abliteration search, so this is
+#: generous by design: the failure that cost a completed head-to-head on 2026-08-06 was a job
+#: killed at a ceiling with its work already done, and that is worse than waiting. What this
+#: bounds is the OTHER failure, a hung process holding a sweep open indefinitely.
+ARM_TIMEOUT_S = 12 * 3600
+
+
+def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
+    """Run one arm to completion, streaming its output. Returns the exit code.
+
+    The timeout is not optional and has no "wait forever" setting, because a sweep is a sequence
+    and one hung arm stops every arm behind it. holst-orchestrated runs carry their own
+    `timeout_secs` and `stall_secs`, so this covers the case those do not: `senbonzakura bench`
+    invoked directly, where nothing else is watching. A `llama-cli` smoke hung for two hours on
+    2026-08-16 with no bound on it at all, which is this failure one layer down.
+
+    On expiry the child is killed and the arm is reported as failed rather than as never-run, so
+    the sweep continues and the artefact records which arm died and why.
+    """
     log(f"  $ {' '.join(str(a) for a in argv)}")
     try:
-        proc = subprocess.run(argv, cwd=cwd, check=False)
+        proc = subprocess.run(argv, cwd=cwd, check=False, timeout=timeout)
     except FileNotFoundError as e:
         raise BenchError(f"could not start {argv[0]!r}: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        # subprocess.run has already killed the child by the time this is raised.
+        log(f"  TIMED OUT after {timeout / 3600:.1f}h and was killed: {argv[0]}")
+        raise ArmTimeoutError(
+            f"ran for {timeout / 3600:.1f} hours without finishing and was killed. An arm that "
+            f"exceeds this is hung rather than slow; the usual causes are a model that will not "
+            f"generate, a prompt for input on a non-interactive stream, or a deadlocked "
+            f"dataloader. Re-run that arm alone to see where it stops.") from e
     return proc.returncode
 
 
@@ -549,7 +584,13 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     # WHEN THIS ARM STARTED, so the artefact check can tell what this arm produced from what was
     # simply lying in the directory. See the staleness check below.
     started = time.time() - 1          # a second of slack for filesystem timestamp granularity
-    code = runner(argv, log=log)
+    try:
+        code = runner(argv, log=log)
+    except ArmTimeoutError as e:
+        # This arm only. Every other BenchError still propagates, because the rest are conditions
+        # that will meet the next arm identically.
+        return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
+                         reason=f"timed out: {e}", argv=list(argv))
     if code != 0:
         return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
                          reason=f"exited {code}", argv=list(argv))
@@ -634,14 +675,21 @@ def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", ima
 
 # ── scoring: one instrument, over every model both tools produced ─────────────────────
 def score_argv(*, model: Path, harmful: Path, harmless: Path, out: Path, label: str,
-               skip_harmful: int, batch: int) -> list[str]:
+               skip_harmful: int, batch: int, track: Path | None = None) -> list[str]:
     """The compass, invoked the one right way.
 
     On 2026-08-05 this was invoked three wrong ways at once from a shell loop, and one of them hid
-    the other two: it was passed a `--track` the compass does not have, `--skip-harmful` was passed
+    the other two: it was passed a `--track` the compass did not have, `--skip-harmful` was passed
     with no count so it swallowed the next argument, and the two tools save their models in
     different shapes so one tool's arms were scored against nothing at all. There is one call site
     now and a test asserting each of those three cannot recur.
+
+    The first of those three has since changed shape rather than gone away. As of 2026-08-17 the
+    compass DOES take `--track`, and passing it is now the correct thing to do: the manifest is
+    where the partition boundaries actually fell, and `--skip-harmful` alone is a restatement of
+    them that was measurably wrong (128 against a 132-row selection partition). So the rule is no
+    longer "never pass a track", it is "pass the real one, and let it beat the default". A track
+    that is not a track is still refused, by the compass, on the manifest it cannot read.
     """
     # `sys.executable`, NOT "python". The scorer runs on the HOST, unlike the arms, which run
     # inside a container where `python` exists. The card this benchmark runs on has `python3` and
@@ -653,10 +701,17 @@ def score_argv(*, model: Path, harmful: Path, harmless: Path, out: Path, label: 
     # It is also the correct interpreter on its own merits: the compass must run with the same
     # senbonzakura the harness was started from, or `-m senbonzakura` resolves to a different
     # install than the one being tested.
-    return [sys.executable, "-u", "-m", "senbonzakura", "compass",
+    argv = [sys.executable, "-u", "-m", "senbonzakura", "compass",
             "--model", str(model), "--harmful", str(harmful), "--harmless", str(harmless),
-            "--out", str(out), "--label", label,
-            "--skip-harmful", str(skip_harmful), "--batch", str(batch)]
+            "--out", str(out), "--label", label, "--batch", str(batch)]
+    if track is not None:
+        argv += ["--track", str(track)]
+    # Only when explicitly set. Left off, the compass reads the boundary from the track, which is
+    # the point; passing both a track and a contradicting count is refused there rather than here,
+    # so the refusal names the manifest that disagrees.
+    if skip_harmful is not None:
+        argv += ["--skip-harmful", str(skip_harmful)]
+    return argv
 
 
 def arm_model_dir(result: ArmResult, adapter: Adapter) -> Path:
@@ -669,8 +724,8 @@ def arm_model_dir(result: ArmResult, adapter: Adapter) -> Path:
     return Path(result.arm) / adapter.model_subdir if adapter.model_subdir else Path(result.arm)
 
 
-def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmful=128, batch=16,
-               runner=None, log=print, force=False) -> list[dict]:
+def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmful=None, batch=16,
+               runner=None, log=print, force=False, track=None) -> list[dict]:
     """Score every model that exists, and say plainly which ones did not."""
     runner = runner or default_runner
     scored = []
@@ -689,7 +744,8 @@ def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmfu
                            "path": str(target)})
             continue
         code = runner(score_argv(model=model, harmful=harmful, harmless=harmless, out=target,
-                                 label=label, skip_harmful=skip_harmful, batch=batch), log=log)
+                                 label=label, skip_harmful=skip_harmful, batch=batch,
+                                 track=track), log=log)
         # Exit zero is not a score. The file is.
         ok = code == 0 and target.is_file()
         scored.append({"label": label, "ok": ok,
@@ -887,9 +943,11 @@ def build_parser():
                         "unless --no-score is given")
     h.add_argument("--harmless", default="",
                    help="held-out harmless dataset for the compass's other arm")
-    h.add_argument("--skip-harmful", dest="skip_harmful", type=int, default=128,
+    h.add_argument("--skip-harmful", dest="skip_harmful", type=int, default=None,
                    help="how many harmful rows the search already saw, and the compass must "
-                        "therefore skip. A count, never a bare flag (default: 128)")
+                        "therefore skip. A count, never a bare flag. Left unset, the compass "
+                        "reads the boundary out of the track's own manifest, which is the "
+                        "recorded fact rather than a restatement of it")
     h.add_argument("--batch", type=int, default=16,
                    help="scoring batch size, held fixed across every arm so no two arms are "
                         "measured under different conditions")
@@ -982,7 +1040,8 @@ def main(argv=None):
         print("scoring every model, with one instrument")
         scored = score_arms([r for r in results if r.ok], harmful=Path(a.harmful),
                             harmless=Path(a.harmless), out=Path(a.out),
-                            skip_harmful=a.skip_harmful, batch=a.batch, force=a.force)
+                            skip_harmful=a.skip_harmful, batch=a.batch, force=a.force,
+                            track=a.track)
         summary["scored"] = scored
         summary["unscored"] = [s["label"] for s in scored if not s["ok"]]
 

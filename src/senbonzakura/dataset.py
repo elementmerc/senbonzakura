@@ -346,9 +346,25 @@ def resolve(spec, *, text_column=None, token=None, streaming=False, limit=None,
         rest = body[len(BUNDLED_ALIAS) + 1:] if "/" in body else ""
         body = str(root / rest) if rest else str(root)
 
+    # A bundled corpus by name: `advbench`, `xstest-safe`, and the rest. Resolved BEFORE the path
+    # check for the same reason `default` is: a directory in the working directory that happens to
+    # share the name must not silently become the corpus a published number came from.
+    #
+    # Ambiguous names are refused rather than guessed at. `xstest` is 250 prompts a model should
+    # answer and 200 it should not, and one list containing both produces a refusal rate that
+    # means nothing.
+    from . import corpora
+    bundled_corpus = body in corpora.CORPORA or body in corpora.AMBIGUOUS
+
     path = Path(body).expanduser()
 
-    if path.exists():
+    if bundled_corpus:
+        # Shaped as rows so the slice, the column pick, the blank check and the limit below are
+        # the SAME code every other source goes through. A second path here would be a second
+        # place for `[:64]` to mean something slightly different.
+        key = corpora.resolve_name(body)      # raises CorpusError on the ambiguous ones
+        rows, cols = [{"text": t} for t in corpora.load(key)], ["text"]
+    elif path.exists():
         if path.is_dir():
             rows, cols = _from_disk(str(path), split, spec, what)
         elif path.suffix.lower() in TABLE_SUFFIXES:

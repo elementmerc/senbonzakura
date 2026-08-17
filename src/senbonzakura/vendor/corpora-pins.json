@@ -1,0 +1,21 @@
+{
+  "schema": "senbonzakura-corpora-pins/1",
+  "files": {
+    "alexandrasouly/strongreject@3432b2d696b4:strongreject_dataset/strongreject_dataset.csv": {
+      "sha256": "4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381",
+      "bytes": 56359
+    },
+    "centerforaisafety/HarmBench@c0423b952435:data/behavior_datasets/harmbench_behaviors_text_all.csv": {
+      "sha256": "8d81accedd38eaaf8b760618622bb888417d1fd0c86eba65c427a16f1cbb4afc",
+      "bytes": 198850
+    },
+    "llm-attacks/llm-attacks@a62d1307e38b:data/advbench/harmful_behaviors.csv": {
+      "sha256": "6cd1a5c63c07610d7eb67307772ee5606017ee950b5770ab288a2c487489d3e1",
+      "bytes": 82125
+    },
+    "paul-rottger/exaggerated-safety@475f10bf0a3d:xstest_prompts.csv": {
+      "sha256": "11783fb294ed017473ee53c207d71f2161c7672c8d0b037501e78387f801cb5a",
+      "bytes": 38719
+    }
+  }
+}

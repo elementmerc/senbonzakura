@@ -75,3 +75,9 @@ docs/tapes/captured/
 # and runs the binary to prove the extraction produced something that starts.
 src/senbonzakura/vendor/bin/
 src/senbonzakura/vendor/src/
+
+# Fetched corpus sources. `src/senbonzakura/vendor/corpora-pins.json` IS committed and records the
+# upstream, the pinned commit, the byte count and the sha256 of every file, so what the wheel
+# carries is reviewable in a diff of one small file. The CSVs themselves are other people's data
+# at a pinned commit; re-fetch with `python tools/build_corpora.py`.
+build/corpora/

@@ -102,7 +102,13 @@ where = ["src"]
 # `--track default` fails on an installed package while working in a source checkout, which is
 # the worst shape of bug: it only appears for users.
 [tool.setuptools.package-data]
-senbonzakura = ["data/*.bin"]
+# `data/*.bin` is the packed evaluation track and the packed corpora. `vendor/*.json` is the pin
+# manifests, and they are READ AT RUNTIME: `vendoring.load_manifest()` opens
+# `vendor/pins.json` to answer what this install ships and how old the pins are. Without them the
+# wheel installs, imports, and raises the moment anything asks about a vendored artefact, which is
+# the worst shape of bug because it only appears for users. Caught by unzipping a built wheel
+# rather than by reasoning about the glob.
+senbonzakura = ["data/*.bin", "vendor/*.json"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]
@@ -223,6 +229,10 @@ ignore = [
 # S310 is the URL-scheme audit: every URL here is built from the committed pin manifest against
 # a fixed https host, so the scheme cannot be influenced by anything a caller passes.
 "tools/vendor_llama.py" = ["E402", "S310"]
+
+# Same reason as above: these run from a checkout where the package is not installed, so `src/`
+# has to reach the path before the import.
+"tools/build_corpora.py" = ["E402"]
 
 [tool.pytest.ini_options]
 # Coverage runs on a bare `pytest`, so the gate is something you meet while working

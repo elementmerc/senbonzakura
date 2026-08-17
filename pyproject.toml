@@ -203,6 +203,13 @@ ignore = [
 "src/senbonzakura/validate.py" = ["SLF001"]
 "tools/axis_probe.py" = ["SLF001"]
 
+# The vendoring tool runs from a git checkout, where the package is not installed, so it must
+# put `src/` on the path before it can import from it. E402 is describing that accurately and
+# there is no arrangement of the file that both imports the package and satisfies it.
+# S310 is the URL-scheme audit: every URL here is built from the committed pin manifest against
+# a fixed https host, so the scheme cannot be influenced by anything a caller passes.
+"tools/vendor_llama.py" = ["E402", "S310"]
+
 [tool.pytest.ini_options]
 # Coverage runs on a bare `pytest`, so the gate is something you meet while working
 # rather than something CI tells you about after you push.

@@ -158,7 +158,7 @@ def test_the_shipped_manifest_loads():
     m = vendoring.load_manifest()
     assert m["cooldown_days"] == vendoring.COOLDOWN_DAYS
     assert "llama.cpp" in m["pins"]
-    assert "convert_hf_to_gguf" in m["pins"]
+    assert "llama_conversion" in m["pins"]
 
 
 def test_the_shipped_pin_had_cleared_the_cooldown_when_it_was_chosen():

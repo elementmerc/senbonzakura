@@ -55,3 +55,23 @@ holst/*-oncard.toml
 # Terminal captures used only to verify a recording caught what it claims.
 # Not published, and the banner it captures is randomised, so it is not a golden file.
 docs/tapes/captured/
+
+# Vendored third-party artefacts: FETCHED at build time, never committed.
+#
+# `src/senbonzakura/vendor/pins.json` IS committed and is the whole record: it names the upstream,
+# the tag, the publication date, the expected sizes and the sha256 of everything fetched. So what a
+# wheel contains is reviewable in a diff of that one file rather than by unzipping a wheel.
+#
+# What is deliberately NOT here:
+#   * bin/ holds llama-quantize and its shared libraries, 27 MB for one platform and roughly 80 MB
+#     for the six. Committing opaque blobs of that size to a public repository, per pin bump, buys
+#     nothing a hash does not already give.
+#   * src/ holds llama.cpp's conversion package: 158 modules, about 752 KB. It was going to be
+#     committed on the argument that source is reviewable in a diff, and that argument does not
+#     survive contact with the actual number. A 158-file diff on every pin bump is the appearance
+#     of reviewability rather than the fact of it.
+#
+# `python tools/vendor_llama.py --all` repopulates both, verifies every hash against pins.json,
+# and runs the binary to prove the extraction produced something that starts.
+src/senbonzakura/vendor/bin/
+src/senbonzakura/vendor/src/

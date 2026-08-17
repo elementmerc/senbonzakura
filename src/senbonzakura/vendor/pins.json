@@ -53,33 +53,49 @@
           "size": 12263344
         }
       },
-      "sha256": {},
+      "sha256": {
+        "linux-x86_64": "e180cabf4cd5d685fc5756315f99d6e254c0d54604814647f46bfebb242b66cb"
+      },
       "note": [
         "CPU archives only. Quantisation is CPU work, so the CUDA, Vulkan, SYCL and ROCm builds",
         "would add hundreds of megabytes per wheel for nothing."
       ],
       "chosen_by": "tools/check_vendor_pins.py on 2026-08-17: the newest release that had cleared the 7-day cooldown. It was chosen over b10250, which a human had picked by eye, and over b10456, which was hours old."
     },
-    "convert_hf_to_gguf": {
-      "name": "llama.cpp convert_hf_to_gguf.py",
+    "llama_conversion": {
+      "name": "llama.cpp conversion package (convert_hf_to_gguf.py + conversion/)",
       "repo": "ggml-org/llama.cpp",
       "tag": "b10355",
       "published": "2026-08-10T23:15:19Z",
       "licence": "MIT",
       "why": [
-        "Not shipped in the gguf pip package (checked: its scripts/ holds only the dump, hash,",
-        "endian, metadata and editor tools). It is a single pure-Python file that depends on the",
-        "gguf package, so vendoring it costs a file rather than a toolchain.",
-        "The cost of vendoring is that architecture support freezes at the pinned version, which",
-        "is exactly why the refresh-every-release rule applies to it: a new architecture landing",
-        "upstream reaches us at the next release rather than never."
+        "Not in the gguf pip package: its scripts/ holds only the dump, hash, endian, metadata and",
+        "editor tools. And convert_hf_to_gguf.py alone is NOT enough. As of b10355 it is a 307-line",
+        "entry point that does `from conversion import ...`; the real work is 158 modules and about",
+        "752 KB in conversion/. Fetching the one file gives a stub that fails at import, which is",
+        "exactly what the first attempt at this produced.",
+        "Fetched at build time from the source archive at the pinned tag and hash-verified, NOT",
+        "committed. One 752 KB, 158-file third-party package in our tree would make every pin bump a",
+        "158-file diff, and 'reviewable in a diff' stops being true at that size. Committing it would",
+        "buy the appearance of reviewability rather than the fact of it.",
+        "Its cost is that architecture support freezes at the pinned tag, which is why the",
+        "refresh-every-release rule matters here as much as for the binaries: a new architecture",
+        "landing upstream reaches us at the next release rather than never."
       ],
       "assets": {
         "any": {
-          "file": "convert_hf_to_gguf.py"
+          "file": "source archive at the tag",
+          "keep": [
+            "convert_hf_to_gguf.py",
+            "conversion/",
+            "LICENSE"
+          ],
+          "licence_note": "LICENSE is kept from the same archive so the MIT notice we redistribute is the verbatim text at the pinned tag, not a copy of MIT typed from memory. MIT requires the copyright notice travel with the work; a paraphrase does not discharge that."
         }
       },
-      "sha256": {}
+      "sha256": {
+        "any": "e38975e1c68d98ac1664dfd530616eb35c72294382a4dd873d4746b23f27779f"
+      }
     }
   }
 }

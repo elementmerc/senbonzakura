@@ -58,6 +58,20 @@ dependencies = [
   # it ("assert version is not None"), which took out 17 tests in the floors job.
   # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.
   "optuna>=3.1",
+  # Needed by the vendored `convert_hf_to_gguf.py`, whose first real statement is `import gguf`.
+  # A 0.11 MB pure-Python `py3-none-any` wheel, and its four dependencies (numpy, pyyaml,
+  # requests, tqdm) all arrive anyway via torch, transformers and datasets, so this adds a tenth
+  # of a megabyte and nothing transitive.
+  #
+  # The floor is 0.19 because that is the gguf-py that ships INSIDE the pinned llama.cpp build
+  # (its own libggml is versioned 0.19.0), so it is the version the vendored converter was
+  # written against. An older gguf resolves cleanly and then fails at conversion time on a
+  # constant or a writer method that did not exist yet, which is the failure this project's
+  # dependency-floor CI job exists to catch.
+  #
+  # 0.19.0 was 103 days old when adopted, so it clears the 7-day cooldown by a wide margin
+  # (baseline Section 5, checked against PyPI upload dates rather than assumed).
+  "gguf>=0.19",
 ]
 
 [project.optional-dependencies]

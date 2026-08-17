@@ -969,6 +969,8 @@ def build_parser():
             "  validate     ask whether a direction set carries refusal or carries topic: "
             "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
             "direction count against ablation strength compared at matched refusal removal\n"
+            "  quantise     shrink a GGUF with the pinned llama-quantize, then read the output "
+            "back to confirm it is the quantisation that was asked for\n"
             "\n"
             "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2817,14 +2819,15 @@ class Abliterator:
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
 DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate",
-             "interactive")
+             "interactive", "quantise")
 
 
 def _delegate(name):
-    from . import bench, coherence, drift, interactive, margin, score, track, validate
+    from . import bench, coherence, drift, interactive, margin, quantise, score, track, validate
     return {"bench": bench.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "drift": drift.main, "track": track.main,
-            "validate": validate.main, "interactive": interactive.run}[name]
+            "validate": validate.main, "interactive": interactive.run,
+            "quantise": quantise.main}[name]
 
 
 def main(argv=None):

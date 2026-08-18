@@ -50,7 +50,7 @@ def build_args(argv=None):
     ap.add_argument("--model", required=True)
     ap.add_argument("--track", default="track")
     ap.add_argument("--experiment", default="all",
-                    choices=["e1", "e2", "e3", "e4", "transfer", "all"])
+                    choices=["e1", "e2", "e3", "e4", "transfer", "reach", "all"])
     ap.add_argument("--strengths", default="0.3,0.5,0.7,0.85,1.0",
                     help="ablation strengths for the E4 grid. The weakest must leave refusal "
                          "partly standing or the grid has no room for K to show an effect, "
@@ -365,6 +365,141 @@ def projection_magnitude(a, log, K):
     log(f"  projection magnitudes (fraction of primary): "
         f"{ {k: v['fraction_of_primary'] for k, v in out.items()} }")
     return {"per_direction": out, "weakest_fraction_of_primary": weakest, "reading": reading}
+
+
+#: Below this, a layer's residual component along the direction did not meaningfully move, and the
+#: edit did not reach that layer's residual stream. Chosen as a floor rather than a target: the
+#: gemma failure showed a whole architecture at essentially zero while a working one halved.
+MIN_REACH = 0.10
+
+
+def bake_reach(a, log, K=1, strength=1.0):
+    """Does the weight edit actually reach the residual stream, AT EACH LAYER, by layer type?
+
+    WHY THIS IS NOT ANSWERED BY `transfer_gap`
+
+    That compares hook and bake as whole-model refusal rates, which detects a model where the edit
+    lands nowhere. It cannot see a model where the edit lands on SOME layers and not others, and
+    that is exactly the open question on a hybrid: LFM2 writes its residual stream through a short
+    convolution on most of its layers, and the bake edits `conv.out_proj` because it is
+    dimensionally identical to an attention `o_proj` and sits in the same position. That is correct
+    linear algebra and, until this ran, an untested claim about behaviour. On LFM2.5-8B-A1B it
+    governs 18 of 24 layers.
+
+    HOW IT IS MEASURED
+
+    Take the residual stream at every layer on the harmful prompts, project it onto the refusal
+    direction, and record the magnitude. Bake. Take it again. A layer whose edit landed has a
+    smaller component along the direction; a layer whose edit did nothing has the same component it
+    started with. Grouping by layer type turns that into the question actually being asked.
+
+    This is the gemma check localised. Gemma's whole-model disagreement was 0.578 against Qwen3's
+    0.016, and the cause was a normalisation between the edited weight and the stream. Per layer,
+    the same shape of failure is visible before it costs a run.
+    """
+    from . import cli as _cli
+
+    args = a.args
+    bad = a.load(f"{args.track}/bad_ds", args.dir_prompts)
+    if not bad:
+        raise ValueError("no harmful prompts, so there is nothing to project.")
+
+    NL = a.NL
+    P, D = int(NL * 0.6), max(2, NL // 4)
+
+    def component(R):
+        # Mean absolute projection of each layer's residual onto the kept directions.
+        out = []
+        for li in range(NL + 1):
+            M = a.dirs_multi[li][:K].float()
+            live = M[M.norm(dim=-1) > 1e-6]
+            if live.shape[0] == 0:
+                out.append(0.0)
+                continue
+            H = R[li].float()
+            out.append(float((H @ live.T).abs().mean()))
+        return out
+
+    before = component(a.collect_resid(bad))
+    a.bake(P, strength, 0.0, D, K=K)
+    after = component(a.collect_resid(bad))
+    a.restore_weights()
+
+    # Which layers the profile actually edits. A layer the weight profile skipped is not evidence
+    # about anything, and including it would dilute the very fraction being measured.
+    edited = [li for li in range(NL) if _cli.layer_weight(li, P, strength, 0.0, D) > 0]
+
+    rows, by_kind = [], {}
+    for li in edited:
+        b, af = before[li + 1], after[li + 1]
+        drop = 0.0 if b <= 0 else (b - af) / b
+        layer = a.layers[li]
+        kind = ("conv" if _cli._conv_outproj(layer) is not None and not _cli._has_attention(layer)
+                else "attention")
+        rows.append({"layer": li, "kind": kind, "before": round(b, 5), "after": round(af, 5),
+                     "reduction": round(drop, 4)})
+        by_kind.setdefault(kind, []).append(drop)
+
+    summary = {k: {"layers": len(v), "mean_reduction": round(sum(v) / len(v), 4),
+                   "min_reduction": round(min(v), 4),
+                   "below_floor": sum(1 for x in v if x < MIN_REACH)}
+               for k, v in sorted(by_kind.items())}
+    for kind, st in summary.items():
+        log(f"  {kind}: {st['layers']} layer(s), mean reduction {st['mean_reduction']:.3f}, "
+            f"worst {st['min_reduction']:.3f}"
+            + (f", {st['below_floor']} BELOW THE FLOOR" if st["below_floor"] else ""))
+
+    # A MEAN over layer types is not the check. Measured on LFM2.5-350M on 2026-08-18, conv layers
+    # averaged 0.495 against attention's 0.759, which reads as healthy, while ONE conv layer had
+    # moved by 0.076: below the floor, and invisible in its own average. A summary that hides a
+    # per-item failure is the defect class this whole command exists to catch, so individual
+    # layers are counted as well as averaged.
+    failed = [k for k, st in summary.items()
+              if st["mean_reduction"] < MIN_REACH or st["below_floor"]]
+    stragglers = [r for r in rows if r["reduction"] < MIN_REACH]
+    if failed:
+        dead = [k for k in failed if summary[k]["mean_reduction"] < MIN_REACH]
+        if dead:
+            reading = (f"the edit does NOT reach the residual stream on {', '.join(dead)} layers "
+                       f"(mean reduction below {MIN_REACH}). An edit that does not land is a "
+                       f"partial abliteration that looks like a whole one, which is the gemma "
+                       f"failure. Do not publish a number from this architecture until it is "
+                       f"understood.")
+        else:
+            where = ", ".join(f"layer {r['layer']} ({r['kind']}, {r['reduction']:.3f})"
+                              for r in stragglers[:5])
+            reading = (f"the edit lands on average and NOT everywhere: "
+                       f"{len(stragglers)} layer(s) moved less than {MIN_REACH} along the "
+                       f"direction, at {where}. The averages look healthy, so this is only "
+                       f"visible per layer. Worth understanding before a published run leans on "
+                       f"those layers, and not on its own a reason to withhold a result.")
+    elif len(summary) > 1:
+        kinds = sorted(summary, key=lambda k: summary[k]["mean_reduction"])
+        lo, hi = summary[kinds[0]]["mean_reduction"], summary[kinds[-1]]["mean_reduction"]
+        ratio = (lo / hi) if hi > 0 else 0.0
+        reading = (f"the edit reaches every layer type. {kinds[0]} layers reduce by {lo:.3f} and "
+                   f"{kinds[-1]} by {hi:.3f}, a ratio of {ratio:.2f}"
+                   + ("; comparable, so the bake treats both positions alike."
+                      if ratio >= 0.5 else
+                      "; the weaker type lands less than half as hard, which is worth "
+                      "understanding before a published run leans on it."))
+    else:
+        only = next(iter(summary))
+        reading = (f"the edit reaches the residual stream on all {only} layers "
+                   f"(mean reduction {summary[only]['mean_reduction']:.3f}). This architecture has "
+                   f"one residual-writing position, so there is no cross-type comparison to make.")
+    log(f"  reading: {reading}")
+    return {"per_layer": rows, "by_kind": summary, "min_reach": MIN_REACH,
+            "layers_below_floor": [r["layer"] for r in stragglers],
+            "architectures_failing": failed, "reading": reading}
+
+
+def experiment_reach(a, log, ks, strengths):
+    """Per-architecture bake validation: does the edit land, and does it land evenly?"""
+    log("R: does the weight edit reach the residual stream, per layer type")
+    K = min(ks) if ks else 1
+    s = max(strengths) if strengths else 1.0
+    return bake_reach(a, log, K=K, strength=s)
 
 
 def experiment_transfer(a, log, ks, strengths):
@@ -800,6 +935,16 @@ def main(argv=None):
         log(f"\n  T: {record['transfer']['reading']}\n")
         record["projection_magnitude"] = projection_magnitude(a, log, max(ks))
         log(f"\n  M: {record['projection_magnitude']['reading']}\n")
+
+    if own.experiment in ("reach", "all"):
+        # Cheap next to the grids, and it answers a question that invalidates them if the answer
+        # is wrong: an edit that never reaches the stream makes every number below it meaningless.
+        if own.experiment == "reach":
+            prepare_for_bakes(a, log, own.directions_from)
+        strengths_r = [float(x) for x in own.strengths.split(",") if x.strip()]
+        record["reach"] = experiment_reach(a, log, [1], strengths_r)
+        if record["reach"]["architectures_failing"]:
+            log(f"\n  R: {record['reach']['reading']}\n")
 
     if own.experiment in ("e4", "all"):
         strengths = [float(x) for x in own.strengths.split(",") if x.strip()]

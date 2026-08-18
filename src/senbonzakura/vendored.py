@@ -110,14 +110,20 @@ def find_binary(name, *, key=None, search_path=True, log=None):
 
 
 def find_script(name):
-    """A vendored pure-Python script, which is committed and so should always be present."""
+    """A vendored pure-Python script from the conversion package.
+
+    NOT committed, despite an earlier version of this message saying so: the package is 87 files
+    and is fetched at build time, so a source checkout does not carry it until the vendoring tool
+    has run. That distinction is the whole content of the failure below, because "you have not run
+    a build step" and "your install is broken" want completely different things from a reader.
+    """
     p = VENDOR_SRC / name
     if p.is_file():
         return p
     raise VendorError(
-        f"the vendored script {name} is missing from {VENDOR_SRC}. Unlike the binaries this one "
-        f"IS committed, so an absence here means a broken checkout or a packaging change that "
-        f"dropped it from the wheel rather than a step nobody ran.")
+        f"the vendored script {name} is missing from {VENDOR_SRC}. It is fetched at build time "
+        f"rather than committed, so in a source checkout run `python tools/vendor_llama.py` to "
+        f"fetch it; in an installed wheel its absence is a packaging fault and should be reported.")
 
 
 def make_executable(p):

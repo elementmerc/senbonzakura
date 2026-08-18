@@ -7,8 +7,10 @@ WHAT THIS DOES
 Reads `src/senbonzakura/vendor/pins.json`, downloads the pinned release archives for one platform
 or all of them, checks each against its recorded hash (or records it the first time), extracts only
 `llama-quantize` and the shared libraries it needs, and writes them to
-`src/senbonzakura/vendor/bin/<platform>/`. It also fetches `convert_hf_to_gguf.py` at the same tag
-into `vendor/src/`, which unlike the binaries IS committed.
+`src/senbonzakura/vendor/bin/<platform>/`. It also fetches the conversion package at the same tag
+into `vendor/src/`: the entry point, the 85 architecture modules it imports, and `gguf-py/`, which
+the entry point puts on its own path. None of that is committed either; it is 87 files, and a
+158-file diff at every pin bump would buy the appearance of reviewability rather than the fact.
 
 WHY THE HASH IS RECORDED RATHER THAN CONFIGURED
 
@@ -141,8 +143,15 @@ def _download(url, dest, *, timeout=TIMEOUT_S, opener=None, retries=RETRIES, sle
     raise VendorFetchError(f"could not download {url}: {last}")
 
 
-def _check_or_record(pin, key, got_size, got_hash, *, expect_size=None, log=print):
-    """Verify against the recorded hash, or record it on a first fetch. Raises on a mismatch."""
+def _check_or_record(pin, key, got_size, got_hash, *, expect_size=None, fatal=True, log=print):
+    """Verify against the recorded hash, or record it on a first fetch. Raises on a mismatch.
+
+    `fatal=False` is for an archive the forge GENERATES rather than stores: a source tarball at a
+    tag is rebuilt on request and its bytes depend on the compression in use that day, so a change
+    there is a statement about packaging and not about contents. Those callers warn here and gate
+    on `content_digest` after extraction instead, which is the check that actually answers "are
+    these the same files".
+    """
     recorded = (pin.get("sha256") or {}).get(key)
     if expect_size is not None and got_size != expect_size:
         raise VendorFetchError(
@@ -153,6 +162,12 @@ def _check_or_record(pin, key, got_size, got_hash, *, expect_size=None, log=prin
         log(f"  {key}: recording sha256 {got_hash} (first fetch of this pin)")
         return got_hash, True
     if recorded != got_hash:
+        if not fatal:
+            log(f"  {key}: the archive hashes to {got_hash} and the manifest records {recorded}. "
+                f"This URL is generated on request rather than stored, so a repackaging changes "
+                f"these bytes without changing a single file. Continuing to the content check, "
+                f"which is the one that can tell those apart.")
+            return got_hash, True
         raise VendorFetchError(
             f"{key}: sha256 is {got_hash} but the manifest records {recorded}. The file at this "
             f"URL has changed since it was pinned, which for an immutable release asset should "
@@ -321,7 +336,7 @@ def vendor_conversion(manifest, *, dry_run=False, verify_only=False, log=print):
         archive = Path(td) / "src.tar.gz"
         size, digest = _download(url, archive)
         recorded = dict(pin.get("sha256") or {})
-        recorded["any"], _ = _check_or_record(pin, "any", size, digest, log=log)
+        recorded["any"], _ = _check_or_record(pin, "any", size, digest, fatal=False, log=log)
         if verify_only:
             return recorded
 
@@ -361,8 +376,63 @@ def vendor_conversion(manifest, *, dry_run=False, verify_only=False, log=print):
             raise VendorFetchError(
                 f"only {written} file(s) matched {keep} in the source archive. The upstream layout "
                 f"has moved, and a partial conversion package imports and then fails at use.")
-        _smoke_conversion(dest, log=log)
+        try:
+            recorded["content"], _ = _check_or_record_content(pin, dest, log=log)
+            _smoke_conversion(dest, log=log)
+        except VendorFetchError:
+            # A package that failed its own verification must not be left on disk. It would be
+            # importable, it would look current, and the next run would use it without re-checking
+            # anything. Absent is recoverable; present-and-unverified is not.
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
     return recorded
+
+
+def content_digest(root):
+    """A hash over the EXTRACTED files, independent of how they were packaged.
+
+    The archive hash covers the wrapper. This covers the contents, and the difference matters
+    because the two URLs this tool fetches are not the same kind of object. A release asset is
+    uploaded once and is genuinely immutable, so hashing the bytes is the right check. A source
+    archive at `/archive/refs/tags/` is GENERATED on request, and its exact bytes depend on the
+    compression the forge happens to use that day; a pin on those bytes can fail on a package whose
+    contents never changed, and a check that cries wolf is a check people learn to override.
+
+    Path and size go into the hash alongside the bytes, so a renamed or truncated file cannot be
+    concealed by another one's contents. Sorted, so the walk order of the filesystem cannot change
+    the answer between two machines.
+    """
+    h = hashlib.sha256()
+    for p in sorted(Path(root).rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(root).as_posix()
+        data = p.read_bytes()
+        h.update(f"{rel}\0{len(data)}\0".encode())
+        h.update(data)
+    return h.hexdigest()
+
+
+def _check_or_record_content(pin, dest, *, log=print):
+    """Verify the extracted package against its recorded content hash, or record it on a first run.
+
+    Kept separate from `_check_or_record` because the two failures mean different things and want
+    different words. A wrapper mismatch with a matching content hash is a re-packaged archive and
+    is harmless. A content mismatch is the one that matters.
+    """
+    got = content_digest(dest)
+    recorded = (pin.get("sha256") or {}).get("content")
+    if recorded is None:
+        log(f"  content: recording sha256 {got} (first extraction of this pin)")
+        return got, True
+    if recorded != got:
+        raise VendorFetchError(
+            f"the extracted package hashes to {got} and the manifest records {recorded}. The "
+            f"FILES differ, not just the packaging, so this is not a re-compressed archive: at a "
+            f"pinned tag the contents cannot legitimately change. Investigate before touching the "
+            f"pin; nothing downstream should use this package.")
+    log("  content: sha256 matches the recorded value")
+    return recorded, False
 
 
 def _smoke_conversion(dest, log=print):

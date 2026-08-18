@@ -156,11 +156,18 @@ def test_a_vendored_script_is_found(monkeypatch, tmp_path):
     assert vendored.find_script("conv.py") == tmp_path / "conv.py"
 
 
-def test_a_missing_script_says_it_should_have_been_there(monkeypatch, tmp_path):
+def test_a_missing_script_names_the_step_that_was_not_run(monkeypatch, tmp_path):
+    """The message used to say a missing script meant a broken checkout, on the belief that the
+    conversion package was committed. It is not: it is 87 files fetched at build time. "You have
+    not run a build step" and "your install is broken" want completely different things from a
+    reader, and only one of them was ever true here.
+    """
     monkeypatch.setattr(vendored, "VENDOR_SRC", tmp_path)
     with pytest.raises(VendorError) as e:
         vendored.find_script("conv.py")
-    assert "broken checkout" in str(e.value)
+    msg = str(e.value)
+    assert "vendor_llama.py" in msg, "the message does not name the step that fixes it"
+    assert "packaging fault" in msg, "the installed-wheel case is not distinguished"
 
 
 # ── the diagnostic ─────────────────────────────────────────────────────────────────

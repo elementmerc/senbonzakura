@@ -975,6 +975,9 @@ def build_parser():
             "  validate     ask whether a direction set carries refusal or carries topic: "
             "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
             "direction count against ablation strength compared at matched refusal removal\n"
+            "  convert      turn edited weights into a GGUF with the pinned converter, and "
+            "optionally quantise in the same command, so an edited model becomes something "
+            "llama.cpp will serve in one step\n"
             "  quantise     shrink a GGUF with the pinned llama-quantize, then read the output "
             "back to confirm it is the quantisation that was asked for\n"
             "  fetch        download a model file and prove it is the one asked for: length, GGUF "
@@ -2877,15 +2880,16 @@ class Abliterator:
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
 DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate",
-             "interactive", "quantise", "fetch")
+             "interactive", "quantise", "convert", "fetch")
 
 
 def _delegate(name):
-    from . import bench, coherence, drift, fetch, interactive, margin, quantise, score, track, validate
+    from . import bench, coherence, convert, drift, fetch, interactive, margin, quantise, score, track, validate
     return {"bench": bench.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "drift": drift.main, "track": track.main,
             "validate": validate.main, "interactive": interactive.run,
-            "quantise": quantise.main, "fetch": fetch.main}[name]
+            "quantise": quantise.main, "convert": convert.main,
+            "fetch": fetch.main}[name]
 
 
 def main(argv=None):

@@ -71,13 +71,17 @@
       "why": [
         "Not in the gguf pip package: its scripts/ holds only the dump, hash, endian, metadata and",
         "editor tools. And convert_hf_to_gguf.py alone is NOT enough. As of b10355 it is a 307-line",
-        "entry point that does `from conversion import ...`; the real work is 158 modules and about",
-        "752 KB in conversion/. Fetching the one file gives a stub that fails at import, which is",
-        "exactly what the first attempt at this produced.",
+        "entry point that does `from conversion import ...`; the real work is 85 modules and 845 KB",
+        "in conversion/. Fetching the one file gives a stub that fails at import, which is exactly",
+        "what the first attempt at this produced.",
         "Fetched at build time from the source archive at the pinned tag and hash-verified, NOT",
-        "committed. One 752 KB, 158-file third-party package in our tree would make every pin bump a",
-        "158-file diff, and 'reviewable in a diff' stops being true at that size. Committing it would",
+        "committed. An 859 KB, 87-file third-party package in our tree would make every pin bump an",
+        "87-file diff, and 'reviewable in a diff' stops being true at that size. Committing it would",
         "buy the appearance of reviewability rather than the fact of it.",
+        "The module count and size here were MEASURED on 2026-08-18 from the extracted package. The",
+        "figures they replace, 158 modules and 752 KB, were written a day earlier alongside the",
+        "unmeasured hash described below, by the same commit and for the same reason: nothing had",
+        "been downloaded yet. Three claims, one fetch that never happened.",
         "Its cost is that architecture support freezes at the pinned tag, which is why the",
         "refresh-every-release rule matters here as much as for the binaries: a new architecture",
         "landing upstream reaches us at the next release rather than never."
@@ -88,14 +92,44 @@
           "keep": [
             "convert_hf_to_gguf.py",
             "conversion/",
+            "gguf-py/gguf/",
             "LICENSE"
+          ],
+          "gguf_py_note": [
+            "gguf-py/gguf/ is kept because the converter's first real statement is `import gguf`,",
+            "and the PyPI package of that name IS NOT THE SAME CODE. Measured on 2026-08-18: PyPI",
+            "gguf 0.19.0 and this tag's gguf-py both declare version 0.19.0, and the PyPI one has",
+            "no MODEL_ARCH.LFM2_MOE and no GEMMA4_ASSISTANT. The result was that conversion/lfm2.py",
+            "failed to import, while --print-supported-models still advertised Lfm2MoeForCausalLM,",
+            "because that list is built from a static registry rather than from what imported.",
+            "A claim of support the machinery could not deliver, presenting as green.",
+            "No version constraint can express this: the two share a version NUMBER and differ in",
+            "contents, so a floor, a ceiling and a pin are all equally unable to tell them apart.",
+            "Vendoring gguf-py from the same tag makes the converter and its library consistent by",
+            "construction, which is the only check that holds."
           ],
           "licence_note": "LICENSE is kept from the same archive so the MIT notice we redistribute is the verbatim text at the pinned tag, not a copy of MIT typed from memory. MIT requires the copyright notice travel with the work; a paraphrase does not discharge that."
         }
       },
       "sha256": {
-        "any": "e38975e1c68d98ac1664dfd530616eb35c72294382a4dd873d4746b23f27779f"
-      }
+        "any": "e95e4628eea911b817cec473fd95451fc0720304dce72b316980a156c3d1481d",
+        "content": "497a43b50f294216ffd0b37a348d9005427d859c8e55fdc461be165f1ec1c783"
+      },
+      "_hash_note": [
+        "The value that sat here until 2026-08-18 was NEVER MEASURED. It was written on 2026-08-17",
+        "in the same commit whose own message says 'the conversion package is consequently NOT yet",
+        "fetched', because codeload was throttling; so it recorded a hash for an archive nobody had",
+        "downloaded. That is precisely what the policy above forbids, and it went in three lines",
+        "under the line forbidding it. It was caught on the first real fetch, by the check refusing",
+        "to extract. Removed rather than corrected in place, so the next fetch records it the only",
+        "legitimate way: from bytes that actually arrived.",
+        "Two hashes are kept from now on, because this URL is not the same kind of object as a",
+        "release asset. `any` is the source ARCHIVE, which the forge generates on request, so its",
+        "bytes can change with the compression in use on the day while every file inside stays",
+        "identical; a mismatch there warns. `content` is a hash over the EXTRACTED files, sorted,",
+        "with each path and length folded in, and that is the gate: at a pinned tag the contents",
+        "cannot legitimately change."
+      ]
     }
   }
 }

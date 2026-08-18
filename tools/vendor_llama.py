@@ -71,10 +71,20 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 RETRIES = 5
 BACKOFF_BASE_S = 4
 
-#: The only executable we need out of an eighty-megabyte archive. Everything else in there is
+#: The executables we need out of an eighty-megabyte archive. Everything else in there is
 #: inference and tooling this package does not use, and shipping it would be dead weight in
 #: every wheel.
-WANT_BIN = "llama-quantize"
+#:
+#: `llama-imatrix` was added on 2026-08-18 and costs 0.34 MB. It computes an importance matrix,
+#: which is what separates an `i1-` quantisation from a plain one of the same weights. That
+#: distinction is not cosmetic: it confounded a sister project's headline comparison, where an
+#: abliterated arm quantised with an imatrix was read against a stock arm quantised without one,
+#: so part of the difference was the quantiser rather than the edit. Owning both halves is what
+#: lets that comparison be made with one variable.
+#:
+#: It needs no per-tool implementation library of its own (there is no `libllama-imatrix-impl.so`
+#: in the archive); it links against libllama directly, which is already here.
+WANT_BINS = ("llama-quantize", "llama-imatrix")
 
 #: Shared libraries to keep. Matched by prefix because the exact set changes between releases and
 #: a hardcoded list silently ships a binary that cannot start.
@@ -199,7 +209,7 @@ def _open_archive(archive):
 
 def _wanted(name):
     base = Path(name).name
-    if base in (WANT_BIN, f"{WANT_BIN}.exe"):
+    if base in WANT_BINS or base in tuple(f"{w}.exe" for w in WANT_BINS):
         return True
     if not base.startswith(LIB_PREFIXES) or not _SONAME.search(base):
         return False
@@ -207,7 +217,7 @@ def _wanted(name):
 
 
 def extract(archive, out_dir, *, log=print):
-    """Pull llama-quantize and its libraries out, flat. Returns the names written."""
+    """Pull the wanted binaries and their libraries out, flat. Returns the names written."""
     out_dir.mkdir(parents=True, exist_ok=True)
     written, links = [], []
     with _open_archive(archive) as (handle, members):
@@ -244,10 +254,12 @@ def extract(archive, out_dir, *, log=print):
                 link.chmod(0o755)
         written.append(link.name)
 
-    if not any(w.startswith(WANT_BIN) for w in written):
+    missing = [w for w in WANT_BINS if not any(x.startswith(w) for x in written)]
+    if missing:
         raise VendorFetchError(
-            f"{archive.name} does not contain {WANT_BIN}. The upstream archive layout has changed, "
-            f"so this tool is looking in the wrong place rather than the release being broken.")
+            f"{archive.name} does not contain {', '.join(missing)}. The upstream archive layout "
+            f"has changed, so this tool is looking in the wrong place rather than the release "
+            f"being broken.")
     log(f"  extracted {len(written)} file(s): {', '.join(sorted(written))}")
     return written
 
@@ -265,24 +277,29 @@ def smoke(out_dir, key, *, log=print):
     platforms get the structural check above and their real smoke test on the machine that uses
     them, which is honest about what has and has not been verified.
     """
-    exe = out_dir / (f"{WANT_BIN}.exe" if key.startswith("windows") else WANT_BIN)
     if key != vendored.platform_key():
-        log(f"  {key}: not this platform, so the binary is not run here. Extraction checked only.")
+        log(f"  {key}: not this platform, so the binaries are not run here. Extraction checked only.")
         return False
-    try:
-        r = subprocess.run([str(exe), "--help"], capture_output=True, timeout=60, check=False)
-    except (OSError, subprocess.SubprocessError) as e:
-        raise VendorFetchError(
-            f"{key}: the extracted {WANT_BIN} could not be started ({e}). The archive downloaded "
-            f"and hashed correctly, so this is a missing shared library rather than a bad "
-            f"download: check that every soname alias was kept.") from e
-    out = (r.stdout + r.stderr).decode("utf-8", errors="replace")
-    if "usage" not in out.lower():
-        raise VendorFetchError(
-            f"{key}: {WANT_BIN} started but did not print a usage message; it exited "
-            f"{r.returncode} saying {out.strip()[:200]!r}. A binary that cannot describe itself "
-            f"will not quantise anything either.")
-    log(f"  {key}: {WANT_BIN} runs and reports its usage")
+
+    # EVERY wanted binary, not just the first. They are separate executables with separate library
+    # needs, so "one of them starts" says nothing about the other, and an unrunnable one would ship
+    # in every wheel until somebody tried to use it.
+    for want in WANT_BINS:
+        exe = out_dir / (f"{want}.exe" if key.startswith("windows") else want)
+        try:
+            r = subprocess.run([str(exe), "--help"], capture_output=True, timeout=60, check=False)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise VendorFetchError(
+                f"{key}: the extracted {want} could not be started ({e}). The archive downloaded "
+                f"and hashed correctly, so this is a missing shared library rather than a bad "
+                f"download: check that every soname alias was kept.") from e
+        out = (r.stdout + r.stderr).decode("utf-8", errors="replace")
+        if "usage" not in out.lower():
+            raise VendorFetchError(
+                f"{key}: {want} started but did not print a usage message; it exited "
+                f"{r.returncode} saying {out.strip()[:200]!r}. A binary that cannot describe "
+                f"itself will not do its job either.")
+        log(f"  {key}: {want} runs and reports its usage")
     return True
 
 

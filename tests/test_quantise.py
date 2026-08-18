@@ -9,6 +9,8 @@ Everything else here is a guard, and each guard exists because its absence has c
 an exit code that was believed over the file it produced, a partial write left looking like a
 result, and a lossy step stacked on a lossy step.
 """
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -248,3 +250,65 @@ def test_a_missing_binary_explains_both_routes(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         quantise.run([str(src)], log=lambda _m: None)
     assert "vendor_llama.py" in str(e.value)
+
+
+# ── the imatrix path, added 2026-08-18 ───────────────────────────────────────────
+def test_an_imatrix_is_passed_to_the_binary_and_its_calibration_named(tmp_path, monkeypatch):
+    """Applying a matrix is half the job; SAYING which one is the half that stops the next
+    comparison being confounded. An i1 file and a plain one of the same weights are not
+    comparable, and the only place that used to be written down was the filename.
+    """
+    src = tmp_path / "m-bf16.gguf"
+    src.write_bytes(b"GGUF" + b"\0" * 32)
+    im = tmp_path / "im.gguf"
+    im.write_bytes(b"matrix")
+    (tmp_path / ("im.gguf" + ".calibration.json")).write_text(
+        '{"calibration": {"corpus": "advbench"}}', encoding="utf-8")
+
+    monkeypatch.setattr(quantise.gguf_io, "verify",
+                        lambda *a, **k: {"file_type": "BF16", "tensor_count": 5,
+                                         "architecture": "qwen3"})
+    monkeypatch.setattr(quantise, "find_binary", lambda _n, **k: ("/x/llama-quantize", "vendored"))
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        Path(argv[-2]).write_bytes(b"GGUF" + b"\0" * 32)
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(quantise.subprocess, "run", fake_run)
+    msgs = []
+    quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
+                  "--imatrix", str(im)], log=msgs.append)
+    assert "--imatrix" in seen["argv"]
+    assert any("advbench" in m for m in msgs), "the calibration was applied and not named"
+
+
+def test_a_matrix_without_a_sidecar_is_applied_and_flagged_as_unknown(tmp_path, monkeypatch):
+    src = tmp_path / "m-bf16.gguf"
+    src.write_bytes(b"GGUF" + b"\0" * 32)
+    im = tmp_path / "orphan.gguf"
+    im.write_bytes(b"matrix")
+    monkeypatch.setattr(quantise.gguf_io, "verify",
+                        lambda *a, **k: {"file_type": "BF16", "tensor_count": 5,
+                                         "architecture": "qwen3"})
+    monkeypatch.setattr(quantise, "find_binary", lambda _n, **k: ("/x/llama-quantize", "vendored"))
+    monkeypatch.setattr(quantise.subprocess, "run",
+                        lambda argv, **kw: (Path(argv[-2]).write_bytes(b"GGUF" + b"\0" * 32),
+                                            type("R", (), {"returncode": 0})())[1])
+    msgs = []
+    quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
+                  "--imatrix", str(im)], log=msgs.append)
+    assert any("provenance is unknown" in m for m in msgs)
+
+
+def test_a_missing_imatrix_is_refused_before_the_job(tmp_path, monkeypatch):
+    src = tmp_path / "m-bf16.gguf"
+    src.write_bytes(b"GGUF" + b"\0" * 32)
+    monkeypatch.setattr(quantise.gguf_io, "verify",
+                        lambda *a, **k: {"file_type": "BF16", "tensor_count": 5,
+                                         "architecture": "qwen3"})
+    monkeypatch.setattr(quantise, "find_binary", lambda _n, **k: ("/x/llama-quantize", "vendored"))
+    with pytest.raises(SystemExit, match="no importance matrix"):
+        quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
+                      "--imatrix", str(tmp_path / "nope.gguf")], log=lambda _m: None)

@@ -65,6 +65,11 @@ def build_parser():
     ap.add_argument("--allow-requantize", action="store_true",
                     help="quantise an already-quantised source. Lossy on top of lossy, and the "
                          "reason it is off by default")
+    ap.add_argument("--imatrix", default=None, metavar="FILE",
+                    help="apply an importance matrix, producing the better-quality quantisation "
+                         "llama.cpp names `i1-`. Build one with `senbonzakura imatrix`. An i1 and "
+                         "a plain quant of the SAME weights are not comparable, so a comparison "
+                         "that mixes them is measuring the quantiser as well as the model")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")
     ap.add_argument("--keep-source", action="store_true",
                     help="do not offer to remove the source afterwards (it never removes it "
@@ -149,6 +154,19 @@ def run(argv=None, log=print):
     argv_q = [str(exe)]
     if a.allow_requantize:
         argv_q.append("--allow-requantize")
+    if a.imatrix:
+        im = Path(a.imatrix)
+        if not im.is_file():
+            raise SystemExit(f"no importance matrix at {im}. Build one with `senbonzakura imatrix`.")
+        argv_q += ["--imatrix", str(im)]
+        from . import imatrix as _imatrix
+        cal = _imatrix.describe(im)
+        # Named, not just applied. Which text a matrix was calibrated on changes which weights keep
+        # their precision, and a quantisation whose provenance is only in a filename is how the
+        # imatrix confound hid in the first place.
+        log(f"  applying the importance matrix at {im.name}"
+            + (f", calibrated on {cal['calibration'].get('corpus') or cal['calibration'].get('path')}"
+               if cal else " (no calibration sidecar; its provenance is unknown)"))
     argv_q += [str(a.source), str(out), a.type]
     if a.threads:
         argv_q.append(str(a.threads))

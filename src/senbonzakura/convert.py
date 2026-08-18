@@ -84,6 +84,8 @@ def build_parser():
                     help="after converting, quantise to this type (e.g. Q4_K_M) and remove the "
                          "intermediate. One command from edited weights to something llama.cpp "
                          "will serve")
+    ap.add_argument("--imatrix", default=None, metavar="FILE",
+                    help="with --quantise, apply this importance matrix (an `i1-` quantisation)")
     ap.add_argument("--keep-intermediate", action="store_true",
                     help="with --quantise, keep the full-precision GGUF as well")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")
@@ -253,6 +255,8 @@ def run(argv=None, log=print):
         from . import quantise
         log(f"quantising to {a.quantise}")
         q_argv = [str(out), "--type", a.quantise]
+        if a.imatrix:
+            q_argv += ["--imatrix", a.imatrix]
         if a.force:
             q_argv.append("--force")
         if not a.keep_intermediate:

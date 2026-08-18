@@ -13,7 +13,7 @@
   ],
   "pins": {
     "llama.cpp": {
-      "name": "llama.cpp release binaries (llama-quantize)",
+      "name": "llama.cpp release binaries (llama-quantize, llama-imatrix)",
       "repo": "ggml-org/llama.cpp",
       "tag": "b10355",
       "published": "2026-08-10T23:15:19Z",
@@ -25,7 +25,8 @@
         "k-quant algorithms exist in C++ and nowhere else we can reach.",
         "Reimplementing them in numpy was considered and rejected: the failure mode is a model",
         "that loads and is quietly slightly worse, which is the defect class this project has",
-        "withdrawn results over twice."
+        "withdrawn results over twice.",
+        "llama-imatrix was added on 2026-08-18 and costs 0.34 MB. An importance matrix is what separates an i1- quantisation from a plain one of the same weights, and that difference is not cosmetic: it confounded a sister project's headline 8B comparison, where an abliterated arm quantised WITH an imatrix was read against a stock arm quantised without one, so part of the measured gain was the quantiser rather than the edit. Shipping both halves is what lets that comparison be run with one variable instead of two."
       ],
       "assets": {
         "linux-x86_64": {
@@ -58,7 +59,8 @@
       },
       "note": [
         "CPU archives only. Quantisation is CPU work, so the CUDA, Vulkan, SYCL and ROCm builds",
-        "would add hundreds of megabytes per wheel for nothing."
+        "would add hundreds of megabytes per wheel for nothing.",
+        "There is no libllama-imatrix-impl.so in the archive: llama-imatrix links against libllama directly, which is already vendored, so the second binary adds no new library."
       ],
       "chosen_by": "tools/check_vendor_pins.py on 2026-08-17: the newest release that had cleared the 7-day cooldown. It was chosen over b10250, which a human had picked by eye, and over b10456, which was hours old."
     },

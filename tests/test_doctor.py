@@ -11,6 +11,8 @@ three lines apart. Both came from the same source: the converter's static regist
 architecture whether or not the module providing it imported. A reader skimming for ticks would
 have been reassured by the line that was wrong.
 """
+import pathlib
+
 import pytest
 
 from senbonzakura import doctor
@@ -259,3 +261,40 @@ def test_torch_without_cuda_is_an_advisory_and_names_the_version():
     c = doctor.check_torch()
     assert c.status in ("pass", "warn")
     assert any(ch.isdigit() for ch in c.detail), "the torch version is not in the detail line"
+
+
+def test_the_deep_check_reports_both_steps_when_they_succeed(monkeypatch):
+    """The success path of the only check that proves the whole chain. Mocked at the command
+    boundary rather than the binary, so it exercises doctor's own reporting rather than llama.cpp.
+    """
+    from senbonzakura import convert, gguf_io, quantise
+
+    def fake_convert(argv, log=print):
+        pathlib.Path(argv[1]).write_bytes(b"GGUF")
+        return 0
+
+    def fake_quantise(argv, log=print):
+        pathlib.Path(argv[1]).write_bytes(b"GGUF")
+        return 0
+
+    monkeypatch.setattr(convert, "run", fake_convert)
+    monkeypatch.setattr(quantise, "run", fake_quantise)
+    monkeypatch.setattr(gguf_io, "verify",
+                        lambda *a, **k: {"tensor_count": 25, "architecture": "qwen3",
+                                         "file_type": "BF16"})
+    out = doctor.deep_check(log=lambda _m: None)
+    names = [c.name for c in out]
+    assert "deep convert" in names and "deep quantise" in names
+    assert all(c.status == "pass" for c in out), [(c.name, c.detail) for c in out]
+
+
+def test_a_deep_quantise_that_writes_nothing_is_a_failure(monkeypatch):
+    from senbonzakura import convert, gguf_io, quantise
+    monkeypatch.setattr(convert, "run",
+                        lambda argv, log=print: (pathlib.Path(argv[1]).write_bytes(b"GGUF"), 0)[1])
+    monkeypatch.setattr(quantise, "run", lambda argv, log=print: 0)   # claims success, no file
+    monkeypatch.setattr(gguf_io, "verify",
+                        lambda *a, **k: {"tensor_count": 25, "architecture": "qwen3",
+                                         "file_type": "BF16"})
+    out = doctor.deep_check(log=lambda _m: None)
+    assert any(c.status == "fail" and "quantise" in c.name for c in out)

@@ -982,6 +982,9 @@ def build_parser():
             "back to confirm it is the quantisation that was asked for\n"
             "  fetch        download a model file and prove it is the one asked for: length, GGUF "
             "header, architecture and the quantisation its name claims\n"
+            "  doctor       check this install can actually do the job: pins, the binary runs, "
+            "every architecture module imports, the bundled data decodes, and with --deep a real "
+            "model goes through convert and quantise\n"
             "\n"
             "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2880,15 +2883,15 @@ class Abliterator:
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
 DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate",
-             "interactive", "quantise", "convert", "fetch")
+             "interactive", "quantise", "convert", "fetch", "doctor")
 
 
 def _delegate(name):
-    from . import bench, coherence, convert, drift, fetch, interactive, margin, quantise, score, track, validate
+    from . import bench, coherence, convert, doctor, drift, fetch, interactive, margin, quantise, score, track, validate
     return {"bench": bench.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "drift": drift.main, "track": track.main,
             "validate": validate.main, "interactive": interactive.run,
-            "quantise": quantise.main, "convert": convert.main,
+            "quantise": quantise.main, "convert": convert.main, "doctor": doctor.main,
             "fetch": fetch.main}[name]
 
 

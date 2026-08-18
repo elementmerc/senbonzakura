@@ -161,6 +161,12 @@ NULL_DIRECTIONS_PER_LAYER = 4
 # for best. A true infinity so no finite objective can ever tie or beat it.
 WORST_SCORE = float("inf")
 
+# Ceiling on the activation-capture chunk. Separate from the generation batch because capturing
+# every layer's hidden states costs far more per row than generating from them, and it is the
+# value this path used as a fixed size before it was paced, so a healthy card behaves exactly as
+# it did before.
+CAPTURE_BATCH = 16
+
 
 # ── weight math (pure) ───────────────────────────────────────────────────────────
 def _orth_to(vec, basis):
@@ -1465,6 +1471,27 @@ class Abliterator:
             external_pressure_mb=args.external_pressure_mb,
             enabled=not args.no_throttle)
 
+        # A SECOND governor, for activation capture, and deliberately not the one above.
+        #
+        # Two reasons it is separate rather than shared. The memory profile is different:
+        # `output_hidden_states=True` materialises every layer's activations for the whole batch at
+        # once, so a batch size that is comfortable for generation can be far too large here, and a
+        # shared `cur_batch` would carry one path's adaptation into the other. And the artefact
+        # records `batch_sizes_used` under `generation`, described there as a property of
+        # generation; folding capture chunks into that counter would make the field describe two
+        # different things, which is the defect class this project keeps withdrawing results over.
+        #
+        # The ceiling stays at the 16 that was hard-coded here before, so a healthy card sees
+        # exactly the behaviour it saw previously and only a starved one sees a smaller chunk.
+        self.capture_gov = ResourceGovernor(
+            self.dev, log,
+            max_batch=CAPTURE_BATCH,
+            min_free_frac=args.gpu_min_free_frac,
+            max_pause_s=args.max_pause_s,
+            background_mode=args.background_mode,
+            external_pressure_mb=args.external_pressure_mb,
+            enabled=not args.no_throttle)
+
         # Search-window layer bounds + reversible-bake / current-direction state.
         self.lo = int(self.NL * args.layer_lo)
         self.hi = int(self.NL * args.layer_hi)
@@ -1508,13 +1535,28 @@ class Abliterator:
 
     # ── direction extraction: per-prompt last-token residuals, bad vs good ────────
     @torch.no_grad()
-    def collect_resid(self, prompts, bs=16):
-        # Per-prompt last-token residual at every layer -> [NL+1, N, H] on CPU (float32).
-        # We keep the whole cloud, not just its mean, so secondary refusal directions can be
-        # recovered by PCA (multi-directional ablation), not only the difference-of-means.
-        chunks = []
-        for i in range(0, len(prompts), bs):
-            ch = [self.chat(p) for p in prompts[i:i+bs]]
+    def collect_resid(self, prompts):
+        """Per-prompt last-token residual at every layer -> [NL+1, N, H] on CPU (float32).
+
+        We keep the whole cloud, not just its mean, so secondary refusal directions can be
+        recovered by PCA (multi-directional ablation), not only the difference-of-means.
+
+        PACED, because this is the first GPU-heavy thing an abliteration run does and it used to be
+        the only batched path with a fixed size. `output_hidden_states=True` materialises every
+        layer's activations for the whole batch at once, so on a large model it is also the
+        heaviest thing per row; running it unpaced meant a run could die at the very first step,
+        after loading the weights and before a single trial, on a card another process was already
+        using. The governor shrinks the chunk on out-of-memory and waits when the card is too full
+        for even one prompt, which is machinery this file already had and this path alone did not
+        use.
+
+        Memory here is bounded by the caller's prompt count rather than streamed: the whole cloud
+        is the point, since PCA needs it. For the models this tool targets that is small (25 layers
+        x 256 prompts x 2048 wide x 4 bytes is 52 MB), and the arithmetic is written down in the
+        deferred ledger rather than left to be rediscovered.
+        """
+        def _capture(chunk):
+            ch = [self.chat(p) for p in chunk]
             enc = self.tok(ch, return_tensors="pt", padding=True, add_special_tokens=False).to(self.dev)
             out = self.model(**enc, output_hidden_states=True, use_cache=False)
             # The tokenizer is LEFT-padded (see __init__), so the real prompt always ends at the
@@ -1522,8 +1564,15 @@ class Abliterator:
             # attention_mask.sum()-1 would point into the pad region for every prompt shorter than
             # the batch max, averaging pad-token activations into the refusal subspace (the old bug).
             per = torch.stack([h[:, -1, :].float().cpu() for h in out.hidden_states], 0)  # [NL+1, b, H]
-            chunks.append(per)
-        return torch.cat(chunks, 1)  # [NL+1, N, H]
+            # One entry per PROMPT, not one per chunk: the governor's contract is a list the same
+            # length as the items it was handed, which is also what lets it re-run a shrunken chunk
+            # without the caller having to know the chunk boundaries moved.
+            return [per[:, j, :] for j in range(per.shape[1])]
+
+        rows = self.capture_gov.run(_capture, list(prompts))
+        if not rows:
+            raise ValueError("no activations captured: the prompt list was empty.")
+        return torch.stack(rows, 1)  # [NL+1, N, H]
 
     def extract_directions(self, bad_dir, good_dir_path, hedge_ds, clean_src):
         # Build up to KMAX ORTHONORMAL refusal directions per layer into self.dirs_multi.
@@ -2757,6 +2806,13 @@ class Abliterator:
                        # machinery was pinned; `--no-throttle` pins it.
                        "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
                                       **self.gov.report()},
+                       # The same disclosure for the capture pass, which the generation block does
+                       # not cover and which has a stronger claim to it: these activations ARE the
+                       # refusal direction. Batch composition enters their numerics exactly as it
+                       # enters generation's, so a reader comparing two runs' directions needs to
+                       # know whether the chunking was pinned here too.
+                       "direction_capture": {"prompts_per_side": args.dir_prompts,
+                                             **self.capture_gov.report()},
                        "sparsity": float(args.sparsity),
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.

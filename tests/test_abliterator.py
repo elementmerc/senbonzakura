@@ -1734,3 +1734,32 @@ def test_the_warm_start_reports_the_budget_it_actually_seeded():
         "the warm-start line reports a constant rather than the budget it seeded"
     assert re.search(r"K=\{seed\[.num_directions.\]\}", src), \
         "the warm-start line no longer interpolates the seeded budget"
+
+
+def test_the_chat_template_flag_reaches_the_loader(monkeypatch, base_args, tiny_model, tiny_tok):
+    """It did not until 2026-08-20, and the failure was self-contradicting: a model shipping no
+    template refused the run and told the operator to supply one with `--chat-template`, which the
+    abliterate path then dropped on the floor. `score` and `compass` both forwarded it; the main
+    command did not, so the instruction in the error and the behaviour of the fix disagreed.
+    """
+    seen = {}
+
+    def fake_loader(model_id, **kw):
+        seen.update(kw)
+        return tiny_model, tiny_tok
+
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", fake_loader)
+    base_args.chat_template = "/some/template.jinja"
+    cli.Abliterator(base_args, lambda _m: None)
+    assert seen.get("chat_template") == "/some/template.jinja", (
+        "the abliterate path dropped --chat-template again")
+
+
+def test_an_absent_chat_template_flag_stays_absent(monkeypatch, base_args, tiny_model, tiny_tok):
+    """The parser defaults it to "", which must not reach the loader as a path to an empty file."""
+    seen = {}
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
+                        lambda model_id, **kw: (seen.update(kw), (tiny_model, tiny_tok))[1])
+    base_args.chat_template = ""
+    cli.Abliterator(base_args, lambda _m: None)
+    assert seen.get("chat_template") is None

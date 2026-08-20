@@ -1089,6 +1089,8 @@ def build_parser():
                          "convolution path at all, by comparison against a run without this flag. "
                          "Every skipped layer is warned about and the choice is recorded in the "
                          "result file, so the model cannot later be mistaken for a whole one.")
+    from . import events as _events
+    _events.add_argument(ap)
     ap.add_argument("--seed", type=int, default=42,
                     help="seed for the Optuna sampler (default 42). Vary it to measure run-to-run "
                          "spread: a single run tells you nothing about whether a gap between two "
@@ -1434,6 +1436,11 @@ class Abliterator:
                 args.model, device=self.dev,
                 load_in_4bit=args.load_in_4bit,
                 trust_remote_code=args.trust_remote_code,
+                # Passed through, which it was not until 2026-08-20. `score` and `compass` both
+                # forwarded it and the abliterator did not, so on a model shipping no template the
+                # run refused and told the operator to supply one with a flag it then ignored:
+                # the instruction in the failure and the behaviour of the fix disagreed.
+                chat_template=getattr(args, "chat_template", None) or None,
                 attn_impl=args.attn_impl, log=log)
         self.tok = tok
         self.model = model
@@ -1459,6 +1466,13 @@ class Abliterator:
         # invariant restated where the search reads it.
         self.KMIN = min(max(1, args.min_directions), self.KMAX)
         log(f"model up: hidden={self.H} layers={self.NL} down-proj={self.arch} experts={self.ne}")
+        # Opened here rather than in `run()` so a caller constructing the class directly (a GUI, a
+        # test) gets events too. A no-op when the flag is absent, which is the common case.
+        from . import events as _events
+        self.events = _events.open_for(args, log=log)
+        self.events.emit("model_loaded", model=getattr(args, "model", None), hidden=self.H,
+                         layers=self.NL, arch=self.arch, experts=self.ne,
+                         device=str(getattr(self, "dev", "")))
 
         # Offload awareness: when the model is bigger than VRAM, accelerate places some layers on CPU
         # (or disk). The bake handles those transparently (see _real_tensor); we just report it so the
@@ -1587,6 +1601,7 @@ class Abliterator:
         # Build up to KMAX ORTHONORMAL refusal directions per layer into self.dirs_multi.
         args, NL, H, KMAX, log = self.args, self.NL, self.H, self.KMAX, self.log
         log("extracting refusal directions (primary + secondary)")
+        self.events.emit("phase", phase="phase_directions")
         bad = self.load(bad_dir, args.dir_prompts)
         good = self.load(good_dir_path, args.dir_prompts)
         if not bad or not good:
@@ -2134,6 +2149,9 @@ class Abliterator:
         log(f"  trial {trial.number}: o(P={pr[0]},wmax={pr[1]:.2f}) d(P={pr[4]},wmax={pr[5]:.2f}) K={K} {mode}"
             f"{'' if didx is None else f' di={didx:.1f}'} -> refusals={ref*100:.1f}% soft={soft*100:.1f}% "
             f"heretic={hk*100:.1f}% broken={broken*100:.0f}% KL={kl:.4f} obj={scal:.4f}")
+        self.events.emit("trial", number=trial.number, k=K, mode=mode,
+                         refusals=round(ref, 6), soft=round(soft, 6), heretic=round(hk, 6),
+                         broken=round(broken, 6), kl=round(kl, 6), objective=round(scal, 6))
         if args.search == "pareto":
             # THREE objectives (lever 1): strict non-compliance (hard+hedge, with a broken penalty),
             # the Heretic keyword rate (its own axis so the search actually targets what Heretic wins),
@@ -2771,6 +2789,7 @@ class Abliterator:
 
         self.free_before_save()
         log(f"saving to {args.out}")
+        self.events.emit("phase", phase="phase_saving")
         self._save_weights()
         # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
         # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a
@@ -2880,6 +2899,8 @@ class Abliterator:
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},
                       f, indent=2)
+        self.events.emit("done", out=str(args.out))
+        self.events.close()
         log("DONE")
 
 

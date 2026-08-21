@@ -6,7 +6,7 @@
        alt="Senbonzakura: multi-direction refusal abliteration">
 </picture>
 
-**Multi-direction refusal abliteration, and the instruments to tell whether it worked**
+**Precision abliteration, with receipts.**
 
 <p>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>

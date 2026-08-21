@@ -17,8 +17,8 @@ const SITE = process.env.DOCS_SITE || 'https://elementmerc.github.io'
 export default {
   title: 'Senbonzakura',
   description:
-    'Multi-direction refusal abliteration for transformer language models, and the instruments '
-    + 'to tell whether it worked.',
+    'Precision abliteration, with receipts. Multi-direction refusal abliteration for transformer '
+    + 'language models, and the instruments to tell whether it worked.',
   lang: 'en-GB',
   base: BASE,
   cleanUrls: true,
@@ -49,7 +49,8 @@ export default {
     ['meta', { property: 'og:title', content: 'Senbonzakura' }],
     ['meta', {
       property: 'og:description',
-      content: 'Multi-direction refusal abliteration, and the instruments to tell whether it worked.',
+      content: 'Precision abliteration, with receipts. Multi-direction refusal abliteration, and '
+        + 'the instruments to tell whether it worked.',
     }],
     ['meta', { property: 'og:image', content: `${SITE}${BASE}social-card.png` }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],

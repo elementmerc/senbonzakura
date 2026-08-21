@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -50,12 +51,33 @@ class BuildError(Exception):
     """A corpus that cannot be trusted, phrased for a person."""
 
 
+def preflight():
+    """Refuse before the first download rather than partway through it.
+
+    `doctor` sends people here by name when the corpora are missing, so this script is something
+    a stranger runs on a fresh machine on the strength of that instruction. Without `gh` it used
+    to die on a raw `FileNotFoundError: 'gh'` from deep inside subprocess, which names the
+    program that is missing and nothing about what to do next.
+    """
+    if shutil.which("gh") is None:
+        raise BuildError(
+            "the GitHub CLI (`gh`) is not installed. The corpus sources are fetched through it "
+            "so that no credential is ever handled by this script. Install it from "
+            "https://cli.github.com, run `gh auth login`, then run this again.")
+
+
 def fetch(repo, commit, path, *, timeout=120):
     """Raw bytes of one file at one commit, through `gh` so the credential never enters here."""
-    r = subprocess.run(
-        ["gh", "api", f"repos/{repo}/contents/{path}?ref={commit}",
-         "-H", "Accept: application/vnd.github.raw"],
-        capture_output=True, timeout=timeout, check=False)
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/contents/{path}?ref={commit}",
+             "-H", "Accept: application/vnd.github.raw"],
+            capture_output=True, timeout=timeout, check=False)
+    except FileNotFoundError as e:
+        # Belt and braces behind preflight(): anything importing this module and calling fetch()
+        # directly gets the same sentence rather than the bare OSError.
+        raise BuildError(
+            "the GitHub CLI (`gh`) is not installed; see https://cli.github.com") from e
     if r.returncode != 0 or not r.stdout:
         raise BuildError(
             f"could not fetch {repo}@{commit[:12]}:{path}: "
@@ -167,6 +189,7 @@ def main(argv=None):
                     help="verify the pins and the counts, write nothing")
     a = ap.parse_args(argv)
     try:
+        preflight()
         payload = build(check_only=a.check)
     except (BuildError, corpora.CorpusError) as e:
         print(f"corpora: {e}", file=sys.stderr)

@@ -246,3 +246,63 @@ def test_a_local_directory_cannot_shadow_a_bundled_name(tmp_path, monkeypatch):
 def test_the_ambiguous_name_is_refused_through_resolve_too():
     with pytest.raises(CorpusError):
         dataset.resolve("xstest", what="prompt set")
+
+
+# ── the prerequisite is named before the first download ──────────────────────────
+#
+# `doctor` sends a stranger to `tools/build_corpora.py` by name when the corpora are missing, so
+# it gets run on machines that were never set up for it. On one without the GitHub CLI it died on
+# a raw `FileNotFoundError: 'gh'` out of subprocess, which names the missing program and nothing
+# a person can act on. Found by running it on the CPU box.
+def _build_corpora_module():
+    import importlib.util
+    import pathlib
+    path = pathlib.Path(__file__).resolve().parent.parent / "tools" / "build_corpora.py"
+    spec = importlib.util.spec_from_file_location("_build_corpora_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_missing_github_cli_is_refused_with_something_to_do(monkeypatch):
+    mod = _build_corpora_module()
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: None)
+    with pytest.raises(mod.BuildError) as e:
+        mod.preflight()
+    msg = str(e.value)
+    assert "gh" in msg and "cli.github.com" in msg, msg
+    assert "auth login" in msg, "the message names the program but not how to make it usable"
+
+
+def test_the_preflight_passes_when_the_cli_is_present(monkeypatch):
+    mod = _build_corpora_module()
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/gh")
+    mod.preflight()
+
+
+def test_fetch_itself_also_refuses_rather_than_raising_oserror(monkeypatch):
+    """Belt and braces: anything calling fetch() directly gets the sentence, not the OSError."""
+    mod = _build_corpora_module()
+
+    def _no_gh(*_a, **_k):
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(mod.subprocess, "run", _no_gh)
+    with pytest.raises(mod.BuildError) as e:
+        mod.fetch("owner/repo", "abc123", "some.csv")
+    assert "gh" in str(e.value)
+
+
+def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys):
+    """Behavioural, so that deleting the preflight() call from main() fails this rather than
+    leaving three green tests that only ever exercised the function directly.
+    """
+    mod = _build_corpora_module()
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: None)
+
+    def _should_not_run(*_a, **_k):
+        raise AssertionError("a download was attempted after the prerequisite check failed")
+
+    monkeypatch.setattr(mod.subprocess, "run", _should_not_run)
+    assert mod.main([]) == 1
+    assert "cli.github.com" in capsys.readouterr().err

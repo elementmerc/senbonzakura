@@ -251,3 +251,47 @@ def test_the_readme_only_documents_entry_points_that_exist():
     assert modules or commands, (
         "the README documents no runnable command at all any more, so this check is passing "
         "over an empty set rather than checking anything")
+
+
+# ── the exit code has to survive the way out ─────────────────────────────────────
+#
+# `__main__.py` called `main()` and dropped the return value, so `python -m senbonzakura`
+# reported success for any command that fails by RETURNING a status rather than raising.
+# `doctor` printed "this install cannot do what it claims" over nine failed checks and exited 0,
+# which makes it useless as the pre-flight gate it was built to be. Only a subprocess can show
+# this: calling `main()` in-process returns the number perfectly well, and the loss happens on
+# the way out of the interpreter.
+def _run_module(args, stdin=""):
+    return subprocess.run(
+        [sys.executable, "-m", "senbonzakura", *args],
+        capture_output=True, text=True, timeout=300, check=False, input=stdin,
+    )
+
+
+def test_a_command_that_returns_a_failure_code_exits_with_it():
+    """`interactive` refuses a non-terminal stdin by returning 2. Piped stdin is never a TTY,
+    so this is deterministic without needing a pty.
+    """
+    r = _run_module(["interactive"])
+    assert r.returncode == 2, (
+        f"the refusal exited {r.returncode}; a caller checking the status saw success. "
+        f"stdout={r.stdout[-300:]!r}"
+    )
+
+
+def test_python_dash_m_agrees_with_the_console_script():
+    """The two documented invocations must not disagree about whether a run failed."""
+    import shutil
+    exe = shutil.which("senbonzakura")
+    if exe is None:                                        # pragma: no cover
+        pytest.skip("the console script is not on PATH in this environment")
+    direct = subprocess.run([exe, "interactive"], capture_output=True, text=True,
+                            timeout=300, check=False, input="")
+    assert _run_module(["interactive"]).returncode == direct.returncode
+
+
+def test_success_still_exits_zero():
+    """`sys.exit(main())` must not turn a normal run into a failure: the abliterate paths
+    return None, and None is exit 0.
+    """
+    assert _run_module(["--help"]).returncode == 0

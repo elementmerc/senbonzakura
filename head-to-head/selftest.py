@@ -9,7 +9,7 @@ its point.
 So this runs INSIDE the container and checks each invariant by trying to violate it. Run it before
 any arm, and after any change to the runner:
 
-    bench/run-isolated.sh --tool selftest --model <any dir> --out <dir> -- python /work/selftest.py
+    head-to-head/run-isolated.sh --tool selftest --model <any dir> --out <dir> -- python /work/selftest.py
 
 Exit 0 means every invariant held. Exit 1 names the ones that did not.
 """

@@ -26,7 +26,7 @@
 # needs to be reproducible by a stranger.
 #
 # Usage:
-#   bench/run-isolated.sh --tool heretic --ref v1.2.3 --model /models/Qwen3-1.7B \
+#   head-to-head/run-isolated.sh --tool heretic --ref v1.2.3 --model /models/Qwen3-1.7B \
 #                         --out /work/out/heretic-seed42 -- <command to run inside>
 set -euo pipefail
 
@@ -80,7 +80,7 @@ die() { echo "run-isolated: $*" >&2; exit 2; }
 IMAGE="${IMAGE_OVERRIDE:-${BENCH_IMAGE:-$(image_for "$TOOL")}}"
 IMAGE="${IMAGE:-senbon-bench:tool}"
 docker image inspect "$IMAGE" >/dev/null 2>&1 \
-  || die "no image $IMAGE for tool '$TOOL'. Build it first (bench/Dockerfile.*), or name one with --image."
+  || die "no image $IMAGE for tool '$TOOL'. Build it first (head-to-head/Dockerfile.*), or name one with --image."
 [ -n "$MODEL" ] || die "--model is required and must already exist on disk (nothing is downloaded)"
 [ -n "$OUT" ]   || die "--out is required"
 [ $# -gt 0 ]    || die "no command given after --"
@@ -121,7 +121,7 @@ CORPUS_ARGS=()
 
 EVAL_ARGS=()
 if [ -n "$EVAL" ]; then
-  [ -d "$EVAL" ] || die "--eval $EVAL does not exist. The slices are written by bench/stage_eval_slices.py before the arms start, because the container has no network and no corpus loader."
+  [ -d "$EVAL" ] || die "--eval $EVAL does not exist. The slices are written by head-to-head/stage_eval_slices.py before the arms start, because the container has no network and no corpus loader."
   EVAL_ARGS=(-v "$EVAL:/corpus-eval:ro")
 fi
 

@@ -99,7 +99,7 @@ Until 2026-08-06 the head-to-head existed only as our private runner configurati
 meant a table on this site could not be re-derived by anyone who didn't have this machine.
 That's a claim, not a measurement.
 
-It's now `senbonzakura bench`, it ships inside the wheel, and it has its own tests. See
+It's now `senbonzakura head-to-head`, it ships inside the wheel, and it has its own tests. See
 [Benchmarking against another tool](/guide/benchmark).
 
 **The head-to-head against Heretic is published but provisional.** It ran on 2026-08-12 under

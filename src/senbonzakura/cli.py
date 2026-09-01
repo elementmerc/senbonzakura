@@ -967,6 +967,8 @@ def build_parser():
             "  score        refusal, hedging, the Heretic keyword rate and broken output on a "
             "fixed eval set\n"
             "  coherence    perplexity of a fixed neutral passage, the coherence cost\n"
+            "  drift        one coherence ruler applied to any model after the fact, so a model "
+            "edited by any tool can be measured on the same scale\n"
             "  track        build an evaluation track with a checked fit / search / measure split\n"
             "  auto         alias for kageyoshi, for anyone who has not met the name\n"
             "  interactive  a guided walk through the handful of choices that decide whether a "
@@ -975,6 +977,8 @@ def build_parser():
             "  validate     ask whether a direction set carries refusal or carries topic: "
             "leave-one-cluster-out generalisation, a random-direction floor, and a sweep of "
             "direction count against ablation strength compared at matched refusal removal\n"
+            "  head-to-head run this tool and other abliteration tools over the same model, the same "
+            "corpus and the same budget on one machine, then report what separates them\n"
             "  convert      turn edited weights into a GGUF with the pinned converter, and "
             "optionally quantise in the same command, so an edited model becomes something "
             "llama.cpp will serve in one step\n"
@@ -2906,18 +2910,18 @@ class Abliterator:
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-DELEGATED = ("bench", "compass", "drift", "score", "coherence", "track", "validate",
+DELEGATED = ("head-to-head", "compass", "drift", "score", "coherence", "track", "validate",
              "interactive", "quantise", "convert", "imatrix", "fetch", "doctor")
 
 
 def _delegate(name):
     from . import (
-        bench,
         coherence,
         convert,
         doctor,
         drift,
         fetch,
+        headtohead,
         imatrix,
         interactive,
         margin,
@@ -2926,7 +2930,7 @@ def _delegate(name):
         track,
         validate,
     )
-    return {"bench": bench.main, "compass": margin.main, "score": score.main,
+    return {"head-to-head": headtohead.main, "compass": margin.main, "score": score.main,
             "coherence": coherence.main, "drift": drift.main, "track": track.main,
             "validate": validate.main, "interactive": interactive.run,
             "quantise": quantise.main, "convert": convert.main, "doctor": doctor.main,

@@ -30,7 +30,7 @@ Every command is `python -m senbonzakura <name>`, or `senbonzakura <name>` after
 | Command | What it does |
 |---|---|
 | `bench stage` | Cut the prompt slices every tool will be scored on, from one corpus. |
-| `bench head-to-head` | Run every tool over every seed, score every model with one instrument, print the verdict. |
+| `head-to-head run` | Run every tool over every seed, score every model with one instrument, print the verdict. |
 | `bench report` | Read a finished run again, without re-running anything. |
 
 See [Benchmarking against another tool](/guide/benchmark) for what makes it a comparison rather

@@ -1,6 +1,6 @@
 """Run a head-to-head between abliteration tools, on one machine, in one command.
 
-`senbonzakura bench head-to-head --tools senbon,heretic --seeds 5` is the whole thing: it runs
+`senbonzakura head-to-head run --tools senbon,heretic --seeds 5` is the whole thing: it runs
 each tool's arms, scores every model it produced with one judge, and writes a report. No
 orchestrator, no ssh, no private tooling. A stranger can run it, which is the point.
 
@@ -132,7 +132,7 @@ def _heretic_argv(*, model, track, out, seed, trials, slices, extra):
             "heretic needs the staged evaluation slices; pass --eval-slices. They are what make "
             "both tools read the same prompts, and without them Heretic fetches its own")
     s = Path(slices)
-    return ["python", "-u", "-m", "bench.run_heretic",
+    return ["python", "-u", "-m", "headtohead.run_heretic",
             "--model", str(model), "--out", str(out),
             "--good", str(s / "good.txt"), "--bad", str(s / "bad.txt"),
             "--keyword-prompts", str(s / "keyword_prompts.txt"),
@@ -146,7 +146,7 @@ def _heretic_finalise(*, out, slices, **_):
     senbonzakura does not report the best trial its search found: it re-scores its top six on a
     larger held-out slice and reports the winner of that second look. A comparison that skips the
     equivalent for Heretic measures our selection procedure and calls it our method, which is why
-    `bench/EQUAL-BUDGET.md` commits us to this pass. It also does the saving, because v1.4.0
+    `headtohead/EQUAL-BUDGET.md` commits us to this pass. It also does the saving, because v1.4.0
     cannot save without a terminal.
     """
     if not slices:
@@ -161,20 +161,20 @@ def _heretic_finalise(*, out, slices, **_):
 
 
 def _bench_dir_for(out) -> Path:
-    """Where `bench/` is, as the pass will see it.
+    """Where `headtohead/` is, as the pass will see it.
 
-    Inside the container it is mounted at /work/bench; outside it sits beside the package. The
+    Inside the container it is mounted at /work/headtohead; outside it sits beside the package. The
     caller tells us which by the output path it passed, because that is already the guest-or-host
     decision run_arm made.
     """
     if str(out) == GUEST_OUT:
-        return Path("/work/bench")
+        return Path("/work/headtohead")
     here = Path(__file__).resolve()
     for root in (here.parent.parent.parent, Path.cwd(), Path.home()):
-        candidate = root / "bench"
+        candidate = root / "headtohead"
         if (candidate / "best_of_n_heretic.py").is_file():
             return candidate
-    return Path("bench")
+    return Path("headtohead")
 
 
 def _heretic_report(arm: Path):
@@ -220,7 +220,7 @@ def _senbon_conv_argv(ablate_conv: bool):
     only way to ask whether refusal travels through that path at all. Everything that keeps that
     model from being mistaken for a result lives elsewhere and is deliberate: the run warns per
     layer, `abliteration.json` records `ablate_conv` and the skipped layers, the checkpoint carries
-    the same in its config and its safetensors header, and `bench report` excludes any arm that
+    the same in its config and its safetensors header, and `headtohead report` excludes any arm that
     declares itself partial before a single table is built.
     """
     def build(**kw):
@@ -374,7 +374,7 @@ def docker_available() -> bool:
 def isolate_argv(argv, *, image: str, mounts, workdir="/work") -> list[str]:
     """Wrap a command so it runs sealed: no network, read-only inputs, no capabilities.
 
-    Used when `bench/run-isolated.sh` is not available. It is the minimum sealed box and it is
+    Used when `headtohead/run-isolated.sh` is not available. It is the minimum sealed box and it is
     deliberately not the one this project runs its own arms in: see `isolation_wrapper`.
     """
     out = ["docker", "run", "--rm", "--network", "none", "--read-only",
@@ -387,24 +387,24 @@ def isolate_argv(argv, *, image: str, mounts, workdir="/work") -> list[str]:
 
 
 def find_run_isolated() -> Path | None:
-    """`bench/run-isolated.sh`, if this is a checkout rather than an installed wheel."""
+    """`headtohead/run-isolated.sh`, if this is a checkout rather than an installed wheel."""
     override = os.environ.get("SENBON_RUN_ISOLATED")
     if override:
         p = Path(override)
         return p if p.is_file() else None
     here = Path(__file__).resolve()
     # A checkout has it beside the package; a machine the code was shipped to has it wherever the
-    # shipping put it, which on this project's card is ~/bench rather than beside the source.
+    # shipping put it, which on this project's card is ~/headtohead rather than beside the source.
     roots = (here.parent.parent.parent, Path.cwd(), Path.home())
     for root in roots:
-        candidate = root / "bench" / "run-isolated.sh"
+        candidate = root / "headtohead" / "run-isolated.sh"
         if candidate.is_file():
             return candidate
     return None
 
 
 def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, out) -> list[str]:
-    """Run an arm through `bench/run-isolated.sh`, which owns the isolation.
+    """Run an arm through `headtohead/run-isolated.sh`, which owns the isolation.
 
     THE FLAGS ARE NOT REIMPLEMENTED HERE, and that is the point.
 
@@ -413,10 +413,10 @@ def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, 
     `/usr/lib/wsl/drivers`; miss the driver store and libcuda loads, reports that it cannot
     initialise NVML, and returns zero devices, which reads as "no GPU here" rather than "one bind
     mount short". It also needs the corpus, the staged eval slices, our package source so a pass
-    running inside can import the shared ruler, and the bench directory so the tool's own entry
+    running inside can import the shared ruler, and the headtohead directory so the tool's own entry
     point is importable.
 
-    That is seven mounts and a device, and `bench/selftest.py` verifies nine invariants about them
+    That is seven mounts and a device, and `headtohead/selftest.py` verifies nine invariants about them
     from INSIDE the box. Rebuilding that list in Python would mean maintaining two copies of a
     thing this project has already been bitten by having three copies of, and the copy that drifts
     is the one nobody re-verifies.
@@ -515,7 +515,7 @@ def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
 
     The timeout is not optional and has no "wait forever" setting, because a sweep is a sequence
     and one hung arm stops every arm behind it. holst-orchestrated runs carry their own
-    `timeout_secs` and `stall_secs`, so this covers the case those do not: `senbonzakura bench`
+    `timeout_secs` and `stall_secs`, so this covers the case those do not: `senbonzakura head-to-head`
     invoked directly, where nothing else is watching. A `llama-cli` smoke hung for two hours on
     2026-08-16 with no bound on it at all, which is this failure one layer down.
 
@@ -558,7 +558,7 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     # THE ARM IS GIVEN THE PATHS IT WILL SEE, NOT THE ONES WE SEE.
     #
     # A container mounts the model at /model and the corpus at /corpus, so an arm handed
-    # `--model /home/<user>/bench-models/Qwen3-1.7B` looks for a directory that does not exist
+    # `--model /home/<user>/headtohead-models/Qwen3-1.7B` looks for a directory that does not exist
     # inside the box and dies on its first line. The rehearsal on 2026-08-10 caught exactly that:
     # every arm failed instantly with "No module named senbonzakura", because the command was
     # built against this machine's layout and run somewhere with a different one.
@@ -787,7 +787,7 @@ def drift_prompt_slice(harmless: Path, out: Path, skip=DRIFT_SKIP_HARMLESS, n=DR
     partition: held out from direction fitting by the track's own boundaries, and never shown to
     either tool. All three axes then read the same exam.
     """
-    from .benchstage import load_texts
+    from .headtohead_stage import load_texts
 
     target = Path(out) / "drift-prompts.txt"
     prompts = load_texts(str(harmless), skip + n)[skip:skip + n]
@@ -914,10 +914,10 @@ def summarise(results) -> dict:
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="senbonzakura bench",
+        prog="senbonzakura head-to-head",
         description="Run a head-to-head between abliteration tools on one machine.")
     sub = ap.add_subparsers(dest="operation", required=True)
-    h = sub.add_parser("head-to-head", help="run every tool over every seed, then report")
+    h = sub.add_parser("run", help="run every tool over every seed, then report")
     h.add_argument("--tools", default="senbon,heretic",
                    help=f"comma-separated, from: {', '.join(sorted(ADAPTERS))}")
     h.add_argument("--seeds", default="42,43,44,45,46",
@@ -1000,15 +1000,15 @@ def _parse_seeds(text):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     if a.operation == "stage":
-        from . import benchstage
-        raise SystemExit(benchstage.main([
+        from . import headtohead_stage
+        raise SystemExit(headtohead_stage.main([
             "--track", a.track, "--out", a.out,
             "--dir-prompts", str(a.dir_prompts), "--eval-refusal", str(a.eval_refusal),
             "--eval-refusal-final", str(a.eval_refusal_final), "--eval-kl", str(a.eval_kl)]))
     if a.operation == "report":
-        from . import benchreport
+        from . import headtohead_report
         args = [a.run_dir] + (["--allow-unreadable"] if a.allow_unreadable else [])
-        raise SystemExit(benchreport.main(args))
+        raise SystemExit(headtohead_report.main(args))
     tools = [t.strip() for t in a.tools.split(",") if t.strip()]
     seeds = _parse_seeds(a.seeds)
     images = _parse_images(a.image)
@@ -1064,7 +1064,7 @@ def main(argv=None):
         summary["refusal"] = refused
         summary["uncounted"] = [x["label"] for x in refused if not x["ok"]]
 
-    Path(a.out, "bench-summary.json").write_text(json.dumps(summary, indent=2) + "\n",
+    Path(a.out, "headtohead-summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                                  encoding="utf-8")
 
     if (summary["failed"] or summary.get("unscored") or summary.get("undrifted")
@@ -1080,8 +1080,8 @@ def main(argv=None):
         raise SystemExit(1)
 
     if a.score:
-        from . import benchreport
-        benchreport.main([str(a.out)])
+        from . import headtohead_report
+        headtohead_report.main([str(a.out)])
     return summary
 
 

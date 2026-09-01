@@ -50,7 +50,7 @@ the compass shipping in no released artefact, and it matters more here: a reader
 against a table they doubt is being able to re-derive it.
 
 Usage:
-    senbonzakura bench report <run-directory>
+    senbonzakura head-to-head report <run-directory>
 """
 import argparse
 import json
@@ -429,7 +429,7 @@ def render(arms):
                      f"{(dn if dn is not None else '-'):>9}")
     if not have_drift:
         lines.append("")
-        lines.append("  No drift files found. Run `senbonzakura bench head-to-head` with scoring")
+        lines.append("  No drift files found. Run `senbonzakura head-to-head run` with scoring")
         lines.append("  enabled, or `senbonzakura drift` per model, to fill this in.")
     else:
         by_tool_drift = {}
@@ -482,12 +482,12 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if not os.path.isdir(a.run_dir):
-        raise SystemExit(f"bench report: no directory at {a.run_dir}")
+        raise SystemExit(f"headtohead report: no directory at {a.run_dir}")
 
     arms = collect(a.run_dir)
     if not arms:
         raise SystemExit(
-            f"bench report: no scored arms under {a.run_dir}. Expected files named "
+            f"headtohead report: no scored arms under {a.run_dir}. Expected files named "
             f"scored-<tool>-seed<N>.json, which is what the score job writes.")
 
     text, had_unreadable, n_readable = render(arms)

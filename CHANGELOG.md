@@ -99,9 +99,9 @@ not comparable to what this version produces.
 
 ### Benchmark
 
-- `senbonzakura bench` runs a matched head-to-head between abliteration tools on one machine:
-  `stage` cuts the prompt slices every tool is scored on, `head-to-head` runs every arm and
-  scores every model with one instrument, `report` reads a finished run.
+- `senbonzakura head-to-head` runs a matched comparison between abliteration tools on one machine:
+  `run` puts every arm through, scoring every model with one instrument, `stage` cuts the prompt
+  slices every tool is scored on, and `report` reads a finished run.
 - Both tools get the same corpus, the same budget and the same prompt slices, and the slices
   record which corpus they came from so a mismatched pair is refused rather than run.
 - `--isolate docker` runs each arm with no network, read-only inputs and no credentials.

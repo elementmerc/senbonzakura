@@ -58,7 +58,7 @@ Concretely:
   on, with the same generation budget per candidate.
 - The winner of that re-score, picked by the same weighted knee scalar, is Heretic's reported arm.
 
-This is implemented **outside Heretic's code** (`bench/best_of_n_heretic.py`), reading its study,
+This is implemented **outside Heretic's code** (`head-to-head/best_of_n_heretic.py`), reading its study,
 so nothing about the tool is modified and the comparison is still of the tool as its author wrote
 it plus a selection pass we added to match our own.
 
@@ -86,7 +86,7 @@ what ours does).
 Heretic's two scorers each own an evaluation prompt set, separate from the corpus the directions
 are fitted on, and both default to a Hugging Face dataset. Inside a box with no network those
 defaults cannot load at all. They are pointed instead at the slices senbonzakura is scored on,
-written by `bench/stage_eval_slices.py` from the same code that builds them for our own arm.
+written by `head-to-head/stage_eval_slices.py` from the same code that builds them for our own arm.
 
 This is a comparability requirement, not a concession to the isolation. A tool's search is steered
 by whatever its scorers measure. Two tools optimising against different prompts have not been given

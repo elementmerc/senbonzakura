@@ -6,7 +6,7 @@ this does is:
 
   * point it at the same model and the same prompts senbonzakura gets, because a comparison across
     two corpora is a comparison of corpora;
-  * pin the seed and the trial count to the numbers in `bench/EQUAL-BUDGET.md`;
+  * pin the seed and the trial count to the numbers in `head-to-head/EQUAL-BUDGET.md`;
   * record the budget actually consumed in all three units, since trials alone hide a selection
     stage;
   * leave the Optuna study on disk so the best-of-N pass required by the equal-budget definition
@@ -21,7 +21,7 @@ A batch job has no terminal to answer with.
 
 That is not a problem, because the search is the tool and the save is only serialisation. Optuna
 writes the study to disk as the search runs, so by the time the menu appears every trial is
-already on disk. `bench/best_of_n_heretic.py` reads it, rebuilds the candidates, and saves both
+already on disk. `head-to-head/best_of_n_heretic.py` reads it, rebuilds the candidates, and saves both
 Heretic's own first offer and the winner of the best-of-N pass. Heretic's search runs exactly as
 released; nothing about it is modified.
 
@@ -50,7 +50,7 @@ import time
 
 def write_config(args, workdir):
     """The exact configuration Heretic is given, left on disk beside the result."""
-    cfg = f"""# Written by bench/run_heretic.py. Heretic is not modified; this is what it was told.
+    cfg = f"""# Written by head-to-head/run_heretic.py. Heretic is not modified; this is what it was told.
 model = "{args.model}"
 seed = {args.seed}
 n_trials = {args.trials}
@@ -78,7 +78,7 @@ column = "text"
 # tool's search is steered by whatever it is scored on, so two tools scored on different prompts
 # have not been given the same problem, and a table built from that would compare evaluation sets
 # while claiming to compare tools. These files are the slices senbonzakura is scored on, written
-# by bench/stage_eval_slices.py from the same code that builds them for our own arm. Heretic reads
+# by head-to-head/stage_eval_slices.py from the same code that builds them for our own arm. Heretic reads
 # a plain text file as one prompt per line, so `split` and `column` are not needed for that form.
 [bad_evaluation_prompts]
 dataset = "{args.keyword_prompts}"
@@ -191,7 +191,7 @@ def main():
         "config_written": cfg_path,
         "study": study_path(a.model, a.out),
         # Stated rather than implied: this arm has not yet had the best-of-N selection pass that
-        # `bench/EQUAL-BUDGET.md` promises it, and a row read before that pass is applied is not
+        # `head-to-head/EQUAL-BUDGET.md` promises it, and a row read before that pass is applied is not
         # the matched comparison the gate asks for.
         "best_of_n_applied": False,
     }

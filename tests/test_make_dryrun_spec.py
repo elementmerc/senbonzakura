@@ -22,7 +22,7 @@ _SPEC.loader.exec_module(mds)
 
 # The run specs are the operator's private runner configuration and are not in the public
 # repository (they name machines and home paths, and the operation they used to carry now lives
-# in `senbonzakura bench`). The fixture skips when they are absent, so a clone can run the suite.
+# in `senbonzakura head-to-head`). The fixture skips when they are absent, so a clone can run the suite.
 REAL = _ROOT / "private" / "holst" / "head-to-head-heretic.toml"
 
 
@@ -88,7 +88,7 @@ def test_the_rehearsal_stages_its_own_slices(real_spec):
     "--tools senbon,heretic",            # it is still a head-to-head and not one arm
     "--eval-slices",                     # both tools are still scored on one staged set
     "--skip-harmful 128",                # the compass still skips what the search saw
-    "bench stage",                       # the slices are still cut rather than assumed
+    "headtohead stage",                       # the slices are still cut rather than assumed
     "--track",                           # one corpus, still named
 ])
 def test_the_rehearsal_keeps_what_can_actually_be_wrong(real_spec, guarantee):

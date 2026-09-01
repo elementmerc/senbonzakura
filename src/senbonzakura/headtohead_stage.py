@@ -29,9 +29,9 @@ may contain a newline. That is checked rather than assumed, because a corpus row
 newline would silently become two prompts and shift every subsequent one.
 
 Run on the host, in senbonzakura's environment, before the container arms start:
-`senbonzakura bench stage --track <track> --out <slices>`.
+`senbonzakura head-to-head stage --track <track> --out <slices>`.
 
-It moved out of `bench/` and into the package on 2026-08-06 for the same reason the report did:
+It moved out of `headtohead/` and into the package on 2026-08-06 for the same reason the report did:
 a script beside the repository does not ship in the wheel, so nothing an outsider installs could
 stage the inputs the benchmark needs, and the benchmark was therefore unrunnable by anyone but us.
 """
@@ -47,11 +47,11 @@ def load_texts(directory, n, *, text_column=None, token=None):
     from senbonzakura import dataset
     try:
         rows = dataset.resolve(directory, text_column=text_column, token=token,
-                               strip=False, what="bench stage input")
+                               strip=False, what="headtohead stage input")
     except dataset.DatasetError as e:
-        raise SystemExit(f"bench stage: {e}") from e
+        raise SystemExit(f"headtohead stage: {e}") from e
     if len(rows) < n:
-        print(f"bench stage: NOTE {directory} holds {len(rows)} rows, fewer than the {n} "
+        print(f"headtohead stage: NOTE {directory} holds {len(rows)} rows, fewer than the {n} "
               f"requested; using all {len(rows)}", file=sys.stderr)
     return rows[:n]
 
@@ -66,13 +66,13 @@ def write_slice(path, prompts, label):
     bad = [i for i, p in enumerate(prompts) if "\n" in p or "\r" in p]
     if bad:
         raise SystemExit(
-            f"bench stage: {len(bad)} prompt(s) in the {label} slice contain a line break "
+            f"headtohead stage: {len(bad)} prompt(s) in the {label} slice contain a line break "
             f"(first at index {bad[0]}). Heretic reads one prompt per line, so writing these would "
             f"silently split them and shift every prompt after. Fix the corpus rows first.")
     blank = [i for i, p in enumerate(prompts) if not p.strip()]
     if blank:
         raise SystemExit(
-            f"bench stage: {len(blank)} blank prompt(s) in the {label} slice (first at index "
+            f"headtohead stage: {len(blank)} blank prompt(s) in the {label} slice (first at index "
             f"{blank[0]}). Heretic ignores empty lines, so the slice it reads would be shorter than "
             f"the one senbonzakura is scored on.")
     # Heretic strips each line as it reads it and senbonzakura does not, so a prompt carrying
@@ -80,13 +80,13 @@ def write_slice(path, prompts, label):
     padded = [i for i, p in enumerate(prompts) if p != p.strip()]
     if padded:
         raise SystemExit(
-            f"bench stage: {len(padded)} prompt(s) in the {label} slice carry leading or "
+            f"headtohead stage: {len(padded)} prompt(s) in the {label} slice carry leading or "
             f"trailing whitespace (first at index {padded[0]}). Heretic strips it on read and "
             f"senbonzakura does not, so the two tools would be scored on different strings. Clean "
             f"the corpus rows rather than the file written here.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(prompts) + "\n", encoding="utf-8")
-    print(f"bench stage: {len(prompts):>4} prompts -> {path}  ({label})")
+    print(f"headtohead stage: {len(prompts):>4} prompts -> {path}  ({label})")
     return len(prompts)
 
 
@@ -106,11 +106,11 @@ def main(argv=None):
 
     track, out = Path(a.track), Path(a.out)
     if not track.is_dir():
-        raise SystemExit(f"bench stage: no track at {track}")
+        raise SystemExit(f"headtohead stage: no track at {track}")
 
     if a.eval_refusal_final < a.eval_refusal:
         raise SystemExit(
-            f"bench stage: --eval-refusal-final ({a.eval_refusal_final}) is smaller than "
+            f"headtohead stage: --eval-refusal-final ({a.eval_refusal_final}) is smaller than "
             f"--eval-refusal ({a.eval_refusal}). The final slice is the LARGER one the best-of-N "
             f"pass re-scores on; with it smaller, the selection would see less evidence than the "
             f"search did and the pass would be worse than not running it.")
@@ -130,7 +130,7 @@ def main(argv=None):
         out / "kl_prompts.txt",
         kl_eval_slice(load_texts(track / "good_ds", a.dir_prompts + a.eval_kl),
                       a.dir_prompts, a.eval_kl,
-                      lambda m: print(f"bench stage: NOTE good_ds {m}", file=sys.stderr)),
+                      lambda m: print(f"headtohead stage: NOTE good_ds {m}", file=sys.stderr)),
         "KL divergence, disjoint from direction extraction")
 
     # The prompts each tool FITS its directions on. Heretic takes these as files; senbonzakura
@@ -149,15 +149,15 @@ def main(argv=None):
     # either command line and becomes an invariant nothing is checking. Slices cut from corpus A
     # beside a run pointed at corpus B would be silent: every arm finishes, every artefact is
     # present, and the table means nothing.
-    from .bench import write_slice_provenance
-    print(f"bench stage: recorded the source corpus in {write_slice_provenance(out, track)}")
+    from .headtohead import write_slice_provenance
+    print(f"headtohead stage: recorded the source corpus in {write_slice_provenance(out, track)}")
 
     # The final slice is a superset of the search slice by construction (both are the head of
     # bad_eval_ds). Stated as a check because a corpus shorter than the final count would silently
     # make them equal, and the re-score would then add nothing while the table said it had.
     if counts["final"] <= counts["keyword"]:
         raise SystemExit(
-            f"bench stage: the best-of-N slice ({counts['final']}) is not larger than the "
+            f"headtohead stage: the best-of-N slice ({counts['final']}) is not larger than the "
             f"search slice ({counts['keyword']}), so re-scoring on it would repeat the search's own "
             f"measurement rather than test it on fresh evidence. bad_eval_ds is too small; either "
             f"grow it or lower --eval-refusal.")

@@ -612,10 +612,19 @@ def test_kageyoshi_is_a_real_subcommand_and_abliterate_names_the_default(
 
 
 def test_every_subcommand_is_listed_in_the_help():
-    """A dispatcher nobody can discover is a private API with a public name."""
-    text = cli.build_parser().format_help()
+    """A dispatcher nobody can discover is a private API with a public name.
+
+    The substring form of this check passed `bench` for months while it was genuinely
+    undocumented, because the parser carries a `--bench-only` flag and "bench" is inside it.
+    The epilog lists one command per line as `  name  description`, so the command has to be
+    matched THERE rather than anywhere in the help text.
+    """
+    lines = cli.build_parser().format_help().splitlines()
     for name in ("abliterate", "kageyoshi", *cli.DELEGATED):
-        assert name in text, f"{name} is dispatched but undocumented"
+        # The command must OPEN an epilog entry, not merely appear somewhere in the help.
+        # Column widths vary with the longest name, so match the entry rather than the padding.
+        assert any(ln.startswith(f"  {name} ") for ln in lines), \
+            f"{name} is dispatched but not listed in the command epilog"
 
 
 # ── kageyoshi preset ─────────────────────────────────────────────────────────────────

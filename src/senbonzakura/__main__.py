@@ -11,5 +11,5 @@ if __name__ == "__main__":
     # `doctor` was the one that mattered: it exists to be run before a long job, it printed
     # "this install cannot do what it claims" over nine failed checks, and it exited 0. Anything
     # using it as a pre-flight gate in a script or a CI job got a silent pass. `interactive`'s
-    # non-terminal refusal and `benchreport`'s failure code were losing the same way.
+    # non-terminal refusal and `headtohead_report`'s failure code were losing the same way.
     sys.exit(main())

@@ -1,4 +1,4 @@
-"""Tests for `senbonzakura bench report`, which turns a finished head-to-head into a claim.
+"""Tests for `senbonzakura head-to-head report`, which turns a finished head-to-head into a claim.
 
 The tests are about the claims, not the layout: that a gap inside the noise is called a tie, that
 two seeds cannot buy a verdict, that a missing arm fails the report rather than shrinking the
@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from senbonzakura import benchreport as rh
+from senbonzakura import headtohead_report as rh
 
 
 @pytest.fixture

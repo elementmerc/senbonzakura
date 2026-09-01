@@ -9,7 +9,7 @@ second look (cli.py, the `--top-rescore` block). That is a selection stage, it c
 and it appears in no trial count. A head-to-head that ignores it measures our selection procedure
 and calls it our method.
 
-`bench/EQUAL-BUDGET.md` therefore commits us to giving Heretic an equivalent pass, and this is it.
+`head-to-head/EQUAL-BUDGET.md` therefore commits us to giving Heretic an equivalent pass, and this is it.
 It runs AFTER Heretic's own search, reads the Optuna study the search left on disk, and never
 touches Heretic's code: the tool ran exactly as its author wrote it, and the selection we added to
 match our own is applied from outside.

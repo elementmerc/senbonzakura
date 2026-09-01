@@ -1,4 +1,4 @@
-"""Tests for `senbonzakura bench stage`, the shared evaluation slices.
+"""Tests for `senbonzakura head-to-head stage`, the shared evaluation slices.
 
 The head-to-head is only a comparison of two tools if both are scored on the same prompts. These
 slices are what make that true, and every check here is written around a way they could quietly
@@ -8,7 +8,7 @@ into two, a blank row that Heretic drops and we keep, padding that Heretic strip
 import pytest
 from datasets import Dataset
 
-from senbonzakura import benchstage as ses
+from senbonzakura import headtohead_stage as ses
 from senbonzakura.cli import kl_eval_slice
 
 
@@ -65,23 +65,23 @@ def test_the_slices_record_the_corpus_they_were_cut_from(track, tmp_path):
     """Otherwise slices from corpus A beside a run pointed at corpus B is silent."""
     import json
 
-    from senbonzakura import bench
+    from senbonzakura import headtohead
     t = track()
     out = tmp_path / "eval"
     run(t, out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
-    recorded = json.loads((out / bench.SLICE_PROVENANCE).read_text(encoding="utf-8"))
+    recorded = json.loads((out / headtohead.SLICE_PROVENANCE).read_text(encoding="utf-8"))
     assert recorded["track"] == str(t.resolve())
-    assert bench.slices_match_track(out, t) == []
+    assert headtohead.slices_match_track(out, t) == []
 
 
 def test_every_file_the_benchmark_expects_is_written(track, tmp_path):
     """The staging step and the runner must agree about the filenames, or preflight refuses a
     correctly staged directory and nobody can tell which half is wrong.
     """
-    from senbonzakura import bench
+    from senbonzakura import headtohead
     out = tmp_path / "eval"
     run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
-    for name in bench.SLICE_FILES:
+    for name in headtohead.SLICE_FILES:
         assert (out / name).is_file(), f"{name} is expected by the runner and never written"
 
 

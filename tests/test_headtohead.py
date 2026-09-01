@@ -1,4 +1,4 @@
-"""Tests for `senbonzakura bench head-to-head`, the operation that used to be a run spec.
+"""Tests for `senbonzakura head-to-head run`, the operation that used to be a run spec.
 
 The defects this module exists to have fixed are all from 2026-08-05 and 06, and every one of them
 lived in shell embedded in orchestrator configuration rather than in either tool: a resume guard
@@ -15,7 +15,7 @@ import types
 
 import pytest
 
-from senbonzakura import bench
+from senbonzakura import headtohead
 
 
 def _host_out(argv):
@@ -91,7 +91,7 @@ def runner():
     return Fake()
 
 
-SLICE_FILES = bench.SLICE_FILES
+SLICE_FILES = headtohead.SLICE_FILES
 
 
 def _slices(tmp_path, track=None):
@@ -100,7 +100,7 @@ def _slices(tmp_path, track=None):
     d.mkdir(exist_ok=True)
     for f in SLICE_FILES:
         (d / f).write_text("a prompt\n", encoding="utf-8")
-    bench.write_slice_provenance(d, track if track is not None else tmp_path / "track")
+    headtohead.write_slice_provenance(d, track if track is not None else tmp_path / "track")
     return d
 
 
@@ -116,9 +116,9 @@ def _args(tmp_path, **over):
 # ── the resume guard, which is the defect this file most exists for ───────────────────
 def test_a_finished_arm_is_skipped_on_a_second_run(tmp_path, runner):
     a = _args(tmp_path)
-    first = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    first = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     assert first.ran and first.ok
-    second = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    second = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     assert not second.ran and second.ok
     assert len(runner.calls) == 1, "the finished arm was run again"
 
@@ -126,25 +126,25 @@ def test_a_finished_arm_is_skipped_on_a_second_run(tmp_path, runner):
 def test_an_arm_from_a_different_configuration_is_not_reused(tmp_path, runner):
     """"A file is here" is what a guard says when it has stopped guarding."""
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     a["trials"] = 60
-    again = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    again = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     assert again.ran, "an arm searched for 200 trials was reused for a 60-trial run"
 
 
 def test_a_different_model_is_not_reused_either(tmp_path, runner):
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     a["model"] = "/models/somethingelse"
-    assert bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a).ran
+    assert headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a).ran
 
 
 def test_a_manifest_without_its_artefacts_does_not_count_as_done(tmp_path, runner):
     """The manifest is a claim; the artefacts are the evidence. Both, or it runs again."""
     a = _args(tmp_path)
-    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     (r.arm / "abliteration.json").unlink()
-    again = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    again = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     assert again.ran
 
 
@@ -152,15 +152,15 @@ def test_the_guard_always_says_why(tmp_path):
     """A guard that reports only true or false cannot be debugged when it is wrong."""
     arm = tmp_path / "senbon-seed42"
     arm.mkdir()
-    expected = bench.arm_manifest(bench.ADAPTERS["senbon"], 42, "/m", 200)
-    done, why = bench.arm_is_done(arm, expected, bench.ADAPTERS["senbon"])
+    expected = headtohead.arm_manifest(headtohead.ADAPTERS["senbon"], 42, "/m", 200)
+    done, why = headtohead.arm_is_done(arm, expected, headtohead.ADAPTERS["senbon"])
     assert not done and "no manifest" in why
 
 
 def test_force_re_runs_a_finished_arm(tmp_path, runner):
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, force=True, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, force=True, **a)
     assert len(runner.calls) == 2
 
 
@@ -168,27 +168,27 @@ def test_force_re_runs_a_finished_arm(tmp_path, runner):
 def test_an_arm_that_exits_zero_producing_nothing_is_a_failure(tmp_path, runner):
     """The 2026-08-05 rehearsal's arms exited 0 having written nothing at all."""
     runner.produce = False
-    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
     assert not r.ok and "produced no" in r.reason
 
 
 def test_a_failed_arm_writes_no_manifest(tmp_path, runner):
     """Otherwise the next run would skip it and the failure would become permanent and silent."""
     runner.produce = False
-    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
-    assert not (r.arm / bench.ARM_MANIFEST).exists()
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    assert not (r.arm / headtohead.ARM_MANIFEST).exists()
 
 
 def test_a_nonzero_exit_is_a_failure_and_names_the_code(tmp_path, runner):
     runner.code = 137
-    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **_args(tmp_path))
     assert not r.ok and "137" in r.reason
 
 
 # ── the arms are given the same problem ───────────────────────────────────────────────
 def test_every_arm_gets_the_same_trial_budget(tmp_path, runner):
     """An equal-budget claim is the whole comparison, and it used to live in a bash loop."""
-    bench.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner,
+    headtohead.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner,
                        **_args(tmp_path))
     # The selection pass carries no trial budget: it re-scores candidates the search already
     # spent its budget producing, so it is filtered out rather than expected to declare one.
@@ -204,11 +204,11 @@ def test_every_arm_reads_prompts_traceable_to_one_corpus(tmp_path, runner):
     and becomes an invariant something has to check rather than one a reader can see.
     """
     a = _args(tmp_path)
-    bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    headtohead.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
     senbon, heretic = runner.calls[0], runner.calls[1]
     assert senbon[senbon.index("--track") + 1] == str(a["track"])
     assert str(a["slices"]) in " ".join(heretic)
-    assert bench.slices_match_track(a["slices"], a["track"]) == []
+    assert headtohead.slices_match_track(a["slices"], a["track"]) == []
 
 
 def test_slices_cut_from_another_corpus_are_refused(tmp_path):
@@ -216,73 +216,73 @@ def test_slices_cut_from_another_corpus_are_refused(tmp_path):
     other = tmp_path / "othercorpus"
     other.mkdir()
     d = _slices(tmp_path, track=other)
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=d)
     assert any("different corpora" in x for x in p)
 
 
 def test_slices_that_cannot_say_where_they_came_from_are_refused(tmp_path):
     d = _slices(tmp_path)
-    (d / bench.SLICE_PROVENANCE).unlink()
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
+    (d / headtohead.SLICE_PROVENANCE).unlink()
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path / "track", out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=d)
     assert any("which corpus" in x for x in p)
 
 
 def test_each_seed_reaches_its_arm(tmp_path, runner):
-    bench.head_to_head(tools=["senbon"], seeds=[42, 43, 44], runner=runner, **_args(tmp_path))
+    headtohead.head_to_head(tools=["senbon"], seeds=[42, 43, 44], runner=runner, **_args(tmp_path))
     assert [c[c.index("--seed") + 1] for c in runner.calls] == ["42", "43", "44"]
 
 
 def test_a_failing_arm_does_not_stop_the_others(tmp_path, runner):
     """One bad seed should cost that seed, not the night."""
     runner.code = 1
-    results = bench.head_to_head(tools=["senbon"], seeds=[42, 43], runner=runner,
+    results = headtohead.head_to_head(tools=["senbon"], seeds=[42, 43], runner=runner,
                                  **_args(tmp_path))
-    assert len(results) == 2 and bench.summarise(results)["failed"] == 2
+    assert len(results) == 2 and headtohead.summarise(results)["failed"] == 2
 
 
 # ── isolation ─────────────────────────────────────────────────────────────────────────
 def test_the_sealed_box_drops_the_network_and_the_capabilities():
-    argv = bench.isolate_argv(["python", "run.py"], image="img",
+    argv = headtohead.isolate_argv(["python", "run.py"], image="img",
                               mounts=[("/tmp", "/corpus", "ro")])
     for flag in ("--network", "none", "--read-only", "--cap-drop", "ALL", "no-new-privileges"):
         assert flag in argv, f"{flag} missing, so the box is not sealed"
 
 
 def test_inputs_are_mounted_read_only_and_output_is_not(tmp_path):
-    argv = bench.isolate_argv(["x"], image="img",
+    argv = headtohead.isolate_argv(["x"], image="img",
                               mounts=[(tmp_path, "/corpus", "ro"), (tmp_path, "/work/out", "rw")])
     joined = " ".join(argv)
     assert "/corpus:ro" in joined and "/work/out:rw" in joined
 
 
 def test_the_command_survives_wrapping_intact():
-    argv = bench.isolate_argv(["python", "-m", "x", "--flag", "a b"], image="img", mounts=[])
+    argv = headtohead.isolate_argv(["python", "-m", "x", "--flag", "a b"], image="img", mounts=[])
     assert argv[-5:] == ["python", "-m", "x", "--flag", "a b"]
 
 
 def test_an_arm_command_is_a_list_so_a_path_with_a_space_stays_one_argument(tmp_path, runner):
     a = _args(tmp_path, model="/models/my model")
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     assert "/models/my model" in runner.calls[0]
 
 
 # ── preflight ─────────────────────────────────────────────────────────────────────────
 def test_one_tool_is_not_a_head_to_head(tmp_path):
-    p = bench.preflight(tools=["senbon"], track=tmp_path, out=tmp_path / "o", model="m",
+    p = headtohead.preflight(tools=["senbon"], track=tmp_path, out=tmp_path / "o", model="m",
                         isolate="none", images={})
     assert any("needs two" in x for x in p)
 
 
 def test_an_unknown_tool_is_named_rather_than_ignored(tmp_path):
-    p = bench.preflight(tools=["senbon", "nosuchtool"], track=tmp_path, out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "nosuchtool"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="none", images={})
     assert any("nosuchtool" in x for x in p)
 
 
 def test_a_missing_corpus_is_caught_before_the_first_gpu_second(tmp_path):
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path / "nowhere",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path / "nowhere",
                         out=tmp_path / "o", model="m", isolate="none", images={})
     assert any("no corpus" in x for x in p)
 
@@ -290,35 +290,35 @@ def test_a_missing_corpus_is_caught_before_the_first_gpu_second(tmp_path):
 def test_an_unwritable_output_directory_is_caught(tmp_path):
     blocked = tmp_path / "blocked"
     blocked.write_text("i am a file, not a directory", encoding="utf-8")
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=blocked, model="m",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=blocked, model="m",
                         isolate="none", images={})
     assert any("cannot write" in x for x in p)
 
 
 def test_asking_for_isolation_without_an_image_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setattr(bench, "docker_available", lambda: True)
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    monkeypatch.setattr(headtohead, "docker_available", lambda: True)
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="docker", images={"senbon": "img"})
     assert any("heretic" in x and "image" in x for x in p)
 
 
 def test_asking_for_isolation_without_docker_says_what_the_alternative_costs(tmp_path,
                                                                              monkeypatch):
-    monkeypatch.setattr(bench, "docker_available", lambda: False)
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    monkeypatch.setattr(headtohead, "docker_available", lambda: False)
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="docker", images={})
     assert any("credentials" in x for x in p)
 
 
 def test_a_clean_setup_has_no_complaints(tmp_path):
-    assert bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    assert headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                            model="m", isolate="none", images={},
                            slices=_slices(tmp_path, track=tmp_path)) == []
 
 
 def test_a_tool_that_would_bring_its_own_prompts_is_refused_without_staged_slices(tmp_path):
     """A tool steered by its own scorer is solving a different problem from ours."""
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=None)
     assert any("eval-slices" in x for x in p)
 
@@ -326,14 +326,14 @@ def test_a_tool_that_would_bring_its_own_prompts_is_refused_without_staged_slice
 def test_an_incomplete_slice_directory_names_what_is_missing(tmp_path):
     d = _slices(tmp_path, track=tmp_path)
     (d / "kl_prompts.txt").unlink()
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=d)
     assert any("kl_prompts.txt" in x for x in p)
 
 
 def test_heretic_is_given_the_staged_prompts_rather_than_fetching_its_own(tmp_path, runner):
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["heretic"], seed=42, runner=runner, **a)
     argv = runner.calls[0]
     for flag in ("--good", "--bad", "--keyword-prompts", "--kl-prompts"):
         assert flag in argv, f"heretic was not told where {flag} is, so it would fetch its own"
@@ -341,24 +341,24 @@ def test_heretic_is_given_the_staged_prompts_rather_than_fetching_its_own(tmp_pa
 
 def test_running_heretic_with_no_slices_fails_loudly_rather_than_silently(tmp_path, runner):
     a = _args(tmp_path, slices=None)
-    with pytest.raises(bench.BenchError) as e:
-        bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, **a)
+    with pytest.raises(headtohead.BenchError) as e:
+        headtohead.run_arm(headtohead.ADAPTERS["heretic"], seed=42, runner=runner, **a)
     assert "eval-slices" in str(e.value)
 
 
 # ── the command line ──────────────────────────────────────────────────────────────────
 def test_a_refused_preflight_runs_nothing(tmp_path, capsys):
     with pytest.raises(SystemExit):
-        bench.main(["head-to-head", "--tools", "senbon", "--model", "m",
+        headtohead.main(["run", "--tools", "senbon", "--model", "m",
                     "--track", str(tmp_path), "--out", str(tmp_path / "o")])
     assert "BENCH REFUSED" in capsys.readouterr().err
 
 
 def test_running_unsealed_warns_rather_than_proceeding_quietly(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(bench, "default_runner", lambda *a, **k: 0)
+    monkeypatch.setattr(headtohead, "default_runner", lambda *a, **k: 0)
     (tmp_path / "track").mkdir()
     with pytest.raises(SystemExit):
-        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+        headtohead.main(["run", "--model", "m", "--track", str(tmp_path / "track"),
                     "--out", str(tmp_path / "o"), "--seeds", "42", "--no-score",
                     "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
     assert "run unsealed" in capsys.readouterr().err
@@ -366,42 +366,42 @@ def test_running_unsealed_warns_rather_than_proceeding_quietly(tmp_path, monkeyp
 
 def test_a_repeated_seed_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
-        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+        headtohead.main(["run", "--model", "m", "--track", str(tmp_path),
                     "--out", str(tmp_path / "o"), "--seeds", "42,42"])
     assert "repeats a value" in str(e.value)
 
 
 def test_a_seed_that_is_not_a_number_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
-        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+        headtohead.main(["run", "--model", "m", "--track", str(tmp_path),
                     "--out", str(tmp_path / "o"), "--seeds", "42,forty-three"])
     assert "whole numbers" in str(e.value)
 
 
 def test_a_malformed_image_argument_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
-        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path),
+        headtohead.main(["run", "--model", "m", "--track", str(tmp_path),
                     "--out", str(tmp_path / "o"), "--image", "justanimage"])
     assert "TOOL=IMAGE" in str(e.value)
 
 
 def test_a_finished_run_writes_a_summary_that_traces_to_a_file(tmp_path, monkeypatch, runner):
-    monkeypatch.setattr(bench, "default_runner", runner)
+    monkeypatch.setattr(headtohead, "default_runner", runner)
     (tmp_path / "track").mkdir()
     out = tmp_path / "o"
-    summary = bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+    summary = headtohead.main(["run", "--model", "m", "--track", str(tmp_path / "track"),
                           "--out", str(out), "--seeds", "42", "--no-score",
                           "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
-    assert json.loads((out / "bench-summary.json").read_text(encoding="utf-8")) == summary
+    assert json.loads((out / "headtohead-summary.json").read_text(encoding="utf-8")) == summary
     assert summary["failed"] == 0 and summary["ran"] == 2
 
 
 def test_a_run_with_a_failed_arm_exits_non_zero(tmp_path, monkeypatch, runner):
     runner.code = 1
-    monkeypatch.setattr(bench, "default_runner", runner)
+    monkeypatch.setattr(headtohead, "default_runner", runner)
     (tmp_path / "track").mkdir()
     with pytest.raises(SystemExit):
-        bench.main(["head-to-head", "--model", "m", "--track", str(tmp_path / "track"),
+        headtohead.main(["run", "--model", "m", "--track", str(tmp_path / "track"),
                     "--out", str(tmp_path / "o"), "--seeds", "42", "--no-score",
                     "--eval-slices", str(_slices(tmp_path, tmp_path / "track"))])
 
@@ -409,12 +409,12 @@ def test_a_run_with_a_failed_arm_exits_non_zero(tmp_path, monkeypatch, runner):
 # ── the adapters are data, and the two tools genuinely differ ─────────────────────────
 def test_the_two_tools_disagree_about_where_the_model_lands():
     """Scoring one tool's arms against nothing at all cost a night on 2026-08-05."""
-    assert bench.ADAPTERS["senbon"].model_subdir == ""
-    assert bench.ADAPTERS["heretic"].model_subdir == "model"
+    assert headtohead.ADAPTERS["senbon"].model_subdir == ""
+    assert headtohead.ADAPTERS["heretic"].model_subdir == "model"
 
 
 def test_every_adapter_declares_what_proves_it_ran():
-    for name, a in bench.ADAPTERS.items():
+    for name, a in headtohead.ADAPTERS.items():
         assert a.produces, f"{name} declares no artefact, so nothing can check it"
 
 
@@ -424,11 +424,11 @@ def test_each_tool_reports_its_own_estimator_by_name(tmp_path):
     arm.mkdir()
     (arm / "abliteration.json").write_text(
         json.dumps({"post_bake_refusals": 0.03, "post_bake_kl": 0.2}), encoding="utf-8")
-    r = bench.ADAPTERS["senbon"].self_report(arm)
+    r = headtohead.ADAPTERS["senbon"].self_report(arm)
     assert "senbonzakura" in r["kl_estimator"]
     (arm / "best_of_n.json").write_text(
         json.dumps({"winner": {"refusals": 0.05, "kl": 0.004}}), encoding="utf-8")
-    h = bench.ADAPTERS["heretic"].self_report(arm)
+    h = headtohead.ADAPTERS["heretic"].self_report(arm)
     assert "Heretic" in h["kl_estimator"]
     assert r["kl_estimator"] != h["kl_estimator"]
 
@@ -437,8 +437,8 @@ def test_an_unreadable_artefact_is_a_loud_error_not_an_empty_reading(tmp_path):
     arm = tmp_path / "arm"
     arm.mkdir()
     (arm / "abliteration.json").write_text("{not json", encoding="utf-8")
-    with pytest.raises(bench.BenchError):
-        bench.ADAPTERS["senbon"].self_report(arm)
+    with pytest.raises(headtohead.BenchError):
+        headtohead.ADAPTERS["senbon"].self_report(arm)
 
 
 # ── scoring: the three wrong ways it was invoked, each now impossible ─────────────────
@@ -449,7 +449,7 @@ def test_the_compass_gets_no_track_when_there_is_none_to_give(tmp_path):
     passed when there IS one and omitted when there is not. A bare `--track` with nothing after
     it is what killed the original run.
     """
-    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+    argv = headtohead.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
                             label="x", skip_harmful=128, batch=16)
     assert "--track" not in argv
     assert "--harmful" in argv and "--harmless" in argv
@@ -457,7 +457,7 @@ def test_the_compass_gets_no_track_when_there_is_none_to_give(tmp_path):
 
 def test_the_compass_is_handed_the_track_so_it_can_read_the_real_boundary(tmp_path):
     """The fix for the 128-against-132 contamination: the manifest travels to the scorer."""
-    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+    argv = headtohead.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
                             label="x", skip_harmful=None, batch=16, track=tmp_path / "trk")
     assert argv[argv.index("--track") + 1] == str(tmp_path / "trk")
     # No skip count: unset means "read it from the track", and sending both invites the two to
@@ -467,24 +467,24 @@ def test_the_compass_is_handed_the_track_so_it_can_read_the_real_boundary(tmp_pa
 
 def test_skip_harmful_carries_its_count_and_never_travels_bare(tmp_path):
     """Passed bare, it swallowed the next argument and the run was measured on the wrong slice."""
-    argv = bench.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
+    argv = headtohead.score_argv(model=tmp_path, harmful="h", harmless="g", out="o.json",
                             label="x", skip_harmful=128, batch=16)
     assert argv[argv.index("--skip-harmful") + 1] == "128"
 
 
 def test_each_tools_model_is_looked_for_where_that_tool_puts_it(tmp_path):
     """Assuming one shape scored a whole tool's arms against nothing at all."""
-    senbon = bench.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
-    heretic = bench.ArmResult("heretic", 42, tmp_path / "heretic-seed42", True, True, "")
-    assert bench.arm_model_dir(senbon, bench.ADAPTERS["senbon"]) == tmp_path / "senbon-seed42"
-    assert bench.arm_model_dir(heretic, bench.ADAPTERS["heretic"]) == \
+    senbon = headtohead.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
+    heretic = headtohead.ArmResult("heretic", 42, tmp_path / "heretic-seed42", True, True, "")
+    assert headtohead.arm_model_dir(senbon, headtohead.ADAPTERS["senbon"]) == tmp_path / "senbon-seed42"
+    assert headtohead.arm_model_dir(heretic, headtohead.ADAPTERS["heretic"]) == \
         tmp_path / "heretic-seed42" / "model"
 
 
 def test_the_drift_pass_names_an_arm_with_no_model(tmp_path, runner):
-    r = bench.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
+    r = headtohead.ArmResult("senbon", 42, tmp_path / "senbon-seed42", True, True, "")
     (tmp_path / "senbon-seed42").mkdir()
-    scored = bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    scored = headtohead.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
     assert scored[0]["ok"] is False and "no model" in scored[0]["reason"]
     assert not runner.calls, "the compass was run against a directory holding no model"
 
@@ -494,8 +494,8 @@ def test_scoring_that_exits_zero_without_writing_a_file_is_a_failure(tmp_path, r
     arm.mkdir()
     (arm / "config.json").write_text("{}", encoding="utf-8")
     runner.produce = False
-    r = bench.ArmResult("senbon", 42, arm, True, True, "")
-    scored = bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    r = headtohead.ArmResult("senbon", 42, arm, True, True, "")
+    scored = headtohead.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
     assert scored[0]["ok"] is False
 
 
@@ -504,8 +504,8 @@ def test_an_already_scored_arm_is_not_scored_again(tmp_path, runner):
     arm.mkdir()
     (arm / "config.json").write_text("{}", encoding="utf-8")
     (tmp_path / "scored-senbon-seed42.json").write_text("{}", encoding="utf-8")
-    r = bench.ArmResult("senbon", 42, arm, True, True, "")
-    bench.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
+    r = headtohead.ArmResult("senbon", 42, arm, True, True, "")
+    headtohead.score_arms([r], harmful="h", harmless="g", out=tmp_path, runner=runner)
     assert not runner.calls
 
 
@@ -518,28 +518,28 @@ def test_every_arm_is_scored_at_the_same_batch_size(tmp_path, runner):
         arm = tmp_path / f"senbon-seed{seed}"
         arm.mkdir()
         (arm / "config.json").write_text("{}", encoding="utf-8")
-        results.append(bench.ArmResult("senbon", seed, arm, True, True, ""))
-    bench.score_arms(results, harmful="h", harmless="g", out=tmp_path, runner=runner, batch=8)
+        results.append(headtohead.ArmResult("senbon", seed, arm, True, True, ""))
+    headtohead.score_arms(results, harmful="h", harmless="g", out=tmp_path, runner=runner, batch=8)
     batches = [c[c.index("--batch") + 1] for c in runner.calls]
     assert batches == ["8", "8"]
 
 
 def test_scoring_inputs_are_checked_before_any_gpu_time_is_spent(tmp_path):
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=_slices(tmp_path, tmp_path),
                         score=True, harmful="", harmless="")
     assert any("--harmful" in x for x in p) and any("--harmless" in x for x in p)
 
 
 def test_a_scoring_input_that_is_not_there_is_caught_at_preflight(tmp_path):
-    p = bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    p = headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                         model="m", isolate="none", images={}, slices=_slices(tmp_path, tmp_path),
                         score=True, harmful=tmp_path / "nowhere", harmless=tmp_path)
     assert any("not there" in x for x in p)
 
 
 def test_no_score_leaves_the_scoring_inputs_unrequired(tmp_path):
-    assert bench.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
+    assert headtohead.preflight(tools=["senbon", "heretic"], track=tmp_path, out=tmp_path / "o",
                            model="m", isolate="none", images={},
                            slices=_slices(tmp_path, tmp_path), score=False) == []
 
@@ -553,13 +553,13 @@ def test_the_report_is_a_subcommand_rather_than_a_script_in_the_repository(tmp_p
     defect as the compass shipping in no released artefact, and it matters more here.
     """
     with pytest.raises(SystemExit) as e:
-        bench.main(["report", str(tmp_path)])
+        headtohead.main(["report", str(tmp_path)])
     assert "no scored arms" in str(e.value)
 
 
 def test_the_report_refuses_a_directory_that_is_not_there(tmp_path):
     with pytest.raises(SystemExit) as e:
-        bench.main(["report", str(tmp_path / "nowhere")])
+        headtohead.main(["report", str(tmp_path / "nowhere")])
     assert "no directory" in str(e.value)
 
 
@@ -614,7 +614,7 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
             # in a subdirectory. A stub that ignored the difference would pass this test and hide
             # the mistake that scored a whole tool's arms against nothing on 2026-08-05.
             tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
-            model = target / bench.ADAPTERS[tool].model_subdir
+            model = target / headtohead.ADAPTERS[tool].model_subdir
             model.mkdir(parents=True, exist_ok=True)
             (model / "config.json").write_text("{}", encoding="utf-8")
             (target / "abliteration.json").write_text(
@@ -623,12 +623,12 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
                 json.dumps({"winner": {"refusals": 0.04, "kl": 0.005}}), encoding="utf-8")
         return 0
 
-    monkeypatch.setattr(bench, "default_runner", fake)
+    monkeypatch.setattr(headtohead, "default_runner", fake)
     # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
-    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+    monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
-    summary = bench.main([
-        "head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+    summary = headtohead.main([
+        "run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
         "--model", "/models/qwen", "--track", str(track), "--out", str(out),
         "--eval-slices", str(_slices(tmp_path, track)),
         "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
@@ -638,7 +638,7 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
     # Six arms, six scores, and a verdict that reads them.
     for tool in ("senbon", "heretic"):
         for seed in (42, 43, 44):
-            assert (out / f"{tool}-seed{seed}" / bench.ARM_MANIFEST).is_file()
+            assert (out / f"{tool}-seed{seed}" / headtohead.ARM_MANIFEST).is_file()
             assert (out / f"scored-{tool}-seed{seed}.json").is_file()
     printed = capsys.readouterr().out
     assert "senbon scores higher on harm recognition than heretic" in printed
@@ -683,27 +683,27 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
                 "controls": {}}), encoding="utf-8")
         else:
             tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
-            model = target / bench.ADAPTERS[tool].model_subdir
+            model = target / headtohead.ADAPTERS[tool].model_subdir
             model.mkdir(parents=True, exist_ok=True)
             (model / "config.json").write_text("{}", encoding="utf-8")
             for n in ("abliteration.json", "best_of_n.json"):
                 (target / n).write_text("{}", encoding="utf-8")
         return 0
 
-    monkeypatch.setattr(bench, "default_runner", fake)
+    monkeypatch.setattr(headtohead, "default_runner", fake)
     # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
-    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+    monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
-    argv = ["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+    argv = ["run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
             "--model", "/models/qwen", "--track", str(track), "--out", str(out),
             "--eval-slices", str(_slices(tmp_path, track)),
             "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
             "--trials", "6"]
-    bench.main(argv)
+    headtohead.main(argv)
     first = len(calls)
     capsys.readouterr()
 
-    second = bench.main(argv)
+    second = headtohead.main(argv)
     assert len(calls) == first, "a completed run re-ran its arms"
     assert second["ran"] == 0 and second["skipped"] == 6
     assert "harm recognition" in capsys.readouterr().out, "the second run produced no report"
@@ -748,18 +748,18 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
                               encoding="utf-8")
         else:
             tool = "heretic" if "run_heretic" in " ".join(argv) else "senbon"
-            model = target / bench.ADAPTERS[tool].model_subdir
+            model = target / headtohead.ADAPTERS[tool].model_subdir
             model.mkdir(parents=True, exist_ok=True)
             (model / "config.json").write_text("{}", encoding="utf-8")
             for n in ("abliteration.json", "best_of_n.json"):
                 (target / n).write_text("{}", encoding="utf-8")
         return 0
 
-    monkeypatch.setattr(bench, "default_runner", fake)
+    monkeypatch.setattr(headtohead, "default_runner", fake)
     # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
-    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+    monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
-    bench.main(["head-to-head", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+    headtohead.main(["run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
                 "--model", "/m", "--track", str(track), "--out", str(tmp_path / "out"),
                 "--eval-slices", str(_slices(tmp_path, track)),
                 "--harmful", str(track / "bad_eval_ds"),
@@ -770,11 +770,11 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
 
 # ── isolation reuses the proven wrapper rather than reimplementing its flags ──────────
 def test_a_checkout_runs_arms_through_the_proven_wrapper(tmp_path, runner, monkeypatch):
-    """`bench/run-isolated.sh` owns the isolation, and it needs seven mounts and a device.
+    """`headtohead/run-isolated.sh` owns the isolation, and it needs seven mounts and a device.
 
     A WSL2 container needs `/dev/dxg` AND `/usr/lib/wsl/lib` AND `/usr/lib/wsl/drivers` to see a
     GPU; miss the driver store and libcuda loads, fails to initialise NVML and reports zero
-    devices, which reads as "no GPU here" rather than "one bind mount short". `bench/selftest.py`
+    devices, which reads as "no GPU here" rather than "one bind mount short". `head-to-head/selftest.py`
     verifies nine invariants about that set from inside the box. Reimplementing it in Python would
     be a second copy of a list this project has already been bitten by having three copies of.
     """
@@ -782,8 +782,8 @@ def test_a_checkout_runs_arms_through_the_proven_wrapper(tmp_path, runner, monke
     script.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setenv("SENBON_RUN_ISOLATED", str(script))
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
-                  image="senbon-bench:heretic", **a)
+    headtohead.run_arm(headtohead.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
+                  image="senbon-headtohead:heretic", **a)
     argv = runner.calls[0]
     assert argv[0] == str(script), "the arm did not go through run-isolated.sh"
     assert "--tool" in argv and argv[argv.index("--tool") + 1] == "heretic"
@@ -799,18 +799,18 @@ def test_the_wrapper_is_given_the_image_for_that_tool(tmp_path, runner, monkeypa
     script = tmp_path / "run-isolated.sh"
     script.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setenv("SENBON_RUN_ISOLATED", str(script))
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
-                  image="senbon-bench:senbonzakura", **_args(tmp_path))
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+                  image="senbon-headtohead:senbonzakura", **_args(tmp_path))
     argv = runner.calls[0]
-    assert argv[argv.index("--image") + 1] == "senbon-bench:senbonzakura"
+    assert argv[argv.index("--image") + 1] == "senbon-headtohead:senbonzakura"
 
 
 def test_without_the_wrapper_it_falls_back_to_a_plain_sealed_box(tmp_path, runner, monkeypatch):
-    """An installed wheel has no `bench/` directory. The fallback is the minimum sealed box, so a
+    """An installed wheel has no `headtohead/` directory. The fallback is the minimum sealed box, so a
     stranger still gets no network and read-only inputs rather than nothing.
     """
-    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+    monkeypatch.setattr(headtohead, "find_run_isolated", lambda: None)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
                   image="img", **_args(tmp_path))
     argv = runner.calls[0]
     assert argv[0] == "docker"
@@ -825,14 +825,14 @@ def test_an_isolated_arm_is_given_the_paths_it_will_see(tmp_path, runner, monkey
     somewhere with a different one. Nothing in the unit tests noticed, because they never crossed
     the boundary where the two layouts differ.
     """
-    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
+    monkeypatch.setattr(headtohead, "find_run_isolated", lambda: None)
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, isolate="docker",
                   image="img", **a)
     argv = runner.calls[0]
-    assert argv[argv.index("--model") + 1] == bench.GUEST_MODEL
-    assert argv[argv.index("--track") + 1] == bench.GUEST_CORPUS
-    assert argv[argv.index("--out") + 1] == bench.GUEST_OUT
+    assert argv[argv.index("--model") + 1] == headtohead.GUEST_MODEL
+    assert argv[argv.index("--track") + 1] == headtohead.GUEST_CORPUS
+    assert argv[argv.index("--out") + 1] == headtohead.GUEST_OUT
     assert str(a["model"]) not in " ".join(argv[argv.index("img"):]), (
         "a host path reached the command that runs inside the box")
 
@@ -840,17 +840,17 @@ def test_an_isolated_arm_is_given_the_paths_it_will_see(tmp_path, runner, monkey
 def test_an_unisolated_arm_still_gets_the_real_paths(tmp_path, runner):
     """The mapping applies only where there is a boundary to cross."""
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
     argv = runner.calls[0]
     assert argv[argv.index("--model") + 1] == str(a["model"])
 
 
 def test_heretics_staged_slices_are_addressed_inside_the_box(tmp_path, runner, monkeypatch):
-    monkeypatch.setattr(bench, "find_run_isolated", lambda: None)
-    bench.run_arm(bench.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
+    monkeypatch.setattr(headtohead, "find_run_isolated", lambda: None)
+    headtohead.run_arm(headtohead.ADAPTERS["heretic"], seed=42, runner=runner, isolate="docker",
                   image="img", **_args(tmp_path))
     argv = runner.calls[0]
-    assert argv[argv.index("--good") + 1] == f"{bench.GUEST_EVAL}/good.txt"
+    assert argv[argv.index("--good") + 1] == f"{headtohead.GUEST_EVAL}/good.txt"
 
 
 # ── the pass that finishes an arm the tool cannot finish itself ───────────────────────
@@ -858,7 +858,7 @@ def test_heretic_gets_the_selection_pass_that_writes_its_only_artefact(tmp_path,
     """Heretic's search cannot save; the arm is not finished until the pass runs.
 
     v1.4.0 ends at an interactive menu it cannot reach in a container, so it leaves a complete
-    study and no model. `bench/EQUAL-BUDGET.md` promises it the same best-of-N selection
+    study and no model. `headtohead/EQUAL-BUDGET.md` promises it the same best-of-N selection
     senbonzakura gives itself, and that pass is also what does the saving.
 
     Decision Q-5 moved the arms out of a run spec and into this command, and left the pass behind
@@ -866,7 +866,7 @@ def test_heretic_gets_the_selection_pass_that_writes_its_only_artefact(tmp_path,
     five days while nothing could write it, and the first real run after that spent 53 minutes an
     arm producing no model at all. This test is the one that would have said so in three seconds.
     """
-    bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **_args(tmp_path))
+    headtohead.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **_args(tmp_path))
     passes = [c for c in runner.calls if "best_of_n_heretic.py" in " ".join(c)]
     assert len(passes) == 1, "Heretic's arm ran without the selection pass that saves its model"
     argv = " ".join(passes[0])
@@ -877,7 +877,7 @@ def test_heretic_gets_the_selection_pass_that_writes_its_only_artefact(tmp_path,
 
 def test_our_own_arm_needs_no_second_pass(tmp_path, runner):
     """Senbonzakura saves its own winner, so a pass here would be a second spend nothing asked for."""
-    bench.head_to_head(tools=["senbon"], seeds=[42], runner=runner, **_args(tmp_path))
+    headtohead.head_to_head(tools=["senbon"], seeds=[42], runner=runner, **_args(tmp_path))
     assert len(runner.calls) == 1
 
 
@@ -900,11 +900,11 @@ def test_an_arm_that_produced_nothing_cannot_pass_on_a_previous_run_s_output(tmp
     os.utime(stale, (old, old))
 
     runner.produce = False                   # the tool runs and writes nothing, as Heretic does
-    results = bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
+    results = headtohead.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
     failed = [r for r in results if not r.ok]
     assert len(failed) == 1, "an arm that produced nothing was reported as a success"
     assert "earlier run" in failed[0].reason, failed[0].reason
-    assert not (arm / bench.ARM_MANIFEST).exists(), \
+    assert not (arm / headtohead.ARM_MANIFEST).exists(), \
         "a manifest was written vouching for a file this arm did not produce"
 
 
@@ -918,7 +918,7 @@ def test_the_scorer_runs_under_this_interpreter_not_a_bare_name():
     """
     import sys
 
-    argv = bench.score_argv(model="m", harmful="h", harmless="g", out="o",
+    argv = headtohead.score_argv(model="m", harmful="h", harmless="g", out="o",
                             label="x", skip_harmful=0, batch=8)
     assert argv[0] == sys.executable, \
         "the compass must run under the interpreter the harness was started from"
@@ -935,9 +935,9 @@ def test_every_model_gets_the_same_coherence_ruler(tmp_path, runner):
     one batch size, run by us afterwards over whatever each tool produced.
     """
     a = _args(tmp_path)
-    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    results = headtohead.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
     runner.calls.clear()
-    measured = bench.drift_arms(results, base="/models/qwen",
+    measured = headtohead.drift_arms(results, base="/models/qwen",
                                 prompts=a["slices"] / "kl_prompts.txt",
                                 out=a["out"], batch=16, runner=runner)
     assert [m["ok"] for m in measured] == [True, True]
@@ -953,9 +953,9 @@ def test_every_model_gets_the_same_coherence_ruler(tmp_path, runner):
 def test_the_two_tools_are_measured_against_one_base_and_one_slice(tmp_path, runner):
     """If either differs between arms, the column is not a column."""
     a = _args(tmp_path)
-    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner, **a)
+    results = headtohead.head_to_head(tools=["senbon", "heretic"], seeds=[42, 43], runner=runner, **a)
     runner.calls.clear()
-    bench.drift_arms(results, base="/models/qwen", prompts=a["slices"] / "kl_prompts.txt",
+    headtohead.drift_arms(results, base="/models/qwen", prompts=a["slices"] / "kl_prompts.txt",
                      out=a["out"], batch=16, runner=runner)
     bases = {argv[argv.index("--base") + 1] for argv in runner.calls}
     slices = {argv[argv.index("--prompts") + 1] for argv in runner.calls}
@@ -966,10 +966,10 @@ def test_the_two_tools_are_measured_against_one_base_and_one_slice(tmp_path, run
 def test_a_drift_pass_names_an_arm_with_no_model_rather_than_skipping_it(tmp_path, runner):
     """A missing model must reach the summary, or the table is short and nothing says why."""
     a = _args(tmp_path)
-    results = bench.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
+    results = headtohead.head_to_head(tools=["heretic"], seeds=[42], runner=runner, **a)
     import shutil
     shutil.rmtree(results[0].arm / "model")
-    measured = bench.drift_arms(results, base="/models/qwen",
+    measured = headtohead.drift_arms(results, base="/models/qwen",
                                 prompts=a["slices"] / "kl_prompts.txt",
                                 out=a["out"], batch=16, runner=runner)
     assert measured[0]["ok"] is False
@@ -979,7 +979,7 @@ def test_a_drift_pass_names_an_arm_with_no_model_rather_than_skipping_it(tmp_pat
 def test_the_drift_pass_runs_under_this_interpreter():
     """Same reason as the compass: it runs on the host, and the card has no bare `python`."""
     import sys
-    argv = bench.drift_argv(model="m", base="b", prompts="p", out="o", label="x",
+    argv = headtohead.drift_argv(model="m", base="b", prompts="p", out="o", label="x",
                             batch=16, cache="c")
     assert argv[0] == sys.executable
 
@@ -993,9 +993,9 @@ def test_refusals_are_counted_by_one_ruler_on_one_slice(tmp_path, runner):
     refusals and drifted less") could not be written at all.
     """
     a = _args(tmp_path)
-    results = bench.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
+    results = headtohead.head_to_head(tools=["senbon", "heretic"], seeds=[42], runner=runner, **a)
     runner.calls.clear()
-    counted = bench.refusal_arms(results, harmful=tmp_path / "bad_eval_ds", out=a["out"],
+    counted = headtohead.refusal_arms(results, harmful=tmp_path / "bad_eval_ds", out=a["out"],
                                  skip=128, batch=16, runner=runner)
     assert [c["ok"] for c in counted] == [True, True]
     evals = {argv[argv.index("--eval") + 1] for argv in runner.calls}
@@ -1006,7 +1006,7 @@ def test_refusals_are_counted_by_one_ruler_on_one_slice(tmp_path, runner):
 
 def test_the_refusal_pass_runs_under_this_interpreter():
     import sys
-    argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
+    argv = headtohead.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
     assert argv[0] == sys.executable
 
 
@@ -1017,7 +1017,7 @@ def test_refusals_are_counted_on_the_same_rows_the_compass_reads():
     model and seven and a half hours for one table, measured on rows the other two axes never saw.
     The compass evaluates 200 after the same skip, so this does too.
     """
-    argv = bench.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
+    argv = headtohead.refusal_argv(model="m", harmful="h", out="o", label="x", skip=128, batch=16)
     assert argv[argv.index("--n") + 1] == "200"
     assert argv[argv.index("--skip") + 1] == "128"
 
@@ -1032,21 +1032,21 @@ def test_drift_is_measured_on_prompts_neither_tool_has_seen(tmp_path, monkeypatc
     slice no tool has seen.
     """
     rows = [f"harmless prompt {i}" for i in range(600)]
-    monkeypatch.setattr("senbonzakura.benchstage.load_texts", lambda d, n: rows[:n])
+    monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts", lambda d, n: rows[:n])
     out = tmp_path / "out"
-    path = bench.drift_prompt_slice(tmp_path / "good_ds", out)
+    path = headtohead.drift_prompt_slice(tmp_path / "good_ds", out)
     written = path.read_text(encoding="utf-8").strip().split("\n")
-    assert len(written) == bench.DRIFT_EVAL_N
-    assert written[0] == rows[bench.DRIFT_SKIP_HARMLESS], "the skip did not reach the measure rows"
+    assert len(written) == headtohead.DRIFT_EVAL_N
+    assert written[0] == rows[headtohead.DRIFT_SKIP_HARMLESS], "the skip did not reach the measure rows"
     assert "kl_prompts" not in str(path), "drift fell back to the slice Heretic was tuned on"
 
 
 def test_a_short_harmless_set_is_announced_rather_than_silently_shrinking(tmp_path, monkeypatch):
     """A slice quietly smaller than asked for is a table with less power than its caption claims."""
-    monkeypatch.setattr("senbonzakura.benchstage.load_texts",
+    monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"p{i}" for i in range(340)])
     said = []
-    path = bench.drift_prompt_slice(tmp_path / "good_ds", tmp_path / "out", log=said.append)
+    path = headtohead.drift_prompt_slice(tmp_path / "good_ds", tmp_path / "out", log=said.append)
     assert len(path.read_text(encoding="utf-8").strip().split("\n")) == 20
     assert any("only 20" in m for m in said)
 
@@ -1061,8 +1061,8 @@ def test_the_k_arms_differ_only_in_the_direction_budget(tmp_path, runner):
     nothing else, which is what makes the pair a comparison.
     """
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon-k1"], seed=42, runner=runner, **a)
-    bench.run_arm(bench.ADAPTERS["senbon-k2"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon-k1"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon-k2"], seed=42, runner=runner, **a)
     k1, k2 = runner.calls
     # BOTH bounds. `--max-directions` alone is a ceiling and the search picks anywhere beneath it,
     # so "up to two" is not "two": the 2026-08-12 rehearsal's K=2 arm spent two of its first three
@@ -1091,10 +1091,10 @@ def test_the_k_arms_do_not_collide_with_each_other_or_with_a_searched_run(tmp_pa
     """Three families of arm in one output directory, and none may reuse another's work."""
     a = _args(tmp_path)
     for tool in ("senbon", "senbon-k1", "senbon-k2"):
-        bench.run_arm(bench.ADAPTERS[tool], seed=42, runner=runner, **a)
+        headtohead.run_arm(headtohead.ADAPTERS[tool], seed=42, runner=runner, **a)
     assert len(runner.calls) == 3, "one arm was skipped as though another had already run it"
     for tool in ("senbon", "senbon-k1", "senbon-k2"):
-        assert (a["out"] / f"{tool}-seed42" / bench.ARM_MANIFEST).is_file()
+        assert (a["out"] / f"{tool}-seed42" / headtohead.ARM_MANIFEST).is_file()
 
 
 # ── the hybrid experiment's arms (task 40) ────────────────────────────────────────────
@@ -1103,8 +1103,8 @@ def test_the_conv_arms_differ_by_exactly_one_flag(tmp_path, runner):
     measures that difference too and the result is uninterpretable.
     """
     a = _args(tmp_path)
-    bench.run_arm(bench.ADAPTERS["senbon-conv"], seed=42, runner=runner, **a)
-    bench.run_arm(bench.ADAPTERS["senbon-noconv"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon-conv"], seed=42, runner=runner, **a)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon-noconv"], seed=42, runner=runner, **a)
     whole, control = runner.calls
 
     assert "--skip-conv-ablation" not in whole
@@ -1126,22 +1126,22 @@ def test_the_conv_arms_differ_by_exactly_one_flag(tmp_path, runner):
 def test_the_conv_arms_do_not_collide_with_each_other_or_anything_else(tmp_path, runner):
     a = _args(tmp_path)
     for tool in ("senbon", "senbon-conv", "senbon-noconv"):
-        bench.run_arm(bench.ADAPTERS[tool], seed=42, runner=runner, **a)
+        headtohead.run_arm(headtohead.ADAPTERS[tool], seed=42, runner=runner, **a)
     assert len(runner.calls) == 3, "one arm was skipped as though another had already run it"
     for tool in ("senbon", "senbon-conv", "senbon-noconv"):
-        assert (a["out"] / f"{tool}-seed42" / bench.ARM_MANIFEST).is_file()
+        assert (a["out"] / f"{tool}-seed42" / headtohead.ARM_MANIFEST).is_file()
 
 
 def test_the_control_arm_is_labelled_as_one_in_the_registry():
     """Whoever reads `--tools` for the first time should not have to infer which is the control."""
-    assert "CONTROL" in bench.ADAPTERS["senbon-noconv"].notes.upper()
-    assert "partial" in bench.ADAPTERS["senbon-noconv"].notes.lower()
+    assert "CONTROL" in headtohead.ADAPTERS["senbon-noconv"].notes.upper()
+    assert "partial" in headtohead.ADAPTERS["senbon-noconv"].notes.lower()
 
 
 def test_the_report_recognises_both_conv_arms():
-    from senbonzakura import benchreport
+    from senbonzakura import headtohead_report
     for tool in ("senbon-conv", "senbon-noconv"):
-        m = benchreport.ARM.match(f"scored-{tool}-seed42")
+        m = headtohead_report.ARM.match(f"scored-{tool}-seed42")
         assert m and m["tool"] == tool, f"{tool} would be unmatched or swallowed by `senbon`"
 
 
@@ -1154,28 +1154,28 @@ def test_the_runner_passes_a_timeout_to_the_subprocess(monkeypatch):
         seen.update(kw)
         return types.SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(bench.subprocess, "run", fake_run)
-    bench.default_runner(["true"], log=lambda _m: None)
-    assert seen.get("timeout") == bench.ARM_TIMEOUT_S
+    monkeypatch.setattr(headtohead.subprocess, "run", fake_run)
+    headtohead.default_runner(["true"], log=lambda _m: None)
+    assert seen.get("timeout") == headtohead.ARM_TIMEOUT_S
     assert seen["timeout"] > 0
 
 
 def test_a_timed_out_arm_raises_the_distinct_error(monkeypatch):
     def fake_run(argv, **kw):
-        raise bench.subprocess.TimeoutExpired(cmd=argv, timeout=kw["timeout"])
+        raise headtohead.subprocess.TimeoutExpired(cmd=argv, timeout=kw["timeout"])
 
-    monkeypatch.setattr(bench.subprocess, "run", fake_run)
-    with pytest.raises(bench.ArmTimeoutError) as e:
-        bench.default_runner(["sleep"], log=lambda _m: None, timeout=1)
+    monkeypatch.setattr(headtohead.subprocess, "run", fake_run)
+    with pytest.raises(headtohead.ArmTimeoutError) as e:
+        headtohead.default_runner(["sleep"], log=lambda _m: None, timeout=1)
     assert "hung rather than slow" in str(e.value)
 
 
 def test_a_timeout_fails_only_that_arm_and_not_the_sweep(tmp_path):
     """Blast radius. A hung arm says nothing about the arms behind it."""
     def hanging_runner(argv, log=None):
-        raise bench.ArmTimeoutError("ran for 12.0 hours without finishing and was killed.")
+        raise headtohead.ArmTimeoutError("ran for 12.0 hours without finishing and was killed.")
 
-    r = bench.run_arm(bench.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
                       track=tmp_path / "t", out=tmp_path / "o", trials=2,
                       runner=hanging_runner, log=lambda _m: None)
     assert r.ran is True
@@ -1186,9 +1186,9 @@ def test_a_timeout_fails_only_that_arm_and_not_the_sweep(tmp_path):
 def test_a_non_timeout_bench_error_still_stops_everything(tmp_path):
     """"Could not start heretic" will meet the next arm identically, so it must not be swallowed."""
     def broken_runner(argv, log=None):
-        raise bench.BenchError("could not start 'python'")
+        raise headtohead.BenchError("could not start 'python'")
 
-    with pytest.raises(bench.BenchError):
-        bench.run_arm(bench.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
+    with pytest.raises(headtohead.BenchError):
+        headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
                       track=tmp_path / "t", out=tmp_path / "o", trials=2,
                       runner=broken_runner, log=lambda _m: None)

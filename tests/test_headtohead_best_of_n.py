@@ -1,4 +1,4 @@
-"""Tests for bench/best_of_n_heretic.py, the selection pass that decides Heretic's reported arm.
+"""Tests for head-to-head/best_of_n_heretic.py, the selection pass that decides Heretic's reported arm.
 
 This script chooses which of Heretic's candidates goes into a published table, so its decision
 logic is tested here rather than only exercised on the card. It normally runs inside the benchmark
@@ -43,7 +43,7 @@ def _load():
         sys.modules.setdefault(name, module)
     spec = importlib.util.spec_from_file_location(
         "best_of_n_heretic",
-        Path(__file__).resolve().parent.parent / "bench" / "best_of_n_heretic.py")
+        Path(__file__).resolve().parent.parent / "head-to-head" / "best_of_n_heretic.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules["best_of_n_heretic"] = module
     spec.loader.exec_module(module)
@@ -209,7 +209,7 @@ def test_the_command_line_is_blanked_before_heretics_settings_are_built():
     Found by a dry run: it met this pass's own flags, did not recognise them, printed its usage and
     exited 2, several minutes into a GPU job and naming nothing about the real cause.
     """
-    source = (Path(__file__).resolve().parent.parent / "bench" / "best_of_n_heretic.py").read_text()
+    source = (Path(__file__).resolve().parent.parent / "head-to-head" / "best_of_n_heretic.py").read_text()
     body = source.split("def main(")[1]
     blank = body.index("sys.argv = sys.argv[:1]")
     assert blank < body.index("open_study("), \

@@ -1,4 +1,4 @@
-"""Tests for bench/run_heretic.py, the adapter that drives Heretic inside the sealed box.
+"""Tests for head-to-head/run_heretic.py, the adapter that drives Heretic inside the sealed box.
 
 Every check here is written around a way an arm dies or drifts hours in rather than at the start:
 
@@ -15,7 +15,7 @@ import types
 from pathlib import Path
 
 _SPEC = importlib.util.spec_from_file_location(
-    "run_heretic", Path(__file__).resolve().parent.parent / "bench" / "run_heretic.py")
+    "run_heretic", Path(__file__).resolve().parent.parent / "head-to-head" / "run_heretic.py")
 rh = importlib.util.module_from_spec(_SPEC)
 sys.modules["run_heretic"] = rh
 _SPEC.loader.exec_module(rh)
@@ -118,12 +118,12 @@ def test_heretic_is_not_invoked_through_a_module_that_has_no_main_guard():
     `__main__` block. A dry run spent fourteen seconds producing a clean exit code, an empty study
     and a budget file describing a completed arm. Nothing about that reads as a failure.
     """
-    source = (Path(__file__).resolve().parent.parent / "bench" / "run_heretic.py").read_text()
+    source = (Path(__file__).resolve().parent.parent / "head-to-head" / "run_heretic.py").read_text()
     assert '"-m", "heretic.main"' not in source
     assert "from heretic.main import main; main()" in source
 
 
 def test_the_trial_count_is_read_through_optuna_not_matched_out_of_the_journal():
     """The journal is an internal format; a pattern guess at its shape fails silently on change."""
-    source = (Path(__file__).resolve().parent.parent / "bench" / "run_heretic.py").read_text()
+    source = (Path(__file__).resolve().parent.parent / "head-to-head" / "run_heretic.py").read_text()
     assert "optuna.load_study" in source

@@ -1,0 +1,2 @@
+Pre-fetched wheels for the CUDA image build. Empty in a checkout: the build falls back to the
+index when nothing is here, and uses what is here when a link cannot hold a 2.5 GB transfer.

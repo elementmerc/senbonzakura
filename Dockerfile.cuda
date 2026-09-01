@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+#
+# senbonzakura with a GPU, which is the only way it can do the job it is named for.
+#
+# WHY THIS EXISTS SEPARATELY FROM `Dockerfile`
+#
+# The CPU image converts, quantises, scores and builds importance matrices. It cannot abliterate
+# anything larger than a toy, because a CPU torch build has no CUDA kernels and the search is
+# hundreds of forward passes. So the shipped container could do everything except the thing the
+# tool is for. Operator decision Q-17, taken against a recommendation to defer: an image that
+# cannot do the headline job is a strange answer to "run it without installing".
+#
+# The costs are real and were accepted when the decision was taken: this image is several times
+# the size of the CPU one, and it pins a CUDA version into a release artefact we then support.
+#
+# WHAT IT PINS, AND WHY EXACTLY
+#
+# The base carries the CUDA runtime. torch arrives from the matching wheel index rather than the
+# default, because the default pulls its own CUDA libraries and you end up with two copies of the
+# runtime in one image, several gigabytes apart, and no statement anywhere about which one is in
+# use. The version floor is the project's own (`crashsafe.MIN_TORCH`), which exists because the
+# transformers MoE path imports `torch.distributed.tensor.DTensor`.
+#
+# BUILD
+#   docker build -f Dockerfile.cuda -t senbonzakura:cuda .
+#
+# RUN
+#   docker run --rm --gpus all -v "$PWD:/work" senbonzakura:cuda doctor
+#   docker run --rm --gpus all -v "$PWD:/work" senbonzakura:cuda kageyoshi --model <id> --out brain
+#
+# Without `--gpus all` the container starts, finds no device, and `doctor` says so. It does not
+# pretend, and it does not fail obscurely halfway into a run.
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+# libgomp1 is what llama.cpp's binaries link against; without it they install and cannot start,
+# which is the defect the CPU image found and the clean room now asserts against.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3.11 python3.11-venv python3-pip curl ca-certificates libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python3.11 -m venv /opt/venv
+# A CUDA torch wheel is about two and a half gigabytes. pip's default 15-second socket timeout
+# and five retries are tuned for small packages on a fast link; on a laptop connection this build
+# died on a read timeout partway through the download, which reads as a broken Dockerfile rather
+# than as a slow network. (A comment cannot live INSIDE an ENV continuation, which is why this
+# sits above it: Docker would take the "#" line as part of the value.)
+ENV PATH="/opt/venv/bin:$PATH" \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
+
+WORKDIR /build
+COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md ./
+COPY src/ ./src/
+COPY tools/ ./tools/
+COPY man/ ./man/
+
+# torch FIRST, from the CUDA index that matches the base. Installing the package first would let
+# the dependency resolver pull the default torch wheel and its own bundled CUDA libraries.
+#
+# A LOCAL WHEEL IS USED IF THE BUILD CONTEXT CARRIES ONE, and that is not an optimisation. The
+# CUDA wheel is about two and a half gigabytes, and on a domestic link this download failed twice
+# inside the build even with pip's timeout raised to 120 seconds and ten retries: a build step
+# starts from zero every time it dies, so a link that cannot hold the connection for the whole
+# transfer can never finish it. Fetched on the host instead, where it can be resumed, and dropped
+# into `wheels/`. Without one, the build falls back to the index and needs a link that can.
+COPY wheels/ /wheels/
+RUN if ls /wheels/torch-*.whl >/dev/null 2>&1; then \
+      echo "using the wheel from the build context"; \
+      pip install --no-cache-dir --quiet /wheels/torch-*.whl; \
+    else \
+      echo "no local wheel; pulling from the index"; \
+      pip install --no-cache-dir --quiet --index-url https://download.pytorch.org/whl/cu124 torch; \
+    fi \
+ && python -c "import torch; assert torch.version.cuda, 'a CPU torch reached a CUDA image'; \
+print('torch', torch.__version__)"
+
+RUN pip install --no-cache-dir --quiet "requests>=2" . \
+ && python tools/vendor_llama.py \
+ && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
+
+# ── runtime ─────────────────────────────────────────────────────────────────────
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+
+LABEL org.opencontainers.image.title="senbonzakura (CUDA)" \
+      org.opencontainers.image.description="Precision abliteration, with receipts. GPU build." \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.source="https://github.com/elementmerc/senbonzakura"
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3.11 libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --uid 1000 senbon \
+ && mkdir -p /work && chown senbon:senbon /work
+
+COPY --from=builder /opt/venv /opt/venv
+# The binaries are copied explicitly: package-data excludes `vendor/bin/**` on purpose, because a
+# universal wheel has no business holding a platform executable.
+COPY --from=builder /build/src/senbonzakura/vendor/bin \
+     /opt/venv/lib/python3.11/site-packages/senbonzakura/vendor/bin
+COPY --from=builder /build/src/senbonzakura/vendor/src \
+     /opt/venv/lib/python3.11/site-packages/senbonzakura/vendor/src
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    HF_HOME=/work/.cache/huggingface \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER senbon
+WORKDIR /work
+
+# Proven at build time, not asserted in a comment. The build machine has no GPU visible (docker
+# build takes no --gpus), so CUDA AVAILABILITY cannot be checked here and deliberately is not:
+# what is checked is that a CUDA-enabled torch is installed and the binaries start.
+RUN python -c "import torch; assert torch.version.cuda, 'no CUDA torch in the CUDA image'" \
+ && senbonzakura doctor 2>&1 | tee /tmp/doctor.txt; \
+    grep -q "llama-quantize *vendored, runs" /tmp/doctor.txt \
+      || { echo "the image ships a quantiser that does not run:"; cat /tmp/doctor.txt; exit 1; }
+RUN test -w /work || { echo "/work is not writable by $(id -un)"; exit 1; }
+
+ENTRYPOINT ["senbonzakura"]
+CMD ["--help"]

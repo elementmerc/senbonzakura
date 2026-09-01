@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Integration tests for the Abliterator class and the shared loader, against the tiny synthetic
 model. Covers the reversible bake, direction extraction, the C-1 padding-invariance regression,
 evaluation, the full run() pipeline, dataset-boundary errors, and the loader / main guards.

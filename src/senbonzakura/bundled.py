@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The evaluation track that ships inside the package, and the reasons it is wrapped.
 
 WHAT THIS IS FOR, STATED WITHOUT FLATTERY

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Senbonzakura: multi-direction refusal abliteration for transformer LMs."""
 
 __all__ = ["__version__", "main"]

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Shared test fixtures: a tiny real-tensor transformer stand-in and a matching tokenizer.
 
 The model is a genuine nn.Module whose residual stream is written by real Linear o_proj /

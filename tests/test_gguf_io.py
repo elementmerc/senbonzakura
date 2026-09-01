@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The header reader, checked against bytes rather than against a mock.
 
 Every fixture here is a real GGUF header assembled field by field to the format specification. A

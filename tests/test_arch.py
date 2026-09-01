@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the architecture resolvers: layer_downproj, _decoder_layers, _attn_outproj."""
 import types
 

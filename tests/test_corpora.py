@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The corpora that ship inside the wheel.
 
 The tool runs with no network once installed, so these are packed rather than fetched. What the

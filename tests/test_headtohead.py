@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for `senbonzakura head-to-head run`, the operation that used to be a run spec.
 
 The defects this module exists to have fixed are all from 2026-08-05 and 06, and every one of them

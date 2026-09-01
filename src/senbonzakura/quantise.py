@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`senbonzakura quantise`: turn a GGUF into a smaller one, and check what came out.
 
 WHAT THIS REPLACES

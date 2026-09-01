@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Crash-resilience helpers (never lose expensive search work).
 
 A large-model abliteration rents an expensive GPU; a search that must be re-run after a save

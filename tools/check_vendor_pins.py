@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Are the vendored third-party pins current? Run this at every release.
 
 THE OBLIGATION THIS ENFORCES

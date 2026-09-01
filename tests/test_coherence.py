@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the coherence probe (senbonzakura.coherence).
 
 The regression these guard is concrete: the neutral-passage coherence scorer used

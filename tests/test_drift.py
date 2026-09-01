@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the coherence ruler (senbonzakura.drift).
 
 This module exists because two tools reported a KL divergence a hundredfold apart and neither

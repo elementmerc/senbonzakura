@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for head-to-head/run_heretic.py, the adapter that drives Heretic inside the sealed box.
 
 Every check here is written around a way an arm dies or drifts hours in rather than at the start:

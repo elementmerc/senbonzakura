@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The startup banner: five designs, rotated, and the rules that keep them harmless.
 
 Three rules govern every banner here, and each exists because breaking it would cost

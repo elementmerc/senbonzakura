@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the refusal-separation statistic (cli._halves, _held_out_separation, _null_...).
 
 WHY THIS FILE EXISTS

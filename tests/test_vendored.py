@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Resolving a vendored executable, and failing usefully when there is not one.
 
 The asymmetry this module exists for: a git checkout has the pins and no binaries, an installed

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Give Heretic the same best-of-N selection pass senbonzakura gives itself.
 
 WHAT THIS IS FOR

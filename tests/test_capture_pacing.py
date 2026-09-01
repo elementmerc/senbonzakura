@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Activation capture under memory pressure.
 
 `collect_resid` is the first GPU-heavy thing an abliteration run does, and until this was written it

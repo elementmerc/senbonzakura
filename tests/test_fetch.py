@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`senbonzakura fetch`, and the three ways a download is wrong.
 
 A byte count catches the first. Nothing catches the third by accident, and the third is the one

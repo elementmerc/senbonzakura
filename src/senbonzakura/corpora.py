@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The corpora that ship inside the wheel, and what each one is actually for.
 
 WHY THEY SHIP RATHER THAN DOWNLOAD

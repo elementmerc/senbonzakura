@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the corpus builder (tools/build_track.py).
 
 The builder exists because two of the three upstream datasets declare no licence, so the rows

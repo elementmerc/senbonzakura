@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Which model layouts this tool can edit, and which it must refuse rather than half-edit.
 
 Every case here is built from a config, on the CPU, in milliseconds. No weights are downloaded

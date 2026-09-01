@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`senbonzakura quantise`, including one genuine end-to-end run through the vendored binary.
 
 The end-to-end test builds a small but STRUCTURALLY REAL llama-architecture GGUF and quantises it

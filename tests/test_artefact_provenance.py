@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """A run's artefact must be able to say what its own numbers are.
 
 Two omissions let a figure travel further than it should have on 2026-08-16. The refusal rates

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The front door must not import a deep-learning stack to print a page of text.
 
 `cli.py` imports torch, optuna and transformers at module level. Every command used to reach the

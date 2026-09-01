@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Ask why a layer got the direction count it did, without running a search.
 
 The headline claim of this project is that refusal occupies a subspace rather than a single

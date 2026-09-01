@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Audit WHERE refusal lives along the token sequence, not just at the last token.
 
 Senbonzakura (like Arditi and Heretic) reads the refusal direction from the LAST prompt token's

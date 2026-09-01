@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for `senbonzakura head-to-head stage`, the shared evaluation slices.
 
 The head-to-head is only a comparison of two tools if both are scored on the same prompts. These

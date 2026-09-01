@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Find command-line flags a parser promises and nothing keeps.
 
 `--chat-template` shipped dead on the abliterate path: the parser accepted it, the help text

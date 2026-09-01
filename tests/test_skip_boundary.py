@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """The compass must skip the rows the search saw, not a guess at how many there were.
 
 `margin.py` carried `--skip-harmful 128`, reasoned from "the largest --eval-refusal-final any auto

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Multi-direction refusal abliteration for transformer language models, with an Optuna search.
 
 Handles dense transformers and mixture-of-experts models, including the *fused* expert layout

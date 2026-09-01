@@ -157,8 +157,6 @@ ignore = [
                                # of short exception strings and a lookup table
   "PTH",      # os.path to pathlib is a migration with no defect behind it
   "S603", "S607",  # subprocess calls with known-literal arguments (nvidia-smi)
-  "CPY001",   # copyright headers are real and scheduled: v1.0 adds SPDX plus
-              # copyright to every module. Enabled then, not suppressed forever
   "FURB122",  # its fix turned an explicit write loop into a 136-character
               # f.writelines generator, breaking the line limit it was run under.
               # The loop is clearer in a module whose job is being auditable
@@ -204,6 +202,14 @@ ignore = [
   # decomposition (sprint decision D19); this comes off when that lands.
   "ANN",
 ]
+
+[tool.ruff.lint.flake8-copyright]
+# CPY001 was suppressed with a note saying the headers were "real and scheduled". They are now on
+# every file, so the note is retired and the rule is on: a header that nothing enforces is one
+# that quietly stops being applied to new files. `tools/add_license_headers.py --check` is the
+# same assertion in a form CI and a pre-commit hook can run.
+author = "Daniel Iwugo"
+notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 
 [tool.ruff.lint.per-file-ignores]
 # Only rules that are NOT in the global `ignore` above belong here. A per-file

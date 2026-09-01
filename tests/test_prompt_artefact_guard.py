@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the retention guard (tools/check_prompt_artefacts.py).
 
 The guard is the layer that does not trust `.gitignore`. An ignore rule stops an

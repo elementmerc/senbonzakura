@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Unit tests for the adaptive VRAM governor (resources.py).
 
 Every external dependency the governor touches (VRAM reading, reclaimable-cache reading, cache flush,

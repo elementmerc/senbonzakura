@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Per-architecture bake validation: does the weight edit reach the residual stream, per layer type?
 
 The bake edits a convolution's `out_proj` exactly as it edits an attention `o_proj`, because they

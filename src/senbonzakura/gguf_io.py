@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Read a GGUF file's header, and say what the file actually is.
 
 WHY THIS IS HAND-ROLLED AND NOT THE `gguf` PACKAGE

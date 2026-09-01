@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Assemble the harmful and harmless prompt pools this project measures on, from their sources.
 
 WHY THIS EXISTS

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`senbonzakura fetch`: get a model file and prove it is the file you asked for.
 
 WHY THIS IS NOT `wget`

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the axis probe (tools/axis_probe.py).
 
 The probe exists to answer one question: when a layer keeps a single refusal direction, is that

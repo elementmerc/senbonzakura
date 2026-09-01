@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`atomic_write`: a result file is never observed half-written.
 
 The defect this closes: every result was written with a plain `open(path, "w")`, which

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the guided mode (senbonzakura/interactive.py).
 
 The load-bearing property is that the printed command is exactly the run that happens. A guided

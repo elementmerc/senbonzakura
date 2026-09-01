@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Pack an evaluation track into the blob that ships inside the package.
 
 The output is deliberately NOT reproducible byte for byte: a fresh salt and nonce are drawn each

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Drive Heretic against OUR corpus, inside the sealed box, and record what it was given.
 
 This is an adapter, not a wrapper that changes behaviour. Heretic runs as its author wrote it. All

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`senbonzakura doctor`: the command that answers "can this install actually do the job".
 
 The test that matters most here is `test_a_broken_module_does_not_leave_an_architecture_marked_

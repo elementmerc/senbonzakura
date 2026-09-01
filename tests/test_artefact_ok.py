@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for tools/artefact_ok.py, the resume guard that checks WHICH configuration made a file.
 
 The defect this replaces cost a day: every guard tested whether a result file parsed, so a run

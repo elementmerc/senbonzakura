@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Adaptive GPU resource governor for senbonzakura.
 
 Abliterating a model is heavy, sustained GPU work. If you open a game or a browser mid-run, the

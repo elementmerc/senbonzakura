@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Tests for the bundled evaluation track (senbonzakura/bundled.py).
 
 The wrapping is a speed bump against automated scraping, not a secret, and the tests say so

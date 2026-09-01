@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """One place that turns "where the prompts are" into a list of prompts.
 
 WHY THIS EXISTS

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Write out the exact prompt slices both tools are scored on, as plain text files.
 
 WHY THIS EXISTS

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Read a finished head-to-head and say what it found, without saying more than it found.
 
 WHY THIS IS NOT `report_bands.py`

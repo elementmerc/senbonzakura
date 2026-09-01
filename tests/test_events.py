@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """`--json-events`: the machine-readable stream a GUI or a supervisor consumes.
 
 The reason it exists at all is that the human log is written for a person and changes whenever

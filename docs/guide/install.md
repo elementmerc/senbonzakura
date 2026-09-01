@@ -47,6 +47,35 @@ around one 6 GB laptop card, which is exactly why every model it's ever been run
 under 3B parameters. [Limits](/guide/limits) is blunt about what that means for the
 numbers.
 
+## Converting and quantising needs one system library
+
+If you install a platform wheel (one whose filename ends in something other than `py3-none-any`),
+it carries the pinned `llama.cpp` binaries so that `convert`, `quantise` and `imatrix` work
+without a source checkout.
+
+Those binaries are built against OpenMP, and a Python wheel has no way to ask your system for a
+system library. On most desktop Linux installs it is already there. On a slim container image, a
+minimal server, or a fresh CI runner it often is not, and the binaries cannot start.
+
+`senbonzakura doctor` tells you which library is missing and what to install:
+
+```
+✗  llama-quantize   present at .../llama-quantize and cannot start: a shared library is
+                    missing (libgomp.so.1)
+                    -> install the library it names. On Debian and Ubuntu the usual one is
+                       libgomp1: apt-get install -y libgomp1
+```
+
+Re-installing the package will not help, because the binary is correct and the system is missing
+a dependency of it.
+
+**If you would rather not think about this**, use the container image, which carries the library
+and is checked at build time:
+
+```
+docker run --rm -v "$PWD:/work" senbonzakura doctor
+```
+
 ## The two optional extras
 
 Neither is needed for a normal run, and the tool works without both.

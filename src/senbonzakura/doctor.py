@@ -94,6 +94,18 @@ def check_quantize():
         return _fail("llama-quantize", f"present at {exe} and will not run ({e})",
                      "re-run `python tools/vendor_llama.py`")
     out = (r.stdout + r.stderr).decode("utf-8", errors="replace").lower()
+    # A MISSING SHARED LIBRARY IS NOT A WRONG BINARY, and saying so sends the reader to re-vendor
+    # a file that is already correct. llama.cpp links against OpenMP, and a slim image or a
+    # minimal host does not carry it: the binary is exactly what we think and the system is not.
+    # Seen for real inside `python:3.13-slim`, twice, and misdiagnosed both times.
+    if "error while loading shared libraries" in out or "cannot open shared object" in out:
+        missing = out.split("error while loading shared libraries:")[-1].split(":")[0].strip()
+        return _fail("llama-quantize",
+                     f"present at {exe} and cannot start: a shared library is missing"
+                     + (f" ({missing})" if missing else ""),
+                     "install the library it names. On Debian and Ubuntu the usual one is "
+                     "libgomp1: `apt-get install -y libgomp1`. Re-vendoring will not help; the "
+                     "binary is correct and the system is missing a dependency of it")
     if "usage" not in out:
         return _fail("llama-quantize", "ran and printed no usage; the binary is not what we think",
                      "re-run `python tools/vendor_llama.py`")

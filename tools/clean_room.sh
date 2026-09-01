@@ -68,12 +68,17 @@ cp "$WHEEL" "$ROOT/tools/clean_room_checks.py" "$WORK/"
 INSTALL_FLAGS="--no-deps"
 EXPECT="" ; [ "$MODE" = full ] && { INSTALL_FLAGS=""; EXPECT="--expect-torch"; }
 
+# The venv is built ON THE MOUNTED VOLUME, which is disk, not in a tmpfs. A full install is torch
+# and its dependencies, several gigabytes, and a tmpfs is RAM: the first attempt died on
+# "No space left on device" against a 4 GB tmpfs on a 28 GB machine, which is a harness limit
+# being reported as if the install had failed.
 script=$(cat <<EOF
 set -e
-python -m venv /home/box/venv
-/home/box/venv/bin/pip install --quiet --upgrade pip
+rm -rf /box/venv
+python -m venv /box/venv
+/box/venv/bin/pip install --quiet --upgrade pip
 echo "installing (${MODE})..."
-/home/box/venv/bin/pip install --quiet ${INSTALL_FLAGS} /box/$(basename "$WHEEL")
+/box/venv/bin/pip install --quiet ${INSTALL_FLAGS} /box/$(basename "$WHEEL")
 EOF
 )
 
@@ -83,7 +88,7 @@ if [ -n "$HOST" ]; then
   scp -q "$WORK"/* "$HOST:~/.senbon-cleanroom/"
   # Install (network on, nothing else), then check (network off). Two invocations, one volume.
   ssh "$HOST" "docker run --rm --user \$(id -u):\$(id -g) -v ~/.senbon-cleanroom:/box -e HOME=/home/box \
-       --tmpfs /home/box:rw,exec,size=4g -w /box $IMAGE sh -c '$script && cp -r /home/box/venv /box/venv'" \
+       --tmpfs /home/box:rw,size=64m -w /box $IMAGE sh -c '$script'" \
     || die "the install failed on $HOST"
   ssh "$HOST" "docker run --rm --user "$(id -u):$(id -g)" --network none --cap-drop ALL --security-opt no-new-privileges \
        -v ~/.senbon-cleanroom:/box:ro -e HOME=/home/box --tmpfs /home/box:rw,size=64m -w /tmp \
@@ -93,8 +98,8 @@ if [ -n "$HOST" ]; then
   exit $rc
 fi
 
-docker run --rm --user "$(id -u):$(id -g)" -v "$WORK:/box" -e HOME=/home/box --tmpfs /home/box:rw,exec,size=4g \
-  -w /box "$IMAGE" sh -c "$script && cp -r /home/box/venv /box/venv" || die "the install failed"
+docker run --rm --user "$(id -u):$(id -g)" -v "$WORK:/box" -e HOME=/home/box --tmpfs /home/box:rw,size=64m \
+  -w /box "$IMAGE" sh -c "$script" || die "the install failed"
 docker run --rm --user "$(id -u):$(id -g)" --network none --cap-drop ALL --security-opt no-new-privileges \
   -v "$WORK:/box:ro" -e HOME=/home/box --tmpfs /home/box:rw,size=64m -w /tmp \
   "$IMAGE" /box/venv/bin/python /box/clean_room_checks.py $EXPECT

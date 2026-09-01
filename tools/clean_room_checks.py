@@ -101,14 +101,34 @@ def main(argv=None):
     # asserted a stale truth the day platform wheels shipped, which is the failure mode this file
     # was written to catch in the software.
     check("doctor names the quantiser either way", "llama-quantize" in out)
-    carries_binaries = "vendored, runs" in out
-    if carries_binaries:
-        print("\n  note  this is a PLATFORM wheel: it carries the binaries, so doctor should "
-              "pass.\n")
-        check("a platform wheel can actually quantise", "llama-quantize" in out
-              and "not available" not in out.split("llama-quantize")[1][:60], out[-300:])
-        check("doctor does not report a failure it does not have",
-              "cannot do what it claims" not in out, out[-300:])
+
+    # THREE states, and they are read from the FILESYSTEM and doctor's status glyph rather than
+    # from its prose.
+    #
+    # The first version of this matched the sentence "vendored, runs", which made a wheel shipping
+    # broken binaries indistinguishable from one shipping none. Widening it to also match "will
+    # not run" missed a THIRD phrasing ("ran and printed no usage"), because doctor has several
+    # ways to say a binary is unusable and matching prose means chasing all of them forever. That
+    # is precisely the failure `events.py` exists to avoid, committed here by the same hand that
+    # wrote that docstring.
+    #
+    # So: does the file exist (a fact), and did doctor pass it (a glyph)?
+    import pathlib as _pl
+    pkg = _pl.Path(importlib.util.find_spec("senbonzakura").origin).parent
+    shipped = sorted((pkg / "vendor" / "bin").glob("*/llama-quantize"))
+    verdict = next((ln for ln in out.splitlines() if "llama-quantize" in ln), "")
+    runs = verdict.strip().startswith("\u2713")
+
+    if shipped and not runs:
+        check("a shipped quantiser actually starts", False,
+              f"the wheel installed {shipped[0]} and doctor rejects it: {verdict.strip()!r}. "
+              f"A wheel that carries a capability it cannot deliver is worse than one that "
+              f"carries neither, because only the second is honest about it.")
+        print("\n  note  this wheel CARRIES binaries that do not run here. That is a packaging "
+              "fault, not a missing feature.\n")
+    elif shipped:
+        print("\n  note  this is a PLATFORM wheel and its binaries run.\n")
+        check("a platform wheel can convert and quantise", "\u2717" not in verdict, verdict)
     else:
         print("\n  note  this is a UNIVERSAL wheel: it carries no binaries, so doctor should "
               "refuse.\n")

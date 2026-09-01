@@ -15,7 +15,8 @@
 #
 # CPU BY DEFAULT, AND THAT IS A DELIBERATE LIMIT
 #
-# torch arrives from the CPU index. The image is therefore about 1 GB rather than about 6, and it
+# torch arrives from the CPU index. The image is therefore 2.11 GB (measured, not estimated)
+# rather than the 6 GB or so a CUDA build costs, and it
 # does everything that is CPU-bound: convert, quantise, importance matrices, scoring, and the
 # abliteration of small models slowly. It CANNOT use a GPU even with `--gpus all`, because a CPU
 # torch build has no CUDA kernels, and `doctor` will tell you so rather than pretending.
@@ -87,7 +88,9 @@ LABEL org.opencontainers.image.title="senbonzakura" \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libgomp1 \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --create-home --uid 1000 senbon
+ && useradd --create-home --uid 1000 senbon \
+ && mkdir -p /work \
+ && chown senbon:senbon /work
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/senbonzakura /usr/local/bin/senbonzakura
 # The binaries are copied EXPLICITLY, because `pip install` will not carry them: package-data
@@ -119,6 +122,11 @@ RUN senbonzakura doctor 2>&1 | tee /tmp/doctor.txt; \
 RUN senbonzakura head-to-head --help >/dev/null \
  && senbonzakura quantise --help >/dev/null \
  && echo "the delegated commands start"
+# /work is the default working directory and HF_HOME lives under it. It was created by WORKDIR as
+# root, so the unprivileged user could not write to it and every download failed on a permissions
+# error a long way from its cause. Asserted, because the comment above predicted this exact
+# failure while the image shipped it.
+RUN test -w /work || { echo "/work is not writable by $(id -un); HF_HOME is unusable"; exit 1; }
 
 ENTRYPOINT ["senbonzakura"]
 CMD ["--help"]

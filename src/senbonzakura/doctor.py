@@ -152,6 +152,21 @@ def check_converter(timeout=300):
     return out
 
 
+def _corpus_fix():
+    """The instruction to hand someone whose corpora are missing, including what it needs.
+
+    `build_corpora.py` fetches through the GitHub CLI so that no credential is ever handled by
+    the script. On a machine without `gh` the recommended command is one a person cannot run, and
+    telling them to run it is worse than useless: they follow the instruction, it fails, and the
+    instruction was ours. Checked here because this is where the recommendation is made.
+    """
+    import shutil
+    base = "run `python tools/build_corpora.py` in a source checkout"
+    if shutil.which("gh") is None:
+        return base + " (it needs the GitHub CLI, which is not installed: https://cli.github.com)"
+    return base
+
+
 def check_corpora():
     from .corpora import CORPORA, CorpusError, load
     out = []
@@ -159,8 +174,7 @@ def check_corpora():
         try:
             rows = load(key)
         except CorpusError as e:
-            out.append(_fail(f"corpus {key}", str(e).split(".")[0],
-                             "run `python tools/build_corpora.py` in a source checkout"))
+            out.append(_fail(f"corpus {key}", str(e).split(".")[0], _corpus_fix()))
             continue
         expected = CORPORA[key].rows
         out.append(_pass(f"corpus {key}", f"{len(rows)} prompts")

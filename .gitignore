@@ -29,6 +29,7 @@ __pycache__/
 *.pyc
 build/
 dist/
+dist-cleanroom/
 .venv/
 venv/
 *.egg-info/

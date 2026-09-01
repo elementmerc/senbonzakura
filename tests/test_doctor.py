@@ -298,3 +298,24 @@ def test_a_deep_quantise_that_writes_nothing_is_a_failure(monkeypatch):
                                          "file_type": "BF16"})
     out = doctor.deep_check(log=lambda _m: None)
     assert any(c.status == "fail" and "quantise" in c.name for c in out)
+
+
+# ── the fix line has to be a thing the reader can actually do ────────────────────
+def test_the_corpus_fix_names_the_github_cli_when_it_is_missing(monkeypatch):
+    """`build_corpora.py` fetches through `gh`. Telling someone to run a command that will fail
+    on their machine is worse than saying nothing: they follow the instruction, it dies, and the
+    instruction was ours. Found by running the script on the CPU box, which has no `gh`.
+    """
+    monkeypatch.setattr(doctor.shutil if hasattr(doctor, "shutil") else __import__("shutil"),
+                        "which", lambda _n: None)
+    fix = doctor._corpus_fix()
+    assert "build_corpora.py" in fix
+    assert "GitHub CLI" in fix and "cli.github.com" in fix
+
+
+def test_the_corpus_fix_stays_short_when_the_cli_is_there(monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/gh")
+    fix = doctor._corpus_fix()
+    assert "build_corpora.py" in fix
+    assert "GitHub CLI" not in fix, "the note is only useful when the tool is actually absent"

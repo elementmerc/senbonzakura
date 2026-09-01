@@ -22,6 +22,27 @@ from senbonzakura import convert
 from senbonzakura.convert import ConvertError
 
 
+def _have_converter():
+    """Is the vendored `convert_hf_to_gguf.py` present in this checkout?"""
+    from senbonzakura.vendored import VendorError, find_script
+    try:
+        find_script("convert_hf_to_gguf.py")
+    except VendorError:
+        return False
+    return True
+
+
+#: The converter is fetched at build time rather than committed, so a fresh clone does not have
+#: it. Fifteen of the tests below then FAILED, where the quantise suite next door SKIPS for the
+#: same reason: `git clone && pytest` looked like broken code and was a missing artefact. Found by
+#: deploying a `git archive` of this tree to another machine, which is a fresh clone by another
+#: name.
+needs_converter = pytest.mark.skipif(
+    not _have_converter(),
+    reason="no vendored convert_hf_to_gguf.py; run tools/vendor_llama.py")
+
+
+
 def _checkpoint(d, *, arch="Qwen3ForCausalLM", weights=True, extra=None):
     d.mkdir(parents=True, exist_ok=True)
     cfg = {"architectures": [arch], "model_type": "qwen3", "hidden_size": 64}
@@ -84,6 +105,7 @@ def test_writing_over_the_model_directory_is_refused(tmp_path):
         convert.preflight(d, d, force=False, skip_arch_check=True)
 
 
+@needs_converter
 def test_an_existing_output_needs_force(tmp_path):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -93,6 +115,7 @@ def test_an_existing_output_needs_force(tmp_path):
     convert.preflight(d, out, force=True, skip_arch_check=True)
 
 
+@needs_converter
 def test_not_enough_disk_is_caught_before_the_job_not_during(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 1)
@@ -101,6 +124,7 @@ def test_not_enough_disk_is_caught_before_the_job_not_during(tmp_path, monkeypat
 
 
 # ── the architecture check, and the failure it exists for ────────────────────────
+@needs_converter
 def test_an_unsupported_architecture_is_refused_before_the_weights_are_read(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m", arch="NoSuchForCausalLM")
     monkeypatch.setattr(convert, "supported_architectures",
@@ -109,6 +133,7 @@ def test_an_unsupported_architecture_is_refused_before_the_weights_are_read(tmp_
         convert.preflight(d, tmp_path / "o.gguf", force=False, skip_arch_check=False)
 
 
+@needs_converter
 def test_a_supported_architecture_passes(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     monkeypatch.setattr(convert, "supported_architectures",
@@ -118,6 +143,7 @@ def test_a_supported_architecture_passes(tmp_path, monkeypatch):
     assert got["shards"] == 1
 
 
+@needs_converter
 def test_a_module_that_failed_to_import_is_not_support(tmp_path, monkeypatch):
     """THE defect this check exists for, and it shipped.
 
@@ -136,6 +162,7 @@ def test_a_module_that_failed_to_import_is_not_support(tmp_path, monkeypatch):
     assert "vendor_llama.py" in str(e.value)
 
 
+@needs_converter
 def test_the_arch_check_can_be_skipped_without_skipping_the_rest(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m", arch="SomethingExotic")
     called = []
@@ -203,6 +230,7 @@ def _ok_header(**over):
     return h
 
 
+@needs_converter
 def test_a_failed_conversion_removes_the_partial_file(tmp_path, monkeypatch, capsys):
     """A converter that dies halfway leaves a file the same shape as a real one. Leaving it is how
     a 987 MB fragment of a 5.16 GB GGUF got served and scored as model quality.
@@ -216,6 +244,7 @@ def test_a_failed_conversion_removes_the_partial_file(tmp_path, monkeypatch, cap
     assert not out.exists(), "the partial output was left behind"
 
 
+@needs_converter
 def test_an_output_that_does_not_verify_is_kept_for_inspection(tmp_path, monkeypatch):
     """The opposite decision from the failure above, deliberately. A process that reported success
     and produced something unverifiable is a bug worth looking at, so the evidence stays.
@@ -234,6 +263,7 @@ def test_an_output_that_does_not_verify_is_kept_for_inspection(tmp_path, monkeyp
     assert out.exists(), "the unverifiable output was deleted instead of kept for inspection"
 
 
+@needs_converter
 def test_a_successful_conversion_verifies_and_reports(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -248,6 +278,7 @@ def test_a_successful_conversion_verifies_and_reports(tmp_path, monkeypatch):
     assert "--outtype" in ran.calls[0] and "bf16" in ran.calls[0]
 
 
+@needs_converter
 def test_the_requested_precision_is_what_gets_checked(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -263,6 +294,7 @@ def test_the_requested_precision_is_what_gets_checked(tmp_path, monkeypatch):
     assert seen["expect"] == "F16"
 
 
+@needs_converter
 def test_auto_precision_asserts_nothing_because_there_is_nothing_to_assert(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -278,6 +310,7 @@ def test_auto_precision_asserts_nothing_because_there_is_nothing_to_assert(tmp_p
     assert seen["expect"] is False, "auto claimed a precision it cannot know in advance"
 
 
+@needs_converter
 def test_quantise_is_chained_and_the_intermediate_is_pruned_by_default(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -296,6 +329,7 @@ def test_quantise_is_chained_and_the_intermediate_is_pruned_by_default(tmp_path,
     assert "Q4_K_M" in seen["argv"]
 
 
+@needs_converter
 def test_keeping_the_intermediate_is_honoured(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -310,6 +344,7 @@ def test_keeping_the_intermediate_is_honoured(tmp_path, monkeypatch):
     assert "--prune-source" not in seen["argv"]
 
 
+@needs_converter
 def test_a_failing_quantise_step_propagates_its_code(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
@@ -321,6 +356,7 @@ def test_a_failing_quantise_step_propagates_its_code(tmp_path, monkeypatch):
     assert convert.run([str(d), str(out), "--quantise", "Q4_K_M"], log=lambda _m: None) == 3
 
 
+@needs_converter
 def test_use_temp_file_reaches_the_converter(tmp_path, monkeypatch):
     """The flag that makes a model larger than memory convertible at all."""
     d = _checkpoint(tmp_path / "m")

@@ -18,7 +18,7 @@
 # The container is the second line, not the first. The first is `--network none` at run time: a
 # tool that cannot reach the network cannot exfiltrate a credential it never had. Everything the
 # tool needs (weights, corpus) is mounted read-only, and the only writable path is its output
-# directory. See `bench/run-isolated.sh`, which refuses to start if those invariants are not met.
+# directory. See `head-to-head/run-isolated.sh`, which refuses to start if those invariants are not met.
 #
 # WHY NOT AN NVIDIA BASE IMAGE
 #
@@ -28,7 +28,7 @@
 # image is pulled: two large dependencies avoided, which is the point of section 5 rather than an
 # optimisation.
 #
-# Build:  docker build -f bench/Dockerfile.tool -t senbon-bench:tool .
+# Build:  docker build -f head-to-head/Dockerfile.tool -t senbon-bench:tool .
 FROM python:3.11-slim-bookworm@sha256:d29f48a31a8b408ed19272ca1e7b10ebae13b240a27e862d3d4217c528e2e0c3
 
 # git only, for cloning the tool under test at a pinned ref. No curl, no build toolchain, nothing

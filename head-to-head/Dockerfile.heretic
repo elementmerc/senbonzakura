@@ -19,7 +19,7 @@
 # authors chose.
 #
 # Build:
-#   docker build -f bench/Dockerfile.heretic --build-arg HERETIC_REF=v1.4.0 -t senbon-bench:heretic .
+#   docker build -f head-to-head/Dockerfile.heretic --build-arg HERETIC_REF=v1.4.0 -t senbon-bench:heretic .
 FROM senbon-bench:tool
 
 # Pinned by tag, and the tag's commit is recorded below. v1.4.0 is the current release as of

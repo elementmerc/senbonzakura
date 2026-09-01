@@ -9,7 +9,7 @@
 # The host venv carries torch 2.13.0+cu130. The benchmark base pins torch 2.5.1+cu124, because
 # that is what the competing tools are pinned to. Two arms on two torch builds are two sets of
 # kernels, two sets of numerics, and a KL divergence measured against a slightly different
-# baseline. `bench/EQUAL-BUDGET.md` said "Card: same", which was true and which quietly meant
+# baseline. `head-to-head/EQUAL-BUDGET.md` said "Card: same", which was true and which quietly meant
 # less than a reader would take it to mean.
 #
 # So both tools now run on one image, one torch, one CUDA build, with the same flags, the same
@@ -19,14 +19,14 @@
 #
 # WHAT IS BAKED IN, AND WHAT IS NOT
 #
-# The dependencies are baked; the source is NOT. `bench/run-isolated.sh --senbon-src` mounts the
+# The dependencies are baked; the source is NOT. `head-to-head/run-isolated.sh --senbon-src` mounts the
 # working tree read-only at /work/senbon-src, so an arm runs the code that is checked out right
 # now and `cli.code_version()` reports it. Baking the source would mean rebuilding the image to
 # change one line, and would make the version in the image and the version in the repository two
 # things that have to be kept in step by hand.
 #
 # Build:
-#   docker build -f bench/Dockerfile.senbonzakura -t senbon-bench:senbonzakura .
+#   docker build -f head-to-head/Dockerfile.senbonzakura -t senbon-bench:senbonzakura .
 FROM senbon-bench:tool
 
 USER root

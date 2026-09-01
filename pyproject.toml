@@ -124,7 +124,13 @@ where = ["src"]
 # wheel installs, imports, and raises the moment anything asks about a vendored artefact, which is
 # the worst shape of bug because it only appears for users. Caught by unzipping a built wheel
 # rather than by reasoning about the glob.
-senbonzakura = ["data/*.bin", "vendor/*.json"]
+# `vendor/bin/**` and `vendor/src/**` are here so a PLATFORM wheel can carry the llama.cpp
+# binaries and the pinned converter. They are absent from a normal checkout until
+# `tools/vendor_llama.py` runs, so a build with nothing vendored still produces a universal wheel
+# with no binaries in it; `setup.py` makes the tag follow the contents, so the two cannot
+# disagree. A `py3-none-any` wheel holding a Linux executable is the state this arrangement makes
+# impossible to build.
+senbonzakura = ["data/*.bin", "vendor/*.json", "vendor/bin/*/*", "vendor/src/**/*"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

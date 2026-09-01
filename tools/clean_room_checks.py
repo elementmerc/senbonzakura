@@ -94,15 +94,30 @@ def main(argv=None):
         print("\n  note  bare --help is the abliterate parser, which needs torch. Not checked "
               "in this mode.\n")
 
-    # ── doctor tells the truth about a fresh install ─────────────────────────────
-    # The binaries are not in the wheel. doctor must say so and must exit non-zero, because
-    # exiting 0 while printing "this install cannot do what it claims" is the failure that
-    # made this whole file necessary.
-    check("doctor reports the missing quantiser", "llama-quantize" in out)
-    check("doctor exits non-zero when it cannot do the job", r.returncode != 0,
-          f"exit {r.returncode}")
-    check("doctor says plainly that the install is not usable",
-          "cannot do what it claims" in out, out[-300:])
+    # ── doctor tells the truth about THIS wheel ──────────────────────────────────
+    #
+    # Two kinds of wheel exist and they have opposite correct answers, so the expectation is read
+    # off the artefact rather than hard-coded. Hard-coding it would mean the checks quietly
+    # asserted a stale truth the day platform wheels shipped, which is the failure mode this file
+    # was written to catch in the software.
+    check("doctor names the quantiser either way", "llama-quantize" in out)
+    carries_binaries = "vendored, runs" in out
+    if carries_binaries:
+        print("\n  note  this is a PLATFORM wheel: it carries the binaries, so doctor should "
+              "pass.\n")
+        check("a platform wheel can actually quantise", "llama-quantize" in out
+              and "not available" not in out.split("llama-quantize")[1][:60], out[-300:])
+        check("doctor does not report a failure it does not have",
+              "cannot do what it claims" not in out, out[-300:])
+    else:
+        print("\n  note  this is a UNIVERSAL wheel: it carries no binaries, so doctor should "
+              "refuse.\n")
+        # Exiting 0 while printing "this install cannot do what it claims" is the failure that
+        # made this whole file necessary.
+        check("doctor exits non-zero when it cannot do the job", r.returncode != 0,
+              f"exit {r.returncode}")
+        check("doctor says plainly that the install is not usable",
+              "cannot do what it claims" in out, out[-300:])
 
     # ── the corpora DO ship, and work with no network ────────────────────────────
     r = run(["doctor"])
@@ -115,6 +130,8 @@ def main(argv=None):
         check("a bundled corpus loads offline", False, f"{type(e).__name__}: {e}")
 
     # ── the refusals are clean, not tracebacks ───────────────────────────────────
+    # True of both wheel kinds: a missing INPUT file must be refused with a sentence rather than
+    # a traceback, whether or not the binary that would have processed it is present.
     for cmd, needle in (("quantise", "llama-quantize"), ("convert", "convert")):
         r = run([cmd, "--help"])
         check(f"{cmd} --help works without the binary", r.returncode == 0,

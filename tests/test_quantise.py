@@ -312,3 +312,115 @@ def test_a_missing_imatrix_is_refused_before_the_job(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="no importance matrix"):
         quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
                       "--imatrix", str(tmp_path / "nope.gguf")], log=lambda _m: None)
+
+
+# ── C-1: the artefact names the toolchain that produced it ───────────────────────
+#
+# A published figure is measured on a file, and until now the file could not say what made it.
+# The confound that motivated this landed next door in the same week: an abliterated arm quantised
+# `i1-Q4_K_M` compared against a stock arm quantised plain `Q4_K_M`, two variables in a
+# one-variable comparison, caught only because somebody read the filenames.
+def test_build_info_reads_what_the_binary_says_about_itself():
+    exe, _src = vendored.find_binary("llama-quantize", search_path=True)
+    info = quantise.build_info(exe)
+    assert info and isinstance(info["build"], int) and info["commit"]
+
+
+def test_build_info_returns_none_rather_than_guessing(tmp_path):
+    """A stub that says nothing about itself yields no field, not an invented one."""
+    stub = tmp_path / "quiet"
+    stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    assert quantise.build_info(stub) is None
+
+
+def test_build_info_survives_a_binary_that_does_not_exist(tmp_path):
+    assert quantise.build_info(tmp_path / "nope") is None
+
+
+def test_identity_keeps_the_claim_and_the_report_as_separate_fields():
+    """Recording only one would make the interesting case unrepresentable."""
+    exe, src = vendored.find_binary("llama-quantize", search_path=True)
+    ident = quantise.quantiser_identity(exe, src, log=lambda _m: None)
+    assert ident["pinned_tag"], "the pin we believe we vendored is not recorded"
+    assert ident["reported_build"]["build"], "what the binary says is not recorded"
+    assert len(ident["sha256"]) == 64
+    assert "pin_mismatch" not in ident, "this install's pin and binary should agree"
+
+
+def test_a_binary_that_is_not_the_pinned_one_is_called_out(monkeypatch, tmp_path):
+    """The substitution the pins exist to prevent, said out loud rather than left in the JSON.
+
+    This is the whole reason the record carries two fields instead of one.
+    """
+    said = []
+    monkeypatch.setattr(quantise, "pinned_tag", lambda: "b10355")
+    monkeypatch.setattr(quantise, "build_info", lambda _e: {"build": 99999, "commit": "deadbeef"})
+    stub = tmp_path / "q"
+    stub.write_text("x", encoding="utf-8")
+    ident = quantise.quantiser_identity(stub, "vendored", log=said.append)
+    assert ident["pin_mismatch"] is True
+    assert any("not the one this install claims to vendor" in m for m in said)
+
+
+def test_an_unreadable_pin_manifest_leaves_the_field_empty_rather_than_wrong(monkeypatch):
+    from senbonzakura import vendoring
+    monkeypatch.setattr(vendoring, "load_manifest",
+                        lambda *_a, **_k: (_ for _ in ()).throw(vendoring.VendorError("gone")))
+    assert quantise.pinned_tag() is None
+
+
+@needs_binary
+def test_the_sidecar_lands_beside_the_output_and_names_the_toolchain(tmp_path):
+    import json
+    src = tmp_path / "m.gguf"
+    _tiny_gguf(src)
+    out = tmp_path / "m-Q4_K_M.gguf"
+    assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=lambda _m: None) == 0
+
+    sidecar = Path(str(out) + quantise.SIDECAR_SUFFIX)
+    assert sidecar.is_file(), "the quantisation recorded nothing about what produced it"
+    rec = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert rec["schema"] == "senbonzakura-quantisation/1"
+    assert rec["quant_type"] == "Q4_K_M"
+    assert rec["quantiser"]["tool"] == "llama-quantize"
+    assert rec["quantiser"]["reported_build"]["build"] > 0
+    assert rec["quantiser"]["sha256"]
+    assert rec["imatrix"] is None, "no matrix was applied and the record should say so"
+    assert rec["output"]["name"] == out.name and rec["output"]["bytes"] > 0
+    assert rec["source"]["name"] == src.name
+    assert rec["created"].endswith("+00:00")
+
+
+@needs_binary
+def test_no_sidecar_is_written_when_the_output_does_not_verify(tmp_path, monkeypatch):
+    """Provenance for a file that turned out to be wrong is a record of a thing that did not
+    happen, so it must not exist.
+    """
+    src = tmp_path / "m.gguf"
+    _tiny_gguf(src)
+    out = tmp_path / "m-Q4_K_M.gguf"
+    monkeypatch.setattr(gguf_io, "verify",
+                        lambda *_a, **_k: (_ for _ in ()).throw(gguf_io.GGUFError("nope")))
+    with pytest.raises(SystemExit):
+        quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=lambda _m: None)
+    assert not Path(str(out) + quantise.SIDECAR_SUFFIX).exists()
+
+
+@needs_binary
+def test_a_sidecar_that_cannot_be_written_degrades_loudly_and_keeps_the_gguf(tmp_path, monkeypatch):
+    said = []
+    src = tmp_path / "m.gguf"
+    _tiny_gguf(src)
+    out = tmp_path / "m-Q4_K_M.gguf"
+    real_write = Path.write_text
+
+    def _fail_on_sidecar(self, *a, **k):
+        if str(self).endswith(quantise.SIDECAR_SUFFIX):
+            raise OSError("read-only filesystem")
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", _fail_on_sidecar)
+    assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=said.append) == 0
+    assert out.is_file(), "a provenance failure must not cost the quantisation"
+    assert any("provenance is unrecorded" in m for m in said)

@@ -30,6 +30,10 @@ and the quantisation actually written, which must be the one that was asked for.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import hashlib
+import json
+import re
 import subprocess
 import sys
 import time
@@ -49,6 +53,99 @@ QUANT_TYPES = ("Q2_K", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_K_S", "Q4_K_M", "Q5_K_S
 #: is a sanity floor for the disk check rather than an estimate: asking for F16 output from an F32
 #: input is the one case where "smaller" is the wrong assumption.
 SIZE_HEADROOM = 1.15
+
+
+
+#: Written beside the output GGUF. Mirrors `imatrix`'s `.calibration.json`: the provenance of a
+#: file lives next to the file, so a figure measured on it can name the toolchain that made it.
+SIDECAR_SUFFIX = ".provenance.json"
+
+
+def _now():
+    """One UTC timestamp per operation, to seconds. Matches `track.py`'s `promoted_at`."""
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+#: llama.cpp prints this on the way into a real operation. The number is the upstream build, which
+#: is the same number our pin carries as `bNNNNN`, so the two can be checked against each other.
+_BUILD_RE = re.compile(r"build\s*=\s*(\d+)\s*\(([0-9a-f]+)\)")
+
+
+def build_info(exe, *, timeout=20):
+    """What the binary says its own build is, or None when it will not say.
+
+    The identity of a quantiser is not the tag we believe we vendored; it is what the executable
+    that actually ran reports about itself. Those can disagree, and the whole point of recording
+    provenance is to be able to notice when they do.
+
+    llama-quantize prints the line only once it is past argument parsing, so this asks it to
+    dry-run a path that does not exist: the build banner is emitted, nothing is read, nothing is
+    written, and the non-zero exit is expected rather than a failure. Returns None on anything
+    unexpected, because a provenance field nobody can trust is worse than an absent one.
+    """
+    try:
+        r = subprocess.run([str(exe), "--dry-run", "/nonexistent.senbonzakura.probe.gguf",
+                            "/nonexistent.senbonzakura.probe.out.gguf", "Q4_K_M"],
+                           capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # getattr rather than attribute access: this is a probe, and anything unexpected about
+    # the result means "cannot say", never a crash on the way into a real quantisation.
+    text = (getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or "")
+    m = _BUILD_RE.search(text if isinstance(text, str) else "")
+    return {"build": int(m.group(1)), "commit": m.group(2)} if m else None
+
+
+def _sha256(path, *, chunk=1 << 20):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def pinned_tag():
+    """The llama.cpp tag this install claims to vendor, or None if it cannot be read."""
+    from . import vendoring
+    try:
+        manifest = vendoring.load_manifest()
+    except (vendoring.VendorError, OSError):
+        # A missing or malformed manifest is a real problem, and it is `doctor`'s to report.
+        # Here it means only that this field cannot be filled, and an absent field is honest.
+        return None
+    pin = (manifest.get("pins") or {}).get("llama.cpp") or {}
+    return pin.get("tag")
+
+
+def quantiser_identity(exe, source_of, log=print):
+    """Who did the quantising, stated so a reader can check it rather than trust it.
+
+    Carries the binary's self-reported build AND the tag we believe we pinned, deliberately as
+    two separate fields. Recording only one would make the interesting case, the case where they
+    disagree, unrepresentable.
+    """
+    info = build_info(exe)
+    tag = pinned_tag()
+    ident = {
+        "tool": "llama-quantize",
+        "source": source_of,
+        "path": str(exe),
+        "pinned_tag": tag,
+        "reported_build": info,
+        "sha256": None,
+    }
+    try:
+        ident["sha256"] = _sha256(exe)
+    except OSError:
+        pass
+
+    # `b10355` against a reported build of 10355. A mismatch means the binary on disk is not the
+    # one the pin names, which is exactly the substitution the pins exist to prevent, so it is
+    # said out loud rather than left for whoever later reads the JSON.
+    if info and tag and re.fullmatch(r"b\d+", str(tag)) and int(str(tag)[1:]) != info["build"]:
+        ident["pin_mismatch"] = True
+        log(f"  WARNING: the pin says {tag} and the binary reports build {info['build']}. "
+            f"The quantiser that ran is not the one this install claims to vendor.")
+    return ident
 
 
 def build_parser():
@@ -150,6 +247,8 @@ def run(argv=None, log=print):
     except VendorError as e:
         raise SystemExit(str(e)) from e
     log(f"  using {source_of} llama-quantize at {exe}")
+    # Read BEFORE the work, so a run that dies mid-quantise has still said what was about to do it.
+    identity = quantiser_identity(exe, source_of, log=log)
 
     argv_q = [str(exe)]
     if a.allow_requantize:
@@ -167,6 +266,9 @@ def run(argv=None, log=print):
         log(f"  applying the importance matrix at {im.name}"
             + (f", calibrated on {cal['calibration'].get('corpus') or cal['calibration'].get('path')}"
                if cal else " (no calibration sidecar; its provenance is unknown)"))
+        imatrix_record = {"path": str(im), "name": im.name, "calibration": cal}
+    else:
+        imatrix_record = None
     argv_q += [str(a.source), str(out), a.type]
     if a.threads:
         argv_q.append(str(a.threads))
@@ -201,6 +303,29 @@ def run(argv=None, log=print):
     log(f"  wrote {out.name}: {out_size / 1e9:.2f} GB from {src_size / 1e9:.2f} GB "
         f"({out_size / src_size * 100:.0f}%), {got['tensor_count']} tensors, {took:.0f}s")
     log(f"  verified: {got['file_type']}, architecture {got['architecture']}")
+
+    sidecar = Path(str(out) + SIDECAR_SUFFIX)
+    record = {
+        "schema": "senbonzakura-quantisation/1",
+        "created": _now(),
+        "quantiser": identity,
+        "quant_type": a.type,
+        "imatrix": imatrix_record,
+        "allow_requantize": bool(a.allow_requantize),
+        "source": {"name": Path(a.source).name, "bytes": src_size,
+                   "file_type": head["file_type"], "architecture": head["architecture"]},
+        "output": {"name": out.name, "bytes": out_size, "file_type": got["file_type"],
+                   "architecture": got["architecture"], "tensor_count": got["tensor_count"]},
+        "seconds": round(took, 1),
+    }
+    try:
+        sidecar.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        log(f"  wrote {sidecar.name}: the toolchain that produced this file")
+    except OSError as e:
+        # The GGUF is good and is the point; losing its provenance is a degradation, not a
+        # failure, and it degrades LOUDLY rather than leaving a silent gap in the record.
+        log(f"  WARNING: could not write {sidecar.name} ({e}). The quantisation is fine and "
+            f"its provenance is unrecorded.")
 
     if a.prune_source and not a.keep_source:
         # Only after the output has verified. The f16 halfway file is usually the largest thing on

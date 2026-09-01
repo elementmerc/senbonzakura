@@ -968,11 +968,43 @@ def test_the_run_records_which_format_produced_its_numbers(base_args, tiny_model
 def test_the_applied_k_per_layer_is_recorded(base_args, tiny_model, tiny_tok, track):
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
     a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
-    assert len(a.dirs_per_layer) == a.NL + 1
-    assert all(0 <= k <= a.KMAX for k in a.dirs_per_layer)
+    # POSITIONS are NL+1; LAYERS are NL. Both are recorded, and the distinction is the whole
+    # point: they were one list called `dirs_per_layer` that held positions, which read as
+    # "layer 0 got no direction" on every model and cost a real investigation.
+    assert len(a.dirs_per_position) == a.NL + 1
+    assert len(a.dirs_per_layer) == a.NL
+    assert all(0 <= k <= a.KMAX for k in a.dirs_per_position)
     # The count must match the tensor it describes, not the request.
-    for li, k in enumerate(a.dirs_per_layer):
+    for li, k in enumerate(a.dirs_per_position):
         assert int((a.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum()) == k
+
+
+def test_the_per_layer_counts_describe_the_layers_they_name(base_args, tiny_model, tiny_tok, track):
+    """`directions_per_layer[i]` must be what decoder layer i actually ablates with.
+
+    `active_dirs(i)` reads `dirs_multi[i + 1]`, because position 0 is the embedding output and
+    position i+1 is what layer i writes into. While the recorded list was position-indexed and
+    called per-layer, every entry described the layer before it, its leading zero looked like a
+    layer that missed out, and `min()` of it was therefore ALWAYS zero.
+    """
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    a._cur = {"mode": "per_layer"}
+    for idx in range(a.NL):
+        applied = int((a.active_dirs(idx, a.KMAX).float().norm(dim=-1) > 1e-6).sum())
+        assert a.dirs_per_layer[idx] == applied, (
+            f"the record says layer {idx} got {a.dirs_per_layer[idx]} and it ablates with "
+            f"{applied}")
+
+
+def test_position_zero_is_the_embedding_and_is_never_ablated(base_args, tiny_model, tiny_tok,
+                                                             track):
+    """The leading zero is a choice, not a gap: `embed_tokens` is deliberately left alone."""
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    a.extract_directions(f"{track}/bad_ds", f"{track}/good_ds", None, f"{track}/good_ds")
+    assert a.dirs_per_position[0] == 0, "position 0 is the embedding output"
+    assert min(a.dirs_per_layer) >= 1, (
+        "no LAYER should be empty; a zero here is a real shortfall rather than the embedding")
 
 
 def test_a_shortfall_against_the_requested_k_is_announced(base_args, tiny_model, tiny_tok, track,
@@ -1020,7 +1052,12 @@ def test_the_artefact_carries_the_applied_k(base_args, tiny_model, tiny_tok, tra
     with open(os.path.join(base_args.out, "abliteration.json"), encoding="utf-8") as f:
         artefact = json.load(f)
     assert artefact["directions_per_layer"] == a.dirs_per_layer
-    assert len(artefact["directions_per_layer"]) == a.NL + 1
+    assert len(artefact["directions_per_layer"]) == a.NL, "one entry per decoder layer"
+    # Both views ship, because a reader cannot derive one from the other without knowing the
+    # convention, and the note is what tells them the leading zero is a choice.
+    assert artefact["directions_per_position"] == a.dirs_per_position
+    assert len(artefact["directions_per_position"]) == a.NL + 1
+    assert "embedding output" in artefact["directions_index_note"]
 
 
 # ── why a layer got the count it did, not just what the count was ─────────────────────
@@ -1139,8 +1176,9 @@ def test_the_candidate_set_does_not_change_when_the_budget_does(
     # That is what makes the arms of a K comparison differ in K alone. Candidates are ranked by
     # separation before any is kept, so the budget truncates the list rather than changing it.
     for smaller in (1, 2):
+        # POSITIONS here, because the loop indexes `dirs_multi`, which is position-indexed.
         for li in range(runs[3].NL + 1):
-            k = min(runs[smaller].dirs_per_layer[li], runs[3].dirs_per_layer[li])
+            k = min(runs[smaller].dirs_per_position[li], runs[3].dirs_per_position[li])
             for j in range(k):
                 a_dir = runs[smaller].dirs_multi[li, j].float()
                 b_dir = runs[3].dirs_multi[li, j].float()

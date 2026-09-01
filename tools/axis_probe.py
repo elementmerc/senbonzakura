@@ -133,7 +133,11 @@ def summarise(a):
         "max_directions_requested": a.KMAX,
         "dir_prompts": a.args.dir_prompts,
         "axis_separation_threshold": threshold,
+        # Both views. `axis_separations` below is indexed by residual-stream POSITION (NL+1
+        # entries, 0 being the embedding output), so recording only the layer view would leave a
+        # reader lining up two arrays of different lengths with nothing saying why.
         "directions_per_layer": a.dirs_per_layer,
+        "directions_per_position": getattr(a, "dirs_per_position", None),
         "axis_separations": seps,
         "axes_measured": total,
         "axes_recorded": len(measured),

@@ -27,7 +27,7 @@ upstream's.
 - **Modified by:** Daniel Iwugo.
 - **First included:** 2026-07-14, in the initial package.
 - **Relicensed to AGPL-3.0-or-later for this inclusion:** 2026-07-17.
-- **Most recent modification to the file carrying it:** 2026-08-12.
+- **Most recent modification to the file carrying it:** 2026-09-01.
 
 What was and was not changed, because the distinction is the whole point of the
 notice:

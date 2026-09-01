@@ -31,7 +31,10 @@ def _fake(seps, *, threshold=None):
     return SimpleNamespace(
         args=SimpleNamespace(model="m", track="t", dir_prompts=128, good_ds=None),
         H=8, NL=2, KMAX=8,
-        dirs_per_layer=[1] * len(seps),
+        # `seps` is per POSITION, so the stub mirrors the real object: positions are
+        # NL+1 and layers are NL, with position 0 the never-ablated embedding output.
+        dirs_per_position=[0] + [1] * (len(seps) - 1),
+        dirs_per_layer=[1] * (len(seps) - 1),
         axis_separations=seps,
         best_rejected_separation=max(below) if below else None)
 
@@ -181,7 +184,10 @@ def test_the_probe_runs_and_writes_a_record(base_args, tiny_model, tiny_tok, tra
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["directions_per_layer"] and record["verdict"]
     assert record["axis_separation_threshold"] == cli.MIN_AXIS_SEPARATION
-    assert len(record["axis_separations"]) == len(record["directions_per_layer"])
+    # `axis_separations` is per POSITION, so it pairs with the position view. Pairing it with
+    # the layer view is an off-by-one that used to typecheck because both lists were NL+1 long.
+    assert len(record["axis_separations"]) == len(record["directions_per_position"])
+    assert len(record["directions_per_layer"]) == len(record["axis_separations"]) - 1
     assert "axis probe" in capsys.readouterr().out
 
 

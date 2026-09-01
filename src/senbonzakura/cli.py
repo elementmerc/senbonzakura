@@ -1586,8 +1586,23 @@ class Abliterator:
         # cloud) and the request is not evidence of the result, so record the achieved
         # count per layer and say so when it differs. Without this, a run reports the K it
         # asked for and nothing anywhere states the K it applied.
-        self.dirs_per_layer = [int((self.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum())
-                               for li in range(NL + 1)]
+        # INDEXED BY RESIDUAL-STREAM POSITION, NOT BY LAYER, and the difference is load-bearing.
+        # `dirs_multi` has NL+1 entries: position 0 is the embedding output and position i+1 is
+        # what decoder layer i writes into, which is why `active_dirs` reads `dirs_multi[idx+1]`.
+        # Position 0 is never ablated, because `embed_tokens` is deliberately left alone.
+        self.dirs_per_position = [int((self.dirs_multi[li].float().norm(dim=-1) > 1e-6).sum())
+                                  for li in range(NL + 1)]
+        # The LAYER view, which is what every message and every reader actually wants. Dropping
+        # position 0 is what makes the name true.
+        #
+        # It was one list called `dirs_per_layer` carrying positions, and that cost a real
+        # investigation: the record began `[0, 1, 1, ...]` on every model, and a reader concluded
+        # layer 0 received no direction. It always received one, from position 1. The same
+        # mislabelling also made `min()` of the list ALWAYS zero, so every run with a shortfall
+        # announced "the counts run 0 to K" and named one layer too many, and it sliced the search
+        # window with layer indices into a position-indexed list, reporting the window one layer
+        # off. One wrong noun, three wrong statements.
+        self.dirs_per_layer = self.dirs_per_position[1:]
         # Report the WHOLE model, and name the window separately. Scoping this line to the
         # search window cost most of a day on 2026-08-03: it said "within the search window
         # layers got 1 to 1 directions", which left open, and wrongly, that layers outside the
@@ -2627,7 +2642,18 @@ class Abliterator:
                        # The K actually applied at each layer, which is not always the K asked
                        # for: the separation filter, the rank floor and a degenerate cloud can
                        # each reduce it, and num_directions alone cannot show that.
+                       # Both views, because they answer different questions and the reader
+                       # cannot reconstruct one from the other without knowing the convention.
                        "directions_per_layer": getattr(self, "dirs_per_layer", None),
+                       "directions_per_position": getattr(self, "dirs_per_position", None),
+                       "directions_index_note": (
+                           "directions_per_layer[i] is decoder layer i. "
+                           "directions_per_position[i] is the residual-stream position: 0 is the "
+                           "embedding output, which is never ablated, and position i+1 is what "
+                           "layer i writes into. A leading 0 in the position list is that choice, "
+                           "not a layer that missed out. `axis_separations` uses the same "
+                           "position indexing, so its entry i pairs with "
+                           "directions_per_position[i]."),
                        # Why each layer got the count it did. A rejected axis whose separation
                        # sits just under the threshold means the constant chose the direction
                        # count; one far under it means the second direction is genuinely absent.

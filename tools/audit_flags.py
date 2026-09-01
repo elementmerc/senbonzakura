@@ -16,6 +16,12 @@ Three passes, because they fail differently:
   B. read only inside the function that declares it     -> usually fine in a short main()
   C. declared in a module that never reads it           -> the --chat-template shape
 
+A module that imports a parser INHERITS its declarations. Splitting the argument surface into
+`parser.py` (so `--help` costs nothing) would otherwise silence pass C entirely: the flags would
+be declared in a module with no execution path and read in the modules that matter, and the
+original bug, declared beside `main` and forwarded by everyone except `main`, would sail through.
+The promise belongs to whoever picks the parser up.
+
 Run it directly to see the findings:
 
     python tools/audit_flags.py
@@ -77,9 +83,18 @@ def dest_of(call):
 
 
 class _Walk(ast.NodeVisitor):
-    def __init__(self, module, declared, read, splat):
+    def __init__(self, module, declared, read, splat, imports, forwards):
         self.module, self.declared, self.read, self.splat = module, declared, read, splat
+        self.imports, self.forwards = imports, forwards
         self._fn = []
+
+    def visit_ImportFrom(self, node):
+        # `from .parser import build_parser` makes this module answerable for those flags.
+        if node.module:
+            for alias in node.names:
+                self.imports.setdefault(self.module, set()).add(
+                    (node.module.split(".")[-1], alias.name))
+        self.generic_visit(node)
 
     def _here(self):
         return self._fn[-1] if self._fn else "<module>"
@@ -94,6 +109,13 @@ class _Walk(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
 
     def visit_Call(self, node):
+        # Passing the whole namespace on to somebody else discharges the promise: a forwarded
+        # Namespace cannot drop a flag. Recorded, and used ONLY for a module that reads nothing
+        # itself, so `cli` (which forwards to `run_parsed` and also reads dozens of flags) stays
+        # answerable and the original `--chat-template` catch survives.
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            if isinstance(arg, ast.Name) and arg.id in NAMESPACE_NAMES:
+                self.forwards.add(self.module)
         f = node.func
         if isinstance(f, ast.Attribute) and f.attr == "add_argument":
             dest = dest_of(node)
@@ -117,7 +139,7 @@ class _Walk(ast.NodeVisitor):
 
 def analyse(root):
     """Return (declared, read, splat, parsed_count) for every first-party module under `root`."""
-    declared, read, splat, parsed = {}, {}, [], 0
+    declared, read, splat, parsed, imports, forwards = {}, {}, [], 0, {}, set()
     for path in sorted(pathlib.Path(root).rglob("*.py")):
         if any(s in str(path) for s in SKIP_DIRS):
             continue
@@ -126,7 +148,32 @@ def analyse(root):
         except SyntaxError as exc:
             raise SystemExit(f"audit_flags: cannot parse {path}: {exc}") from exc
         parsed += 1
-        _Walk(path.name, declared, read, splat).visit(tree)
+        _Walk(path.name, declared, read, splat, imports, forwards).visit(tree)
+
+    # Attribute a parser's declarations to the modules that IMPORT that specific parser.
+    #
+    # Resolved against the defining module, not the function name. Several modules define their
+    # own `build_parser`, and matching on the bare name attributed `quantise`'s flags to `cli`
+    # because both import something called `build_parser`. That is a name standing in for the
+    # thing, which is the exact error this tool was written after.
+    parser_defs = {}                      # (module, function) -> {dest, ...}
+    for dest, sites in declared.items():
+        for module, _lineno, fn in sites:
+            parser_defs.setdefault((module, fn), set()).add(dest)
+    for module, names in imports.items():
+        for src_module, imported in names:
+            for dest in parser_defs.get((f"{src_module}.py", imported), ()):
+                declared[dest].append((module, 0, imported))
+
+    # A module that reads no flag at all cannot drop one. That is either a pure parser module
+    # (`parser.py` declares the surface and runs nothing) or a pure forwarder (`entry.py` hands
+    # the whole Namespace to `run_parsed`). `cli` is neither: it forwards AND reads dozens, so it
+    # stays answerable and the original `--chat-template` catch survives.
+    reads_by_module = {m for readers in read.values() for m, _fn in readers}
+    exempt = {m for m in (forwards | {mod for mod, _fn in parser_defs})
+              if m not in reads_by_module}
+    for sites in declared.values():
+        sites[:] = [site for site in sites if site[0] not in exempt]
     return declared, read, splat, parsed
 
 

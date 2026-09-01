@@ -65,18 +65,78 @@ def test_a_flag_nothing_reads_is_caught(tmp_path):
 
 
 def test_the_chat_template_shape_is_caught(tmp_path):
-    """Declared by one module, read only by another. This is the real bug, in miniature."""
+    """The real bug, in miniature: a RUNNER declares two flags, keeps one and drops the other.
+
+    The declaring module has to read something, because that is what makes it a runner rather
+    than a parser module. `parser.py` declares the whole surface and reads none of it, and a
+    checker that cannot tell those apart either flags the split architecture or misses the bug.
+    """
     _dead, _inspected, unkept = analyse_source(
         tmp_path,
         declarer="""
             def build(ap):
                 ap.add_argument("--chat-template", dest="chat_template", default="")
+                ap.add_argument("--model", default="")
+
+            def run(args):
+                return load(args.model)          # --model kept, --chat-template dropped
         """,
         reader="""
             def go(args):
                 return args.chat_template
         """)
     assert [(d, m) for d, m, _l, _f, _mods in unkept] == [("chat_template", "declarer.py")]
+
+
+def test_a_pure_parser_module_is_not_blamed_for_flags_it_only_declares(tmp_path):
+    """`parser.py` exists so `--help` costs nothing. It declares the surface and runs nothing.
+
+    Blaming it would make the split architecture unrepresentable; exempting a module that reads
+    NOTHING is safe, because a module that reads no flag cannot be the one dropping it.
+    """
+    dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--thing", default="")
+                return ap
+        """,
+        runner="""
+            from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.thing
+        """)
+    assert not dead and not unkept
+
+
+def test_a_module_that_imports_a_parser_inherits_its_promises(tmp_path):
+    """Otherwise the split would silence the check: declare in a module with no execution path,
+    read in the modules that matter, and the original bug sails through.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--thing", default="")
+                ap.add_argument("--other", default="")
+                return ap
+        """,
+        runner="""
+            from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.other          # --thing inherited and dropped
+        """,
+        elsewhere="""
+            def go(args):
+                return args.thing
+        """)
+    assert [(d, m) for d, m, _l, _f, _mods in unkept] == [("thing", "runner.py")]
 
 
 def test_a_field_of_the_same_name_is_not_mistaken_for_a_read(tmp_path):

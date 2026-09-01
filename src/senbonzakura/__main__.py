@@ -1,6 +1,6 @@
 import sys
 
-from .cli import main
+from .entry import main
 
 if __name__ == "__main__":
     # `sys.exit(main())` rather than a bare `main()`, so that `python -m senbonzakura` reports

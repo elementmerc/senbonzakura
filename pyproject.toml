@@ -106,7 +106,7 @@ Issues = "https://github.com/elementmerc/senbonzakura/issues"
 
 [project.scripts]
 # `senbonzakura --help` after `pip install .`  (also works: `python -m senbonzakura`)
-senbonzakura = "senbonzakura.cli:main"
+senbonzakura = "senbonzakura.entry:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

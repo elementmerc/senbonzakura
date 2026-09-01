@@ -375,7 +375,10 @@ def test_the_read_out_audit_reports_counts_and_never_a_prompt():
     """Aggregate only: a per-prompt list of what the model said is a generation log."""
     out = margin.readout(_readout_rows([1, 2, 3]), [1], decode=lambda ids: "t")
     assert set(out) == {"argmax_is_verdict", "verdict_prob_mass_mean", "verdict_prob_mass_median",
-                        "mean_p_harmful", "mean_p_benign", "top_tokens"}
+                        "mean_p_harmful", "mean_p_benign", "top_tokens",
+                        # Added when the audit started stating its own verdict rather than
+                        # leaving a reader to derive it from two decimals.
+                        "suspect", "suspect_threshold"}
     assert all(set(t) == {"id", "text", "count"} for t in out["top_tokens"])
 
 
@@ -1063,3 +1066,41 @@ def test_the_verdict_rates_are_labelled_as_diagnostic(capsys, loaded, tmp_path):
     assert "says_harmful_h=" in out
     assert "DIAGNOSTIC" in out
     assert "not results" in out
+
+
+# ── a read-out that is not a verdict says so, next to the number ─────────────────
+#
+# The diagnostic existed, was recorded and was printed, and none of that stopped a figure being
+# quoted: somebody had to know that 0.0% argmax agreement invalidates the AUC above it. That is
+# the shape of every published-number failure this project has had.
+def _suspect_rows(argmax, p_h, p_b, n=4):
+    return [{"margin": 0.0, "canonical": None, "tokens": 5,
+             "argmax": argmax, "p_harmful": p_h, "p_benign": p_b} for _ in range(n)]
+
+
+def test_a_healthy_readout_is_not_suspect():
+    out = margin.readout(_suspect_rows(1, 0.4, 0.3), [1, 2], lambda ids: "HARMFUL")
+    assert out["argmax_is_verdict"] == 1.0
+    assert out["suspect"] is False
+
+
+def test_a_negligible_verdict_mass_is_suspect():
+    """Two tokens holding 0.06% of the mass are two rounding errors, not a comparison."""
+    out = margin.readout(_suspect_rows(99, 0.0003, 0.0003), [1, 2], lambda ids: "<think>")
+    assert out["verdict_prob_mass_mean"] < margin.READOUT_SUSPECT_MASS
+    assert out["suspect"] is True
+
+
+def test_no_prompt_topping_out_on_a_verdict_is_suspect_whatever_the_mass():
+    """The exact broken Qwen3 state: the position holds the reasoning opener every time."""
+    out = margin.readout(_suspect_rows(99, 0.30, 0.30), [1, 2], lambda ids: "<think>")
+    assert out["argmax_is_verdict"] == 0.0
+    assert out["suspect"] is True, "zero agreement is decisive even when the mass looks healthy"
+
+
+def test_the_threshold_is_recorded_so_a_reader_can_disagree_with_it():
+    """`MIN_AXIS_SEPARATION` decided outcomes for this project's whole history while sitting in a
+    constant nobody could see from the artefact. This one travels with its own number.
+    """
+    out = margin.readout(_suspect_rows(1, 0.4, 0.3), [1, 2], lambda ids: "HARMFUL")
+    assert out["suspect_threshold"] == margin.READOUT_SUSPECT_MASS

@@ -89,6 +89,7 @@ export default {
             { text: 'The method', link: '/guide/how-it-works' },
             { text: 'The track', link: '/guide/the-track' },
             { text: 'Contamination', link: '/guide/contamination' },
+            { text: 'Quantisation', link: '/guide/quantisation' },
             { text: 'The evaluation track: dataset card', link: '/evaluation-track-card' },
           ],
         },

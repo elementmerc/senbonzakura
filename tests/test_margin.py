@@ -1104,3 +1104,16 @@ def test_the_threshold_is_recorded_so_a_reader_can_disagree_with_it():
     """
     out = margin.readout(_suspect_rows(1, 0.4, 0.3), [1, 2], lambda ids: "HARMFUL")
     assert out["suspect_threshold"] == margin.READOUT_SUSPECT_MASS
+
+
+def test_both_arms_are_checked_not_just_the_harmful_one():
+    """The AUC compares harmful margins AGAINST harmless ones, so a read-out taken from the wrong
+    position on either arm makes the comparison meaningless.
+
+    The first version printed the harmful arm and stored the harmless one in the JSON where
+    nothing looked at it, which is half a check wearing the shape of a whole one.
+    """
+    import inspect
+    src = inspect.getsource(margin.main)
+    assert 'for arm in ("harmful", "harmless")' in src, "only one arm is reported"
+    assert "suspect_arms" in src, "the suspect check does not consider both arms"

@@ -67,6 +67,16 @@ not comparable to what this version produces.
 - Every result records what produced it: the code version, the package versions, and the
   commit.
 
+- The compass says when its own read-out is not a verdict. It records what token actually sits
+  at the position the margin is read from and how much probability the two verdict spellings
+  hold, on both arms, and prints a warning beside the figure when that position holds something
+  else. On a thinking model it can hold the reasoning opener, and the margin is then a comparison
+  between two tokens the model was never going to produce.
+- The per-layer direction counts in the run record are per layer. They were indexed by
+  residual-stream position under a name that said layer, so each entry described the layer
+  before the one it named, the minimum was always zero, and the search-window report was out by
+  one. Both views now ship, with a note saying which is which.
+
 ### Data
 
 - `senbonzakura.track` builds an evaluation split and refuses to write one that leaks.
@@ -149,6 +159,11 @@ not comparable to what this version produces.
 - One model-loading surface instead of four near-copies. The four had drifted apart, which is
   what put the compass's read-out on the wrong token.
 
+- `bench` is now `head-to-head`, and its operation moved with it: `head-to-head run`, `stage`
+  and `report`. The old name was the word a newcomer reaches for when asking whether a model is
+  any good on their machine, which is a different question from comparing two abliteration tools.
+- `drift` and the head-to-head were both dispatched without being listed in the help.
+
 ### Documentation
 
 - The README documents the track layout, the manifest, and the optional datasets.
@@ -165,6 +180,21 @@ not comparable to what this version produces.
   not a tested floor.
 - Importing the package no longer imports the whole command-line interface, so running any
   module with `-m` no longer prints a warning about unpredictable behaviour.
+- Container images, so the tool can be run without installing anything. The CPU image converts,
+  quantises and builds importance matrices; a separate CUDA image abliterates on a GPU. Both
+  carry the pinned llama.cpp binaries, which a wheel cannot.
+- Per-platform wheels that carry those binaries, so `pip install` can convert and quantise. A
+  wheel is tagged for a platform only when it actually holds one platform's binaries, so a
+  package claiming to run anywhere can never contain a Linux executable.
+- Converting and quantising from a wheel needs the OpenMP runtime, which a wheel has no way to
+  ask a system for. `doctor` names the missing library and what to install; the container images
+  carry it already.
+- The command line starts in a hundredth of a second instead of just under three, because
+  printing help no longer loads a deep-learning stack. `doctor` can now run on a machine that is
+  missing the very libraries it exists to report on.
+- Every quantisation writes a record beside its output naming the toolchain that produced it:
+  the pinned version, the build the binary reports about itself, and the importance matrix used,
+  if any.
 
 ### Licence
 

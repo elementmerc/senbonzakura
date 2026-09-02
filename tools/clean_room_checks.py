@@ -114,7 +114,14 @@ def main(argv=None):
     #
     # So: does the file exist (a fact), and did doctor pass it (a glyph)?
     import pathlib as _pl
-    pkg = _pl.Path(importlib.util.find_spec("senbonzakura").origin).parent
+    spec2 = importlib.util.find_spec("senbonzakura")
+    if not (spec2 and spec2.origin):
+        # Guarded like the check twenty lines above, which was written correctly and then not
+        # copied. A namespace package or a broken install gives no origin, and crashing here
+        # would report a checker bug where the install is what is wrong.
+        check("the package has a resolvable location", False, "no spec origin for senbonzakura")
+        return 1
+    pkg = _pl.Path(spec2.origin).parent
     shipped = sorted((pkg / "vendor" / "bin").glob("*/llama-quantize"))
     verdict = next((ln for ln in out.splitlines() if "llama-quantize" in ln), "")
     runs = verdict.strip().startswith("\u2713")

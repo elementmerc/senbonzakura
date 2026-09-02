@@ -33,7 +33,11 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import sys
+
+#: PEP 263: an encoding declaration is only honoured on line 1 or line 2.
+_ENCODING_RE = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*([-_.a-zA-Z0-9]+)")
 
 SPDX = "# SPDX-License-Identifier: AGPL-3.0-or-later"
 COPYRIGHT = "# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>"
@@ -65,8 +69,17 @@ def apply(path, *, check=False):
         return True
 
     lines = text.splitlines(keepends=True)
-    # A shebang must stay on line 1 or it stops being a shebang.
-    at = 1 if lines and lines[0].startswith("#!") else 0
+    # A shebang must stay on line 1 or it stops being a shebang, and an encoding declaration
+    # must stay on line 1 or 2 or Python ignores it silently. Inserting between the two pushed
+    # the declaration to line 3 and quietly disabled it; nothing in this repository carries one
+    # today, so this was latent rather than live, and a latent corruption in a tool that rewrites
+    # every file in the tree is worth closing anyway.
+    at = 0
+    for i, line in enumerate(lines[:2]):
+        if i == 0 and line.startswith("#!"):
+            at = 1
+        elif _ENCODING_RE.match(line):
+            at = i + 1
 
     # Insert each line at the right place rather than blindly at the top. The first version put
     # the copyright ABOVE an existing SPDX line, inverting the conventional order in the twelve

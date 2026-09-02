@@ -753,15 +753,26 @@ def main(argv=None):
               f"against compass={_fmt(res.get('auc'))}  "
               + " ".join(f"{k}={_fmt(v)}" for k, v in n.items() if k.endswith("_auc")
                          and k != "strongest_auc"))
+    # BOTH ARMS, and checking one was half a check. The AUC compares harmful margins against
+    # harmless margins, so a read-out taken from the wrong position on EITHER arm makes the
+    # comparison meaningless. The first version of this printed the harmful arm and stored the
+    # harmless one in the JSON where nothing looked at it.
+    for arm in ("harmful", "harmless"):
+        ra = res["readout"][arm]
+        if ra:
+            print(f"MARGIN_READOUT {a.label} arm={arm} "
+                  f"argmax_is_verdict={ra['argmax_is_verdict']*100:.1f}% "
+                  f"verdict_prob_mass={ra['verdict_prob_mass_mean']:.4f} "
+                  f"top={[t['text'] for t in ra['top_tokens'][:3]]}")
     r = res["readout"]["harmful"]
-    print(f"MARGIN_READOUT {a.label} argmax_is_verdict={r['argmax_is_verdict']*100:.1f}% "
-          f"verdict_prob_mass={r['verdict_prob_mass_mean']:.4f} "
-          f"top={[t['text'] for t in r['top_tokens'][:3]]}")
-    if r["suspect"]:
+    suspect_arms = [arm for arm in ("harmful", "harmless")
+                    if res["readout"][arm] and res["readout"][arm]["suspect"]]
+    if suspect_arms:
+        r = res["readout"][suspect_arms[0]]
         # Printed BESIDE the AUC, not buried in the JSON. The diagnostic already existed, was
         # already recorded and was already printed, and none of that stops a figure being quoted:
         # somebody has to know that 0.0% agreement invalidates the number above it. So it says so.
-        print(f"MARGIN_READOUT_SUSPECT {a.label} the compass read its verdict where the model was "
+        print(f"MARGIN_READOUT_SUSPECT {a.label} arm(s)={','.join(suspect_arms)}: "
               f"doing something else: the two verdict sets hold "
               f"{r['verdict_prob_mass_mean'] * 100:.2f}% of the probability and the top token is "
               f"a verdict for {r['argmax_is_verdict'] * 100:.1f}% of prompts. THE AUC ABOVE IS NOT "

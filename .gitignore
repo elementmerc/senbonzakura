@@ -29,7 +29,9 @@ __pycache__/
 *.pyc
 build/
 dist/
-dist-cleanroom/
+# Every scratch build directory, not each one as it is invented. `dist-adv/` was not
+# listed and a 19 MB wheel reached a commit in a repository with a public remote.
+dist-*/
 .venv/
 venv/
 *.egg-info/

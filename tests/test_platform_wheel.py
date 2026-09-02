@@ -122,3 +122,35 @@ def test_the_shipped_wheel_never_disagrees_with_itself():
     for w in wheels:
         pathlib.Path(w).unlink()
     out.rmdir()
+
+
+# ── the header tool must not silently disable an encoding declaration ────────────
+def test_a_licence_header_does_not_push_an_encoding_declaration_off_line_two(tmp_path):
+    """PEP 263 honours `# -*- coding: ... -*-` only on line 1 or 2.
+
+    Inserting the licence between the shebang and the declaration moved it to line 3 and turned
+    it off silently. Nothing in this repository carries one today, so it was latent rather than
+    live, and a latent corruption in a tool that rewrites every file in the tree is worth closing.
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import add_license_headers as alh
+
+    f = tmp_path / "legacy.py"
+    f.write_text('#!/usr/bin/env python3\n# -*- coding: latin-1 -*-\n"""D."""\n', encoding="utf-8")
+    alh.apply(f)
+    lines = f.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("#!")
+    assert "coding" in lines[1], "the encoding declaration must stay on line 1 or 2"
+    assert lines[2].startswith("# SPDX")
+
+
+def test_a_file_with_only_an_encoding_declaration_keeps_it_first(tmp_path):
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import add_license_headers as alh
+
+    f = tmp_path / "enc.py"
+    f.write_text("# -*- coding: utf-8 -*-\nx = 1\n", encoding="utf-8")
+    alh.apply(f)
+    assert f.read_text(encoding="utf-8").splitlines()[0].startswith("# -*- coding")

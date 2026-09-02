@@ -177,3 +177,88 @@ jobs:
           test ! -d node_modules || { echo "node_modules at the repository root"; exit 1; }
           test ! -d src/node_modules || { echo "node_modules inside the package"; exit 1; }
           ! git ls-files | grep -q '^docs/node_modules' || { echo "node_modules is tracked"; exit 1; }
+
+  wheel:
+    # The wheel is what a stranger actually installs, and every other job runs in a
+    # checkout that already has the vendored binaries, the corpora sources and the dev
+    # dependencies on disk. This is the only job that asks what someone with none of
+    # that receives.
+    #
+    # THE NEGATIVE CONTROL IS THE POINT. Building a wheel and checking it passes proves
+    # nothing about the check: a gate only ever seen agreeing has not been shown to
+    # work. So the job also constructs a wheel it knows is wrong and requires the same
+    # check to refuse it. That is the discipline this project arrived at the hard way,
+    # after a check shipped that passed a tree with the bug reinstated.
+    name: the wheel describes itself honestly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Build the wheel
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist-ci
+      - name: The tag and the contents agree
+        run: python tools/check_wheel.py dist-ci/*.whl
+      - name: A deliberately mislabelled wheel is refused
+        # Renaming a platform wheel to the universal tag produces the one combination
+        # that installs on machines it cannot run on. If this step passes, the check
+        # above is decoration.
+        run: |
+          set -euo pipefail
+          orig="$(ls dist-ci/*.whl)"
+          case "$orig" in
+            *-py3-none-any.whl)
+              # Nothing was vendored, so invent the opposite lie: a platform tag with
+              # no platform payload to justify it.
+              bad="dist-ci/mislabelled-0.0.0-py3-none-linux_x86_64.whl" ;;
+            *)
+              bad="dist-ci/mislabelled-0.0.0-py3-none-any.whl" ;;
+          esac
+          cp "$orig" "$bad"
+          python tools/check_wheel.py "$bad" --expect-failure
+      - name: The wheel installs and runs where nothing else exists
+        # It builds its own wheel into dist-cleanroom/ rather than taking a path, and
+        # runs two containers: one with a network to install, one with `--network none`
+        # to check. A single container with the network left on would prove nothing
+        # about whether the corpora are really bundled.
+        run: bash tools/clean_room.sh
+
+  images:
+    # Both published images, built and then asked what they can do. `doctor` is the
+    # right question because it answers "does this WORK" rather than "is this present",
+    # and a container that imports cleanly and cannot run the quantiser is exactly the
+    # failure it was written for: that happened twice inside python:3.13-slim, where
+    # the binary was correct and libgomp1 was missing.
+    name: both container images can do what they claim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build the CPU image
+        run: docker build -f Dockerfile -t senbonzakura:ci-cpu .
+      - name: The CPU image runs the quantiser
+        # Not `doctor` exiting 0: it exits 1 on warnings, and a CPU image legitimately
+        # warns about having no card. The claim under test is narrower and is read from
+        # the check line itself.
+        run: |
+          set -euo pipefail
+          docker run --rm senbonzakura:ci-cpu doctor > cpu.txt 2>&1 || true
+          cat cpu.txt
+          grep -qE '^\s*✓\s+llama-quantize' cpu.txt
+          grep -qE '^\s*✓\s+architecture modules' cpu.txt
+      - name: Build the CUDA image
+        run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
+      - name: The CUDA image carries a CUDA torch
+        # There is no card on a GitHub runner, so this cannot test that CUDA WORKS. It
+        # tests the thing that is actually easy to get wrong and impossible to notice:
+        # that the image shipped a CPU torch while calling itself the CUDA image.
+        run: |
+          set -euo pipefail
+          docker run --rm senbonzakura:ci-cuda python -c "
+          import torch
+          print('torch', torch.__version__)
+          assert '+cu' in torch.__version__, f'the CUDA image carries {torch.__version__}, which is not a CUDA build'
+          "

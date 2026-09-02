@@ -154,3 +154,103 @@ def test_a_file_with_only_an_encoding_declaration_keeps_it_first(tmp_path):
     f.write_text("# -*- coding: utf-8 -*-\nx = 1\n", encoding="utf-8")
     alh.apply(f)
     assert f.read_text(encoding="utf-8").splitlines()[0].startswith("# -*- coding")
+
+
+# ── the standalone wheel check, and its negative control ────────────────────────────
+def _wheel_check():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_wheel", ROOT / "tools" / "check_wheel.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _fake_wheel(tmp_path, name, *, payload=False, metadata_tag=None):
+    """A minimal wheel-shaped zip, so the check can be exercised without a real build."""
+    import zipfile
+    tag = metadata_tag or "-".join(name[: -len(".whl")].split("-")[-3:])
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("pkg/__init__.py", "")
+        z.writestr("pkg-0.0.0.dist-info/WHEEL", f"Wheel-Version: 1.0\nTag: {tag}\n")
+        if payload:
+            z.writestr("pkg/vendor/bin/llama-quantize", "not really a binary")
+    return path
+
+
+def test_an_honest_universal_wheel_passes(tmp_path):
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl")
+    assert cw.problems(cw.inspect(w)) == []
+    assert cw.main([str(w)]) == 0
+
+
+def test_an_honest_platform_wheel_passes(tmp_path):
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-linux_x86_64.whl", payload=True)
+    assert cw.problems(cw.inspect(w)) == []
+
+
+def test_a_universal_tag_with_a_binary_is_the_combination_that_breaks_for_strangers(tmp_path):
+    """It installs on a Mac, a Windows box and an ARM server, and fails on all three."""
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl", payload=True)
+    found = cw.problems(cw.inspect(w))
+    assert any("runs anywhere" in p for p in found)
+    assert cw.main([str(w)]) == 1
+
+
+def test_a_platform_tag_with_nothing_to_justify_it_is_also_wrong(tmp_path):
+    """The quieter waste: refusing installation everywhere else for no reason."""
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-linux_x86_64.whl")
+    assert any("nothing" in p or "no platform payload" in p
+               for p in cw.problems(cw.inspect(w)))
+
+
+def test_a_renamed_wheel_is_caught_by_its_own_metadata(tmp_path):
+    """Renaming a file is the easiest way to make a wheel lie, and pip believes the metadata."""
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl",
+                    payload=True, metadata_tag="py3-none-linux_x86_64")
+    found = cw.problems(cw.inspect(w))
+    assert any("filename says" in p and "metadata says" in p for p in found)
+
+
+def test_a_wheel_with_no_metadata_is_refused(tmp_path):
+    import zipfile
+    cw = _wheel_check()
+    path = tmp_path / "pkg-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("pkg/__init__.py", "")
+    assert any("no WHEEL metadata" in p for p in cw.problems(cw.inspect(path)))
+
+
+def test_expect_failure_inverts_the_verdict_both_ways(tmp_path):
+    """THE CONTROL. CI runs this against a wheel built to be wrong.
+
+    A gate only ever seen agreeing has not been shown to work, so the mode that requires a
+    rejection is itself tested in both directions: it must succeed on a bad wheel and fail on a
+    good one.
+    """
+    cw = _wheel_check()
+    bad = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl", payload=True)
+    good = _fake_wheel(tmp_path, "ok-0.0.0-py3-none-any.whl")
+    assert cw.main([str(bad), "--expect-failure"]) == 0
+    assert cw.main([str(good), "--expect-failure"]) == 1
+
+
+def test_a_missing_or_unreadable_file_exits_two_not_one(tmp_path):
+    """Distinguished so CI can tell 'the wheel is wrong' from 'the check could not run'."""
+    cw = _wheel_check()
+    assert cw.main([str(tmp_path / "nope.whl")]) == 2
+    junk = tmp_path / "junk-0.0.0-py3-none-any.whl"
+    junk.write_text("not a zip")
+    assert cw.main([str(junk)]) == 2
+
+
+def test_a_name_that_is_not_a_wheel_is_refused(tmp_path):
+    cw = _wheel_check()
+    with pytest.raises(ValueError, match="not a wheel filename"):
+        cw._filename_tag("thing.whl")

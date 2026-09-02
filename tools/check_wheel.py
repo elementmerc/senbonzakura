@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+"""Does this wheel's tag match what is inside it?
+
+THE ONE COMBINATION THAT BREAKS FOR A STRANGER AND NOT FOR US
+
+`py3-none-any` says "this runs on any machine". A wheel carrying a compiled `llama-quantize` does
+not. Ship both together and pip installs happily on a Mac, a Windows box and an ARM server, and the
+binary refuses to start on all three. Nothing in the build says a word about it, because from
+inside the checkout the binary is right there and works.
+
+The other direction is a quieter waste: a platform tag on a wheel with no platform payload refuses
+installation everywhere except one architecture, for nothing.
+
+A wheel also states its tag twice, in the filename and in the `WHEEL` metadata, and those can
+disagree. Renaming a file is the easiest way to produce a wheel that lies, so both are read and
+compared with each other as well as with the contents.
+
+WHY A SCRIPT AND NOT ONLY A TEST
+
+`tests/test_platform_wheel.py` asserts this about the wheel THIS checkout builds. CI needs to point
+the same check at a wheel it constructed to be wrong, and see it refuse: a gate that has only ever
+been shown passing has not been shown to work. `--expect-failure` is that mode.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+#: Files that make a wheel platform-specific. Anything here means the wheel cannot honestly claim
+#: to run anywhere, whatever its tag says.
+PLATFORM_PAYLOAD = ("llama-quantize", "llama-imatrix", ".so", ".dylib", ".dll", ".pyd")
+
+UNIVERSAL_TAG = "py3-none-any"
+
+
+def _filename_tag(path):
+    """The last three dash-separated fields of a wheel name are its tag."""
+    stem = Path(path).name[: -len(".whl")]
+    parts = stem.split("-")
+    if len(parts) < 5:
+        raise ValueError(f"{Path(path).name} is not a wheel filename (too few fields)")
+    return "-".join(parts[-3:])
+
+
+def _metadata_tag(zf):
+    """The Tag: line from the wheel's own WHEEL file, which is the authority pip reads."""
+    names = [n for n in zf.namelist() if re.fullmatch(r"[^/]+\.dist-info/WHEEL", n)]
+    if not names:
+        return None
+    lines = zf.read(names[0]).decode("utf-8", errors="replace").splitlines()
+    tags = [ln.split(":", 1)[1].strip() for ln in lines if ln.startswith("Tag:")]
+    return tags or None
+
+
+def inspect(path):
+    """Everything the verdict rests on, so a failure can show its working."""
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        meta_tags = _metadata_tag(zf)
+    payload = sorted({n for n in names if any(p in n for p in PLATFORM_PAYLOAD)})
+    return {
+        "filename_tag": _filename_tag(path),
+        "metadata_tags": meta_tags,
+        "platform_payload": payload,
+    }
+
+
+def problems(info):
+    """Every disagreement found, as sentences. Empty means the wheel is honest."""
+    found = []
+    ftag, mtags, payload = info["filename_tag"], info["metadata_tags"], info["platform_payload"]
+    universal = ftag == UNIVERSAL_TAG
+
+    if mtags is None:
+        found.append("the wheel carries no WHEEL metadata, so pip cannot tell what it is")
+    elif ftag not in mtags:
+        found.append(f"the filename says {ftag} and the WHEEL metadata says {', '.join(mtags)}. "
+                     f"One of them is wrong, and pip believes the metadata")
+
+    if universal and payload:
+        found.append(f"the tag says it runs anywhere and it carries {len(payload)} "
+                     f"platform file(s): {', '.join(payload[:3])}. It will install on machines it "
+                     f"cannot run on")
+    if not universal and not payload:
+        found.append(f"the tag {ftag} restricts it to one platform and there is no platform "
+                     f"payload to justify that, so it refuses to install everywhere else for "
+                     f"nothing")
+    return found
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("wheel", type=Path)
+    p.add_argument("--expect-failure", action="store_true",
+                   help="invert the verdict: the wheel MUST be found dishonest. CI builds a "
+                        "deliberately mislabelled wheel and runs this, because a gate only ever "
+                        "seen passing has not been shown to work.")
+    a = p.parse_args(argv)
+
+    if not a.wheel.is_file():
+        print(f"check_wheel: no such file: {a.wheel}", file=sys.stderr)
+        return 2
+    try:
+        info = inspect(a.wheel)
+    except (ValueError, zipfile.BadZipFile) as e:
+        print(f"check_wheel: {a.wheel.name} could not be read as a wheel: {e}", file=sys.stderr)
+        return 2
+
+    print(f"  wheel          {a.wheel.name}")
+    print(f"  filename tag   {info['filename_tag']}")
+    print(f"  metadata tag   {', '.join(info['metadata_tags'] or ['(none)'])}")
+    print(f"  platform files {len(info['platform_payload'])}"
+          + (f": {', '.join(info['platform_payload'][:3])}" if info["platform_payload"] else ""))
+
+    found = problems(info)
+    for line in found:
+        print(f"  PROBLEM: {line}")
+
+    if a.expect_failure:
+        if found:
+            print("\nOK: the deliberately mislabelled wheel was rejected, so this check has teeth.")
+            return 0
+        print("\nFAILED: a wheel built to be wrong passed. This check cannot say no, so its "
+              "approvals mean nothing.")
+        return 1
+    if found:
+        print(f"\nFAILED: {a.wheel.name} does not describe itself honestly.")
+        return 1
+    print("\nOK: the tag and the contents agree.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

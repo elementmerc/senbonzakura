@@ -105,6 +105,32 @@ def variance_ratio(pb: torch.Tensor, pg: torch.Tensor) -> float:
     return float(between / within_ms)
 
 
+def welch_ratio(pb: torch.Tensor, pg: torch.Tensor) -> float:
+    """Candidate A under Welch's correction (Q-21), which drops the shared-variance assumption.
+
+    The squared Welch t statistic: the mean difference over a standard error that gives each group
+    its OWN variance divided by its OWN count, rather than pooling them. Same null of ~1.0 and the
+    same threshold as the plain ratio, so the two are directly comparable, which is the point of
+    running them side by side rather than choosing between them by argument.
+
+    **What it buys, measured before any model run.** Across harmful groups of 4 to 128 rows and
+    spread ratios of 0.5 to 4.0 against a 32-row harmless comparison, the plain ratio's false-keep
+    rate runs from 0.7% to 43.5%. Welch's runs from 4.7% to 13.7% over the identical grid.
+
+    **What it does not buy.** At four rows a side it still keeps 11% to 14% rather than 5%: the t
+    approximation is thin at that size and no correction rescues four observations. That is a
+    property of the sample, not of the statistic, and it is recorded rather than smoothed over.
+    """
+    n1, n2 = int(pb.numel()), int(pg.numel())
+    if n1 < 2 or n2 < 2:
+        # A one-row group has no variance to estimate, so the standard error is undefined. Returns
+        # the null rather than raising: a degenerate cluster should be dropped by the caller's
+        # MIN_GROUP_ROWS check, and a statistic is the wrong place to take a run down.
+        return 1.0
+    se_sq = pb.var(unbiased=True) / n1 + pg.var(unbiased=True) / n2
+    return float((pb.mean() - pg.mean()) ** 2 / se_sq.clamp_min(1e-12))
+
+
 def classifier_auc(pb: torch.Tensor, pg: torch.Tensor) -> float:
     """Candidate B: the probability that a harmful projection outranks a harmless one.
 
@@ -185,6 +211,17 @@ STATISTICS: dict[str, Statistic] = {
         # rather than a round number. It is close to the F(1, inf) critical value of 3.84 because
         # that is what it is.
         rationale="null 95th percentile: a 5% per-axis false-keep rate, flat across group sizes",
+    ),
+    "welch-ratio": Statistic(
+        name="welch-ratio",
+        fn=welch_ratio,
+        null=1.0,
+        margin=3.0,
+        # Deliberately the SAME threshold as the plain ratio. Q-21 chose to run the two poolings
+        # side by side rather than pick one, and moving the bar between them would confound the
+        # pooling with the bar. Its own null 95th percentile sits near 4.0 for the same reason the
+        # plain one's does: both are approximately F(1, df) under the null.
+        rationale="the plain ratio's threshold, held fixed so the comparison is of the pooling alone",
     ),
     "auc": Statistic(
         name="auc",

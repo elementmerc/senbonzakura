@@ -39,7 +39,7 @@ def _null_keep_rate(stat, n_bad, n_good=64, draws=4000, bad_scale=1.0):
 
 
 # ── the sprint's verification line ─────────────────────────────────────────────────
-ALL = ["cohens-d", "variance-ratio", "auc"]
+ALL = ["cohens-d", "variance-ratio", "welch-ratio", "auc"]
 
 
 @pytest.mark.parametrize("name", ALL)
@@ -212,6 +212,43 @@ def test_auc_reuses_the_compass_implementation():
     pb, pg = _projections(32, 48, shift=0.7, seed=11)
     assert separation.classifier_auc(pb, pg) == pytest.approx(
         margin.auc(pb.tolist(), pg.tolist()), rel=1e-12)
+
+
+def test_welch_ratio_survives_the_case_that_breaks_the_plain_ratio():
+    """Q-21's whole reason for existing, asserted rather than asserted-about.
+
+    The plain ratio keeps a null axis 43.5% of the time when a small, widely spread group meets a
+    larger tight one. Welch's gives each group its own variance over its own count instead of
+    pooling them, and the same case drops to roughly 14%.
+    """
+    plain = _null_keep_rate(separation.get("variance-ratio"), 4, n_good=32, draws=3000, bad_scale=4.0)
+    welch = _null_keep_rate(separation.get("welch-ratio"), 4, n_good=32, draws=3000, bad_scale=4.0)
+    assert plain > 0.25, f"the plain ratio should be badly anti-conservative here, got {plain:.1%}"
+    assert welch < 0.20, f"Welch's should mostly close it, got {welch:.1%}"
+    assert welch < plain / 2
+
+
+def test_welch_ratio_is_still_imperfect_at_four_rows_a_side():
+    """The honest limit of the correction, pinned so the write-up cannot overstate it.
+
+    No pooling correction rescues four observations. This asserts the residual inflation is real,
+    so a future claim that Welch's is uniformly 5% would fail here rather than in a reader's head.
+    """
+    rate = _null_keep_rate(separation.get("welch-ratio"), 4, n_good=32, draws=3000, bad_scale=1.0)
+    assert rate > 0.07, f"expected the small-sample inflation to survive, got {rate:.1%}"
+
+
+def test_welch_and_plain_agree_when_the_groups_are_balanced_and_equally_spread():
+    """Where the plain ratio's assumption HOLDS, the correction must change almost nothing.
+
+    Otherwise the pair is comparing two things at once, and Q-21's side-by-side arm would be
+    measuring the correction plus an unrelated shift.
+    """
+    for seed in range(30):
+        pb, pg = _projections(64, 64, shift=0.8, seed=700 + seed)
+        plain = separation.variance_ratio(pb, pg)
+        welch = separation.welch_ratio(pb, pg)
+        assert welch == pytest.approx(plain, rel=0.05), f"seed {seed}: {plain} vs {welch}"
 
 
 def test_variance_ratio_grows_with_evidence_at_a_fixed_effect_size():

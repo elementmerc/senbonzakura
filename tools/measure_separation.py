@@ -53,8 +53,13 @@ from senbonzakura import cli, separation
 #: choice of comparison can be read apart from each other rather than confounded.
 ARMS = [(name, matched) for name in separation.CHOICES for matched in (False, True)]
 
+#: The real labelling and two nulls. `shuffled` destroys refusal but makes both sides mixtures,
+#: which inflates within-group variance and so flatters any statistic that divides by it;
+#: `harmless-split` destroys refusal without touching the variance and is the cleaner of the two.
+WORLDS = ("real", "shuffled", "harmless-split")
 
-def _sampled_loader(base_load, seed, n_per_side, bad_dir, good_dir, shuffle_labels):
+
+def _sampled_loader(base_load, seed, n_per_side, bad_dir, good_dir, world):
     """Replace `load` with a seeded SAMPLE, optionally with the two labels shuffled together.
 
     TWO JOBS, AND THE SECOND IS THE CONTROL THIS WHOLE MEASUREMENT NEEDS.
@@ -64,25 +69,39 @@ def _sampled_loader(base_load, seed, n_per_side, bad_dir, good_dir, shuffle_labe
     only in how the rows were split, so their spread would measure re-splitting rather than
     sampling. That is named in the pre-registration in advance as a way to get this wrong.
 
-    The shuffle: pool the harmful and harmless prompts and deal them back out at random. Topic
-    structure survives completely, because both sides still contain every subject. The refusal
-    contrast is destroyed, because neither side is harmful any more. **A filter that keeps
-    candidates in the shuffled world is not measuring refusal**, and unlike a synthetic probe this
-    control runs on real prompts, real residuals and the shipped code path.
+    The controls, of which there are two because the first one has a confound the second does not.
 
-    It is the same idea as a permutation test, and it is the only version of "a world with no
-    refusal in it" that can be built out of a real model.
+    `shuffled` pools the harmful and harmless prompts and deals them back out at random. Subject
+    structure survives, since both sides still hold every subject, and the refusal contrast is
+    destroyed, since neither side is harmful. It is a permutation test.
+
+    **Its confound:** each side becomes a 50/50 mixture, so within-group variance rises, and every
+    statistic here except the AUC divides by exactly that. Some of the control's extra rejection is
+    therefore mechanical rather than an absence of refusal, and a gap measured against it is an
+    upper bound on the real discrimination rather than an estimate of it.
+
+    `harmless-split` has no such confound. The harmless prompts alone are split in two and one half
+    is labelled harmful. Subject structure is intact, there is no refusal anywhere, and neither
+    side is a mixture, so within-group variance is what it would ordinarily be. **This is the
+    cleaner null**, and it is the one to read when the two disagree.
     """
     def load(directory, n):
         want = min(n_per_side, n)
         is_bad = Path(directory).name == Path(bad_dir).name
-        if not shuffle_labels:
+        if world == "real":
             rows = base_load(directory, 10**9)
             g = torch.Generator().manual_seed((seed * 7919 + len(rows)) & 0x7FFFFFFF)
             idx = torch.randperm(len(rows), generator=g)[:min(want, len(rows))].tolist()
             return [rows[i] for i in idx]
-        pool = base_load(bad_dir, 10**9) + base_load(good_dir, 10**9)
-        g = torch.Generator().manual_seed((seed * 104729 + len(pool)) & 0x7FFFFFFF)
+        if world == "shuffled":
+            pool = base_load(bad_dir, 10**9) + base_load(good_dir, 10**9)
+            salt = 104729
+        elif world == "harmless-split":
+            pool = base_load(good_dir, 10**9)
+            salt = 15485863
+        else:
+            raise ValueError(f"unknown world {world!r}")
+        g = torch.Generator().manual_seed((seed * salt + len(pool)) & 0x7FFFFFFF)
         order = torch.randperm(len(pool), generator=g).tolist()
         half = len(order) // 2
         side = order[:half] if is_bad else order[half:]
@@ -128,7 +147,7 @@ def _arm_result(abl):
     }
 
 
-def run_seed(args, seed, log, model, tok, shuffle_labels):
+def run_seed(args, seed, log, model, tok, world):
 
     run_args = cli.build_parser().parse_args([
         "--model", args.model, "--track", args.track, "--out", str(Path(args.out).parent / "unused"),
@@ -139,7 +158,7 @@ def run_seed(args, seed, log, model, tok, shuffle_labels):
     abl = cli.Abliterator(run_args, log, model=model, tok=tok)
     bad_dir = f"{args.track}/bad_ds"
     good_dir = args.good_ds or f"{args.track}/good_ds"
-    abl.load = _sampled_loader(abl.load, seed, args.dir_prompts, bad_dir, good_dir, shuffle_labels)
+    abl.load = _sampled_loader(abl.load, seed, args.dir_prompts, bad_dir, good_dir, world)
     cache = _capture_once(abl)
 
     out, captures_after_first = {}, None
@@ -208,41 +227,44 @@ def main(argv=None):
         a.model, dtype=torch.bfloat16,
         device_map=None if a.device == "cpu" else a.device)
     for seed in range(a.seeds):
-        for world in ("real", "shuffled"):
+        for world in WORLDS:
             log(f"\n=== seed {seed}, {world} labels ===")
-            got = run_seed(a, seed, log, model, tok, shuffle_labels=(world == "shuffled"))
+            got = run_seed(a, seed, log, model, tok, world)
             results["seeds"].setdefault(str(seed), {})[world] = got
             Path(a.out).write_text(json.dumps(results, indent=2), encoding="utf-8")
 
     def rates(key, world):
         return [results["seeds"][s][world][key]["rejection_rate"] for s in results["seeds"]]
 
-    log("\n" + "=" * 96)
+    log("\n" + "=" * 130)
     log("REJECTION RATE. The shuffled column is the control: the labels are dealt at random, so")
     log("no candidate there carries refusal and every one of them should be rejected.")
-    log("=" * 96)
-    log(f"{'arm':>24} | {'real labels, per seed':>32} | {'SHUFFLED (control)':>32}")
-    log("-" * 96)
+    log("=" * 130)
+    log(f"{'arm':>24} | {'real labels, per seed':>32} | {'SHUFFLED control':>32} | "
+        f"{'HARMLESS-SPLIT control':>32}")
+    log("-" * 130)
     for name, matched in ARMS:
         key = f"{name}{'+matched' if matched else ''}"
-        real, shuf = rates(key, "real"), rates(key, "shuffled")
         f = lambda rs: " ".join("  n/a" if r is None else f"{r:5.1%}" for r in rs)  # noqa: E731
-        log(f"{key:>24} | {f(real):>32} | {f(shuf):>32}")
-    log("=" * 96)
+        log(f"{key:>24} | {f(rates(key, 'real')):>32} | "
+            f"{f(rates(key, 'shuffled')):>32} | {f(rates(key, 'harmless-split')):>32}")
+    log("=" * 130)
     # The verdict, stated per arm rather than left for a reader to derive. An arm that rejects the
     # shuffled world no harder than the real one has not been shown to measure refusal at all.
     for name, matched in ARMS:
         key = f"{name}{'+matched' if matched else ''}"
         real = [r for r in rates(key, "real") if r is not None]
-        shuf = [r for r in rates(key, "shuffled") if r is not None]
-        if not real or not shuf:
+        clean = [r for r in rates(key, "harmless-split") if r is not None]
+        if not real or not clean:
             continue
-        gap = statistics.median(shuf) - statistics.median(real)
-        verdict = ("rejects the control harder than the real labels" if gap > 0.1 else
-                   "CANNOT TELL THE CONTROL FROM THE REAL LABELS")
-        log(f"{key:>24} | real {statistics.median(real):5.1%} | control "
-            f"{statistics.median(shuf):5.1%} | gap {gap:+6.1%} | {verdict}")
-    log("-" * 96)
+        # Read against the harmless-split control, because the shuffled one inflates within-group
+        # variance and so overstates the gap for every statistic that divides by it.
+        gap = statistics.median(clean) - statistics.median(real)
+        verdict = ("rejects the clean control harder than the real labels" if gap > 0.1 else
+                   "CANNOT TELL THE CLEAN CONTROL FROM THE REAL LABELS")
+        log(f"{key:>24} | real {statistics.median(real):5.1%} | clean control "
+            f"{statistics.median(clean):5.1%} | gap {gap:+6.1%} | {verdict}")
+    log("-" * 130)
     for name, matched in ARMS:
         if not matched:
             continue

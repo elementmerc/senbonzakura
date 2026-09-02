@@ -6,7 +6,6 @@ Distinct from `test_separation.py`, which covers the extractor's held-out machin
 (`_halves`, `_held_out_separation`, `_null_separation_floor`). That file tests HOW a candidate is
 scored; this one tests WHAT it is scored with.
 
-
 The pre-registration is `private/plans/pre-registration-2026-09-02-separation-statistic.md`. These
 tests are the "verified when" line of sprint 02 task A: a synthetic refusal axis separates, a
 synthetic topic axis does not, and two draws from one distribution do not.
@@ -40,7 +39,10 @@ def _null_keep_rate(stat, n_bad, n_good=64, draws=4000, bad_scale=1.0):
 
 
 # ── the sprint's verification line ─────────────────────────────────────────────────
-@pytest.mark.parametrize("name", ["cohens-d", "variance-ratio"])
+ALL = ["cohens-d", "variance-ratio", "auc"]
+
+
+@pytest.mark.parametrize("name", ALL)
 def test_separates_a_refusal_axis_from_a_topic_axis(name):
     stat = separation.get(name)
     # A "refusal axis": the harmful cloud sits well away from the harmless one along it.
@@ -53,7 +55,7 @@ def test_separates_a_refusal_axis_from_a_topic_axis(name):
     assert refusal > topic
 
 
-@pytest.mark.parametrize("name", ["cohens-d", "variance-ratio"])
+@pytest.mark.parametrize("name", ALL)
 def test_does_not_separate_two_draws_from_one_distribution(name):
     stat = separation.get(name)
     # The control that makes the test above mean something: no effect at all, so a statistic that
@@ -152,6 +154,66 @@ def test_variance_ratio_null_breaks_when_the_groups_are_both_unbalanced_and_uneq
     assert under > 0.10, f"expected an inflated keep-rate for a large tight group, got {under:.1%}"
 
 
+# ── Candidate B: rank-based, so the assumption that limits Candidate A cannot reach it ──
+def test_auc_null_is_unmoved_by_unequal_spread():
+    """Candidate B's claim over Candidate A, and the reason the two are different questions.
+
+    The AUC never assumes the clouds share a variance, because it never looks at a variance. Under
+    exactly the spread ratios that take the variance ratio's false-keep rate from 0.7% to 29.9%,
+    the AUC's null mean does not move off 0.5 at all.
+    """
+    for scale in (0.5, 1.0, 2.0, 4.0):
+        means = [separation.classifier_auc(*_projections(8, 128, 0.0, seed=s, bad_scale=scale))
+                 for s in range(400)]
+        mean = sum(means) / len(means)
+        assert mean == pytest.approx(0.5, abs=0.02), f"sd ratio {scale} moved the null: {mean}"
+
+
+def test_auc_null_spread_still_moves_with_group_size():
+    """CANDIDATE B'S OWN LIMIT, pinned for the same reason Candidate A's is.
+
+    Its null MEAN is 0.5 everywhere, which is the property above. Its null SPREAD is not
+    size-invariant: the 95th percentile is 0.736 for a 4-row group and 0.559 for a 128-row one.
+    So a fixed threshold is a different test at each cluster size, the same disease as the
+    incumbent's and for the same reason, though far milder.
+
+    Neither candidate is therefore calibrated on both axes by a fixed threshold alone, which is
+    what makes the MEASURED null floor the load-bearing part rather than the backstop.
+    """
+    def p95(n_bad):
+        vals = sorted(separation.classifier_auc(*_projections(n_bad, 128, 0.0, seed=s))
+                      for s in range(2000))
+        return vals[int(0.95 * (len(vals) - 1))]
+
+    small, large = p95(4), p95(128)
+    assert small > 0.70, f"expected a wide null at 4 rows, got p95={small:.3f}"
+    assert large < 0.60, f"expected a narrow null at 128 rows, got p95={large:.3f}"
+    assert small - large > 0.10
+
+
+def test_auc_is_not_folded_around_chance():
+    """An axis that separates the WRONG WAY scores below chance rather than being counted as good.
+
+    Folding would look harmless and would silently move the null above 0.5, making the
+    pre-registered number wrong for the statistic actually computed. The candidate axis is the
+    harmful mean minus the harmless mean, so the sign is fixed by construction and there is
+    nothing to fold.
+    """
+    forward = separation.classifier_auc(*_projections(64, 64, shift=2.0, seed=9))
+    backward = separation.classifier_auc(*_projections(64, 64, shift=-2.0, seed=9))
+    assert forward > 0.9
+    assert backward < 0.1
+    assert backward < separation.get("auc").threshold
+
+
+def test_auc_reuses_the_compass_implementation():
+    """The sprint requires one AUC in this codebase, not two that can drift apart."""
+    from senbonzakura import margin
+    pb, pg = _projections(32, 48, shift=0.7, seed=11)
+    assert separation.classifier_auc(pb, pg) == pytest.approx(
+        margin.auc(pb.tolist(), pg.tolist()), rel=1e-12)
+
+
 def test_variance_ratio_grows_with_evidence_at_a_fixed_effect_size():
     """The same true effect, measured on more rows, scores higher. Cohen's d does not do this.
 
@@ -169,7 +231,7 @@ def test_variance_ratio_grows_with_evidence_at_a_fixed_effect_size():
 
 
 # ── boundaries ─────────────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("name", ["cohens-d", "variance-ratio"])
+@pytest.mark.parametrize("name", ALL)
 def test_score_returns_none_when_a_group_is_too_small(name):
     stat = separation.get(name)
     pb, pg = _projections(3, 64, 2.0)

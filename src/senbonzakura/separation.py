@@ -105,6 +105,37 @@ def variance_ratio(pb: torch.Tensor, pg: torch.Tensor) -> float:
     return float(between / within_ms)
 
 
+def classifier_auc(pb: torch.Tensor, pg: torch.Tensor) -> float:
+    """Candidate B: the probability that a harmful projection outranks a harmless one.
+
+    The Mann-Whitney U as an area under the curve, which is the one-dimensional classifier the
+    pre-registration asks for: there is no threshold to fit, because the AUC integrates over every
+    threshold at once. 0.5 is chance.
+
+    NOT FOLDED AROUND 0.5, and that is deliberate. The candidate axis is the harmful cluster's mean
+    minus the harmless mean, so a genuine refusal axis puts the harmful cloud on the high side by
+    construction and an axis that separates the other way is not the thing being looked for.
+    Folding would also destroy the null: `0.5 + |auc - 0.5|` has an expectation strictly above 0.5,
+    so the pre-registered null would be wrong for the statistic actually computed.
+
+    **Where it beats Candidate A, measured before any model run.** Its null mean is 0.5 at every
+    group size AND at every spread ratio (0.4980 to 0.4989 across a spread ratio of 0.5 to 4.0 on
+    an 8-against-128 comparison, where the variance ratio's keep-rate goes from 0.7% to 29.9%).
+    Being rank-based, it never assumes the two clouds share a variance, so the Behrens-Fisher
+    failure that limits Candidate A cannot reach it.
+
+    **Where it does not.** Its null SPREAD is not size-invariant: the 95th percentile is 0.736 for
+    a 4-row group and 0.559 for a 128-row one, both against 128 harmless rows. So a fixed
+    threshold is again a different test at each cluster size, in the same way the incumbent's is
+    and for the same reason, though far less severely. The margin below is therefore set at the
+    worst case rather than the typical one, and the measured null floor is what actually adapts.
+    """
+    # The compass's own implementation. It imports torch, so it cannot be imported at module
+    # level: `parser.py` reads this module's CHOICES and may pull in nothing heavy.
+    from .margin import auc
+    return float(auc(pb.tolist(), pg.tolist()))
+
+
 @dataclass(frozen=True)
 class Statistic:
     """A separation statistic together with the two numbers that make it readable.
@@ -154,6 +185,19 @@ STATISTICS: dict[str, Statistic] = {
         # rather than a round number. It is close to the F(1, inf) critical value of 3.84 because
         # that is what it is.
         rationale="null 95th percentile: a 5% per-axis false-keep rate, flat across group sizes",
+    ),
+    "auc": Statistic(
+        name="auc",
+        fn=classifier_auc,
+        null=0.5,
+        margin=0.25,
+        # 0.75 is the null's 95th percentile at the SMALLEST comparison this code permits, a
+        # 4-row group against a large harmless half, where the null is at its widest. Set at the
+        # worst case rather than the typical one because the alternative is a backstop that only
+        # holds for big clusters, and small clusters are where a filter is most easily fooled. It
+        # is conservative for a large cluster by design: the measured null floor is what tightens
+        # there, and a backstop is meant to be the loose outer bound.
+        rationale="null 95th percentile at the smallest permitted group; deliberately conservative",
     ),
 }
 

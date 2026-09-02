@@ -17,7 +17,9 @@ import sys
 
 import pytest
 
-LIGHT = ("senbonzakura.entry", "senbonzakura.parser", "senbonzakura._version")
+LIGHT = ("senbonzakura.entry", "senbonzakura.parser", "senbonzakura._version",
+         # `parser` reads its flag choices from `separation`, so `separation` inherits the ban.
+         "senbonzakura.separation")
 HEAVY = ("torch", "optuna", "transformers")
 
 

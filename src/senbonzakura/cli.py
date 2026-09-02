@@ -47,6 +47,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from . import (
     dataset,  # every accepted way of saying "the prompts are here"
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
+    separation,  # the candidate statistics for "does this axis carry refusal?" (Q-14)
 )
 
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
@@ -179,16 +180,20 @@ def _orth_to(vec, basis):
     return vec
 
 
-def _axis_separation(bad, good, v):
-    # Cohen's d: the standardised mean difference between the harmful and harmless residual
-    # projections onto unit axis `v`. A genuine refusal axis separates the two clouds (large d);
-    # a within-harmful topic/phrasing axis does not (small d). Used to keep only PCA axes that
-    # actually carry refusal, so multi-direction ablation cuts refusal and not capability (P1).
+def _axis_separation(bad, good, v, stat=None):
+    # How well unit axis `v` separates the harmful and harmless residual clouds. A genuine refusal
+    # axis separates them; a within-harmful topic/phrasing axis does not. Used to keep only
+    # candidate axes that actually carry refusal, so multi-direction ablation cuts refusal and not
+    # capability (P1).
+    #
+    # `stat` is None everywhere the incumbent Cohen's d is wanted, which is everywhere until
+    # --separation-statistic says otherwise. The default path calls the same arithmetic the project
+    # has always used, so no recorded number moves when a candidate is merely available.
     pb = bad @ v
     pg = good @ v
-    md = (pb.mean() - pg.mean()).abs()
-    pooled = ((pb.var(unbiased=False) + pg.var(unbiased=False)) / 2).clamp_min(1e-12).sqrt()
-    return (md / pooled).item()
+    if stat is None:
+        return separation.cohens_d(pb, pg)
+    return stat.fn(pb, pg)
 
 
 def _halves(n, seed):
@@ -203,7 +208,7 @@ def _halves(n, seed):
     return perm[: int(n) // 2], perm[int(n) // 2:]
 
 
-def _held_out_separation(bad_rows, good_fit, good_score, basis, seed):
+def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None):
     """How well the direction these rows propose separates rows it was NOT fitted on.
 
     THE DEFECT THIS REPLACES, because it is the whole reason the filter was worthless.
@@ -229,10 +234,10 @@ def _held_out_separation(bad_rows, good_fit, good_score, basis, seed):
     norm = v.norm()
     if norm < 1e-6:
         return None
-    return _axis_separation(bad_rows[score_idx], good_score, v / norm)
+    return _axis_separation(bad_rows[score_idx], good_score, v / norm, stat)
 
 
-def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null):
+def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null, stat=None):
     """What a direction carrying nothing scores, measured through the identical path.
 
     The threshold above it was picked once and never checked against a measurement, which is the
@@ -254,7 +259,7 @@ def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_n
         g = torch.Generator().manual_seed((int(seed) + 7919 * (j + 1)) & 0x7FFFFFFF)
         idx = torch.randperm(int(bad_all.shape[0]), generator=g)[:size]
         s = _held_out_separation(bad_all[idx], good_fit, good_score, basis,
-                                 int(seed) + 104729 * (j + 1))
+                                 int(seed) + 104729 * (j + 1), stat)
         if s is not None:
             seps.append(float(s))
     return (max(seps) if seps else 0.0), seps
@@ -1416,6 +1421,12 @@ class Abliterator:
         layer_null_floors = [None] * (NL + 1)
         hedge_applied = [False] * (NL + 1)
         max_sep_seen = 0.0
+        # Which statistic decides whether a candidate axis carries refusal. Resolved once here
+        # rather than per layer, so every layer of a run is judged on one ruler and the artefact
+        # can name it. `getattr` because the forward-only commands share this class's helpers
+        # through argument namespaces that never had the flag.
+        sep_stat = separation.get(getattr(args, "separation_statistic",
+                                          separation.DEFAULT_STATISTIC))
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
         # each. Below two, there is no second refusal mode to look for and the run says so rather
         # than quietly measuring nothing: a contrast set this small cannot support the claim, and
@@ -1516,9 +1527,9 @@ class Abliterator:
                     null_size = sorted(s for s, _ in eligible)[len(eligible) // 2]
                     null_floor, _null_samples = _null_separation_floor(
                         Rb[li], good_fit, good_score, basis, null_size,
-                        args.seed + li, NULL_DIRECTIONS_PER_LAYER)
+                        args.seed + li, NULL_DIRECTIONS_PER_LAYER, sep_stat)
                     layer_null_floors[li] = round(float(null_floor), 4)
-                threshold = max(MIN_AXIS_SEPARATION, float(null_floor))
+                threshold = max(sep_stat.threshold, float(null_floor))
 
                 scored, dropped, dropped_by_null = [], 0, 0
                 for _size, c in eligible:
@@ -1528,7 +1539,7 @@ class Abliterator:
                     # is actually applied should still use every row available to estimate it.
                     if held_out_usable:
                         sep = _held_out_separation(rows, good_fit, good_score, basis,
-                                                   args.seed + li + int(c))
+                                                   args.seed + li + int(c), sep_stat)
                         if sep is None:
                             continue
                     else:
@@ -1538,7 +1549,7 @@ class Abliterator:
                         v_probe = _orth_to(rows.mean(0) - mg[li], basis)
                         if v_probe.norm() < 1e-6:
                             continue
-                        sep = _axis_separation(rows, Rg[li], v_probe / v_probe.norm())
+                        sep = _axis_separation(rows, Rg[li], v_probe / v_probe.norm(), sep_stat)
                     v = _orth_to(rows.mean(0) - mg[li], basis)
                     n = v.norm()
                     if n < 1e-6:
@@ -1551,7 +1562,7 @@ class Abliterator:
                     if sep < threshold:
                         dropped += 1
                         axes_rejected_total += 1
-                        if sep >= MIN_AXIS_SEPARATION:
+                        if sep >= sep_stat.threshold:
                             # Cleared the fixed constant and lost to a direction carrying nothing.
                             # Counted apart because it is the case the null was added to catch.
                             dropped_by_null += 1
@@ -1574,8 +1585,8 @@ class Abliterator:
                     kept.append(w); basis.append(w)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
                     log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
-                        f"refusal-separation threshold (d<{threshold:.4f}, the larger of the "
-                        f"fixed {MIN_AXIS_SEPARATION} and a measured null floor of "
+                        f"refusal-separation threshold ({sep_stat.name}<{threshold:.4f}, the "
+                        f"larger of the fixed {sep_stat.threshold} and a measured null floor of "
                         f"{null_floor:.4f}); {dropped_by_null} of them cleared the constant and "
                         f"lost to a direction carrying nothing")
             for j, v in enumerate(kept):
@@ -1614,13 +1625,19 @@ class Abliterator:
         # words, because that is the sentence a reader needs and "1 to 1" is not it.
         # The separations themselves, and the one number that says whether the single-direction
         # result is a property of the model or of the threshold: the largest separation any
-        # REJECTED axis reached. A best rejected value just under MIN_AXIS_SEPARATION means the
+        # REJECTED axis reached. A best rejected value just under the threshold means the
         # constant decided the outcome; one far below it means the second direction is not there.
         self.axis_separations = axis_seps
+        # WHICH RULER produced every number above. Without it two runs' separations are on
+        # different scales and nothing in the record says so, which is the confound this project
+        # has met three times: a figure that describes the rows, the tool or the threshold it was
+        # taken under, with the record silent about which.
+        self.separation_statistic = sep_stat.name
+        self.separation_null = sep_stat.null
         self.axes_measured_total = axes_measured_total
         self.max_axis_separation = max_sep_seen if axes_measured_total else None
         measured = [d for layer in axis_seps for d in layer]
-        rejected = [d for d in measured if d < MIN_AXIS_SEPARATION]
+        rejected = [d for d in measured if d < sep_stat.threshold]
         self.best_rejected_separation = max(rejected) if rejected else None
         self.axes_rejected_total = axes_rejected_total
         self.axes_rejected_by_null = axes_rejected_by_null
@@ -1648,14 +1665,14 @@ class Abliterator:
             log(f"  null-direction floor: a direction built from a random subset of the harmful "
                 f"rows, carrying nothing, scores up to {self.null_separation_floor:.4f} through "
                 f"the same held-out path. Candidates were held to "
-                f"max({MIN_AXIS_SEPARATION}, that), and {axes_rejected_by_null} cleared the "
+                f"max({sep_stat.threshold}, that), and {axes_rejected_by_null} cleared the "
                 f"constant but not the floor.")
         if axes_measured_total:
             reject_rate = axes_rejected_total / axes_measured_total
             if reject_rate == 0.0:
                 log(f"  NOTE: the refusal-separation filter rejected NONE of "
                     f"{axes_measured_total} candidate directions. Every one beat both the fixed "
-                    f"{MIN_AXIS_SEPARATION} and the measured null floor on rows it was not "
+                    f"{sep_stat.threshold} and the measured null floor on rows it was not "
                     f"fitted on, which is a stronger statement than this note used to carry, but "
                     f"a filter that rejects nothing still discriminates nothing. It is evidence "
                     f"the candidates separate held-out harmful from held-out harmless prompts; "
@@ -1671,24 +1688,24 @@ class Abliterator:
         # be cleared. Measured 2026-08-03 on two models and three corpora: every one of 224 axes
         # returned ~1e-8. This is louder than the shortfall note below because a shortfall is a
         # result and this is a broken instrument.
-        structural_zero = MIN_AXIS_SEPARATION * STRUCTURAL_ZERO_FRACTION
+        structural_zero = sep_stat.threshold * STRUCTURAL_ZERO_FRACTION
         self.filter_is_unsatisfiable = bool(axes_measured_total) and max_sep_seen < structural_zero
         if self.filter_is_unsatisfiable:
             log(f"  BROKEN FILTER: all {axes_measured_total} candidate axes scored a refusal separation "
                 f"of ~0, which the geometry forces rather than the data: the axes are "
                 f"orthogonalised against a basis spanning both class means, and the separation "
                 f"statistic is a difference of class means. No axis can clear "
-                f"{MIN_AXIS_SEPARATION}, or any positive value, so --max-directions above 1 "
+                f"{sep_stat.threshold}, or any positive value, so --max-directions above 1 "
                 f"cannot take effect. See private/research/"
                 f"2026-08-03-the-separation-filter-can-never-pass.md.")
         elif self.best_rejected_separation is not None:
-            near = self.best_rejected_separation >= MIN_AXIS_SEPARATION * 0.8
+            near = self.best_rejected_separation >= sep_stat.threshold * 0.8
             log(f"  rejected-axis separations: {len(rejected)} axis/axes measured below the "
                 f"threshold, best {self.best_rejected_separation:.4f} against "
-                f"{MIN_AXIS_SEPARATION}"
+                f"{sep_stat.threshold}"
                 + (". That is close enough to the threshold that the cut-off, not the model, "
                    "decided the direction count; treat the single-direction reading as a "
-                   "property of MIN_AXIS_SEPARATION until it is varied." if near else
+                   "property of the threshold until it is varied." if near else
                    ". Well clear of the threshold, so lowering it would not add a direction."))
 
         window = self.dirs_per_layer[self.lo:self.hi + 1] or self.dirs_per_layer
@@ -2661,7 +2678,18 @@ class Abliterator:
                        # A bounded sample per layer, plus the two exact totals over every axis
                        # measured. The sample is the evidence; the totals are the count it came from.
                        "axis_separations": getattr(self, "axis_separations", None),
-                       "axis_separation_threshold": MIN_AXIS_SEPARATION,
+                       # The statistic, its null and its threshold travel together. A threshold
+                       # with no statistic beside it is unreadable the moment there is more than
+                       # one, and a null is what turns the score into evidence rather than a
+                       # number: 2.1 means nothing until something says what nothing scores.
+                       "separation_statistic": getattr(self, "separation_statistic",
+                                                       separation.DEFAULT_STATISTIC),
+                       "separation_null": getattr(self, "separation_null",
+                                                  separation.get(
+                                                      separation.DEFAULT_STATISTIC).null),
+                       "axis_separation_threshold": separation.get(
+                           getattr(self, "separation_statistic",
+                                   separation.DEFAULT_STATISTIC)).threshold,
                        "axes_measured_total": getattr(self, "axes_measured_total", None),
                        "max_axis_separation": getattr(self, "max_axis_separation", None),
                        "best_rejected_separation": getattr(self, "best_rejected_separation", None),

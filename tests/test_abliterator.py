@@ -1069,7 +1069,7 @@ def _sep_sequence(monkeypatch, values):
     """
     seen = []
 
-    def fake(bad, good, v):
+    def fake(bad, good, v, stat=None):
         d = values[len(seen)] if len(seen) < len(values) else values[-1]
         seen.append(d)
         return d
@@ -1237,7 +1237,7 @@ def test_a_discriminating_filter_says_nothing(base_args, tiny_model, tiny_tok, m
     # Alternate: some candidates clear the bar, some do not.
     flip = {"n": 0}
 
-    def fake(bad, good, v):
+    def fake(bad, good, v, stat=None):
         flip["n"] += 1
         return cli.MIN_AXIS_SEPARATION + 1.0 if flip["n"] % 2 else 0.01
 
@@ -1445,7 +1445,7 @@ def test_the_verdict_comes_from_every_axis_not_the_sample(
     """
     seen = []
 
-    def fake(bad, good, v):
+    def fake(bad, good, v, stat=None):
         # Zero for the first MAX_RECORDED_AXES of the layer, then a clear separation past the cap.
         d = 0.0 if len(seen) < cli.MAX_RECORDED_AXES else 5.0
         seen.append(d)

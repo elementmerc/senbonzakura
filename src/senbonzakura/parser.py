@@ -18,14 +18,16 @@ actual abliteration pays for torch, which is the one case where the cost buys so
 
 WHAT MAY BE IMPORTED HERE
 
-`argparse`, the version, `metrics` (constants, no imports of its own) and `events` (json, os, sys,
-time). Nothing else, ever. A future `import torch` here silently restores the defect, so the test
-suite measures the cost rather than trusting this paragraph.
+`argparse`, the version, `metrics` and `separation` (constants, with no heavy imports of their
+own), and `events` (json, os, sys, time). Nothing else, ever. A future `import torch` here
+silently restores the defect, so the test suite measures the cost rather than trusting this
+paragraph, and it measures it for everything on that list rather than for this file alone.
 """
 from __future__ import annotations
 
 import argparse
 
+from . import separation as _separation  # constants only; imports nothing heavy, see its head
 from ._version import __version__
 from .metrics import KL_CEIL, KL_TARGET
 
@@ -205,6 +207,13 @@ def build_parser():
                          "--max-directions. Deliberately independent of --max-directions so the "
                          "candidate set does not change when the budget does, which is what makes "
                          "a K=1 against K=3 comparison a comparison of K.")
+    ap.add_argument("--separation-statistic", dest="separation_statistic",
+                    choices=_separation.CHOICES, default=_separation.DEFAULT_STATISTIC,
+                    help="which statistic decides whether a candidate axis carries refusal rather "
+                         "than topic. 'cohens-d' (default) is the incumbent and its threshold "
+                         "means a different thing at every cluster size; 'variance-ratio' is the "
+                         "ANOVA F, whose null is 1.0 at any size. Under measurement (Q-14): the "
+                         "default does not change until that measurement says it should.")
     ap.add_argument("--sparsity", type=float, default=0.0,
                     help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "

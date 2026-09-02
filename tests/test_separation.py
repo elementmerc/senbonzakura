@@ -15,6 +15,7 @@ saw, and gives the threshold a floor measured from directions that carry nothing
 are mostly about the two properties that make that worth having: that the in-sample statistic
 really is degenerate, and that the held-out one really does separate a signal from noise.
 """
+import pytest
 import torch
 
 from senbonzakura import cli
@@ -173,14 +174,43 @@ def _floor(bad, good, size, seed=0, n_null=4, basis=None):
         bad, good[gf], good[gs], basis or [], size, seed, n_null)
 
 
-def test_the_null_floor_is_the_best_a_meaningless_direction_reached():
-    # Not the mean. A candidate that merely beats a typical null is not evidence.
+def test_the_null_floor_is_a_stated_quantile_of_the_draws():
+    """CHANGED BY Q-22, 2026-09-02. It asserted `floor == max(samples)`.
+
+    The maximum was replaced because it made the DRAW COUNT a hidden gate setting: the maximum of
+    n draws climbs with n without limit, so raising the count to steady the estimate would have
+    tightened the filter instead. Measured on one layer's rows, the variance ratio's maximum went
+    2.33 at four draws to 6.14 at two hundred.
+
+    Still not the mean, for the original reason: a candidate that merely beats a TYPICAL
+    meaningless direction is not evidence. It is the 95th percentile, by nearest rank, so the
+    floor is always a value some null direction actually reached.
+    """
     h = 12
     bad = _blob(60, h, 1.0, seed=1)
     good = _blob(40, h, 0.0, seed=2)
     floor, samples = _floor(bad, good, 20)
     assert samples
-    assert floor == max(samples)
+    assert floor in samples, "the floor must be a value a null direction actually reached"
+    ordered = sorted(samples)
+    assert floor == ordered[min(len(ordered) - 1,
+                                int(cli.NULL_FLOOR_QUANTILE * (len(ordered) - 1)))]
+    assert floor >= ordered[len(ordered) // 2], "a quantile this high sits above the median"
+
+
+def test_the_null_floor_does_not_move_with_the_draw_count():
+    """The property Q-22 bought, and the one the maximum could never have.
+
+    More draws must mean a better-located floor, not a stricter one. Without this the draw count
+    is a gate setting wearing the clothes of a precision setting, which is how it behaved before.
+    """
+    h = 12
+    bad = _blob(200, h, 1.0, seed=1)
+    good = _blob(120, h, 0.0, seed=2)
+    few = _floor(bad, good, 20, n_null=20)[0]
+    many = _floor(bad, good, 20, n_null=200)[0]
+    assert many == pytest.approx(few, rel=0.5), (
+        f"the floor moved from {few} to {many} on a tenfold change in draws alone")
 
 
 def test_the_null_floor_draws_one_sample_per_requested_null():
@@ -250,4 +280,7 @@ def test_the_smallest_allowed_cluster_can_still_be_split():
 
 
 def test_there_is_more_than_one_null_per_layer():
-    assert cli.NULL_DIRECTIONS_PER_LAYER >= 2
+    # Renamed by Q-22 (2026-09-02): the floor is drawn once per CANDIDATE at that candidate's own
+    # row count, not once per layer at the median cluster's. The count also has to be high enough
+    # to locate a 95th percentile rather than merely to beat one draw.
+    assert cli.NULL_DIRECTIONS_PER_CANDIDATE >= 20

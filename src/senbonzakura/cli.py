@@ -156,10 +156,20 @@ MIN_CLUSTER_ROWS = 8
 #: buys nothing, and raising this without raising that silently rejects every smallest cluster.
 MIN_HELD_OUT_ROWS = 4
 
-#: How many meaningless directions are measured per layer to give the threshold a floor. Each one
-#: costs a mean and a projection, no forward pass, so this is cheap; four is enough for the
-#: maximum to be a stable summary without the per-layer cost becoming visible.
-NULL_DIRECTIONS_PER_LAYER = 4
+#: How many meaningless directions are measured to give each candidate's threshold a floor. Each
+#: one costs a mean and a projection, no forward pass, so this is cheap.
+#:
+#: It was 4 per LAYER until Q-22, which is two changes: the floor is now drawn once per CANDIDATE
+#: at that candidate's own row count, and the count is high enough to estimate a quantile rather
+#: than to be summarised by a maximum. Four draws cannot locate a 95th percentile; forty can.
+#: Measured cost of the whole change on a 28-layer model with eight candidates a layer: under
+#: three seconds added to a run measured in hours.
+NULL_DIRECTIONS_PER_CANDIDATE = 40
+
+#: Which quantile of the null draws becomes the floor. The same quantile every fixed backstop in
+#: `separation` is derived from, so a candidate faces one idea measured two ways: that quantile
+#: computed offline on synthetic draws, and that quantile measured on the rows in front of it.
+NULL_FLOOR_QUANTILE = 0.95
 
 # The "worse than anything real" score, used to keep damaged / unmeasured trials out of the running
 # for best. A true infinity so no finite objective can ever tie or beat it.
@@ -250,9 +260,19 @@ def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_n
     remains is noise and nothing else. Whatever such a direction scores is what this statistic
     hands out for free, and a real candidate has to beat it.
 
-    Returns (floor, samples). The floor is the BEST any null reached, not their average: a
-    candidate that merely beats a typical meaningless direction is not evidence, and with a
-    handful of draws the maximum is the honest summary.
+    Returns (floor, samples). The floor is a stated QUANTILE of the draws, not their maximum, and
+    the difference is not cosmetic.
+
+    IT WAS THE MAXIMUM UNTIL Q-22, AND THAT MADE THE DRAW COUNT A HIDDEN GATE SETTING. The maximum
+    of n draws climbs with n without limit, so raising the count to steady the estimate would have
+    silently tightened the filter instead. Measured on one layer's rows: the variance ratio's
+    maximum went 2.33 at four draws to 6.14 at two hundred, a 2.6x move in the gate from a change
+    that was only ever meant to reduce noise.
+
+    A quantile does not move with the draw count; more draws simply pin it down better. The 95th
+    is deliberately the same quantity every fixed backstop in `separation` is derived from, so the
+    two halves of the threshold are one idea measured two ways: the backstop is that quantile
+    computed offline on synthetic draws, and this is the same quantile measured on the actual rows.
     """
     seps = []
     for j in range(n_null):
@@ -262,7 +282,13 @@ def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_n
                                  int(seed) + 104729 * (j + 1), stat)
         if s is not None:
             seps.append(float(s))
-    return (max(seps) if seps else 0.0), seps
+    if not seps:
+        return 0.0, seps
+    ordered = sorted(seps)
+    # Nearest-rank, so the floor is always a value a null direction actually reached rather than
+    # an interpolation between two of them. With few draws that matters: an interpolated quantile
+    # can sit above every observation and become a bar nothing was measured at.
+    return ordered[min(len(ordered) - 1, int(NULL_FLOOR_QUANTILE * (len(ordered) - 1)))], seps
 
 
 def _available_ram_bytes():
@@ -1518,22 +1544,31 @@ class Abliterator:
                 # candidate SET is identical whatever K is, so K is a budget and nothing else.
                 # The withdrawn five-seed comparison failed for exactly the opposite reason.
                 eligible = [(size, c) for size, c in sizes if size >= MIN_CLUSTER_ROWS]
-                # The floor a candidate has to clear, measured rather than assumed. Nulls are
-                # drawn at the size of a typical eligible cluster so they are judged at the same
-                # scale: Cohen's d over 8 rows is noisier than over 80, and a floor measured at
-                # the wrong size would be a floor for a different question.
-                null_floor = 0.0
-                if held_out_usable and eligible:
-                    null_size = sorted(s for s, _ in eligible)[len(eligible) // 2]
-                    null_floor, _null_samples = _null_separation_floor(
-                        Rb[li], good_fit, good_score, basis, null_size,
-                        args.seed + li, NULL_DIRECTIONS_PER_LAYER, sep_stat)
-                    layer_null_floors[li] = round(float(null_floor), 4)
-                threshold = max(sep_stat.threshold, float(null_floor))
+                # The floor a candidate has to clear, measured rather than assumed, AND MEASURED AT
+                # THAT CANDIDATE'S OWN ROW COUNT (Q-22). It used to be drawn once per layer at the
+                # median eligible cluster size, so every candidate away from that median was judged
+                # against a bar built for a different cluster. That matters because a null's value
+                # depends on the group size for every statistic here: the incumbent keeps a
+                # meaningless axis 21.2% of the time at 8 rows and 0.0% at 256 against one constant.
+                # Cached by size, because two clusters of the same size share a floor exactly and
+                # the draws are the expensive part.
+                floors_by_size = {}
+
+                def _floor_for(size, _li=li, _gf=good_fit, _gs=good_score, _cache=floors_by_size):
+                    if not held_out_usable:
+                        return 0.0
+                    if size not in _cache:
+                        value, _samples = _null_separation_floor(
+                            Rb[_li], _gf, _gs, basis, size,
+                            args.seed + _li, NULL_DIRECTIONS_PER_CANDIDATE, sep_stat)
+                        _cache[size] = float(value)
+                    return _cache[size]
 
                 scored, dropped, dropped_by_null = [], 0, 0
                 for _size, c in eligible:
                     rows = Rb[li][labels == c]
+                    null_floor = _floor_for(int(rows.shape[0]))
+                    threshold = max(sep_stat.threshold, null_floor)
                     # Judged out of sample, then fitted on everything. The decision has to be made
                     # on rows the candidate never saw or it is not a decision; the direction that
                     # is actually applied should still use every row available to estimate it.
@@ -1583,12 +1618,21 @@ class Abliterator:
                         continue
                     w = w / n
                     kept.append(w); basis.append(w)
+                # There is now a floor per candidate size rather than one per layer, so the record
+                # keeps the STRICTEST bar any candidate here had to clear. A single number can no
+                # longer describe them all, and the strictest is the one that decided the closest
+                # call; the spread across sizes is what `floors_by_size` would show if the field
+                # were widened, which it is not, because the artefact is read by people.
+                if floors_by_size:
+                    layer_null_floors[li] = round(max(floors_by_size.values()), 4)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
+                    floor_lo, floor_hi = min(floors_by_size.values()), max(floors_by_size.values())
                     log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
-                        f"refusal-separation threshold ({sep_stat.name}<{threshold:.4f}, the "
-                        f"larger of the fixed {sep_stat.threshold} and a measured null floor of "
-                        f"{null_floor:.4f}); {dropped_by_null} of them cleared the constant and "
-                        f"lost to a direction carrying nothing")
+                        f"refusal-separation threshold ({sep_stat.name}, the larger of the fixed "
+                        f"{sep_stat.threshold} and a null floor measured at each candidate's own "
+                        f"row count, which ranged {floor_lo:.4f} to {floor_hi:.4f} across "
+                        f"{len(floors_by_size)} distinct cluster size(s)); {dropped_by_null} of "
+                        f"them cleared the constant and lost to a direction carrying nothing")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         self.dirs_multi = dirs_multi.to(torch.bfloat16)      # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)

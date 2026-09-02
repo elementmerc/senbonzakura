@@ -35,7 +35,7 @@ def _section(title):
 def _types_in(section):
     """Quantisation-looking tokens inside fenced code blocks, which is where the lists live."""
     found = set()
-    for block in re.findall(r"```\n(.*?)```", section, re.S):
+    for block in re.findall(r"```\n(.*?)```", section, re.DOTALL):
         found.update(re.findall(r"\b((?:I?Q|TQ|F|BF|MXFP|NVFP)[0-9][A-Z0-9_]*)\b", block))
     return found
 

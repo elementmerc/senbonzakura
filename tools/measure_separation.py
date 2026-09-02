@@ -274,8 +274,11 @@ def main(argv=None):
         qualities = [q for q in qualities if q is not None]
         if qualities:
             median = statistics.median(qualities)
+            # One-sided. A high value means the matching did not work; a low one does NOT mean it
+            # worked well, because a corpus with many distant rows inflates the denominator. See
+            # `cli.matching_quality` for the calibration.
             verdict = ("MATCHING ACHIEVED NOTHING" if median > cli.MATCHING_USELESS_RATIO
-                       else "matching found on-subject controls")
+                       else "matching found nearer rows (not a quality score, see docstring)")
             log(f"{key:>24} | matching quality {median:.3f} | {verdict}")
     log(f"\nwritten to {a.out}")
     return 0

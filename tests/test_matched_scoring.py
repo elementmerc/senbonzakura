@@ -237,3 +237,32 @@ def test_matching_quality_reports_nothing_when_there_is_nothing_to_report():
     # Every harmless row identical to the cluster centre: no scale to express a ratio against.
     flat = Rb[topic == 0].mean(0).expand(16, H)
     assert cli.matching_quality(Rb[topic == 0], flat, [], 8) is None
+
+
+def test_matching_quality_is_calibrated_against_corpora_whose_answer_is_known():
+    """Pins the numbers the docstring quotes, including the one that makes it a one-sided alarm.
+
+    A quarter-matched corpus scores LOWER than a perfectly matched one, because its distant rows
+    inflate the mean distance the ratio divides by. So a low value must never be read as "the
+    matching worked well", and this test is what stops that reading from creeping back in.
+    """
+    Rb, Rg, topic = _world(1.0)
+    d0 = Rb.mean(0) - Rg.mean(0)
+    basis = [d0 / d0.norm()]
+    g = torch.Generator().manual_seed(3)
+    far = torch.randn(256, H, generator=g) * 0.35 + 30.0
+
+    def median_quality(pool):
+        vals = sorted(cli.matching_quality(Rb[topic == t], pool, basis, PER_GOOD)
+                      for t in range(N_TOPIC))
+        return vals[len(vals) // 2]
+
+    perfect = median_quality(Rg)
+    none_shared = median_quality(far)
+    quarter = median_quality(torch.cat([Rg[:64], far[:192]]))
+
+    assert none_shared > cli.MATCHING_USELESS_RATIO, f"the alarm must fire here: {none_shared}"
+    assert perfect < cli.MATCHING_USELESS_RATIO, f"a perfect corpus must not trip it: {perfect}"
+    assert quarter < perfect, (
+        "the documented catch: a partly matched corpus scores lower than a perfect one, so the "
+        f"ratio is not a quality score. perfect={perfect} quarter={quarter}")

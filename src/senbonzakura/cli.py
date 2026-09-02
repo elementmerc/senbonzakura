@@ -297,8 +297,19 @@ def matching_quality(cluster_rows, good_rows, basis, k):
     unmatched rows.
 
     The ratio of the mean distance to the chosen controls, over the mean distance to all harmless
-    rows. Near 0 means the controls really are close by. **Near 1.0 means matching achieved
-    nothing** and a "matched" number from that run is not one.
+    rows. **Near 1.0 means matching achieved nothing** and a "matched" number from that run is not
+    one.
+
+    IT IS A ONE-SIDED ALARM AND NOT A SCORE, which is worth stating because the number looks like
+    a score. Calibrated on synthetic corpora whose answer is known:
+
+        no shared subjects at all        0.997     <- what the alarm is for
+        perfectly matched corpus         0.299
+        a quarter matched, rest far      0.047     <- LOWER than the perfect corpus
+
+    The last row is the catch. A corpus holding a few near rows and many distant ones inflates the
+    denominator, so the ratio falls for a reason that has nothing to do with the controls being
+    good. Read a high value as "this did not work"; do not read a low value as "this worked well".
 
     Returns None when there is nothing to measure.
     """

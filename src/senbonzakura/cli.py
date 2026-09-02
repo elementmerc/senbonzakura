@@ -166,6 +166,13 @@ MIN_HELD_OUT_ROWS = 4
 #: three seconds added to a run measured in hours.
 NULL_DIRECTIONS_PER_CANDIDATE = 40
 
+#: A matching quality at or above this is matching that did nothing: the chosen controls are no
+#: nearer the candidate than harmless prompts picked at random, so the comparison is unmatched
+#: whatever the flag said. 0.9 rather than 1.0 because the mean distance to a random row is itself
+#: the average over a cloud, and controls drawn from the near side of it land slightly under 1.0
+#: without being on-subject at all.
+MATCHING_USELESS_RATIO = 0.9
+
 #: Which quantile of the null draws becomes the floor. The same quantile every fixed backstop in
 #: `separation` is derived from, so a candidate faces one idea measured two ways: that quantile
 #: computed offline on synthetic draws, and that quantile measured on the rows in front of it.
@@ -247,7 +254,97 @@ def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None)
     return _axis_separation(bad_rows[score_idx], good_score, v / norm, stat)
 
 
-def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null, stat=None):
+def _orth_rows(mat, basis):
+    """`_orth_to` for every row of a matrix at once."""
+    for u in basis:
+        mat = mat - torch.outer(mat @ u, u)
+    return mat
+
+
+def _matched_harmless_idx(cluster_rows, good_rows, basis, k):
+    """The k harmless rows whose CONTENT is nearest this cluster's, ignoring refusal.
+
+    The control group for a matched comparison (Q-23). A candidate is one cluster of harmful
+    prompts, and judging it against harmless prompts in general asks whether that cluster stands
+    out, which a cluster about explosives does whether or not the model refuses it. Judging it
+    against harmless prompts on the SAME SUBJECT holds the subject still, so refusal is the only
+    thing left to vary. It is the same move a study makes when it compares patients to matched
+    controls rather than to the general population.
+
+    Distances are taken in the subspace ORTHOGONAL TO `basis`, which holds the global
+    difference-of-means and every direction kept so far. Matching on the full vector would let
+    refusal decide which controls a candidate meets, and the controls would then differ in the one
+    respect the comparison exists to measure. Projecting it out first means the neighbours are
+    chosen on everything except what has already been called refusal.
+    """
+    n_good = int(good_rows.shape[0])
+    if k <= 0 or n_good == 0:
+        return None
+    k = min(int(k), n_good)
+    query = _orth_to(cluster_rows.mean(0), basis)
+    pool = _orth_rows(good_rows, basis)
+    return torch.topk((pool - query).norm(dim=1), k, largest=False).indices
+
+
+def matching_quality(cluster_rows, good_rows, basis, k):
+    """How much nearer the matched controls are than an arbitrary set of the same size.
+
+    THE NULL FOR THE MATCHING ITSELF, and it needs one for the same reason every other number here
+    does. `--matched-scoring` asks for harmless prompts on the candidate's subject; whether any
+    EXIST is a property of the corpus, not of the request. A harmless set that shares no subject
+    matter with the harmful one returns its nearest rows just the same, and they are not controls.
+    Nothing in the score would show it: the run would report matched figures taken against
+    unmatched rows.
+
+    The ratio of the mean distance to the chosen controls, over the mean distance to all harmless
+    rows. Near 0 means the controls really are close by. **Near 1.0 means matching achieved
+    nothing** and a "matched" number from that run is not one.
+
+    Returns None when there is nothing to measure.
+    """
+    idx = _matched_harmless_idx(cluster_rows, good_rows, basis, k)
+    if idx is None:
+        return None
+    query = _orth_to(cluster_rows.mean(0), basis)
+    distances = (_orth_rows(good_rows, basis) - query).norm(dim=1)
+    everything = float(distances.mean())
+    if everything < 1e-9:
+        return None      # every harmless row sits on top of the cluster; no scale to report against
+    return float(distances[idx].mean()) / everything
+
+
+def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None):
+    """`_held_out_separation` against matched controls rather than the harmless set at large.
+
+    The controls are chosen using the FIT half of the cluster only, so the rows a candidate is
+    scored on never influence which harmless rows they are scored against. Without that, the
+    matching itself becomes a way of fitting the score.
+
+    The control group is drawn at the size of the harmful half it faces, which makes the
+    comparison BALANCED. That is worth naming, because it is exactly the condition under which
+    the variance ratio's null holds (see `separation.variance_ratio`): the matched design removes
+    the imbalance that limits Candidate A, rather than merely tolerating it.
+    """
+    n = int(bad_rows.shape[0])
+    fit_idx, score_idx = _halves(n, seed)
+    if len(fit_idx) < MIN_HELD_OUT_ROWS or len(score_idx) < MIN_HELD_OUT_ROWS:
+        return None
+    fit_rows = bad_rows[fit_idx]
+    mf = _matched_harmless_idx(fit_rows, good_fit, basis, len(fit_idx))
+    ms = _matched_harmless_idx(fit_rows, good_score, basis, len(score_idx))
+    if mf is None or ms is None:
+        return None
+    if len(mf) < MIN_HELD_OUT_ROWS or len(ms) < MIN_HELD_OUT_ROWS:
+        return None
+    v = _orth_to(fit_rows.mean(0) - good_fit[mf].mean(0), basis)
+    norm = v.norm()
+    if norm < 1e-6:
+        return None
+    return _axis_separation(bad_rows[score_idx], good_score[ms], v / norm, stat)
+
+
+def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null, stat=None,
+                           matched=False):
     """What a direction carrying nothing scores, measured through the identical path.
 
     The threshold above it was picked once and never checked against a measurement, which is the
@@ -274,12 +371,16 @@ def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_n
     two halves of the threshold are one idea measured two ways: the backstop is that quantile
     computed offline on synthetic draws, and this is the same quantile measured on the actual rows.
     """
+    # The nulls go through whichever path the candidates go through. A floor measured on the
+    # unmatched comparison would be a floor for a different question than a matched candidate is
+    # being asked, which is the exact failure Q-23 found in the floor itself.
+    score = _matched_held_out_separation if matched else _held_out_separation
     seps = []
     for j in range(n_null):
         g = torch.Generator().manual_seed((int(seed) + 7919 * (j + 1)) & 0x7FFFFFFF)
         idx = torch.randperm(int(bad_all.shape[0]), generator=g)[:size]
-        s = _held_out_separation(bad_all[idx], good_fit, good_score, basis,
-                                 int(seed) + 104729 * (j + 1), stat)
+        s = score(bad_all[idx], good_fit, good_score, basis,
+                  int(seed) + 104729 * (j + 1), stat)
         if s is not None:
             seps.append(float(s))
     if not seps:
@@ -1453,6 +1554,15 @@ class Abliterator:
         # through argument namespaces that never had the flag.
         sep_stat = separation.get(getattr(args, "separation_statistic",
                                           separation.DEFAULT_STATISTIC))
+        # Whether a candidate is judged against matched controls or against the harmless set at
+        # large (Q-23). Resolved here for the same reason: one comparison per run, named in the
+        # artefact, rather than a property a reader has to infer from the command line.
+        matched_scoring = bool(getattr(args, "matched_scoring", False))
+        # How well the matching actually worked, gathered across every candidate at every layer.
+        # Whether on-subject harmless prompts exist is a property of the corpus, and a run that
+        # asked for matched controls and got arbitrary ones must say so rather than publish
+        # "matched" numbers taken against rows that match nothing.
+        matching_ratios = []
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
         # each. Below two, there is no second refusal mode to look for and the run says so rather
         # than quietly measuring nothing: a contrast set this small cannot support the claim, and
@@ -1554,38 +1664,53 @@ class Abliterator:
                 # the draws are the expensive part.
                 floors_by_size = {}
 
-                def _floor_for(size, _li=li, _gf=good_fit, _gs=good_score, _cache=floors_by_size):
-                    if not held_out_usable:
-                        return 0.0
-                    if size not in _cache:
-                        value, _samples = _null_separation_floor(
-                            Rb[_li], _gf, _gs, basis, size,
-                            args.seed + _li, NULL_DIRECTIONS_PER_CANDIDATE, sep_stat)
-                        _cache[size] = float(value)
-                    return _cache[size]
-
                 scored, dropped, dropped_by_null = [], 0, 0
                 for _size, c in eligible:
                     rows = Rb[li][labels == c]
-                    null_floor = _floor_for(int(rows.shape[0]))
+                    cand_size = int(rows.shape[0])
+                    # `basis` is read here and appended to only after this loop finishes, so every
+                    # candidate at this layer is scored against the same basis and their floors
+                    # are comparable.
+                    if held_out_usable and cand_size not in floors_by_size:
+                        value, _null_samples = _null_separation_floor(
+                            Rb[li], good_fit, good_score, basis, cand_size,
+                            args.seed + li, NULL_DIRECTIONS_PER_CANDIDATE, sep_stat,
+                            matched=matched_scoring)
+                        floors_by_size[cand_size] = float(value)
+                    null_floor = floors_by_size.get(cand_size, 0.0)
                     threshold = max(sep_stat.threshold, null_floor)
                     # Judged out of sample, then fitted on everything. The decision has to be made
                     # on rows the candidate never saw or it is not a decision; the direction that
                     # is actually applied should still use every row available to estimate it.
+                    # The anchor the candidate direction is measured FROM. Under matched scoring it
+                    # must be the same controls the score was taken against: selecting a direction
+                    # on one comparison and then ablating a direction built from another would
+                    # keep an axis for carrying refusal and cut an axis carrying topic.
+                    anchor = mg[li]
+                    if matched_scoring:
+                        midx = _matched_harmless_idx(rows, Rg[li], basis, cand_size)
+                        if midx is None or len(midx) < MIN_HELD_OUT_ROWS:
+                            continue
+                        anchor = Rg[li][midx].mean(0)
+                        q = matching_quality(rows, Rg[li], basis, cand_size)
+                        if q is not None:
+                            matching_ratios.append(q)
                     if held_out_usable:
-                        sep = _held_out_separation(rows, good_fit, good_score, basis,
-                                                   args.seed + li + int(c), sep_stat)
+                        score_fn = (_matched_held_out_separation if matched_scoring
+                                    else _held_out_separation)
+                        sep = score_fn(rows, good_fit, good_score, basis,
+                                       args.seed + li + int(c), sep_stat)
                         if sep is None:
                             continue
                     else:
                         # No usable harmless split. Scored in sample, which the note above already
                         # said is not evidence; kept rather than skipped so a small-corpus run
                         # still produces directions instead of silently becoming a K=1 run.
-                        v_probe = _orth_to(rows.mean(0) - mg[li], basis)
+                        v_probe = _orth_to(rows.mean(0) - anchor, basis)
                         if v_probe.norm() < 1e-6:
                             continue
                         sep = _axis_separation(rows, Rg[li], v_probe / v_probe.norm(), sep_stat)
-                    v = _orth_to(rows.mean(0) - mg[li], basis)
+                    v = _orth_to(rows.mean(0) - anchor, basis)
                     n = v.norm()
                     if n < 1e-6:
                         continue      # this cluster's refusal is entirely inside what d0 already cuts
@@ -1678,6 +1803,21 @@ class Abliterator:
         # taken under, with the record silent about which.
         self.separation_statistic = sep_stat.name
         self.separation_null = sep_stat.null
+        # WHAT THE CANDIDATE WAS COMPARED AGAINST, which decides what its score can mean at all.
+        # An unmatched score says a cluster stands out from harmless prompts; a matched one says
+        # it stands out from harmless prompts on the same subject. Only the second is evidence
+        # about refusal, and a record that does not say which is not a record.
+        self.matched_scoring = matched_scoring
+        self.matching_quality = (round(sorted(matching_ratios)[len(matching_ratios) // 2], 4)
+                                 if matching_ratios else None)
+        if self.matching_quality is not None and self.matching_quality > MATCHING_USELESS_RATIO:
+            log(f"  MATCHING ACHIEVED NOTHING: the harmless prompts chosen as controls sit "
+                f"{self.matching_quality:.2f} times the average distance from their candidate, "
+                f"where 1.00 means they are no nearer than any harmless prompt taken at random. "
+                f"The corpus has no harmless prompts on these subjects, so --matched-scoring "
+                f"asked for controls and received arbitrary rows. Every separation number from "
+                f"this run is an UNMATCHED number wearing a matched label; treat it as such and "
+                f"build a topic-matched harmless set before reading it as evidence about refusal.")
         self.axes_measured_total = axes_measured_total
         self.max_axis_separation = max_sep_seen if axes_measured_total else None
         measured = [d for layer in axis_seps for d in layer]
@@ -2731,6 +2871,11 @@ class Abliterator:
                        "separation_null": getattr(self, "separation_null",
                                                   separation.get(
                                                       separation.DEFAULT_STATISTIC).null),
+                       "matched_scoring": getattr(self, "matched_scoring", False),
+                       # Whether the matching found anything. Near 1.0 means it did not, and a
+                       # matched_scoring:true run with a quality near 1.0 produced unmatched
+                       # numbers under a matched label.
+                       "matching_quality": getattr(self, "matching_quality", None),
                        "axis_separation_threshold": separation.get(
                            getattr(self, "separation_statistic",
                                    separation.DEFAULT_STATISTIC)).threshold,

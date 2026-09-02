@@ -1,0 +1,239 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+"""The matched comparison (Q-23): can the filter tell refusal from subject matter?
+
+WHY THIS FILE EXISTS
+
+Q-14 asked which STATISTIC could tell a refusal axis from a topic axis. Testing whether the
+measured null floor could answer it instead produced a different answer: in a synthetic world with
+topic clusters and no refusal anywhere, every statistic kept every candidate, and the floor
+stopped none of them. The comparison was the defect, not the ruler.
+
+A candidate is one cluster of harmful prompts. Judged against harmless prompts in general, a
+cluster about explosives separates because it is about explosives. Judged against harmless prompts
+on the same subject, the subject cancels and refusal is the only thing left to vary.
+
+THE SHAPE OF THESE TESTS
+
+Every one is a pair: a world where refusal is genuinely present, and an otherwise identical world
+where it is absent. A filter that cannot tell those apart is worthless however impressive its
+numbers, so the no-refusal world is the control that forces the instrument to fail, and it is the
+half that would catch a change making the filter merely permissive.
+"""
+import pytest
+import torch
+
+from senbonzakura import cli, separation
+
+H, N_TOPIC, PER_BAD, PER_GOOD = 48, 8, 32, 32
+STATS = ["cohens-d", "variance-ratio", "welch-ratio", "auc"]
+
+
+def _world(refusal_scale, seed=0):
+    """Harmful and harmless prompts sharing topic structure, refusal present only on the harmful.
+
+    The harmless side deliberately carries the SAME topic mix as the harmful side, which is the
+    best case for a topic-matched corpus. That is what makes the unmatched result below a
+    statement about the comparison rather than about the dataset: even with a perfectly matched
+    corpus, scoring against the pool at large does not hold the subject still.
+    """
+    g = torch.Generator().manual_seed(seed)
+    topics = torch.randn(N_TOPIC, H, generator=g)
+    topics = topics - topics.mean(0)
+    refusals = torch.randn(N_TOPIC, H, generator=g)
+    refusals = refusals / refusals.norm(dim=1, keepdim=True)
+    bad, good, bad_topic = [], [], []
+    for t in range(N_TOPIC):
+        bad.append(topics[t] + refusals[t] * refusal_scale
+                   + torch.randn(PER_BAD, H, generator=g) * 0.35)
+        good.append(topics[t] + torch.randn(PER_GOOD, H, generator=g) * 0.35)
+        bad_topic += [t] * PER_BAD
+    return torch.cat(bad), torch.cat(good), torch.tensor(bad_topic)
+
+
+def _median_candidate_score(matched, refusal_scale, stat_name, seed=0):
+    """What a typical candidate scores in this world, through the real scoring path."""
+    Rb, Rg, topic = _world(refusal_scale, seed)
+    d0 = Rb.mean(0) - Rg.mean(0)
+    basis = [d0 / d0.norm()]
+    stat = separation.get(stat_name)
+    fit_idx, score_idx = cli._halves(int(Rg.shape[0]), 0)
+    good_fit, good_score = Rg[fit_idx], Rg[score_idx]
+    score_fn = cli._matched_held_out_separation if matched else cli._held_out_separation
+    scores = []
+    for t in range(N_TOPIC):
+        s = score_fn(Rb[topic == t], good_fit, good_score, basis, 3 + t, stat)
+        if s is not None:
+            scores.append(float(s))
+    assert scores, "no candidate could be scored at all"
+    return sorted(scores)[len(scores) // 2]
+
+
+# ── the finding, as a test ─────────────────────────────────────────────────────────
+@pytest.mark.parametrize("name", STATS)
+def test_the_unmatched_comparison_cannot_tell_refusal_from_topic(name):
+    """THE CONTROL THAT FORCES THE INSTRUMENT TO FAIL, and the reason Q-23 exists.
+
+    Two worlds, identical but for whether refusal is present at all. Under the unmatched
+    comparison every statistic scores them the same, so no threshold placed anywhere on any of
+    these rulers could separate them.
+
+    This asserts a DEFECT is present. If it ever fails, the unmatched path has started
+    distinguishing the two worlds and this whole analysis needs revisiting rather than the test
+    being adjusted.
+    """
+    without = _median_candidate_score(False, 0.0, name)
+    with_ = _median_candidate_score(False, 2.0, name)
+    # Tight on purpose. Measured gaps are 2.8% to 8.8% across the four statistics, so 15% leaves
+    # room for a seed to wobble and none at all for the unmatched path to start working.
+    assert with_ == pytest.approx(without, rel=0.15), (
+        f"{name}: unmatched scores {without} without refusal and {with_} with it, which is a "
+        f"bigger gap than this analysis predicts")
+
+
+@pytest.mark.parametrize("name", STATS)
+def test_the_matched_comparison_lands_on_the_null_when_there_is_no_refusal(name):
+    """The other half: hold the subject still and a world with no refusal scores like one."""
+    stat = separation.get(name)
+    score = _median_candidate_score(True, 0.0, name)
+    assert score < stat.threshold, (
+        f"{name}: a world containing no refusal at all scored {score}, clearing the "
+        f"{stat.threshold} threshold")
+
+
+@pytest.mark.parametrize("name", STATS)
+def test_the_matched_comparison_still_finds_refusal_when_it_is_there(name):
+    """And it must not achieve the test above by rejecting everything.
+
+    A filter that says no to every candidate discriminates exactly as much as one that says yes.
+    Both extremes have happened in this project, a year apart, which is why both directions are
+    asserted rather than only the one being fixed.
+    """
+    stat = separation.get(name)
+    score = _median_candidate_score(True, 2.0, name)
+    assert score >= stat.threshold, (
+        f"{name}: real refusal scored {score}, below the {stat.threshold} threshold")
+
+
+@pytest.mark.parametrize("name", STATS)
+def test_matched_scoring_separates_the_two_worlds_and_unmatched_does_not(name):
+    """The comparison the other three tests imply, stated as one number so it cannot be missed."""
+    unmatched_gap = abs(_median_candidate_score(False, 2.0, name)
+                        - _median_candidate_score(False, 0.0, name))
+    matched_gap = abs(_median_candidate_score(True, 2.0, name)
+                      - _median_candidate_score(True, 0.0, name))
+    assert matched_gap > unmatched_gap, f"{name}: matched {matched_gap}, unmatched {unmatched_gap}"
+
+
+# ── the matching itself ────────────────────────────────────────────────────────────
+def test_matching_picks_harmless_rows_on_the_same_topic():
+    """The mechanism, checked directly rather than only through its effect."""
+    Rb, Rg, topic = _world(2.0)
+    good_topic = torch.arange(Rg.shape[0]) // PER_GOOD
+    d0 = Rb.mean(0) - Rg.mean(0)
+    basis = [d0 / d0.norm()]
+    for t in range(N_TOPIC):
+        idx = cli._matched_harmless_idx(Rb[topic == t], Rg, basis, PER_GOOD)
+        share = float((good_topic[idx] == t).float().mean())
+        assert share > 0.8, f"topic {t}: only {share:.0%} of the matched controls were on-topic"
+
+
+def test_matching_ignores_the_directions_already_called_refusal():
+    """Matching on the full vector would let refusal choose the controls.
+
+    The controls would then differ from the candidate in the one respect the comparison exists to
+    measure, which is the same circularity as scoring a direction on the rows it was fitted on.
+    """
+    Rb, Rg, topic = _world(0.0)
+    rows = Rb[topic == 0]
+    # A direction that is IN the basis must not influence which controls are chosen, so shifting
+    # every harmless row along it changes nothing about the selection.
+    u = torch.randn(H)
+    u = u / u.norm()
+    plain = cli._matched_harmless_idx(rows, Rg, [u], 16)
+    shifted = cli._matched_harmless_idx(rows, Rg + u * 25.0, [u], 16)
+    assert plain.tolist() == shifted.tolist()
+
+
+def test_matching_refuses_when_there_are_no_controls_to_draw():
+    Rb, Rg, topic = _world(1.0)
+    assert cli._matched_harmless_idx(Rb[topic == 0], Rg[:0], [], 8) is None
+    assert cli._matched_harmless_idx(Rb[topic == 0], Rg, [], 0) is None
+
+
+def test_matching_never_asks_for_more_controls_than_exist():
+    Rb, Rg, topic = _world(1.0)
+    idx = cli._matched_harmless_idx(Rb[topic == 0], Rg[:10], [], 999)
+    assert len(idx) == 10
+
+
+def test_the_matched_score_does_not_look_at_the_rows_it_scores():
+    """The controls are chosen from the FIT half only.
+
+    If the score half picked its own controls, the matching would be a second way of fitting the
+    score, which is the defect the held-out split exists to prevent.
+    """
+    Rb, Rg, topic = _world(2.0)
+    d0 = Rb.mean(0) - Rg.mean(0)
+    basis = [d0 / d0.norm()]
+    rows = Rb[topic == 0]
+    fit_idx, score_idx = cli._halves(int(rows.shape[0]), 5)
+    gf, gs = Rg[:Rg.shape[0] // 2], Rg[Rg.shape[0] // 2:]
+    before = cli._matched_held_out_separation(rows, gf, gs, basis, 5)
+    # Move the SCORE half of the cluster far away. The controls it meets are selected from the fit
+    # half, so the selection must be unchanged; only the score itself may move.
+    moved = rows.clone()
+    moved[score_idx] += 40.0
+    after = cli._matched_held_out_separation(moved, gf, gs, basis, 5)
+    assert before is not None and after is not None
+    assert after != before
+
+
+def test_a_cluster_too_small_to_split_is_refused_under_matching_too():
+    Rb, Rg, topic = _world(1.0)
+    tiny = Rb[topic == 0][: cli.MIN_HELD_OUT_ROWS * 2 - 1]
+    gf, gs = Rg[:100], Rg[100:]
+    assert cli._matched_held_out_separation(tiny, gf, gs, [], 0) is None
+
+
+def test_the_null_floor_follows_the_candidates_through_the_matched_path():
+    """A floor measured on the unmatched comparison would answer a different question."""
+    Rb, Rg, _ = _world(1.0)
+    gf, gs = Rg[:128], Rg[128:]
+    plain, _ = cli._null_separation_floor(Rb, gf, gs, [], 32, 4, 12, None, matched=False)
+    matched, _ = cli._null_separation_floor(Rb, gf, gs, [], 32, 4, 12, None, matched=True)
+    assert plain != matched
+
+
+# ── the null for the matching itself ───────────────────────────────────────────────
+def test_matching_quality_is_low_when_on_topic_controls_exist():
+    Rb, Rg, topic = _world(1.0)
+    q = cli.matching_quality(Rb[topic == 0], Rg, [], PER_GOOD)
+    assert q is not None
+    assert q < cli.MATCHING_USELESS_RATIO, f"matching found on-topic controls but scored {q}"
+
+
+def test_matching_quality_reaches_one_when_the_corpus_shares_no_subjects():
+    """THE CASE THE MEASURE EXISTS FOR, and the one nothing else would have caught.
+
+    `--matched-scoring` asks for harmless prompts on the candidate's subject. Whether any exist is
+    a property of the corpus, not of the request: a harmless set sharing no subject matter still
+    returns its nearest rows, and they are not controls. Without this number a run would publish
+    matched figures taken against arbitrary rows, with nothing anywhere saying so.
+    """
+    Rb, _, topic = _world(1.0)
+    g = torch.Generator().manual_seed(99)
+    # Harmless prompts from somewhere else entirely: no shared topic structure at all.
+    elsewhere = torch.randn(256, H, generator=g) * 0.35 + 40.0
+    q = cli.matching_quality(Rb[topic == 0], elsewhere, [], PER_GOOD)
+    assert q is not None
+    assert q > cli.MATCHING_USELESS_RATIO, (
+        f"a corpus with no shared subjects should score near 1.0, got {q}")
+
+
+def test_matching_quality_reports_nothing_when_there_is_nothing_to_report():
+    Rb, Rg, topic = _world(1.0)
+    assert cli.matching_quality(Rb[topic == 0], Rg[:0], [], 8) is None
+    # Every harmless row identical to the cluster centre: no scale to express a ratio against.
+    flat = Rb[topic == 0].mean(0).expand(16, H)
+    assert cli.matching_quality(Rb[topic == 0], flat, [], 8) is None

@@ -214,6 +214,15 @@ def build_parser():
                          "means a different thing at every cluster size; 'variance-ratio' is the "
                          "ANOVA F, whose null is 1.0 at any size. Under measurement (Q-14): the "
                          "default does not change until that measurement says it should.")
+    ap.add_argument("--matched-scoring", dest="matched_scoring", action="store_true",
+                    help="judge each candidate direction against the harmless prompts nearest it "
+                         "in content, instead of against the harmless set at large. A cluster "
+                         "about explosives stands out from harmless prompts in general whether or "
+                         "not the model refuses it, so the unmatched comparison cannot tell "
+                         "refusal from subject matter. Holding the subject still leaves refusal "
+                         "as the only thing that varies. Off by default: it changes what every "
+                         "separation number means, and Q-14 measures it before it becomes the "
+                         "default.")
     ap.add_argument("--sparsity", type=float, default=0.0,
                     help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "

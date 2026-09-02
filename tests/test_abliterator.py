@@ -1812,3 +1812,77 @@ def test_an_absent_chat_template_flag_stays_absent(monkeypatch, base_args, tiny_
     base_args.chat_template = ""
     cli.Abliterator(base_args, lambda _m: None)
     assert seen.get("chat_template") is None
+
+
+# ── matched scoring inside the extractor (Q-23) ──────────────────────────────────────
+def _topic_matched(a, monkeypatch, n=48, modes=3, seed=5):
+    """Like `_clusterable`, but the HARMLESS cloud carries the same modes as the harmful one.
+
+    `_clusterable` puts every harmless row at one point, which is the corpus with no shared
+    subject matter: matching there can only return arbitrary rows, and correctly reports that it
+    achieved nothing. This is the other case, where on-subject controls genuinely exist.
+    """
+    NL1, H = a.NL + 1, a.H
+    torch.manual_seed(seed)
+    a.args.direction_clusters = modes
+
+    def fake_collect(prompts):
+        k = len(prompts)
+        base = torch.zeros(NL1, k, H)
+        for i in range(k):
+            # Both sides span the same modes, so a control on the same mode exists for every
+            # candidate. Only the harmful rows carry the extra displacement that stands for refusal.
+            base[:, i, 1 + (i % modes)] = 6.0
+            if not prompts[i].startswith("GOOD"):
+                base[:, i, 0] = 4.0
+        return base + torch.randn(NL1, k, H) * 0.02
+
+    monkeypatch.setattr(a, "load",
+                        lambda d, m: [("GOOD " if "good" in d else "BAD ") + str(i) for i in range(n)])
+    monkeypatch.setattr(a, "collect_resid", fake_collect)
+
+
+def test_matched_scoring_runs_and_is_recorded_in_the_artefact(
+        base_args, tiny_model, tiny_tok, monkeypatch):
+    """A separation number is unreadable without knowing what it was compared against."""
+    base_args.max_directions = 3
+    base_args.matched_scoring = True
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _topic_matched(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
+    assert a.matched_scoring is True
+    assert a.matching_quality is not None
+    assert a.matching_quality < cli.MATCHING_USELESS_RATIO, (
+        f"on-subject controls exist in this fixture, so matching should find them: "
+        f"{a.matching_quality}")
+
+
+def test_a_corpus_with_no_shared_subjects_says_the_matching_achieved_nothing(
+        base_args, tiny_model, tiny_tok, monkeypatch):
+    """THE FAILURE THAT WOULD OTHERWISE BE SILENT.
+
+    `--matched-scoring` asks for harmless prompts on the candidate's subject. Whether any exist is
+    a property of the corpus, not of the request. Here the harmless cloud is a single point, so
+    the nearest rows to any candidate are arbitrary rows, and a run must say so rather than
+    publish matched-looking figures taken against them.
+    """
+    lines = []
+    base_args.max_directions = 3
+    base_args.matched_scoring = True
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+    joined = "\n".join(lines)
+    assert "MATCHING ACHIEVED NOTHING" in joined
+    assert "UNMATCHED number wearing a matched label" in joined
+    assert a.matching_quality >= cli.MATCHING_USELESS_RATIO
+
+
+def test_the_default_run_is_unmatched_and_says_so(base_args, tiny_model, tiny_tok, monkeypatch):
+    """Implementing a comparison does not make it the default; Q-14 measures it first."""
+    base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+    assert a.matched_scoring is False
+    assert a.matching_quality is None, "an unmatched run has no matching to report on"

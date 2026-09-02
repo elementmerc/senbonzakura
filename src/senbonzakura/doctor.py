@@ -224,6 +224,92 @@ def check_torch():
                  "editing a model on CPU works and is slow; scoring is fine")
 
 
+#: Steps for the page-locked probe. Big enough that the per-allocation overhead does not dominate,
+#: small enough that the answer is not rounded to uselessness on a machine with a low ceiling.
+PINNED_STEP_BYTES = 256 * 1024 * 1024
+
+#: How far the shallow probe goes. One step: enough to answer "can this machine pin at all", which
+#: is the question a default `doctor` run should cost nothing to answer.
+PINNED_SHALLOW_STEPS = 1
+
+#: How far `--deep` will climb. A ceiling on the ceiling-finder, because the honest way to find the
+#: limit is to reach it, and reaching it on a machine with a huge one would mean pinning most of
+#: host RAM. Better to report "at least 8 GB" than to make a laptop unusable establishing 30.
+PINNED_DEEP_MAX_BYTES = 8 * 1024 * 1024 * 1024
+
+
+def _measure_pinned_ceiling(max_bytes):
+    """How much page-locked host memory this machine will actually hand out, measured.
+
+    WHY A DOCTOR CHECK CARES, which is not obvious.
+
+    Streaming a model through the card layer by layer only pays off if the host-to-device copy
+    OVERLAPS with compute, and `copy_(non_blocking=True)` only overlaps when the source is
+    page-locked. Above the machine's page-locked ceiling the allocation quietly falls back to
+    ordinary pageable memory, the copy becomes synchronous, and the overlap is lost. The observed
+    cost of crossing that line elsewhere was GPU utilisation dropping from 100% to 79.3%, with
+    nothing in any log to say why.
+
+    So this is a number a streaming run has to be designed against, and the failure it prevents is
+    the kind that gets blamed on streaming being slow rather than on a host store being too big.
+
+    WHY IT ALLOCATES RATHER THAN READING A LIMIT. `ulimit -l` (RLIMIT_MEMLOCK) looks like the
+    answer and is not. Measured on the reference machine 2026-09-02: the rlimit reads 64 MB and the
+    probe pinned 8.6 GB without complaint, because CUDA's host allocator does not go through the
+    path that limit governs. A check that read the rlimit would have reported a ceiling 134 times
+    too low and sent a streaming design chasing a constraint that is not there.
+
+    Returns (bytes_reached, hit_limit, note). `hit_limit` is False when the probe stopped because
+    it ran out of budget rather than because the machine refused, so "at least this much" and
+    "exactly this much" are never confused.
+    """
+    import torch
+    blocks, reached = [], 0
+    try:
+        while reached + PINNED_STEP_BYTES <= max_bytes:
+            try:
+                blocks.append(torch.empty(PINNED_STEP_BYTES, dtype=torch.uint8, pin_memory=True))
+            except (RuntimeError, MemoryError) as e:
+                return reached, True, type(e).__name__
+            reached += PINNED_STEP_BYTES
+        return reached, False, ""
+    finally:
+        # Freed before returning, whatever happened. Holding gigabytes of page-locked memory past
+        # the end of a diagnostic would be a worse bug than the one being diagnosed.
+        blocks.clear()
+        import gc
+        gc.collect()
+
+
+def check_pinned_memory(max_bytes=None):
+    """Report the page-locked ceiling, or say plainly why it could not be measured."""
+    try:
+        import torch
+    except ImportError:
+        return _warn("pinned memory", "not measured, torch is missing",
+                     "install torch; this number only matters for streaming a model larger "
+                     "than the card")
+    if not torch.cuda.is_available():
+        return _warn("pinned memory", "not measured, no cuda device",
+                     "page-locked memory is only useful for overlapping host-to-device copies, "
+                     "so there is nothing to measure without a card")
+    budget = PINNED_STEP_BYTES * PINNED_SHALLOW_STEPS if max_bytes is None else max_bytes
+    try:
+        reached, hit_limit, note = _measure_pinned_ceiling(budget)
+    except Exception as e:                     # a probe must never be the thing that fails a run
+        return _warn("pinned memory", f"not measured ({type(e).__name__}: {e})",
+                     "this is diagnostic only and does not affect an ordinary run")
+    gb = reached / 1e9
+    if reached == 0:
+        return _warn("pinned memory", f"cannot pin even {PINNED_STEP_BYTES / 1e6:.0f} MB ({note})",
+                     "a streaming run would lose host-to-device overlap entirely here; check "
+                     "`ulimit -l` and how much host RAM is free")
+    if hit_limit:
+        return _pass("pinned memory", f"ceiling {gb:.1f} GB (refused more: {note}). A host-side "
+                                      f"store above this loses copy/compute overlap")
+    return _pass("pinned memory", f"at least {gb:.1f} GB, not probed further")
+
+
 def deep_check(log=print):
     """Build a two-layer model, convert it, quantise it. The only check that proves the chain.
 
@@ -281,6 +367,9 @@ def deep_check(log=print):
 
 def run_checks(*, deep=False, log=print):
     checks = [check_platform(), check_torch()]
+    # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
+    # where finding the real ceiling means climbing to it.
+    checks.append(check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None))
     checks += check_pins()
     checks.append(check_quantize())
     checks += check_converter()

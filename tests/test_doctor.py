@@ -14,6 +14,7 @@ architecture whether or not the module providing it imported. A reader skimming 
 have been reassured by the line that was wrong.
 """
 import pathlib
+import sys
 
 import pytest
 
@@ -321,3 +322,106 @@ def test_the_corpus_fix_stays_short_when_the_cli_is_there(monkeypatch):
     fix = doctor._corpus_fix()
     assert "build_corpora.py" in fix
     assert "GitHub CLI" not in fix, "the note is only useful when the tool is actually absent"
+
+
+# ── the page-locked ceiling (from the Soup analysis) ─────────────────────────────────
+class _FakeCuda:
+    def __init__(self, available=True):
+        self._available = available
+
+    def is_available(self):
+        return self._available
+
+
+def _fake_torch(monkeypatch, *, available=True, refuse_after=None, raiser=None):
+    """A torch stand-in whose pinned allocation succeeds a set number of times, then refuses."""
+    import types
+    calls = {"n": 0}
+
+    def empty(_n, dtype=None, pin_memory=False):
+        calls["n"] += 1
+        if raiser is not None:
+            raise raiser
+        if refuse_after is not None and calls["n"] > refuse_after:
+            raise RuntimeError("CUDA error: cannot allocate pinned memory")
+        return bytearray(8)          # a stand-in; only its lifetime matters to the code
+
+    fake = types.SimpleNamespace(empty=empty, uint8="uint8", cuda=_FakeCuda(available),
+                                 __version__="fake")
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    return calls
+
+
+def test_the_pinned_check_says_why_it_could_not_measure_without_a_card(monkeypatch):
+    _fake_torch(monkeypatch, available=False)
+    c = doctor.check_pinned_memory()
+    assert c.status == "warn"
+    assert "no cuda device" in c.detail
+    assert "overlap" in c.fix, "it has to say what the number would have been for"
+
+
+def test_the_pinned_check_reports_a_ceiling_when_the_machine_refuses(monkeypatch):
+    _fake_torch(monkeypatch, refuse_after=3)
+    c = doctor.check_pinned_memory(max_bytes=doctor.PINNED_STEP_BYTES * 10)
+    assert c.status == "pass"
+    assert "ceiling" in c.detail
+    expected = 3 * doctor.PINNED_STEP_BYTES / 1e9
+    assert f"{expected:.1f} GB" in c.detail
+    assert "loses copy/compute overlap" in c.detail, "the number needs its consequence beside it"
+
+
+def test_a_probe_that_runs_out_of_budget_says_at_least(monkeypatch):
+    """'At least 8 GB' and 'exactly 8 GB' are different findings and must not be confused."""
+    _fake_torch(monkeypatch)
+    c = doctor.check_pinned_memory(max_bytes=doctor.PINNED_STEP_BYTES * 4)
+    assert c.status == "pass"
+    assert "at least" in c.detail
+    assert "ceiling" not in c.detail
+
+
+def test_a_machine_that_cannot_pin_at_all_is_a_warning_with_a_fix(monkeypatch):
+    _fake_torch(monkeypatch, refuse_after=0)
+    c = doctor.check_pinned_memory()
+    assert c.status == "warn"
+    assert "cannot pin" in c.detail
+    assert "ulimit -l" in c.fix
+
+
+def test_the_probe_frees_everything_even_when_it_refuses(monkeypatch):
+    """Holding gigabytes of page-locked memory past a diagnostic would be worse than the defect."""
+    import gc
+    _fake_torch(monkeypatch, refuse_after=2)
+    before = len(gc.get_objects())
+    doctor.check_pinned_memory(max_bytes=doctor.PINNED_STEP_BYTES * 10)
+    gc.collect()
+    # Not an exact count, which would be flaky; the point is that it does not grow by the number
+    # of blocks allocated.
+    assert len(gc.get_objects()) < before + 100
+
+
+def test_an_unexpected_failure_in_the_probe_does_not_take_the_run_down(monkeypatch):
+    _fake_torch(monkeypatch, raiser=ValueError("something odd"))
+    c = doctor.check_pinned_memory()
+    assert c.status == "warn"
+    assert "ValueError" in c.detail
+    assert "does not affect an ordinary run" in c.fix
+
+
+def test_the_default_run_probes_cheaply_and_deep_probes_further(monkeypatch):
+    """A default `doctor` must not pin gigabytes; finding the real ceiling means climbing to it."""
+    seen = {}
+
+    def spy(max_bytes=None):
+        seen["max_bytes"] = max_bytes
+        return doctor._pass("pinned memory", "stub")
+
+    monkeypatch.setattr(doctor, "check_pinned_memory", spy)
+    monkeypatch.setattr(doctor, "check_pins", list)
+    monkeypatch.setattr(doctor, "check_quantize", lambda: doctor._pass("q", ""))
+    monkeypatch.setattr(doctor, "check_converter", lambda *a, **k: [])
+    monkeypatch.setattr(doctor, "check_track", lambda: doctor._pass("t", ""))
+    monkeypatch.setattr(doctor, "check_corpora", list)
+    doctor.run_checks(deep=False, log=lambda _m: None)
+    assert seen["max_bytes"] is None, "the default run must use the cheap one-step probe"
+    doctor.run_checks(deep=True, log=lambda _m: None)
+    assert seen["max_bytes"] == doctor.PINNED_DEEP_MAX_BYTES

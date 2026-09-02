@@ -104,10 +104,38 @@ partly because it's about explosives, not because of anything to do with refusal
 separates just as well on rows it never saw. Cut along it and you haven't removed the model's
 reluctance, you've removed its chemistry.
 
-Telling those apart needs a harmless set matched to the harmful one by *topic*, so the subject
-matter is held still and refusal is the only thing left to vary. The hook exists
-(`--harmless-matched`); the partitioned set behind it does not yet. Until it does, this question
-stays open and nothing here claims otherwise.
+Telling those apart needs the subject matter held still, so refusal is the only thing left to
+vary. It's the move a medical study makes when it compares patients against matched controls
+rather than against the general population.
+
+On 2026-09-02 we measured how badly the unmatched comparison fails, on synthetic data where we
+knew the answer in advance. Two worlds, identical except that one contains refusal and the other
+contains none at all. Every candidate in both should be rejected in the second world.
+
+| how a candidate is judged | world with no refusal | world with refusal |
+|---|---|---|
+| against harmless prompts in general | 3.547 | 3.703 |
+| against harmless prompts on the same subject | **0.319** | **4.369** |
+
+Read the top row twice. **The two worlds score the same**, so no threshold anywhere on that scale
+could separate them, and no choice of statistic changes that. We tried four. The bottom row is the
+same data judged against matched controls: the world with no refusal lands on the scale's own
+"nothing here" value, and the world with refusal stands clear.
+
+Two things follow, and the second was a surprise.
+
+The first is that the tool now has `--matched-scoring`, which picks each candidate's controls from
+the harmless prompts nearest it in content. It's off by default, because it changes what every
+separation number means and we haven't yet measured it on a real model.
+
+The second is that **a topic-matched harmless corpus would not have been enough on its own**. In
+the numbers above the harmless side already had the same mix of subjects as the harmful side, and
+the unmatched comparison still couldn't tell the two worlds apart. The matching has to happen when
+each candidate is scored, not only when the corpus is built. This page previously said the dataset
+was the missing piece; that was half the answer.
+
+One honest caveat: those figures are synthetic. Whether subject matter swamps refusal by that much
+inside a real model is still unmeasured, and until it is, this question stays open.
 
 **Does removing several directions beat removing one?** We ran it, and the answer on the one
 model we can measure properly is **no**. See the next section.

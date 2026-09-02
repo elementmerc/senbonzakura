@@ -202,11 +202,51 @@ def cache_dir():
     return Path(base) / "senbonzakura" / "bundled-track"
 
 
+#: Names the extracted cache's provenance. Holds the sha256 of the packed data it came from, so
+#: the cache can be keyed on CONTENT rather than on the fact that something is already there.
+STAMP_NAME = ".packed-sha256"
+
+
+def packed_digest():
+    """The sha256 of the packed track shipped in this install."""
+    h = hashlib.sha256()
+    with open(data_path(), "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _cache_is_current(target):
+    """Does the extracted cache come from the packed track this install actually carries?
+
+    IT USED TO ASK ONLY WHETHER `track.json` EXISTED, which is a presence test rather than an
+    identity one, and this project has now met that distinction three times. A release correcting
+    the corpus would extract nothing, because a directory was already there, and every run
+    afterwards would fit directions on the OLD prompts with nothing anywhere saying so. Prompts
+    decide every measurement here, so that is not a stale cache; it is a silently wrong result.
+
+    Content, not metadata. Soup keys its shard cache on basename, size and mtime, and notes that
+    without it a checkpoint retrained in place would stream the wrong weights. Size and mtime can
+    both be preserved by an edit in place, and a project whose tagline is receipts should hash what
+    it actually read.
+    """
+    if not (target / "track.json").is_file():
+        return False
+    stamp = target / STAMP_NAME
+    if not stamp.is_file():
+        # Extracted by a build that predates the stamp. Its contents cannot be vouched for, so it
+        # is re-extracted once and stamped, rather than trusted because it happens to be there.
+        return False
+    try:
+        return stamp.read_text(encoding="utf-8").strip() == packed_digest()
+    except OSError:
+        return False
+
+
 def ensure(log=print):
     """The bundled track as a directory on disk, extracting it the first time it is needed."""
     target = cache_dir()
-    marker = target / "track.json"
-    if marker.is_file():
+    if _cache_is_current(target):
         notice(log=log)
         return target
     tmp = target.with_name(target.name + ".unpacking")
@@ -223,4 +263,7 @@ def ensure(log=print):
     if tmp.exists():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
+    # Stamped LAST, after everything else is in place, so an interrupted extraction leaves a cache
+    # that fails the check and gets redone rather than one that passes it and is half a track.
+    (target / STAMP_NAME).write_text(packed_digest() + "\n", encoding="utf-8")
     return target

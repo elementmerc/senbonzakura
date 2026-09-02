@@ -326,3 +326,73 @@ def test_a_blob_with_no_manifest_says_so(monkeypatch):
     monkeypatch.setattr(bundled, "_read", lambda: bundled.pack(payload.getvalue()))
     with pytest.raises(ValueError, match=r"no manifest\.json"):
         bundled.manifest()
+
+
+# ── the cache is keyed on content, not on something being there ─────────────────────
+def test_the_cache_is_reused_when_the_packed_track_has_not_changed(tmp_path, monkeypatch):
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "c")
+    first = bundled.ensure(log=lambda _m: None)
+    marker = first / "track.json"
+    stamp = first / bundled.STAMP_NAME
+    assert stamp.is_file()
+    assert stamp.read_text(encoding="utf-8").strip() == bundled.packed_digest()
+    # A second call must not re-extract, which is what the cache is for.
+    marker.write_text('{"touched": true}', encoding="utf-8")
+    bundled.ensure(log=lambda _m: None)
+    assert "touched" in marker.read_text(encoding="utf-8")
+
+
+def test_a_changed_packed_track_invalidates_the_cache(tmp_path, monkeypatch):
+    """THE DEFECT THIS REPLACES.
+
+    The old check asked whether `track.json` existed. A release correcting the corpus would then
+    extract nothing, because a directory was already there, and every run afterwards would fit
+    directions on the OLD prompts with nothing saying so. Prompts decide every measurement in this
+    project, so that is a silently wrong result rather than a stale cache.
+    """
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "c")
+    target = bundled.ensure(log=lambda _m: None)
+    (target / "track.json").write_text('{"stale": true}', encoding="utf-8")
+    # The install now carries different packed bytes, exactly as a new release would.
+    monkeypatch.setattr(bundled, "packed_digest", lambda: "0" * 64)
+    refreshed = bundled.ensure(log=lambda _m: None)
+    assert "stale" not in (refreshed / "track.json").read_text(encoding="utf-8"), (
+        "the cache survived a change to the packed track it came from")
+
+
+def test_a_cache_with_no_stamp_is_re_extracted_rather_than_trusted(tmp_path, monkeypatch):
+    """Left by a build predating the stamp. Its contents cannot be vouched for."""
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "c")
+    target = bundled.ensure(log=lambda _m: None)
+    (target / bundled.STAMP_NAME).unlink()
+    (target / "track.json").write_text('{"unvouched": true}', encoding="utf-8")
+    refreshed = bundled.ensure(log=lambda _m: None)
+    assert "unvouched" not in (refreshed / "track.json").read_text(encoding="utf-8")
+    assert (refreshed / bundled.STAMP_NAME).is_file()
+
+
+def test_an_interrupted_extraction_does_not_leave_a_cache_that_passes(tmp_path, monkeypatch):
+    """The stamp is written last, so a half-extracted tree fails the check and is redone."""
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "c")
+    target = tmp_path / "c"
+    target.mkdir(parents=True)
+    (target / "track.json").write_text('{"half": true}', encoding="utf-8")   # no stamp
+    assert not bundled._cache_is_current(target)
+
+
+def test_an_unreadable_stamp_is_treated_as_absent(tmp_path, monkeypatch):
+    """A cache that cannot be verified must not be trusted for that reason."""
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "c")
+    target = bundled.ensure(log=lambda _m: None)
+    stamp = target / bundled.STAMP_NAME
+    stamp.unlink()
+    stamp.mkdir()                       # a directory where a file is expected: OSError on read
+    assert not bundled._cache_is_current(target)
+
+
+def test_the_digest_is_of_the_packed_bytes_and_is_stable():
+    a, b = bundled.packed_digest(), bundled.packed_digest()
+    assert a == b
+    assert len(a) == 64
+    import hashlib
+    assert a == hashlib.sha256(bundled.data_path().read_bytes()).hexdigest()

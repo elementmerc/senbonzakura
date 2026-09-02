@@ -98,3 +98,73 @@ def test_the_parser_is_the_same_one_cli_uses():
     from senbonzakura import cli, parser
     assert cli.build_parser is parser.build_parser
     assert cli.loader_parser is parser.loader_parser
+
+
+# ── a partial install gets a sentence, not a traceback ──────────────────────────────
+def _dispatch_with(monkeypatch, exc):
+    """Make importing the delegated module raise `exc`, and return what dispatch does."""
+    from senbonzakura import entry
+    monkeypatch.setattr(entry.importlib, "import_module",
+                        lambda *a, **k: (_ for _ in ()).throw(exc))
+    with pytest.raises(SystemExit) as caught:
+        entry.dispatch("compass")
+    return str(caught.value)
+
+
+def test_a_missing_dependency_names_itself_and_what_to_type(monkeypatch):
+    """The traceback this replaces pointed at margin.py's `import torch`.
+
+    That describes OUR file to someone whose problem is their environment, and it arrived through
+    eleven frames of importlib with the one useful line last.
+    """
+    message = _dispatch_with(monkeypatch,
+                             ModuleNotFoundError("No module named 'torch'", name="torch"))
+    assert "cannot run 'compass'" in message
+    assert "torch" in message
+    assert "pip install" in message
+    assert "doctor" in message, "the one command that works without the missing piece"
+    assert "Traceback" not in message
+
+
+def test_a_missing_piece_of_our_own_package_is_a_different_fault(monkeypatch):
+    """A damaged install and an incomplete one need different advice, so they get it."""
+    message = _dispatch_with(monkeypatch,
+                             ModuleNotFoundError("nope", name="senbonzakura.margin"))
+    assert "damaged rather than incomplete" in message
+    assert "force-reinstall" in message
+
+
+def test_an_unknown_dependency_still_gets_a_usable_line(monkeypatch):
+    # No hint recorded for this one, so it must fall back rather than produce "None".
+    message = _dispatch_with(monkeypatch, ImportError("boom", name="some_new_dep"))
+    assert "some_new_dep" in message
+    assert "pip install senbonzakura" in message
+    assert "None" not in message
+
+
+def test_an_import_error_carrying_no_name_does_not_say_none(monkeypatch):
+    message = _dispatch_with(monkeypatch, ImportError("something went wrong"))
+    assert "a required package" in message
+    assert "None" not in message
+
+
+def test_a_module_without_its_entry_point_is_named_a_build_fault(monkeypatch):
+    """No user action causes this, so it must not be dressed up as a missing dependency."""
+    from senbonzakura import entry
+    monkeypatch.setattr(entry.importlib, "import_module", lambda *a, **k: object())
+    with pytest.raises(SystemExit) as caught:
+        entry.dispatch("compass")
+    assert "packaging fault in this build" in str(caught.value)
+    assert "pip install" not in str(caught.value), "telling them to reinstall would not help"
+
+
+def test_every_delegated_command_survives_a_missing_dependency(monkeypatch):
+    """All of them, not just the one that happened to be tested."""
+    from senbonzakura import entry
+    monkeypatch.setattr(entry.importlib, "import_module",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            ModuleNotFoundError("no", name="torch")))
+    for command in entry.DELEGATED:
+        with pytest.raises(SystemExit) as caught:
+            entry.dispatch(command)
+        assert f"cannot run '{command}'" in str(caught.value)

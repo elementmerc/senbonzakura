@@ -57,11 +57,62 @@ DELEGATED: dict[str, tuple[str, str]] = {
 }
 
 
+#: Which optional install brings each heavy dependency in, so a failure can say what to type.
+#: Only the ones a partial install actually loses; anything absent from here gets the generic line.
+_INSTALL_HINT = {
+    "torch": "pip install 'senbonzakura[cuda]'   (or the CPU build: pip install torch)",
+    "transformers": "pip install senbonzakura",
+    "optuna": "pip install senbonzakura",
+    "datasets": "pip install senbonzakura",
+    "bitsandbytes": "pip install 'senbonzakura[quant]'",
+    "shtab": "pip install 'senbonzakura[completion]'",
+}
+
+
+def _cannot_run(command, module_name, error):
+    """Turn a failed import of a delegated module into a sentence about the install.
+
+    The traceback this replaces named `margin.py` and the line number of its `import torch`, which
+    describes OUR file to someone whose actual problem is that their environment is missing a
+    dependency. It also arrived through eleven frames of importlib, so the one useful line was the
+    last one.
+
+    A missing package of ours is a different fault from a missing dependency and says so: the first
+    means the install is damaged and should be reinstalled, the second means it is incomplete and
+    names what to add.
+    """
+    missing = getattr(error, "name", None) or "a required package"
+    if missing.split(".")[0] == __package__:
+        return SystemExit(
+            f"senbonzakura: cannot run '{command}': part of senbonzakura itself is missing "
+            f"({missing}).\n"
+            f"  The installation is damaged rather than incomplete. Reinstall it:\n"
+            f"    pip install --force-reinstall senbonzakura\n"
+            f"  Then run 'senbonzakura doctor' to confirm.")
+    hint = _INSTALL_HINT.get(missing.split(".")[0], "pip install senbonzakura")
+    return SystemExit(
+        f"senbonzakura: cannot run '{command}': it needs {missing}, which is not installed.\n"
+        f"  Install it with:\n"
+        f"    {hint}\n"
+        f"  'senbonzakura doctor' lists everything this install is missing in one go, and it "
+        f"runs without any of it.")
+
+
 def dispatch(name):
     """Import just the module that serves `name` and return its entry point."""
     module_name, attr = DELEGATED[name]
-    module = importlib.import_module(f".{module_name}", __package__)
-    return getattr(module, attr)
+    try:
+        module = importlib.import_module(f".{module_name}", __package__)
+        return getattr(module, attr)
+    except ImportError as e:
+        raise _cannot_run(name, module_name, e) from e
+    except AttributeError as e:
+        # The module imported and does not carry its entry point, which no user action causes.
+        # Named as a build fault rather than dressed up as a missing dependency.
+        raise SystemExit(
+            f"senbonzakura: cannot run '{name}': the '{module_name}' module is present but has no "
+            f"'{attr}'. That is a packaging fault in this build, not something your environment "
+            f"caused. Please report it with the output of 'senbonzakura doctor'.") from e
 
 
 def main(argv=None):

@@ -38,8 +38,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -93,6 +95,14 @@ def build_parser():
     ap.add_argument("--use-temp-file", action="store_true",
                     help="stream through a temporary file: slower, and the way to convert a model "
                          "larger than memory")
+    ap.add_argument("--keep-tied-head", action="store_true",
+                    help="keep a separate output head even when the config declares tied "
+                         "embeddings and the head is byte-identical to them. The default drops it, "
+                         "because a lone embedding is also the output projection and is quantised "
+                         "accurately as a result: measured at Q3_K_L, dropping the duplicate moves "
+                         "the embedding from Q3_K to Q6_K, which is 8.5x closer to the original, "
+                         "in a smaller file. Use this to reproduce a file made before that "
+                         "behaviour, or to compare the two")
     ap.add_argument("--skip-arch-check", action="store_true",
                     help="skip the pre-flight architecture check. For an architecture the pinned "
                          "converter supports under a name this cannot read from config.json")
@@ -201,6 +211,117 @@ def preflight(model_dir, out, *, force, skip_arch_check, log=print):
     return {"architecture": arch, "shards": len(shards), "bytes": total, "script": script}
 
 
+#: The two names for one tensor when a config declares tied embeddings.
+TIED_HEAD = "lm_head.weight"
+TIED_EMBED = "model.embed_tokens.weight"
+
+
+def tied_head_state(model_dir):
+    """Whether this checkpoint ships an output head its own config says is redundant.
+
+    Returns (verdict, shard, detail). The verdict is one of:
+
+      "absent"      the config does not declare tying, or there is no separate head. Nothing to do,
+                    and this covers most large models: Qwen3-30B-A3B declares tie_word_embeddings
+                    false and its head is real.
+      "redundant"   the config declares tying and the head is byte-identical to the embedding, so
+                    it is a duplicate and dropping it changes nothing about the model.
+      "contradicts" the config declares tying and the head DIFFERS. One of the two is wrong and
+                    this code cannot know which, so the caller refuses rather than picking.
+
+    WHY THIS EXISTS. `llama-quantize` decides the embedding's precision from whether a separate
+    output head is present, because a lone `token_embd` is also the output projection and must
+    stay accurate. Measured on a tied model at Q3_K_L: with the duplicate present the embedding
+    lands at Q3_K and its error against f16 is 0.1509; with it absent the embedding lands at Q6_K
+    and the error is 0.0177, EIGHT AND A HALF TIMES better, in a file that is also smaller. The
+    output projection is Q6_K either way. So this is not a trade: the duplicate costs accuracy and
+    disk at once, and which you get is decided by whether the checkpoint happened to ship a tensor
+    its own config calls redundant.
+    """
+    cfg = read_config(model_dir)
+    if not cfg.get("tie_word_embeddings", False):
+        return "absent", None, "the config does not declare tied embeddings"
+
+    d = Path(model_dir)
+    shards = [p for p in weight_files(d) if p.suffix == ".safetensors"]
+    if not shards:
+        # A .bin checkpoint. Detectable, but rewriting a pickle is a different job and torch
+        # checkpoints are not what this project produces or expects.
+        return "absent", None, "no safetensors shards to inspect"
+
+    from safetensors import safe_open
+    head_shard = embed_shard = None
+    for p in shards:
+        with safe_open(p, framework="np") as h:
+            keys = set(h.keys())
+        if TIED_HEAD in keys:
+            head_shard = p
+        if TIED_EMBED in keys:
+            embed_shard = p
+    if head_shard is None:
+        return "absent", None, "the config declares tying and no separate head is present"
+    if embed_shard is None:
+        return "contradicts", head_shard, (
+            f"{TIED_HEAD} is present and {TIED_EMBED} is not, so there is nothing to tie it to")
+
+    import numpy as np
+    with safe_open(head_shard, framework="np") as h:
+        head = h.get_tensor(TIED_HEAD)
+    with safe_open(embed_shard, framework="np") as h:
+        embed = h.get_tensor(TIED_EMBED)
+    if head.shape != embed.shape:
+        return "contradicts", head_shard, (
+            f"{TIED_HEAD} is {head.shape} and {TIED_EMBED} is {embed.shape}")
+    if not np.array_equal(head, embed):
+        # Byte equality, not a tolerance. The claim being checked is "these are the same tensor",
+        # and two tensors that merely round to each other are not that.
+        diff = float(np.abs(head.astype(np.float64) - embed.astype(np.float64)).max())
+        return "contradicts", head_shard, (
+            f"{TIED_HEAD} and {TIED_EMBED} have the same shape and different values "
+            f"(largest difference {diff:g})")
+    return "redundant", head_shard, f"{TIED_HEAD} is byte-identical to {TIED_EMBED}"
+
+
+def without_tied_head(model_dir, workdir, shard, log=print):
+    """A view of the checkpoint with the redundant head removed, built without copying weights.
+
+    Every file is symlinked into `workdir` and only the one shard holding the duplicate is
+    rewritten, so the cost is that shard rather than the model. On a tied checkpoint the head sits
+    beside the embedding in the first shard, and tied models are small ones: large models declare
+    tying false, so the expensive case does not arise.
+
+    The safetensors index, if there is one, is rewritten too. The converter reads the tensors
+    present in each part and checks them against the index, so an index still promising a tensor
+    that has been removed would fail the converter's own consistency check.
+    """
+    from safetensors.numpy import load_file, save_file
+
+    src, work = Path(model_dir), Path(workdir)
+    work.mkdir(parents=True, exist_ok=True)
+    index_name = "model.safetensors.index.json"
+    for p in src.iterdir():
+        if not p.is_file() or p.name in (shard.name, index_name):
+            continue
+        (work / p.name).symlink_to(p.resolve())
+
+    tensors = load_file(shard)
+    dropped = tensors.pop(TIED_HEAD)
+    save_file(tensors, work / shard.name, metadata={"format": "pt"})
+    log(f"  dropped {TIED_HEAD} {tuple(dropped.shape)}: the config declares tied embeddings and "
+        f"it is byte-identical to {TIED_EMBED}")
+
+    index = src / index_name
+    if index.is_file():
+        doc = json.loads(index.read_text(encoding="utf-8"))
+        wmap = doc.get("weight_map", {})
+        wmap.pop(TIED_HEAD, None)
+        meta = doc.get("metadata")
+        if isinstance(meta, dict) and "total_size" in meta:
+            meta["total_size"] = int(meta["total_size"]) - int(dropped.nbytes)
+        (work / index_name).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return work
+
+
 def default_output(model_dir, outtype):
     d = Path(model_dir).resolve()
     return d.parent / f"{d.name}-{outtype}.gguf"
@@ -219,7 +340,28 @@ def run(argv=None, log=print):
         f"{pre['bytes'] / 1e9:.2f} GB) -> {out.name} [{a.outtype}]")
     log(f"  using the vendored converter at {pre['script']}")
 
-    argv_c = [sys.executable, str(pre["script"]), str(a.model),
+    source = Path(a.model)
+    tmp_view = None
+    verdict, shard, detail = tied_head_state(a.model)
+    if verdict == "contradicts":
+        raise SystemExit(
+            f"this checkpoint's config says tie_word_embeddings is true, and its weights disagree: "
+            f"{detail}.\nOne of the two is wrong and nothing here can tell which, so the conversion "
+            f"stops rather than choosing. Fix the config or the weights, or pass "
+            f"--keep-tied-head to convert it exactly as it is.")
+    if verdict == "redundant" and a.keep_tied_head:
+        log(f"  NOTE: {detail}, and --keep-tied-head was given, so it is kept. The embedding will "
+            f"be quantised as an ordinary embedding rather than as an output projection.")
+    elif verdict == "redundant":
+        tmp_view = Path(tempfile.mkdtemp(prefix="senbonzakura-tied-", dir=out.parent))
+        # The VIEW keeps the source's own directory name. The converter derives `general.name`
+        # from the directory it is pointed at, so converting from `senbonzakura-tied-zkxhdz01/`
+        # stamped that into the model's metadata: a published GGUF called
+        # "Senbonzakura Tied Zkxhdz01". The random part is the parent and the name is the leaf.
+        source = without_tied_head(a.model, tmp_view / Path(a.model).resolve().name, shard,
+                                   log=log)
+
+    argv_c = [sys.executable, str(pre["script"]), str(source),
               "--outfile", str(out), "--outtype", a.outtype]
     if a.use_temp_file:
         argv_c.append("--use-temp-file")
@@ -227,7 +369,14 @@ def run(argv=None, log=print):
     started = time.monotonic()
     # No timeout, for the same reason `quantise` has none: converting a large model is genuinely
     # long, and a ceiling here would kill a job with its work nearly done.
-    r = subprocess.run(argv_c, check=False)
+    try:
+        r = subprocess.run(argv_c, check=False)
+    finally:
+        if tmp_view is not None:
+            # Symlinks and one rewritten shard. Removed on every path, including a converter crash,
+            # because a stray view of a checkpoint is confusing to find later and it sits beside
+            # the output rather than in a temp directory someone would think to clear.
+            shutil.rmtree(tmp_view, ignore_errors=True)
     took = time.monotonic() - started
 
     if r.returncode != 0:

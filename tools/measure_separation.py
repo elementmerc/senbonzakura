@@ -141,6 +141,8 @@ def _arm_result(abl):
         "max_axis_separation": getattr(abl, "max_axis_separation", None),
         "best_rejected_separation": getattr(abl, "best_rejected_separation", None),
         "matching_quality": getattr(abl, "matching_quality", None),
+        # The scale-free one, which is what a corpus is built against (Q-25 D2).
+        "match_closeness": getattr(abl, "match_closeness", None),
         "directions_per_layer_max": max(per_layer) if per_layer else None,
         "directions_per_layer_mean": (sum(per_layer) / len(per_layer)) if per_layer else None,
         "filter_is_unsatisfiable": bool(getattr(abl, "filter_is_unsatisfiable", False)),

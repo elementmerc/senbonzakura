@@ -1693,6 +1693,7 @@ class Abliterator:
         # asked for matched controls and got arbitrary ones must say so rather than publish
         # "matched" numbers taken against rows that match nothing.
         matching_ratios = []
+        closeness_values = []
         # Never propose more clusters than there are prompts to fill them at MIN_CLUSTER_ROWS
         # each. Below two, there is no second refusal mode to look for and the run says so rather
         # than quietly measuring nothing: a contrast set this small cannot support the claim, and
@@ -1831,6 +1832,12 @@ class Abliterator:
                         q = matching_quality(rows, ctl, basis, cand_size)
                         if q is not None:
                             matching_ratios.append(q)
+                        # The scale-free companion (Q-25 D2). Recorded beside the alarm rather
+                        # than replacing it: the alarm is what the artefact has always carried,
+                        # and this is the number corpus work is measured against.
+                        closeness = match_closeness(rows, ctl, basis, cand_size, args.seed + li)
+                        if closeness is not None:
+                            closeness_values.append(closeness)
                     if held_out_usable:
                         score_fn = (_matched_held_out_separation if matched_scoring
                                     else _held_out_separation)
@@ -1950,6 +1957,10 @@ class Abliterator:
         self.matched_source = matched_src or None
         self.matching_quality = (round(sorted(matching_ratios)[len(matching_ratios) // 2], 4)
                                  if matching_ratios else None)
+        # How near the controls are on the corpus's own scale. Unlike the ratio above this can be
+        # read as a quality and used as a target, because padding the corpus cannot improve it.
+        self.match_closeness = (round(sorted(closeness_values)[len(closeness_values) // 2], 4)
+                                if closeness_values else None)
         if self.matching_quality is not None and self.matching_quality > MATCHING_USELESS_RATIO:
             log(f"  MATCHING ACHIEVED NOTHING: the harmless prompts chosen as controls sit "
                 f"{self.matching_quality:.2f} times the average distance from their candidate, "
@@ -3045,6 +3056,10 @@ class Abliterator:
                        # matched_scoring:true run with a quality near 1.0 produced unmatched
                        # numbers under a matched label.
                        "matching_quality": getattr(self, "matching_quality", None),
+                       # About 1.0 is as near as the space allows; above about 2.0 the corpus
+                       # holds little on the candidate's subject. The acceptance target for
+                       # corpus work, where matching_quality is only an alarm.
+                       "match_closeness": getattr(self, "match_closeness", None),
                        "axis_separation_threshold": separation.get(
                            getattr(self, "separation_statistic",
                                    separation.DEFAULT_STATISTIC)).threshold,

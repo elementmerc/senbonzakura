@@ -374,3 +374,35 @@ def test_the_neighbour_scale_is_sampled_but_stable():
     same = cli._typical_neighbour_distance(Rg, basis, seed=1)
     assert small == pytest.approx(same, rel=0.15), (
         f"the sampled scale moved with the seed: {small} against {same}")
+
+
+def test_a_run_records_the_closeness_beside_the_alarm(base_args, tiny_model, tiny_tok, monkeypatch):
+    """Both numbers, because they answer different questions and one is not a replacement.
+
+    `matching_quality` is the alarm the artefact has always carried; `match_closeness` is what
+    corpus work is measured against. A run that recorded only one of them would either lose the
+    alarm or leave the target unmeasurable on real residuals, which is the thing blocking Q-25.
+    """
+    from tests.test_abliterator import _topic_matched
+    base_args.max_directions = 3
+    base_args.matched_scoring = True
+    a = cli.Abliterator(base_args, lambda _m: None, model=tiny_model, tok=tiny_tok)
+    _topic_matched(a, monkeypatch)
+    a.extract_directions("bad", "good", None, "good")
+    assert a.matching_quality is not None
+    assert a.match_closeness is not None
+    assert a.match_closeness > 0.0
+
+
+def test_the_harness_reports_the_closeness_so_a_corpus_can_be_measured_without_new_tooling():
+    """The measurement Q-25 is blocked on runs through the existing Q-14 harness.
+
+    It already takes `--good-ds` and captures residuals once per seed, so pointing it at one corpus
+    and then another answers the question. Requiring a bespoke script for it would be the thing
+    that keeps producing harnesses that measure nothing.
+    """
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[1] / "tools" / "measure_separation.py"
+    text = src.read_text(encoding="utf-8")
+    assert '"match_closeness"' in text
+    assert "--good-ds" in text

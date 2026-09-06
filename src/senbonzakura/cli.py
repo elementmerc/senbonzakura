@@ -1871,8 +1871,12 @@ class Abliterator:
                     f"fitted on, which is a stronger statement than this note used to carry, but "
                     f"a filter that rejects nothing still discriminates nothing. It is evidence "
                     f"the candidates separate held-out harmful from held-out harmless prompts; "
-                    f"it is NOT evidence they carry refusal rather than topic, which needs a "
-                    f"topic-matched harmless set (--harmless-matched).")
+                    f"it is NOT evidence they carry refusal rather than topic. To ask that "
+                    f"question, re-run with --matched-scoring, which judges each candidate "
+                    f"against the harmless prompts nearest it in content rather than against the "
+                    f"set at large. A subject-matched CORPUS alone does not answer it: measured "
+                    f"2026-09-02, scoring a matched corpus against the pool still could not tell "
+                    f"a world containing refusal from one containing none.")
             elif reject_rate == 1.0:
                 log(f"  NOTE: the refusal-separation filter rejected ALL "
                     f"{axes_measured_total} candidate directions, so no candidate could be kept "
@@ -2253,7 +2257,9 @@ class Abliterator:
             "note": ("These are SELECTION-SET figures: the search chose its winner by scoring these "
                      "same rows, so they are the maximum of N draws rather than a measurement. For "
                      "a publishable number, score the measure partition with "
-                     "`--skip-harmful <track.json skip_harmful>`."),
+                     "`senbonzakura score --skip <track.json skip_harmful>`, or "
+                     "`senbonzakura margin --skip-harmful <same>` for the harm-discrimination "
+                     "figure."),
         }
 
     def _save_weights(self):

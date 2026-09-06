@@ -178,6 +178,16 @@ def build_parser():
     return ap
 
 
+#: The only suffix that is an EXTENSION here. Anything else after a dot is part of the name.
+#:
+#: `Path.suffix` answers "what follows the last dot", which is not the same question. It calls
+#: `.7b` the extension of `stock-1.7b`, and a model name carrying a size or a version is the
+#: normal case rather than a corner: `stock-1.7b` became `stock-1-Q3_K_L.7b` and `v0.3.0-model`
+#: became `v0.3-Q3_K_L.0-model`. Both are files llama.cpp tooling will not recognise, produced
+#: silently. Found on real hardware 2026-09-05.
+GGUF_SUFFIX = ".gguf"
+
+
 def default_output(source, quant):
     """`model-f16.gguf` plus Q4_K_M becomes `model-Q4_K_M.gguf`.
 
@@ -185,11 +195,14 @@ def default_output(source, quant):
     the check that catches a Q8_0 sitting under a Q4_K_M name.
     """
     p = Path(source)
-    stem = p.name[: -len(p.suffix)] if p.suffix else p.name
+    has_ext = p.name.lower().endswith(GGUF_SUFFIX)
+    stem = p.name[: -len(GGUF_SUFFIX)] if has_ext else p.name
     claimed = gguf_io.claimed_quant(stem)
     stem = (stem.replace(claimed, quant).replace(claimed.lower(), quant) if claimed
             else f"{stem}-{quant}")
-    return p.with_name(f"{stem}{p.suffix or '.gguf'}")
+    # Always ends in .gguf, including when the source did not. A quantised file with no extension
+    # is a file the rest of the ecosystem declines to open.
+    return p.with_name(f"{stem}{GGUF_SUFFIX}")
 
 
 def preflight(source, out, quant, *, allow_requantize, force):

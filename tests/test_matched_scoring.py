@@ -266,3 +266,111 @@ def test_matching_quality_is_calibrated_against_corpora_whose_answer_is_known():
     assert quarter < perfect, (
         "the documented catch: a partly matched corpus scores lower than a perfect one, so the "
         f"ratio is not a quality score. perfect={perfect} quarter={quarter}")
+
+
+# ── the scale-free replacement (D2, 2026-09-06) ──────────────────────────────────────
+# `matching_quality` is a sound ALARM and an unsound MEASURE: it divides by the mean distance to
+# every harmless row, so a corpus of a few near rows and many distant ones inflates its own
+# denominator and scores better than a perfect corpus. That is tolerable while the number is only
+# read at the alarm end, and not tolerable once it becomes the acceptance target for corpus work,
+# which is what the operator's D1 decision makes it. `match_closeness` divides instead by a
+# property of the harmless corpus alone.
+
+def _pools():
+    Rb, Rg, topic = _world(1.0)
+    d0 = Rb.mean(0) - Rg.mean(0)
+    basis = [d0 / d0.norm()]
+    g = torch.Generator().manual_seed(3)
+    far = torch.randn(256, H, generator=g) * 0.35 + 30.0
+    return Rb, Rg, topic, basis, far
+
+
+def _median(fn, Rb, topic, pool, basis):
+    vals = sorted(fn(Rb[topic == t], pool, basis, PER_GOOD) for t in range(N_TOPIC))
+    return vals[len(vals) // 2]
+
+
+def test_closeness_orders_the_three_corpora_correctly():
+    """THE DEFECT THIS REPLACES, stated as the thing the old number got wrong.
+
+    Perfect must beat partial must beat none. `matching_quality` fails the first comparison and
+    reports the partial corpus as the best of the three.
+    """
+    Rb, Rg, topic, basis, far = _pools()
+    quarter = torch.cat([Rg[:64], far[:192]])
+    perfect = _median(cli.match_closeness, Rb, topic, Rg, basis)
+    partial = _median(cli.match_closeness, Rb, topic, quarter, basis)
+    none_shared = _median(cli.match_closeness, Rb, topic, far, basis)
+    assert perfect < partial < none_shared, (
+        f"perfect={perfect:.3f} partial={partial:.3f} none={none_shared:.3f}")
+
+    old_perfect = _median(cli.matching_quality, Rb, topic, Rg, basis)
+    old_partial = _median(cli.matching_quality, Rb, topic, quarter, basis)
+    assert old_partial < old_perfect, (
+        "the old ratio no longer prefers the partial corpus, so this test is guarding nothing and "
+        "needs rewriting around a case that still separates them")
+
+
+def test_a_perfectly_matched_corpus_reads_about_one():
+    """The unit is the corpus's own nearest-neighbour distance, so 1.0 means the controls are as
+    near the candidate as harmless prompts are to each other: as good as the space allows.
+    """
+    Rb, Rg, topic, basis, _far = _pools()
+    assert _median(cli.match_closeness, Rb, topic, Rg, basis) == pytest.approx(1.0, abs=0.25)
+
+
+def test_a_corpus_with_nothing_on_the_subject_reads_far_above_the_poor_mark():
+    Rb, _Rg, topic, basis, far = _pools()
+    assert _median(cli.match_closeness, Rb, topic, far, basis) > cli.MATCH_CLOSENESS_POOR
+
+
+def test_adding_distant_rows_cannot_improve_the_score():
+    """WHY THIS ONE CAN BE A TARGET AND THE OLD ONE CANNOT.
+
+    Padding a corpus with unrelated prompts made `matching_quality` look better. If that were true
+    of the replacement, the cheapest way to hit any target would be to add junk, and the metric
+    would be actively harmful as an acceptance test.
+    """
+    Rb, Rg, topic, basis, far = _pools()
+    before = _median(cli.match_closeness, Rb, topic, Rg, basis)
+    after = _median(cli.match_closeness, Rb, topic, torch.cat([Rg, far]), basis)
+    assert after >= before - 1e-6, f"padding improved the score: {before:.3f} -> {after:.3f}"
+
+    old_before = _median(cli.matching_quality, Rb, topic, Rg, basis)
+    old_after = _median(cli.matching_quality, Rb, topic, torch.cat([Rg, far]), basis)
+    assert old_after < old_before, (
+        "the old ratio no longer rewards padding, so this contrast needs rewriting rather than "
+        "keeping")
+
+
+def test_closeness_is_invariant_to_the_scale_of_the_space():
+    """Scale-free is the name of the property, so it is worth asserting rather than trusting.
+
+    Multiplying every vector by a constant changes both the distance to the controls and the
+    typical neighbour distance by that constant, so the ratio must not move. The old number is not
+    invariant in any useful sense because its denominator mixes a corpus property with the
+    candidate's position.
+    """
+    Rb, Rg, topic, basis, _far = _pools()
+    plain = _median(cli.match_closeness, Rb, topic, Rg, basis)
+    scaled = _median(cli.match_closeness, Rb * 1000.0, topic,
+                     Rg * 1000.0, list(basis))
+    assert scaled == pytest.approx(plain, rel=1e-4)
+
+
+def test_closeness_reports_nothing_when_there_is_nothing_to_report():
+    Rb, _Rg, topic, basis, _far = _pools()
+    one = torch.zeros(1, H)
+    assert cli.match_closeness(Rb[topic == 0], one, basis, PER_GOOD) is None
+    assert cli.match_closeness(Rb[topic == 0], torch.zeros(0, H), basis, PER_GOOD) is None
+
+
+def test_the_neighbour_scale_is_sampled_but_stable():
+    """Capped at MATCH_SCALE_SAMPLE because the full matrix is quadratic. The cap has to be large
+    enough that the number does not wander between runs of different corpus sizes.
+    """
+    _Rb, Rg, _topic, basis, _far = _pools()
+    small = cli._typical_neighbour_distance(Rg, basis, seed=0)
+    same = cli._typical_neighbour_distance(Rg, basis, seed=1)
+    assert small == pytest.approx(same, rel=0.15), (
+        f"the sampled scale moved with the seed: {small} against {same}")

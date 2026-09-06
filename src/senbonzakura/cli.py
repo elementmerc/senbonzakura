@@ -334,6 +334,83 @@ def matching_quality(cluster_rows, good_rows, basis, k):
     return float(distances[idx].mean()) / everything
 
 
+#: How many harmless rows to sample when measuring the corpus's own internal scale. The statistic
+#: is a mean over nearest-neighbour distances and settles quickly; the cost is quadratic in this
+#: number, so it is capped rather than run over a corpus of thousands.
+MATCH_SCALE_SAMPLE = 256
+
+#: `match_closeness` at or below this means the controls are about as near the candidate as two
+#: harmless prompts on the same subject are to each other, which is as good as the space allows.
+#: Above roughly 2.0 the controls are further from the candidate than harmless rows are from their
+#: own neighbours, which is the corpus saying it has nothing on the subject.
+MATCH_CLOSENESS_GOOD = 1.0
+MATCH_CLOSENESS_POOR = 2.0
+
+
+def _typical_neighbour_distance(good_rows, basis, seed=0):
+    """How close two harmless prompts get in this space, as the corpus's own yardstick.
+
+    The mean distance from a harmless row to its NEAREST other harmless row. That is the scale on
+    which "on the same subject" is expressed here: whatever the embedding's absolute magnitudes
+    are, two prompts about the same thing land about this far apart.
+
+    Sampled rather than computed over everything, because the full matrix is quadratic and the
+    mean of a few hundred nearest-neighbour distances is stable well before it matters.
+    """
+    rows = _orth_rows(good_rows, basis)
+    n = int(rows.shape[0])
+    if n < 2:
+        return None
+    if n > MATCH_SCALE_SAMPLE:
+        g = torch.Generator().manual_seed(seed)
+        rows = rows[torch.randperm(n, generator=g)[:MATCH_SCALE_SAMPLE]]
+    d = torch.cdist(rows, rows)
+    d.fill_diagonal_(float("inf"))          # a row's nearest neighbour is not itself
+    nearest = d.min(dim=1).values
+    value = float(nearest.mean())
+    return value if value > 1e-9 else None
+
+
+def match_closeness(cluster_rows, good_rows, basis, k, seed=0):
+    """How near the matched controls are, on the scale of the corpus's own neighbour distances.
+
+    THE SCALE-FREE REPLACEMENT for `matching_quality`, and the reason it exists is that the older
+    number cannot be read as a quality score even though it looks like one. That one divides the
+    distance to the chosen controls by the mean distance to EVERY harmless row, so a corpus holding
+    a few near rows and many distant ones inflates its own denominator and scores better than a
+    perfectly matched corpus: 0.047 against 0.299 on the calibration set. It is a sound alarm and an
+    unsound measure, which is a bad shape for a number that is about to be used as a target.
+
+    This divides instead by a property of the harmless corpus ALONE: the mean distance from a
+    harmless row to its nearest neighbour. That is the yardstick the corpus itself provides for
+    "two prompts about the same thing", so the ratio asks a question with a fixed meaning:
+
+        how much further from this candidate are its controls
+        than a harmless prompt typically is from its nearest harmless neighbour?
+
+        about 1.0   the controls are as near as anything in this space gets. As good as it allows.
+        about 2.0   the controls are twice the typical neighbour distance away, which is the corpus
+                    saying it holds little on the subject.
+        much above  no on-subject controls exist and the "matched" comparison is not matched.
+
+    Adding distant rows to the corpus cannot improve this, because they change neither the
+    numerator (the k nearest are unchanged) nor the denominator (a far row's nearest neighbour is
+    still whatever was already nearest it). That is what makes it usable as an acceptance target
+    for corpus work, which the old ratio is not.
+
+    Returns None when there is nothing to measure.
+    """
+    idx = _matched_harmless_idx(cluster_rows, good_rows, basis, k)
+    if idx is None:
+        return None
+    scale = _typical_neighbour_distance(good_rows, basis, seed)
+    if scale is None:
+        return None
+    query = _orth_to(cluster_rows.mean(0), basis)
+    chosen = (_orth_rows(good_rows, basis)[idx] - query).norm(dim=1)
+    return float(chosen.mean()) / scale
+
+
 def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None):
     """`_held_out_separation` against matched controls rather than the harmless set at large.
 

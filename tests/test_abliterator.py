@@ -565,6 +565,9 @@ def test_the_bare_flag_form_still_abliterates(monkeypatch):
     the subcommand is additive and abliteration stays the default.
     """
     seen = {}
+    # The dataset pre-flight runs before the model is constructed, and this test is about
+    # parsing rather than corpora. `tests/test_dataset_preflight.py` is that check's gate.
+    monkeypatch.setattr(cli, "_preflight_datasets", lambda _a: None)
     monkeypatch.setattr(cli, "Abliterator", lambda args, log: seen.setdefault("args", args))
     monkeypatch.setattr(cli, "torch_version_ok", lambda *a: True)
     with pytest.raises(AttributeError):        # the stub has no .run(); parsing is what matters
@@ -598,6 +601,9 @@ def test_kageyoshi_is_a_real_subcommand_and_abliterate_names_the_default(
         monkeypatch, argv, expect_preset):
     applied = {}
     monkeypatch.setattr(cli, "torch_version_ok", lambda *a: True)
+    # Same reason as the other dispatch tests: the dataset pre-flight runs before the model is
+    # built, and what is under test here is which subcommand reaches the preset, not corpora.
+    monkeypatch.setattr(cli, "_preflight_datasets", lambda _a: None)
     monkeypatch.setattr(cli, "_apply_kageyoshi",
                         lambda *a, **k: applied.setdefault("yes", True))
 
@@ -1690,6 +1696,10 @@ def test_auto_is_an_alias_for_kageyoshi(monkeypatch):
 
     monkeypatch.setattr(cli, "Abliterator", _Stub)
     monkeypatch.setattr(cli, "resolve_bankai", lambda *a, **k: None, raising=False)
+    # As above: the dataset pre-flight now runs first, and this test is about the alias reaching
+    # the abliterator, not about whether a track exists. It also swallows SystemExit below, so
+    # without this the assertion would pass for the wrong reason.
+    monkeypatch.setattr(cli, "_preflight_datasets", lambda _a: None)
 
     for name in ("kageyoshi", "auto"):
         seen.clear()

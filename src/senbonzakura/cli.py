@@ -3040,6 +3040,63 @@ def main(argv=None, *, emit_banner=True):
     return run_parsed(args, bankai, argv)
 
 
+def _preflight_datasets(args):
+    """Prove every dataset the run needs can be read, BEFORE the model is downloaded.
+
+    The run used to discover a missing track in `extract_directions`, which is after the weights
+    are resident. On a rented pod that is a 61 GB download and a full load thrown away for a
+    mistake that was visible from the command line: `--track` defaults to the relative directory
+    `track`, so a run started anywhere else, or with `HF_HUB_OFFLINE=1` and no flag, dies on
+    `could not fetch the Hub dataset 'track/bad_ds'` having already spent the expensive part.
+
+    Each source is resolved with a read budget of one row rather than merely stat-ed, so this also
+    catches a directory that exists and holds the wrong thing: an unreadable format, or a text
+    column that is not there. Reading one row of a track is nothing beside loading a model.
+
+    Reported ALL AT ONCE. A pre-flight that stops at the first fault turns one wasted start into
+    three, which on rented hardware is the whole point of having one.
+    """
+    from . import dataset as _dataset
+
+    track = getattr(args, "track", "track")
+    good = getattr(args, "good_ds", None) or f"{track}/good_ds"
+    # `clean_ds` defaults to whatever `good_ds` resolves to, so it is not listed separately unless
+    # it was given: checking the same source twice would report one fault as two.
+    required = [(f"{track}/bad_ds", "the harmful prompts directions are extracted from"),
+                (good, "the harmless prompts directions are contrasted against"),
+                (f"{track}/bad_eval_ds", "the held-out harmful prompts refusal is scored on")]
+    optional = [(getattr(args, "hedge_ds", ""), "the hedged-compliance contrast (--hedge-ds)"),
+                (getattr(args, "clean_ds", ""), "the clean contrast (--clean-ds)"),
+                (getattr(args, "harmless_matched", ""),
+                 "the matched control pool (--harmless-matched)")]
+    def fault(spec, what):
+        """The reason this source cannot be read, or None. A function rather than a try inside the
+        loop so every source is attempted and the loop stays a plain comprehension.
+        """
+        try:
+            _dataset.resolve(spec, text_column=getattr(args, "text_column", None) or None,
+                             token=getattr(args, "hf_token", None) or None, limit=1,
+                             what="prompt set")
+        except _dataset.DatasetError as e:
+            return f"  {spec}\n      ({what})\n      {e}"
+        return None
+
+    checked = required + [(s, w) for s, w in optional if s]
+    faults = [f for f in (fault(s, w) for s, w in checked) if f]
+    if not faults:
+        return
+    hint = ""
+    if any(f.lstrip().startswith(track + "/") for f in faults):
+        # The single most common cause, and the fix is one flag. The bundled track ships inside
+        # the wheel, so it needs no network and no files on disk.
+        hint = ("\n\nIf you have not built a track, the one bundled in this install needs neither "
+                "a network nor a download:\n  --track default")
+    raise SystemExit(
+        f"{len(faults)} of the datasets this run needs cannot be read, and this is checked before "
+        f"the model is downloaded so that finding out costs nothing:\n"
+        + "\n".join(faults) + hint)
+
+
 def run_parsed(args, bankai, argv):
     """Everything after parsing. Split out so the entry point can parse without importing torch.
 
@@ -3075,6 +3132,11 @@ def run_parsed(args, bankai, argv):
             f"senbonzakura needs torch >= {MIN_TORCH[0]}.{MIN_TORCH[1]} (the transformers MoE path "
             f"imports torch.distributed.tensor.DTensor); found {torch.__version__}. "
             f"Install a compatible build, e.g. torch==2.5.1.")
+
+    # After the torch check and before the model. The torch check is instant and local, and an
+    # unusable interpreter makes every other fault moot, so it goes first; this one may touch the
+    # network for a Hub track and is still nothing beside pulling a model.
+    _preflight_datasets(args)
 
     t0 = time.time()
     def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)

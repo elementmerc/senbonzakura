@@ -29,6 +29,7 @@ checkpoint whose head differs from its embedding while the config claims tying i
 different stories, and this code cannot know which is true, so it refuses instead of choosing.
 """
 import json
+import pathlib
 
 import numpy as np
 import pytest
@@ -91,7 +92,8 @@ def test_a_head_that_differs_is_a_contradiction_not_a_duplicate(tmp_path):
     d = _checkpoint(tmp_path / "m", tie=True, head="different")
     verdict, _shard, detail = convert.tied_head_state(d)
     assert verdict == "contradicts"
-    assert "0.5" in detail, "the message must quantify the disagreement, not just assert it"
+    assert "bytes differ" in detail
+    assert "offset" in detail, "the message must locate the disagreement, not just assert it"
 
 
 def test_equality_is_exact_and_not_a_tolerance(tmp_path):
@@ -189,3 +191,154 @@ def test_the_view_keeps_the_source_directory_name(tmp_path):
     view = convert.without_tied_head(d, tmp_path / "scratch" / d.name, d / "model.safetensors",
                                      log=lambda _m: None)
     assert view.name == "my-model"
+
+
+# ── dtypes, which is where the first version broke ───────────────────────────────────
+# The first version read tensors through `safetensors.safe_open(framework="np")` and crashed with
+# "data type 'bfloat16' not understood" on the very checkpoints it existed for: numpy has no
+# bfloat16, and bf16 is what most modern checkpoints ship. The fixtures here were all float32, so
+# nothing caught it until a peer converted a stock Qwen3-1.7B on real hardware. Comparing and
+# copying raw bytes rather than decoded tensors is what makes the dtype irrelevant.
+
+def _raw_checkpoint(path, dtype, *, tie=True, head="same", nbytes=2):
+    """A checkpoint written by hand, so a dtype numpy cannot represent can still be built."""
+    import struct
+    path.mkdir(parents=True, exist_ok=True)
+    n = 64 * 32
+    embed = bytes((i * 7 + 3) % 256 for i in range(n * nbytes))
+    other = embed if head == "same" else bytes((b + 1) % 256 for b in embed)
+    entries, blob, cur = {}, b"", 0
+    for name, payload in ((convert.TIED_EMBED, embed),
+                          *(((convert.TIED_HEAD, other),) if head != "none" else ())):
+        entries[name] = {"dtype": dtype, "shape": [64, 32],
+                         "data_offsets": [cur, cur + len(payload)]}
+        blob += payload
+        cur += len(payload)
+    hdr = json.dumps(entries, separators=(",", ":")).encode()
+    hdr += b" " * ((-len(hdr)) % 8)
+    (path / "model.safetensors").write_bytes(struct.pack("<Q", len(hdr)) + hdr + blob)
+    (path / "config.json").write_text(json.dumps(
+        {"architectures": ["Qwen3ForCausalLM"], "tie_word_embeddings": tie}), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(("dtype", "nbytes"), [("BF16", 2), ("F16", 2), ("F32", 4), ("F8_E4M3", 1)])
+def test_a_duplicate_is_recognised_whatever_the_dtype(tmp_path, dtype, nbytes):
+    """THE REGRESSION THIS SECTION IS NAMED FOR.
+
+    BF16 is the one that shipped broken. F8_E4M3 is here because no numeric library in this
+    process can represent it either, and the check must not start caring.
+    """
+    d = _raw_checkpoint(tmp_path / dtype, dtype, head="same", nbytes=nbytes)
+    verdict, _shard, _detail = convert.tied_head_state(d)
+    assert verdict == "redundant"
+
+
+@pytest.mark.parametrize(("dtype", "nbytes"), [("BF16", 2), ("F8_E4M3", 1)])
+def test_a_contradiction_is_caught_whatever_the_dtype(tmp_path, dtype, nbytes):
+    d = _raw_checkpoint(tmp_path / dtype, dtype, head="different", nbytes=nbytes)
+    verdict, _shard, detail = convert.tied_head_state(d)
+    assert verdict == "contradicts"
+    assert dtype in detail
+
+
+def test_dtypes_that_disagree_are_a_contradiction(tmp_path):
+    """Same bytes, different declared types, is not one tensor."""
+    d = _raw_checkpoint(tmp_path / "m", "BF16", head="same")
+    hdr = convert.safetensors_header(d / "model.safetensors")
+    assert hdr[convert.TIED_HEAD]["dtype"] == "BF16"
+    raw = (d / "model.safetensors").read_bytes()
+    n = int.from_bytes(raw[:8], "little")
+    doc = json.loads(raw[8:8 + n])
+    doc[convert.TIED_HEAD]["dtype"] = "F16"
+    blob = json.dumps(doc, separators=(",", ":")).encode()
+    blob += b" " * ((-len(blob)) % 8)
+    (d / "model.safetensors").write_bytes(
+        len(blob).to_bytes(8, "little") + blob + raw[8 + n:])
+    verdict, _shard, detail = convert.tied_head_state(d)
+    assert verdict == "contradicts"
+    assert "BF16" in detail and "F16" in detail
+
+
+def test_the_copy_preserves_every_surviving_tensor_byte_for_byte(tmp_path):
+    """The rewrite decodes nothing, so what it keeps is identical by construction, not by luck."""
+    d = _raw_checkpoint(tmp_path / "m", "BF16", head="same")
+    src = d / "model.safetensors"
+    before = convert.safetensors_header(src)
+    dropped = convert.copy_shard_without(src, tmp_path / "out.safetensors", convert.TIED_HEAD)
+    after = convert.safetensors_header(tmp_path / "out.safetensors")
+    assert convert.TIED_HEAD not in after
+    assert set(after) == set(before) - {convert.TIED_HEAD}
+    assert after[convert.TIED_EMBED]["dtype"] == "BF16"
+    same, where = convert.raw_bytes_equal(src, before[convert.TIED_EMBED],
+                                          tmp_path / "out.safetensors", after[convert.TIED_EMBED])
+    assert same, f"the surviving embedding changed at byte {where}"
+    assert dropped["shape"] == [64, 32]
+
+
+def test_the_rewritten_header_is_eight_byte_aligned(tmp_path):
+    """A misaligned header is valid JSON that some readers accept and others do not, which is the
+    worst of both. The reference writer pads with spaces; so does this.
+    """
+    d = _raw_checkpoint(tmp_path / "m", "BF16", head="same")
+    convert.copy_shard_without(d / "model.safetensors", tmp_path / "out.safetensors",
+                               convert.TIED_HEAD)
+    n = int.from_bytes((tmp_path / "out.safetensors").read_bytes()[:8], "little")
+    assert n % 8 == 0
+
+
+def test_no_part_file_is_left_behind(tmp_path):
+    """The shard is written to .part and renamed, so an interrupted copy cannot be mistaken for a
+    finished one by anything that comes later.
+    """
+    d = _raw_checkpoint(tmp_path / "m", "BF16", head="same")
+    convert.copy_shard_without(d / "model.safetensors", tmp_path / "out.safetensors",
+                               convert.TIED_HEAD)
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_the_header_reader_refuses_a_file_that_is_not_safetensors(tmp_path):
+    """Arbitrary bytes read as a length field give a huge number, so the size guard catches this
+    before the JSON parse does. Either refusal is correct; what matters is that it is a
+    ConvertError with the filename in it and not a MemoryError from a 7-exabyte read.
+    """
+    junk = tmp_path / "j.safetensors"
+    junk.write_bytes(b"not a safetensors file at all")
+    with pytest.raises(convert.ConvertError, match=r"j\.safetensors"):
+        convert.safetensors_header(junk)
+
+
+def test_the_header_reader_refuses_a_header_that_is_not_json(tmp_path):
+    junk = tmp_path / "j.safetensors"
+    body = b"this is not json"
+    junk.write_bytes(len(body).to_bytes(8, "little") + body)
+    with pytest.raises(convert.ConvertError, match="not readable as safetensors"):
+        convert.safetensors_header(junk)
+
+
+def test_the_header_reader_refuses_an_implausible_header_length(tmp_path):
+    """A corrupt length field must not become a multi-gigabyte read."""
+    junk = tmp_path / "j.safetensors"
+    junk.write_bytes((1 << 40).to_bytes(8, "little") + b"{}")
+    with pytest.raises(convert.ConvertError, match="implausible header"):
+        convert.safetensors_header(junk)
+
+
+def test_convert_needs_neither_torch_nor_numpy_for_any_of_this(tmp_path):
+    """The clean room requires `convert` to refuse cleanly on an install with neither.
+
+    The first version imported numpy to compare the tensors, which would have made this module's
+    behaviour depend on an optional dependency for a question answerable from the file header.
+    """
+    import ast
+    src = pathlib.Path(convert.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            names = [n.name.split(".")[0] for n in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [(node.module or "").split(".")[0]]
+        else:
+            continue
+        assert "torch" not in names and "numpy" not in names, (
+            f"convert.py imports {names} at line {node.lineno}; this module has to work on an "
+            f"install that has neither")

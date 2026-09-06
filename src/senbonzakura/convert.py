@@ -215,6 +215,71 @@ def preflight(model_dir, out, *, force, skip_arch_check, log=print):
 TIED_HEAD = "lm_head.weight"
 TIED_EMBED = "model.embed_tokens.weight"
 
+#: How much of a tensor to compare at a time. An embedding table is hundreds of megabytes on a
+#: real model and there is no reason to hold two of them to answer a yes/no question.
+COMPARE_CHUNK = 8 << 20
+
+
+def safetensors_header(path):
+    """The tensor index of a safetensors file: name -> {dtype, shape, data_offsets}.
+
+    Read from the format directly rather than through `safetensors.safe_open`, and that is the
+    point rather than an optimisation. `safe_open(..., framework="np")` cannot materialise a bf16
+    tensor at all ("data type 'bfloat16' not understood"), because numpy has no bfloat16, and bf16
+    is what most modern checkpoints ship. The header is plain JSON and carries everything needed
+    to compare two tensors without decoding either.
+
+    It also keeps this module free of torch and numpy, which the clean room checks: `convert` has
+    to give a clean refusal on an install that has neither, not an ImportError.
+    """
+    p = Path(path)
+    try:
+        with p.open("rb") as f:
+            raw = f.read(8)
+            if len(raw) < 8:
+                raise ConvertError(f"{p.name} is too short to be safetensors.")
+            n = int.from_bytes(raw, "little")
+            if n <= 0 or n > 100 << 20:
+                raise ConvertError(f"{p.name} declares an implausible header of {n} bytes.")
+            doc = json.loads(f.read(n).decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        raise ConvertError(f"{p.name} is not readable as safetensors ({e}).") from e
+    # `__metadata__` is the format's own free-text slot, not a tensor.
+    return {k: v for k, v in doc.items() if k != "__metadata__"}
+
+
+def raw_bytes_equal(p_a, entry_a, p_b, entry_b, *, chunk=COMPARE_CHUNK):
+    """Whether two tensors hold identical bytes. Returns (equal, first differing offset or None).
+
+    Byte equality is what the caller actually means, stated exactly: a tensor that merely rounds to
+    another is not the same tensor. Comparing the stored bytes says that in any dtype, including
+    the ones no numeric library here can represent, and it is correct for NaN payloads where value
+    comparison is not.
+    """
+    (a0, a1), (b0, b1) = entry_a["data_offsets"], entry_b["data_offsets"]
+    if (a1 - a0) != (b1 - b0):
+        return False, 0
+    with Path(p_a).open("rb") as fa, Path(p_b).open("rb") as fb:
+        # The data section starts after the 8-byte length and the header itself, and both files
+        # are already open, so the bases are read here rather than through a second open apiece.
+        base_a = 8 + int.from_bytes(fa.read(8), "little")
+        base_b = 8 + int.from_bytes(fb.read(8), "little")
+        fa.seek(base_a + a0)
+        fb.seek(base_b + b0)
+        remaining, seen = a1 - a0, 0
+        while remaining > 0:
+            n = min(chunk, remaining)
+            ba, bb = fa.read(n), fb.read(n)
+            if len(ba) != n or len(bb) != n:
+                raise ConvertError("a safetensors shard ended before its header said it would.")
+            if ba != bb:
+                for i, (x, y) in enumerate(zip(ba, bb, strict=True)):
+                    if x != y:
+                        return False, seen + i
+            remaining -= n
+            seen += n
+    return True, None
+
 
 def tied_head_state(model_dir):
     """Whether this checkpoint ships an output head its own config says is redundant.
@@ -249,14 +314,16 @@ def tied_head_state(model_dir):
         # checkpoints are not what this project produces or expects.
         return "absent", None, "no safetensors shards to inspect"
 
-    from safetensors import safe_open
     head_shard = embed_shard = None
+    headers = {}
     for p in shards:
-        with safe_open(p, framework="np") as h:
-            keys = set(h.keys())
-        if TIED_HEAD in keys:
+        try:
+            headers[p] = safetensors_header(p)
+        except ConvertError:
+            return "absent", None, f"{p.name} is not readable as safetensors"
+        if TIED_HEAD in headers[p]:
             head_shard = p
-        if TIED_EMBED in keys:
+        if TIED_EMBED in headers[p]:
             embed_shard = p
     if head_shard is None:
         return "absent", None, "the config declares tying and no separate head is present"
@@ -264,22 +331,80 @@ def tied_head_state(model_dir):
         return "contradicts", head_shard, (
             f"{TIED_HEAD} is present and {TIED_EMBED} is not, so there is nothing to tie it to")
 
-    import numpy as np
-    with safe_open(head_shard, framework="np") as h:
-        head = h.get_tensor(TIED_HEAD)
-    with safe_open(embed_shard, framework="np") as h:
-        embed = h.get_tensor(TIED_EMBED)
-    if head.shape != embed.shape:
+    a = headers[head_shard][TIED_HEAD]
+    b = headers[embed_shard][TIED_EMBED]
+    if a["shape"] != b["shape"]:
         return "contradicts", head_shard, (
-            f"{TIED_HEAD} is {head.shape} and {TIED_EMBED} is {embed.shape}")
-    if not np.array_equal(head, embed):
-        # Byte equality, not a tolerance. The claim being checked is "these are the same tensor",
-        # and two tensors that merely round to each other are not that.
-        diff = float(np.abs(head.astype(np.float64) - embed.astype(np.float64)).max())
+            f"{TIED_HEAD} is {tuple(a['shape'])} and {TIED_EMBED} is {tuple(b['shape'])}")
+    if a["dtype"] != b["dtype"]:
         return "contradicts", head_shard, (
-            f"{TIED_HEAD} and {TIED_EMBED} have the same shape and different values "
-            f"(largest difference {diff:g})")
+            f"{TIED_HEAD} is {a['dtype']} and {TIED_EMBED} is {b['dtype']}")
+    same, where = raw_bytes_equal(head_shard, a, embed_shard, b)
+    if not same:
+        return "contradicts", head_shard, (
+            f"{TIED_HEAD} and {TIED_EMBED} are both {a['dtype']}{tuple(a['shape'])} and their "
+            f"bytes differ, first at offset {where}")
     return "redundant", head_shard, f"{TIED_HEAD} is byte-identical to {TIED_EMBED}"
+
+
+def copy_shard_without(src_shard, dst_shard, drop, *, chunk=COMPARE_CHUNK):
+    """Write `src_shard` to `dst_shard` with one tensor removed, copying bytes and decoding none.
+
+    Returns the dropped tensor's header entry.
+
+    Byte-level for the same reason the comparison is: `safetensors.numpy.load_file` cannot
+    represent bf16, which is what most modern checkpoints ship, and decoding a tensor to write it
+    back unchanged would be work done only to lose precision on the way. It also means a shard
+    larger than memory streams rather than being materialised, and every surviving tensor is
+    byte-identical to its source by construction.
+    """
+    header = safetensors_header(src_shard)
+    if drop not in header:
+        raise ConvertError(f"{Path(src_shard).name} does not hold {drop}.")
+    with Path(src_shard).open("rb") as f:
+        src_base = 8 + int.from_bytes(f.read(8), "little")
+    dropped = header[drop]
+
+    # Offsets are recomputed from scratch, because removing a tensor moves everything after it.
+    # Order is preserved: a reader may not care, but a diff of two headers is far easier to read
+    # when the only change is the absence.
+    out, cursor, plan = {}, 0, []
+    for name, entry in header.items():
+        if name == drop:
+            continue
+        a0, a1 = entry["data_offsets"]
+        size = a1 - a0
+        out[name] = {"dtype": entry["dtype"], "shape": entry["shape"],
+                     "data_offsets": [cursor, cursor + size]}
+        plan.append((src_base + a0, size))
+        cursor += size
+
+    blob = json.dumps(out, separators=(",", ":")).encode("utf-8")
+    # The format wants the data section 8-byte aligned, and the reference writer pads the header
+    # with spaces to achieve it. A header that is merely valid JSON but misaligned is readable by
+    # some tools and not others, which is the worst of both.
+    pad = (-len(blob)) % 8
+    blob += b" " * pad
+
+    tmp = Path(dst_shard).with_suffix(".part")
+    try:
+        with Path(src_shard).open("rb") as fin, tmp.open("wb") as fout:
+            fout.write(len(blob).to_bytes(8, "little"))
+            fout.write(blob)
+            for offset, size in plan:
+                fin.seek(offset)
+                remaining = size
+                while remaining > 0:
+                    piece = fin.read(min(chunk, remaining))
+                    if not piece:
+                        raise ConvertError(
+                            f"{Path(src_shard).name} ended before its header said it would.")
+                    fout.write(piece)
+                    remaining -= len(piece)
+        tmp.replace(dst_shard)      # atomic: a half-written shard must never look like a whole one
+    finally:
+        tmp.unlink(missing_ok=True)
+    return dropped
 
 
 def without_tied_head(model_dir, workdir, shard, log=print):
@@ -294,8 +419,6 @@ def without_tied_head(model_dir, workdir, shard, log=print):
     present in each part and checks them against the index, so an index still promising a tensor
     that has been removed would fail the converter's own consistency check.
     """
-    from safetensors.numpy import load_file, save_file
-
     src, work = Path(model_dir), Path(workdir)
     work.mkdir(parents=True, exist_ok=True)
     index_name = "model.safetensors.index.json"
@@ -304,11 +427,9 @@ def without_tied_head(model_dir, workdir, shard, log=print):
             continue
         (work / p.name).symlink_to(p.resolve())
 
-    tensors = load_file(shard)
-    dropped = tensors.pop(TIED_HEAD)
-    save_file(tensors, work / shard.name, metadata={"format": "pt"})
-    log(f"  dropped {TIED_HEAD} {tuple(dropped.shape)}: the config declares tied embeddings and "
-        f"it is byte-identical to {TIED_EMBED}")
+    dropped = copy_shard_without(shard, work / shard.name, TIED_HEAD)
+    log(f"  dropped {TIED_HEAD} {tuple(dropped['shape'])}: the config declares tied embeddings "
+        f"and it is byte-identical to {TIED_EMBED}")
 
     index = src / index_name
     if index.is_file():
@@ -317,7 +438,8 @@ def without_tied_head(model_dir, workdir, shard, log=print):
         wmap.pop(TIED_HEAD, None)
         meta = doc.get("metadata")
         if isinstance(meta, dict) and "total_size" in meta:
-            meta["total_size"] = int(meta["total_size"]) - int(dropped.nbytes)
+            a0, a1 = dropped["data_offsets"]
+            meta["total_size"] = int(meta["total_size"]) - (a1 - a0)
         (work / index_name).write_text(json.dumps(doc, indent=2), encoding="utf-8")
     return work
 

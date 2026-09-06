@@ -108,6 +108,12 @@ def _message_flags(path):
     return found
 
 
+def _offenders_in_text(text, accepted):
+    """The rule applied to one string, so the detector can be tested without a file on disk."""
+    return [f for f in FLAG.findall(text)
+            if f not in accepted and f not in FOREIGN and not NAMES_A_COMMAND.search(text)]
+
+
 def _offenders(path, accepted):
     """Flags this command would reject, in messages that do not name the command that accepts them."""
     bad = []
@@ -157,20 +163,39 @@ def test_the_delegated_commands_do_not_recommend_flags_they_reject(module):
 def test_the_check_would_catch_the_defect_it_was_written_for():
     """A gate only ever seen passing has not been shown to work.
 
-    Reconstructs the exact string that shipped, and requires the detector to flag it.
+    Reconstructs the shape of the string that shipped and requires the detector to flag it.
+
+    THE ORIGINAL FLAG IS NO LONGER ABSENT. The shipped defect named `--harmless-matched`, and on
+    2026-09-06 the abliterator gained that flag for real, so the historical string stopped being a
+    dead end and this test stopped proving anything. The instruction left in the old assertion was
+    to rewrite it around a flag that is still missing rather than to delete it, because what is
+    under test is the DETECTOR, not that one string. `--skip-harmful` is the stand-in: it lives on
+    `margin` and the abliterator has never accepted it.
     """
     from senbonzakura.parser import build_parser
     accepted = _parser_flags(build_parser)
+    stand_in = "--skip-harmful"
     shipped = ("it is NOT evidence they carry refusal rather than topic, which needs a "
-               "topic-matched harmless set (--harmless-matched).")
+               f"topic-matched harmless set ({stand_in}).")
     named = FLAG.findall(shipped)
-    assert named == ["--harmless-matched"]
+    assert named == [stand_in]
     assert named[0] not in accepted, (
-        "if the abliterator now accepts --harmless-matched, this test needs rewriting around a "
-        "flag that is still absent, not deleting")
+        f"if the abliterator now accepts {stand_in}, this test needs rewriting around a flag that "
+        f"is still absent, not deleting")
     assert named[0] not in FOREIGN, "the defect must not be exempted into invisibility"
     assert not NAMES_A_COMMAND.search(shipped), (
         "the shipped string named no command, which is exactly why it was a dead end")
+    assert _offenders_in_text(shipped, accepted), "the detector no longer flags the shipped shape"
+
+
+def test_the_original_defect_is_fixed_rather_than_merely_untestable():
+    """The other half: `--harmless-matched` is now a real abliterator flag, not a dead end.
+
+    Without this, the test above could be satisfied by a stand-in while the original defect
+    quietly came back.
+    """
+    from senbonzakura.parser import build_parser
+    assert "--harmless-matched" in _parser_flags(build_parser)
 
 
 def test_the_exemptions_all_carry_a_reason():

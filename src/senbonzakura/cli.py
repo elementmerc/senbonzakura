@@ -254,6 +254,16 @@ def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None)
     return _axis_separation(bad_rows[score_idx], good_score, v / norm, stat)
 
 
+#: Why a matched corpus without matched scoring is refused. Checked twice, in `run_parsed` before
+#: the model download and in `extract_directions` for callers that construct the class directly,
+#: so the wording lives here rather than in two places that would drift apart.
+def _unused_matched_corpus(path):
+    return (f"--harmless-matched {path} was supplied without --matched-scoring, so the corpus "
+            f"would be loaded and never used and every separation number would still be measured "
+            f"against the harmless set at large. Add --matched-scoring to judge candidates "
+            f"against it, or drop --harmless-matched.")
+
+
 def _orth_rows(mat, basis):
     """`_orth_to` for every row of a matrix at once."""
     for u in basis:
@@ -1515,6 +1525,38 @@ class Abliterator:
         Rb = self.collect_resid(bad)                         # [NL+1, Nb, H] cpu float32
         Rg = self.collect_resid(good)                        # [NL+1, Ng, H]
         mb = Rb.mean(1); mg = Rg.mean(1)                     # [NL+1, H]
+        # The pool matched scoring draws its controls from. It is `Rg` unless a set written on the
+        # harmful side's own subjects was supplied, and the distinction matters because matching
+        # can only ever find what the pool contains: asking for the nearest harmless rows to a
+        # cluster about explosives returns rows either way, and they are controls only if
+        # something on the subject is in there to find.
+        #
+        # `mg` and `good_dir` deliberately stay on `Rg` whatever this is. They exist to keep the
+        # ablation from tearing out good behaviour in general, which is a different job from
+        # holding the subject still while refusal varies, and pointing them at a small on-subject
+        # corpus would narrow what the run protects.
+        Rc = Rg
+        matched_src = getattr(args, "harmless_matched", "") or ""
+        # Resolved here rather than at its point of use so the corpus below can only be loaded on
+        # the path that reads it. `run_parsed` already refuses this combination before the model
+        # is downloaded; this guard is for a caller constructing the class directly, and shares
+        # one wording with it so the two cannot drift.
+        matched_scoring = bool(getattr(args, "matched_scoring", False))
+        if matched_src and not matched_scoring:
+            raise SystemExit(_unused_matched_corpus(matched_src))
+        if matched_src:
+            matched_rows = self.load(matched_src, args.dir_prompts)
+            if not matched_rows:
+                raise ValueError(
+                    f"--harmless-matched {matched_src} holds no prompts. It is the pool matched "
+                    f"scoring draws its controls from, so an empty one would silently fall back "
+                    f"to the ordinary harmless set and report matched figures taken against it.")
+            Rc = self.collect_resid(matched_rows)            # [NL+1, Nc, H]
+            log(f"matched control pool: {len(matched_rows)} prompts from {matched_src}")
+            if len(matched_rows) < 2 * MIN_HELD_OUT_ROWS:
+                log(f"  NOTE: {len(matched_rows)} matched prompts cannot be split into two halves "
+                    f"of {MIN_HELD_OUT_ROWS}, so candidates fall back to in-sample scoring and "
+                    f"the separation filter is not evidence about them.")
         # Refinement 3 (Heretic `orthogonalize_direction`): keep only the component ORTHOGONAL to
         # the good direction, so ablation does not tear out good behaviour itself (a major cause of
         # our early high harmless KL). clamp_min guards a degenerate (near-zero) mean from producing
@@ -1565,10 +1607,10 @@ class Abliterator:
         # through argument namespaces that never had the flag.
         sep_stat = separation.get(getattr(args, "separation_statistic",
                                           separation.DEFAULT_STATISTIC))
-        # Whether a candidate is judged against matched controls or against the harmless set at
-        # large (Q-23). Resolved here for the same reason: one comparison per run, named in the
+        # `matched_scoring` (whether a candidate is judged against matched controls or against the
+        # harmless set at large, Q-23) is resolved above, before the control pool is loaded, so the
+        # corpus can only be read on the path that uses it. One comparison per run, named in the
         # artefact, rather than a property a reader has to infer from the command line.
-        matched_scoring = bool(getattr(args, "matched_scoring", False))
         # How well the matching actually worked, gathered across every candidate at every layer.
         # Whether on-subject harmless prompts exist is a property of the corpus, and a run that
         # asked for matched controls and got arbitrary ones must say so rather than publish
@@ -1645,12 +1687,18 @@ class Abliterator:
                 # candidate at that layer, so two candidates are judged against the same rows and
                 # their scores are comparable. Splitting per candidate would make each score a
                 # measurement on a different exam.
-                gi_fit, gi_score = _halves(int(Rg[li].shape[0]), args.seed)
-                good_fit, good_score = Rg[li][gi_fit], Rg[li][gi_score]
+                # Split the pool the scoring actually uses. Under matched scoring with a supplied
+                # matched set that is `Rc`, so the halves the controls are drawn from and the
+                # halves the null floor is measured through are the same rows the comparison runs
+                # on. Splitting `Rg` here while drawing controls from `Rc` would have measured the
+                # floor on one corpus and the candidates on another.
+                ctl = Rc[li] if matched_scoring else Rg[li]
+                gi_fit, gi_score = _halves(int(ctl.shape[0]), args.seed)
+                good_fit, good_score = ctl[gi_fit], ctl[gi_score]
                 held_out_usable = (len(gi_fit) >= MIN_HELD_OUT_ROWS
                                    and len(gi_score) >= MIN_HELD_OUT_ROWS)
                 if not held_out_usable and li == self.lo:
-                    log(f"  NOTE: {int(Rg[li].shape[0])} harmless prompts cannot be split into "
+                    log(f"  NOTE: {int(ctl.shape[0])} harmless prompts cannot be split into "
                         f"two halves of {MIN_HELD_OUT_ROWS}, so candidate directions are scored "
                         f"IN SAMPLE and the refusal-separation filter is not evidence about "
                         f"them. Raise --dir-prompts to at least {2 * MIN_HELD_OUT_ROWS}.")
@@ -1699,11 +1747,11 @@ class Abliterator:
                     # keep an axis for carrying refusal and cut an axis carrying topic.
                     anchor = mg[li]
                     if matched_scoring:
-                        midx = _matched_harmless_idx(rows, Rg[li], basis, cand_size)
+                        midx = _matched_harmless_idx(rows, ctl, basis, cand_size)
                         if midx is None or len(midx) < MIN_HELD_OUT_ROWS:
                             continue
-                        anchor = Rg[li][midx].mean(0)
-                        q = matching_quality(rows, Rg[li], basis, cand_size)
+                        anchor = ctl[midx].mean(0)
+                        q = matching_quality(rows, ctl, basis, cand_size)
                         if q is not None:
                             matching_ratios.append(q)
                     if held_out_usable:
@@ -1720,7 +1768,7 @@ class Abliterator:
                         v_probe = _orth_to(rows.mean(0) - anchor, basis)
                         if v_probe.norm() < 1e-6:
                             continue
-                        sep = _axis_separation(rows, Rg[li], v_probe / v_probe.norm(), sep_stat)
+                        sep = _axis_separation(rows, ctl, v_probe / v_probe.norm(), sep_stat)
                     v = _orth_to(rows.mean(0) - anchor, basis)
                     n = v.norm()
                     if n < 1e-6:
@@ -1819,6 +1867,10 @@ class Abliterator:
         # it stands out from harmless prompts on the same subject. Only the second is evidence
         # about refusal, and a record that does not say which is not a record.
         self.matched_scoring = matched_scoring
+        # Which corpus the controls came from. "matched against what" is not answerable from the
+        # ratio alone, and a run that used a dedicated on-subject set and one that used the
+        # nearest rows of the ordinary harmless set are different measurements.
+        self.matched_source = matched_src or None
         self.matching_quality = (round(sorted(matching_ratios)[len(matching_ratios) // 2], 4)
                                  if matching_ratios else None)
         if self.matching_quality is not None and self.matching_quality > MATCHING_USELESS_RATIO:
@@ -2910,6 +2962,8 @@ class Abliterator:
                                                   separation.get(
                                                       separation.DEFAULT_STATISTIC).null),
                        "matched_scoring": getattr(self, "matched_scoring", False),
+                       # null when the controls were drawn from the ordinary harmless set.
+                       "matched_source": getattr(self, "matched_source", None),
                        # Whether the matching found anything. Near 1.0 means it did not, and a
                        # matched_scoring:true run with a quality near 1.0 produced unmatched
                        # numbers under a matched label.
@@ -3000,6 +3054,18 @@ def run_parsed(args, bankai, argv):
             "senbonzakura abliterates by rewriting weights, which needs full precision, so "
             "--load-in-4bit is not supported here. Use it with the scorer to measure a model on "
             "low VRAM: python -m senbonzakura.score --load-in-4bit --model <dir> --eval <ds> --out r.json")
+
+    # A flag combination needs no model to check, so it is checked here rather than where it is
+    # used. `extract_directions` runs after the weights are resident and after two residual passes,
+    # and discovering an unusable command line there costs a download and a load on a rented card
+    # for a mistake that was visible before either.
+    if getattr(args, "harmless_matched", "") and not getattr(args, "matched_scoring", False):
+        # Refused rather than ignored, and rather than silently switching matched scoring on. A
+        # supplied corpus that goes unused is the failure where a reader believes the run answered
+        # the matched question because they passed the matched set; enabling it for them would be
+        # the mirror image, changing what every separation number in the artefact means on the
+        # strength of an inferred intention.
+        raise SystemExit(_unused_matched_corpus(args.harmless_matched))
 
     # Fail loud on an incompatible torch BEFORE the model download (a fused-MoE class imports
     # torch.distributed.tensor.DTensor, torch >= 2.5); otherwise the run dies only after pulling

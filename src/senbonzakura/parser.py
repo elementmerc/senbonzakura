@@ -223,6 +223,15 @@ def build_parser():
                          "as the only thing that varies. Off by default: it changes what every "
                          "separation number means, and Q-14 measures it before it becomes the "
                          "default.")
+    ap.add_argument("--harmless-matched", dest="harmless_matched", default="",
+                    help="a second harmless set, written on the SAME subjects as the harmful one, "
+                         "used as the pool that --matched-scoring draws its controls from. Without "
+                         "it the controls are the nearest rows of the ordinary harmless set, which "
+                         "is only as good as whatever that set happens to contain on the subject. "
+                         "Requires --matched-scoring, and the run refuses rather than accepting a "
+                         "corpus it would not use. Whether the matching then worked is reported as "
+                         "matching_quality in abliteration.json, and a value near 1.0 means it did "
+                         "not.")
     ap.add_argument("--sparsity", type=float, default=0.0,
                     help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "

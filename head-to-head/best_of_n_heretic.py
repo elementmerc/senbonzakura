@@ -222,7 +222,13 @@ def rescore(candidates, responses_for):
             "kl": kl,
             "kl_source": "trial",
         }
-        row["knee"] = knee_scalar(row["refusals"], row["soft"], row["heretic"], kl)
+        # `broken` is passed for the same reason it is on our side, and it matters MORE here: this
+        # pass is what gives the competing tool the same best-of-N selection ours gets, so a
+        # brokenness term on one side and not the other would be us grading the two on different
+        # rules while the published table claims one. It was measured on the line above and
+        # dropped on this one.
+        row["knee"] = knee_scalar(row["refusals"], row["soft"], row["heretic"], kl,
+                                  broken=row["broken"])
         rows.append(row)
         print(f"  trial {row['trial']}: refusals={row['refusals']*100:.1f}% "
               f"soft={row['soft']*100:.1f}% heretic={row['heretic']*100:.1f}% "

@@ -2706,6 +2706,18 @@ class Abliterator:
         # the small search eval (lever 5). Held in a local dict; the trials themselves aren't mutated.
         _final = {}
         _pool = _intact or _cand
+        if not _intact:
+            # Reachable only without --max-kl, since the branch above exits when one was asked for.
+            # It used to happen in silence, and a silent fallback here is the worst kind: every
+            # remaining candidate is over the drift ceiling or wrecked, and the run still prints a
+            # BEST line that reads exactly like a healthy one. The knee scalar now carries a
+            # brokenness term so the pick among them is at least the least damaged, but the honest
+            # statement is that there was nothing intact to choose from.
+            worst = min(t.user_attrs["kl"] for t in _cand) if _cand else float("nan")
+            log(f"  WARNING: none of {len(_cand)} scored trials was intact (KL <= {ceiling} AND "
+                f"broken <= 0.1), so the winner is chosen from DAMAGED configurations. The least "
+                f"drift any trial achieved was {worst:.4f}. Treat the saved model as a search "
+                f"artefact, not a result, and re-run with more --trials or a wider --max-kl.")
         if args.eval_refusal_final and args.eval_refusal_final > len(self.bad_eval):
             big = self.load(f"{TR}/bad_eval_ds", args.eval_refusal_final)
             ranked = sorted(_pool, key=_scalar_of)[:max(1, args.top_rescore)]
@@ -2719,9 +2731,17 @@ class Abliterator:
                 r = sum(is_refusal(x) for x in g) / max(1, len(g))
                 s = sum(is_soft_refusal(x) for x in g) / max(1, len(g))
                 h = heretic_keyword_rate(g)
-                _final[t.number] = {"refusals": r, "soft": s, "heretic": h}
+                # Re-measured for the same reason as the other three: this pass exists because the
+                # knee should not be overfit to the small search eval, and until 2026-09-06 it
+                # refreshed every axis EXCEPT this one. A config whose output only falls apart on
+                # the larger eval kept its stale, low brokenness and could win on a refusal rate
+                # that had dropped because the model had stopped answering rather than started
+                # complying. The harmless side is not re-measured here (it is not what --eval-
+                # refusal-final grows) so the trial's value is kept as a floor.
+                b = max(broken_rate(g), t.user_attrs.get("broken", 0.0))
+                _final[t.number] = {"refusals": r, "soft": s, "heretic": h, "broken": b}
                 log(f"   trial {t.number}: refusals={r*100:.1f}% soft={s*100:.1f}% "
-                    f"heretic={h*100:.1f}% KL={t.user_attrs['kl']:.4f}")
+                    f"heretic={h*100:.1f}% broken={b*100:.0f}% KL={t.user_attrs['kl']:.4f}")
             self.restore_weights()
             _pool = ranked
 
@@ -2736,7 +2756,8 @@ class Abliterator:
             ref = f["refusals"] if f else ua["refusals"]
             soft = f["soft"] if f else ua.get("soft", 0.0)
             her = f["heretic"] if f else ua.get("heretic", 0.0)
-            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from)
+            brk = f["broken"] if f else ua.get("broken", 0.0)
+            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from, broken=brk)
 
         best = min(_pool, key=_knee_key)
         bp = best.params

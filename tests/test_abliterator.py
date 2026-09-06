@@ -168,14 +168,14 @@ def test_objective_pareto_returns_triple(abl, track):
 def test_knee_scalar_weights_keyword_axis():
     # Equal non-compliance and KL; only the keyword rate differs. The lower-keyword candidate must
     # score better, which the old lexicographic tuple would not have guaranteed.
-    worse = cli.knee_scalar(0.1, 0.0, 0.5, 0.05)
-    better = cli.knee_scalar(0.1, 0.0, 0.1, 0.05)
+    worse = cli.knee_scalar(0.1, 0.0, 0.5, 0.05, broken=0.0)
+    better = cli.knee_scalar(0.1, 0.0, 0.1, 0.05, broken=0.0)
     assert better < worse
 
 
 def test_knee_scalar_kl_only_above_target():
-    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET) == pytest.approx(0.0)
-    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET + 0.1) > 0.0
+    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET, broken=0.0) == pytest.approx(0.0)
+    assert cli.knee_scalar(0.0, 0.0, 0.0, metrics.KL_TARGET + 0.1, broken=0.0) > 0.0
 
 
 def test_the_knee_scalar_is_importable_without_the_abliterator():

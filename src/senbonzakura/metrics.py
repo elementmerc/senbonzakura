@@ -196,10 +196,14 @@ KL_CEIL = 0.25
 KNEE_W_NONCOMPLIANCE = 1.0   # hard refusal + hedged compliance
 KNEE_W_KEYWORD = 1.0         # Heretic keyword rate (its own axis, now steered at selection time)
 KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
+# Matches the `2.0 * broken` the search objective already carries, so the rule that RANKS trials
+# and the rule that PICKS among them agree about how bad a wrecked model is. They disagreed until
+# 2026-09-06: the search penalised brokenness heavily and the final pick could not see it at all.
+KNEE_W_BROKEN = 2.0
 
 
 def knee_scalar(ref: float, soft: float, heretic: float, kl: float,
-                kl_target: float = KL_TARGET) -> float:
+                kl_target: float = KL_TARGET, *, broken: float) -> float:
     # `kl_target` is where the coherence surcharge starts, and it moves with `--max-kl`. Left at
     # the default, the search lands wherever the frontier's knee is, which on Qwen3-1.7B is a drift
     # of about 0.15 to 0.21: comfortably under the ceiling and mildly surcharged. That is a CHOICE,
@@ -210,9 +214,17 @@ def knee_scalar(ref: float, soft: float, heretic: float, kl: float,
     # The weighted knee score (P2): lower is better. The keyword/hedging axis carries real weight so
     # the final pick reflects the axis the search already optimises, instead of the old lexicographic
     # tuple where it only broke exact ties. KL surcharges only above the comfortably-intact target.
+    #
+    # `broken` is REQUIRED and keyword-only rather than defaulted to 0.0, and that is the whole
+    # point of the argument. A default would let a caller that forgot it score a wrecked model as
+    # a perfect one, silently, which is the exact defect this term was added to close; a required
+    # argument makes every call site say what it measured. Both callers already had the number and
+    # neither passed it: `cli._knee_key` had it in `user_attrs`, and the head-to-head best-of-N
+    # computed `broken_rate(responses)` on the line above the one that dropped it.
     return (KNEE_W_NONCOMPLIANCE * (ref + soft)
             + KNEE_W_KEYWORD * heretic
-            + KNEE_W_KL * max(0.0, kl - kl_target))
+            + KNEE_W_KL * max(0.0, kl - kl_target)
+            + KNEE_W_BROKEN * broken)
 
 
 # --- Harm recognition (the "compass" axis) --------------------------------------

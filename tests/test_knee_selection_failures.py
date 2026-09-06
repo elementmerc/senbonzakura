@@ -20,10 +20,16 @@ from senbonzakura import cli
 class _Trial:
     """The parts of an Optuna trial that _select_knee reads."""
 
+    _next = 0
+
     def __init__(self, user_attrs=None, params=None, state="TrialState.COMPLETE"):
         self.user_attrs = user_attrs or {}
         self.params = params if params is not None else _params()
         self.state = state
+        # `_select_knee` keys its re-scored values by trial number, so a fake without one fails
+        # in the selection rather than in the code under test.
+        self.number = _Trial._next
+        _Trial._next += 1
 
 
 def _params(**over):
@@ -128,3 +134,39 @@ def test_an_incoherent_trial_under_the_ceiling_does_not_count_as_intact(tmp_path
     study = _Study([_Trial(_attrs(kl=0.01, broken=0.9))])
     with pytest.raises(SystemExit, match="every trial under the limit was incoherent"):
         _selector(tmp_path, max_kl=0.05)._select_knee(study, None, None)
+
+
+# ── choosing among damaged configurations, when there is nothing intact ───────────
+# Reachable only without --max-kl, because the branch above exits when one was asked for. It
+# happened in SILENCE until 2026-09-06: `_pool = _intact or _cand` fell back to the unfiltered
+# candidates and the run printed a BEST line that reads exactly like a healthy one.
+
+def _damaged_selector(tmp_path, lines):
+    obj = _selector(tmp_path)
+    obj.args.eval_refusal_final = 0
+    obj.args.top_rescore = 1
+    obj.bad_eval = []
+    obj.log = lines.append
+    return obj
+
+
+def test_a_run_with_nothing_intact_says_so_instead_of_printing_a_normal_best_line(tmp_path):
+    lines = []
+    study = _Study([_Trial(_attrs(kl=0.9, broken=0.9)), _Trial(_attrs(kl=0.8, broken=0.8))])
+    _damaged_selector(tmp_path, lines)._select_knee(study, None, None)
+    warned = [ln for ln in lines if "DAMAGED" in ln]
+    assert warned, f"no warning that the pick came from damaged configs; got {lines}"
+    assert "0.8000" in warned[0], "the warning must say the least drift actually achieved"
+    assert "search artefact" in warned[0]
+
+
+def test_among_damaged_configs_the_least_broken_one_is_chosen(tmp_path):
+    # The fallback cannot be made safe, but it can be made sane: with the brokenness term in the
+    # scalar, the pick among wrecked candidates is at least the least wrecked. Before it, the
+    # candidate that had stopped answering altogether won on its 0% refusal rate.
+    lines = []
+    ruined = _Trial(_attrs(refusals=0.0, kl=0.9, broken=1.0), params=_params(num_directions=1))
+    salvageable = _Trial(_attrs(refusals=0.2, kl=0.9, broken=0.2), params=_params(num_directions=3))
+    study = _Study([ruined, salvageable])
+    _, k, _mode, _di = _damaged_selector(tmp_path, lines)._select_knee(study, None, None)
+    assert k == 3, "the ruined candidate won on a refusal rate it earned by producing nothing"

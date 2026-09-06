@@ -539,8 +539,8 @@ def test_the_knee_surcharge_starts_where_the_caller_says():
 
     # Same trial, two ceilings. Under a tight ceiling its drift is surcharged; under a loose one
     # it is free, so the same configuration must not score the same both ways.
-    tight = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.01)
-    loose = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.50)
+    tight = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.01, broken=0.0)
+    loose = knee_scalar(0.0, 0.0, 0.0, kl=0.20, kl_target=0.50, broken=0.0)
     assert tight > loose, "the ceiling did not change what the drift costs"
     assert loose == 0.0, "drift below the target should carry no surcharge at all"
 
@@ -549,4 +549,5 @@ def test_the_default_ceiling_is_unchanged_for_callers_who_set_nothing():
     """A new knob must not silently move every existing run's answer."""
     from senbonzakura.metrics import KL_TARGET, knee_scalar
 
-    assert knee_scalar(0.1, 0.0, 0.0, kl=0.3) == knee_scalar(0.1, 0.0, 0.0, kl=0.3, kl_target=KL_TARGET)
+    assert (knee_scalar(0.1, 0.0, 0.0, kl=0.3, broken=0.0)
+            == knee_scalar(0.1, 0.0, 0.0, kl=0.3, kl_target=KL_TARGET, broken=0.0))

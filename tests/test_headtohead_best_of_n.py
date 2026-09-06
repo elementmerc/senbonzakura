@@ -164,7 +164,8 @@ def test_kl_comes_from_the_trial_and_not_from_the_rescore():
 def test_the_knee_is_the_shared_one_not_a_local_copy():
     rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.3)], lambda t: REFUSING)
     r = rows[0]
-    assert r["knee"] == knee_scalar(r["refusals"], r["soft"], r["heretic"], r["kl"])
+    assert r["knee"] == knee_scalar(r["refusals"], r["soft"], r["heretic"], r["kl"],
+                                    broken=r["broken"])
 
 
 def test_a_trial_with_no_recorded_kl_is_refused_rather_than_scored_as_zero():

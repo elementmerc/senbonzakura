@@ -97,7 +97,8 @@ def test_the_check_would_have_caught_the_defect_it_was_written_for():
 
 def test_a_defaulted_getattr_is_not_counted():
     """`getattr(a, "x", default)` is how the shared helpers cope with namespaces that legitimately
-    lack a flag, and it cannot raise. Counting it would make the check noisy enough to ignore."""
+    lack a flag, and it cannot raise. Counting it would make the check noisy enough to ignore.
+    """
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:

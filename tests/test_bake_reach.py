@@ -180,10 +180,16 @@ def test_one_dead_layer_is_not_hidden_by_a_healthy_average(abl, monkeypatch):
 
     got = validate.bake_reach(abl, lambda _m: None)
     assert 1 in got["layers_below_floor"], got["per_layer"]
-    assert got["architectures_failing"], "a layer below the floor did not register at all"
     assert "not everywhere" in got["reading"].lower()
+    assert str(1) in got["reading"], "the reading has to name the layer, not just count it"
     # And it must NOT read as the whole-architecture gemma failure, which is a different thing.
     assert "does NOT reach" not in got["reading"]
+    # CHANGED 2026-09-07, and the change is the point. A below-floor layer used to be rolled up
+    # into `architectures_failing`, which turned one shallow layer into a verdict on its whole
+    # layer type. It is a fact about that layer, `layers_below_floor` names it, and the reading
+    # says it. Attributing it to an architecture is what the depth-overlap work removed.
+    assert got["architectures_failing"] == [], (
+        "one layer below the floor must not be reported as its architecture failing")
 
 
 def test_a_whole_type_failing_still_reads_as_the_gemma_shape(abl, monkeypatch):

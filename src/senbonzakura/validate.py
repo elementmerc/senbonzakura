@@ -374,6 +374,139 @@ def projection_magnitude(a, log, K):
 #: gemma failure showed a whole architecture at essentially zero while a working one halved.
 MIN_REACH = 0.10
 
+#: How many layers of each kind must sit inside the depth range the kinds SHARE before their means
+#: may be compared at all.
+#:
+#: Reported by hephaestus-c9 on 2026-09-07 from the LFM2.5-8B-A1B reach run, and it is a defect in
+#: this reading rather than in the model. Reduction climbs with depth in both LFM2 models measured,
+#: and past a threshold it stops caring about layer kind entirely. LFM2 puts full attention at
+#: layers 2, 6, 10, 14, 18 and 20, so the conv blocks fill the shallow positions that score badly
+#: for every kind AND the deep ones that score well; the conv mean carries a shallow tail the
+#: attention mean does not have. At matched depth conv was never worse:
+#:
+#:     8B    layer 10 attn 0.248  vs  layer 11 conv 0.347
+#:     8B    layer 14 attn 0.780  vs  layer 15 conv 0.781
+#:     8B    layer 18 attn 0.799  vs  layer 17 conv 0.839
+#:     1.2B  layer  8 attn 0.560  vs  layer  9 conv 0.822
+#:
+#: A verdict of `architectures_failing: ['conv']` off those pooled means attributes a depth effect
+#: to an architecture, and it would fire on any hybrid whose non-attention blocks sit shallow,
+#: including Qwen3.5 where 30 of 40 layers are mixers.
+MIN_DEPTH_OVERLAP = 2
+
+#: How far apart two layers may be and still count as the same depth for a matched comparison.
+MATCHED_DEPTH_WINDOW = 2
+
+
+def _spearman(xs, ys):
+    """Rank correlation, written out because it is eight lines and a dependency is not.
+
+    None when there is nothing to correlate. Ties get their average rank, which matters here
+    because equal reductions are common near the top of the range.
+    """
+    n = len(xs)
+    if n < 3:
+        return None
+
+    def ranks(vs):
+        order = sorted(range(n), key=lambda i: vs[i])
+        out = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and vs[order[j + 1]] == vs[order[i]]:
+                j += 1
+            shared = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                out[order[k]] = shared
+            i = j + 1
+        return out
+
+    rx, ry = ranks(xs), ranks(ys)
+    mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry, strict=True))
+    dx = sum((a - mx) ** 2 for a in rx) ** 0.5
+    dy = sum((b - my) ** 2 for b in ry) ** 0.5
+    return None if dx == 0 or dy == 0 else round(num / (dx * dy), 4)
+
+
+def _depth_overlap(rows):
+    """How many layers of each kind sit inside the depth range every kind shares.
+
+    The test for whether a cross-kind mean is a statement about kinds. Two kinds whose layers
+    occupy different depths are not being compared to each other; they are being compared to the
+    depth they happen to sit at.
+    """
+    kinds = {}
+    for r in rows:
+        kinds.setdefault(r["kind"], []).append(r["layer"])
+    if len(kinds) < 2:
+        return None
+    lo = max(min(v) for v in kinds.values())
+    hi = min(max(v) for v in kinds.values())
+    return {k: sum(1 for x in v if lo <= x <= hi) for k, v in sorted(kinds.items())}
+
+
+def _shared_depth_range(rows):
+    """The depth window every kind actually occupies, or None when there is only one kind."""
+    kinds = {}
+    for r in rows:
+        kinds.setdefault(r["kind"], []).append(r["layer"])
+    if len(kinds) < 2:
+        return None
+    return max(min(v) for v in kinds.values()), min(max(v) for v in kinds.values())
+
+
+def _by_kind_in_range(rows, span):
+    """Each kind's mean reduction, restricted to the depth window the kinds share.
+
+    THE FIX, and it is a fairer comparison rather than a refusal to compare.
+
+    The unrestricted mean is not wrong arithmetic; it answers a different question. On
+    LFM2.5-8B-A1B attention occupies layers 10, 14 and 18 while conv also fills 9 and 19, so the
+    conv mean carries a shallow layer that no attention layer is there to balance, and reduction
+    rises with depth. Restricting both kinds to the range they share removes that, and on that
+    model it moves conv from 0.565 to 0.625 against attention's 0.609: the deficit the pooled
+    means reported is a depth effect and disappears when depth is held still.
+    """
+    if span is None:
+        return None
+    lo, hi = span
+    kinds = {}
+    for r in rows:
+        if lo <= r["layer"] <= hi:
+            kinds.setdefault(r["kind"], []).append(r["reduction"])
+    return {k: {"layers": len(v), "mean_reduction": round(sum(v) / len(v), 4),
+                "min_reduction": round(min(v), 4)}
+            for k, v in sorted(kinds.items()) if v}
+
+
+def _matched_depth_pairs(rows, window=MATCHED_DEPTH_WINDOW):
+    """Each layer of the rarer kind against its nearest layer of the other kind.
+
+    The comparison the pooled means cannot make. Four pairs is not a finding, and four pairs shown
+    beside two means is enough for a reader to see that the means are answering a different
+    question.
+    """
+    kinds = {}
+    for r in rows:
+        kinds.setdefault(r["kind"], []).append(r)
+    if len(kinds) != 2:
+        return []
+    a_name, b_name = sorted(kinds, key=lambda k: len(kinds[k]))
+    out = []
+    for ra in kinds[a_name]:
+        near = [rb for rb in kinds[b_name] if abs(rb["layer"] - ra["layer"]) <= window]
+        if not near:
+            continue
+        rb = min(near, key=lambda r: abs(r["layer"] - ra["layer"]))
+        out.append({
+            a_name: {"layer": ra["layer"], "reduction": ra["reduction"]},
+            b_name: {"layer": rb["layer"], "reduction": rb["reduction"]},
+            "stronger": a_name if ra["reduction"] > rb["reduction"] else b_name,
+        })
+    return out
+
 
 def bake_reach(a, log, K=1, strength=1.0):
     """Does the weight edit actually reach the residual stream, AT EACH LAYER, by layer type?
@@ -456,31 +589,84 @@ def bake_reach(a, log, K=1, strength=1.0):
     # moved by 0.076: below the floor, and invisible in its own average. A summary that hides a
     # per-item failure is the defect class this whole command exists to catch, so individual
     # layers are counted as well as averaged.
-    failed = [k for k, st in summary.items()
-              if st["mean_reduction"] < MIN_REACH or st["below_floor"]]
+    # Depth, before kind. Reduction climbs with depth, so a kind that sits shallow scores badly
+    # for a reason that has nothing to do with being that kind.
+    overlap = _depth_overlap(rows)
+    trend = _spearman([r["layer"] for r in rows], [r["reduction"] for r in rows])
+    pairs = _matched_depth_pairs(rows)
+    span = _shared_depth_range(rows)
+    in_range = _by_kind_in_range(rows, span)
+    comparable = overlap is None or all(c >= MIN_DEPTH_OVERLAP for c in overlap.values())
+    if trend is not None:
+        log(f"  reduction against depth: rank correlation {trend:+.2f}")
+    if in_range and comparable:
+        log(f"  holding depth still (layers {span[0]} to {span[1]}): " + ", ".join(
+            f"{k} {st['mean_reduction']:.3f} over {st['layers']}" for k, st in in_range.items()))
+    if overlap is not None and not comparable:
+        log(f"  the kinds do not share enough depth to be compared: {overlap} layer(s) each "
+            f"inside the shared range, and {MIN_DEPTH_OVERLAP} are needed")
+    for p in pairs:
+        names = [k for k in p if k != "stronger"]
+        log("  matched depth: " + "  vs  ".join(
+            f"layer {p[k]['layer']} {k} {p[k]['reduction']:.3f}" for k in names))
+
     stragglers = [r for r in rows if r["reduction"] < MIN_REACH]
+    # A kind is named as failing only on the POOLED MEAN, and only when the pooled mean is a
+    # statement about kinds at all. A per-layer failure below the floor is a fact about that
+    # layer; `layers_below_floor` already names it, and rolling it up into an architecture verdict
+    # is what turned one shallow conv block into "conv does not work".
+    #
+    # And it is judged on the DEPTH-HELD-STILL means where those exist, because that is the only
+    # version of the mean that is a statement about kinds. On LFM2.5-8B-A1B the unrestricted conv
+    # mean is 0.565 and the restricted one is 0.625, against attention's 0.609.
+    judged = in_range if (in_range and comparable) else summary
+    failed = ([k for k, st in judged.items() if st["mean_reduction"] < MIN_REACH]
+              if comparable or len(summary) < 2 else [])
     if failed:
-        dead = [k for k in failed if summary[k]["mean_reduction"] < MIN_REACH]
-        if dead:
-            reading = (f"the edit does NOT reach the residual stream on {', '.join(dead)} layers "
-                       f"(mean reduction below {MIN_REACH}). An edit that does not land is a "
-                       f"partial abliteration that looks like a whole one, which is the gemma "
-                       f"failure. Do not publish a number from this architecture until it is "
-                       f"understood.")
-        else:
-            where = ", ".join(f"layer {r['layer']} ({r['kind']}, {r['reduction']:.3f})"
-                              for r in stragglers[:5])
-            reading = (f"the edit lands on average and NOT everywhere: "
-                       f"{len(stragglers)} layer(s) moved less than {MIN_REACH} along the "
-                       f"direction, at {where}. The averages look healthy, so this is only "
-                       f"visible per layer. Worth understanding before a published run leans on "
-                       f"those layers, and not on its own a reason to withhold a result.")
+        reading = (f"the edit does NOT reach the residual stream on {', '.join(failed)} layers "
+                   f"(mean reduction below {MIN_REACH}). An edit that does not land is a "
+                   f"partial abliteration that looks like a whole one, which is the gemma "
+                   f"failure. Do not publish a number from this architecture until it is "
+                   f"understood.")
+    elif stragglers:
+        # Its own branch, and it fires whether or not the kinds were comparable. A layer that did
+        # not move is a fact about that layer, and the reading that named an architecture used to
+        # sit in front of it: on LFM2.5-8B-A1B layer 9 moved by -0.025, meaning the edit pushed
+        # that layer FURTHER along the refusal direction, and that must be shouted regardless of
+        # what the cross-kind means were allowed to say.
+        where = ", ".join(f"layer {r['layer']} ({r['kind']}, {r['reduction']:.3f})"
+                          for r in stragglers[:5])
+        backwards = [r for r in stragglers if r["reduction"] < 0]
+        reading = (f"the edit lands on average and NOT everywhere: "
+                   f"{len(stragglers)} layer(s) moved less than {MIN_REACH} along the "
+                   f"direction, at {where}. The averages look healthy, so this is only "
+                   f"visible per layer. Worth understanding before a published run leans on "
+                   f"those layers, and not on its own a reason to withhold a result.")
+        if backwards:
+            reading = (f"{len(backwards)} layer(s) moved BACKWARDS: "
+                       + ", ".join(f"layer {r['layer']} ({r['kind']}, {r['reduction']:+.3f})"
+                                   for r in backwards[:5])
+                       + ". The edit pushed those layers further ALONG the refusal direction, "
+                         "which is worse than not landing. " + reading)
+    elif len(summary) > 1 and not comparable:
+        reading = (f"the edit reaches every layer type, and the types CANNOT be compared to each "
+                   f"other here: {overlap} layer(s) of each sit inside the depth range they "
+                   f"share, below the {MIN_DEPTH_OVERLAP} needed. Reduction rises with depth "
+                   + (f"(rank correlation {trend:+.2f}), " if trend is not None else "")
+                   + "so a mean over a type that occupies shallow positions is a statement about "
+                     "depth wearing a type's name. The matched-depth pairs above are the "
+                     "comparison this data supports.")
+        reading += _thin_margin_note(rows)
     elif len(summary) > 1:
-        kinds = sorted(summary, key=lambda k: summary[k]["mean_reduction"])
-        lo, hi = summary[kinds[0]]["mean_reduction"], summary[kinds[-1]]["mean_reduction"]
+        # Read off the depth-held-still means. The unrestricted ones are still in the artefact,
+        # and they are not the sentence anybody pastes into a table.
+        basis = in_range or summary
+        held = " (holding depth still, layers {}-{})".format(*span) if in_range else ""
+        kinds = sorted(basis, key=lambda k: basis[k]["mean_reduction"])
+        lo, hi = basis[kinds[0]]["mean_reduction"], basis[kinds[-1]]["mean_reduction"]
         ratio = (lo / hi) if hi > 0 else 0.0
-        reading = (f"the edit reaches every layer type. {kinds[0]} layers reduce by {lo:.3f} and "
-                   f"{kinds[-1]} by {hi:.3f}, a ratio of {ratio:.2f}"
+        reading = (f"the edit reaches every layer type{held}. {kinds[0]} layers reduce by "
+                   f"{lo:.3f} and {kinds[-1]} by {hi:.3f}, a ratio of {ratio:.2f}"
                    + ("; comparable, so the bake treats both positions alike."
                       if ratio >= 0.5 else
                       "; the weaker type lands less than half as hard, which is worth "
@@ -494,6 +680,13 @@ def bake_reach(a, log, K=1, strength=1.0):
         reading += _thin_margin_note(rows)
     log(f"  reading: {reading}")
     return {"per_layer": rows, "by_kind": summary, "min_reach": MIN_REACH,
+            # The evidence for whether by_kind means anything, recorded beside it. A reader who
+            # only ever sees the means cannot tell a type effect from a depth effect, and this
+            # reading spent a day telling somebody conv does not work when the data said shallow
+            # does not work.
+            "depth_trend": trend, "depth_overlap": overlap, "shared_depth_range": span,
+            "by_kind_shared_depth": in_range,
+            "kinds_comparable": comparable, "matched_depth_pairs": pairs,
             "layers_below_floor": [r["layer"] for r in stragglers],
             "architectures_failing": failed, "reading": reading}
 

@@ -278,3 +278,117 @@ def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
             finished = eos is not None and bool((new_tokens == eos).any())
             truncated.append(not finished)
     return gens, truncated
+
+
+#: How the question is put to the model. Deliberately plain and deliberately fixed: a prompt that
+#: varies between the two arms would make the comparison a measurement of the prompt.
+PROMPT = ("{}\n\nWork through it, then give the final answer as a number on the last line.")
+
+
+def build_parser():
+    import argparse
+
+    from .cli import loader_parser
+
+    ap = argparse.ArgumentParser(
+        prog="senbonzakura capability",
+        description="Measure what an edit cost, on a task the model either gets right or does "
+                    "not. Refusal rates and KL cannot see capability loss; this can.",
+        parents=[loader_parser()])
+    ap.add_argument("--eval", required=True,
+                    help="a graded benchmark with a question column and an answer column, such "
+                         "as openai/gsm8k::test. A plain prompt list will not do: marking needs "
+                         "the reference answer")
+    ap.add_argument("--question-column", dest="question_column", default=None,
+                    help="name the question column when it cannot be detected")
+    ap.add_argument("--answer-column", dest="answer_column", default=None,
+                    help="name the answer column when it cannot be detected")
+    ap.add_argument("--out", required=True, help="where the verdicts and summary are written")
+    ap.add_argument("--label", default="", help="a name for this arm, recorded in the output")
+    ap.add_argument("--n", type=int, default=200,
+                    help="how many items (default 200). A FIXED subset, taken from the head, so "
+                         "two arms are compared on the same questions")
+    ap.add_argument("--skip", type=int, default=0, help="drop this many items from the head first")
+    ap.add_argument("--max-new", dest="max_new", type=int, default=320,
+                    help="token budget per answer (default 320). A worked solution is long, and "
+                         "a budget that truncates most of them measures the budget rather than "
+                         "the model. Truncated items are reported as indeterminate, never wrong")
+    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--compare-to", dest="compare_to", default="",
+                    help="a previous run's output, typically the stock model. Adds the PAIRED "
+                         "change with its interval, which is much tighter than comparing two "
+                         "separate runs by eye and is the number that says what the edit cost")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--bootstrap", type=int, default=2000,
+                    help="resamples for the interval on the change (0 disables it)")
+    ap.add_argument("--save-generations", dest="save_generations", default="",
+                    help="write every question, answer and verdict, so a disputed grade can be "
+                         "checked without the GPU back")
+    return ap
+
+
+def main(argv=None):
+    import json as _json
+
+    from . import dataset
+    from .cli import load_model_and_tokenizer
+
+    a = build_parser().parse_args(argv)
+    if a.n is not None and a.n < 1:
+        raise SystemExit("--n must be at least 1.")
+
+    try:
+        questions, answers = dataset.resolve_pairs(
+            a.eval, question_column=a.question_column, answer_column=a.answer_column,
+            token=a.hf_token or None)
+    except dataset.DatasetError as e:
+        raise SystemExit(str(e)) from e
+
+    if a.skip >= len(questions):
+        raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(questions)} items.")
+    questions, answers = questions[a.skip:], answers[a.skip:]
+    if a.n > len(questions):
+        raise SystemExit(f"--n {a.n} exceeds the {len(questions)} items available after --skip.")
+    questions, answers = questions[:a.n], answers[:a.n]
+
+    reference = load_reference(a.compare_to)
+    if reference is not None and len(reference) != len(questions):
+        # Refused rather than truncated to fit. Two arms compared on different item sets is not a
+        # paired comparison, and silently aligning them by position would produce a number that
+        # looks paired and is not.
+        raise SystemExit(
+            f"--compare-to {a.compare_to} holds {len(reference)} items and this run has "
+            f"{len(questions)}. A paired comparison needs the same items in the same order; "
+            f"re-run with matching --n and --skip.")
+
+    model, tok = load_model_and_tokenizer(
+        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+
+    prompts = [PROMPT.format(q) for q in questions]
+    gens, truncated = generate_with_truncation(
+        model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
+    verdicts = grade(gens, answers, truncated)
+    summary = summarise(verdicts)
+    change = None
+    if reference is not None and a.bootstrap:
+        change = paired_change(reference, verdicts, seed=a.seed, resamples=a.bootstrap)
+
+    print(f"capability: {a.label or a.model} on {a.eval}")
+    for line in report(summary, change):
+        print(line)
+
+    result = {"label": a.label, "model": a.model, "eval": a.eval, "n": len(questions),
+              "max_new": a.max_new, "seed": a.seed, "summary": summary,
+              "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change}
+    with open(a.out, "w", encoding="utf-8") as f:
+        _json.dump(result, f, indent=2)
+    if a.save_generations:
+        with open(a.save_generations, "w", encoding="utf-8") as f:
+            for q, gold, gen, t, v in zip(questions, answers, gens, truncated, verdicts,
+                                          strict=True):
+                f.write(_json.dumps({"question": q, "gold": gold, "generation": gen,
+                                     "truncated": t, "verdict": v}, ensure_ascii=False) + "\n")
+    # Non-zero when nothing could be graded, because a run that measured nothing must not look
+    # like a run that measured a zero.
+    return 0 if summary["graded"] else 1

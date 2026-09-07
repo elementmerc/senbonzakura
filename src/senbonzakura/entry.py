@@ -48,6 +48,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "drift": ("drift", "main"),
     "track": ("track", "main"),
     "validate": ("validate", "main"),
+    "capability": ("capability", "main"),
     "interactive": ("interactive", "run"),
     "quantise": ("quantise", "main"),
     "convert": ("convert", "main"),

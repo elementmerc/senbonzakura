@@ -470,3 +470,67 @@ def resolve_labelled(spec, *, label_column=None, text_column=None, harmful_value
     harmful = _apply_slice(harmful, slice_expr, spec)
     harmless = _apply_slice(harmless, slice_expr, spec)
     return harmful, harmless
+
+
+#: Column names a question-and-answer benchmark uses, most specific first. GSM8K is
+#: `question`/`answer`; the others are what near neighbours call the same two fields.
+QUESTION_COLUMNS = ("question", "problem", "query", "prompt", "input")
+ANSWER_COLUMNS = ("answer", "solution", "target", "output", "label")
+
+
+def resolve_pairs(spec, *, question_column=None, answer_column=None, token=None):
+    """A benchmark as (questions, answers), aligned by row.
+
+    `resolve` returns ONE column, which is all a prompt set needs and not enough for anything
+    graded: a capability benchmark needs the question to ask and the reference answer to mark
+    against, and pairing them afterwards from two separate reads would be a place to misalign
+    them silently.
+
+    Columns are detected rather than assumed, and an explicit name always wins. When detection
+    cannot find a pair it raises and lists what the file actually has, because guessing which
+    column is the answer is exactly the kind of quiet decision that produces a confident wrong
+    number.
+    """
+    body, split, slice_expr = parse_spec(spec)
+    token = token or os.environ.get("HF_TOKEN") or None
+    path = Path(body).expanduser()
+    if path.exists() and path.is_dir():
+        rows, cols = _from_disk(str(path), split, spec)
+    elif path.exists() and path.suffix.lower() in TABLE_SUFFIXES:
+        rows = _read_table(path, spec)
+        cols = list(rows[0]) if rows else []
+    elif path.exists():
+        raise DatasetError(
+            f"{spec}: a plain text file has one column, and a graded benchmark needs two. Use a "
+            f".csv/.jsonl with a question column and an answer column.")
+    elif looks_like_hub_id(body):
+        rows, cols = _from_hub(body, split, spec, token, False, None)
+    else:
+        raise DatasetError(f"{spec}: nothing exists at that path and it is not a Hub id.")
+
+    if not rows:
+        raise DatasetError(f"the dataset at {spec} is empty.")
+    cols = cols or list(rows[0])
+
+    def _pick(explicit, candidates, what):
+        if explicit:
+            if explicit not in cols:
+                raise DatasetError(
+                    f"{spec}: no column named '{explicit}'. Available: {sorted(cols)}.")
+            return explicit
+        for name in candidates:
+            if name in cols:
+                return name
+        raise DatasetError(
+            f"{spec}: cannot tell which column holds the {what}. Available: {sorted(cols)}. "
+            f"Name it with --{what}-column.")
+
+    q = _pick(question_column, QUESTION_COLUMNS, "question")
+    a = _pick(answer_column, ANSWER_COLUMNS, "answer")
+    if q == a:
+        raise DatasetError(
+            f"{spec}: the question and the answer resolved to the same column '{q}', so every "
+            f"item would be marked against itself.")
+    questions = [str(r.get(q, "")) for r in rows]
+    answers = [str(r.get(a, "")) for r in rows]
+    return _apply_slice(questions, slice_expr, spec), _apply_slice(answers, slice_expr, spec)

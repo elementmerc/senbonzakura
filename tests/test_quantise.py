@@ -20,8 +20,14 @@ from senbonzakura import gguf_io, quantise, vendored
 from senbonzakura.vendored import VendorError
 
 
-def _tiny_gguf(path, *, n_layer=2, n_embd=256, n_ff=512, n_head=4, n_vocab=512, ftype=0):
-    """A real llama-arch GGUF. Small, and complete enough for llama-quantize to accept it."""
+def _tiny_gguf(path, *, n_layer=2, n_embd=256, n_ff=512, n_head=4, n_vocab=512, ftype=0,
+               tied=False):
+    """A real llama-arch GGUF. Small, and complete enough for llama-quantize to accept it.
+
+    `tied=True` omits `output.weight`, which is what a model with tied embeddings looks like on
+    disk. That shape has already cost this project once, so it is a fixture rather than a
+    thought experiment.
+    """
     from gguf import GGUFWriter
     w = GGUFWriter(str(path), "llama")
     w.add_block_count(n_layer)
@@ -40,7 +46,8 @@ def _tiny_gguf(path, *, n_layer=2, n_embd=256, n_ff=512, n_head=4, n_vocab=512, 
 
     t("token_embd.weight", (n_vocab, n_embd))
     t("output_norm.weight", (n_embd,))
-    t("output.weight", (n_vocab, n_embd))
+    if not tied:
+        t("output.weight", (n_vocab, n_embd))
     for i in range(n_layer):
         t(f"blk.{i}.attn_norm.weight", (n_embd,))
         for part in ("attn_q", "attn_k", "attn_v", "attn_output"):

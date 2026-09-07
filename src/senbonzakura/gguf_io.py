@@ -26,11 +26,18 @@ check that already exists. It does not catch the other two ways a file can be wr
 The second is the one worth the code. `general.file_type` is a file-level label, and comparing it
 against the quantisation named in the filename catches the mismatch in milliseconds.
 
-WHY FILE-LEVEL AND NOT PER-TENSOR
+WHY THE PASS/FAIL CHECK IS FILE-LEVEL AND NOT PER-TENSOR
 
 A genuine Q4_K_M is a MIXTURE: most tensors are Q4_K and some are Q6_K, by design. Checking each
 tensor's type against "Q4_K" would therefore fail every honest Q4_K_M ever produced. Failing a
 correct file is worse than not checking, because it trains whoever meets it to pass --force.
+
+That reasoning is about a VERDICT on a whole file, and it still stands. It says nothing against
+reading the per-tensor types, and `read_tensor_info` does, for the one question the file-level
+label cannot answer: when somebody asks for a specific tensor to be kept at a specific precision,
+did that actually happen? `general.file_type` is unchanged by such an override, so the only
+evidence is the tensor itself. Asking for something and checking you got it is a different
+activity from judging a file against its name, and only the second can fail a correct file.
 """
 from __future__ import annotations
 
@@ -75,6 +82,26 @@ FILE_TYPES = {
     28: "IQ2_S", 29: "IQ2_M", 30: "IQ4_XS", 31: "IQ1_M", 32: "BF16",
     36: "TQ1_0", 37: "TQ2_0", 38: "MXFP4_MOE", 39: "NVFP4", 40: "Q1_0", 1024: "GUESSED",
 }
+
+#: GGML tensor types, the per-TENSOR enum. Not the same numbering as `general.file_type` above and
+#: the two must never be looked up in each other's table: 8 is Q8_0 here and Q5_0 there. Read out
+#: of the pinned `gguf` package's GGMLQuantizationType rather than typed from memory, and the gaps
+#: (3 to 5, 31 to 33, 36 to 38) are removed formats that are not reused, so an unknown number is
+#: reported as unknown rather than guessed at.
+GGML_TYPES = {
+    0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8: "Q8_0", 9: "Q8_1",
+    10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K",
+    16: "IQ2_XXS", 17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S",
+    22: "IQ2_S", 23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64",
+    29: "IQ1_M", 30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4", 40: "NVFP4", 41: "Q1_0",
+}
+
+#: The types `llama-quantize` will accept for a per-tensor override. Its own list is wider than
+#: what is useful here; these are the ones that make sense to pin a single tensor to, and naming a
+#: closed set means a typo is refused before a multi-hour job starts rather than after it.
+OVERRIDE_TYPES = tuple(sorted(
+    {"F32", "F16", "BF16", "Q8_0", "Q6_K", "Q5_K", "Q4_K", "Q3_K", "Q2_K",
+     "Q5_1", "Q5_0", "Q4_1", "Q4_0", "IQ4_NL", "IQ4_XS"}))
 
 #: Filename spellings to the file type they claim, longest first so "Q4_K_M" is not matched as
 #: "Q4_K" and then reported as a mismatch against itself.
@@ -149,12 +176,12 @@ class _Cursor:
         raise GGUFError(f"unknown GGUF metadata value type {vtype}")
 
 
-def read_header(path, *, max_bytes=MAX_HEADER_BYTES):
-    """Metadata and tensor count from a GGUF, reading only its head.
+def _read_head(path, max_bytes):
+    """The parse itself, returning the header AND the cursor sitting on the tensor info section.
 
-    Returns {"version", "tensor_count", "metadata", "architecture", "file_type",
-    "file_type_id"}. Raises GGUFError with a readable reason for anything that is not a GGUF this
-    reader can parse.
+    Split out so `read_tensor_info` continues where `read_header` stopped rather than keeping a
+    second copy of the metadata walk. Two parsers over one format is how a reader ends up
+    disagreeing with itself about the same file.
     """
     p = Path(path)
     try:
@@ -194,7 +221,7 @@ def read_header(path, *, max_bytes=MAX_HEADER_BYTES):
         metadata[key] = c.value(c.scalar("<I", 4))
 
     ftype_id = metadata.get("general.file_type")
-    return {
+    info = {
         "path": str(p),
         "version": version,
         "tensor_count": tensor_count,
@@ -203,6 +230,95 @@ def read_header(path, *, max_bytes=MAX_HEADER_BYTES):
         "file_type_id": ftype_id,
         "file_type": FILE_TYPES.get(ftype_id) if isinstance(ftype_id, int) else None,
     }
+    return info, c
+
+
+def read_header(path, *, max_bytes=MAX_HEADER_BYTES):
+    """Metadata and tensor count from a GGUF, reading only its head.
+
+    Returns {"version", "tensor_count", "metadata", "architecture", "file_type",
+    "file_type_id"}. Raises GGUFError with a readable reason for anything that is not a GGUF this
+    reader can parse.
+    """
+    return _read_head(path, max_bytes)[0]
+
+
+#: A tensor name past this is corrupt rather than long. llama.cpp's own limit is 64 and this is
+#: generous against it, because refusing a legitimate file is the worse failure of the two.
+MAX_TENSOR_NAME = 512
+
+#: More dimensions than any tensor in a language model has. GGUF allows four; this refuses a
+#: length field that would otherwise make the reader walk off into the data section and report
+#: nonsense with a straight face.
+MAX_TENSOR_DIMS = 4
+
+
+def read_tensor_info(path, *, max_bytes=MAX_HEADER_BYTES):
+    """Every tensor's name, shape and TYPE, without reading a byte of tensor data.
+
+    Returns a list of {"name", "dims", "type_id", "type", "offset"} in file order. `type` is None
+    for a type id this reader does not know, which is reported rather than guessed: naming an
+    unknown number would make a wrong answer look like an answer.
+
+    `dims` is in GGUF's own order, fastest-moving axis first, which is the REVERSE of the shape
+    the same tensor has in numpy or torch. Reported as the file stores it rather than flipped to
+    suit a caller, because this module's job is to say what is on disk.
+
+    The tensor info section sits immediately after the metadata, so this costs the same head read
+    `read_header` already does. It exists to answer "did the precision I asked for actually land
+    on the tensor I named", which the file-level label cannot: an override leaves
+    `general.file_type` completely unchanged.
+    """
+    _info, c = _read_head(path, max_bytes)
+    out = []
+    for i in range(_info["tensor_count"]):
+        n = c.count()
+        if n > MAX_TENSOR_NAME:
+            raise GGUFError(
+                f"tensor {i} claims a name {n:,} bytes long, past the {MAX_TENSOR_NAME} this "
+                f"reader will honour. The tensor info section is misaligned or the file is "
+                f"corrupt; either way what follows would be read as garbage.")
+        name = c.take(n).decode("utf-8", errors="replace")
+        n_dims = c.scalar("<I", 4)
+        if n_dims > MAX_TENSOR_DIMS:
+            raise GGUFError(
+                f"tensor {name!r} claims {n_dims} dimensions and GGUF allows at most "
+                f"{MAX_TENSOR_DIMS}. Reading on would walk into the data section.")
+        dims = [c.scalar("<Q", 8) for _ in range(n_dims)]
+        type_id = c.scalar("<I", 4)
+        offset = c.scalar("<Q", 8)
+        out.append({
+            "name": name,
+            "dims": dims,
+            "type_id": type_id,
+            "type": GGML_TYPES.get(type_id),
+            "offset": offset,
+        })
+    return out
+
+
+def type_census(path, *, max_bytes=MAX_HEADER_BYTES):
+    """How many tensors carry each type, highest count first.
+
+    The honest way to describe what a quantisation actually produced. "Q4_K_M" is a recipe name;
+    this is what came out of it, and the two are not the same statement.
+    """
+    counts = {}
+    for t in read_tensor_info(path, max_bytes=max_bytes):
+        key = t["type"] or f"unknown type {t['type_id']}"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def tensor_types(path, names, *, max_bytes=MAX_HEADER_BYTES):
+    """The type of each named tensor, or None where the file has no such tensor.
+
+    None means ABSENT and never "some default". A tied-embedding model has no `output.weight` at
+    all, so an override aimed at it silently does nothing, and a caller that could not tell absent
+    from present would report that silence as success.
+    """
+    have = {t["name"]: t["type"] for t in read_tensor_info(path, max_bytes=max_bytes)}
+    return {n: have.get(n) for n in names}
 
 
 def claimed_quant(name):

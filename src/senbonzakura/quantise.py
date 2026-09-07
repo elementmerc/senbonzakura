@@ -168,6 +168,22 @@ def build_parser():
                          "llama.cpp names `i1-`. Build one with `senbonzakura imatrix`. An i1 and "
                          "a plain quant of the SAME weights are not comparable, so a comparison "
                          "that mixes them is measuring the quantiser as well as the model")
+    ap.add_argument("--output-tensor-type", dest="output_tensor_type", default=None,
+                    choices=gguf_io.OVERRIDE_TYPES, metavar="TYPE",
+                    help="keep the output head at this precision instead of whatever the recipe "
+                         "chose. The head reads out over the whole vocabulary and is where "
+                         "quantisation damage shows first, so Q8_0 or F16 here costs little size "
+                         "and buys back most of it. A model with TIED embeddings has no separate "
+                         "head at all, and this run says so rather than reporting a silent "
+                         "no-op as success")
+    ap.add_argument("--token-embedding-type", dest="token_embedding_type", default=None,
+                    choices=gguf_io.OVERRIDE_TYPES, metavar="TYPE",
+                    help="the same for the token embedding table")
+    ap.add_argument("--tensor-type", dest="tensor_type", action="append", default=[],
+                    metavar="NAME=TYPE",
+                    help="pin any tensor whose name matches NAME to TYPE. Repeatable. NAME is "
+                         "matched by llama-quantize as a pattern, so `attn_v=Q6_K` reaches every "
+                         "layer's value projection")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")
     ap.add_argument("--keep-source", action="store_true",
                     help="do not offer to remove the source afterwards (it never removes it "
@@ -203,6 +219,113 @@ def default_output(source, quant):
     # Always ends in .gguf, including when the source did not. A quantised file with no extension
     # is a file the rest of the ecosystem declines to open.
     return p.with_name(f"{stem}{GGUF_SUFFIX}")
+
+
+#: The tensors the two named overrides act on. llama-quantize hard-codes these names, so a model
+#: that spells them differently, or does not have them, cannot be served by those flags.
+OUTPUT_TENSOR = "output.weight"
+EMBED_TENSOR = "token_embd.weight"
+
+
+def parse_tensor_type(spec):
+    """`attn_v=Q6_K` becomes ("attn_v", "Q6_K"), or a readable refusal.
+
+    Validated here rather than left to llama-quantize, which reports a bad type by listing every
+    type it knows and exiting, after the operator has waited for the job to start.
+    """
+    name, sep, kind = spec.partition("=")
+    if not sep or not name.strip():
+        raise SystemExit(
+            f"--tensor-type wants NAME=TYPE and got {spec!r}. The name is matched against tensor "
+            f"names, so `attn_v=Q6_K` reaches every layer's value projection.")
+    kind = kind.strip().upper()
+    if kind not in gguf_io.OVERRIDE_TYPES:
+        raise SystemExit(
+            f"--tensor-type {spec!r} names the type {kind!r}, which is not one this tool will "
+            f"pass on. Choose from: {', '.join(gguf_io.OVERRIDE_TYPES)}.")
+    return name.strip(), kind
+
+
+def _preflight_overrides(src, a, log):
+    """Refuse an override that cannot possibly land, before the hours rather than after them.
+
+    The expensive case is a model with TIED embeddings. It has no `output.weight`, so
+    `--output-tensor-type` is accepted by llama-quantize, does nothing at all, and leaves a file
+    whose `general.file_type` is exactly what it would have been anyway. Nothing downstream can
+    tell that apart from success, which is how the operator ends up publishing a model they
+    believe has a high-precision head.
+
+    Returns the pairs from --tensor-type, parsed.
+    """
+    pairs = [parse_tensor_type(s) for s in a.tensor_type]
+    if not (a.output_tensor_type or a.token_embedding_type or pairs):
+        return pairs
+
+    try:
+        names = [t["name"] for t in gguf_io.read_tensor_info(src)]
+    except gguf_io.GGUFError as e:
+        # The overrides cannot be checked, and saying so is better than either silently skipping
+        # the check or refusing a file that quantises perfectly well.
+        log(f"  WARNING: the tensor list could not be read ({e}), so the overrides below are "
+            f"passed on unchecked and their effect is confirmed only after the run.")
+        return pairs
+
+    for flag, tensor, wanted in (("--output-tensor-type", OUTPUT_TENSOR, a.output_tensor_type),
+                                 ("--token-embedding-type", EMBED_TENSOR, a.token_embedding_type)):
+        if wanted and tensor not in names:
+            raise SystemExit(
+                f"{flag} {wanted} was asked for and {Path(src).name} has no tensor called "
+                f"{tensor}. llama-quantize would accept the flag, do nothing, and produce a file "
+                f"indistinguishable from one where it was never passed. A model with tied "
+                f"embeddings has no separate output head, which is the usual reason.")
+    for name, kind in pairs:
+        if not any(name in n for n in names):
+            raise SystemExit(
+                f"--tensor-type {name}={kind} matches no tensor in {Path(src).name}. It is "
+                f"matched against tensor names, and nothing here contains {name!r}, so the flag "
+                f"would quietly do nothing.")
+    return pairs
+
+
+def _verify_overrides(out, a, pairs, log):
+    """Read the finished file and confirm every override actually landed.
+
+    The receipt. An exit code says a process finished; this says the tensor on disk carries the
+    precision that was asked for, and those two came apart on a 987 MB fragment of a 5.16 GB file
+    that loaded and served.
+    """
+    wanted = {}
+    if a.output_tensor_type:
+        wanted[OUTPUT_TENSOR] = a.output_tensor_type
+    if a.token_embedding_type:
+        wanted[EMBED_TENSOR] = a.token_embedding_type
+    if not wanted and not pairs:
+        return None
+
+    info = gguf_io.read_tensor_info(out)
+    got = {t["name"]: t["type"] for t in info}
+    wrong = []
+    for name, kind in wanted.items():
+        if got.get(name) != kind:
+            wrong.append(f"{name} was asked for as {kind} and is {got.get(name) or 'absent'}")
+        else:
+            log(f"  verified: {name} is {kind}")
+    for name, kind in pairs:
+        matched = [n for n in got if name in n]
+        off = [n for n in matched if got[n] != kind]
+        if off:
+            wrong.append(f"{len(off)} of {len(matched)} tensors matching {name!r} are not {kind} "
+                         f"(for example {off[0]} is {got[off[0]]})")
+        else:
+            log(f"  verified: all {len(matched)} tensors matching {name!r} are {kind}")
+    if wrong:
+        raise SystemExit(
+            "llama-quantize reported success and the per-tensor precision asked for is not what "
+            "is in the file:\n  " + "\n  ".join(wrong) + f"\nThe file is left at {out} for "
+            f"inspection. Nothing else would have caught this: an override does not change "
+            f"general.file_type, so the file verifies against its own name either way.")
+    return {"requested": {**wanted, **dict(pairs)},
+            "census": gguf_io.type_census(out)}
 
 
 def preflight(source, out, quant, *, allow_requantize, force):
@@ -255,6 +378,7 @@ def run(argv=None, log=print):
     head = preflight(a.source, out, a.type, allow_requantize=a.allow_requantize, force=a.force)
     log(f"quantise {Path(a.source).name} ({head['file_type']}, {head['tensor_count']} tensors, "
         f"{head['architecture']}) -> {out.name} [{a.type}]")
+    pairs = _preflight_overrides(a.source, a, log)
 
     try:
         exe, source_of = find_binary("llama-quantize", log=log)
@@ -283,6 +407,20 @@ def run(argv=None, log=print):
         imatrix_record = {"path": str(im), "name": im.name, "calibration": cal}
     else:
         imatrix_record = None
+
+    # After the imatrix and before the positionals, which is where llama-quantize expects every
+    # option. Announced individually because a per-tensor precision is exactly the kind of choice
+    # that gets forgotten between running a command and reading its output a week later.
+    if a.output_tensor_type:
+        argv_q += ["--output-tensor-type", a.output_tensor_type]
+        log(f"  keeping {OUTPUT_TENSOR} at {a.output_tensor_type}")
+    if a.token_embedding_type:
+        argv_q += ["--token-embedding-type", a.token_embedding_type]
+        log(f"  keeping {EMBED_TENSOR} at {a.token_embedding_type}")
+    for name, kind in pairs:
+        argv_q += ["--tensor-type", f"{name}={kind}"]
+        log(f"  pinning tensors matching {name!r} to {kind}")
+
     argv_q += [str(a.source), str(out), a.type]
     if a.threads:
         argv_q.append(str(a.threads))
@@ -313,6 +451,15 @@ def run(argv=None, log=print):
             f"The file has been left at {out} for inspection rather than deleted, because what is "
             f"wrong with it is the interesting part.") from e
 
+    # The per-tensor receipt, and it is a separate check from the one above on purpose: `verify`
+    # judges the file against its own name, and an override leaves that judgement unchanged.
+    try:
+        overrides = _verify_overrides(out, a, pairs, log)
+    except gguf_io.GGUFError as e:
+        raise SystemExit(
+            f"the output quantised and its tensor list could not be read back to confirm the "
+            f"per-tensor precision that was asked for: {e}\nThe file is left at {out}.") from e
+
     src_size, out_size = Path(a.source).stat().st_size, out.stat().st_size
     log(f"  wrote {out.name}: {out_size / 1e9:.2f} GB from {src_size / 1e9:.2f} GB "
         f"({out_size / src_size * 100:.0f}%), {got['tensor_count']} tensors, {took:.0f}s")
@@ -325,6 +472,9 @@ def run(argv=None, log=print):
         "quantiser": identity,
         "quant_type": a.type,
         "imatrix": imatrix_record,
+        # What was asked for AND what the finished file actually holds. A recipe name is a
+        # statement about intent; the census is a statement about the file.
+        "tensor_overrides": overrides,
         "allow_requantize": bool(a.allow_requantize),
         "source": {"name": Path(a.source).name, "bytes": src_size,
                    "file_type": head["file_type"], "architecture": head["architecture"]},

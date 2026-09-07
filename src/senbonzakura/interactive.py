@@ -29,6 +29,7 @@ never return. A script that pipes into this wanted the flags, not the menu, and 
 beats a job that hangs in CI until something kills it.
 """
 import sys
+from pathlib import Path
 
 from . import bundled
 
@@ -196,6 +197,70 @@ def pick_dataset(ask_fn=input, log=print):
     return entry["spec"], entry["licence"]
 
 
+#: What makes a directory something you can carry on with, rather than merely occupied. The study
+#: is the expensive part: it holds every completed trial. `best-config.json` is the cheaper but
+#: more valuable one, because it turns a crashed run from hours of re-searching into minutes of
+#: re-baking.
+STUDY_DB = "senbon-study.db"
+BAKEABLE = "best-config.json"
+
+
+def resumable_runs(root="."):
+    """Runs under `root` that can be carried on with, as (path, what is there) pairs.
+
+    THE WAY BACK IN (critique finding 3). The guided mode could CREATE a paused run and could not
+    FIND one: scene 9 writes the marker and tells you to resume with a flag, and scenes 1 and 2
+    never mention it, so somebody who paused yesterday is sent back to the flag list, which is the
+    one outcome this mode exists to avoid.
+
+    Only one level down, deliberately. A recursive walk of somebody's home directory to populate a
+    menu is slow, surprising, and would list runs from projects they are not in.
+    """
+    out = []
+    try:
+        entries = sorted(Path(root).iterdir())
+    except OSError:
+        return out
+    for d in entries:
+        if not d.is_dir():
+            continue
+        has_study = (d / STUDY_DB).is_file()
+        has_config = (d / BAKEABLE).is_file()
+        if has_study and has_config:
+            what = "a search in progress, and a winning config already picked"
+        elif has_study:
+            what = "a search in progress, with its completed trials kept"
+        elif has_config:
+            what = "a winning config, so it re-bakes in minutes rather than re-searching"
+        else:
+            continue
+        out.append((str(d), what))
+    return out
+
+
+def offer_resume(root=".", ask_fn=input, log=print):
+    """Offer to carry on with a run found under `root`. Returns a plan, or None to start fresh.
+
+    Shown only when there is something to show. A menu row that is empty most of the time trains
+    people to skip the first question, and the first question is the one that saves them hours.
+    """
+    found = resumable_runs(root)
+    if not found:
+        return None
+    options = [(f"Carry on with {path}", what) for path, what in found]
+    options.append(("Start a new run", "leaves everything above untouched"))
+    index = choose("There is a run here you can pick up. What would you like to do?",
+                   options, default=0, ask_fn=ask_fn, log=log)
+    if index == len(found):
+        return None
+    path, _what = found[index]
+    log("")
+    log(f"  Carrying on with {path}. Nothing there is overwritten: the search continues from the")
+    log("  trials it already has, and if it had already finished it goes straight to baking.")
+    return {"command": "kageyoshi", "options": {"--out": path, "--resume": True},
+            "licence": "yours"}
+
+
 def ask_output(ask_fn=input, log=print):
     """Where the edited model goes, and what to do when something is already there.
 
@@ -238,6 +303,11 @@ def plan_abliteration(ask_fn=input, log=print):
     log("")
     log("Senbonzakura, guided mode. Ctrl+C stops at any point and changes nothing.")
     log("Every answer has a default, shown in brackets; press Enter to take it.")
+
+    # Before any of the questions, because the cheapest run is the one already half done.
+    carry_on = offer_resume(ask_fn=ask_fn, log=log)
+    if carry_on is not None:
+        return carry_on
 
     model = ask("\nWhich model? (a Hub id, or a local directory)",
                 default="Qwen/Qwen3-1.7B", ask_fn=ask_fn, log=log)

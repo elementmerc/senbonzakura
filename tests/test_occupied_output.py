@@ -267,3 +267,79 @@ def test_an_interrupt_gets_the_screen_too(monkeypatch):
     monkeypatch.setattr(_cli, "main", _stop)
     assert interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None) == 130
     assert "--resume" in "\n".join(lines)
+
+
+# ── the way back in (critique finding 3) ─────────────────────────────────────────────
+# The guided mode could CREATE a paused run and could not FIND one: scene 9 writes the marker and
+# says to resume with a flag, and scenes 1 and 2 never mention it, so the person who paused
+# yesterday is sent back to the flag list. That is the single outcome the mode exists to avoid.
+
+def test_a_directory_with_a_study_is_resumable(tmp_path):
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    found = interactive.resumable_runs(tmp_path)
+    assert [p for p, _w in found] == [str(tmp_path / "brain")]
+    assert "completed trials" in found[0][1]
+
+
+def test_a_directory_with_only_a_winning_config_is_still_resumable(tmp_path):
+    """The cheaper artefact and the more valuable one: it turns hours of re-searching into
+    minutes of re-baking, and the design mentions it in none of its ten scenes.
+    """
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / interactive.BAKEABLE).write_text("{}", encoding="utf-8")
+    found = interactive.resumable_runs(tmp_path)
+    assert "re-bakes in minutes" in found[0][1]
+
+
+def test_a_directory_with_both_says_so(tmp_path):
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    (tmp_path / "brain" / interactive.BAKEABLE).write_text("{}", encoding="utf-8")
+    assert "already picked" in interactive.resumable_runs(tmp_path)[0][1]
+
+
+def test_an_ordinary_directory_is_not_offered(tmp_path):
+    """A saved model with no study and no config cannot be carried on with, only overwritten."""
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "plain" / "model.safetensors").write_text("", encoding="utf-8")
+    assert interactive.resumable_runs(tmp_path) == []
+
+
+def test_the_search_does_not_descend(tmp_path):
+    """One level down on purpose: walking a home directory to fill a menu is slow and surprising,
+    and would list runs from projects the person is not in.
+    """
+    deep = tmp_path / "a" / "b" / "brain"
+    deep.mkdir(parents=True)
+    (deep / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    assert interactive.resumable_runs(tmp_path) == []
+
+
+def test_an_unreadable_root_is_not_a_crash(tmp_path):
+    assert interactive.resumable_runs(tmp_path / "nope") == []
+
+
+def test_nothing_is_offered_when_there_is_nothing_to_offer(tmp_path):
+    """A menu row that is empty most of the time trains people to skip the first question, and
+    the first question is the one that saves them hours.
+    """
+    lines = []
+    assert interactive.offer_resume(tmp_path, ask_fn=lambda _p: "1", log=lines.append) is None
+    assert lines == []
+
+
+def test_choosing_a_found_run_produces_a_resume_command(tmp_path):
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    plan = interactive.offer_resume(tmp_path, ask_fn=lambda _p: "1", log=lambda _m: None)
+    line = interactive.render_command(plan["command"], plan["options"])
+    assert line == f"senbonzakura kageyoshi --out {tmp_path / 'brain'} --resume"
+
+
+def test_starting_fresh_is_always_the_last_option(tmp_path):
+    """Offering the found run must not trap somebody who wanted a new one."""
+    (tmp_path / "brain").mkdir()
+    (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    assert interactive.offer_resume(tmp_path, ask_fn=lambda _p: "2",
+                                    log=lambda _m: None) is None

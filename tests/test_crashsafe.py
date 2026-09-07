@@ -273,6 +273,19 @@ class TestProvenance:
 
 
 # ── provenance from a stamp file, for a tree that is not a checkout ────────────────
+def test_the_stamp_file_is_the_one_cli_code_version_already_looks_for():
+    """ONE NAME. This reader was written with a second one, `VERSION_STAMP`, which would have meant
+    a stamp satisfying the abliterator's provenance and a differently-named one satisfying the
+    separation tool's, with nothing enforcing that anybody wrote both. Same defect as the guard and
+    the editor keeping separate lists of block names.
+    """
+    import inspect
+
+    from senbonzakura import cli
+
+    assert crashsafe.COMMIT_STAMP_FILE in inspect.getsource(cli.code_version)
+
+
 def test_a_stamp_file_supplies_the_commit_when_git_cannot(tmp_path):
     """A night of ROG runs produced artefacts with no commit at all: the source was staged as a
     tarball without .git, which is reasonable, and nobody exported the variable. A file travels

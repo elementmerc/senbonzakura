@@ -374,16 +374,25 @@ def resolved_versions(packages=PROVENANCE_PACKAGES):
 # the run specs already export, so this reads what they were already writing.
 COMMIT_ENV = "SENBONZAKURA_COMMIT"
 
-#: A file at the tree root carrying the commit the tree was cut from. Read when git cannot answer
-#: and before the environment variable, because a file TRAVELS WITH THE TREE and a variable has to
-#: be remembered at launch time by whoever wrote the run script.
+#: A file carrying the version the tree was cut from, read when git cannot answer and before the
+#: environment variable, because a file TRAVELS WITH THE TREE and a variable has to be remembered
+#: at launch time by whoever wrote the run script.
 #:
-#: Added 2026-09-07 after every artefact from a night of ROG runs came back with no commit at all.
-#: The source had been staged to the machine as a tarball without `.git`, which is a perfectly
-#: reasonable way to stage it, and nobody exported the variable. The results stayed reproducible
-#: from their own JSON and could not be tied to a commit, which is how a good result becomes an
-#: uncitable one. Write it at the source: `git rev-parse --short HEAD > VERSION_STAMP`.
-COMMIT_STAMP_FILE = "VERSION_STAMP"
+#: THE NAME IS `cli.code_version`'s NAME, deliberately, and this note is why. That function has
+#: looked for `CODE_VERSION` beside the package since a GPU box first got its code by file copy.
+#: This reader was written on 2026-09-07 with a second name, `VERSION_STAMP`, which would have
+#: meant one stamp file satisfying the abliterator's provenance and a differently-named one
+#: satisfying the separation tool's, with nothing enforcing that anybody wrote both. That is the
+#: same defect as the guard and the editor keeping separate lists of block names, which cost this
+#: project two days in the same week. One name.
+#:
+#: Written at the source before staging: `git rev-parse --short HEAD > CODE_VERSION`.
+COMMIT_STAMP_FILE = "CODE_VERSION"
+
+#: Where to look for it. The same two places `cli.code_version` looks, in the same order: beside
+#: the installed package, then at the tree root, so a stamp satisfies both readers wherever a sync
+#: happens to drop it.
+COMMIT_STAMP_DIRS = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[2])
 
 
 def git_commit(repo_root=None, env=None):
@@ -391,7 +400,7 @@ def git_commit(repo_root=None, env=None):
 
     Three sources, and the answer says which one it came from. `git` is the trustworthy one
     because it is a measurement of the tree in front of it. A rented pod or a shipped tarball is
-    not a checkout, so git cannot answer there and two weaker sources follow: a `VERSION_STAMP`
+    not a checkout, so git cannot answer there and two weaker sources follow: a `CODE_VERSION`
     file written into the tree when it was cut, and the environment variable a run script exports.
     Both are CLAIMS rather than measurements, and `source` records which one so a reader can weigh
     it rather than being handed a commit with no idea where it came from.
@@ -414,15 +423,16 @@ def git_commit(repo_root=None, env=None):
         return {"commit": rev, "dirty": bool(dirty), "source": "git"}
     except (OSError, subprocess.SubprocessError):
         pass
-    stamp = Path(root) / COMMIT_STAMP_FILE
-    try:
-        # First line only, and stripped: the obvious way to write this file is a shell redirect,
-        # which leaves a trailing newline, and a commit with a newline in it matches nothing.
-        text = stamp.read_text(encoding="utf-8").strip().splitlines()
+    for base in (Path(root), *COMMIT_STAMP_DIRS):
+        try:
+            # First line only, and stripped: the obvious way to write this file is a shell
+            # redirect, which leaves a trailing newline, and a commit with one in it matches
+            # nothing.
+            text = (base / COMMIT_STAMP_FILE).read_text(encoding="utf-8").strip().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
         if text and text[0].strip():
             return {"commit": text[0].strip(), "dirty": None, "source": "stamp"}
-    except (OSError, UnicodeDecodeError):
-        pass
     declared = ((env if env is not None else os.environ).get(COMMIT_ENV) or "").strip()
     if not declared:
         return None

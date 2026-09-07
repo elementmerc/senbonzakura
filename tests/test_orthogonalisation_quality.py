@@ -119,3 +119,53 @@ def test_the_direction_construction_subtracts_first_then_normalises():
     subtract_at = text.index("d0 = _orth_to(mb[li] - mg[li], [gd])")
     normalise_at = text.index("d0 = d0 / d0.norm().clamp_min(1e-8)", subtract_at)
     assert subtract_at < normalise_at, "the direction is normalised before it is projected"
+
+
+# ── the reach reading must not hide a near-miss (peer finding, 2026-09-07) ───────────
+# On LFM2.5-1.2B one conv layer reduced by 0.1010 against a floor of 0.100: it cleared by one part
+# in a thousand, and the reading sentence said "comparable, so the bake treats both positions
+# alike" without mentioning it. `below_floor` is binary, so 0.101 and 0.99 print identically, and
+# the reading is the line that gets pasted into a table.
+#
+# This is the same failure as the one that moved this check from comparing MEANS to counting
+# layers, one level up: a summary that hides a per-item result.
+
+def test_a_layer_that_barely_cleared_the_floor_is_named_in_the_reading():
+    """THE REGRESSION THIS SECTION IS NAMED FOR, with the real number that forced it."""
+    from senbonzakura.validate import _thin_margin_note
+    note = _thin_margin_note([{"layer": 3, "kind": "conv", "reduction": 0.1010},
+                              {"layer": 7, "kind": "attention", "reduction": 0.7325}])
+    assert "0.1010" in note
+    assert "layer 3" in note or "is 3" in note
+    assert "1.01" in note, "the margin over the floor is the number a reader needs"
+
+
+def test_a_healthy_run_gets_no_note():
+    """A warning that fires on every run is one nobody reads."""
+    from senbonzakura.validate import _thin_margin_note
+    assert _thin_margin_note([{"layer": 1, "kind": "conv", "reduction": 0.42},
+                              {"layer": 2, "kind": "attention", "reduction": 0.73}]) == ""
+
+
+def test_the_note_says_it_passed_so_it_is_not_mistaken_for_a_failure():
+    """It IS a pass. Wording it as a failure would make a real failure unreadable by comparison."""
+    from senbonzakura.validate import _thin_margin_note
+    note = _thin_margin_note([{"layer": 3, "kind": "conv", "reduction": 0.11}])
+    assert "It passed" in note
+
+
+def test_no_rows_produce_no_note():
+    from senbonzakura.validate import _thin_margin_note
+    assert _thin_margin_note([]) == ""
+
+
+def test_the_threshold_is_a_named_constant_with_the_number_behind_it():
+    """0.101 against 0.100 is the case; the constant has to be wide enough to catch it and narrow
+    enough that an ordinary run stays quiet.
+    """
+    from senbonzakura.validate import MIN_REACH, THIN_MARGIN, _thin_margin_note
+    assert THIN_MARGIN > 1.0
+    assert _thin_margin_note([{"layer": 0, "kind": "conv",
+                               "reduction": MIN_REACH * THIN_MARGIN * 1.01}]) == ""
+    assert _thin_margin_note([{"layer": 0, "kind": "conv",
+                               "reduction": MIN_REACH * 1.01}]) != ""

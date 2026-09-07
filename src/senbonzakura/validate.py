@@ -485,15 +485,44 @@ def bake_reach(a, log, K=1, strength=1.0):
                       if ratio >= 0.5 else
                       "; the weaker type lands less than half as hard, which is worth "
                       "understanding before a published run leans on it."))
+        reading += _thin_margin_note(rows)
     else:
         only = next(iter(summary))
         reading = (f"the edit reaches the residual stream on all {only} layers "
                    f"(mean reduction {summary[only]['mean_reduction']:.3f}). This architecture has "
                    f"one residual-writing position, so there is no cross-type comparison to make.")
+        reading += _thin_margin_note(rows)
     log(f"  reading: {reading}")
     return {"per_layer": rows, "by_kind": summary, "min_reach": MIN_REACH,
             "layers_below_floor": [r["layer"] for r in stragglers],
             "architectures_failing": failed, "reading": reading}
+
+
+#: A layer that clears the floor by less than this multiple of it has not really cleared it. The
+#: number that forced this: on LFM2.5-1.2B one conv layer reduced by 0.1010 against a floor of
+#: 0.100, passing by one part in a thousand, while the reading sentence said "comparable, so the
+#: bake treats both positions alike" and never mentioned it. `below_floor` is binary, so 0.101 and
+#: 0.99 print identically, and the reading is the line that gets pasted into a table.
+THIN_MARGIN = 1.5
+
+
+def _thin_margin_note(rows):
+    """A sentence naming the worst layer when it only just cleared the floor, or nothing.
+
+    Appended to a PASSING reading, which is the only place it is needed: a failing reading already
+    names the stragglers. The failure this closes is the same one that moved this check from
+    comparing means to counting layers, one level up: a summary that hides a per-item near-miss.
+    """
+    if not rows:
+        return ""
+    worst = min(rows, key=lambda r: r["reduction"])
+    if worst["reduction"] >= MIN_REACH * THIN_MARGIN:
+        return ""
+    margin = worst["reduction"] / MIN_REACH if MIN_REACH else 0.0
+    return (f" WORTH SEEING ANYWAY: the weakest layer is {worst['layer']} ({worst['kind']}) at "
+            f"{worst['reduction']:.4f}, which clears the {MIN_REACH} floor by a factor of only "
+            f"{margin:.2f}. It passed, and it is close enough that a published run leaning on that "
+            f"layer should say so.")
 
 
 def experiment_reach(a, log, ks, strengths):

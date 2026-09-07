@@ -36,17 +36,26 @@ import torch
 from senbonzakura import cli
 
 
-class _Block:
+class _Block(torch.nn.Module):
+    """A sequence mixer with an output projection, as the real ones present themselves.
+
+    A real Module rather than a bare object, because the guard walks `named_children` and
+    `named_parameters`: a stand-in that only satisfies the editor would let the two drift again
+    without a test noticing, which is the exact defect this file guards.
+    """
+
     def __init__(self, out_features=8, in_features=8, dim=2):
+        super().__init__()
         shape = (out_features, in_features) if dim == 2 else (2, out_features, in_features)
         self.out_proj = torch.nn.Linear(1, 1)
         self.out_proj.weight = torch.nn.Parameter(torch.randn(*shape))
 
 
-class _Layer:
+class _Layer(torch.nn.Module):
     """A decoder layer carrying whichever mixer the architecture puts in the attention position."""
 
     def __init__(self, **blocks):
+        super().__init__()
         for name, block in blocks.items():
             setattr(self, name, block)
 
@@ -109,3 +118,52 @@ def test_skipping_the_mixer_still_leaves_the_control_arm_reachable():
     layer = _Layer(linear_attn=_Block())
     assert cli.layer_attn_writers(layer, ablate_conv=False) == []
     assert len(cli.layer_attn_writers(layer, ablate_conv=True)) == 1
+
+
+# ── the guard and the editor must not drift ──────────────────────────────────────────
+# They were two lists of names that had to agree, with nothing enforcing it, and they drifted the
+# first time the editor learned a new block: MIXER_BLOCKS gained `linear_attn`, the guard's
+# `known` did not, and Qwen3.5 was refused by the guard while the editor could edit it perfectly.
+#
+# That failure was the SAFE direction: a loud refusal rather than a silent partial edit. The
+# opposite drift, a guard that accepts a block the editor skips, is the gemma failure exactly:
+# a run completes, reports success, and a third of the layers were never touched.
+
+def test_the_guard_recognises_every_block_the_editor_can_edit():
+    """THE REGRESSION THIS SECTION IS NAMED FOR.
+
+    Asserted as a property rather than by listing the names twice, because listing them twice is
+    the defect.
+    """
+    layer = _Layer(**{name: _Block() for name in cli.MIXER_BLOCKS})
+    _known, unrecognised = cli.residual_writers(layer, hidden_size=8, ablate_conv=True)
+    assert unrecognised == [], (
+        f"the editor can edit {cli.MIXER_BLOCKS} and the guard refuses {unrecognised}; the two "
+        f"name lists have drifted apart again")
+
+
+def test_each_mixer_block_is_recognised_by_the_guard_individually():
+    """One at a time, so a block that only passes when another is present cannot hide."""
+    for name in cli.MIXER_BLOCKS:
+        _known, unrecognised = cli.residual_writers(
+            _Layer(**{name: _Block()}), hidden_size=8, ablate_conv=True)
+        assert unrecognised == [], f"the guard does not recognise {name}"
+
+
+def test_the_control_arm_still_reports_a_skipped_mixer_as_unrecognised():
+    """With --skip-conv-ablation the mixer is deliberately NOT edited, so the guard must still see
+    it as an unedited residual writer. Silently accepting it there would turn the control arm into
+    an unlabelled partial abliteration.
+    """
+    for name in cli.MIXER_BLOCKS:
+        _known, unrecognised = cli.residual_writers(
+            _Layer(**{name: _Block()}), hidden_size=8, ablate_conv=False)
+        assert unrecognised, f"{name} was silently accepted while being skipped"
+
+
+def test_the_guard_derives_its_names_rather_than_restating_them():
+    """The structural fix, pinned. Two lists that must agree is the defect; one list is the fix."""
+    import inspect
+    src = inspect.getsource(cli.residual_writers)
+    assert "MIXER_BLOCKS" in src, "the guard restates the block names instead of deriving them"
+    assert '"linear_attn"' not in src, "a block name is hard-coded in the guard again"

@@ -1029,10 +1029,16 @@ def residual_writers(layer, hidden_size, ablate_conv=True):
     precisely the gemma failure this function exists to prevent, so it must not be reachable
     through a tensor rank the test does not look at.
     """
+    # DERIVED from the editor's own list rather than restating it. These were two sets of names
+    # that had to agree with nothing enforcing it, and they drifted the first time the editor
+    # learned a new block: `MIXER_BLOCKS` gained `linear_attn`, this did not, and Qwen3.5 was
+    # refused by the guard while the editor was perfectly able to edit it. That failure was the
+    # safe direction, a loud refusal rather than a silent partial edit, and the opposite drift is
+    # the gemma failure exactly, so the lists are now one list.
     known = {"self_attn", "attention", "self_attention", "attn",
              "mlp", "block_sparse_moe", "feed_forward"}
     if ablate_conv:
-        known.add("conv")
+        known.update(MIXER_BLOCKS)
     unrecognised = []
     for name, child in layer.named_children():
         if name in known:

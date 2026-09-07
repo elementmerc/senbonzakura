@@ -80,7 +80,8 @@ def test_the_searched_recipe_pins_no_profile_so_it_searches():
 @pytest.mark.parametrize("name", ["single-pass", "single-pass-raw"])
 def test_a_single_pass_recipe_pins_a_bakeable_profile(name):
     """THE POINT OF THE RECIPE. It must produce something the bake path can take directly, or the
-    run would search anyway and the arm would be the default wearing another name."""
+    run would search anyway and the arm would be the default wearing another name.
+    """
     from senbonzakura.crashsafe import config_to_bake_args
 
     profile = methods.get(name).settings["bake_profile"]
@@ -100,7 +101,8 @@ def test_a_single_pass_profile_is_uniform_across_the_window():
 
 def test_the_two_single_pass_arms_differ_only_in_the_norm_restoration():
     """They are a controlled pair: same directions, same strength, same layers. If they differed
-    in anything else, a difference between them would not be attributable to the edit."""
+    in anything else, a difference between them would not be attributable to the edit.
+    """
     a = methods.get("single-pass").settings
     b = methods.get("single-pass-raw").settings
     assert a["bake_profile"] == b["bake_profile"]
@@ -110,7 +112,8 @@ def test_the_two_single_pass_arms_differ_only_in_the_norm_restoration():
 
 def test_the_recipes_are_distinct_settings_not_distinct_labels():
     """Two names for one configuration would produce two arms that cannot differ, and a comparison
-    between them would read as evidence that the method does not matter."""
+    between them would read as evidence that the method does not matter.
+    """
     seen = {}
     for name in methods.CHOICES:
         key = repr(sorted(methods.get(name).settings.items()))
@@ -138,7 +141,8 @@ def test_a_pinned_recipe_makes_the_run_skip_the_search(monkeypatch):
 
 def test_a_namespace_with_no_method_behaves_as_the_default():
     """The forward-only commands share this class's helpers through namespaces that never had the
-    flag, and a KeyError there would break paths that do not abliterate at all."""
+    flag, and a KeyError there would break paths that do not abliterate at all.
+    """
     import types
 
     from senbonzakura import cli

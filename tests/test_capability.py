@@ -587,3 +587,123 @@ def test_the_task_reaches_the_output_because_an_accuracy_needs_to_say_what_was_a
     cap.main(["--model", "m", "--device", "cpu", "--eval", str(bench), "--n", "2",
               "--max-new", "4", "--task", "multiple-choice", "--out", str(out)])
     assert json.loads(out.read_text(encoding="utf-8"))["task"] == "multiple-choice"
+
+
+# ── agentic behaviour, graded without a judge (B2) ───────────────────────────────────
+# "Agentic" sounds like the thing that finally forces a judge, and most of it does not. Whether a
+# model emitted a well-formed call, named the right tool, passed the right arguments and obeyed a
+# format instruction are all questions code answers exactly. Reaching for a judge early would make
+# every number inherit its reliability, which is what the judge harness exists to stop.
+
+@pytest.mark.parametrize("text", [
+    '{"name": "search", "arguments": {"q": "cats"}}',
+    'Sure.\n```json\n{"name": "search", "arguments": {"q": "cats"}}\n```',
+    'I will call it: {"name": "search", "arguments": {"q": "cats"}} now.',
+    '{"tool": "search", "args": {"q": "cats"}}',
+    '{"name": "search", "arguments": "{\\"q\\": \\"cats\\"}"}',   # args as a JSON string
+])
+def test_a_tool_call_is_found_in_the_shapes_models_actually_emit(text):
+    assert cap.tool_call(text) == ("search", {"q": "cats"})
+
+
+def test_a_nested_function_name_is_understood():
+    assert cap.tool_call('{"function": {"name": "search"}, "arguments": {}}')[0] == "search"
+
+
+def test_argument_order_is_not_part_of_the_answer():
+    """Two calls differing only in key order are the same call, and marking them different would
+    report a formatting change as a capability loss.
+    """
+    a = cap.tool_call('{"name": "f", "arguments": {"x": 1, "y": 2}}')
+    b = cap.tool_call('{"name": "f", "arguments": {"y": 2, "x": 1}}')
+    assert cap.same_tool_call(a, b)
+
+
+def test_the_wrong_tool_is_wrong():
+    assert cap.grade_one('{"name": "delete", "arguments": {}}',
+                         '{"name": "search", "arguments": {}}', task="tool-call") == "wrong"
+
+
+def test_the_right_tool_with_wrong_arguments_is_wrong():
+    """Naming the tool and then passing the wrong thing to it is the failure that matters most in
+    an agent, and a name-only comparison would score it correct.
+    """
+    assert cap.grade_one('{"name": "search", "arguments": {"q": "dogs"}}',
+                         '{"name": "search", "arguments": {"q": "cats"}}',
+                         task="tool-call") == "wrong"
+
+
+def test_replying_in_prose_when_asked_for_a_call_counts_as_wrong():
+    """THE DISTINCTION THIS TASK TURNS ON.
+
+    Elsewhere an unreadable answer is indeterminate, because a model that says "eight" in words
+    did the arithmetic and formatted it unexpectedly. Here producing the format IS the capability,
+    so a prose reply has failed the thing being measured, and calling it indeterminate would hide
+    the most common way tool use breaks.
+    """
+    assert cap.grade_one("I would search for cats.",
+                         '{"name": "search", "arguments": {}}', task="tool-call") == "wrong"
+
+
+def test_a_truncated_tool_call_is_still_indeterminate():
+    """Truncation is decided before any of that, so a cut-off generation is never scored wrong."""
+    assert cap.grade_one("I would sea", '{"name": "search", "arguments": {}}',
+                         truncated=True, task="tool-call") == "indeterminate"
+
+
+def test_a_model_answering_arithmetic_in_words_is_still_indeterminate():
+    """The contrast that makes the rule above a distinction rather than an inconsistency."""
+    assert cap.grade_one("the answer is eight", "#### 8") == "indeterminate"
+
+
+# ── format instructions ──────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(("text", "spec", "want"), [
+    ("hello there", "max_words:3", True),
+    ("one two three four", "max_words:3", False),
+    ("hello", "min_words:1;lowercase", True),
+    ("HELLO", "lowercase", False),
+    ("HELLO", "uppercase", True),
+    ("a\nb\nc", "lines:3", True),
+    ("say cats please", "contains:cats", True),
+    ("say dogs please", "excludes:cats", True),
+    ("say cats please", "excludes:cats", False),
+    ('{"a": 1}', "json", True),
+    ("not json at all", "json", False),
+    ("finish here.", "ends_with:.", True),
+    ("Answer: yes", "starts_with:Answer", True),
+])
+def test_each_constraint_is_a_rule_a_reader_could_apply_by_hand(text, spec, want):
+    checks = cap.parse_constraints(spec)
+    assert cap.meets_constraints(text, checks) is want
+
+
+def test_all_the_constraints_must_hold_not_most_of_them():
+    """A response that obeys three instructions and breaks the fourth has not followed the
+    instruction.
+    """
+    checks = cap.parse_constraints("max_words:5;lowercase;contains:cat")
+    assert cap.meets_constraints("i like my cat", checks) is True
+    assert cap.meets_constraints("I like my cat", checks) is False
+
+
+def test_an_unknown_constraint_is_refused_rather_than_skipped():
+    """A skipped check is one the model is graded as having passed, so a typo in a benchmark would
+    quietly make every item easier.
+    """
+    with pytest.raises(KeyError, match="Available:"):
+        cap.parse_constraints("max_words:5;vibes:good")
+
+
+def test_an_empty_constraint_spec_is_an_unusable_row():
+    assert cap.parse_constraints("") is None
+    assert cap.grade_one("anything", "", task="constraints") == "indeterminate"
+
+
+def test_every_task_still_explains_itself():
+    """Including the two new ones: a task that cannot say what it grades and why no judge is
+    needed is a benchmark somebody has to take on trust.
+    """
+    for name in cap.TASK_CHOICES:
+        t = cap.get_task(name)
+        assert t.grades and t.needs_no_judge, f"{name} does not explain itself"

@@ -142,6 +142,119 @@ def last_line_answer(text):
     return normalised_text(lines[-1]) if lines else None
 
 
+# ── agentic behaviour, and how much of it needs no judge ─────────────────────────────
+# "Agentic" sounds like the thing that finally forces a judge, and most of it does not. Whether a
+# model emitted a well-formed tool call, named the right tool, passed the right arguments, and
+# obeyed a format instruction are all questions code can answer exactly. A judge is only needed for
+# the part that is genuinely a matter of opinion, and that part is smaller than it first looks.
+#
+# Reaching for a judge early would have made every number here inherit its reliability, which is
+# what `senbonzakura judge` exists to stop. So these two tasks close as much of the gap as can be
+# closed without one.
+
+#: A JSON object as a model embeds one in prose or a code fence. Non-greedy from the last opening
+#: brace, because a model that reasons aloud writes its call last.
+JSON_BLOB = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def tool_call(text):
+    """The tool call a model emitted, as (name, arguments), or None.
+
+    Accepts the shapes models actually produce: a bare JSON object, one inside a ```json fence, or
+    one embedded in prose. `arguments` may itself arrive as a JSON string rather than an object,
+    which is common and is not the model getting it wrong.
+    """
+    if text is None:
+        return None
+    m = JSON_BLOB.search(str(text))
+    if not m:
+        return None
+    try:
+        doc = json.loads(m.group())
+    except ValueError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    name = doc.get("name") or doc.get("tool") or doc.get("function")
+    if isinstance(name, dict):                       # {"function": {"name": ...}}
+        name = name.get("name")
+    if not isinstance(name, str):
+        return None
+    args = doc.get("arguments", doc.get("args", doc.get("parameters", {})))
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {"__unparsed__": args}
+    if not isinstance(args, dict):
+        args = {"__value__": args}
+    return (name, args)
+
+
+def same_tool_call(got, want):
+    """Same tool, same arguments. Argument ORDER is not part of the answer; presence and value are.
+
+    Compared as parsed objects rather than as strings, because two calls that differ only in
+    whitespace or key order are the same call, and marking them different would report a
+    formatting change as a capability loss.
+    """
+    return got[0] == want[0] and got[1] == want[1]
+
+
+#: The constraint checks a format instruction can be graded by. Deliberately small: every one is a
+#: rule a reader could apply by hand and get the same answer, which is what keeps this out of
+#: judge territory.
+CONSTRAINTS = {
+    "max_words": lambda text, v: len(text.split()) <= int(v),
+    "min_words": lambda text, v: len(text.split()) >= int(v),
+    "contains": lambda text, v: str(v).lower() in text.lower(),
+    "excludes": lambda text, v: str(v).lower() not in text.lower(),
+    "lines": lambda text, v: len([ln for ln in text.splitlines() if ln.strip()]) == int(v),
+    "lowercase": lambda text, _v: text == text.lower(),
+    "uppercase": lambda text, _v: text == text.upper(),
+    "json": lambda text, _v: _is_json(text),
+    "ends_with": lambda text, v: text.rstrip().endswith(str(v)),
+    "starts_with": lambda text, v: text.lstrip().startswith(str(v)),
+}
+
+
+def _is_json(text):
+    try:
+        json.loads(JSON_BLOB.search(text).group() if JSON_BLOB.search(text) else text)
+    except (ValueError, AttributeError):
+        return False
+    return True
+
+
+def parse_constraints(spec):
+    """`"max_words:50;lowercase"` into a list of (check, value). Unknown checks are a refusal.
+
+    An unknown constraint is not silently skipped. A skipped check is one the model is graded as
+    having passed, so a typo in a benchmark would quietly make every item easier.
+    """
+    if spec is None:
+        return None
+    out = []
+    for raw in str(spec).split(";"):
+        part = raw.strip()
+        if not part:
+            continue
+        name, _, value = part.partition(":")
+        name = name.strip()
+        if name not in CONSTRAINTS:
+            raise KeyError(
+                f"unknown constraint {name!r}. Available: {', '.join(sorted(CONSTRAINTS))}.")
+        out.append((name, value.strip()))
+    return out or None
+
+
+def meets_constraints(text, checks):
+    """Every check, or nothing. A response that obeys three instructions and breaks the fourth has
+    not followed the instruction.
+    """
+    return all(CONSTRAINTS[name](text, value) for name, value in checks)
+
+
 @dataclass(frozen=True)
 class Task:
     """One graded task: how to ask, how to read the answer, and how to compare it."""
@@ -153,6 +266,14 @@ class Task:
     same: object             # (got, want) -> bool
     grades: str              # what a reader should understand this measures
     needs_no_judge: str      # why the grading is trustworthy without a model in the loop
+    #: Whether a generation the extractor cannot read is a WRONG answer rather than an ungradeable
+    #: one. Usually False: a model that answers "eight" in words did the arithmetic and formatted
+    #: it unexpectedly, and scoring that wrong would count a formatting habit as lost reasoning.
+    #: True where producing the format IS the capability under test, as it is for a tool call:
+    #: a model that replies in prose when asked for a call has failed the thing being measured,
+    #: and calling that indeterminate would hide the most common way tool use breaks.
+    #: Truncation is handled before this either way, so a cut-off generation never lands here.
+    unparseable_is_wrong: bool = False
 
 
 TASKS = {
@@ -173,6 +294,31 @@ TASKS = {
         same=lambda got, want: got == want,
         grades="knowledge and discrimination, without needing the model to compose an answer",
         needs_no_judge="the answer is one letter from a fixed set",
+    ),
+    "tool-call": Task(
+        name="tool-call",
+        prompt="{}\n\nRespond with a single JSON object naming the tool and its arguments, and "
+               "nothing else.",
+        extract=tool_call,
+        reference=tool_call,
+        same=same_tool_call,
+        grades="whether the model can pick the right tool and pass it the right arguments, which "
+               "is the part of agentic behaviour that fails first",
+        needs_no_judge="the tool name and the argument values are compared as parsed data, so "
+                       "agreement is exact and whitespace or key order cannot change it",
+        unparseable_is_wrong=True,
+    ),
+    "constraints": Task(
+        name="constraints",
+        prompt="{}",
+        extract=lambda gen: gen if gen and gen.strip() else None,
+        reference=parse_constraints,
+        same=lambda text, checks: meets_constraints(text, checks),
+        grades="whether the model still follows a format instruction, which abliteration may "
+               "damage independently of its reasoning",
+        needs_no_judge="each constraint is a rule a reader could apply by hand and get the same "
+                       "answer: a word count, a substring, a letter case",
+        unparseable_is_wrong=True,
     ),
     "exact": Task(
         name="exact",
@@ -217,7 +363,7 @@ def grade_one(generation, solution, truncated=False, task=DEFAULT_TASK):
         return "indeterminate"
     got = t.extract(generation)
     if got is None:
-        return "indeterminate"
+        return "wrong" if t.unparseable_is_wrong else "indeterminate"
     return "correct" if t.same(got, want) else "wrong"
 
 

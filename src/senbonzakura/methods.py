@@ -22,6 +22,20 @@ the way DECCP is described as working, which is a different claim and a much wea
 an arm `deccp` would say we had reproduced their implementation, and what we would actually have
 measured is ours. Each recipe records what it RESEMBLES separately from what it IS.
 
+WHY ONE OF THESE IS A CELL RATHER THAN A TOOL
+
+`single-pass` differs from `searched` in TWO ways at once: it does not search, and it removes one
+direction. A result comparing them cannot say which half did the work, and this project's whole
+argument is about direction count. `searched-one-direction` is the missing cell:
+
+                        one direction        as many as separate
+    no search           single-pass          (not built; nothing does this)
+    searched            searched-one-        searched
+                        direction
+
+Reading down a column isolates the search. Reading across a row isolates the direction count.
+Neither is readable from the diagonal alone, and the diagonal is what the field publishes.
+
 WHAT THIS IS FOR
 
 The field ships on a claimed one to three percent degradation with no benchmarks behind it, and a
@@ -76,6 +90,16 @@ METHODS = {
                   "capability retention",
         edit="direction only; identical surgery to the default",
         search="none; the strength is fixed rather than optimised",
+        directions="one, the difference of means",
+    ),
+    "searched-one-direction": Method(
+        name="searched-one-direction",
+        summary="Our search, their directions: the strength and placement are optimised exactly "
+                "as the default does it, but only the global difference of means is ever "
+                "removed. No clustering, no hedging contrast.",
+        settings={"args": {"max_directions": 1}},
+        edit="direction only; identical surgery to the default",
+        search="Optuna over many trials, identical to the default",
         directions="one, the difference of means",
     ),
     "single-pass-raw": Method(

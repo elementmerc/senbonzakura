@@ -3429,6 +3429,38 @@ def _preflight_datasets(args):
         + "\n".join(faults) + hint)
 
 
+def _apply_method_args(args, log):
+    """Pin the argument values this run's method fixes, and refuse to fight the command line.
+
+    A recipe that only sets a bake profile can be applied where the bake happens. One that fixes
+    how directions are EXTRACTED has to be applied before extraction, and the danger is different:
+    the flag it pins is one the operator can also type.
+
+    So a conflict is refused rather than resolved. Silently overriding an explicit
+    `--max-directions 4` would produce an artefact recording a method whose defining property the
+    operator believed they had turned off, which is the kind of result that gets withdrawn. A
+    value that MATCHES what the method pins is not a conflict and passes without comment.
+    """
+    from . import methods
+
+    pinned = methods.get(getattr(args, "method", methods.DEFAULT_METHOD)).settings.get("args")
+    if not pinned:
+        return
+    defaults = build_parser()
+    for name, value in sorted(pinned.items()):
+        typed = getattr(args, name)
+        if typed != value and typed != defaults.get_default(name):
+            flag = "--" + name.replace("_", "-")
+            raise SystemExit(
+                f"--method {args.method} fixes {flag} at {value}, and this command line asks for "
+                f"{typed}. That is the property the method is defined by, so it is refused rather "
+                f"than overridden: a run recording one method and behaving as another is how a "
+                f"published number gets withdrawn. Drop the method or drop the flag.")
+        if typed != value:
+            log(f"method {args.method} pins {name.replace('_', '-')} = {value}")
+        setattr(args, name, value)
+
+
 def run_parsed(args, bankai, argv):
     """Everything after parsing. Split out so the entry point can parse without importing torch.
 
@@ -3473,6 +3505,10 @@ def run_parsed(args, bankai, argv):
 
     t0 = time.time()
     def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
+
+    # Before the model, because the conflict it can raise is visible from the command line alone
+    # and finding it after a download costs a rented card an hour.
+    _apply_method_args(args, log)
 
     abl = Abliterator(args, log)
     if bankai:

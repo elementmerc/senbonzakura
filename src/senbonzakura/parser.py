@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 
+from . import methods as _methods  # constants only; imports nothing heavy
 from . import separation as _separation  # constants only; imports nothing heavy, see its head
 from ._version import __version__
 from .metrics import KL_CEIL, KL_TARGET
@@ -228,6 +229,14 @@ def build_parser():
                          "as the only thing that varies. Off by default: it changes what every "
                          "separation number means, and Q-14 measures it before it becomes the "
                          "default.")
+    ap.add_argument("--method", choices=_methods.CHOICES, default=_methods.DEFAULT_METHOD,
+                    help="which ablation recipe to run. 'searched' (default) optimises how much "
+                         "to ablate and where; 'single-pass' fixes it at full strength on one "
+                         "direction with no search, which is how the tools that retain capability "
+                         "best are described as working; 'single-pass-raw' additionally drops the "
+                         "norm restoration and exists as a control. The recipe is recorded in "
+                         "abliteration.json, so two runs are comparable arms rather than two runs "
+                         "whose flags a reader has to diff.")
     ap.add_argument("--harmless-matched", dest="harmless_matched", default="",
                     help="a second harmless set, written on the SAME subjects as the harmful one, "
                          "used as the pool that --matched-scoring draws its controls from. Without "

@@ -2512,6 +2512,15 @@ class Abliterator:
             return self._bench_only()
         if args.bake_config:
             return self._bake_saved_config(base_ref)
+        fixed = self._method_profile()
+        if fixed is not None:
+            # A recipe that pins the ablation has nothing to search for. Going through the search
+            # anyway and then ignoring its answer would burn the GPU time the recipe exists to
+            # save, and would put a study on disk describing a run that did not use it.
+            from .crashsafe import config_to_bake_args
+            bpr, b_K, b_mode, b_di = config_to_bake_args(fixed)
+            self.log(f"method {args.method}: baking a fixed profile, no search")
+            return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
         study, db = self._run_search(TR)
         bpr, b_K, b_mode, b_di = self._select_knee(study, db, TR)
         return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
@@ -2620,6 +2629,17 @@ class Abliterator:
         self.restore_weights()
         log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
             f"refusals={r*100:.1f}% KL={k:.4f}")
+
+    def _method_profile(self):
+        """The bake profile this run's method pins, or None when the method searches.
+
+        Read here rather than in the parser so the recipe is applied at the one place that decides
+        between searching and baking, and cannot be half-applied by a caller that built its own
+        argument namespace.
+        """
+        from . import methods
+        name = getattr(self.args, "method", methods.DEFAULT_METHOD)
+        return methods.get(name).settings.get("bake_profile")
 
     def _bake_saved_config(self, base_ref):
         """`--bake-config`: bake a saved winner without searching for it again.
@@ -3052,6 +3072,10 @@ class Abliterator:
                        "matched_scoring": getattr(self, "matched_scoring", False),
                        # null when the controls were drawn from the ordinary harmless set.
                        "matched_source": getattr(self, "matched_source", None),
+                       # Which recipe produced this. Without it two arms of a comparison are two
+                       # runs whose settings a reader has to diff by eye, which is not a
+                       # comparison, and the artefact is the only place that survives the session.
+                       "method": getattr(args, "method", "searched"),
                        # Whether the matching found anything. Near 1.0 means it did not, and a
                        # matched_scoring:true run with a quality near 1.0 produced unmatched
                        # numbers under a matched label.

@@ -66,7 +66,7 @@ def test_the_printed_command_is_exactly_what_would_run():
     be shown one command and given another, which is the failure this mode must not have.
     """
     plan = it.plan_abliteration(
-        ask_fn=_answers("Qwen/Qwen3-0.6B", "1", "2", "out dir", "5"), log=lambda *a: None)
+        ask_fn=_answers("1", "Qwen/Qwen3-0.6B", "1", "2", "out dir", "5"), log=lambda *a: None)
     line = it.render_command(plan["command"], plan["options"])
 
     argv = [plan["command"]]
@@ -210,7 +210,7 @@ def test_choosing_the_bundled_track_without_one_says_how_to_get_it(monkeypatch):
 # ── the plan ─────────────────────────────────────────────────────────────────────
 def test_the_plan_collects_the_flags_that_matter():
     plan = it.plan_abliteration(
-        ask_fn=_answers("M", "1", "1", "OUT", "50"), log=lambda *a: None)
+        ask_fn=_answers("1", "M", "1", "1", "OUT", "50"), log=lambda *a: None)
     assert plan["command"] == "kageyoshi"
     assert plan["options"]["--model"] == "M"
     assert plan["options"]["--track"] == "default"
@@ -263,7 +263,7 @@ def test_abandoning_exits_cleanly_without_running_anything():
 
 def test_declining_the_run_exits_zero():
     said = []
-    code = it.run(ask_fn=_answers("M", "5", "mytrack", "2", "OUT", "3", "n"),
+    code = it.run(ask_fn=_answers("1", "M", "5", "mytrack", "2", "OUT", "3", "n"),
                   log=said.append, stdin=_Tty())
     assert code == 0
 
@@ -278,7 +278,7 @@ def test_accepting_calls_the_cli_with_the_displayed_flags(monkeypatch):
     from senbonzakura import cli
     monkeypatch.setattr(cli, "main", fake_main)
     said = []
-    code = it.run(ask_fn=_answers("MODEL", "5", "mytrack", "2", "OUT", "7", "y"),
+    code = it.run(ask_fn=_answers("1", "MODEL", "5", "mytrack", "2", "OUT", "7", "y"),
                   log=said.append, stdin=_Tty())
     assert code == 0
     argv = seen["argv"]

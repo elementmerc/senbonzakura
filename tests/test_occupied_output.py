@@ -343,3 +343,87 @@ def test_starting_fresh_is_always_the_last_option(tmp_path):
     (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
     assert interactive.offer_resume(tmp_path, ask_fn=lambda _p: "2",
                                     log=lambda _m: None) is None
+
+
+# ── every recipe has a path behind it (critique finding 2) ───────────────────────────
+# Scene 2 offered five recipes and the document walked one. Two had nothing behind them at all,
+# and a menu entry that leads nowhere is worse than no entry: the person has committed to the path
+# before it stops making sense. "Measure a model I already have" was the sharp case, because the
+# screens that follow ask where the edited model goes and there is no edited model.
+
+def _walk(answers, log=None):
+    it = iter(answers)
+    return interactive.plan_abliteration(ask_fn=lambda _p: next(it),
+                                         log=(log.append if log is not None else (lambda _m: None)))
+
+
+def test_every_recipe_on_the_menu_produces_a_command():
+    """The rule this list is kept short to satisfy."""
+    for i, (key, _label, _note) in enumerate(interactive.RECIPES, 1):
+        answers = [str(i), "m", "1", "1", "out", "200"]
+        plan = _walk(answers)
+        assert plan["command"], f"recipe {key} produced no command"
+        assert plan.get("recipe") == key
+
+
+def test_measuring_never_asks_where_the_edited_model_goes():
+    """THE DEFECT FINDING 2 NAMES. There is no edited model, so the question is meaningless, and
+    a person who answers it has been walked into a screen built for a different job.
+    """
+    lines = []
+    plan = _walk(["3", "my-model", "1", "1", "scores.json"], log=lines)
+    assert plan["command"] == "score"
+    assert "--out" in plan["options"] and plan["options"]["--out"] == "scores.json"
+    assert "--trials" not in plan["options"], "measuring does not search"
+    text = "\n".join(lines).lower()
+    assert "edited model go" not in text
+
+
+def test_measuring_scores_the_held_out_arm_not_the_fitting_one():
+    """bad_eval_ds, not bad_ds. Scoring on the rows a run fitted on is the error this project has
+    withdrawn published numbers over.
+    """
+    plan = _walk(["3", "m", "1", "1", "s.json"])
+    assert plan["options"]["--eval"].endswith("/bad_eval_ds")
+
+
+def test_everything_by_hand_gets_out_of_the_way():
+    """The person asked for the flags. Wrapping --help in a menu would be the guided mode
+    insisting on itself.
+    """
+    plan = _walk(["4"])
+    assert plan["command"] == "--help"
+    assert plan["options"] == {}
+
+
+def test_building_a_brain_is_two_commands_shown_as_two():
+    """The convert step is a separate program with its own flags. Collapsing them into one line
+    would print something nobody could type, which breaks the rule this file exists to keep.
+    """
+    plan = _walk(["2", "m", "1", "1", "brain", "200"])
+    assert plan["command"] == "kageyoshi"
+    assert plan["then"]["command"] == "convert"
+    lines = []
+    interactive.present(plan, ask_fn=lambda _p: "n", log=lines.append)
+    shown = [ln.strip() for ln in lines if ln.strip().startswith("senbonzakura")]
+    assert len(shown) == 2, f"both commands must be shown, got {shown}"
+    assert shown[1].startswith("senbonzakura convert brain")
+
+
+def test_the_printed_command_and_the_executed_one_cannot_drift():
+    """One function builds both. A guided mode that ran something other than what it displayed
+    would be a very good way to hide a mistake.
+    """
+    plan = _walk(["1", "m", "1", "1", "out", "200"])
+    line = interactive.render_command(plan["command"], plan["options"])
+    argv = interactive._argv_for(plan)
+    assert line == "senbonzakura " + " ".join(
+        interactive.quote(a) if not a.startswith("-") else a for a in argv)
+
+
+def test_a_positional_with_a_space_is_quoted():
+    """A path with a space in it is a real thing, and an unquoted one silently becomes two
+    arguments. `render_command` appended bare keys without quoting.
+    """
+    line = interactive.render_command("convert", {"my model dir": True, "--quantise": "Q4_K_M"})
+    assert line == "senbonzakura convert 'my model dir' --quantise Q4_K_M"

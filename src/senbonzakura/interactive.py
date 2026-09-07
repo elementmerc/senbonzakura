@@ -119,7 +119,10 @@ def render_command(command, options):
         if value is None or value is False:
             continue
         if value is True:
-            parts.append(flag)
+            # A bare flag, or a positional passed as a key with no value. Quoted either way,
+            # because a path with a space in it is a real thing and an unquoted one silently
+            # becomes two arguments.
+            parts.append(quote(flag) if not flag.startswith("-") else flag)
         else:
             parts.append(f"{flag} {quote(value)}")
     return " ".join(parts)
@@ -203,6 +206,19 @@ def pick_dataset(ask_fn=input, log=print):
 #: re-baking.
 STUDY_DB = "senbon-study.db"
 BAKEABLE = "best-config.json"
+
+
+#: Scene 2's menu. Every entry here has a path behind it, and that is the whole point of the list
+#: being this short (critique finding 2): the design offered five recipes and walked one, and the
+#: two with nothing behind them were worse than absent, because a person commits to the path before
+#: it stops making sense. "Measure a model I already have" was the sharp case, since the screens
+#: that follow the abliterate recipe ask where the edited model goes and there is no edited model.
+RECIPES = [
+    ("abliterate", "Abliterate a model", "the usual job"),
+    ("brain", "Build a local brain", "abliterate, then convert for llama.cpp"),
+    ("measure", "Measure a model I already have", "no editing, no output model"),
+    ("flags", "Everything by hand", "prints the flag list and stops"),
+]
 
 
 def resumable_runs(root="."):
@@ -309,6 +325,15 @@ def plan_abliteration(ask_fn=input, log=print):
     if carry_on is not None:
         return carry_on
 
+    index = choose("What would you like to do?",
+                   [(label, note) for _key, label, note in RECIPES],
+                   default=0, ask_fn=ask_fn, log=log)
+    recipe = RECIPES[index][0]
+    if recipe == "flags":
+        # Not a dead end and not a pretend screen: the person asked for the flags, so they get
+        # them, and the guided mode gets out of the way rather than wrapping `--help` in a menu.
+        return {"command": "--help", "options": {}, "licence": None, "recipe": recipe}
+
     model = ask("\nWhich model? (a Hub id, or a local directory)",
                 default="Qwen/Qwen3-1.7B", ask_fn=ask_fn, log=log)
     track, licence = pick_dataset(ask_fn=ask_fn, log=log)
@@ -316,6 +341,19 @@ def plan_abliteration(ask_fn=input, log=print):
                           [(name, note) for name, note in DEVICES],
                           default=0, ask_fn=ask_fn, log=log)
     device = DEVICES[device_index][0]
+
+    if recipe == "measure":
+        # Stops here on purpose. The remaining abliterate questions are where the edited model
+        # goes and how many search trials to run, and this recipe edits nothing and searches for
+        # nothing. Asking them would be the exact defect finding 2 names: screens built for a
+        # different job, reached after the person has already committed to the path.
+        results = ask("\nWhere should the results go?", default="scores.json",
+                      ask_fn=ask_fn, log=log)
+        return {"command": "score",
+                "options": {"--model": model, "--eval": f"{track}/bad_eval_ds",
+                            "--device": device, "--out": results},
+                "licence": licence, "recipe": recipe}
+
     out, resume = ask_output(ask_fn=ask_fn, log=log)
     trials = ask("How many search trials? More is better and slower; 200 is the usual",
                  default="200", ask_fn=ask_fn, log=log)
@@ -331,17 +369,32 @@ def plan_abliteration(ask_fn=input, log=print):
         # A flag, not a hidden mode. The whole contract of this file is that the command it prints
         # is the command it runs, so a decision taken in the walkthrough has to appear on the line.
         options["--resume"] = True
-    return {"command": "kageyoshi", "options": options, "licence": licence}
+    plan = {"command": "kageyoshi", "options": options, "licence": licence, "recipe": recipe}
+    if recipe == "brain":
+        # Two commands, shown as two. The convert step is a separate program with its own flags,
+        # and pretending one line does both would break the rule this file exists to keep.
+        plan["then"] = {"command": "convert",
+                        "options": {out: True, "--quantise": "Q4_K_M"}}
+    return plan
 
 
 def present(plan, *, ask_fn=input, log=print):
     """Show the command, the licence, and ask. Returns the command line, or None if declined."""
     line = render_command(plan["command"], plan["options"])
     log("")
-    log("This is the command that will run. It is also the one to put in a method section,")
-    log("and the one to type next time:")
-    log("")
-    log(f"    {line}")
+    if plan.get("then"):
+        # Two commands, shown as two. The second is a separate program with its own flags, and
+        # collapsing them into one line would print something nobody could type.
+        log("These are the two commands that will run, in order. They are also what goes in a")
+        log("method section, and what to type next time:")
+        log("")
+        log(f"    {line}")
+        log(f"    {render_command(plan['then']['command'], plan['then']['options'])}")
+    else:
+        log("This is the command that will run. It is also the one to put in a method section,")
+        log("and the one to type next time:")
+        log("")
+        log(f"    {line}")
     log("")
     if plan.get("licence") and plan["licence"] != "yours":
         log(f"The prompts are under {plan['licence']}. Attribution is required, and if that")
@@ -388,6 +441,22 @@ def log_failure(plan, reason, *, log=print):
     log("──────────────────────────────────────────────────────────────")
 
 
+def _argv_for(plan):
+    """The plan as an argument list, matching the line `render_command` printed for it.
+
+    One function so the printed command and the executed one cannot drift. A guided mode that ran
+    something other than what it displayed would be a very good way to hide a mistake, which is
+    the reason this file prints the command at all.
+    """
+    argv = [plan["command"]]
+    for flag, value in plan["options"].items():
+        if value is True:
+            argv.append(flag)
+        elif value not in (None, False):
+            argv += [flag, str(value)]
+    return argv
+
+
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     """Entry point for `senbonzakura interactive`."""
     if not is_tty(stdin or sys.stdin):
@@ -404,14 +473,12 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     if line is None:
         return 0
     from .cli import main as cli_main
-    argv = [plan["command"]]
-    for flag, value in plan["options"].items():
-        if value is True:
-            argv.append(flag)
-        elif value not in (None, False):
-            argv += [flag, str(value)]
     try:
-        return cli_main(argv)
+        code = cli_main(_argv_for(plan))
+        if code == 0 and plan.get("then"):
+            log("")
+            log("Now the second command.")
+            code = cli_main(_argv_for(plan["then"]))
     except KeyboardInterrupt:
         log("")
         log_failure(plan, "You stopped it.", log=log)
@@ -432,3 +499,5 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         log("")
         log_failure(plan, f"{type(e).__name__}: {e}", log=log)
         raise
+    else:
+        return code

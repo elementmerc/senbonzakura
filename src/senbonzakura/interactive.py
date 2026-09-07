@@ -283,6 +283,41 @@ def present(plan, *, ask_fn=input, log=print):
     return line
 
 
+def log_failure(plan, reason, *, log=print):
+    """What a person needs when a guided run dies partway: what is kept, and the way back in.
+
+    THE FAILURE SCREEN, in the form this codebase can deliver today (critique finding 1, ranked
+    first of thirteen). The design draws ten scenes and every one of them succeeds; the thing that
+    actually loses hours is the screen nobody drew. `cli.py` records that a traceback out of
+    `_save_weights` has, twice, meant hours of card time producing nothing an operator could use.
+
+    Deliberately not a summary of the error. The tool's own message and the traceback are better
+    than anything reconstructable here and they are still on the way out; this adds the sentence
+    they do not carry, which is that the search is on disk and one command resumes it.
+    """
+    out = plan.get("options", {}).get("--out")
+    log("── the run stopped ───────────────────────────────────────────")
+    if reason:
+        log(f"  {reason}")
+    log("")
+    if out:
+        log(f"  What is on disk, in {out}:")
+        log("    the persisted study, so completed trials are not lost")
+        log("    best-config.json, if the search got as far as picking a winner")
+        log("")
+        log("  To pick up where it stopped:")
+        log("")
+        log(f"    {render_command(plan['command'], {**plan['options'], '--resume': True})}")
+        log("")
+        log("  That continues the search rather than starting it again, and if the search had")
+        log("  already finished it goes straight to baking and saving.")
+    else:
+        log("  Nothing was written, so there is nothing to recover.")
+    log("")
+    log("  If this looks like a bug, the traceback above is the useful part of a report.")
+    log("──────────────────────────────────────────────────────────────")
+
+
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     """Entry point for `senbonzakura interactive`."""
     if not is_tty(stdin or sys.stdin):
@@ -305,4 +340,25 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
             argv.append(flag)
         elif value not in (None, False):
             argv += [flag, str(value)]
-    return cli_main(argv)
+    try:
+        return cli_main(argv)
+    except KeyboardInterrupt:
+        log("")
+        log_failure(plan, "You stopped it.", log=log)
+        return 130
+    except SystemExit as e:
+        # A refusal the tool phrased itself. Its message has already been printed and is better
+        # than anything this could add, so the only thing worth appending is the way back in.
+        code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        if code:
+            log("")
+            log_failure(plan, None, log=log)
+        raise
+    except Exception as e:
+        # Deliberately broad, and deliberately not swallowing. The traceback is what a bug report
+        # needs and it still goes to stderr; what a person needs on top of it is the sentence
+        # saying their GPU hours are not gone. `cli.py` records that a traceback out of
+        # `_save_weights` has twice meant hours of card time producing nothing usable.
+        log("")
+        log_failure(plan, f"{type(e).__name__}: {e}", log=log)
+        raise

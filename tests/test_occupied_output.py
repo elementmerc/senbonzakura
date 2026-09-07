@@ -185,3 +185,85 @@ def test_the_resume_decision_reaches_the_printed_command():
     assert line == "senbonzakura kageyoshi --out x --resume"
     assert "--resume" not in interactive.render_command("kageyoshi", {"--out": "x",
                                                                      "--resume": False})
+
+
+# ── the failure screen (critique finding 1) ──────────────────────────────────────────
+# Ten drawn scenes and every one of them succeeds. The screen nobody drew is the one that loses
+# hours: `cli.py` records that a traceback out of `_save_weights` has twice meant hours of card
+# time producing nothing an operator could use.
+
+def _plan(out="abliterated"):
+    return {"command": "kageyoshi",
+            "options": {"--model": "Qwen/Qwen3-1.7B", "--out": out, "--trials": "200"},
+            "licence": "yours"}
+
+
+def test_the_failure_screen_names_the_way_back_in():
+    """THE POINT OF IT. Not a summary of the error, which the tool already printed better, but the
+    sentence those messages do not carry: the search is on disk and one command resumes it.
+    """
+    lines = []
+    interactive.log_failure(_plan(), "RuntimeError: CUDA out of memory", log=lines.append)
+    text = "\n".join(lines)
+    assert "RuntimeError: CUDA out of memory" in text
+    assert "--resume" in text, "a failure screen without the recovery is just bad news"
+    assert "abliterated" in text
+
+
+def test_the_recovery_command_is_the_original_one_plus_resume():
+    """A command a person can paste, not a description of one they should construct."""
+    lines = []
+    interactive.log_failure(_plan(), "boom", log=lines.append)
+    line = next(ln.strip() for ln in lines if ln.strip().startswith("senbonzakura"))
+    assert line == ("senbonzakura kageyoshi --model Qwen/Qwen3-1.7B --out abliterated "
+                    "--trials 200 --resume")
+
+
+def test_a_run_that_wrote_nothing_says_so_rather_than_offering_a_false_recovery():
+    """Offering --resume when there is nothing to resume sends somebody to a second failure."""
+    plan = _plan()
+    plan["options"].pop("--out")
+    lines = []
+    interactive.log_failure(plan, "boom", log=lines.append)
+    text = "\n".join(lines)
+    assert "nothing to recover" in text
+    assert "--resume" not in text
+
+
+def test_the_guided_mode_adds_the_screen_and_still_lets_the_error_out(monkeypatch):
+    """Not swallowed. The traceback is what a bug report needs and it still goes to stderr; this
+    adds to it rather than replacing it.
+    """
+    lines = []
+    monkeypatch.setattr(interactive, "is_tty", lambda _s=None: True)
+    monkeypatch.setattr(interactive, "plan_abliteration", lambda **_k: _plan())
+    monkeypatch.setattr(interactive, "present", lambda _p, **_k: "senbonzakura kageyoshi")
+
+    def _boom(_argv):
+        raise RuntimeError("the bake failed")
+
+    import senbonzakura.cli as _cli
+    monkeypatch.setattr(_cli, "main", _boom)
+    with pytest.raises(RuntimeError, match="the bake failed"):
+        interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None)
+    text = "\n".join(lines)
+    assert "the run stopped" in text
+    assert "--resume" in text
+
+
+def test_an_interrupt_gets_the_screen_too(monkeypatch):
+    """Ctrl+C partway through a search is the most likely way a guided run ends early, and the
+    trials completed before it are exactly what --resume exists to keep.
+    """
+    lines = []
+    monkeypatch.setattr(interactive, "is_tty", lambda _s=None: True)
+    monkeypatch.setattr(interactive, "plan_abliteration", lambda **_k: _plan())
+    monkeypatch.setattr(interactive, "present", lambda _p, **_k: "senbonzakura kageyoshi")
+
+    def _stop(_argv):
+        raise KeyboardInterrupt
+
+    import senbonzakura.cli as _cli
+    monkeypatch.setattr(_cli, "main", _stop)
+    assert interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None) == 130
+    assert "--resume" in "\n".join(lines)

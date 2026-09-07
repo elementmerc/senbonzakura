@@ -73,7 +73,7 @@ set -euo pipefail
 MODEL=""
 TRACK="track"
 OUT=""
-EVAL_SET="openai/gsm8k::test"
+EVAL_SET="openai/gsm8k:main::test"
 TASK="numeric"
 N=200
 MAX_NEW=320
@@ -219,14 +219,21 @@ run_step() {
   fi
   say "START $what"
   local began; began=$(date +%s)
+  # The exit code is captured from the command DIRECTLY, never read back through `$?` after an
+  # `if`. `if cmd; then ...; fi` with no else evaluates to 0 when cmd FAILS, so the old form
+  # reported every failure as "exit 0" and a run that ground to a halt read like a fast success.
+  # Seventh time this project has measured an exit code through something that was not the
+  # command, and the first where the mistake was in a file shipped the same day.
+  #
   # The timeout is per step and it is not optional: a wedged generate loop would otherwise hold
   # the card until somebody noticed.
-  if timeout --signal=INT --kill-after=120 "$ARM_TIMEOUT" "$@" >>"$RUN_LOG" 2>&1; then
+  local rc=0
+  timeout --signal=INT --kill-after=120 "$ARM_TIMEOUT" "$@" >>"$RUN_LOG" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$(date -u +%FT%TZ)" >"$marker"
     say "DONE  $what in $(( $(date +%s) - began ))s"
     return 0
   fi
-  local rc=$?
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     say "TIMEOUT $what after ${ARM_TIMEOUT}s. Nothing marked done; re-run to resume."
   else

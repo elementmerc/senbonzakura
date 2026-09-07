@@ -23,6 +23,7 @@ Getting that wrong produces a result that looks like a finding and is resampling
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -186,3 +187,61 @@ def test_the_experiment_covers_every_recipe_the_tool_ships(tmp_path):
     assert not missing, (
         f"these recipes ship but no arm measures them: {sorted(missing)}. Add an arm, or record "
         f"in DEFERRED.md why the recipe is not worth a cell.")
+
+
+def test_a_failing_step_reports_its_real_exit_code(tmp_path):
+    """SEVENTH TIME, and the first in a file shipped the same day.
+
+    `if cmd; then ...; fi` with no else evaluates to 0 when cmd FAILS, so reading `$?` after the
+    `fi` reported every failure as "exit 0". A run that ground to a halt read like a fast success
+    in the log, which is how the operator on the other machine nearly missed two dead arms.
+
+    Driven through the real script with a `senbonzakura` that always fails, so this asserts what
+    the shipped file does rather than what a copy of its logic does.
+    """
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "senbonzakura"
+    # doctor has to pass, or the pre-flight refuses before any step runs and this would be
+    # testing the pre-flight instead of the exit code.
+    stub.write_text('#!/bin/sh\ncase "$1" in doctor) exit 0 ;; esac\nexit 3\n',
+                    encoding="utf-8")
+    stub.chmod(0o755)
+
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
+    out = subprocess.run(
+        [str(SCRIPT), "--model", "m", "--track", str(_track(tmp_path)),
+         "--out", str(tmp_path / "e2"), "--arms", "stock", "--drop-weights"],
+        capture_output=True, text=True, timeout=300, check=False, env=env)
+    assert out.returncode != 0, "a run whose only arm failed must not exit 0"
+    assert "exit 3" in out.stderr, out.stderr
+    assert "exit 0" not in out.stderr
+
+
+def test_a_failed_step_leaves_no_completion_marker(tmp_path):
+    """Resumability depends on it: a marker written after a failure would skip the arm forever."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "senbonzakura"
+    # doctor has to pass, or the pre-flight refuses before any step runs and this would be
+    # testing the pre-flight instead of the exit code.
+    stub.write_text('#!/bin/sh\ncase "$1" in doctor) exit 0 ;; esac\nexit 3\n',
+                    encoding="utf-8")
+    stub.chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
+    subprocess.run(
+        [str(SCRIPT), "--model", "m", "--track", str(_track(tmp_path)),
+         "--out", str(tmp_path / "e2"), "--arms", "stock", "--drop-weights"],
+        capture_output=True, text=True, timeout=300, check=False, env=env)
+    assert not (tmp_path / "e2" / "stock" / ".scored").exists()
+
+
+def test_the_default_benchmark_names_its_config(tmp_path):
+    """openai/gsm8k holds two configs and refuses to load without one. The default in this script
+    was unloadable by any invocation of the tool it drives.
+    """
+    for argv in _plan(tmp_path):
+        if "--eval" in argv:
+            assert _value(argv, "--eval") == "openai/gsm8k:main::test"
+        if "--capability-eval" in argv:
+            assert _value(argv, "--capability-eval") == "openai/gsm8k:main::test"

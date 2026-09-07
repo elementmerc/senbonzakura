@@ -284,6 +284,15 @@ def build_parser():
                          "norm restoration and exists as a control. The recipe is recorded in "
                          "abliteration.json, so two runs are comparable arms rather than two runs "
                          "whose flags a reader has to diff.")
+    ap.add_argument("--free-base-model", dest="free_base_model", action="store_true",
+                    help="delete the local base model directory just before writing the output, "
+                         "when there is not room for both. Off by default and it always will be: "
+                         "it is irreversible, it happens at the end of a long run when nobody is "
+                         "watching, and the model is re-downloadable while the run is not. "
+                         "Refused outright when the source is a shared Hugging Face cache, when "
+                         "--out is the same directory or sits inside it, and when there is "
+                         "already room. Until now this existed only as a sentence inside a disk "
+                         "error, which does not help a volume that is already full.")
     ap.add_argument("--harmless-matched", dest="harmless_matched", default="",
                     help="a second harmless set, written on the SAME subjects as the harmful one, "
                          "used as the pool that --matched-scoring draws its controls from. Without "

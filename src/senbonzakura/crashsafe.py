@@ -123,6 +123,75 @@ def disk_verdict(need_bytes, free_bytes, *, headroom_frac=SAVE_HEADROOM_FRAC):
                    f"somewhere else")
 
 
+#: Marks a directory as living inside a shared Hugging Face cache rather than being a copy of a
+#: model somebody put there on purpose. Deleting one of these frees space and breaks every other
+#: project on the machine that shares it, so it is refused rather than warned about.
+HUB_CACHE_MARKERS = ("huggingface/hub", "huggingface\\hub", ".cache/huggingface", "hf_hub",
+                     "models--")
+
+
+def base_release_verdict(source, out, *, need_bytes=None, free_bytes=None):
+    """May the base model directory be deleted to make room for the output? And why not.
+
+    Returns `(ok, reason)`. `ok` is False for every case that is not a plain local copy of a model
+    the operator pointed us at, and `reason` is what to print either way.
+
+    WHY THIS IS A FUNCTION AND NOT AN `if` AT THE CALL SITE
+
+    Deleting somebody's model directory is irreversible and it happens at the end of a long run,
+    when nobody is watching. Every reason to refuse belongs somewhere it can be tested without a
+    filesystem full of models, and every one of these has a way of going wrong that costs more
+    than the disk space it would have saved:
+
+      * a Hub cache is SHARED. Freeing one to finish this run breaks the next one, and every other
+        tool on the machine that reads the same cache.
+      * `--out` inside the source, or equal to it, means deleting the thing just written.
+      * a source that is not a directory is a Hub id, and there is nothing local to remove.
+      * room already being sufficient makes the deletion pure loss: it buys nothing and costs a
+        re-download.
+
+    The check for "is `out` inside `source`" uses resolved paths, because a relative `--out` and a
+    symlinked model directory are both ordinary and both defeat a string comparison.
+    """
+    from pathlib import Path
+
+    if not source:
+        return False, "no base model path was recorded, so there is nothing to release"
+    src = Path(source).expanduser()
+    if not src.is_dir():
+        return False, (f"the base model was loaded from '{source}', which is not a local "
+                       f"directory, so there is nothing on this disk to release")
+    text = str(src).replace("\\", "/")
+    if any(m.replace("\\", "/") in text for m in HUB_CACHE_MARKERS):
+        return False, (f"'{src}' sits inside a shared Hugging Face cache. Deleting it would free "
+                       f"space here and break every other run and every other tool on this "
+                       f"machine that reads the same cache, so it is refused.")
+    try:
+        src_r, out_r = src.resolve(), Path(out).expanduser().resolve()
+    except OSError as e:
+        return False, f"could not resolve the paths to compare them ({e}), so nothing is deleted"
+    if src_r == out_r:
+        return False, ("the base model directory IS the output directory, so releasing it would "
+                       "delete what was just written")
+    if out_r.is_relative_to(src_r):
+        return False, (f"the output '{out_r}' sits inside the base model directory '{src_r}', so "
+                       f"releasing it would delete what was just written")
+    if need_bytes is not None:
+        if free_bytes is None:
+            # `disk_verdict` reads an unmeasurable disk as "proceed", which is right for a save
+            # and wrong here. Proceeding with a SAVE on a hunch costs a failed write; proceeding
+            # with a DELETION on a hunch costs the model. The two need opposite defaults and this
+            # one refuses.
+            return False, ("the free space where the output goes could not be measured, and a "
+                           "model is not deleted on a guess. Free space by hand, or point --out "
+                           "at a volume this can read.")
+        ok, _msg = disk_verdict(need_bytes, free_bytes)
+        if ok:
+            return False, (f"there is already room for the output ({free_bytes / 1e9:.1f} GB free), "
+                           f"so the base model is left where it is")
+    return True, f"releasing the base model directory '{src_r}' to make room for the output"
+
+
 #: Shard size the save retries at after a space-exhaustion failure. Peak disk during a write is the
 #: finished shards plus the one being built, so a smaller shard lowers the high-water mark; the same
 #: holds for the host-RAM buffer safetensors assembles per shard.

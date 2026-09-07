@@ -2722,6 +2722,35 @@ class Abliterator:
                      "figure."),
         }
 
+    def _release_base_model(self):
+        """Delete the local base model directory, if every guard agrees, and say what happened.
+
+        Never raises. A refusal is logged and the run carries on to the save, which is the right
+        way round: the operator asked for room, and not getting it is a smaller failure than
+        losing the run over a deletion that could not be performed.
+        """
+        from .crashsafe import base_release_verdict
+
+        need = sum(p.numel() * p.element_size() for p in self.model.parameters())
+        ok, reason = base_release_verdict(
+            getattr(self.args, "model", None), self.args.out,
+            need_bytes=need, free_bytes=free_bytes_for(self.args.out))
+        if not ok:
+            self.log(f"  --free-base-model: NOT releasing. {reason}")
+            return
+        self.log(f"  --free-base-model: {reason}")
+        import shutil
+        try:
+            shutil.rmtree(Path(self.args.model).expanduser().resolve())
+        except OSError as e:
+            # Degraded, not fatal. The save is about to be attempted either way and its own
+            # pre-flight will say whether the room is there.
+            self.log(f"  --free-base-model: could not remove it ({e}); continuing to the save")
+            return
+        self.events.emit("base_model_released", path=str(self.args.model))
+        self.log(f"  --free-base-model: removed. {free_bytes_for(self.args.out) / 1e9:.1f} GB "
+                 f"now free where the output goes.")
+
     def _save_weights(self):
         """Write the baked model, and survive the one failure mode that costs the most.
 
@@ -2744,6 +2773,12 @@ class Abliterator:
             # less, and nothing downstream cares how many shards there are.
             self.model.save_pretrained(args.out, safe_serialization=True, max_shard_size=shard_size)
             self.tok.save_pretrained(args.out)
+
+        # BEFORE the write, which is the only moment it helps. The weights are resident by now,
+        # so the files on disk are not needed to finish the run; afterwards the volume has already
+        # had to hold both copies and the deletion buys nothing.
+        if getattr(args, "free_base_model", False):
+            self._release_base_model()
 
         try:
             _write("4GB")

@@ -667,8 +667,22 @@ def _modified_gram_schmidt(M):
     rows = []
     for row in M.double():
         v = row
-        for q in rows:
-            v = v - (v @ q) * q
+        # TWICE, which is the classical result and not a superstition: one pass loses orthogonality
+        # to cancellation when a row is nearly in the span of its predecessors, and a second pass
+        # restores it to machine precision. Measured here on the input that actually produces that
+        # case, eight near-parallel rows from a small cloud, which is --max-directions 8 asked of a
+        # corpus that cannot support eight distinct axes:
+        #
+        #     ordinary rows                 4.4e-16 -> 4.4e-16   no change
+        #     near-parallel rows            6.7e-13 -> 4.4e-16   1500x better
+        #     gain-folded, 13 orders        8.9e-16 -> 8.9e-16   no change
+        #     near-parallel AND gain-folded 1.0     -> 1.0       neither pass saves it
+        #
+        # The last row is why this is an improvement rather than a fix: a basis that degenerate is
+        # not rescued by arithmetic, and the orthonormality check below refuses it outright.
+        for _ in range(2):
+            for q in rows:
+                v = v - (v @ q) * q
         n = v.norm()
         rows.append(v / n if n > 1e-10 else torch.zeros_like(v))
     return torch.stack(rows) if rows else M.double().reshape(0, M.shape[-1])

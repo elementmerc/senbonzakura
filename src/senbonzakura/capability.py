@@ -299,6 +299,8 @@ def build_parser():
                     help="a graded benchmark with a question column and an answer column, such "
                          "as openai/gsm8k::test. A plain prompt list will not do: marking needs "
                          "the reference answer")
+    ap.add_argument("--hf-token", dest="hf_token", default=None,
+                    help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--question-column", dest="question_column", default=None,
                     help="name the question column when it cannot be detected")
     ap.add_argument("--answer-column", dest="answer_column", default=None,

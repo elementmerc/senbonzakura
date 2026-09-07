@@ -117,3 +117,93 @@ def test_n_larger_than_the_set_fails_loudly(monkeypatch, tiny_model, tiny_tok, t
     with pytest.raises(SystemExit, match="exceeds"):
         score.main(["--model", "x", "--eval", ev, "--out", str(tmp_path / "r.json"),
                     "--n", "99", "--device", "cpu"])
+
+
+# ── the length sweep, which measures the budget instead of assuming one ─────────────
+def _eval_set(tmp_path, n=2):
+    from datasets import Dataset
+    ev = str(tmp_path / "sweep-eval")
+    Dataset.from_dict({"text": [f"do the bad thing {i}" for i in range(n)]}).save_to_disk(ev)
+    return ev
+
+
+def test_the_sweep_writes_a_curve_rather_than_one_number(monkeypatch, tiny_model, tiny_tok,
+                                                         tmp_path):
+    """A refusal rate at one budget cannot say whether the budget was the measurement."""
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    out = str(tmp_path / "sweep.json")
+    score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
+                "--length-sweep", "--length-max", "32", "--device", "cpu"])
+    with open(out) as f:
+        got = json.load(f)
+    assert [e["budget"] for e in got["by_budget"]] == [16, 32]
+    assert "first_visible" in got
+    assert got["legacy_budget"] == 48
+
+
+def test_the_sweep_exits_non_zero_when_the_curve_has_not_settled(monkeypatch, tiny_model,
+                                                                 tiny_tok, tmp_path):
+    """A pipeline must not be able to quote a lower bound as a result."""
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    from senbonzakura import lengthsweep
+    monkeypatch.setattr(lengthsweep, "still_climbing", lambda *a, **k: True)
+    rc = score.main(["--model", "x", "--eval", _eval_set(tmp_path),
+                     "--out", str(tmp_path / "s.json"), "--length-sweep",
+                     "--length-max", "32", "--device", "cpu"])
+    assert rc == 1
+
+
+def test_the_sweep_and_the_compass_cannot_run_together(monkeypatch, tiny_model, tiny_tok,
+                                                       tmp_path):
+    """Both replace the scoring pass, so a silent precedence would run the wrong experiment
+    and label the artefact with the one that was asked for.
+    """
+    import pytest
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    with pytest.raises(SystemExit, match="cannot run together"):
+        score.main(["--model", "x", "--eval", _eval_set(tmp_path),
+                    "--out", str(tmp_path / "s.json"), "--length-sweep",
+                    "--harm-recognition", "--device", "cpu"])
+
+
+def test_a_length_max_below_the_smallest_budget_is_refused(monkeypatch, tiny_model, tiny_tok,
+                                                           tmp_path):
+    import pytest
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    with pytest.raises(SystemExit, match="nothing to compare"):
+        score.main(["--model", "x", "--eval", _eval_set(tmp_path),
+                    "--out", str(tmp_path / "s.json"), "--length-sweep",
+                    "--length-max", "4", "--device", "cpu"])
+
+
+def test_the_sweep_can_save_the_longest_generation(monkeypatch, tiny_model, tiny_tok, tmp_path):
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    gens = str(tmp_path / "gens.jsonl")
+    score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", str(tmp_path / "s.json"),
+                "--length-sweep", "--length-max", "32", "--save-generations", gens,
+                "--device", "cpu"])
+    assert os.path.exists(gens)
+
+
+# ── the warning, on the ordinary path ──────────────────────────────────────────────
+def test_a_short_budget_is_warned_about_in_the_log_and_the_artefact(monkeypatch, tiny_model,
+                                                                    tiny_tok, tmp_path, capsys):
+    """The default this project has always used cuts a late refusal off before it is emitted,
+    so a run at that budget has to say so where a reader will meet it later.
+    """
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    out = str(tmp_path / "res.json")
+    score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
+                "--max-new", "48", "--device", "cpu"])
+    assert "BUDGET_WARNING" in capsys.readouterr().out
+    with open(out) as f:
+        assert "306" in json.load(f)["budget_warning"]
+
+
+def test_a_long_budget_carries_no_warning(monkeypatch, tiny_model, tiny_tok, tmp_path):
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    out = str(tmp_path / "res.json")
+    score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
+                "--max-new", "96", "--device", "cpu"])
+    with open(out) as f:
+        assert json.load(f)["budget_warning"] is None

@@ -3520,6 +3520,14 @@ def run_parsed(args, bankai, argv):
     # and finding it after a download costs a rented card an hour.
     _apply_method_args(args, log)
 
+    # The search scores refusal on generations capped at --gen-tokens, and a budget too short to
+    # reach the refusal makes the model look better than it is TO THE SEARCH as well as to the
+    # reader. That is worse than a misreported number: the optimiser then selects for it.
+    from . import lengthsweep
+    budget_note = lengthsweep.budget_warning(int(args.gen_tokens))
+    if budget_note:
+        log(f"WARNING: {budget_note}")
+
     abl = Abliterator(args, log)
     if bankai:
         _apply_kageyoshi(args, abl.model, abl.arch, abl.ne, abl.NL, log,

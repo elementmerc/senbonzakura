@@ -854,21 +854,40 @@ def _attn_outproj(layer):
         f"(type {type(layer).__name__}); architecture not supported.")
 
 
-def _conv_outproj(layer):
-    """A short convolution block's output projection, or None if this layer has no such block.
+#: Blocks that can sit in the attention position and write the residual stream through their own
+#: `out_proj`. The field has moved away from uniform attention stacks and this is the list that
+#: moves with it: LFM2 puts a short convolution there, Qwen3.5 puts a gated delta net. In every
+#: case the writer is a 2-D Linear whose OUTPUT dimension is hidden size, which is dimensionally
+#: the same object as an attention `o_proj`, so the row-wise norm-preserving bake applies to it
+#: unchanged and no per-vendor edit path is needed.
+#:
+#: Verified by building each architecture on the meta device and reading the shapes:
+#:     LFM2.5-8B-A1B      conv.out_proj        [2048, 2048]
+#:     Qwen3.6-35B-A3B    linear_attn.out_proj [2048, 4096]
+#: The inner width differs and does not matter: the projection contracts over the output axis.
+MIXER_BLOCKS = ("conv", "linear_attn")
 
-    LFM2 and its mixture-of-experts variant are hybrids: roughly half their decoder layers carry
-    no attention at all, holding instead a `conv` block whose `out_proj` writes into the residual
-    stream in exactly the position an attention `o_proj` occupies. Dimensionally it is the same
-    object, a `[hidden, hidden]` Linear, so the row-wise norm-preserving bake applies to it
-    unchanged.
+
+def _conv_outproj(layer):
+    """A non-attention sequence mixer's output projection, or None if this layer has none.
+
+    Named for the first case that needed it and kept for the callers that use the name. Hybrids
+    are now the common shape rather than the exception: roughly half of LFM2's decoder layers hold
+    a `conv` block instead of attention, and three quarters of Qwen3.5's hold a gated delta net.
+    In both, `out_proj` writes into the residual stream in exactly the position an attention
+    `o_proj` occupies.
+
+    Only 2-D weights are accepted. A block whose writer is some other rank is not something this
+    bake can edit correctly, and returning it would produce a confident wrong edit rather than the
+    loud refusal `refuse_unrecognised_writers` is there to give.
     """
-    conv = getattr(layer, "conv", None)
-    if conv is None:
-        return None
-    p = getattr(conv, "out_proj", None)
-    if p is not None and hasattr(p, "weight") and _real_tensor(p, "weight").dim() == 2:
-        return _real_tensor(p, "weight")
+    for name in MIXER_BLOCKS:
+        block = getattr(layer, name, None)
+        if block is None:
+            continue
+        p = getattr(block, "out_proj", None)
+        if p is not None and hasattr(p, "weight") and _real_tensor(p, "weight").dim() == 2:
+            return _real_tensor(p, "weight")
     return None
 
 
@@ -901,8 +920,11 @@ def layer_attn_writers(layer, ablate_conv=True):
         raise ValueError(
             f"no residual-writing projection found in the attention position of this layer "
             f"(type {type(layer).__name__}); architecture not supported. Supported: an attention "
-            "output projection (o_proj / out_proj / dense) and a short-convolution out_proj "
-            "(LFM2 / LFM2-MoE).")
+            "output projection (o_proj / out_proj / dense), and the out_proj of a non-attention "
+            "sequence mixer sitting in the same position: a short convolution (LFM2, LFM2-MoE) or "
+            "a gated delta net (Qwen3.5). If this model puts something else there, the writer has "
+            "to be recognised before it can be edited, because an edit that misses it is a "
+            "partial abliteration reported as a whole one.")
     return out
 
 

@@ -310,10 +310,12 @@ def build_parser():
                          "toggles off the projection grimjim calls 'projected abliteration'; on by "
                          "default. For measuring whether the projection helps or hurts the search.")
     ap.add_argument("--skip-conv-ablation", dest="skip_conv_ablation", action="store_true",
-                    help="CONTROL ARM ONLY. Leave short-convolution output projections untouched "
-                         "on a hybrid architecture such as LFM2, where roughly half the decoder "
-                         "layers carry no attention and write the residual stream through a "
-                         "convolution instead. The resulting model is a PARTIAL abliteration by "
+                    help="CONTROL ARM ONLY. Leave the output projections of non-attention "
+                         "sequence mixers untouched on a hybrid architecture: a short convolution "
+                         "on LFM2, a gated delta net on Qwen3.5. Those layers carry no attention "
+                         "and write the residual stream through the mixer instead, and on some "
+                         "models they are most of the stack (30 of 40 on Qwen3.6-35B-A3B, 18 of "
+                         "24 on LFM2.5-8B-A1B). The resulting model is a PARTIAL abliteration by "
                          "construction: it exists to answer whether refusal travels through the "
                          "convolution path at all, by comparison against a run without this flag. "
                          "Every skipped layer is warned about and the choice is recorded in the "

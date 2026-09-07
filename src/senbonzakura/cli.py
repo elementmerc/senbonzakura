@@ -847,18 +847,54 @@ def _owned_weight(parent, name):
     return _real_tensor(parent, name)
 
 
+#: Child names that can hold an attention block. `mixer` is NemotronH, whose decoder layer holds
+#: exactly ONE child called `mixer` that is an attention block, a Mamba-2 mixer, an MLP or a MoE
+#: depending on the layer. It appears here AND in MIXER_BLOCKS AND in MLP_BLOCKS for that reason:
+#: the name says where it sits, not what it is, so every position has to look at it and the
+#: contents decide.
+ATTN_BLOCKS = ("self_attn", "attention", "self_attention", "attn", "mixer")
+
+
+def _attn_block(layer):
+    """The attention block on this layer, or None.
+
+    Ordered, and `mixer` is deliberately last: an architecture carrying both a conventional
+    `self_attn` and something called `mixer` must resolve to the conventional one.
+    """
+    for name in ATTN_BLOCKS:
+        blk = getattr(layer, name, None)
+        if blk is None:
+            continue
+        # A block only counts as attention if it actually has an attention output projection.
+        # NemotronH's `mixer` is an MLP on some layers and a Mamba-2 mixer on others, and reading
+        # either as attention would edit the wrong matrix with complete confidence.
+        for pname in ("o_proj", "out_proj", "dense"):
+            p = getattr(blk, pname, None)
+            w = getattr(p, "weight", None) if p is not None else None
+            # Rank is read off the parameter DIRECTLY rather than through `_real_tensor`, because
+            # this answers a structural question. `_real_tensor` refuses a meta tensor, which is
+            # right when something is about to be edited and wrong here: the whole architecture
+            # probe builds models on the meta device precisely so it needs no weights, and making
+            # "does this layer attend" depend on resident storage broke it.
+            if w is None or getattr(w, "dim", None) is None or w.dim() != 2:
+                continue
+            # `out_proj` on a `mixer` is the Mamba-2 case, which belongs to the mixer path rather
+            # than here. NemotronH is the architecture where one child name means four things.
+            if name == "mixer" and pname != "o_proj":
+                continue
+            return blk, p
+    return None, None
+
+
 def _attn_outproj(layer):
     # The attention OUTPUT projection (the matrix that writes attention back into the residual
     # stream), across naming conventions. Linear-based only: GPT-2-style Conv1D out-projections
     # (transposed weight) are deliberately not returned, since the row-wise norm-preserving bake
     # assumes a [out, in] Linear weight.
-    attn = (getattr(layer, "self_attn", None) or getattr(layer, "attention", None)
-            or getattr(layer, "self_attention", None) or getattr(layer, "attn", None))
-    if attn is not None:
-        for name in ("o_proj", "out_proj", "dense"):
-            p = getattr(attn, name, None)
-            if p is not None and hasattr(p, "weight") and _real_tensor(p, "weight").dim() == 2:
-                return _real_tensor(p, "weight")
+    _blk, p = _attn_block(layer)
+    if p is not None:
+        # Materialised HERE, at the point of editing, which is the only place it is needed.
+        return _real_tensor(p, "weight")
     raise ValueError(
         f"could not locate a Linear attention output projection on this layer "
         f"(type {type(layer).__name__}); architecture not supported.")
@@ -875,7 +911,29 @@ def _attn_outproj(layer):
 #:     LFM2.5-8B-A1B      conv.out_proj        [2048, 2048]
 #:     Qwen3.6-35B-A3B    linear_attn.out_proj [2048, 4096]
 #: The inner width differs and does not matter: the projection contracts over the output axis.
-MIXER_BLOCKS = ("conv", "linear_attn")
+#: Non-attention sequence mixers that sit in the attention position and write the residual stream
+#: through an `out_proj`. Every one of these was verified by building the architecture on the meta
+#: device and reading the shapes, never by reasoning about the mechanism:
+#:
+#:     LFM2.5-8B-A1B      conv.out_proj          [2048, 2048]
+#:     Qwen3.6-35B-A3B    linear_attn.out_proj   [2048, 4096]
+#:     Bamba              mamba.out_proj         [hidden, 2 x hidden]
+#:     FalconH1           mamba.out_proj         [hidden, 16 x hidden]
+#:     Jamba              mamba.out_proj         [hidden, 2 x hidden]
+#:     GraniteMoeHybrid   mamba.out_proj         [hidden, 2 x hidden]
+#:
+#: All are 2-D Linears whose OUTPUT dimension is hidden size, which is what an o_proj is. The
+#: inner width differs and does not matter, because the projection contracts over it.
+MIXER_BLOCKS = ("conv", "linear_attn", "mamba", "mixer")
+
+#: Blocks that hold the MLP-position residual writer. One list, read by the editor AND by the
+#: guard, because two hand-kept copies of a set of names is exactly how the guard came to refuse
+#: Qwen3.5 while the editor was perfectly able to edit it.
+#:
+#: `shared_mlp` is GraniteMoeHybrid's always-on expert, whose writer is `output_linear`. It sits
+#: beside a routed `block_sparse_moe` and a `mamba` block in the same layer, so a layer there has
+#: three residual writers rather than two.
+MLP_BLOCKS = ("block_sparse_moe", "mlp", "feed_forward", "shared_mlp", "mixer")
 
 
 def _conv_outproj(layer):
@@ -892,18 +950,49 @@ def _conv_outproj(layer):
     loud refusal `refuse_unrecognised_writers` is there to give.
     """
     for name in MIXER_BLOCKS:
-        block = getattr(layer, name, None)
-        if block is None:
-            continue
-        p = getattr(block, "out_proj", None)
-        if p is not None and hasattr(p, "weight") and _real_tensor(p, "weight").dim() == 2:
-            return _real_tensor(p, "weight")
+        w = _block_outproj(getattr(layer, name, None))
+        if w is not None:
+            return w
     return None
 
 
+def _block_outproj(block):
+    """The block's own `out_proj`, if it has a 2-D one, else None.
+
+    Split out because `mixer` is POLYMORPHIC. NemotronH gives every layer one child called
+    `mixer` that is a Mamba-2 mixer on some layers, an attention block on others and an MLP or a
+    MoE on the rest. The name says where it sits; only the contents say what it is, so anything
+    deciding "is this a sequence mixer" has to ask this rather than match the name.
+    """
+    if block is None:
+        return None
+    p = _block_outproj_param(block)
+    return None if p is None else _real_tensor(p, "weight")
+
+
+def _block_outproj_param(block):
+    """The block's `out_proj` MODULE if it carries a 2-D weight, without materialising it.
+
+    The structural half of `_block_outproj`. Everything that asks what a layer is made of goes
+    through here, because the architecture probe builds models on the meta device on purpose and
+    a question about shape must not need storage to answer. Materialising belongs at the edit.
+    """
+    if block is None:
+        return None
+    p = getattr(block, "out_proj", None)
+    w = getattr(p, "weight", None) if p is not None else None
+    if w is None or getattr(w, "dim", None) is None or w.dim() != 2:
+        return None
+    return p
+
+
 def _has_attention(layer):
-    return any(getattr(layer, n, None) is not None
-               for n in ("self_attn", "attention", "self_attention", "attn"))
+    """Whether this layer has an attention block WITH a usable output projection.
+
+    Presence of the child is not enough any more. NemotronH names every block `mixer`, so asking
+    "is there a child called mixer" answers a different question from "does this layer attend".
+    """
+    return _attn_block(layer)[1] is not None
 
 
 def layer_attn_writers(layer, ablate_conv=True):
@@ -1045,10 +1134,19 @@ def residual_writers(layer, hidden_size, ablate_conv=True):
     # refused by the guard while the editor was perfectly able to edit it. That failure was the
     # safe direction, a loud refusal rather than a silent partial edit, and the opposite drift is
     # the gemma failure exactly, so the lists are now one list.
-    known = {"self_attn", "attention", "self_attention", "attn",
-             "mlp", "block_sparse_moe", "feed_forward"}
-    if ablate_conv:
-        known.update(MIXER_BLOCKS)
+    known = set(ATTN_BLOCKS) | set(MLP_BLOCKS) | set(MIXER_BLOCKS)
+    if not ablate_conv:
+        # The control arm deliberately leaves sequence mixers alone, so they stop counting as
+        # handled and this guard turns that into the warning the operator has to opt out of.
+        known -= set(MIXER_BLOCKS)
+        # Except where the name is shared. A `mixer` that presents an attention o_proj or an MLP
+        # down-projection is NOT the thing being skipped, and dropping it here would report a
+        # perfectly edited attention layer as an unablated one. Decided by contents, never by
+        # name, because on this architecture the name means only "the block in this position".
+        for shared in set(MIXER_BLOCKS) & (set(ATTN_BLOCKS) | set(MLP_BLOCKS)):
+            blk = getattr(layer, shared, None)
+            if blk is not None and _block_outproj_param(blk) is None:
+                known.add(shared)
     unrecognised = []
     for name, child in layer.named_children():
         if name in known:
@@ -1105,11 +1203,13 @@ def layer_downproj(layer):
     # block_sparse_moe; the dense / Qwen-family / Mixtral / OLMoE layouts under mlp. Raises loud on
     # an architecture whose down-projection can't be found, so an unsupported model fails at load
     # rather than silently leaving a live refusal write-path.
-    entries = _mlp_downprojs(getattr(layer, "block_sparse_moe", None))
-    entries += _mlp_downprojs(getattr(layer, "mlp", None))
-    # LFM2 and its mixture-of-experts variant call the block `feed_forward`, and their dense
-    # layers name the down-projection `w2` on it directly (Mixtral's naming in a dense position).
-    entries += _mlp_downprojs(getattr(layer, "feed_forward", None))
+    # Driven by MLP_BLOCKS so the editor and the guard read one list. Granite exposes its experts
+    # under block_sparse_moe and its always-on expert under shared_mlp; LFM2 and its MoE variant
+    # call the block `feed_forward` and name the down-projection `w2` on it directly (Mixtral's
+    # naming in a dense position); NemotronH calls every block `mixer`.
+    entries = []
+    for name in MLP_BLOCKS:
+        entries += _mlp_downprojs(getattr(layer, name, None))
     if not entries:
         raise ValueError(
             f"could not locate a residual-writing down-projection on this decoder layer "
@@ -1117,6 +1217,109 @@ def layer_downproj(layer):
             "Qwen3-MoE / Granite-MoE (fused), Mixtral (fused or unfused), OLMoE (unfused), "
             "shared-expert MoE (Qwen2-MoE / DeepSeek), and LFM2 / LFM2-MoE (feed_forward).")
     return entries
+
+
+def layer_composition(layers, ablate_conv=True):
+    """What the decoder stack is actually made of, counted rather than assumed.
+
+    Returns {"attention", "mixer", "both", "mlp_only", "layers"}: how many layers write the
+    residual through an attention output projection, how many through a non-attention sequence
+    mixer, how many through BOTH in parallel, and how many have no attention-position writer at
+    all.
+
+    WHY A RUN SHOULD SAY THIS OUT LOUD
+
+    "down-proj=fused3d, 40 layers" describes a mixture-of-experts model and says nothing about
+    whether attention is even present. On Qwen3.6-35B-A3B 30 of 40 layers carry no attention;
+    on LFM2.5-8B-A1B it is 18 of 24; on NemotronH every layer carries exactly one block and which
+    one depends on where it sits. Those are different models to abliterate and the banner used to
+    describe them identically.
+
+    It matters because the mixer path's reach is measurably weaker than attention's on the models
+    checked so far, so a run whose residual stream is mostly written by mixers is a run whose
+    numbers deserve `validate --experiment reach` before anybody leans on them.
+    """
+    counts = {"attention": 0, "mixer": 0, "both": 0, "mlp_only": 0, "layers": len(layers)}
+    for layer in layers:
+        has_attn = _has_attention(layer)
+        has_mixer = ablate_conv and any(
+            _block_outproj_param(getattr(layer, n, None)) is not None for n in MIXER_BLOCKS)
+        if has_attn and has_mixer:
+            counts["both"] += 1
+        elif has_attn:
+            counts["attention"] += 1
+        elif has_mixer:
+            counts["mixer"] += 1
+        else:
+            counts["mlp_only"] += 1
+    return counts
+
+
+def describe_composition(counts):
+    """The composition as one line, and a warning when the mixer path dominates.
+
+    Returns (line, warning_or_None).
+    """
+    n = counts["layers"] or 1
+    parts = [f"{counts['attention']} attention"] if counts["attention"] else []
+    if counts["both"]:
+        parts.append(f"{counts['both']} attention+mixer")
+    if counts["mixer"]:
+        parts.append(f"{counts['mixer']} mixer-only")
+    if counts["mlp_only"]:
+        parts.append(f"{counts['mlp_only']} MLP-only")
+    line = ", ".join(parts) or "no residual writers found"
+    mixer_share = (counts["mixer"] + counts["both"]) / n
+    warn = None
+    if mixer_share >= 0.5:
+        warn = (f"{counts['mixer'] + counts['both']} of {n} layers write the residual stream "
+                f"through a non-attention sequence mixer. On every hybrid measured so far that "
+                f"path is edited LESS hard than attention, so run "
+                f"`senbonzakura validate --experiment reach` on this model before quoting a "
+                f"number from it: recognising a writer is not evidence the edit lands.")
+    return line, warn
+
+
+def layer_writers(layer, ablate_conv=True):
+    """Both positions of one decoder layer, tolerating a layer that only has one of them.
+
+    Returns `(attn_writers, mlp_entries)`.
+
+    WHY THE TOLERANCE IS SAFE, WHICH IS THE WHOLE QUESTION
+
+    Every architecture this tool has met until now puts a writer in BOTH positions on every layer:
+    something attention-shaped, then something MLP-shaped. Both walkers therefore raised when they
+    found nothing, and that loudness is what has kept a partial ablation from being reported as a
+    whole one.
+
+    NemotronH breaks the assumption. Its decoder layer holds exactly ONE child, called `mixer`,
+    which is a Mamba-2 mixer, an attention block, an MLP or a MoE depending on where in the stack
+    it sits, following a repeating pattern. So a layer legitimately has one writer, and the old
+    code refused the whole model: 0 of its layers were recognised.
+
+    The tolerance is therefore stated as an invariant rather than as a relaxation. A layer with a
+    writer in one position and nothing in the other is fine. A layer with NO writer anywhere is
+    still refused, loudly, with both underlying reasons quoted, because that is the case where
+    something residual-writing is present and unrecognised. `refuse_unrecognised_writers` still
+    runs independently and still catches a layer whose writer we simply do not know.
+    """
+    attn, attn_err = [], None
+    try:
+        attn = layer_attn_writers(layer, ablate_conv=ablate_conv)
+    except ValueError as e:
+        attn_err = e
+    mlp, mlp_err = [], None
+    try:
+        mlp = layer_downproj(layer)
+    except ValueError as e:
+        mlp_err = e
+    if not attn and not mlp:
+        raise ValueError(
+            f"this decoder layer (type {type(layer).__name__}) has no residual-writing projection "
+            f"in EITHER position, so there is nothing here this tool knows how to edit.\n"
+            f"  attention position: {attn_err}\n"
+            f"  MLP position: {mlp_err}")
+    return attn, mlp
 
 
 def _profiles_from_params(p):
@@ -1192,7 +1395,7 @@ def _kageyoshi_explicit(argv):
     return seen
 
 
-def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=()):
+def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=(), composition=None):
     # BANKAI — "ultimate balanced-effort" preset. The user asked for the best abliteration
     # we can produce with no knob-twiddling. So: read the detected architecture + parameter
     # count, auto-scale the search budget to the model's size, and switch on every quality
@@ -1258,6 +1461,17 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=()):
     k_note = (f"K={args.max_directions} (pinned)" if k_min == args.max_directions
               else f"K<={args.max_directions}")
     log("BANKAI. Senbonzakura Kageyoshi — scatter, a thousand blades.")
+    # The composition line again, in the preset's own banner, because kageyoshi is the mode people
+    # run when they have decided not to read the flags, and it is the mode most likely to be
+    # pointed at an architecture nobody here has measured.
+    #
+    # Passed in rather than re-walked. The abliterator has already counted it, and walking a second
+    # time here made the preset depend on resolving a decoder stack it has no other need for.
+    if composition:
+        comp_line, comp_warn = describe_composition(composition)
+        log(f"  layers: {comp_line}")
+        if comp_warn:
+            log(f"  NOTE: {comp_warn}")
     log(f"  {b:.1f}B params, down-proj={arch}{'' if ne is None else f'/{ne}e'}, {NL} layers -> "
         f"{args.trials} trials, {k_note}, eval {args.eval_refusal}/{args.eval_refusal_final}, "
         f"patience={args.patience}, {hedge_note}")
@@ -1522,7 +1736,15 @@ class Abliterator:
         self.NL = model.config.num_hidden_layers
         # Architecture label = the distinct down-proj kinds present (e.g. "fused3d" or "fused3d+dense"
         # when a routed stack sits beside a shared expert). Raises loud here if the arch is unsupported.
-        _dp = layer_downproj(self.layers[0])
+        #
+        # Collected across EVERY layer rather than from the first, and through `layer_writers` so a
+        # layer with only one populated position is not a failure. Reading layer 0 alone refused
+        # NemotronH outright: its first layer holds a Mamba-2 mixer and no MLP at all, so the label
+        # lookup raised before the model had a chance to be measured. It also under-reported the
+        # label on any model whose expert layers start further in.
+        _dp = []
+        for _layer in self.layers:
+            _dp += layer_writers(_layer, ablate_conv=not args.skip_conv_ablation)[1]
         # EVERY layer, not just the first. A hybrid architecture interleaves block types, so a
         # first layer that resolves cleanly says nothing about the twentieth: LFM2 puts its
         # convolution blocks first and its attention blocks after, and either order would have
@@ -1538,7 +1760,14 @@ class Abliterator:
         # rejected here because the parser has already refused an inverted pair; this is the
         # invariant restated where the search reads it.
         self.KMIN = min(max(1, args.min_directions), self.KMAX)
+        # Counted, not inferred from the config: a config says how many layers there are and not
+        # what is in them, and on a hybrid that is the difference that decides what a number means.
+        self.composition = layer_composition(self.layers, ablate_conv=self.ablate_conv)
+        comp_line, comp_warn = describe_composition(self.composition)
         log(f"model up: hidden={self.H} layers={self.NL} down-proj={self.arch} experts={self.ne}")
+        log(f"  residual writers by layer: {comp_line}")
+        if comp_warn:
+            log(f"  NOTE: {comp_warn}")
         # Opened here rather than in `run()` so a caller constructing the class directly (a GUI, a
         # test) gets events too. A no-op when the flag is absent, which is the common case.
         from . import events as _events
@@ -2191,8 +2420,9 @@ class Abliterator:
         self._pristine.clear(); self._dirty.clear()
         targets = []
         for layer in self.layers:
-            targets += layer_attn_writers(layer, ablate_conv=self.ablate_conv)
-            for kind, obj in layer_downproj(layer):
+            attn, mlp = layer_writers(layer, ablate_conv=self.ablate_conv)
+            targets += attn
+            for kind, obj in mlp:
                 targets += obj if kind == "list" else [obj]
         need = sum(W.numel() * W.element_size() for W in targets)
         avail = _available_ram_bytes()
@@ -2255,13 +2485,17 @@ class Abliterator:
             attn_norm, mlp_norm = post_sublayer_norms(layer)
             R_attn = self._fold_for(R, attn_norm)
             R_mlp = self._fold_for(R, mlp_norm)
+            # Both positions at once, because a layer may legitimately hold only one of them:
+            # NemotronH puts a single `mixer` on each layer that is attention, a Mamba-2 mixer, an
+            # MLP or a MoE by turns. A layer with nothing in either position still raises.
+            attn_writers, mlp_entries = layer_writers(layer, ablate_conv=self.ablate_conv)
             if wo > 0.0:
                 # Every residual writer in the attention position, which on a hybrid is the
-                # convolution's out_proj on the layers that have no attention at all.
-                for op in layer_attn_writers(layer, ablate_conv=self.ablate_conv):
+                # mixer's out_proj on the layers that have no attention at all.
+                for op in attn_writers:
                     self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp, rounds=rounds)
             if wd > 0.0:
-                for kind, obj in layer_downproj(layer):         # every residual-writing down-proj
+                for kind, obj in mlp_entries:                   # every residual-writing down-proj
                     if kind == "fused3d":
                         self._mark_dirty(obj); orthogonalize_np_3d_(obj, R_mlp, wd, sp, rounds=rounds)
                     elif kind == "list":
@@ -3531,7 +3765,8 @@ def run_parsed(args, bankai, argv):
     abl = Abliterator(args, log)
     if bankai:
         _apply_kageyoshi(args, abl.model, abl.arch, abl.ne, abl.NL, log,
-                         explicit=_kageyoshi_explicit(argv))
+                         explicit=_kageyoshi_explicit(argv),
+                         composition=getattr(abl, "composition", None))
     return abl.run()
 
 

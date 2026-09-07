@@ -568,7 +568,7 @@ def build_parser():
         parents=[loader_parser()])
     ap.add_argument("--eval", required=True,
                     help="a graded benchmark with a question column and an answer column, such "
-                         "as openai/gsm8k::test. A plain prompt list will not do: marking needs "
+                         "as openai/gsm8k:main::test. A plain prompt list will not do: marking needs "
                          "the reference answer")
     ap.add_argument("--task", choices=TASK_CHOICES, default=DEFAULT_TASK,
                     help="how the answers are graded. 'numeric' (default) reads the last number, "

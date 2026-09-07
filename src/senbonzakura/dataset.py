@@ -27,6 +27,7 @@ WHAT A SPEC LOOKS LIKE
     prompts.parquet                     the same
     mlabonne/harmful_behaviors          a Hub dataset id
     mlabonne/harmful_behaviors::train   a specific split
+    openai/gsm8k:main::test             a dataset that ships several configs
     walledai/AdvBench::train[:400]      a slice of one, which is how Heretic's defaults are cut
 
 Local paths win over Hub ids: a spec that exists on disk is never sent to the network.
@@ -65,6 +66,28 @@ BUNDLED_ALIAS = "default"
 #: A Hub id is `owner/name`, optionally `owner/name/subdir`. Anything with a suffix, a leading
 #: dot or an absolute root is a path.
 _HUB_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
+def split_hub_config(body):
+    r"""`owner/name:config` becomes ("owner/name", "config"). Anything else is unchanged.
+
+    WHY THIS EXISTS
+
+    Many Hub datasets ship several CONFIGS and refuse to load without one being named.
+    `openai/gsm8k` is the obvious case: it holds `main` and `socratic`, and `load_dataset` takes
+    the config as its second POSITIONAL argument, which `owner/name::split` had no way to express.
+    So the default capability benchmark in this project's own experiment script could not be
+    loaded by any invocation of it, and every arm of a seven-arm run failed at grading. Found by
+    hephaestus-c9 running E2 on 2026-09-07, and only by running it.
+
+    The colon is safe here in a way it is not in the split separator. It is only treated as a
+    config when what precedes it is a Hub id, and a Hub id is `owner/name`, so a Windows drive
+    letter cannot be mistaken for one: `C:\\corpus` leaves `C`, which has no slash.
+    """
+    head, sep, tail = str(body).rpartition(":")
+    if sep and _HUB_RE.match(head) and tail:
+        return head, tail
+    return body, None
 
 
 class DatasetError(Exception):
@@ -117,7 +140,12 @@ def _apply_slice(rows, slice_expr, spec):
 
 
 def looks_like_hub_id(body):
-    """Whether a spec that is not on disk should be treated as a Hub dataset id."""
+    """Whether a spec that is not on disk should be treated as a Hub dataset id.
+
+    A trailing `:config` is stripped first, so `openai/gsm8k:main` is recognised as the Hub id it
+    is. Without that it fell through to the path branch and was reported as a spelling mistake.
+    """
+    body, _config = split_hub_config(body)
     p = Path(body)
     if p.suffix.lower() in TABLE_SUFFIXES or p.is_absolute() or body.startswith((".", "~")):
         return False
@@ -299,6 +327,7 @@ def _from_hub(body, split, spec, token, streaming, limit):
         raise DatasetError(
             f"{spec} looks like a Hub dataset id and reading one needs the `datasets` package "
             f"(`pip install datasets`).") from e
+    body, config = split_hub_config(body)
     kwargs = {}
     if token:
         kwargs["token"] = token
@@ -307,13 +336,20 @@ def _from_hub(body, split, spec, token, streaming, limit):
     if streaming:
         kwargs["streaming"] = True
     try:
-        obj = load_dataset(body, **kwargs)
+        # The config is `load_dataset`'s second positional argument, which is why it needs its own
+        # place in the spec rather than another keyword.
+        obj = load_dataset(body, config, **kwargs) if config else load_dataset(body, **kwargs)
     except Exception as e:
         hint = ""
         text = str(e).lower()
         if "gated" in text or "401" in text or "403" in text or "authent" in text:
             hint = (" This dataset looks gated or private. Pass --hf-token, or set HF_TOKEN in "
                     "the environment, with an account that has been granted access.")
+        elif "config name is missing" in text or "pick one among the available configs" in text:
+            # The error names the configs, and nothing said how to supply one. Say it here.
+            hint = (f" This dataset ships several configs and one has to be named. Put it in the "
+                    f"spec after a colon, before the split: '{body}:<config>"
+                    + (f"::{split}'." if split else "'."))
         raise DatasetError(f"could not fetch the Hub dataset '{body}': {e}.{hint}") from e
     if streaming:
         rows, cols = [], []

@@ -12,6 +12,7 @@ import json
 import pytest
 from datasets import Dataset, DatasetDict
 
+from senbonzakura import dataset
 from senbonzakura import dataset as ds
 
 
@@ -533,3 +534,73 @@ def test_an_empty_labelled_source_says_so(tmp_path):
     p.write_text("text,label\n", encoding="utf-8")
     with pytest.raises(ds.DatasetError, match="empty"):
         ds.resolve_labelled(str(p))
+
+
+# ── the dataset CONFIG, which had no way to be expressed ───────────────────────────
+# Found by running E2 on 2026-09-07: `openai/gsm8k` holds two configs and refuses to load without
+# one being named, `load_dataset` takes the config as its second POSITIONAL argument, and
+# `owner/name::split` carried only a body and a split. The default capability benchmark in this
+# project's own experiment script could not be loaded by any invocation of it.
+@pytest.mark.parametrize(("spec", "want"), [
+    ("openai/gsm8k:main", ("openai/gsm8k", "main")),
+    ("owner/name:cfg", ("owner/name", "cfg")),
+    ("openai/gsm8k", ("openai/gsm8k", None)),
+])
+def test_a_hub_config_is_split_off_the_body(spec, want):
+    assert dataset.split_hub_config(spec) == want
+
+
+@pytest.mark.parametrize("spec", [
+    r"C:\corpus",              # a Windows drive letter is not a Hub owner
+    "./local.csv",
+    "/abs/path",
+    "plainname",
+    "owner/name:",             # a trailing colon names no config
+])
+def test_a_colon_that_is_not_a_config_is_left_alone(spec):
+    assert dataset.split_hub_config(spec) == (spec, None)
+
+
+def test_a_spec_carrying_a_config_is_still_recognised_as_a_hub_id():
+    """Without this it fell through to the path branch and was reported as a spelling mistake."""
+    assert dataset.looks_like_hub_id("openai/gsm8k:main")
+    assert dataset.looks_like_hub_id("openai/gsm8k")
+    assert not dataset.looks_like_hub_id(r"C:\corpus")
+
+
+def test_the_config_reaches_load_dataset_as_a_positional(monkeypatch):
+    """It is the SECOND POSITIONAL argument, which is why it needed its own place in the spec
+    rather than another keyword.
+    """
+    seen = {}
+
+    class _Fake:
+        column_names = ("question", "answer")
+
+        def __iter__(self):
+            return iter([{"question": "q", "answer": "a"}])
+
+    def fake_load_dataset(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return _Fake()
+
+    import datasets
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    dataset._from_hub("openai/gsm8k:main", "test", "openai/gsm8k:main::test", None, False, None)
+    assert seen["args"] == ("openai/gsm8k", "main")
+    assert seen["kwargs"]["split"] == "test"
+
+
+def test_a_missing_config_error_says_how_to_supply_one(monkeypatch):
+    """The upstream error lists the configs and never says where to put one."""
+    def fake_load_dataset(*_a, **_k):
+        raise ValueError("Config name is missing. Please pick one among the available configs: "
+                         "['main', 'socratic']")
+
+    import datasets
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+    with pytest.raises(dataset.DatasetError) as e:
+        dataset._from_hub("openai/gsm8k", "test", "openai/gsm8k::test", None, False, None)
+    msg = str(e.value)
+    assert "openai/gsm8k:<config>::test" in msg, msg

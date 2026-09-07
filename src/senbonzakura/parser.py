@@ -252,7 +252,7 @@ def build_parser():
                          "default.")
     ap.add_argument("--capability-eval", dest="capability_eval", default="",
                     help="a graded benchmark (a question column and an answer column, e.g. "
-                         "openai/gsm8k::test) used to measure what each finalist config COST in "
+                         "openai/gsm8k:main::test) used to measure what each finalist config COST in "
                          "capability. Off by default because it needs a benchmark you supply. "
                          "Refusal rates, the keyword rate, drift and brokenness cannot see "
                          "reasoning loss: a model can hold a low KL with nothing broken and have "

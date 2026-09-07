@@ -500,3 +500,90 @@ def test_the_paired_change_reaches_the_output(tmp_path, monkeypatch, tiny_model,
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["compare_to"] == str(ref)
     assert doc["change"] is None, "no comparable pairs must not become a change of zero"
+
+
+# ── more than one task (B1) ──────────────────────────────────────────────────────────
+# Arithmetic is one capability. A model can keep it and lose instruction-following, or lose the
+# ability to pick the right option from a list, and a single benchmark reports none of that.
+# Every task is graded by code against a reference: no judge, so nothing whose reliability would
+# have to be established before the result meant anything.
+
+def test_every_task_says_what_it_grades_and_why_no_judge_is_needed():
+    """A task that cannot answer both is a benchmark somebody has to take on trust."""
+    for name in cap.TASK_CHOICES:
+        t = cap.get_task(name)
+        assert t.grades and t.needs_no_judge, f"{name} does not explain itself"
+        assert "{}" in t.prompt, f"{name} has no place to put the question"
+
+
+def test_an_unknown_task_lists_what_exists():
+    with pytest.raises(KeyError, match="Available:"):
+        cap.get_task("vibes")
+
+
+def test_the_default_task_is_unchanged():
+    """Changing it would silently change what every existing capability run measured."""
+    assert cap.DEFAULT_TASK == "numeric"
+
+
+@pytest.mark.parametrize(("text", "want"), [
+    ("(C)", "C"),
+    ("The answer is B.", "B"),
+    ("A) wrong, B) also wrong, so C", "C"),      # last, not first
+    ("D:", "D"),
+    ("no letters here", None),
+    ("", None),
+    (None, None),
+])
+def test_a_multiple_choice_answer_is_read_from_prose(text, want):
+    assert cap.choice_answer(text) == want
+
+
+def test_a_choice_is_not_found_in_an_ordinary_word():
+    """Anchoring matters: without it, a capital inside a word becomes an answer."""
+    assert cap.choice_answer("ABLATION removes a direction") != "B"
+
+
+@pytest.mark.parametrize(("got", "gold", "want"), [
+    ("Paris", "paris", "correct"),
+    ("The Paris", "paris", "correct"),           # article and case normalised
+    ("paris.", "paris", "correct"),              # trailing punctuation
+    ("Lyon", "paris", "wrong"),
+    ("", "paris", "indeterminate"),
+])
+def test_the_exact_task_normalises_only_what_is_not_the_answer(got, gold, want):
+    assert cap.grade_one(got, gold, task="exact") == want
+
+
+def test_the_exact_task_takes_the_last_line_because_that_is_what_it_asked_for():
+    """The prompt says "on the last line and nothing else", so grading anything else would be
+    marking against a different instruction than the one given.
+    """
+    assert cap.grade_one("Let me think.\nWorking.\nParis", "Paris", task="exact") == "correct"
+
+
+def test_the_three_rules_hold_on_every_task():
+    """Truncation is indeterminate, an unusable row is indeterminate, and a refusal is neither
+    correct nor wrong. These are the properties the whole module exists for, so they cannot hold
+    on the first task and quietly lapse on the others.
+    """
+    for name in cap.TASK_CHOICES:
+        assert cap.grade_one("anything", "1", truncated=True, task=name) == "indeterminate"
+        assert cap.grade_one("anything", None, task=name) == "indeterminate"
+        assert cap.grade_one("I'm sorry, I can't help with that.", "#### 8",
+                             task="numeric") == "indeterminate"
+
+
+def test_the_task_reaches_the_output_because_an_accuracy_needs_to_say_what_was_asked(
+        tmp_path, monkeypatch, tiny_model, tiny_tok):
+    import json
+
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(_cli, "render_chat", lambda _tok, p: p)
+    bench = _jsonl(tmp_path, [{"question": "q", "answer": "B"}] * 2)
+    out = tmp_path / "c.json"
+    cap.main(["--model", "m", "--device", "cpu", "--eval", str(bench), "--n", "2",
+              "--max-new", "4", "--task", "multiple-choice", "--out", str(out)])
+    assert json.loads(out.read_text(encoding="utf-8"))["task"] == "multiple-choice"

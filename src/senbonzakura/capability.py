@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 
 #: A number as a model writes one: optional sign, digits with optional thousands separators, an
 #: optional decimal part. Deliberately does not accept a bare `.5`, because the things that look
@@ -91,7 +92,112 @@ def predicted_answer(generation):
     return parse_number(found[-1]) if found else None
 
 
-def grade_one(generation, solution, truncated=False):
+# ── the tasks, and why there is more than one ────────────────────────────────────────
+# Arithmetic is one capability. A model can keep it and lose instruction-following, or lose the
+# ability to pick the right option from a list, and a single benchmark would report none of that.
+# Every task here is graded by CODE against a reference answer: no model in the loop, so no judge
+# whose own reliability would have to be established before the result meant anything.
+#
+# Adding a task means adding an entry here. The three rules never move: an answer that cannot be
+# graded is indeterminate, truncation is decided by the generator rather than guessed from text,
+# and counts are reported beside every rate.
+
+#: A multiple-choice answer as a model writes one: a letter, optionally in brackets or after a
+#: label. Deliberately anchored so a stray capital in prose is not read as a choice.
+CHOICE = re.compile(r"(?:^|[^A-Za-z])\(?([A-J])\)?(?:[.):]|\b)")
+
+
+def choice_answer(text):
+    """The LAST option letter in the text, upper-cased, or None.
+
+    Last for the same reason the numeric task takes the last number: a model that reasons aloud
+    names the options it is rejecting before it names the one it picks.
+    """
+    if text is None:
+        return None
+    found = CHOICE.findall(str(text).upper())
+    return found[-1] if found else None
+
+
+def normalised_text(text):
+    """A short free-text answer with the things that are not the answer removed.
+
+    Case, surrounding punctuation and articles. Anything more aggressive starts deciding that two
+    different answers are the same, which is a judge wearing a regex.
+    """
+    if text is None:
+        return None
+    s = " ".join(str(text).strip().lower().split())
+    s = s.strip(".,;:!?\"'()[]")
+    for article in ("the ", "a ", "an "):
+        s = s.removeprefix(article)
+    return s or None
+
+
+def last_line_answer(text):
+    """The final non-empty line, for tasks whose prompt asks for the answer on its own line."""
+    if text is None:
+        return None
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    return normalised_text(lines[-1]) if lines else None
+
+
+@dataclass(frozen=True)
+class Task:
+    """One graded task: how to ask, how to read the answer, and how to compare it."""
+
+    name: str
+    prompt: str
+    extract: object          # generation -> answer or None
+    reference: object        # dataset answer -> answer or None
+    same: object             # (got, want) -> bool
+    grades: str              # what a reader should understand this measures
+    needs_no_judge: str      # why the grading is trustworthy without a model in the loop
+
+
+TASKS = {
+    "numeric": Task(
+        name="numeric",
+        prompt="{}\n\nWork through it, then give the final answer as a number on the last line.",
+        extract=predicted_answer,
+        reference=gold_answer,
+        same=lambda got, want: abs(got - want) <= TOLERANCE,
+        grades="multi-step arithmetic and the reasoning that gets there",
+        needs_no_judge="the answer is a number, so agreement is exact",
+    ),
+    "multiple-choice": Task(
+        name="multiple-choice",
+        prompt="{}\n\nAnswer with the letter of the correct option, on its own line.",
+        extract=choice_answer,
+        reference=lambda s: choice_answer(s) if s else None,
+        same=lambda got, want: got == want,
+        grades="knowledge and discrimination, without needing the model to compose an answer",
+        needs_no_judge="the answer is one letter from a fixed set",
+    ),
+    "exact": Task(
+        name="exact",
+        prompt="{}\n\nAnswer as briefly as possible, on the last line and nothing else.",
+        extract=last_line_answer,
+        reference=normalised_text,
+        same=lambda got, want: got == want,
+        grades="short factual recall and whether the model can follow a format instruction",
+        needs_no_judge="agreement is string equality after case and article normalisation, which "
+                       "is narrow enough to be a rule rather than a judgement",
+    ),
+}
+
+DEFAULT_TASK = "numeric"
+TASK_CHOICES = sorted(TASKS)
+
+
+def get_task(name):
+    try:
+        return TASKS[name]
+    except KeyError:
+        raise KeyError(f"unknown task {name!r}. Available: {', '.join(TASK_CHOICES)}.") from None
+
+
+def grade_one(generation, solution, truncated=False, task=DEFAULT_TASK):
     """One item, as "correct", "wrong" or "indeterminate".
 
     `truncated` says the generation stopped because it ran out of token budget rather than because
@@ -103,18 +209,19 @@ def grade_one(generation, solution, truncated=False):
     """
     if truncated:
         return "indeterminate"
-    gold = gold_answer(solution)
-    if gold is None:
+    t = get_task(task)
+    want = t.reference(solution)
+    if want is None:
         # The dataset row is unusable, not the model's fault, and silently scoring it wrong would
         # make a corpus defect look like a capability loss.
         return "indeterminate"
-    got = predicted_answer(generation)
+    got = t.extract(generation)
     if got is None:
         return "indeterminate"
-    return "correct" if abs(got - gold) <= TOLERANCE else "wrong"
+    return "correct" if t.same(got, want) else "wrong"
 
 
-def grade(generations, solutions, truncated=None):
+def grade(generations, solutions, truncated=None, task=DEFAULT_TASK):
     """Every item's verdict, in order. Lengths must match; the caller has already checked.
 
     `truncated` is a parallel sequence of flags. It defaults to None only so a caller grading
@@ -122,8 +229,8 @@ def grade(generations, solutions, truncated=None):
     and does not pass it is measuring its own token budget.
     """
     flags = [False] * len(generations) if truncated is None else list(truncated)
-    return [grade_one(g, s, t)
-            for g, s, t in zip(generations, solutions, flags, strict=True)]
+    return [grade_one(g, s, cut, task)
+            for g, s, cut in zip(generations, solutions, flags, strict=True)]
 
 
 def summarise(verdicts):
@@ -317,6 +424,14 @@ def build_parser():
                     help="a graded benchmark with a question column and an answer column, such "
                          "as openai/gsm8k::test. A plain prompt list will not do: marking needs "
                          "the reference answer")
+    ap.add_argument("--task", choices=TASK_CHOICES, default=DEFAULT_TASK,
+                    help="how the answers are graded. 'numeric' (default) reads the last number, "
+                         "for arithmetic sets like GSM8K; 'multiple-choice' reads the last option "
+                         "letter; 'exact' compares the last line as text after normalising case "
+                         "and articles. Every one is graded by code against a reference answer, "
+                         "so no judge model is involved and none has to be validated first. The "
+                         "task is recorded in the output, because an accuracy means nothing "
+                         "without knowing what was asked.")
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--question-column", dest="question_column", default=None,
@@ -385,20 +500,23 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
 
-    prompts = [PROMPT.format(q) for q in questions]
+    task = get_task(a.task)
+    prompts = [task.prompt.format(q) for q in questions]
     gens, truncated = generate_with_truncation(
         model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
-    verdicts = grade(gens, answers, truncated)
+    verdicts = grade(gens, answers, truncated, task=a.task)
     summary = summarise(verdicts)
     change = None
     if reference is not None and a.bootstrap:
         change = paired_change(reference, verdicts, seed=a.seed, resamples=a.bootstrap)
 
     print(f"capability: {a.label or a.model} on {a.eval}")
+    print(f"  task {task.name}: {task.grades}")
     for line in report(summary, change):
         print(line)
 
-    result = {"label": a.label, "model": a.model, "eval": a.eval, "n": len(questions),
+    result = {"label": a.label, "model": a.model, "eval": a.eval, "task": a.task,
+              "n": len(questions),
               "max_new": a.max_new, "seed": a.seed, "summary": summary,
               "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change}
     with open(a.out, "w", encoding="utf-8") as f:

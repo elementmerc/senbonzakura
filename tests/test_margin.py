@@ -1117,3 +1117,31 @@ def test_both_arms_are_checked_not_just_the_harmful_one():
     src = inspect.getsource(margin.main)
     assert 'for arm in ("harmful", "harmless")' in src, "only one arm is reported"
     assert "suspect_arms" in src, "the suspect check does not consider both arms"
+
+
+# ── the second read-out position, through main ─────────────────────────────────────
+def test_readout_both_on_a_model_with_no_reasoning_block_says_so(loaded, tmp_path):
+    """The tiny tokenizer declares no close token, which is the common case and must not be
+    papered over: a made-up boundary would produce a number nobody could trace.
+    """
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "3", "--device", "cpu",
+                       "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0",
+                       "--readout", "both"])
+    past = res["readout"]["past_preamble"]
+    assert past["available"] is False
+    assert "declares no reasoning-close token" in past["why"]
+    assert res["readout"]["position"] == "both"
+
+
+def test_the_default_records_which_position_was_read(loaded, tmp_path):
+    """Two runs read at different positions are not comparable, and this is what lets a reader
+    tell which one they are holding.
+    """
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "3", "--device", "cpu",
+                       "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
+    assert res["readout"]["position"] == "first"
+    assert "past_preamble" not in res["readout"]

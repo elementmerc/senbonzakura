@@ -33,6 +33,16 @@ from ._version import __version__
 from .metrics import KL_CEIL, KL_TARGET
 
 
+def _capability_tasks():
+    """The grading tasks, read lazily so this module stays free of heavy imports.
+
+    `capability` imports json and re and nothing else, but it is not on the import-free list this
+    file's head pins, so it is imported inside the function rather than at module scope.
+    """
+    from .capability import TASK_CHOICES
+    return TASK_CHOICES
+
+
 def split_mode(argv):
     """Peel off the mode word, returning (bankai, remaining argv).
 
@@ -240,6 +250,24 @@ def build_parser():
                          "as the only thing that varies. Off by default: it changes what every "
                          "separation number means, and Q-14 measures it before it becomes the "
                          "default.")
+    ap.add_argument("--capability-eval", dest="capability_eval", default="",
+                    help="a graded benchmark (a question column and an answer column, e.g. "
+                         "openai/gsm8k::test) used to measure what each finalist config COST in "
+                         "capability. Off by default because it needs a benchmark you supply. "
+                         "Refusal rates, the keyword rate, drift and brokenness cannot see "
+                         "reasoning loss: a model can hold a low KL with nothing broken and have "
+                         "lost multi-step arithmetic, because none of them asks it to reason.")
+    ap.add_argument("--capability-n", dest="capability_n", type=int, default=0,
+                    help="how many items the capability probe uses (0 = off). It runs on the "
+                         "finalists rather than on every trial, so it costs --top-rescore "
+                         "generations and not one per trial.")
+    ap.add_argument("--capability-task", dest="capability_task",
+                    choices=_capability_tasks(), default="numeric",
+                    help="how the probe grades: see `senbonzakura capability --help`.")
+    ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=320,
+                    help="token budget per probe answer. A worked solution is long, and a budget "
+                         "that truncates them measures the budget rather than the model; "
+                         "truncated answers are counted as ungradeable, never as wrong.")
     ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
                     help="how many times to alternate restoring the row lengths and removing the "
                          "direction again. 0 (default) is the single pass this tool has always "

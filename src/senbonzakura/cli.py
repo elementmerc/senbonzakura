@@ -2664,6 +2664,71 @@ class Abliterator:
         log(f"BENCH-ONLY default window (P={int(NL*0.6)}, wmax=1.0, K={self.KMAX}): "
             f"refusals={r*100:.1f}% KL={k:.4f}")
 
+    def _capability_baseline(self):
+        """The unedited model's score on the capability probe, and the items it was scored on.
+
+        Returns (accuracy or None, items). Empty items means no probe was asked for, which is the
+        default: this needs a graded benchmark the operator supplies, and inventing one would be
+        worse than not measuring.
+
+        Taken with the weights PRISTINE. The whole quantity of interest is a drop, and a drop
+        needs a before; measuring the baseline after any bake would compare a damaged model to
+        itself and report zero.
+        """
+        args = self.args
+        spec = getattr(args, "capability_eval", "") or ""
+        n = int(getattr(args, "capability_n", 0) or 0)
+        if not spec or n <= 0:
+            return None, []
+        from . import dataset
+        try:
+            questions, answers = dataset.resolve_pairs(spec, token=args.hf_token or None)
+        except dataset.DatasetError as e:
+            raise SystemExit(
+                f"--capability-eval {spec} cannot be read: {e}. A capability probe with no "
+                f"benchmark behind it would silently score every candidate the same.") from e
+        items = list(zip(questions[:n], answers[:n], strict=True))
+        self.restore_weights()          # measure the model as it arrived, not as a trial left it
+        return self._capability_score(items), items
+
+    def _capability_score(self, items):
+        """Accuracy of whatever is currently baked, on the probe items, or None if nothing graded.
+
+        None rather than 0.0 when nothing could be graded, for the same reason it is None
+        everywhere else: a run that measured nothing must not read as a run that measured a zero,
+        and here that difference would move a selection.
+        """
+        if not items:
+            return None
+        from . import capability
+        task = capability.get_task(getattr(self.args, "capability_task", "numeric"))
+        prompts = [task.prompt.format(q) for q, _a in items]
+        gens, truncated = capability.generate_with_truncation(
+            self.model, self.tok, prompts, self.dev,
+            batch=max(1, int(self.args.batch_size)),
+            max_new=int(getattr(self.args, "capability_max_new", 320)))
+        verdicts = capability.grade(gens, [a for _q, a in items], truncated,
+                                    task=getattr(self.args, "capability_task", "numeric"))
+        s = capability.summarise(verdicts)
+        return s["accuracy"]
+
+    def _capability_drop(self, baseline, items):
+        """How much accuracy the currently baked config cost, or None when it cannot be said.
+
+        None when there was no probe, no baseline, or nothing gradeable now. A candidate that
+        cannot be scored must not be scored as unharmed: that would let a config which destroyed
+        the model's ability to answer at all win on a drop of zero, which is the brokenness defect
+        in a new costume.
+        """
+        if baseline is None or not items:
+            return None
+        now = self._capability_score(items)
+        if now is None:
+            # It answered nothing gradeable. That is the largest drop available, not an absent
+            # measurement, because the baseline proved these items ARE gradeable on this model.
+            return baseline
+        return baseline - now
+
     def _method_profile(self):
         """The bake profile this run's method pins, or None when the method searches.
 
@@ -2912,6 +2977,16 @@ class Abliterator:
                 f"broken <= 0.1), so the winner is chosen from DAMAGED configurations. The least "
                 f"drift any trial achieved was {worst:.4f}. Treat the saved model as a search "
                 f"artefact, not a result, and re-run with more --trials or a wider --max-kl.")
+        # The capability probe, and where it sits is the whole design decision. Running it per
+        # TRIAL would multiply a 200-trial search by a graded benchmark; running it here costs
+        # --top-rescore generations, on exactly the candidates that could still win. The
+        # catastrophic case (a model that stopped answering) is already caught per trial by the
+        # brokenness term; this catches the quieter one, a model that answers fluently and can no
+        # longer reason, which nothing in the objective could see.
+        cap_baseline, cap_items = self._capability_baseline()
+        if cap_items:
+            log(f"capability probe: {len(cap_items)} items, baseline accuracy "
+                f"{cap_baseline if cap_baseline is not None else 'not gradeable'}")
         if args.eval_refusal_final and args.eval_refusal_final > len(self.bad_eval):
             big = self.load(f"{TR}/bad_eval_ds", args.eval_refusal_final)
             ranked = sorted(_pool, key=_scalar_of)[:max(1, args.top_rescore)]
@@ -2933,9 +3008,13 @@ class Abliterator:
                 # complying. The harmless side is not re-measured here (it is not what --eval-
                 # refusal-final grows) so the trial's value is kept as a floor.
                 b = max(broken_rate(g), t.user_attrs.get("broken", 0.0))
-                _final[t.number] = {"refusals": r, "soft": s, "heretic": h, "broken": b}
+                drop = self._capability_drop(cap_baseline, cap_items)
+                _final[t.number] = {"refusals": r, "soft": s, "heretic": h, "broken": b,
+                                    "capability_drop": drop}
+                cap_note = "" if drop is None else f" capability={-drop*100:+.1f}pp"
                 log(f"   trial {t.number}: refusals={r*100:.1f}% soft={s*100:.1f}% "
-                    f"heretic={h*100:.1f}% broken={b*100:.0f}% KL={t.user_attrs['kl']:.4f}")
+                    f"heretic={h*100:.1f}% broken={b*100:.0f}% KL={t.user_attrs['kl']:.4f}"
+                    f"{cap_note}")
             self.restore_weights()
             _pool = ranked
 
@@ -2951,7 +3030,11 @@ class Abliterator:
             soft = f["soft"] if f else ua.get("soft", 0.0)
             her = f["heretic"] if f else ua.get("heretic", 0.0)
             brk = f["broken"] if f else ua.get("broken", 0.0)
-            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from, broken=brk)
+            # None means nobody measured it, which must score as no penalty rather than as no
+            # loss: those are the same number here and only one of them is a claim.
+            drop = (f or {}).get("capability_drop") or 0.0
+            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from, broken=brk,
+                               capability_drop=drop)
 
         best = min(_pool, key=_knee_key)
         bp = best.params

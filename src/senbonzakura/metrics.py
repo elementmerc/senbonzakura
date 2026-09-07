@@ -257,10 +257,17 @@ KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
 # and the rule that PICKS among them agree about how bad a wrecked model is. They disagreed until
 # 2026-09-06: the search penalised brokenness heavily and the final pick could not see it at all.
 KNEE_W_BROKEN = 2.0
+# What a point of lost capability is worth against a point of surviving refusal. 1.0 says they
+# trade one for one, which is the honest default when nobody has measured the exchange rate: a
+# config that removes 10% more refusal and costs 10% of arithmetic is a wash, and one that costs
+# more than it removes is refused. Zero when no capability was measured, so this term cannot
+# silently move a selection that had no evidence behind it.
+KNEE_W_CAPABILITY = 1.0
 
 
 def knee_scalar(ref: float, soft: float, heretic: float, kl: float,
-                kl_target: float = KL_TARGET, *, broken: float) -> float:
+                kl_target: float = KL_TARGET, *, broken: float,
+                capability_drop: float = 0.0) -> float:
     # `kl_target` is where the coherence surcharge starts, and it moves with `--max-kl`. Left at
     # the default, the search lands wherever the frontier's knee is, which on Qwen3-1.7B is a drift
     # of about 0.15 to 0.21: comfortably under the ceiling and mildly surcharged. That is a CHOICE,
@@ -278,10 +285,15 @@ def knee_scalar(ref: float, soft: float, heretic: float, kl: float,
     # argument makes every call site say what it measured. Both callers already had the number and
     # neither passed it: `cli._knee_key` had it in `user_attrs`, and the head-to-head best-of-N
     # computed `broken_rate(responses)` on the line above the one that dropped it.
+    # `capability_drop` is how much accuracy the edit cost on a graded task, as a fraction, and
+    # it defaults to 0.0 so a run that measured none is scored exactly as before. Only a DROP is
+    # penalised: a config that happens to score better than the unedited model is not rewarded for
+    # it, because at these sample sizes that is noise and rewarding noise would select for it.
     return (KNEE_W_NONCOMPLIANCE * (ref + soft)
             + KNEE_W_KEYWORD * heretic
             + KNEE_W_KL * max(0.0, kl - kl_target)
-            + KNEE_W_BROKEN * broken)
+            + KNEE_W_BROKEN * broken
+            + KNEE_W_CAPABILITY * max(0.0, capability_drop))
 
 
 # --- Harm recognition (the "compass" axis) --------------------------------------

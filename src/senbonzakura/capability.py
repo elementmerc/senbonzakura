@@ -134,17 +134,26 @@ def summarise(verdicts):
     high indeterminate rate has not measured capability, it has measured its own token budget, and
     a single blended figure would hide exactly that.
     """
+    from .metrics import reportable_rate
+
     n = len(verdicts)
     correct = sum(1 for v in verdicts if v == "correct")
     wrong = sum(1 for v in verdicts if v == "wrong")
     graded = correct + wrong
+    acc = reportable_rate(correct, graded)
     return {
         "n": n,
         "correct": correct,
         "wrong": wrong,
         "indeterminate": n - graded,
         "graded": graded,
-        "accuracy": round(correct / graded, 4) if graded else None,
+        "accuracy": round(acc["rate"], 4) if acc["rate"] is not None else None,
+        # The interval, always, and the reason when the rate is withheld. A point estimate over a
+        # handful of items is what reversed direction on the ROG when the sample grew, and the
+        # interval is what would have said so at the time.
+        "accuracy_ci": acc["ci"],
+        "accuracy_reportable": acc["reportable"],
+        "accuracy_withheld_because": acc["why_not"],
         "indeterminate_rate": round((n - graded) / n, 4) if n else None,
     }
 
@@ -207,11 +216,16 @@ def paired_change(before, after, seed=0, resamples=2000, alpha=0.05):
 
 def report(summary, change=None):
     """The result in the words a reader needs, rather than a dump of the dict."""
-    lines = [
-        f"  graded {summary['graded']} of {summary['n']} items",
-        f"  accuracy {summary['accuracy']}" if summary["accuracy"] is not None
-        else "  accuracy: nothing could be graded",
-    ]
+    lines = [f"  graded {summary['graded']} of {summary['n']} items"]
+    if summary["accuracy"] is not None:
+        lo, hi = summary["accuracy_ci"]
+        lines.append(f"  accuracy {summary['correct']}/{summary['graded']} = "
+                     f"{summary['accuracy']}  95% CI [{lo}, {hi}]")
+    elif summary.get("accuracy_withheld_because"):
+        lines.append(f"  accuracy: {summary['correct']}/{summary['graded']} and NOT REPORTED as a "
+                     f"rate: {summary['accuracy_withheld_because']}")
+    else:
+        lines.append("  accuracy: nothing could be graded")
     if summary["indeterminate"]:
         lines.append(
             f"  INDETERMINATE {summary['indeterminate']} ({summary['indeterminate_rate']:.1%}): "

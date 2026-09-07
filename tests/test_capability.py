@@ -115,11 +115,17 @@ def test_grading_a_batch_requires_matching_lengths():
 def test_accuracy_is_over_what_could_be_graded():
     """Folding indeterminates into the denominator would let a small token budget depress the
     accuracy of a model that is perfectly capable.
+
+    Sized above the reporting floor on purpose. The first version used four items and started
+    failing when the floor landed, which is the floor working: an accuracy over three graded items
+    is not an accuracy. What is under test here is the DENOMINATOR, so the sample is large enough
+    for a rate to exist and the indeterminates still must not count towards it.
     """
-    s = cap.summarise(["correct", "correct", "wrong", "indeterminate"])
-    assert s["graded"] == 3
-    assert s["accuracy"] == pytest.approx(2 / 3, abs=1e-4)
-    assert s["indeterminate"] == 1
+    s = cap.summarise(["correct"] * 40 + ["wrong"] * 20 + ["indeterminate"] * 15)
+    assert s["graded"] == 60, "indeterminates must not enter the denominator"
+    assert s["accuracy"] == pytest.approx(40 / 60, abs=1e-4)
+    assert s["indeterminate"] == 15
+    assert s["n"] == 75
 
 
 def test_the_counts_are_reported_not_only_the_rate():

@@ -175,6 +175,63 @@ def broken_rate(texts: list[str]) -> float:
     return sum(is_broken(t) for t in texts) / max(1, len(texts))
 
 
+# --- Whether a rate may be reported at all ---------------------------------------
+# Three separate wrong numbers in one night, 2026-09-06, all the same shape: a rate computed over
+# a sample too small to carry it. "7.0% against 3.0%" was five observations against two and
+# reversed direction at n=1092. Five hashes of an empty string agreed with each other and were
+# read as determinism. A 280-row corpus collapsed to 40 distinct requests, and partitioned three
+# ways would have produced an AUC over about 13.
+#
+# None of the surfaces refused. Every rate here divides by `max(1, len(texts))` and returns a
+# clean float for a single row, which is a number that looks exactly like a measurement.
+
+#: Below this, a rate is not reported as a value at all. It is a floor against absurdity rather
+#: than a guarantee of power: n=30 is still weak for comparing two rates, and the interval beside
+#: the rate is what tells a reader how weak. Anything under it cannot support a claim in any
+#: framing, so the honest output is a refusal rather than a figure with a caveat.
+MIN_REPORTABLE_N = 30
+
+
+def wilson_interval(count: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """A confidence interval for a proportion that behaves at small n.
+
+    The normal approximation everybody reaches for first gives intervals that run below zero and
+    above one, and is worst exactly where it matters most, which is the small samples this section
+    exists to catch. Wilson's stays inside the range and stays sensible at n=1.
+
+    Written without imports because this module has none by design: the head of the file explains
+    why, and `x ** 0.5` is a square root.
+    """
+    if n <= 0:
+        return (0.0, 1.0)
+    p = count / n
+    d = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    spread = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+    return (max(0.0, centre - spread), min(1.0, centre + spread))
+
+
+def reportable_rate(count: int, n: int, floor: int = MIN_REPORTABLE_N) -> dict:
+    """A rate with its interval, or a refusal to state one.
+
+    Returns a dict carrying the COUNTS as well as the rate, because counts cannot be quoted as
+    something they are not: `62/120` says what `51.7%` hides. `rate` is None below the floor, and
+    a caller that formats None as "0.0" has reintroduced the defect.
+    """
+    enough = n >= floor
+    lo, hi = wilson_interval(count, n)
+    return {
+        "count": count,
+        "n": n,
+        "rate": (count / n) if (enough and n) else None,
+        "ci": (round(lo, 4), round(hi, 4)) if n else None,
+        "reportable": enough,
+        "why_not": None if enough else (
+            f"{n} observations is below the floor of {floor}; a rate over this few cannot support "
+            f"a claim, so the counts are given instead"),
+    }
+
+
 # --- The selection rule over those rulers ----------------------------------------
 # The knee scalar lives here rather than beside the search because it is a rule about the rulers
 # above, and because the head-to-head benchmark gives a competing tool the same best-of-N selection

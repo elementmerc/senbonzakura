@@ -379,6 +379,19 @@ def grade(generations, solutions, truncated=None, task=DEFAULT_TASK):
             for g, s, cut in zip(generations, solutions, flags, strict=True)]
 
 
+#: Above this share of ungradeable answers, the accuracy is not a statement about the model.
+#:
+#: Not because a smaller sample is imprecise, which the interval already reports, but because the
+#: items that fail to finish are NOT MISSING AT RANDOM. A long worked solution truncates and a
+#: short one does not, so the graded subset is biased toward the easy questions and the accuracy
+#: over it is measured on a different, easier exam than the one that was set.
+#:
+#: 10% is a convention rather than a measurement, and it is stated as one. The case that forced
+#: it was 41 of 200 (20.5%) on every arm of a real run INCLUDING the unedited reference, where a
+#: 2.5 point drop was about to be read as a capability cost.
+MAX_INDETERMINATE = 0.10
+
+
 def summarise(verdicts):
     """Counts and the two rates that matter, kept apart on purpose.
 
@@ -408,6 +421,11 @@ def summarise(verdicts):
         "accuracy_reportable": acc["reportable"],
         "accuracy_withheld_because": acc["why_not"],
         "indeterminate_rate": round((n - graded) / n, 4) if n else None,
+        # The verdict, in the record rather than left to a reader comparing two decimals. A run
+        # this far past the threshold has measured its token budget, and every figure beside it
+        # inherits that.
+        "budget_suspect": bool(n and (n - graded) / n > MAX_INDETERMINATE),
+        "budget_threshold": MAX_INDETERMINATE,
     }
 
 
@@ -479,11 +497,19 @@ def report(summary, change=None):
                      f"rate: {summary['accuracy_withheld_because']}")
     else:
         lines.append("  accuracy: nothing could be graded")
-    if summary["indeterminate"]:
+    if summary.get("budget_suspect"):
         lines.append(
-            f"  INDETERMINATE {summary['indeterminate']} ({summary['indeterminate_rate']:.1%}): "
-            f"no number in the generation. Usually the token budget, not the model. Raise "
-            f"--max-new before reading anything into the accuracy above.")
+            f"  BUDGET, NOT MODEL. {summary['indeterminate']} of {summary['n']} answers "
+            f"({summary['indeterminate_rate']:.1%}) never finished, past the "
+            f"{summary['budget_threshold']:.0%} this tool will report through. The ones that fail "
+            f"to finish are the LONG ones, so what was graded is an easier exam than the one set "
+            f"and the accuracy above is not a statement about this model. Raise --max-new and "
+            f"run it again; do not quote any figure from this run.")
+    elif summary["indeterminate"]:
+        lines.append(
+            f"  indeterminate {summary['indeterminate']} ({summary['indeterminate_rate']:.1%}): "
+            f"no number in the generation, usually the token budget rather than the model. Below "
+            f"the {summary['budget_threshold']:.0%} threshold, so the accuracy above stands.")
     if change:
         lo, hi = change["delta_ci"]
         lines += [
@@ -496,6 +522,9 @@ def report(summary, change=None):
         if not change["distinguishable_from_zero"]:
             lines.append("    the interval spans zero, so this is not distinguishable from no "
                          "change")
+        if summary.get("budget_suspect"):
+            lines.append("    AND this change is NOT QUOTABLE: it is a difference between two "
+                         "accuracies measured on whichever items happened to finish.")
     return lines
 
 
@@ -675,4 +704,7 @@ def main(argv=None):
                                      "truncated": t, "verdict": v}, ensure_ascii=False) + "\n")
     # Non-zero when nothing could be graded, because a run that measured nothing must not look
     # like a run that measured a zero.
-    return 0 if summary["graded"] else 1
+    # Non-zero when the budget ate too much of the sample, so a pipeline cannot collect the
+    # number and carry on. `tools/e2_arms.sh` did exactly that: three arms of capability figures
+    # at 20.5% indeterminate, on every arm including the unedited reference.
+    return 0 if summary["graded"] and not summary.get("budget_suspect") else 1

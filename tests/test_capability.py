@@ -201,11 +201,50 @@ def test_nothing_comparable_returns_nothing():
 # ── the report says what the numbers mean ────────────────────────────────────────────
 
 def test_a_high_indeterminate_rate_is_called_out_as_a_budget_problem():
-    """Because the accuracy above it is not a capability measurement when this is high."""
-    lines = cap.report(cap.summarise(_verdicts("ci" * 10)))
-    text = "\n".join(lines)
-    assert "INDETERMINATE" in text
+    """Because the accuracy above it is not a capability measurement when this is high.
+
+    STRENGTHENED 2026-09-07 after a real run came back at 41 of 200 (20.5%) ungradeable on every
+    arm INCLUDING the unedited reference, and a 2.5 point drop was about to be read as a
+    capability cost. The old line fired at any indeterminate count at all, so it read the same at
+    1 of 200 as at 41, and nothing exited non-zero.
+    """
+    s = cap.summarise(_verdicts("ci" * 10))          # 50% ungradeable
+    text = "\n".join(cap.report(s))
+    assert s["budget_suspect"] is True
+    assert "BUDGET, NOT MODEL" in text
     assert "--max-new" in text
+    assert "do not quote" in text
+    assert "LONG ones" in text, "the message must say WHY the graded subset is biased"
+
+
+def test_a_low_indeterminate_rate_does_not_cry_wolf():
+    """A warning that fires on every run is a warning nobody reads."""
+    s = cap.summarise(_verdicts("c" * 39 + "i"))     # 2.5% ungradeable
+    text = "\n".join(cap.report(s))
+    assert s["budget_suspect"] is False
+    assert "BUDGET, NOT MODEL" not in text
+    assert "the accuracy above stands" in text
+
+
+def test_no_indeterminate_answers_says_nothing_about_the_budget():
+    s = cap.summarise(_verdicts("c" * 40))
+    assert s["budget_suspect"] is False
+    assert "indeterminate" not in "\n".join(cap.report(s)).lower()
+
+
+def test_the_threshold_is_recorded_in_the_summary():
+    """A reader six months later needs to know what bar this run cleared."""
+    s = cap.summarise(_verdicts("c" * 40))
+    assert s["budget_threshold"] == cap.MAX_INDETERMINATE
+
+
+def test_a_paired_change_from_a_suspect_run_is_marked_not_quotable():
+    """The change is a difference between two accuracies measured on whichever items finished."""
+    before = ["correct"] * 10 + ["indeterminate"] * 10
+    after = ["correct"] * 8 + ["wrong"] * 2 + ["indeterminate"] * 10
+    s = cap.summarise(after)
+    text = "\n".join(cap.report(s, cap.paired_change(before, after)))
+    assert "NOT QUOTABLE" in text
 
 
 def test_an_interval_spanning_zero_is_said_out_loud():

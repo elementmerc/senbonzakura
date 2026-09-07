@@ -512,9 +512,19 @@ def layer_weight(idx, P, wmax, wmin, D):
     # position P (wmax) and tapers linearly to wmin at distance D, and is ZERO beyond D.
     # Ablating early/late layers, where this direction is not the refusal direction, is
     # what destroyed coherence (KL 12-19) under a uniform-all-layers strength.
+    # D is None for a profile that means "every layer, no taper", which a fixed recipe cannot
+    # express as a number because it does not know how deep the model is.
+    if D is None:
+        return wmax
     dist = abs(idx - P)
     if dist > D:
         return 0.0
+    # A window of zero width still contains its own centre, and the taper has no extent to run
+    # over, so the peak value applies. Reached by any fixed profile with D = 0, which used to
+    # raise ZeroDivisionError one second into the bake, after twenty minutes of direction
+    # extraction. Found by hephaestus-c9 running E2 on 2026-09-07.
+    if D == 0:
+        return wmax
     return wmax + (dist / D) * (wmin - wmax)
 
 

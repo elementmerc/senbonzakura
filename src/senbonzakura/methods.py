@@ -65,9 +65,16 @@ class Method:
     directions: str = ""
 
 
-#: A flat, full-strength profile: the same ablation at every layer in the window. `bake_pc` reads
-#: (position, max_weight, min_weight, distance) per component, so equal max and min is uniform.
-FLAT = [0, 1.0, 1.0, 0]
+#: A flat, full-strength profile: the same ablation at EVERY layer. `bake_pc` reads
+#: (position, max_weight, min_weight, distance) per component, so equal max and min is uniform and
+#: the distance is what decides how far the window reaches.
+#:
+#: `None` is that distance, and it means "every layer" because a fixed recipe cannot write a
+#: number here: it does not know how deep the model is. This was `0` until 2026-09-07, which reads
+#: as a window of zero width, and the taper then divided by it. Both single-pass arms died one
+#: second into the bake having already spent twenty minutes extracting directions, and no test
+#: caught it because nothing had ever baked a fixed profile end to end.
+FLAT = [0, 1.0, 1.0, None]
 
 METHODS = {
     "searched": Method(

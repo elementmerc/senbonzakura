@@ -23,6 +23,8 @@ implementation when what we would have measured is ours.
 import pytest
 
 from senbonzakura import methods
+from senbonzakura.cli import layer_weight as _layer_weight
+from senbonzakura.crashsafe import config_to_bake_args as _config_to_bake_args
 from senbonzakura.parser import build_parser
 
 
@@ -82,10 +84,8 @@ def test_a_single_pass_recipe_pins_a_bakeable_profile(name):
     """THE POINT OF THE RECIPE. It must produce something the bake path can take directly, or the
     run would search anyway and the arm would be the default wearing another name.
     """
-    from senbonzakura.crashsafe import config_to_bake_args
-
     profile = methods.get(name).settings["bake_profile"]
-    bpr, k, mode, _di = config_to_bake_args(profile)
+    bpr, k, mode, _di = _config_to_bake_args(profile)
     assert k == 1, "a single pass removes one direction"
     assert mode == "per_layer"
     assert len(bpr) == 8
@@ -150,3 +150,41 @@ def test_a_namespace_with_no_method_behaves_as_the_default():
     obj = cli.Abliterator.__new__(cli.Abliterator)
     obj.args = types.SimpleNamespace()
     assert obj._method_profile() is None
+
+
+# ── the fixed profile has to survive the bake ──────────────────────────────────────
+# Found by running E2 on 2026-09-07: both single-pass arms died one second into the bake with a
+# ZeroDivisionError, after twenty minutes of direction extraction. FLAT carried a taper distance
+# of 0, `layer_weight` divides by it, and nothing had ever baked a fixed profile end to end.
+def test_a_flat_profile_means_every_layer():
+    """The docstring says "every layer in the window". A distance of 0 is a window of one."""
+    P, wmax, wmin, D = methods.FLAT
+    assert wmax == wmin == 1.0, "flat means the same strength everywhere"
+    assert D is None, "a fixed recipe cannot name a distance; None means every layer"
+    assert all(_layer_weight(i, P, wmax, wmin, D) == 1.0 for i in range(40))
+
+
+@pytest.mark.parametrize("name", ["single-pass", "single-pass-raw"])
+def test_the_fixed_profiles_bake_without_dividing_by_zero(name):
+    """THE CRASH, as a test. Twenty minutes of GPU before it fired, on two of seven arms."""
+    profile = methods.get(name).settings["bake_profile"]
+    bpr, _k, _mode, _di = _config_to_bake_args(profile)
+    oP, owmax, owmin, oD, dP, dwmax, dwmin, dD = bpr
+    for i in range(24):
+        assert _layer_weight(i, oP, owmax, owmin, oD) == 1.0
+        assert _layer_weight(i, dP, dwmax, dwmin, dD) == 1.0
+
+
+def test_a_zero_width_window_still_weights_its_own_centre():
+    """A window of zero width contains its centre and the taper has no extent to run over, so the
+    peak value applies. Anything beyond it is outside the window and weighs nothing.
+    """
+    assert _layer_weight(5, 5, 1.0, 0.2, 0) == 1.0
+    assert _layer_weight(6, 5, 1.0, 0.2, 0) == 0.0
+
+
+def test_a_normal_window_still_tapers():
+    """The fix must not flatten every profile the search produces."""
+    assert _layer_weight(5, 5, 1.0, 0.0, 4) == 1.0
+    assert _layer_weight(7, 5, 1.0, 0.0, 4) == pytest.approx(0.5)
+    assert _layer_weight(10, 5, 1.0, 0.0, 4) == 0.0

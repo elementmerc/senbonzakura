@@ -196,6 +196,43 @@ def pick_dataset(ask_fn=input, log=print):
     return entry["spec"], entry["licence"]
 
 
+def ask_output(ask_fn=input, log=print):
+    """Where the edited model goes, and what to do when something is already there.
+
+    Returns (path, resume).
+
+    A CHOICE RATHER THAN A WARNING, and that is the point of it (critique finding 5). A warning is
+    what a person scrolls past on the way to the next question; this project has lost three
+    separate results to a previous run's output sitting in the directory while something reported
+    the work already done. The non-interactive path now refuses outright. Here, where somebody is
+    being walked through it, refusing would be a dead end, so the three ways out are offered
+    directly and the loop repeats until one of them is taken.
+    """
+    from .cli import occupied_by
+
+    while True:
+        out = ask("\nWhere should the edited model go?", default="abliterated",
+                  ask_fn=ask_fn, log=log)
+        found = occupied_by(out)
+        if not found:
+            return out, False
+        log(f"\n  {out} already holds a previous run:")
+        for name in found:
+            log(f"    {name}")
+        log("  Writing over it would replace some of those files and leave others, and the")
+        log("  artefact would then describe two runs with nothing saying so.")
+        pick = choose("What should happen?", [
+            ("Choose a different directory", "keeps both runs"),
+            ("Continue that run", "resumes the search where it stopped, adds --resume"),
+        ], default=0, ask_fn=ask_fn, log=log)
+        if pick == 1:
+            return out, True
+        # Deliberately no "overwrite" option. Deleting somebody's previous result on their behalf,
+        # inside a guided flow they are still learning, is not a choice this should offer; the
+        # person can remove the directory themselves and come back.
+        log("  Nothing has been changed. Pick another path.")
+
+
 def plan_abliteration(ask_fn=input, log=print):
     """Walk the questions that decide whether an abliteration run means anything."""
     log("")
@@ -209,8 +246,7 @@ def plan_abliteration(ask_fn=input, log=print):
                           [(name, note) for name, note in DEVICES],
                           default=0, ask_fn=ask_fn, log=log)
     device = DEVICES[device_index][0]
-    out = ask("\nWhere should the edited model go?", default="abliterated",
-              ask_fn=ask_fn, log=log)
+    out, resume = ask_output(ask_fn=ask_fn, log=log)
     trials = ask("How many search trials? More is better and slower; 200 is the usual",
                  default="200", ask_fn=ask_fn, log=log)
 
@@ -221,6 +257,10 @@ def plan_abliteration(ask_fn=input, log=print):
         "--device": device,
         "--trials": trials,
     }
+    if resume:
+        # A flag, not a hidden mode. The whole contract of this file is that the command it prints
+        # is the command it runs, so a decision taken in the walkthrough has to appear on the line.
+        options["--resume"] = True
     return {"command": "kageyoshi", "options": options, "licence": licence}
 
 

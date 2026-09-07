@@ -3132,6 +3132,63 @@ def main(argv=None, *, emit_banner=True):
     return run_parsed(args, bankai, argv)
 
 
+#: What a finished or half-finished run leaves in `--out`. Presence of any of these means the
+#: directory is not empty in the way that matters: something already used it as a destination.
+RUN_ARTEFACTS = ("abliteration.json", "best-config.json", "trials.json", "model.safetensors",
+                 "model.safetensors.index.json", "config.json")
+
+
+def occupied_by(out):
+    """The artefacts of a previous run sitting in `--out`, sorted. Empty when it is safe to write.
+
+    THE MISTAKE THIS PROJECT HAS LOST THREE RESULTS TO. On 2026-08-12 three separate defects were
+    traced to one mechanism: a previous run's output sitting in the directory while something
+    reported the work already done. The failure is quiet by construction. A resumed study skips
+    straight to bake and save; a re-run overwrites some files and leaves others; and the artefact
+    that describes the run ends up describing two runs, with no field that says so.
+
+    Deliberately a list of what was found rather than a boolean, because the message a person can
+    act on names the files. "The directory is not empty" sends them to look; "these four artefacts
+    are a previous run" tells them what they are about to lose.
+    """
+    d = Path(out)
+    if not d.is_dir():
+        return []
+    found = [name for name in RUN_ARTEFACTS if (d / name).exists()]
+    # Sharded weights are named per shard, so the exact filename is not knowable in advance.
+    if any(d.glob("model-*-of-*.safetensors")):
+        found.append("model-*.safetensors")
+    return sorted(found)
+
+
+def _preflight_output(args):
+    """Refuse to write into a directory a previous run already used, unless told which to do.
+
+    Checked here rather than at save time for the usual reason: save time is after the search, so
+    discovering it there costs the whole run. `--resume` is the one flag that makes an occupied
+    directory expected rather than a mistake, and `--bake-config` reads a config the previous run
+    left, so both pass through.
+    """
+    if getattr(args, "resume", False) or getattr(args, "bake_config", None):
+        return
+    out = getattr(args, "out", None)
+    if not out:
+        return
+    found = occupied_by(out)
+    if not found:
+        return
+    raise SystemExit(
+        f"--out {out} already holds a previous run:\n"
+        + "\n".join(f"  {name}" for name in found)
+        + f"\n\nThis is refused rather than warned about, because a run that writes over another "
+          f"one fails quietly: some files are replaced, some are left, and the artefact ends up "
+          f"describing two runs with no field that says so. This project has lost three results "
+          f"to exactly that.\n\nPick one:\n"
+          f"  --out <somewhere else>   keep both\n"
+          f"  --resume                 continue the run that is already there\n"
+          f"  delete {out} yourself    if you meant to start again")
+
+
 def _preflight_datasets(args):
     """Prove every dataset the run needs can be read, BEFORE the model is downloaded.
 
@@ -3228,6 +3285,7 @@ def run_parsed(args, bankai, argv):
     # After the torch check and before the model. The torch check is instant and local, and an
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the
     # network for a Hub track and is still nothing beside pulling a model.
+    _preflight_output(args)
     _preflight_datasets(args)
 
     t0 = time.time()

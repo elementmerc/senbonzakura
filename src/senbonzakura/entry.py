@@ -49,6 +49,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "track": ("track", "main"),
     "validate": ("validate", "main"),
     "capability": ("capability", "main"),
+    "report": ("modelcard", "main"),
     "interactive": ("interactive", "run"),
     "quantise": ("quantise", "main"),
     "convert": ("convert", "main"),

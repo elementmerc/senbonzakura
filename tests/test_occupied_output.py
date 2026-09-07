@@ -427,3 +427,62 @@ def test_a_positional_with_a_space_is_quoted():
     """
     line = interactive.render_command("convert", {"my model dir": True, "--quantise": "Q4_K_M"})
     assert line == "senbonzakura convert 'my model dir' --quantise Q4_K_M"
+
+
+def test_the_second_command_of_a_brain_only_runs_if_the_first_succeeded(monkeypatch):
+    """A convert that runs after a failed abliteration would package whatever was on disk."""
+    calls = []
+    lines = []
+    plan = {"command": "kageyoshi", "options": {"--out": "brain"}, "licence": "yours",
+            "then": {"command": "convert", "options": {"brain": True}}}
+    monkeypatch.setattr(interactive, "is_tty", lambda _s=None: True)
+    monkeypatch.setattr(interactive, "plan_abliteration", lambda **_k: plan)
+    monkeypatch.setattr(interactive, "present", lambda _p, **_k: "line")
+
+    import senbonzakura.cli as _cli
+    monkeypatch.setattr(_cli, "main", lambda argv: (calls.append(argv), 3)[1])
+    assert interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None) == 3
+    assert len(calls) == 1, "the convert step ran after the abliteration failed"
+
+    calls.clear()
+    monkeypatch.setattr(_cli, "main", lambda argv: (calls.append(argv), 0)[1])
+    assert interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None) == 0
+    assert len(calls) == 2, "the convert step did not run after a successful abliteration"
+
+
+def test_a_refusal_from_the_tool_still_gets_the_way_back_in(monkeypatch):
+    """A SystemExit is a refusal the tool phrased itself; its message is better than anything this
+    could add, so the screen appends the recovery and re-raises rather than replacing it.
+    """
+    lines = []
+    plan = {"command": "kageyoshi", "options": {"--out": "brain"}, "licence": "yours"}
+    monkeypatch.setattr(interactive, "is_tty", lambda _s=None: True)
+    monkeypatch.setattr(interactive, "plan_abliteration", lambda **_k: plan)
+    monkeypatch.setattr(interactive, "present", lambda _p, **_k: "line")
+
+    def _refuse(_argv):
+        raise SystemExit(2)
+
+    import senbonzakura.cli as _cli
+    monkeypatch.setattr(_cli, "main", _refuse)
+    with pytest.raises(SystemExit):
+        interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None)
+    assert "--resume" in "\n".join(lines)
+
+
+def test_a_clean_exit_does_not_get_a_failure_screen(monkeypatch):
+    """SystemExit(0) is success. Printing "the run stopped" over it would be alarming nonsense."""
+    lines = []
+    plan = {"command": "kageyoshi", "options": {"--out": "brain"}, "licence": "yours"}
+    monkeypatch.setattr(interactive, "is_tty", lambda _s=None: True)
+    monkeypatch.setattr(interactive, "plan_abliteration", lambda **_k: plan)
+    monkeypatch.setattr(interactive, "present", lambda _p, **_k: "line")
+
+    def _clean(_argv):
+        raise SystemExit(0)
+
+    import senbonzakura.cli as _cli
+    monkeypatch.setattr(_cli, "main", _clean)
+    with pytest.raises(SystemExit):
+        interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None)
+    assert "the run stopped" not in "\n".join(lines)

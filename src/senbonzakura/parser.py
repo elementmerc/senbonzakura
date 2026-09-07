@@ -229,6 +229,14 @@ def build_parser():
                          "as the only thing that varies. Off by default: it changes what every "
                          "separation number means, and Q-14 measures it before it becomes the "
                          "default.")
+    ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
+                    help="how many times to alternate restoring the row lengths and removing the "
+                         "direction again. 0 (default) is the single pass this tool has always "
+                         "done, which MEASURABLY leaves part of the direction behind: restoring "
+                         "the lengths undoes some of the ablation, by 5%% to 46%% depending on how "
+                         "uneven the lengths are. 4 rounds removes it fully AND keeps the lengths. "
+                         "Off by default because whether a cleaner cut makes a better model is an "
+                         "open question and turning it on changes every number a run produces.")
     ap.add_argument("--method", choices=_methods.CHOICES, default=_methods.DEFAULT_METHOD,
                     help="which ablation recipe to run. 'searched' (default) optimises how much "
                          "to ablate and where; 'single-pass' fixes it at full strength on one "

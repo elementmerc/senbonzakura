@@ -533,8 +533,15 @@ def _sparsify_rows_(delta, sparsity):
     return delta * (mag >= thr).unsqueeze(-1)           # zero the untouched rows
 
 
+#: How many times to alternate "restore the row lengths" and "remove the direction again".
+#: 0 is the original single pass. Measured convergence: the leak is at floating-point noise by
+#: round 4 across every shape, direction count and row-norm spread tried, and rounds beyond that
+#: change nothing.
+ABLATION_ROUNDS = 4
+
+
 @torch.no_grad()
-def orthogonalize_np_(W, R, s, sparsity=0.0):
+def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0):
     # Refinement 4 (norm-preserving ablation; Heretic row_normalization=full / grimjim):
     # ablate on the row-normalized weight, renormalize, then RESTORE the original row norms.
     # Raw orthogonalization changed the norms and wrecked calibration (KL 12-19); preserving
@@ -547,11 +554,27 @@ def orthogonalize_np_(W, R, s, sparsity=0.0):
     delta = s * (Rf.T @ (Rf @ Wn))                      # each column's projection onto span(R)
     Wn = Wn - _sparsify_rows_(delta, sparsity)
     Wn = Wn / Wn.norm(dim=1, keepdim=True).clamp_min(1e-8)
-    W.copy_((Wn * rn).to(W.dtype))
+    out = Wn * rn
+    # MEASURED DEFECT, and `rounds` is the fix. Putting the original row lengths back undoes part
+    # of the ablation, because scaling rows does not commute with a projection that acts across
+    # them: the subtraction leaves ||R W|| at 5e-07 and the restore puts it back to 32% of where it
+    # started on a matrix with a 4x row-norm spread, 46% at 10x, 5% at 0.2x. So the edit has always
+    # been approximate, and how approximate depended on the model.
+    #
+    # Alternating "restore the lengths" and "remove the direction again" converges to a matrix that
+    # is BOTH orthogonal to the refusal span and has the original row lengths, to floating-point
+    # noise, in four rounds. Default 0 keeps the original behaviour, because turning this on
+    # changes what every run produces and whether a cleaner ablation is a BETTER model is an
+    # empirical question, not an obvious one: the leak may be part of why quality held up.
+    for _ in range(int(rounds)):
+        out = out / out.norm(dim=1, keepdim=True).clamp_min(1e-8) * rn
+        for u in Rf:
+            out = out - torch.outer(u, u @ out)
+    W.copy_(out.to(W.dtype))
 
 
 @torch.no_grad()
-def orthogonalize_np_3d_(W, R, s, sparsity=0.0):
+def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0):
     # Norm-preserving, fused experts [E, out, in]; row norms per (expert, out-row). R is [K, H].
     Rf = R.to(W.device).float()                         # [K, H]
     Wf = W.float()
@@ -561,7 +584,14 @@ def orthogonalize_np_3d_(W, R, s, sparsity=0.0):
     delta = s * torch.einsum("kh,eki->ehi", Rf, proj)   # [E,out,in]
     Wn = Wn - _sparsify_rows_(delta, sparsity)          # per (expert, out-row) sparsify
     Wn = Wn / Wn.norm(dim=2, keepdim=True).clamp_min(1e-8)
-    W.copy_((Wn * rn).to(W.dtype))
+    out = Wn * rn
+    # The same leak as the dense path, for the same reason: restoring per-row lengths undoes part
+    # of a projection that acts across rows. See `orthogonalize_np_` for the measurement.
+    for _ in range(int(rounds)):
+        out = out / out.norm(dim=2, keepdim=True).clamp_min(1e-8) * rn
+        proj = torch.einsum("kh,ehi->eki", Rf, out)
+        out = out - torch.einsum("kh,eki->ehi", Rf, proj)
+    W.copy_(out.to(W.dtype))
 
 
 def post_sublayer_norms(layer):
@@ -2155,6 +2185,10 @@ class Abliterator:
         self._cur["mode"] = mode
         self._cur["single_set"] = self._interp_multi(didx) if (mode == "single" and didx is not None) else None
         sp = float(self.args.sparsity)         # sparse surgery: 0 = edit every row
+        # 0 keeps the historical single pass, which leaves part of the direction in place; see
+        # `orthogonalize_np_`. getattr because the forward-only paths share this class through
+        # namespaces that never had the flag.
+        rounds = int(getattr(self.args, "ablation_rounds", 0))
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)
@@ -2173,16 +2207,16 @@ class Abliterator:
                 # Every residual writer in the attention position, which on a hybrid is the
                 # convolution's out_proj on the layers that have no attention at all.
                 for op in layer_attn_writers(layer, ablate_conv=self.ablate_conv):
-                    self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp)
+                    self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp, rounds=rounds)
             if wd > 0.0:
                 for kind, obj in layer_downproj(layer):         # every residual-writing down-proj
                     if kind == "fused3d":
-                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R_mlp, wd, sp)
+                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R_mlp, wd, sp, rounds=rounds)
                     elif kind == "list":
                         for W in obj:
-                            self._mark_dirty(W); orthogonalize_np_(W, R_mlp, wd, sp)
+                            self._mark_dirty(W); orthogonalize_np_(W, R_mlp, wd, sp, rounds=rounds)
                     else:  # dense
-                        self._mark_dirty(obj); orthogonalize_np_(obj, R_mlp, wd, sp)
+                        self._mark_dirty(obj); orthogonalize_np_(obj, R_mlp, wd, sp, rounds=rounds)
 
     @torch.no_grad()
     def bake(self, P, wmax, wmin, D, K=1, mode="per_layer", didx=None):

@@ -260,7 +260,11 @@ def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
     from .cli import render_chat
 
     gens, truncated = [], []
-    eos = tok.eos_token_id
+    # getattr, because a tokenizer without one is a real thing and crashing on it would be worse
+    # than the conservative answer. No end-of-sequence token means finished and cut off cannot be
+    # told apart, so everything is marked truncated and therefore indeterminate, which reports
+    # nothing rather than reporting wrong answers.
+    eos = getattr(tok, "eos_token_id", None)
     for i in range(0, len(prompts), batch):
         chunk = prompts[i:i + batch]
         texts = [render_chat(tok, p) for p in chunk]

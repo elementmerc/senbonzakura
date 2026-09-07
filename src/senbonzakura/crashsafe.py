@@ -374,14 +374,31 @@ def resolved_versions(packages=PROVENANCE_PACKAGES):
 # the run specs already export, so this reads what they were already writing.
 COMMIT_ENV = "SENBONZAKURA_COMMIT"
 
+#: A file at the tree root carrying the commit the tree was cut from. Read when git cannot answer
+#: and before the environment variable, because a file TRAVELS WITH THE TREE and a variable has to
+#: be remembered at launch time by whoever wrote the run script.
+#:
+#: Added 2026-09-07 after every artefact from a night of ROG runs came back with no commit at all.
+#: The source had been staged to the machine as a tarball without `.git`, which is a perfectly
+#: reasonable way to stage it, and nobody exported the variable. The results stayed reproducible
+#: from their own JSON and could not be tied to a commit, which is how a good result becomes an
+#: uncitable one. Write it at the source: `git rev-parse --short HEAD > VERSION_STAMP`.
+COMMIT_STAMP_FILE = "VERSION_STAMP"
+
 
 def git_commit(repo_root=None, env=None):
     """The commit this code is running from, with a dirty flag, or None if nothing knows.
 
-    Two sources, and the answer says which one it came from. `git` is the trustworthy one.
-    A rented pod or a shipped tarball is not a checkout, so git cannot answer there and the
-    run declares the commit through the environment instead; that is a claim rather than a
-    measurement, and `source` records the difference rather than flattening it.
+    Three sources, and the answer says which one it came from. `git` is the trustworthy one
+    because it is a measurement of the tree in front of it. A rented pod or a shipped tarball is
+    not a checkout, so git cannot answer there and two weaker sources follow: a `VERSION_STAMP`
+    file written into the tree when it was cut, and the environment variable a run script exports.
+    Both are CLAIMS rather than measurements, and `source` records which one so a reader can weigh
+    it rather than being handed a commit with no idea where it came from.
+
+    The stamp file is tried before the variable on purpose: it travels inside the tarball, where
+    the variable has to be remembered separately at launch by whoever wrote the run script. A
+    night of ROG runs produced artefacts with no commit at all for exactly that reason.
 
     None stays the honest answer when neither source knows. A result that cannot say which
     code produced it should say so, not guess.
@@ -396,6 +413,15 @@ def git_commit(repo_root=None, env=None):
                                capture_output=True, check=True, timeout=30).stdout.strip()
         return {"commit": rev, "dirty": bool(dirty), "source": "git"}
     except (OSError, subprocess.SubprocessError):
+        pass
+    stamp = Path(root) / COMMIT_STAMP_FILE
+    try:
+        # First line only, and stripped: the obvious way to write this file is a shell redirect,
+        # which leaves a trailing newline, and a commit with a newline in it matches nothing.
+        text = stamp.read_text(encoding="utf-8").strip().splitlines()
+        if text and text[0].strip():
+            return {"commit": text[0].strip(), "dirty": None, "source": "stamp"}
+    except (OSError, UnicodeDecodeError):
         pass
     declared = ((env if env is not None else os.environ).get(COMMIT_ENV) or "").strip()
     if not declared:

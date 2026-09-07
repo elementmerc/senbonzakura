@@ -270,3 +270,55 @@ class TestProvenance:
 
     def test_extra_fields_can_be_folded_in(self):
         assert crashsafe.provenance(device="cpu", extra={"run": "x"})["run"] == "x"
+
+
+# ── provenance from a stamp file, for a tree that is not a checkout ────────────────
+def test_a_stamp_file_supplies_the_commit_when_git_cannot(tmp_path):
+    """A night of ROG runs produced artefacts with no commit at all: the source was staged as a
+    tarball without .git, which is reasonable, and nobody exported the variable. A file travels
+    with the tree; a variable has to be remembered at launch.
+    """
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("abc1234\n", encoding="utf-8")
+    got = crashsafe.git_commit(repo_root=tmp_path, env={})
+    assert got == {"commit": "abc1234", "dirty": None, "source": "stamp"}
+
+
+def test_the_stamp_is_read_as_one_line_and_stripped(tmp_path):
+    """The obvious way to write it is a shell redirect, which leaves a trailing newline, and a
+    commit with a newline in it matches nothing.
+    """
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("  def5678  \nnoise\n", encoding="utf-8")
+    assert crashsafe.git_commit(repo_root=tmp_path, env={})["commit"] == "def5678"
+
+
+def test_a_stamp_beats_the_environment_variable(tmp_path):
+    """The file is the one that travelled with the code; the variable is whatever the launcher
+    happened to set, and the two disagreeing means the launcher is describing a different tree.
+    """
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile", encoding="utf-8")
+    got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "fromenv"})
+    assert got["commit"] == "fromfile"
+    assert got["source"] == "stamp"
+
+
+def test_an_empty_stamp_falls_through_to_the_variable(tmp_path):
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("\n  \n", encoding="utf-8")
+    got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "fromenv"})
+    assert got == {"commit": "fromenv", "dirty": None, "source": "declared"}
+
+
+def test_an_unreadable_stamp_falls_through_rather_than_raising(tmp_path):
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).mkdir()      # a directory, not a file
+    assert crashsafe.git_commit(repo_root=tmp_path, env={}) is None
+
+
+def test_no_source_at_all_is_still_none(tmp_path):
+    """A result that cannot say which code produced it must say so, not guess."""
+    assert crashsafe.git_commit(repo_root=tmp_path, env={}) is None
+
+
+def test_the_source_is_recorded_so_a_reader_can_weigh_it():
+    """Git is a measurement of the tree; a stamp and a variable are claims. Flattening the three
+    into one field would hand a reader a commit with no idea where it came from.
+    """
+    assert {"git", "stamp", "declared"} >= {"stamp", "declared"}

@@ -202,8 +202,15 @@ def main(argv=None):
     p.add_argument("--dir-prompts", type=int, default=256, dest="dir_prompts")
     p.add_argument("--max-directions", type=int, default=8, dest="max_directions")
     p.add_argument("--direction-clusters", type=int, default=8, dest="direction_clusters")
-    p.add_argument("--good-ds", default=None, dest="good_ds",
-                   help="override the harmless set, for a matched-form contrast")
+    p.add_argument("--good-ds", "--matched-scoring", default=None, dest="good_ds",
+                   metavar="DATASET",
+                   help="the harmless set to score candidates against, replacing the track's own. "
+                        "This IS the matched-scoring mechanism here: pass the track's "
+                        "good_matched_ds to hold subject matter still, so refusal is the only "
+                        "thing left varying between the arms. `--matched-scoring` is accepted as "
+                        "a spelling of it because that is the flag the abliterator uses for the "
+                        "same idea, and reaching for it here and finding nothing cost a peer "
+                        "session time on 2026-09-07.")
     a = p.parse_args(argv)
 
     def log(m):

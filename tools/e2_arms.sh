@@ -61,6 +61,16 @@
 #   tools/e2_arms.sh ... --dry-run                         # print the plan, touch nothing
 #   tools/e2_arms.sh ... --drop-weights                    # artefacts only, for a small disk
 #   tools/e2_arms.sh ... --probe-n 40 --n 200              # holdout boundary and scored items
+#   tools/e2_arms.sh ... --max-new 640                     # fix the budget, skipping the probe
+#   tools/e2_arms.sh ... --no-budget-probe                 # same, keeping the default budget
+#
+# THE BUDGET IS SIZED BEFORE IT IS SPENT
+#
+# A run graded three arms at 20.5% of answers ungradeable, on every arm including the unedited
+# reference, because the token budget was too small for a fifth of the benchmark. The answers that
+# fail to finish are the LONG ones, so what gets graded is an easier exam than the one set. The
+# stock model is probed first, doubling the budget until it clears, and every arm then uses what
+# that found. One arm of generations to save six arms of unusable ones.
 #
 # Re-running is safe. Each arm writes a completion marker and a finished arm is skipped, so an
 # interrupted run resumes rather than repeating GPU hours. Weights are KEPT unless you ask.
@@ -77,6 +87,7 @@ EVAL_SET="openai/gsm8k:main::test"
 TASK="numeric"
 N=200
 MAX_NEW=320
+BUDGET_PROBE=1        # size MAX_NEW from the stock arm before spending it on six more
 BATCH=8
 TRIALS=60
 PROBE_N=40
@@ -109,7 +120,8 @@ while [ $# -gt 0 ]; do
     --eval)         EVAL_SET="${2:-}"; shift 2 ;;
     --task)         TASK="${2:-}"; shift 2 ;;
     --n)            N="${2:-}"; shift 2 ;;
-    --max-new)      MAX_NEW="${2:-}"; shift 2 ;;
+    --max-new)      MAX_NEW="${2:-}"; BUDGET_PROBE=0; shift 2 ;;
+    --no-budget-probe) BUDGET_PROBE=0; shift ;;
     --batch)        BATCH="${2:-}"; shift 2 ;;
     --trials)       TRIALS="${2:-}"; shift 2 ;;
     --probe-n)      PROBE_N="${2:-}"; shift 2 ;;
@@ -204,6 +216,42 @@ for arm in ${ARMS//,/ }; do
 done
 
 STOCK_CAP="$OUT/stock/capability.json"
+
+# ---------------------------------------------------------------- the budget probe
+# WHY THIS RUNS BEFORE ANYTHING ELSE
+#
+# A run on 2026-09-07 graded three arms at 41 of 200 answers ungradeable, 20.5%, on every arm
+# INCLUDING the unedited reference, because --max-new 320 is not enough for a fifth of GSM8K. The
+# answers that fail to finish are the LONG ones, so what got graded was an easier exam than the one
+# set, and a 2.5 point drop was about to be read as a capability cost.
+#
+# `capability` now exits non-zero past its threshold, which stops the wrong number being collected
+# but still costs a night. So the budget is SIZED first, on the stock arm alone, by doubling until
+# it clears. One arm's generations to save six arms of unusable ones.
+probe_budget() {
+  local d="$OUT/_budget-probe" want="$MAX_NEW"
+  mkdir -p "$d"
+  for _try in 1 2 3 4; do
+    say "budget probe: trying --max-new $want on the stock model"
+    if timeout --signal=INT --kill-after=60 "$ARM_TIMEOUT"         "$SZ" capability --model "$MODEL" --device "$DEVICE" --eval "$EVAL_SET" --task "$TASK"           --n 40 --skip "$PROBE_N" --max-new "$want" --batch "$BATCH"           --label "budget-probe-$want" --out "$d/probe-$want.json" >>"$RUN_LOG" 2>&1; then
+      say "budget probe: $want tokens clears the ungradeable threshold; using it for every arm"
+      MAX_NEW="$want"
+      return 0
+    fi
+    say "budget probe: $want tokens leaves too many answers unfinished"
+    want=$(( want * 2 ))
+  done
+  say "budget probe: even $(( want / 2 )) tokens did not clear it. Using it anyway and every arm
+        will report BUDGET, NOT MODEL, which is the honest outcome: this benchmark needs more
+        room than this run is willing to spend, and that is a fact about the pairing rather than
+        about any arm."
+  MAX_NEW=$(( want / 2 ))
+  return 0
+}
+
+if [ "$BUDGET_PROBE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+  probe_budget
+fi
 
 run_step() {
   # run_step <marker> <description> <command...>

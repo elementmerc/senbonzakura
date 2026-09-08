@@ -120,6 +120,39 @@ def dispatch(name):
             f"caused. Please report it with the output of 'senbonzakura doctor'.") from e
 
 
+def exit_status(value):
+    """What a command's return value means to a shell.
+
+    THE DEFECT THIS FIXES, which is the same one twice from opposite ends. `__main__` used to
+    discard what `main` returned, so `doctor` printed "this install cannot do what it claims"
+    over nine failed checks and exited 0. That was fixed with `sys.exit(main())`, and the fix
+    broke the other half of the surface: `score`, `compass`, `drift`, `coherence` and `track`
+    return their RESULT rather than a status, and `sys.exit` on a non-integer prints it to
+    stderr and exits 1. So every successful run of five commands reported failure, with a raw
+    Python dict where an error message goes, and any script gating on one saw a corpus it had
+    just built correctly written off.
+
+    The two conventions both stay, because both are right where they are: a command whose
+    caller wants the numbers returns the numbers, and a command whose whole job is a verdict
+    returns the verdict. This is the one place that knows it is talking to a shell, so this is
+    where the difference is resolved.
+
+    `True` and `False` are refused rather than mapped. `sys.exit(True)` exits 1, which reads
+    exactly backwards, and a command returning a bare boolean has not decided which convention
+    it is following.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise TypeError(
+            f"a command returned {value!r}. Return an int for a status or the result object "
+            f"for the numbers; a bool means neither and exits backwards.")
+    if isinstance(value, int):
+        return value
+    # A result object: the command ran and produced something. Its own failures are raised.
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -130,7 +163,18 @@ def main(argv=None):
     banner.emit(__version__, sys.stdout)
 
     if argv and argv[0] in DELEGATED:
-        return dispatch(argv[0])(argv[1:])
+        name = argv[0]
+        run = dispatch(name)
+        try:
+            return exit_status(run(argv[1:]))
+        except ImportError as e:
+            # `dispatch` only covers imports that happen while the module is being LOADED, and
+            # several commands defer their heavy imports into `main` on purpose so that
+            # `--help` stays fast. A missing dependency then escaped as an eleven-frame
+            # importlib traceback ending at a line number inside one of our files, which
+            # describes our code to somebody whose actual problem is their install. Found by
+            # running the commands with the deep-learning stack made unimportable.
+            raise _cannot_run(name, DELEGATED[name][0], e) from e
 
     # PARSE FIRST, and against the light parser. `--help`, `--version` and every argument error
     # are resolved here, before torch exists in this process: argparse raises SystemExit for all
@@ -144,4 +188,4 @@ def main(argv=None):
     # something. One parse, handed straight in: parsing again inside `cli` would be two parsers
     # that have to agree forever.
     from .cli import run_parsed
-    return run_parsed(args, bankai, rest)
+    return exit_status(run_parsed(args, bankai, rest))

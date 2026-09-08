@@ -1039,4 +1039,11 @@ def main(argv=None):
 
 
 if __name__ == "__main__":   # pragma: no cover
-    main()
+    # Through `exit_status` so `python -m senbonzakura.<module>` reports what the console
+    # script reports. A bare `main()` discards the return, which is how `doctor` printed
+    # nine failed checks and exited 0; `sys.exit(main())` alone breaks the other way for
+    # the commands that return their result rather than a status.
+    import sys
+
+    from .entry import exit_status
+    sys.exit(exit_status(main()))

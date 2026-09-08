@@ -57,8 +57,12 @@ SITECUSTOMIZE = textwrap.dedent(f"""
 
         def find_spec(self, name, path=None, target=None):
             if name.split(".")[0] in BLOCKED:
+                # `name=` matters: the real import machinery always sets it, and the error
+                # message that tells a user what to install reads it. A shim that leaves it
+                # unset makes the tool look vaguer than it is, which would have sent us
+                # chasing a defect in the message rather than in the shim.
                 raise ImportError(
-                    f"No module named {{name!r}} (removed by the torch-free gate)")
+                    f"No module named {{name!r}} (removed by the torch-free gate)", name=name)
             return None
 
 
@@ -178,3 +182,24 @@ def test_a_command_that_genuinely_needs_the_stack_says_so_rather_than_crashing(s
     said = proc.stderr + proc.stdout
     assert "Traceback" not in proc.stderr, f"a missing dependency reached the user as a crash:\n{said}"
     assert "pip install" in said, "the message must name what to install"
+
+
+def test_the_abliterate_path_refuses_in_words_rather_than_a_traceback(stripped):
+    """THE MESSAGE A 0.3.0 USER MEETS, and it was a traceback until this was checked.
+
+    Abliterating is the one thing that legitimately needs the deep-learning stack, and after
+    the dependency split it is also the one command that stops working for somebody who
+    upgrades without reading the release notes. It does not go through the delegated table, so
+    it did not get the delegated table's handler: `from .cli import run_parsed` raised through
+    eleven frames of importlib and ended at a line number inside our own file.
+
+    The first fix named the command after `bankai`, which is a flag, so the message read
+    "cannot run 'True'". Both halves are asserted here.
+    """
+    for word in ("abliterate", "kageyoshi"):
+        proc = _run(stripped, word, "--model", "x", "--track", "y", "--out", "z")
+        said = proc.stderr + proc.stdout
+        assert "Traceback" not in proc.stderr, f"'{word}' failed as a crash:\n{said}"
+        assert "senbonzakura[abliterate]" in said, f"'{word}' did not name what to install"
+        assert f"'{word}'" in said, f"the message did not name the command typed: {said}"
+        assert "'True'" not in said

@@ -128,3 +128,56 @@ def test_each_exemption_is_still_a_real_dependency(name):
     assert name in _requirements(), (
         f"{name} is exempt from the floor gate and is no longer a declared dependency. "
         f"Remove it from EXEMPT.")
+
+
+def _extras() -> set[str]:
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    return set(data["project"].get("optional-dependencies") or {})
+
+
+def test_every_install_hint_names_an_extra_that_exists():
+    """THE DEAD HINT. `torch` was advertised as `senbonzakura[cuda]` for months.
+
+    That extra has never existed in any version of this package. The one line whose entire
+    job is to tell somebody what to type named something they cannot type, and the failure is
+    invisible from the inside: the message prints, it looks helpful, and it only fails on the
+    machine of a person who is already stuck.
+
+    Hints that are a plain `pip install senbonzakura` (with or without a flag) are fine; what
+    is checked is that anything inside square brackets is a real extra.
+    """
+    from senbonzakura import entry
+
+    extras = _extras()
+    wrong = {}
+    for package, hint in entry._INSTALL_HINT.items():
+        for named in re.findall(r"senbonzakura\[([a-z,]+)\]", hint):
+            for extra in named.split(","):
+                if extra not in extras:
+                    wrong[package] = extra
+    assert not wrong, (
+        f"install hints name extras that do not exist: {wrong}. Declared extras are "
+        f"{sorted(extras)}.")
+
+
+def test_the_hint_table_covers_every_dependency_a_partial_install_can_lose():
+    """A dependency with no hint falls back to a generic line that names nothing to type.
+
+    Only the extras are checked: a base dependency missing means a damaged install, which is a
+    different message, and `dev` is not something a user installs to fix a running tool.
+    """
+    from senbonzakura import entry
+
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    optional = data["project"].get("optional-dependencies") or {}
+    missing = set()
+    for name, specs in optional.items():
+        if name in ("dev", "all"):
+            continue
+        for spec in specs:
+            m = re.match(r"^([A-Za-z0-9._-]+)", spec.strip())
+            if m and not m.group(1).lower().startswith("senbonzakura"):
+                missing.add(m.group(1)) if m.group(1) not in entry._INSTALL_HINT else None
+    assert not missing, (
+        f"{sorted(missing)} can be absent from a working install and no hint says what to "
+        f"type to get them. Add them to entry._INSTALL_HINT.")

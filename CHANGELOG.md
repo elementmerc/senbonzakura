@@ -198,6 +198,15 @@ install rather than only in a source checkout.
 
 - Continuous integration, which this repository had never had, on Linux, Windows and macOS
   across five Python versions.
+- **`pip install senbonzakura` no longer installs the deep-learning stack.** It is now one
+  library and about 210 MB against roughly 1.5 GB before, measured on one Linux machine, and
+  it gets you the commands that check things: building an
+  evaluation split, auditing one, checking a benchmark for contamination, checking what an
+  install can do. None of those need a model or a graphics card. Editing a model needs
+  `pip install 'senbonzakura[abliterate]'`.
+- **If you are upgrading from 0.3.0, `senbonzakura abliterate` will stop working until you add
+  that extra.** This is the one breaking change in the release. The tool says so and prints the
+  exact command; it does not fail with a traceback.
 - Declared dependency floors are tested at the floor, because a floor nothing installs at is
   not a tested floor. A check now enforces that the pinned floors and the declared ones are the
   same versions, which was previously a note in a file asking to be remembered.

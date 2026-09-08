@@ -107,9 +107,22 @@ a command you can run on data committed to this repository.
 ## Install
 
 ```sh
-pip install senbonzakura
+pip install senbonzakura            # the checking commands. Small, no GPU needed
+pip install 'senbonzakura[abliterate]'   # and the editor: torch, transformers, a GPU
 senbonzakura --help
 ```
+
+Two lines because they buy different things. The first lets you build an evaluation split,
+audit one, check whether a benchmark figure was measured on rows the model was already fitted
+on, and check what an install can actually do. None of that needs a model or a graphics card.
+The second adds the deep-learning stack, which is what you need to edit a model.
+
+Measured on one machine, so treat them as the order of magnitude rather than the figure:
+about 210 MB installed for the first line against about 1.5 GB for both, and the second one
+also wants a CUDA card with 6 GB on it.
+
+If you had 0.3.0 and `senbonzakura abliterate` has stopped working, that is this change: add
+the extra. The tool says so and prints the exact line if you forget.
 
 ## One worked example
 

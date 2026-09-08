@@ -78,7 +78,7 @@ RUN if ls /wheels/torch-*.whl >/dev/null 2>&1; then \
  && python -c "import torch; assert torch.version.cuda, 'a CPU torch reached a CUDA image'; \
 print('torch', torch.__version__)"
 
-RUN pip install --no-cache-dir --quiet "requests>=2" . \
+RUN pip install --no-cache-dir --quiet "requests>=2" ".[abliterate]" \
  && python tools/vendor_llama.py \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
 

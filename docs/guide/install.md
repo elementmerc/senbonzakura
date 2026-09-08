@@ -7,9 +7,28 @@ pip install .          # or: uv pip install .
 senbonzakura --help
 ```
 
-That pulls in torch, transformers, accelerate, pyarrow and optuna, which is most of a
-gigabyte and takes a few minutes on a decent connection. If you'd rather type
-`python -m senbonzakura` than `senbonzakura`, both work and they're the same thing.
+That pulls in one library, pyarrow, and lands at about 210 MB installed. It gets you the
+commands that *check* things: build an evaluation split, audit one, check a benchmark for
+contamination, check what your install can do. None of those need a model or a graphics card,
+so none of them should make you download one.
+
+To edit a model, add the extra:
+
+```sh
+pip install '.[abliterate]'
+```
+
+That's torch, transformers, accelerate and optuna, taking the install to about 1.5 GB and a
+few minutes on a decent connection. Both figures were measured on one Linux machine, so read
+them as the size of the difference rather than as what you will see. If you type
+`senbonzakura abliterate` without the extra, the tool tells you and prints the line above
+rather than showing you a traceback.
+
+If you'd rather type `python -m senbonzakura` than `senbonzakura`, both work and they're the
+same thing.
+
+**Coming from 0.3.0?** Everything used to arrive in one install. `abliterate`, `convert` and
+the scoring commands now live behind `[abliterate]`; nothing else changed.
 
 ## Reading datasets straight off the HuggingFace Hub
 

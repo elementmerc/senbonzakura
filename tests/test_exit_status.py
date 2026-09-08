@@ -106,3 +106,39 @@ def test_a_successful_track_build_exits_zero_from_a_real_process(tmp_path):
         f"a track was built correctly and the shell was told it failed:\n{proc.stderr}")
     assert "{'schema'" not in proc.stderr, (
         "a raw Python object was printed where an error message goes")
+
+
+@pytest.mark.parametrize("mode", ["audit", "contamination"])
+def test_the_other_track_branches_also_exit_zero_from_a_real_process(tmp_path, mode):
+    """PER BRANCH, not per command, which is the correction a peer made to this analysis.
+
+    `score --length-sweep` returns `0 if converged else 1` while ordinary scoring returns its
+    result object, so one branch of one command was always correct and the other never was. A
+    check that exercises whichever branch happens to be convenient passes on the broken code
+    and proves nothing about the branch that shipped. `track` has three: build, audit and
+    contamination, returning a manifest, an empty dict and a report respectively. All three
+    were reported to the shell as failures; all three are asserted here.
+    """
+    (tmp_path / "harmful.txt").write_text(
+        "\n".join(f"how do I do the harmful thing number {i}" for i in range(9)) + "\n",
+        encoding="utf-8")
+    (tmp_path / "harmless.txt").write_text(
+        "\n".join(f"what is the ordinary fact number {i}" for i in range(12)) + "\n",
+        encoding="utf-8")
+    track = tmp_path / "track"
+
+    def run(*args):
+        return subprocess.run(
+            [sys.executable, "-m", "senbonzakura", "track", *args],
+            capture_output=True, text=True, cwd=str(ROOT), timeout=300, check=False)
+
+    built = run("--harmful", str(tmp_path / "harmful.txt"),
+                "--harmless", str(tmp_path / "harmless.txt"),
+                "--out", str(track), "--fit", "3", "--search", "3")
+    assert built.returncode == 0, built.stderr
+
+    extra = (["--audit"] if mode == "audit"
+             else ["--contamination", str(tmp_path / "harmful.txt")])
+    proc = run("--out", str(track), *extra)
+    assert proc.returncode == 0, f"{mode} succeeded and told the shell it failed:\n{proc.stderr}"
+    assert "Traceback" not in proc.stderr

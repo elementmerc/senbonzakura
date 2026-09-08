@@ -62,11 +62,19 @@ DELEGATED: dict[str, tuple[str, str]] = {
 
 #: Which optional install brings each heavy dependency in, so a failure can say what to type.
 #: Only the ones a partial install actually loses; anything absent from here gets the generic line.
+#: The extras a user can actually type, read from the package metadata rather than remembered.
+#: `torch` used to be advertised here as `senbonzakura[cuda]`, an extra that has never existed
+#: in any version of this package, so the one line whose job was to tell somebody what to type
+#: named something they could not type. Now a test walks these against the metadata.
 _INSTALL_HINT = {
-    "torch": "pip install 'senbonzakura[cuda]'   (or the CPU build: pip install torch)",
-    "transformers": "pip install senbonzakura",
-    "optuna": "pip install senbonzakura",
-    "pyarrow": "pip install senbonzakura",
+    "torch": "pip install 'senbonzakura[abliterate]'   (CPU only: pip install torch)",
+    "transformers": "pip install 'senbonzakura[abliterate]'",
+    "optuna": "pip install 'senbonzakura[abliterate]'",
+    "accelerate": "pip install 'senbonzakura[abliterate]'",
+    "gguf": "pip install 'senbonzakura[abliterate]'",
+    "sentencepiece": "pip install 'senbonzakura[abliterate]'",
+    # A base dependency, so missing it means a damaged install rather than a partial one.
+    "pyarrow": "pip install --force-reinstall senbonzakura",
     # Only the Hub reader and a couple of local shapes need it; local tracks do not.
     "datasets": "pip install 'senbonzakura[hub]'",
     "bitsandbytes": "pip install 'senbonzakura[quant]'",
@@ -187,5 +195,15 @@ def main(argv=None):
     # Only an actual abliteration pays for torch, which is the one case where the cost buys
     # something. One parse, handed straight in: parsing again inside `cli` would be two parsers
     # that have to agree forever.
-    from .cli import run_parsed
+    # The refusal a 0.3.0 user meets after the dependency split, so it gets the same handler as
+    # every other command rather than an eleven-frame traceback ending inside `cli.py`. Caught
+    # by installing the built wheel into a clean environment and typing the command, which is
+    # the only place the difference is visible: in a developer checkout the stack is always
+    # there and this branch never runs.
+    try:
+        from .cli import run_parsed
+    except ImportError as e:
+        # `bankai` is a flag, not a name: naming the command after it printed "cannot run
+        # 'True'". The word the user typed is the one they can act on.
+        raise _cannot_run("kageyoshi" if bankai else "abliterate", "cli", e) from e
     return exit_status(run_parsed(args, bankai, rest))

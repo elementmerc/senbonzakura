@@ -36,6 +36,33 @@ classifiers = [
   "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
+  # `datasets` USED TO BE HERE and is now the `hub` extra below. It is the heaviest thing in
+  # this tree, Debian does not package it in stable, testing or unstable, and it was carrying
+  # a single job: reading and writing a one-column table. `senbonzakura/trackio.py` does that
+  # job on pyarrow, which Debian does package, and the on-disk format is unchanged in both
+  # directions. Reading a Hub dataset id still needs `datasets`, and says so when asked to.
+  #
+  # 14 is the floor because it is the release that removed `pyarrow.PyExtensionType`, and
+  # every pyarrow this project has ever run against is newer. Nothing here uses an API added
+  # since 8, so the floor is about the ecosystem around it rather than about our own calls.
+  "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+
+# THE EDITOR. Everything needed to abliterate a model, convert it and quantise it.
+#
+# These were the base dependencies until 2026-09-08. They are most of a gigabyte and they
+# expect a GPU, and the largest single thing standing between this tool and the people who
+# would use it was that a plain `pip install` bought all of it whether or not you were going
+# to edit a model. Checking somebody else's published claim needs none of it: a track, its
+# audit, its contamination report and the installation check are text files, JSON and
+# arithmetic, and `tests/test_torch_free.py` runs them with every one of these made
+# unimportable, so this is a measured boundary rather than an intended one.
+#
+# BREAKING for anyone installed from 0.3.0: `senbonzakura abliterate` now needs this extra.
+# The refusal names the exact command rather than leaving it to be worked out.
+abliterate = [
   # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE
   # path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
   # succeed into an environment the tool then rejects.
@@ -49,16 +76,6 @@ dependencies = [
   "torch>=2.9; python_version >= '3.14'",
   "transformers>=4.56",
   "accelerate>=0.26",
-  # `datasets` USED TO BE HERE and is now the `hub` extra below. It is the heaviest thing in
-  # this tree, Debian does not package it in stable, testing or unstable, and it was carrying
-  # a single job: reading and writing a one-column table. `senbonzakura/trackio.py` does that
-  # job on pyarrow, which Debian does package, and the on-disk format is unchanged in both
-  # directions. Reading a Hub dataset id still needs `datasets`, and says so when asked to.
-  #
-  # 14 is the floor because it is the release that removed `pyarrow.PyExtensionType`, and
-  # every pyarrow this project has ever run against is newer. Nothing here uses an API added
-  # since 8, so the floor is about the ecosystem around it rather than about our own calls.
-  "pyarrow>=14",
   # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
   # it ("assert version is not None"), which took out 17 tests in the floors job.
   # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.
@@ -94,8 +111,6 @@ dependencies = [
   # PyPI is at 7.x, so adopting it would have meant carrying a pin nobody had shown was necessary.
   "sentencepiece>=0.1.98,<0.3.0",
 ]
-
-[project.optional-dependencies]
 # 4-bit loading for the head-to-head bench and low-VRAM runs.
 quant = ["bitsandbytes>=0.43"]
 # Shell completion. Optional because cli.py degrades gracefully without it; it is
@@ -113,7 +128,10 @@ hub = ["datasets>=2.15"]
 # `datasets` is in `dev` because the test suite asserts BOTH backends read and write the same
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.
-dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff==0.16.0", "shtab>=1.6", "datasets>=2.15"]
+dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=7", "pytest-cov>=4",
+       "build>=1.0", "ruff==0.16.0"]
+# Everything. For anyone who does not want to think about which half they need.
+all = ["senbonzakura[abliterate,hub,quant,completion]"]
 
 [project.urls]
 Homepage = "https://github.com/elementmerc/senbonzakura"

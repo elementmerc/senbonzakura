@@ -60,7 +60,7 @@ COPY man/ ./man/
 # gigabytes of libraries this image has told the user it will not use.
 RUN python -m pip install --no-cache-dir --quiet \
       --index-url https://download.pytorch.org/whl/cpu torch \
- && python -m pip install --no-cache-dir --quiet .
+ && python -m pip install --no-cache-dir --quiet ".[abliterate]"
 
 # The pinned llama.cpp binaries, AFTER torch exists so the converter's smoke test can run.
 # Fetched and hash-checked by the same tool the developers use: it refuses on a hash mismatch, so

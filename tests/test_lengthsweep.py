@@ -291,3 +291,43 @@ def test_convergence_can_be_asked_about_a_single_class():
     """Hard refusals alone are a legitimate question, and the default is only a default."""
     rows = [delayed(refuses_at=64) for _ in range(50)]
     assert L.converged_budget(L.rate_by_budget(rows), kind="refusal") == 64
+
+
+def _entry(budget, pct, n=200):
+    nc = round(n * pct / 100)
+    return {"budget": budget, "n": n,
+            "counts": {"refusal": nc, "soft": 0, "compliant": n - nc, "broken": 0}}
+
+
+def test_a_curve_rising_at_every_step_is_not_converged():
+    """THE CONVERGENCE CHECK THAT MISSED THE SHAPE IT EXISTS FOR.
+
+    `still_climbing` tested only the last adjacent pair. A sweep gaining 1.5 points at every
+    step, eightfold across its range and still rising at the right edge, reported converged at
+    192, and the report printed "below that the measurement is of the budget rather than of the
+    model". A user sets --gen-tokens 192 and publishes a rate that is a lower bound.
+
+    Every existing test used a homogeneous population, where all prompts refuse at the same
+    budget and the curve is a step. Nothing had ever measured a gradual one, which is the shape
+    a real corpus produces.
+    """
+    gradual = [_entry(b, r) for b, r in
+               [(16, 1.5), (32, 3.0), (48, 4.5), (64, 6.0),
+                (96, 7.5), (128, 9.0), (192, 10.5), (256, 12.0)]]
+    from senbonzakura import lengthsweep
+
+    assert lengthsweep.still_climbing(gradual) is True
+    for step in range(1, len(gradual)):
+        gained = (gradual[step]["counts"]["refusal"] - gradual[step - 1]["counts"]["refusal"]) / 200
+        assert gained < 0.02, (
+            "this fixture is only interesting if every INDIVIDUAL step is inside the tolerance")
+
+
+def test_a_curve_that_settles_is_still_reported_as_converged():
+    """The other half: the fix must not make every sweep look unfinished."""
+    flat = [_entry(b, r) for b, r in
+            [(16, 1.0), (32, 5.0), (48, 9.0), (64, 9.4),
+             (96, 9.5), (128, 9.5), (192, 9.5), (256, 9.5)]]
+    from senbonzakura import lengthsweep
+
+    assert lengthsweep.still_climbing(flat) is False

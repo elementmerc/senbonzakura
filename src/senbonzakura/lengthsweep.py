@@ -172,17 +172,32 @@ def converged_budget(by_budget, kind="noncompliant", tolerance=CONVERGENCE_TOLER
 
 
 def still_climbing(by_budget, kind="noncompliant", tolerance=CONVERGENCE_TOLERANCE):
-    """Whether the last step of the sweep still moved the answer.
+    """Whether the sweep was still rising when it stopped.
 
-    The check that stops the largest budget being read as the truth. If the curve gained more than
-    the tolerance between the last two budgets, the sweep stopped too early and every rate in it
-    is a lower bound.
+    The check that stops the largest budget being read as the truth. If the curve had not settled
+    by its right-hand edge, the sweep stopped too early and every rate in it is a lower bound.
+
+    TWO CONDITIONS, AND THE SECOND ONE WAS MISSING. This tested only the last adjacent pair, so a
+    curve gaining 1.5 points at EVERY step, eightfold across the sweep and still rising, reported
+    `still_climbing: False` and `converged_at: 192`, and `report()` printed "converged". Each
+    individual step was inside the tolerance; the trend was not. A user is then told 192 tokens
+    is enough and publishes a rate for a model whose true rate at 512 is higher, which is exactly
+    the defect this module exists to prevent, reproduced in its own convergence check.
+
+    The existing tests only exercised homogeneous populations, where every prompt refuses at the
+    same budget and the curve is a step. A gradual curve is the realistic shape and nothing had
+    ever measured one.
     """
     usable = [e for e in by_budget if e["n"]]
     if len(usable) < 2:
         return False
-    a, b = _point(usable[-2], kind), _point(usable[-1], kind)
-    return (b - a) > tolerance
+    last_step = _point(usable[-1], kind) - _point(usable[-2], kind)
+    # The second half of the sweep, against the tolerance for the whole of it. A run of small
+    # steps that add up to more than the tolerance is a curve that has not settled, however
+    # comfortable any one step looks.
+    half = usable[len(usable) // 2:]
+    trend = _point(usable[-1], kind) - _point(half[0], kind)
+    return last_step > tolerance or trend > tolerance
 
 
 def first_visible_distribution(rows, kind="refusal"):

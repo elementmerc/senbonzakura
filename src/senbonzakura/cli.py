@@ -1909,6 +1909,7 @@ class Abliterator:
         self.hi = int(self.NL * args.layer_hi)
         self._cur = {}            # current ablation config (mode + interpolated set), read by active_dirs
         self._pristine = {}       # id(W) -> (W, cpu clone); the pristine snapshot
+        self._warned_sparsity_rounds = False
         self._dirty = set()       # id(W)s touched by the last bake, restored between trials
         self.dirs_multi = None    # [NL+1, KMAX, H]; filled by extract_directions
         # Eval state, populated by run(); declared up-front so the object's shape is visible and
@@ -2560,6 +2561,19 @@ class Abliterator:
         rounds = int(getattr(self.args, "ablation_rounds", 0))
         # False is the naive formulation, present as a CONTROL rather than a recommendation.
         keep_norms = not getattr(self.args, "no_norm_restore", False)
+        # `--sparsity` masks the FIRST delta only; the refinement rounds then subtract the full
+        # projection over every row with no mask, so the two flags together do not do what either
+        # promises. Measured: sparsity 0.9 with rounds 0 changes 18 of 64 rows, and with rounds 4
+        # changes all 64, moving the rows sparsity promised to leave pristine by a median of 11%.
+        # An A/B of sparsity 0.0 against 0.3 run with rounds on is comparing two identical edits.
+        # Said once per run rather than silently, because the flag's help promises the opposite.
+        if sp > 0 and rounds > 0 and not self._warned_sparsity_rounds:
+            self._warned_sparsity_rounds = True
+            self.log(f"  WARNING: --sparsity {sp} and --ablation-rounds {rounds} together do not "
+                     f"do what --sparsity says. The rounds re-project EVERY row with no sparsity "
+                     f"mask, so the rows sparsity is meant to leave alone are edited anyway. Use "
+                     f"one or the other until this is fixed, and do not read a sparsity "
+                     f"comparison run with rounds on.")
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)

@@ -106,6 +106,21 @@ def predicted_answer(generation):
 #: label. Deliberately anchored so a stray capital in prose is not read as a choice.
 CHOICE = re.compile(r"(?:^|[^A-Za-z])\(?([A-J])\)?(?:[.):]|\b)")
 
+#: The two option letters that are also ordinary English words. Matched on the ORIGINAL text
+#: rather than the upper-cased copy, because that is the only place the distinction survives.
+#:
+#: THE DEFECT THIS FIXES, and it is not a symmetric one. The pattern upper-cased the whole
+#: generation first, so the article "a" and the pronoun "I" both matched, and taking the LAST
+#: match meant "The answer is A. I hope that helps." graded as I, and "B, because it is a fact."
+#: graded as A. Neither is indeterminate: both return a letter, so both are scored WRONG.
+#:
+#: The bias runs one way. A safety-tuned model hedges and self-refers ("I hope this helps",
+#: "I'd note that"); an abliterated one is terser and less first-person. So the stock arm
+#: collects more spurious matches than the edited arm, and `paired_change` reports abliteration
+#: IMPROVING accuracy on general-knowledge questions. Found by a review pass running the grader
+#: on realistic replies, which the existing tests never did.
+_WORD_LETTERS = ("A", "I")
+
 
 def choice_answer(text):
     """The LAST option letter in the text, upper-cased, or None.
@@ -115,8 +130,23 @@ def choice_answer(text):
     """
     if text is None:
         return None
-    found = CHOICE.findall(str(text).upper())
-    return found[-1] if found else None
+    raw = str(text)
+    out = []
+    for m in CHOICE.finditer(raw.upper()):
+        letter = m.group(1)
+        if letter in _WORD_LETTERS:
+            # Lower case in the ORIGINAL is the article "a": a word, never a choice.
+            if raw[m.start(1)].islower():
+                continue
+            # Upper case is ambiguous, and "I" is always capitalised in English, so case cannot
+            # separate the pronoun. A real ANSWER carries a delimiter or ends the reply: "(A)",
+            # "A.", "A:", "the answer is A". A pronoun is followed by its verb. Requiring that
+            # much of the two word-letters keeps "The answer is A" and drops "I hope this helps".
+            rest = raw[m.end(1):].lstrip(")")
+            if rest.strip() and rest[0] not in ".):,;":
+                continue
+        out.append(letter)
+    return out[-1] if out else None
 
 
 def normalised_text(text):

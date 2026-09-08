@@ -746,3 +746,39 @@ def test_every_task_still_explains_itself():
     for name in cap.TASK_CHOICES:
         t = cap.get_task(name)
         assert t.grades and t.needs_no_judge, f"{name} does not explain itself"
+
+
+@pytest.mark.parametrize(("reply", "want"), [
+    ("B, because it is a fact.", "B"),
+    ("The answer is A. I hope that helps.", "A"),
+    ("C. This is a common misconception.", "C"),
+    ("B is correct. I hope this helps!", "B"),
+    ("I would say the answer is C", "C"),
+    ("Option A is right, so A.", "A"),
+])
+def test_the_grader_does_not_read_the_article_a_or_the_pronoun_i_as_an_answer(reply, want):
+    """THE GRADER THAT SCORED A HEDGE AS A WRONG ANSWER.
+
+    The pattern upper-cased the whole reply first, so the article "a" and the pronoun "I" both
+    matched, and taking the LAST match graded "The answer is A. I hope that helps." as I. Those
+    return a letter rather than None, so they are scored WRONG rather than indeterminate.
+
+    The bias runs one way, which is what makes it expensive. A safety-tuned model hedges and
+    self-refers; an abliterated one is terser and less first-person. So the stock arm collects
+    more spurious matches, and `paired_change` reports abliteration IMPROVING accuracy on
+    general-knowledge questions. Every one of these replies is a shape a real model produces,
+    and none of them was in the existing tests.
+    """
+    from senbonzakura import capability
+
+    assert capability.choice_answer(reply) == want
+
+
+@pytest.mark.parametrize(("reply", "want"), [
+    ("(A)", "A"), ("A.", "A"), ("A: the first option", "A"), ("The answer is I.", "I"),
+])
+def test_a_genuine_answer_of_a_or_i_still_reads(reply, want):
+    """The correction must not throw away the two letters it is disambiguating."""
+    from senbonzakura import capability
+
+    assert capability.choice_answer(reply) == want

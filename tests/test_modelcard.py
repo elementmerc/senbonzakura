@@ -164,3 +164,32 @@ def test_the_card_never_invents_a_number_that_is_not_in_an_artefact():
     text = _text(abl={"model": "M", "method": "single-pass"})
     for absent in ("refusal before", "KL drift", "broken output"):
         assert absent not in text, f"{absent} was printed from an artefact that did not carry it"
+
+
+def test_the_card_says_the_base_licence_is_unchanged_and_the_refusals_are_gone():
+    """THE ONE ARTEFACT THAT TRAVELS, and it carried none of this.
+
+    The repository states both things carefully: a base model's licence is not ours to loosen,
+    and abliteration removes safety guardrails wholesale. All of it reaches a reader of the
+    repository. None of it reached the HuggingFace page of a checkpoint somebody abliterated,
+    which is the only artefact a downstream user of those weights will ever see.
+    """
+    from senbonzakura import modelcard
+
+    page = "\n".join(modelcard.build())
+    assert "base model's licence" in page
+    assert "does not create a new work with a new licence" in page
+    assert "removed on purpose" in page
+    assert "senbonzakura" in page, "the card must say what generated it"
+
+
+def test_the_licence_section_needs_no_inputs():
+    """A field somebody can leave blank is a field that gets left blank, so there is no field.
+
+    `build()` with no abliteration and no capability artefact still carries the whole statement.
+    """
+    from senbonzakura import modelcard
+
+    assert "licence and use" in modelcard.SECTIONS
+    page = "\n".join(modelcard.build(abl=None, cap=None, command=None))
+    assert "not ours to loosen" in page or "base model's licence" in page

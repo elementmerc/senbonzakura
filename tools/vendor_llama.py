@@ -261,6 +261,18 @@ def extract(archive, out_dir, *, log=print):
             f"{archive.name} does not contain {', '.join(missing)}. The upstream archive layout "
             f"has changed, so this tool is looking in the wrong place rather than the release "
             f"being broken.")
+    # MIT asks for the notice in "all copies or substantial portions", and 35 MB of ggml and
+    # llama.cpp object code in a directory with no LICENSE beside it is the omission an auditor
+    # finds first. The vendored SOURCE tree carried the notice and the binaries did not. Placed
+    # here rather than by hand so a re-vendor cannot drop it again.
+    licence_src = out_dir.parent.parent / "src" / "LICENSE"
+    if licence_src.is_file():
+        shutil.copyfile(licence_src, out_dir / "LICENSE")
+        written.append("LICENSE")
+    else:
+        log(f"  WARNING: no licence text at {licence_src}, so the binaries ship without one. "
+            f"That is an MIT compliance gap; vendor the source tree first.")
+
     log(f"  extracted {len(written)} file(s): {', '.join(sorted(written))}")
     return written
 

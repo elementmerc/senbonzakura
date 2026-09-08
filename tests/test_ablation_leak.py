@@ -144,3 +144,64 @@ def test_the_fused_expert_path_leaks_too():
 def test_the_flag_defaults_to_the_old_behaviour():
     from senbonzakura.parser import build_parser
     assert build_parser().parse_args(["--model", "m"]).ablation_rounds == 0
+
+
+def test_the_raw_edit_removes_the_direction_completely_and_the_restore_does_not():
+    """THE CONTROL, MEASURED ON THE SHIPPED FUNCTION rather than asserted in a docstring.
+
+    The whole point of `single-pass-raw` is to be the naive formulation: remove the direction and
+    let the row lengths fall where they may. That removes the direction exactly. Restoring the
+    lengths is what keeps the model coherent and is also what leaves part of the direction
+    behind, because scaling rows does not commute with a projection acting across them.
+
+    Until 2026-09-08 no flag anywhere could turn the restore off, while a named arm claimed to be
+    exactly this comparison. So this test is the first thing in the repository that measures the
+    difference the arm was supposed to be measuring.
+    """
+    import torch
+
+    from senbonzakura.cli import orthogonalize_np_
+
+    torch.manual_seed(11)
+    H, cols = 64, 96
+    R = torch.nn.functional.normalize(torch.randn(1, H), dim=1)
+    # A deliberate row-length spread: the leak is a function of how uneven the rows are.
+    base = torch.randn(H, cols) * torch.linspace(0.25, 4.0, H).unsqueeze(1)
+
+    raw, restored = base.clone(), base.clone()
+    orthogonalize_np_(raw, R, 1.0, restore_norms=False)
+    orthogonalize_np_(restored, R, 1.0, restore_norms=True)
+
+    before = (R @ base).norm().item()
+    left_raw = (R @ raw).norm().item() / before
+    left_restored = (R @ restored).norm().item() / before
+
+    assert left_raw < 1e-5, (
+        f"the raw edit left {left_raw:.2%} of the direction; it is supposed to remove all of it")
+    assert left_restored > 0.05, (
+        f"the norm-restoring edit left {left_restored:.2%}, which is not the leak this project "
+        f"has measured and published. Either the leak is gone or the control is not a control.")
+    assert left_restored > left_raw * 100, "the two paths are not meaningfully different"
+
+
+def test_the_raw_edit_does_not_preserve_row_lengths_and_the_other_one_does():
+    """The other half of the same difference, stated the other way round."""
+    import torch
+
+    from senbonzakura.cli import orthogonalize_np_
+
+    torch.manual_seed(12)
+    H, cols = 48, 64
+    R = torch.nn.functional.normalize(torch.randn(1, H), dim=1)
+    base = torch.randn(H, cols) * torch.linspace(0.5, 3.0, H).unsqueeze(1)
+    want = base.norm(dim=1)
+
+    raw, restored = base.clone(), base.clone()
+    orthogonalize_np_(raw, R, 1.0, restore_norms=False)
+    orthogonalize_np_(restored, R, 1.0, restore_norms=True)
+
+    assert torch.allclose(restored.norm(dim=1), want, rtol=1e-3), (
+        "the default path is supposed to put the original row lengths back")
+    assert not torch.allclose(raw.norm(dim=1), want, rtol=1e-3), (
+        "the raw path is supposed to leave the row lengths changed; if it does not, the flag is "
+        "doing nothing and the arm is a copy of the one it controls for again")

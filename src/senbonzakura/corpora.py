@@ -192,6 +192,41 @@ def check_count(corpus, prompts):
     return prompts
 
 
+#: Whether the attribution has been printed in this process. Same shape as `bundled._state`.
+_notified = {"done": False}
+
+
+def notice(key, log=print):
+    """Print the attribution for a bundled corpus, once per process.
+
+    THE OBLIGATION THAT WAS GENERATED AND NEVER DELIVERED. `notices()` below says in its own
+    docstring that MIT and CC-BY require the notice to travel with the work, so this is an
+    obligation rather than a courtesy. It had exactly two callers, both in the build tool: one
+    embedded the text inside `corpora.bin`, where nothing ever read it, and the other wrote
+    `THIRD-PARTY-CORPORA.md` into the repository, which was not in `license-files` and so was
+    absent from the wheel.
+
+    So a user running `--good-ds xstest-safe` received 250 CC-BY-4.0 rows with the attribution
+    present nowhere in what they had installed, and `--good-ds advbench` 520 MIT rows the same
+    way. The evaluation track got this right (`bundled.notice`) and the corpora did not, which
+    is why it went unnoticed: the mechanism existed and one of its two users was wired up.
+    """
+    if _notified["done"]:
+        return
+    _notified["done"] = True
+    c = CORPORA[key]
+    log(f"Using the bundled corpus {c.name} ({c.licence}).")
+    log(f"  {c.attribution}")
+    log(f"  From {c.upstream} @ {c.commit}. Attribution is required by that licence and travels")
+    log("  with any figure you publish from it. Every bundled corpus and its terms are listed in")
+    log("  THIRD-PARTY-CORPORA.md, which ships inside this package.")
+
+
+def _reset_notice_for_tests():
+    """Let a test see the notice again. The flag is per process, and tests share one."""
+    _notified["done"] = False
+
+
 def notices():
     """Attribution for everything bundled, as the licences require.
 
@@ -214,7 +249,7 @@ def notices():
 CORPORA_BLOB = "corpora.bin"
 
 
-def load(key, *, root=None):
+def load(key, *, root=None, log=print):
     """The prompts of one bundled corpus, from the pack that ships in the wheel.
 
     Packed through the same encrypted container as the evaluation track, for the same stated
@@ -256,4 +291,5 @@ def load(key, *, root=None):
         raise CorpusError(
             f"{key}: the pack holds {len(prompts)} prompts and this build expects {expected}. The "
             f"pack and the code disagree about what this corpus is, so neither can be trusted.")
+    notice(key, log=log)
     return list(prompts)

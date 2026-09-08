@@ -321,6 +321,15 @@ def build_parser():
                          "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
                          "toggles off the projection grimjim calls 'projected abliteration'; on by "
                          "default. For measuring whether the projection helps or hurts the search.")
+    ap.add_argument("--no-norm-restore", dest="no_norm_restore", action="store_true",
+                    help="CONTROL ARM ONLY, and it makes a worse model on purpose. Remove the "
+                         "refusal directions WITHOUT putting each weight row's original length "
+                         "back. That restore is what keeps an edited model coherent, and it also "
+                         "undoes part of the ablation because scaling rows does not commute with "
+                         "a projection across them. This flag is the naive formulation the "
+                         "restore is supposed to beat, so the difference can be measured instead "
+                         "of asserted. NOT the same thing as --no-good-orth, which changes how "
+                         "the directions are found rather than how they are applied.")
     ap.add_argument("--skip-conv-ablation", dest="skip_conv_ablation", action="store_true",
                     help="CONTROL ARM ONLY. Leave the output projections of non-attention "
                          "sequence mixers untouched on a hybrid architecture: a short convolution "

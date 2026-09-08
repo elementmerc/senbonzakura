@@ -14,7 +14,12 @@ license = "AGPL-3.0-or-later"
 # wheel. The 0.3.0 release on PyPI shipped LICENSE alone, so the statement existed in the
 # repository and was absent from the artefact anyone actually installs, which is the only place
 # section 5(a) asks for it.
-license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md"]
+# THIRD-PARTY-CORPORA.md is here because the corpora it documents SHIP IN THE WHEEL, and
+# MIT and CC-BY both require the attribution to travel with the work. It was generated at
+# build time into the repository and left out of the artefact, so a user installing the
+# package received 520 MIT rows and 250 CC-BY rows with the attribution present nowhere
+# they could see it. `corpora.notice()` now prints it at load and points here.
+license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [
@@ -170,7 +175,13 @@ where = ["src"]
 # instead. The vendored tree is 103 `.py` files, a LICENSE and a `py.typed`, and each of
 # those is listed rather than swept, so a new kind of file has to be added deliberately.
 senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor/bin/*/*",
-                "vendor/src/**/*.py", "vendor/src/**/LICENSE", "vendor/src/**/py.typed"]
+                "vendor/src/**/*.py", "vendor/src/**/LICENSE", "vendor/src/**/py.typed",
+                # MIT asks for the notice in "all copies or substantial portions". The
+                # vendored SOURCE tree carried it and the 35 MB of ggml/llama.cpp object
+                # code beside it did not, which is the one omission an auditor can check
+                # in ten seconds. `vendor/bin/*/*` already sweeps this directory; it is
+                # named here so a reader can see the obligation being met on purpose.
+                "vendor/bin/*/LICENSE"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

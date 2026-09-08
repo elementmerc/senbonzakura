@@ -113,14 +113,23 @@ METHODS = {
         name="single-pass-raw",
         summary="A single pass WITHOUT restoring the original row norms. Present as a control, "
                 "not as a recommendation.",
-        # `no_good_orth` sits under `args` because that is the key `_apply_method_args` reads.
-        # It was a bare top-level key from the day this recipe was written, and NOTHING read that,
-        # so this arm was byte-identical to `single-pass` in every run: same accuracy, same delta,
-        # same interval to four decimal places. Caught when a peer noticed two methods that differ
-        # precisely in whether row norms are restored agreeing exactly.
+        # TWO defects, found on the same day, in the same three lines.
+        #
+        # First, the setting sat as a bare TOP-LEVEL key that nothing read, so this arm was
+        # byte-identical to `single-pass` in every run: same accuracy, same delta, same interval
+        # to four decimal places. Caught when a peer noticed two methods that differ precisely in
+        # whether row norms are restored agreeing exactly.
+        #
+        # Then the fix moved it under `args` and pointed it at `no_good_orth`, which changes how
+        # directions are EXTRACTED (whether the difference of means is projected off the harmless
+        # mean) and has nothing to do with row norms. So the arm went from measuring nothing to
+        # measuring the wrong axis under a name that promised the other one, which is worse: a
+        # published table headed "with and without norm restoration" would have been a table
+        # about projected abliteration. Found by a review pass reading the flag rather than the
+        # recipe. `--no-norm-restore` now exists and does what this arm's summary says.
         settings={"bake_profile": {"o_profile": FLAT, "d_profile": FLAT,
                                    "num_directions": 1, "dir_mode": "per_layer"},
-                  "args": {"no_good_orth": True}},
+                  "args": {"no_norm_restore": True}},
         resembles="the naive formulation most tutorials describe",
         edit="length and direction both change",
         search="none",

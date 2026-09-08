@@ -109,12 +109,17 @@ def test_the_two_single_pass_arms_differ_only_in_the_norm_restoration():
     decimal places on accuracy, delta and interval, and a peer caught it by noticing that two
     methods which differ precisely in whether row norms are restored cannot agree exactly.
 
-    It is now asserted where the applier looks, so the shape being tested is the shape that runs.
+    CHANGED AGAIN THE SAME DAY. Moving the key to `args` made it read, and it was pointed at
+    `no_good_orth`, which changes how directions are EXTRACTED and not whether row norms are
+    restored. So the arm went from measuring nothing to measuring the wrong axis under a name
+    promising the other one. The flag it needed did not exist and now does.
     """
     a = methods.get("single-pass").settings
     b = methods.get("single-pass-raw").settings
     assert a["bake_profile"] == b["bake_profile"]
-    assert b["args"]["no_good_orth"] is True
+    assert b["args"] == {"no_norm_restore": True}, (
+        "the raw arm must differ from the plain one in the norm restore and in nothing else; "
+        "`no_good_orth` is a different experiment wearing this one's name")
     assert "args" not in a, "the plain arm must pin nothing, or the pair varies twice"
 
 

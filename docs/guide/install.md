@@ -47,6 +47,21 @@ and the tool says so and names what to install.
 If you're packaging this for a distribution, that's the reason for the split: `datasets`
 isn't in Debian at all, and pyarrow is.
 
+## What comes in the box, including the part people don't expect
+
+The wheel carries the evaluation track and six public research corpora, so `--track default`
+and `--good-ds advbench` work with no network. That is roughly 6,500 harmful prompts sitting
+inside your site-packages.
+
+They're wrapped rather than plaintext, which stops a scraper finding them by accident and
+stops nothing else: the key ships beside them and `src/senbonzakura/bundled.py` says so in as
+many words. Every one of them is a public research dataset. The tool prints the attribution
+and the licence the first time it loads one, because several of them require it.
+
+If you'd rather not have them, build the wheel yourself without running
+`tools/build_corpora.py` and `tools/pack_track.py`; everything except the bundled defaults
+still works, and the tool tells you what to run if you ask for one.
+
 A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your
 system picks up manuals from wherever pip put them. Mine doesn't. Yours might.
 

@@ -285,3 +285,61 @@ def test_the_real_lfm2_moe_has_no_unrecognised_writers():
     for layer in model.model.layers:
         _, unrecognised = cli.residual_writers(layer, model.config.hidden_size)
         assert unrecognised == []
+
+
+def test_a_transposed_expert_stack_is_refused_rather_than_edited_on_the_wrong_axis():
+    """THE FAILURE THAT COMPLETES SUCCESSFULLY, which is the only kind this project fears.
+
+    Every fused MoE in transformers declares `down_proj` as `[experts, hidden, intermediate]`.
+    gpt-oss declares it `[experts, intermediate, hidden]` and right-multiplies. Its config sets
+    hidden and intermediate to the same number on both model sizes, so the contraction is
+    dimensionally legal: the run finishes, the artefact says it succeeded, and the edit has
+    removed a direction from the intermediate axis. No refusal removed, damage done, nothing
+    said.
+
+    A per-architecture unit test cannot catch the architecture nobody thought of, so the check
+    is at the edit. Here the two axes are deliberately DIFFERENT sizes, which is what makes the
+    mistake visible; on gpt-oss they are equal, which is what made it invisible.
+    """
+    import pytest
+    import torch
+
+    from senbonzakura.cli import orthogonalize_np_3d_
+
+    H, inter, E = 32, 48, 4
+    R = torch.nn.functional.normalize(torch.randn(1, H), dim=1)
+    correct = torch.randn(E, H, inter)
+    orthogonalize_np_3d_(correct, R, 1.0)          # [E, hidden, intermediate]: fine
+
+    transposed = torch.randn(E, inter, H)          # [E, intermediate, hidden]: gpt-oss's layout
+    with pytest.raises(SystemExit, match="residual-writing axis"):
+        orthogonalize_np_3d_(transposed, R, 1.0)
+
+
+def test_a_transposed_dense_writer_is_refused_too():
+    """The same class one dimension down, and the same reason for checking at the edit."""
+    import pytest
+    import torch
+
+    from senbonzakura.cli import orthogonalize_np_
+
+    H, cols = 32, 48
+    R = torch.nn.functional.normalize(torch.randn(1, H), dim=1)
+    orthogonalize_np_(torch.randn(H, cols), R, 1.0)     # [hidden, in]: fine
+    with pytest.raises(SystemExit, match="residual-writing axis"):
+        orthogonalize_np_(torch.randn(cols, H), R, 1.0)
+
+
+def test_the_message_says_why_a_completed_run_would_have_been_wrong():
+    """A refusal a user overrides is worse than no refusal, so it has to explain itself."""
+    import pytest
+    import torch
+
+    from senbonzakura.cli import orthogonalize_np_
+
+    R = torch.nn.functional.normalize(torch.randn(1, 32), dim=1)
+    with pytest.raises(SystemExit) as e:
+        orthogonalize_np_(torch.randn(48, 32), R, 1.0)
+    said = str(e.value)
+    assert "transposed" in said
+    assert "has not moved" in said, "the message must say what a completed run would have meant"

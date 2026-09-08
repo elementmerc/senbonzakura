@@ -96,10 +96,16 @@ that reads nothing but prompt length: if it separates the two arms as well as th
 the compass is measuring how long the sentences are.
 
 **The honest ceiling.** Nothing has been measured above 3B parameters, and most of the set is
-under 2B. The strongest result in it comes from a 2.61B model, so the ceiling is a real limit on
-what any of this generalises to, not a formality. And below roughly 1B the instrument stops
-working at all: on a 350M model it scored 0.54 with an interval straddling chance, while the
-length-only ruler scored 0.71.
+under 2B, so the ceiling is a real limit on what any of this generalises to rather than a
+formality. The largest model in the set was gemma-2-2b-it at 2.61B and **its numbers are
+withdrawn**, because the weight edit did not reach that architecture's running state; an earlier
+version of this paragraph cited it as the strongest result in the set, which it cannot be.
+
+**And the instrument gets weaker as the model does.** On the two measurements committed to this
+repository, Qwen3-1.7B scores 0.9887 against a length-only ruler's 0.6564, and Qwen3-0.6B scores
+**0.6616 against that same 0.6564**: a gap of five thousandths, which is not a measurement of
+anything. Below roughly 1B the compass has not been shown to work, and the honest statement is
+that it has not been measured there rather than that it fails there.
 
 [The compass page](https://elementmerc.github.io/senbonzakura/guide/compass) has the method, and
 a command you can run on data committed to this repository.
@@ -162,14 +168,23 @@ By design, this is methods and results, not a loaded weapon:
   each under its base model's own licence, which travels with the weights and is not ours to
   loosen. So this bullet covers the repository and is not a claim that the method produces
   nothing.
-- **No harmful prompt sets in this repository.** The evaluation track is published separately as
-  a **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
-  CC BY-NC 4.0, so checking our numbers is possible while taking the
-  data means accepting the terms first rather than a crawler sweeping it up in passing. It holds prompts only: no completions, no
-  answers, nothing a model could be trained to imitate. Its licence chain, including the two
-  links that are inferred rather than stated, is in the
-  [dataset card](docs/evaluation-track-card.md), and `tools/build_track.py` rebuilds an
-  equivalent pool from the public sources for anyone who would rather fetch them directly.
+- **No harmful prompt sets in this git tree, and this is the bullet that needs the most care.**
+  The evaluation track is published separately as a
+  **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
+  CC BY-NC 4.0, so taking the data means accepting the terms rather than a crawler sweeping it
+  up in passing. It holds prompts only: no completions, no answers, nothing a model could be
+  trained to imitate. Its licence chain, including the two links that are inferred rather than
+  stated, is in the [dataset card](docs/evaluation-track-card.md), and `tools/build_track.py`
+  rebuilds an equivalent pool from the public sources.
+
+  **The wheel you install from PyPI is a different matter and you should know it.** It carries
+  the evaluation track and six public research corpora, roughly 6,500 harmful prompts, wrapped
+  so a scraper does not find them in plaintext. That wrapping is a speed bump and not
+  protection: the key ships beside them, and anyone who reads
+  `src/senbonzakura/bundled.py` can recover them in five lines. They are there so the tool runs
+  offline, they are all public research datasets that a determined reader could assemble in an
+  afternoon, and the gate on the HuggingFace copy does not apply to them. Saying only the first
+  half of this would leave the impression that a `pip install` is prompt-free, and it is not.
 - **No harmful outputs.**
 
 Abliteration removes safety guardrails wholesale. That is both the point and the
@@ -212,7 +227,7 @@ keyword metric copied verbatim from [Heretic](https://github.com/p-e-w/heretic) 
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 **Senbonzakura is a modified work based in part on Heretic, and it is not Heretic.** Modified by
-Daniel Iwugo; first included 2026-07-14, most recently modified 2026-07-29. Only the keyword rate
+Daniel Iwugo; first included 2026-07-14, most recently modified 2026-09-07. Only the keyword rate
 is shared code and it is kept byte-identical, so only that number is a like-for-like comparison
 with Heretic; everything else here is measured by our own instrument. The full statement, and what
 was and was not changed, is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

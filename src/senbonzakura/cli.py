@@ -550,19 +550,55 @@ def _sparsify_rows_(delta, sparsity):
 ABLATION_ROUNDS = 4
 
 
+def _assert_writes_on_axis(W, R, axis, what):
+    """Refuse to edit a weight whose residual-writing axis is not where we think it is.
+
+    THE FAILURE THIS CATCHES IS SILENT AND TOTAL. Every fused MoE in transformers declares
+    `down_proj` as `[experts, hidden, intermediate]`, and gpt-oss declares it
+    `[experts, intermediate, hidden]` and right-multiplies. Its config sets hidden and
+    intermediate to the SAME number (2880, on both sizes), so the contraction is dimensionally
+    legal, the run completes, `abliteration.json` reports success, and the edit has removed a
+    direction from the intermediate axis: pure damage, no refusal removed.
+
+    That is the withdrawn-Gemma failure again, and the project already had a unit test with the
+    right title on one architecture. A per-family test cannot catch the family nobody thought of,
+    so this is checked at the edit, where the tensor is.
+    """
+    if W.shape[axis] != R.shape[1]:
+        raise SystemExit(
+            f"refusing to edit {what}: its residual-writing axis should be {R.shape[1]} wide "
+            f"(the hidden size the directions were measured in) and axis {axis} of this tensor "
+            f"is {W.shape[axis]}, shape {tuple(W.shape)}.\n"
+            f"  This usually means the architecture stores that projection transposed, which "
+            f"some do. Editing it anyway removes a direction from the wrong axis: the run "
+            f"completes, the artefact says it succeeded, and the model's refusal behaviour has "
+            f"not moved. Refusing is the only safe answer until this architecture's layout is "
+            f"handled explicitly.")
+
+
 @torch.no_grad()
-def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0):
+def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
     # Refinement 4 (norm-preserving ablation; Heretic row_normalization=full / grimjim):
     # ablate on the row-normalized weight, renormalize, then RESTORE the original row norms.
     # Raw orthogonalization changed the norms and wrecked calibration (KL 12-19); preserving
     # them keeps the model intact. R is [K, H] (refinement 5): removes the whole span.
     # sparsity>0 restricts the edit to the top-magnitude rows (sparse surgery).
+    _assert_writes_on_axis(W, R, 0, "a 2-D residual writer")
     Rf = R.to(W.device).float()                         # [K, H]
     Wf = W.float()                                      # [out=H, in]
     rn = Wf.norm(dim=1, keepdim=True).clamp_min(1e-8)   # [out,1] original row norms
     Wn = Wf / rn
     delta = s * (Rf.T @ (Rf @ Wn))                      # each column's projection onto span(R)
     Wn = Wn - _sparsify_rows_(delta, sparsity)
+    # THE CONTROL THIS PROJECT DESCRIBED AND DID NOT HAVE. `restore_norms=False` is the naive
+    # formulation most tutorials describe: remove the direction and let the row lengths fall
+    # where they may. It is the thing the norm restore is supposed to be better than, and until
+    # 2026-09-08 no flag anywhere could turn the restore off, while a named arm claimed to be
+    # exactly that comparison. It was wired to `--no-good-orth`, which changes DIRECTION
+    # EXTRACTION and not row norms, so the arm measured a different axis under the wrong name.
+    if not restore_norms:
+        W.copy_((Wf - _sparsify_rows_(s * (Rf.T @ (Rf @ Wf)), sparsity)).to(W.dtype))
+        return
     Wn = Wn / Wn.norm(dim=1, keepdim=True).clamp_min(1e-8)
     out = Wn * rn
     # MEASURED DEFECT, and `rounds` is the fix. Putting the original row lengths back undoes part
@@ -584,8 +620,9 @@ def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0):
 
 
 @torch.no_grad()
-def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0):
+def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
     # Norm-preserving, fused experts [E, out, in]; row norms per (expert, out-row). R is [K, H].
+    _assert_writes_on_axis(W, R, 1, "a fused expert stack")
     Rf = R.to(W.device).float()                         # [K, H]
     Wf = W.float()
     rn = Wf.norm(dim=2, keepdim=True).clamp_min(1e-8)   # [E,out,1]
@@ -593,6 +630,10 @@ def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0):
     proj = torch.einsum("kh,ehi->eki", Rf, Wn)          # [E,K,in]
     delta = s * torch.einsum("kh,eki->ehi", Rf, proj)   # [E,out,in]
     Wn = Wn - _sparsify_rows_(delta, sparsity)          # per (expert, out-row) sparsify
+    if not restore_norms:
+        raw = s * torch.einsum("kh,eki->ehi", Rf, torch.einsum("kh,ehi->eki", Rf, Wf))
+        W.copy_((Wf - _sparsify_rows_(raw, sparsity)).to(W.dtype))
+        return
     Wn = Wn / Wn.norm(dim=2, keepdim=True).clamp_min(1e-8)
     out = Wn * rn
     # The same leak as the dense path, for the same reason: restoring per-row lengths undoes part
@@ -2517,6 +2558,8 @@ class Abliterator:
         # `orthogonalize_np_`. getattr because the forward-only paths share this class through
         # namespaces that never had the flag.
         rounds = int(getattr(self.args, "ablation_rounds", 0))
+        # False is the naive formulation, present as a CONTROL rather than a recommendation.
+        keep_norms = not getattr(self.args, "no_norm_restore", False)
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)
@@ -2539,16 +2582,24 @@ class Abliterator:
                 # Every residual writer in the attention position, which on a hybrid is the
                 # mixer's out_proj on the layers that have no attention at all.
                 for op in attn_writers:
-                    self._mark_dirty(op); orthogonalize_np_(op, R_attn, wo, sp, rounds=rounds)
+                    self._mark_dirty(op)
+                    orthogonalize_np_(op, R_attn, wo, sp, rounds=rounds,
+                                      restore_norms=keep_norms)
             if wd > 0.0:
                 for kind, obj in mlp_entries:                   # every residual-writing down-proj
                     if kind == "fused3d":
-                        self._mark_dirty(obj); orthogonalize_np_3d_(obj, R_mlp, wd, sp, rounds=rounds)
+                        self._mark_dirty(obj)
+                        orthogonalize_np_3d_(obj, R_mlp, wd, sp, rounds=rounds,
+                                             restore_norms=keep_norms)
                     elif kind == "list":
                         for W in obj:
-                            self._mark_dirty(W); orthogonalize_np_(W, R_mlp, wd, sp, rounds=rounds)
+                            self._mark_dirty(W)
+                            orthogonalize_np_(W, R_mlp, wd, sp, rounds=rounds,
+                                              restore_norms=keep_norms)
                     else:  # dense
-                        self._mark_dirty(obj); orthogonalize_np_(obj, R_mlp, wd, sp, rounds=rounds)
+                        self._mark_dirty(obj)
+                        orthogonalize_np_(obj, R_mlp, wd, sp, rounds=rounds,
+                                          restore_norms=keep_norms)
 
     @torch.no_grad()
     def bake(self, P, wmax, wmin, D, K=1, mode="per_layer", didx=None):

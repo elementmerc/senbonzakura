@@ -66,11 +66,17 @@ most important is the length-only baseline, which ignores the prompt entirely an
 how long it is.
 
 ::: warning This is not hypothetical, and it's embarrassing
-On this project's own corpus, **a ruler that reads only prompt length beats one of the seven
-measured models**. The harmful prompts were, on average, longer.
+On this project's own corpus, **a ruler that reads only prompt length scores 0.6564, and the
+smaller of the two models with committed evidence scores 0.6616**. Five thousandths apart. The
+harmful prompts were, on average, longer.
 
-That model's AUC was never measuring harm recognition. It was measuring sentence length wearing a
+That model's AUC was not measuring harm recognition. It was measuring sentence length wearing a
 lab coat. 🥲
+
+An earlier version of this box said the length ruler *beat* one of the measured models. Against
+the artefacts in `evidence/`, it does not: it loses by 0.005, which changes the rhetoric and not
+the lesson. The wider seven-model sweep it referred to predates the corpus repair of 2026-07-30
+and has no committed artefact, so it cannot settle the question either way.
 
 Which is exactly why the control is printed beside every result and not buried in an appendix. If
 your AUC doesn't clear the length baseline, you haven't measured anything.

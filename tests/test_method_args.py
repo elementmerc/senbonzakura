@@ -133,25 +133,35 @@ def test_the_conflict_is_refused_before_the_model_is_constructed(monkeypatch):
 
 
 def test_the_raw_arm_actually_turns_the_norm_restoration_off():
-    """THE CONTROL THAT WAS NOT A CONTROL.
+    """THE CONTROL THAT WAS NOT A CONTROL, TWICE.
 
     `single-pass-raw` exists to be the naive formulation `single-pass` has to be better than: the
-    difference between them is precisely whether row norms are restored. Its setting sat as a bare
-    top-level key that nothing read, so the two arms were byte-identical in every run, agreeing to
-    four decimal places on accuracy, delta and interval. A control that is a copy of the thing it
-    controls for is worse than no control, because it reads as agreement.
+    difference between them is precisely whether row norms are restored.
+
+    First its setting sat as a bare top-level key that nothing read, so the two arms were
+    byte-identical in every run, agreeing to four decimal places on accuracy, delta and interval.
+    A control that is a copy of the thing it controls for is worse than no control, because it
+    reads as agreement.
+
+    Then the fix pointed it at `--no-good-orth`, which changes how directions are EXTRACTED and
+    has nothing to do with row norms, so the arm measured the wrong axis under a name promising
+    the other one. This asserts the flag that actually governs the restore, and asserts that the
+    other one is left alone, because those are two different experiments.
     """
-    args = _args(method="single-pass-raw", no_good_orth=False,
+    args = _args(method="single-pass-raw", no_good_orth=False, no_norm_restore=False,
                  max_directions=_default_max_directions())
     cli._apply_method_args(args, _log)
-    assert args.no_good_orth is True
+    assert args.no_norm_restore is True
+    assert args.no_good_orth is False, (
+        "the raw arm must not also change direction extraction; that is a different experiment")
 
 
 def test_the_plain_single_pass_arm_leaves_it_on():
     """The pair only means anything if exactly one of them changes."""
-    args = _args(method="single-pass", no_good_orth=False,
+    args = _args(method="single-pass", no_good_orth=False, no_norm_restore=False,
                  max_directions=_default_max_directions())
     cli._apply_method_args(args, _log)
+    assert args.no_norm_restore is False
     assert args.no_good_orth is False
 
 

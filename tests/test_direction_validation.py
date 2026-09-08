@@ -913,7 +913,7 @@ def _band(*pairs):
 def test_arms_at_different_refusal_levels_are_refused_a_ranking():
     """More ablation always costs more KL, so ranking unmatched arms compares strengths."""
     # Baseline 0.8, tolerance 0.05 -> arms may span at most 0.04 in refusal. These span 0.10.
-    v = dv.rank_band(_band((1, 0.10, 0.90), (2, 0.20, 0.10)), baseline=0.8, tolerance=0.05)
+    v = dv.rank_band(_band((1, 0.10, 0.90), (2, 0.20, 0.10)), baseline=0.8, tolerance=0.05, n_eval=1000)
     assert v["comparable"] is False
     assert "not at the same level" in v["reason"]
     assert "cheapest" not in v, "an unrankable band must not name a winner"
@@ -921,20 +921,20 @@ def test_arms_at_different_refusal_levels_are_refused_a_ranking():
 
 def test_a_one_percent_kl_difference_is_a_tie_not_a_win():
     """The exact shape of the 2026-08-04 report: 0.0088 against 0.0089, crowned MULTI WINS."""
-    v = dv.rank_band(_band((1, 0.15, 0.0089), (2, 0.15, 0.0088)), baseline=0.8, tolerance=0.05)
+    v = dv.rank_band(_band((1, 0.15, 0.0089), (2, 0.15, 0.0088)), baseline=0.8, tolerance=0.05, n_eval=1000)
     assert v["comparable"] is True
     assert v["cheapest"] is None, "a 1% difference was reported as a winner"
     assert "tie" in v["reason"]
 
 
 def test_a_real_advantage_is_ranked_and_its_margin_reported():
-    v = dv.rank_band(_band((1, 0.15, 0.80), (4, 0.16, 0.10)), baseline=0.8, tolerance=0.05)
+    v = dv.rank_band(_band((1, 0.15, 0.80), (4, 0.16, 0.10)), baseline=0.8, tolerance=0.05, n_eval=1000)
     assert v["comparable"] is True and v["cheapest"] == 4
     assert v["margin"] == pytest.approx(8.0, abs=0.01)
 
 
 def test_a_band_only_one_arm_reached_is_not_a_comparison():
-    v = dv.rank_band(_band((4, 0.15, 0.10)), baseline=0.8, tolerance=0.05)
+    v = dv.rank_band(_band((4, 0.15, 0.10)), baseline=0.8, tolerance=0.05, n_eval=1000)
     assert v["comparable"] is False and "nothing to compare" in v["reason"]
 
 
@@ -946,7 +946,7 @@ def test_a_zero_kl_arm_cannot_win_by_division():
     negative KL.
     """
     for bad in (0.0, -0.001):
-        v = dv.rank_band(_band((1, 0.15, bad), (2, 0.15, 0.5)), baseline=0.8, tolerance=0.05)
+        v = dv.rank_band(_band((1, 0.15, bad), (2, 0.15, 0.5)), baseline=0.8, tolerance=0.05, n_eval=1000)
         assert v["comparable"] is False, bad
         assert "cheapest" not in v, "a non-positive KL must not produce a winner"
         assert "not a positive divergence" in v["reason"]
@@ -997,25 +997,55 @@ def test_no_directions_file_means_no_sidecar():
     assert dv._directions_meta(None) is None
 
 
-def test_the_matching_tolerance_follows_the_eval_size_not_the_baseline():
-    """A fixed fraction of the baseline is not the precision of a difference of two proportions.
+def test_more_evaluation_prompts_make_equivalence_easier_not_harder():
+    """THE INVERSION THIS REPLACES, and it is the one that matters.
 
-    At p=0.15 on 64 prompts the standard error of the difference is about 0.065, so the old
-    constant (0.05 * baseline) refused a ranking on more than half of all pairs whose true
-    refusal was identical, while admitting genuinely mismatched pairs elsewhere.
+    The old rule compared the observed spread to two standard errors of the difference and
+    ranked the arms whenever the spread was smaller. That treats failure to detect a difference
+    as evidence of equivalence, and it produces a gate that gets EASIER the less data you
+    collect: at p=0.15 the width is 0.128 on 64 prompts and 0.032 on a thousand, so two arms
+    differing by twelve points were certified "at the same level" on a small evaluation and
+    refused on a large one. The guide calls matched refusal "the whole ball game" and it was
+    enforced by a rule that rewarded collecting less.
+
+    Two one-sided tests instead: the WHOLE interval for the difference must sit inside a margin
+    declared in advance. A small evaluation now certifies nothing.
     """
-    wide = dv.refusal_match_tolerance([0.15, 0.15], n_eval=64, baseline=0.8, tolerance=0.05)
-    tight = dv.refusal_match_tolerance([0.15, 0.15], n_eval=1024, baseline=0.8, tolerance=0.05)
-    assert wide > tight, "more eval prompts must buy a tighter matching tolerance"
-    assert wide == pytest.approx(2 * (2 * 0.15 * 0.85 / 64) ** 0.5, rel=1e-6)
-    # Without n_eval there is nothing better than the old constant, and it says so by returning it.
-    assert dv.refusal_match_tolerance([0.15], None, 0.8, 0.05) == pytest.approx(0.04)
+    small, _s, _u, why_small = dv.refusal_equivalent([0.15, 0.16], n_eval=64)
+    large, _s2, _u2, _w2 = dv.refusal_equivalent([0.15, 0.16], n_eval=1000)
+    assert large is True, "a one-point gap on a thousand prompts is equivalence by any reading"
+    assert small is False, "sixty-four prompts cannot pin a difference tightly enough to certify"
+    assert "not detecting a difference is not the same" in why_small.lower()
 
 
-def test_a_zero_refusal_band_does_not_collapse_its_own_tolerance():
-    """At p=0 the binomial variance is zero, which would make every pair look mismatched."""
-    t = dv.refusal_match_tolerance([0.0, 0.0], n_eval=128, baseline=0.8, tolerance=0.05)
-    assert t > 0
+def test_a_gap_past_the_margin_is_refused_at_any_evaluation_size():
+    """The margin is a judgement about what matters, so no amount of data makes 12 points fine."""
+    for n in (64, 1000, 100000):
+        ok, spread, _upper, why = dv.refusal_equivalent([0.15, 0.27], n_eval=n)
+        assert ok is False
+        assert spread == pytest.approx(0.12)
+        assert "past the" in why
+
+
+def test_without_an_evaluation_size_nothing_can_be_certified():
+    """The honest answer to "how precise is this" when nothing recorded the sample size."""
+    ok, _spread, upper, why = dv.refusal_equivalent([0.15, 0.16], n_eval=None)
+    assert ok is False
+    assert upper is None
+    assert "was not recorded" in why
+
+
+def test_a_zero_refusal_band_does_not_collapse_its_own_interval():
+    """At p=0 the binomial variance is zero, which would certify every pair as equivalent."""
+    ok, _spread, upper, _why = dv.refusal_equivalent([0.0, 0.0], n_eval=128)
+    assert upper > 0, "a zero-variance interval would make any pair look identical"
+    assert ok is True, "two arms both at zero refusal genuinely are at the same level"
+
+
+def test_the_margin_is_a_declared_number_rather_than_one_derived_from_the_data():
+    """An equivalence claim rests on this, so it is in the open with a reason beside it."""
+    assert pytest.approx(0.05) == dv.EQUIVALENCE_MARGIN
+
 
 
 def test_a_grid_with_no_dynamic_range_is_refused_a_ranking():

@@ -209,6 +209,17 @@ looks worse on coherence for a reason that has nothing to do with the thing you 
 Matching refusal first, then comparing the cost, is the only version of this comparison that means
 anything. As far as I can tell nobody else publishes it, which is the main reason I think this
 tool is worth having.
+
+**"Matched" is a claim, and it needs a test that can fail.** Until 2026-09-08 the tool decided two
+arms were at the same level whenever the gap between them was smaller than the noise. That sounds
+reasonable and is backwards: not detecting a difference is not evidence there isn't one, and the
+rule got *easier* the less data you collected. Two arms twelve points apart passed on a 64-prompt
+evaluation and were refused on a thousand-prompt one.
+
+It now asks the question the other way round. The whole confidence interval for the difference has
+to sit inside a margin declared in advance, five percentage points, so a small evaluation certifies
+nothing and says why. If you see *"not detecting a difference is not the same as showing there is
+none"*, that is this: score more prompts before reading the comparison.
 :::
 
 ## So what?

@@ -192,6 +192,78 @@ def broken_rate(texts: list[str]) -> float:
 MIN_REPORTABLE_N = 30
 
 
+#: Above this many observations per arm, enumerating every split is not worth the time and a
+#: seeded sample of permutations gives the same answer to three decimals.
+PERMUTATION_EXACT_MAX = 12
+
+
+def min_achievable_p(na: int, nb: int) -> float | None:
+    """The smallest p a permutation test on these group sizes can possibly return.
+
+    WHY A TOOL SHOULD KNOW THIS ABOUT ITSELF. With three seeds per arm there are twenty ways to
+    split six observations, so the smallest two-sided p reachable is 2/20 = 0.10. No arrangement
+    of the data, however clean the separation, can produce a significant result. A comparison run
+    at that size is not an inconclusive measurement, it is a measurement that could not have
+    concluded, and saying "tie" would let a reader think the tools were found to be equal.
+
+    Four per arm is the floor for a 0.05 test (2/70 = 0.029). Five gives 0.008.
+    """
+    import math
+
+    if min(na, nb) < 2:
+        return None
+    return 2 / math.comb(na + nb, na)
+
+
+def permutation_p(a, b, *, seed: int = 0, draws: int = 20000) -> float | None:
+    """Two-sided p for "these two arms have the same mean", by exactly the labels they carry.
+
+    WHY THIS EXISTS. This project decides winners by comparing a gap to a pooled spread, and
+    that is not a test. It ignores the number of observations entirely, which produces a rule
+    that fires at |t| > 1.58 with five seeds per arm and |t| > 5.0 with fifty: **running ten
+    times as many seeds makes a real effect HARDER to declare.** A gate that gets stricter as
+    evidence accumulates is measuring something other than the evidence.
+
+    A permutation test is the right instrument for the shape this project actually has. The unit
+    is a seed, there are a handful of them, and nothing is known about the distribution of the
+    statistic. It asks the only question that matters: if the labels meant nothing, how often
+    would chance alone put the two group means this far apart? At five against five that is 252
+    splits, so it is enumerated rather than sampled and the answer is exact.
+
+    Returns None when either arm has fewer than two observations, because a group of one has no
+    mean to compare.
+    """
+    import itertools
+    import random
+
+    xa, xb = [float(v) for v in a], [float(v) for v in b]
+    if min(len(xa), len(xb)) < 2:
+        return None
+    pool = xa + xb
+    na, total = len(xa), len(pool)
+    observed = abs(sum(xa) / na - sum(xb) / len(xb))
+    whole = sum(pool)
+
+    def _gap(idx):
+        left = sum(pool[i] for i in idx)
+        return abs(left / na - (whole - left) / (total - na))
+
+    if total <= PERMUTATION_EXACT_MAX:
+        splits = list(itertools.combinations(range(total), na))
+        # `>=` and not `>`: the observed split is one of the splits, and excluding it produces a
+        # p that can reach zero, which no permutation test should ever report.
+        hits = sum(1 for idx in splits if _gap(idx) >= observed - 1e-12)
+        return hits / len(splits)
+    rng = random.Random(seed)  # noqa: S311  # resampling a statistic, not a key
+    order = list(range(total))
+    hits = 1
+    for _ in range(draws):
+        rng.shuffle(order)
+        if _gap(order[:na]) >= observed - 1e-12:
+            hits += 1
+    return hits / (draws + 1)
+
+
 def wilson_interval(count: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """A confidence interval for a proportion that behaves at small n.
 

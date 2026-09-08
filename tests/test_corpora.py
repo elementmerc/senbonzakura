@@ -308,3 +308,29 @@ def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys):
     monkeypatch.setattr(mod.subprocess, "run", _should_not_run)
     assert mod.main([]) == 1
     assert "cli.github.com" in capsys.readouterr().err
+
+
+def test_the_attribution_notice_prints_once_per_process():
+    """The licence asks for the notice, not for it once per row."""
+    from senbonzakura import corpora
+
+    corpora._reset_notice_for_tests()
+    said = []
+    corpora.notice("advbench", log=said.append)
+    first = len(said)
+    corpora.notice("xstest-safe", log=said.append)
+    assert first > 0
+    assert len(said) == first, "the notice repeated within one process"
+
+
+def test_a_corrupt_pack_says_which_tool_rebuilds_it(tmp_path, monkeypatch):
+    """A pack that decrypts to rubbish would otherwise fit a direction on noise."""
+    import pytest
+
+    from senbonzakura import bundled, corpora
+
+    blob = tmp_path / "corpora.bin"
+    blob.write_bytes(bundled.pack(b"this is not json"))
+    monkeypatch.setattr(bundled, "data_path", lambda: tmp_path / "default-track.bin")
+    with pytest.raises(corpora.CorpusError, match=r"build_corpora\.py"):
+        corpora.load("advbench", root=tmp_path)

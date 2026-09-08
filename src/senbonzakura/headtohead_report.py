@@ -61,6 +61,8 @@ import os
 import re
 import sys
 
+from .metrics import min_achievable_p, permutation_p
+
 #: Recognises `senbon-seed42` / `heretic-seed42`, the pinned-budget arms of the multi-direction
 #: experiment (`senbon-k1`, `senbon-k2`), the arms of the hybrid experiment (`senbon-conv`,
 #: `senbon-noconv`), and the `-own-pick` variant the selection pass writes
@@ -228,6 +230,18 @@ def own_numbers(run_dir, tool, seed):
     }
 
 
+ALPHA = 0.05
+
+
+def _fmt_p(pv):
+    """A p that rounds to zero is printed as a bound, not as zero.
+
+    A permutation test never returns zero: the observed arrangement is one of the arrangements.
+    Printing "p=0.000" claims a certainty the method cannot express.
+    """
+    return "<0.001" if pv < 0.0005 else f"{pv:.3f}"
+
+
 def verdict(by_tool):
     """Compare the two tools on the compass, and refuse to call anything inside the noise."""
     tools = sorted(by_tool)
@@ -259,16 +273,45 @@ def verdict(by_tool):
                 f"zero. Check that the seed reaches the search before reading the gap: a spread "
                 f"of zero across five seeds is not a tight measurement, it is usually a seed that "
                 f"never varied anything.")
-    # Strictly greater, and by a margin that survives being printed. `gap < spread` alone let a gap
-    # EQUAL to the spread through, and a gap that differs from it only past the fourth decimal is
-    # equal as far as anyone reading the report can tell.
-    if gap - spread <= DISPLAY_PRECISION:
+    # AN ACTUAL TEST, and gap-versus-spread is not one. That rule ignored the number of seeds
+    # entirely, so it fired at |t| > 1.58 with five per arm and |t| > 5.0 with fifty: running ten
+    # times as many seeds made a real effect HARDER to declare, while the report described it as
+    # a conservative gate against noise. A permutation test asks the question the gate was
+    # reaching for (if the labels meant nothing, how often would chance put the means this far
+    # apart?) and it accounts for n by construction. At five against five it is exact.
+    #
+    # The spread is still reported, because it is what a reader can picture, and the p is what
+    # decides. When the two disagree the disagreement is printed rather than resolved silently.
+    pv = permutation_p(xa, xb, seed=0)
+    clears_spread = gap - spread > DISPLAY_PRECISION
+    # BEFORE anything is called a tie. At three seeds per arm the smallest reachable two-sided p
+    # is 0.10, so no arrangement of the data can be significant however cleanly the tools
+    # separate. That is not an inconclusive result, it is a comparison that could not have
+    # concluded, and reporting "tie" would let a reader believe the tools were found to be equal.
+    floor = min_achievable_p(len(xa), len(xb))
+    if floor is not None and floor > ALPHA:
+        need = 4 if ALPHA >= 0.029 else 5
+        return (f"NO VERDICT POSSIBLE at this many seeds: {a} has {len(xa)} and {b} has "
+                f"{len(xb)}, and the smallest p a permutation test can return on those group "
+                f"sizes is {floor:.3f}. Nothing in the data could clear {ALPHA}. The observed "
+                f"gap is {gap:.4f} ({a} {ma:.4f}, {b} {mb:.4f}), which is a description and not "
+                f"a finding. Run at least {need} seeds per tool.")
+    if pv is None or pv > ALPHA:
+        note = ""
+        if clears_spread:
+            note = (f" The gap does clear the pooled spread, which an earlier version of this "
+                    f"report would have called a win; with {len(xa)} and {len(xb)} seeds that "
+                    f"comparison ignores how little evidence there is.")
         return (f"TIE on harm recognition: {a} {ma:.4f}, {b} {mb:.4f}, gap {gap:.4f}, pooled "
-                f"spread {spread:.4f}. The gap does not clear the spread by a margin this report "
-                f"could show you, and the gate says that is a tie.")
+                f"spread {spread:.4f}, permutation p={_fmt_p(pv)}. Chance alone reorders these seeds "
+                f"into a gap this large often enough that the gap is not evidence.{note}")
     winner, loser = (a, b) if ma > mb else (b, a)
+    caveat = "" if clears_spread else (
+        " The gap does NOT clear the pooled spread, so read it as a small effect that survives a "
+        "test rather than as a comfortable margin.")
     return (f"{winner} scores higher on harm recognition than {loser}: {max(ma, mb):.4f} against "
-            f"{min(ma, mb):.4f}, gap {gap:.4f} against a pooled spread of {spread:.4f}.")
+            f"{min(ma, mb):.4f}, gap {gap:.4f}, pooled spread {spread:.4f}, permutation "
+            f"p={_fmt_p(pv)} over {len(xa)} and {len(xb)} seeds.{caveat}")
 
 
 def partial_comparison(controls, whole):

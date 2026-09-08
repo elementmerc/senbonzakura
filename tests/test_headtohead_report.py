@@ -8,6 +8,7 @@ table quietly, and above all that the two tools' own KL figures are never presen
 comparable column. That last one is the error this project withdrew four claims for.
 """
 import json
+import re
 
 import pytest
 
@@ -62,7 +63,11 @@ def test_a_gap_equal_to_the_spread_is_a_tie(run_dir):
     above the spread, `gap < spread` was therefore false, and the report printed "gap 0.0010
     against a pooled spread of 0.0010" and declared a result.
     """
-    d = run_dir([0.90, 0.91, 0.92], [0.89, 0.90, 0.91])
+    # FIVE seeds per arm, not three. At three there are twenty ways to split six observations,
+    # so no permutation test can clear 0.05 and the report now says the comparison could not have
+    # concluded rather than calling it a tie. The regression this test is named for is about the
+    # tie path, so it needs enough seeds to reach it.
+    d = run_dir([0.90, 0.91, 0.92, 0.905, 0.915], [0.89, 0.90, 0.91, 0.895, 0.905])
     assert "TIE on harm recognition" in report(d)
 
 
@@ -72,7 +77,10 @@ def test_a_margin_too_small_to_print_is_a_tie(run_dir):
     The gap clears the spread here, but by far less than the fourth decimal both are printed to, so
     the verdict sentence would read as two identical numbers with a winner between them.
     """
-    d = run_dir([0.900001, 0.910001, 0.920001], [0.89, 0.90, 0.91])
+    # Five seeds per arm: at three, no permutation test can clear 0.05, so the report
+    # correctly refuses a verdict and this test's subject is unreachable.
+    d = run_dir([0.900001, 0.910001, 0.920001, 0.905001, 0.915001],
+                [0.89, 0.90, 0.91, 0.895, 0.905])
     assert "TIE on harm recognition" in report(d)
 
 
@@ -90,7 +98,9 @@ def test_the_winner_can_be_either_tool(run_dir):
 
 def test_a_zero_spread_is_flagged_rather_than_trusted(run_dir):
     """Five seeds landing on one number is usually a seed that varied nothing."""
-    d = run_dir([0.95, 0.95, 0.95], [0.60, 0.60, 0.60])
+    # Five seeds per arm: at three, no permutation test can clear 0.05, so the report
+    # correctly refuses a verdict and this test's subject is unreachable.
+    d = run_dir([0.95] * 5, [0.60] * 5)
     out = report(d)
     assert "spread is exactly" in out and "never varied anything" in out
 
@@ -105,7 +115,9 @@ def test_two_seeds_cannot_buy_a_verdict(run_dir):
 
 def test_identical_scores_with_no_gap_are_reported_as_suspicious(run_dir):
     """Both tools on one number, seed after seed, is a measurement fault rather than a tie."""
-    d = run_dir([0.9, 0.9, 0.9], [0.9, 0.9, 0.9])
+    # Five seeds per arm: at three, no permutation test can clear 0.05, so the report
+    # correctly refuses a verdict and this test's subject is unreachable.
+    d = run_dir([0.9] * 5, [0.9] * 5)
     out = report(d)
     assert "NO VERDICT" in out and "investigate" in out
 
@@ -120,21 +132,24 @@ def test_one_tool_alone_is_not_a_head_to_head(tmp_path):
 # ── the error this file exists to avoid ───────────────────────────────────────────────
 def test_the_two_kl_figures_are_never_offered_as_a_comparison(run_dir):
     """Different estimators, different slices. One column would repeat the withdrawn claims."""
-    out = report(run_dir([0.9, 0.9, 0.9], [0.8, 0.8, 0.8]))
+    out = report(run_dir([0.9] * 5, [0.8] * 5))
     assert "NOT a comparison" in out
     assert "senbonzakura, our coherence slice" in out
     assert "Heretic, its own evaluation" in out
 
 
 def test_every_self_reported_row_carries_its_estimator(run_dir):
-    out = report(run_dir([0.9, 0.9, 0.9], [0.8, 0.8, 0.8]))
-    assert out.count("KL estimator:") == 6
-    assert out.count("refusal estimator:") == 6
+    out = report(run_dir([0.9] * 5, [0.8] * 5))
+    # Five seeds per tool, two tools: one line per arm.
+    assert out.count("KL estimator:") == 10
+    assert out.count("refusal estimator:") == 10
 
 
 def test_the_verdict_reads_the_compass_not_the_self_reported_numbers(run_dir):
     """The compass is one instrument over both tools; the self-reported figures are not."""
-    d = run_dir([0.95, 0.95, 0.95], [0.60, 0.60, 0.60])
+    # Five seeds per arm: at three, no permutation test can clear 0.05, so the report
+    # correctly refuses a verdict and this test's subject is unreachable.
+    d = run_dir([0.95] * 5, [0.60] * 5)
     assert "senbon scores higher" in report(d)
 
 
@@ -181,7 +196,7 @@ def test_heretics_own_pick_is_shown_but_kept_out_of_the_verdict(run_dir):
 
 def test_a_run_with_no_own_pick_still_reports(run_dir):
     """The selection pass writes no second model when it agreed with Heretic's own choice."""
-    out = report(run_dir([0.9, 0.9, 0.9], [0.8, 0.8, 0.8]))
+    out = report(run_dir([0.9] * 5, [0.8] * 5))
     assert "own-pick" not in out
 
 
@@ -194,10 +209,18 @@ def test_stdev_of_one_point_is_zero_and_never_divided_by(run_dir):
 
 def test_the_pooled_spread_uses_both_arms(run_dir):
     """A silent arm beside a noisy one must not report the silent arm's spread as the spread."""
-    d = run_dir([0.90, 0.90, 0.90], [0.60, 0.95, 0.75])
+    # Five per arm: at three no verdict is reachable, so the sentence carrying the spread is
+    # never printed and this test would be asserting on a string that cannot appear.
+    d = run_dir([0.90] * 5, [0.60, 0.95, 0.75, 0.70, 0.85])
     out = report(d)
     # One arm has zero spread; the pooled figure must still carry the other arm's noise.
-    assert "pooled spread of 0.1" in out or "pooled spread 0.1" in out
+    # Asserted on the VALUE rather than on a literal string, because the value depends on how
+    # many seeds the test uses and the property does not.
+    m = re.search(r"pooled spread(?: of)? ([0-9.]+)", out)
+    assert m, f"the verdict printed no pooled spread:\n{out[-400:]}"
+    assert float(m.group(1)) > 0.05, (
+        f"the pooled spread came back {m.group(1)}, which is the silent arm's spread rather "
+        f"than both arms'")
 
 
 def test_a_spread_of_identical_floats_is_treated_as_zero():
@@ -300,3 +323,95 @@ def test_the_pair_section_says_what_the_numbers_are_not(run_dir):
 def test_no_pair_section_when_nothing_is_partial(run_dir):
     out = report(run_dir([0.95, 0.94, 0.96], [0.60, 0.61, 0.59]))
     assert "partial-ablation comparison" not in out
+
+
+def _arms(tool, values):
+    return [{"tool": tool, "seed": i, "auc": v} for i, v in enumerate(values)]
+
+
+def test_more_seeds_no_longer_make_a_real_effect_harder_to_declare():
+    """THE GATE THAT GOT STRICTER AS EVIDENCE ACCUMULATED.
+
+    The old rule was `gap > pooled_spread`, which never looks at how many seeds there are. Since
+    the standard error of a difference shrinks as sqrt(n), that rule fires at |t| > 1.58 with
+    five seeds per arm and |t| > 5.0 with fifty. Running ten times as many seeds therefore made a
+    real effect HARDER to declare, while the report described the rule as a conservative gate
+    against noise.
+
+    Here the same effect and the same spread are measured with five seeds and with twenty. A
+    correct gate is at least as willing to call it with more data; the old one was less.
+    """
+    from senbonzakura import headtohead_report as hh
+
+    small = {"alpha": _arms("alpha", [0.50, 0.52, 0.54, 0.56, 0.58]),
+             "beta": _arms("beta", [0.60, 0.62, 0.64, 0.66, 0.68])}
+    big_a = [0.50 + 0.02 * (i % 5) for i in range(20)]
+    big_b = [0.60 + 0.02 * (i % 5) for i in range(20)]
+    large = {"alpha": _arms("alpha", big_a), "beta": _arms("beta", big_b)}
+
+    v_small, v_large = hh.verdict(small), hh.verdict(large)
+    assert "TIE" not in v_large, (
+        f"twenty seeds per arm on a ten-point gap reported a tie:\n{v_large}")
+    if "TIE" not in v_small:
+        assert "TIE" not in v_large, "more evidence must not turn a win into a tie"
+
+
+def test_the_verdict_reports_a_p_value_rather_than_a_ratio_of_two_summaries():
+    from senbonzakura import headtohead_report as hh
+
+    by_tool = {"alpha": _arms("alpha", [0.50, 0.52, 0.54, 0.56, 0.58]),
+               "beta": _arms("beta", [0.60, 0.62, 0.64, 0.66, 0.68])}
+    said = hh.verdict(by_tool)
+    assert "permutation p=" in said, said
+    assert "pooled spread" in said, "the spread is still worth showing a reader"
+
+
+def test_a_gap_inside_the_noise_is_still_a_tie():
+    """The fix must not turn the gate into a rubber stamp."""
+    from senbonzakura import headtohead_report as hh
+
+    by_tool = {"alpha": _arms("alpha", [0.50, 0.60, 0.70, 0.40, 0.55]),
+               "beta": _arms("beta", [0.52, 0.61, 0.68, 0.43, 0.57])}
+    assert "TIE" in hh.verdict(by_tool)
+
+
+def test_a_win_that_does_not_clear_the_spread_says_so():
+    """The two comparators can disagree, and the disagreement is printed rather than resolved."""
+    from senbonzakura import headtohead_report as hh
+
+    by_tool = {"alpha": _arms("alpha", [0.50, 0.51, 0.52, 0.53, 0.54]),
+               "beta": _arms("beta", [0.56, 0.57, 0.58, 0.59, 0.60])}
+    said = hh.verdict(by_tool)
+    if "TIE" not in said:
+        assert "permutation p=" in said
+
+
+@pytest.mark.parametrize(("n", "possible"), [(2, False), (3, False), (4, True), (5, True)])
+def test_a_comparison_that_could_not_have_concluded_says_so(n, possible):
+    """AN INCONCLUSIVE RESULT AND AN IMPOSSIBLE ONE ARE DIFFERENT THINGS.
+
+    At three seeds per arm there are twenty ways to split six observations, so the smallest
+    two-sided p reachable is 0.10. Nothing in the data can clear 0.05. Calling that a tie would
+    let a reader believe the two tools had been found equal, when the truth is that the run was
+    never capable of finding anything.
+    """
+    from senbonzakura import headtohead_report as hh
+
+    a = [0.50 + 0.001 * i for i in range(n)]
+    b = [0.90 + 0.001 * i for i in range(n)]      # separated as cleanly as data can be
+    said = hh.verdict({"alpha": _arms("alpha", a), "beta": _arms("beta", b)})
+    if possible:
+        assert "NO VERDICT POSSIBLE" not in said, said
+    else:
+        assert "NO VERDICT POSSIBLE" in said or "NO VERDICT:" in said, said
+
+
+def test_a_p_that_rounds_to_zero_is_printed_as_a_bound():
+    """A permutation test never returns zero: the observed arrangement is one of them."""
+    from senbonzakura import headtohead_report as hh
+
+    a = [0.10 + 0.001 * i for i in range(20)]
+    b = [0.90 + 0.001 * i for i in range(20)]
+    said = hh.verdict({"alpha": _arms("alpha", a), "beta": _arms("beta", b)})
+    assert "p=0.000" not in said, "printing p=0.000 claims a certainty the method cannot express"
+    assert "p=<0.001" in said

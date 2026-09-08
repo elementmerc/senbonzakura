@@ -281,3 +281,68 @@ def test_a_model_with_no_chat_template_still_fingerprints(tmp_path, monkeypatch,
     res = drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
                       "--out", str(tmp_path / "d.json")])
     assert res["fingerprint"] == drift.fingerprint("base", ["first", "second"], "")
+
+
+def test_drift_now_carries_an_interval_over_prompt_sampling():
+    """THE AXIS EVERY HEADLINE COMPARISON TURNS ON, REPORTED AS A BARE NUMBER.
+
+    The K=1 against K=2 result, the head-to-head's "half the collateral damage" claim and
+    `validate`'s matched-refusal ranking are all decided on drift. The compass and the capability
+    score both ship seeded prompt-level bootstraps; drift shipped none, while `validate` asserted
+    that a five-point gap sits "outside the run-to-run noise of a 64-prompt KL estimate", a noise
+    level nothing had measured.
+
+    The per-prompt values were already computed and then averaged away one line later, so this
+    costs no GPU.
+    """
+    import torch
+
+    from senbonzakura import drift
+
+    torch.manual_seed(3)
+    n, vocab = 64, 32
+    base = torch.log_softmax(torch.randn(n, vocab), dim=-1)
+    cand = torch.log_softmax(base + 0.3 * torch.randn(n, vocab), dim=-1)
+
+    value = drift.kl(base, cand)
+    lo, hi = drift.kl_interval(base, cand, seed=7)
+    assert lo < value < hi, f"the point estimate {value} is outside its own interval"
+    assert hi - lo > 0, "a zero-width interval on 64 varied prompts is not a measurement"
+
+
+def test_the_drift_interval_is_seeded():
+    """Two runs on the same data must agree, or the interval is a coin toss with error bars."""
+    import torch
+
+    from senbonzakura import drift
+
+    torch.manual_seed(4)
+    base = torch.log_softmax(torch.randn(40, 16), dim=-1)
+    cand = torch.log_softmax(base + 0.2 * torch.randn(40, 16), dim=-1)
+    assert drift.kl_interval(base, cand, seed=1) == drift.kl_interval(base, cand, seed=1)
+    assert drift.kl_interval(base, cand, seed=1) != drift.kl_interval(base, cand, seed=2)
+
+
+def test_one_prompt_gets_no_interval_rather_than_a_fake_one():
+    """An interval built from one observation is a decoration, and the compass's own degenerate
+    case (a zero-width interval reading as certainty) is the failure to avoid.
+    """
+    import torch
+
+    from senbonzakura import drift
+
+    base = torch.log_softmax(torch.randn(1, 16), dim=-1)
+    cand = torch.log_softmax(torch.randn(1, 16), dim=-1)
+    assert drift.kl_interval(base, cand) == (None, None)
+
+
+def test_the_per_prompt_values_average_to_the_reported_figure():
+    """The interval is only about the same quantity if it is built from the same numbers."""
+    import torch
+
+    from senbonzakura import drift
+
+    torch.manual_seed(5)
+    base = torch.log_softmax(torch.randn(24, 12), dim=-1)
+    cand = torch.log_softmax(base + 0.1 * torch.randn(24, 12), dim=-1)
+    assert abs(float(drift.kl_per_prompt(base, cand).mean()) - drift.kl(base, cand)) < 1e-9

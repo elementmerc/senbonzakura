@@ -133,6 +133,10 @@ def first_token_logprobs(model, tok, prompts, batch=16, log=None):
 #: enough to matter, and that agreement is only knowable because it was checked.
 BF16_KL_FLOOR = 1e-3
 
+#: Bootstrap replicates for the drift interval. The same count the compass uses, so the two
+#: intervals in one report are built the same way and a reader can compare their widths.
+BOOTSTRAP_DRAWS = 2000
+
 
 def logits_dtype_of(model):
     """The dtype this model computes in, or "unknown".
@@ -170,6 +174,16 @@ def precision_verdict(value, dtype_name, *, floor=BF16_KL_FLOOR):
         f"the pair in float32 if the exact number matters.")
 
 
+def kl_per_prompt(base_lp, cand_lp):
+    """KL(base || candidate) for EACH prompt, summed over the vocabulary.
+
+    Kept separately from the mean because the per-prompt values are what an interval is built
+    from, and they were being averaged away one line after they were computed.
+    """
+    p = base_lp.exp()
+    return (p * (base_lp - cand_lp)).sum(-1)
+
+
 def kl(base_lp, cand_lp):
     """KL(base || candidate), summed over the vocabulary, averaged over prompts.
 
@@ -178,8 +192,33 @@ def kl(base_lp, cand_lp):
     original cared about it. The reverse direction would let the edited model be rewarded for
     collapsing onto a few tokens the original also liked.
     """
-    p = base_lp.exp()
-    return float((p * (base_lp - cand_lp)).sum(-1).mean())
+    return float(kl_per_prompt(base_lp, cand_lp).mean())
+
+
+def kl_interval(base_lp, cand_lp, *, seed=0, draws=BOOTSTRAP_DRAWS):
+    """A seeded bootstrap interval over PROMPT sampling, for the drift figure.
+
+    THE AXIS EVERY HEADLINE COMPARISON TURNS ON, AND IT HAD NO UNCERTAINTY AT ALL. The K=1
+    against K=2 result, the head-to-head's "half the collateral damage" claim and `validate`'s
+    matched-refusal ranking are all decided on drift, and it was reported as a bare number while
+    the compass and the capability score both shipped seeded prompt-level bootstraps. `validate`
+    even asserts that a five-point gap is "outside the run-to-run noise of a 64-prompt KL
+    estimate", a noise level nothing had ever measured.
+
+    The per-prompt values are already in hand, so this costs no GPU: it resamples the prompts,
+    which is the uncertainty that actually dominates, exactly as the compass does. Re-running on
+    the same machine would measure floating-point reduction order, which is a reassuring number
+    about the wrong thing.
+    """
+    per = kl_per_prompt(base_lp, cand_lp)
+    n = per.shape[0]
+    if n < 2:
+        return None, None
+    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    flat = per.detach().to("cpu").float()
+    means = torch.stack([flat[torch.randint(n, (n,), generator=g)].mean() for _ in range(draws)])
+    lo, hi = torch.quantile(means, torch.tensor([0.025, 0.975]))
+    return float(lo), float(hi)
 
 
 def load_base_logprobs(a, prompts, fp, log=print):
@@ -230,6 +269,7 @@ def main(argv=None):
 
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)
     value = kl(base_lp, cand_lp)
+    kl_lo, kl_hi = kl_interval(base_lp, cand_lp, seed=int(getattr(a, "seed", 0) or 0))
 
     dtype_name = logits_dtype_of(cand)
     precise, note = precision_verdict(value, dtype_name)
@@ -254,6 +294,11 @@ def main(argv=None):
         "precision_floor": BF16_KL_FLOOR,
         "precision_note": note,
         "instrument": "senbonzakura.drift, KL(base||candidate) on first-token distributions",
+        # An interval over prompt sampling, from the per-prompt values this already computed and
+        # then averaged away. None when there is one prompt, because an interval from one
+        # observation is a decoration.
+        "kl_ci": None if kl_lo is None else [kl_lo, kl_hi],
+        "kl_ci_method": f"seeded percentile bootstrap over prompts, {BOOTSTRAP_DRAWS} draws",
     }
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
@@ -261,7 +306,8 @@ def main(argv=None):
         # In the same breath as the number, because this is exactly the caveat that gets lost
         # between an artefact and a table.
         print(f"DRIFT_BELOW_PRECISION {a.label}: {note}")
-    print(f"DRIFT_DONE {a.label} kl={value:.4f} n={len(prompts)} batch={a.batch} "
+    span = "" if kl_lo is None else f" [{kl_lo:.4f}, {kl_hi:.4f}]"
+    print(f"DRIFT_DONE {a.label} kl={value:.4f}{span} n={len(prompts)} batch={a.batch} "
           f"dtype={dtype_name}{'' if precise else ' PRECISION-LIMITED'}")
     return res
 

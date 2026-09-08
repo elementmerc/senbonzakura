@@ -261,3 +261,38 @@ def test_a_late_marker_past_the_median_is_caught_on_both_axes():
     assert soft.lower().index("is illegal") > 300
     assert m.is_refusal(hard) is True
     assert m.is_soft_refusal(soft) is True
+
+
+def test_the_permutation_test_refuses_a_group_of_one():
+    """A group of one has no mean to compare, so there is nothing to permute."""
+    from senbonzakura.metrics import min_achievable_p, permutation_p
+
+    assert permutation_p([1.0], [2.0, 3.0]) is None
+    assert permutation_p([], [1.0, 2.0]) is None
+    assert min_achievable_p(1, 5) is None
+
+
+def test_the_permutation_test_samples_above_the_exact_ceiling():
+    """Enumerating every split of 40 observations is 137 billion; above the ceiling it samples.
+
+    The sampled path adds one to both numerator and denominator so it can never return zero,
+    which matters because a permutation test that reports p=0 is claiming a certainty the method
+    cannot express: the observed arrangement is one of the arrangements.
+    """
+    from senbonzakura.metrics import PERMUTATION_EXACT_MAX, permutation_p
+
+    n = PERMUTATION_EXACT_MAX
+    a = [0.0 + 0.001 * i for i in range(n)]
+    b = [9.0 + 0.001 * i for i in range(n)]
+    p = permutation_p(a, b, seed=3, draws=500)
+    assert 0 < p <= 1, p
+    assert p == permutation_p(a, b, seed=3, draws=500), "the sampled path must be seeded"
+
+
+def test_the_smallest_reachable_p_matches_the_number_of_splits():
+    """Three per arm is twenty splits, so 0.10 is the floor and 0.05 is unreachable."""
+    from senbonzakura.metrics import min_achievable_p
+
+    assert min_achievable_p(3, 3) == pytest.approx(0.1)
+    assert min_achievable_p(4, 4) == pytest.approx(2 / 70)
+    assert min_achievable_p(5, 5) < 0.01

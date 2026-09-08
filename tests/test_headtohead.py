@@ -643,7 +643,13 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
             assert (out / f"{tool}-seed{seed}" / headtohead.ARM_MANIFEST).is_file()
             assert (out / f"scored-{tool}-seed{seed}.json").is_file()
     printed = capsys.readouterr().out
-    assert "senbon scores higher on harm recognition than heretic" in printed
+    # THREE SEEDS PER ARM CANNOT PRODUCE A FINDING, and the report now says so instead of
+    # calling it a win. There are twenty ways to split six observations, so the smallest
+    # two-sided p a permutation test can return is 0.10: no arrangement of this data clears
+    # 0.05, however cleanly the two tools separate. The old rule compared the gap to the pooled
+    # spread, which never looks at how many seeds there are, and happily declared a winner here.
+    assert "NO VERDICT POSSIBLE at this many seeds" in printed, printed[-400:]
+    assert "Run at least 4 seeds per tool" in printed
     assert "NOT a comparison" in printed, "the two tools' own figures lost their warning"
     assert "length-only" in printed, "the null control did not reach the table"
 
@@ -708,7 +714,11 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
     second = headtohead.main(argv)
     assert len(calls) == first, "a completed run re-ran its arms"
     assert second["ran"] == 0 and second["skipped"] == 6
-    assert "harm recognition" in capsys.readouterr().out, "the second run produced no report"
+    # Case-insensitive, and on the section header rather than the verdict sentence: with three
+    # seeds per arm the verdict is now "NO VERDICT POSSIBLE at this many seeds", which is the
+    # correct answer and does not contain the words the old assertion looked for.
+    assert "harm recognition" in capsys.readouterr().out.lower(), (
+        "the second run produced no report")
 
 
 def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_path, monkeypatch,

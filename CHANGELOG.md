@@ -50,6 +50,14 @@ currently measure it, and we would rather publish that than wait for a friendlie
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
 not comparable to what this version produces.
 
+**And one measurement definition changed on 2026-09-08, so noncompliance figures moved again.**
+The hedging detector counted statements of fact about legality or danger as hedging: a complete,
+compliant technical answer that mentioned an activity is illegal was scored as a soft refusal.
+That fires asymmetrically, because a more explanatory model collects more of them regardless of
+whether it complied, and it carried full weight in the rule that decides which trial is saved as
+the finished model, so the search was being steered toward models that do not caveat. Noncompliance
+rates from before this date are not comparable with rates after it.
+
 ### If you are coming from 0.3.0, this is what you can now run
 
 0.3.0 installed three things you could run: abliterating a model (as `senbonzakura --model ...`

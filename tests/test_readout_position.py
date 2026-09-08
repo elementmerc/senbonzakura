@@ -311,3 +311,76 @@ def test_a_mixed_batch_keeps_each_prompt_aligned():
     assert got[1] is None
     assert got[2] is not None
     assert got[2]["preamble_tokens"] == 1
+
+
+def test_the_second_readout_does_not_attend_to_padding():
+    """THE DEFECT IN THE FIGURE THE ARTEFACT TELLS YOU TO QUOTE.
+
+    `enc` is built with `padding=True`, and this project sets `padding_side = "left"` with the
+    end-of-sequence token as the pad. The re-forward that reads the position after the reasoning
+    block used `torch.ones_like(ids)` as its mask, which marks those pad tokens as real content.
+    So every prompt shorter than the longest in its batch was scored on a context beginning with
+    a run of end-of-sequence tokens.
+
+    It is also batch-size dependent in the worst possible way: at `--batch 1` there is no padding
+    and the figure is correct, and `limits.md` explains compass batch sensitivity as
+    floating-point reduction order and tells a reader to check their batch size before filing a
+    bug. That explanation would have sent someone straight past this.
+
+    Asserted on the mask the model actually receives, because that is the whole defect. The
+    first read-out path was always correct; only this one built its own mask.
+    """
+    import torch
+
+    from senbonzakura import margin
+
+    seen = {}
+
+    class _Tok:
+        pad_token_id = 0
+        chat_template = None
+
+        def apply_chat_template(self, msgs, **_kw):
+            return msgs[0]["content"]
+
+        def __call__(self, texts, **_kw):
+            # Left padding with the pad id, exactly as the real tokeniser is configured.
+            widths = [3, 5]
+            longest = max(widths)
+            ids, mask = [], []
+            for w in widths:
+                pad = longest - w
+                ids.append([self.pad_token_id] * pad + list(range(10, 10 + w)))
+                mask.append([0] * pad + [1] * w)
+            return _Enc({"input_ids": torch.tensor(ids), "attention_mask": torch.tensor(mask)})
+
+    class _Enc(dict):
+        def to(self, _device):
+            return self
+
+    class _Model:
+        def generate(self, input_ids=None, attention_mask=None, **_kw):
+            # One new token, which is the close token, so `upto` is 1 for both rows.
+            new = torch.full((input_ids.shape[0], 1), 99, dtype=input_ids.dtype)
+            return torch.cat([input_ids, new], dim=1)
+
+        def __call__(self, input_ids=None, attention_mask=None, **_kw):
+            seen.setdefault("masks", []).append(attention_mask.clone())
+            seen.setdefault("ids", []).append(input_ids.clone())
+            return type("O", (), {"logits": torch.zeros(1, input_ids.shape[1], 8)})()
+
+    margin.margins_past_preamble(
+        _Model(), _Tok(), ["short", "a longer one"], [1], [2], "cpu", close_id=99,
+        batch=2, budget=4)
+
+    assert seen.get("masks"), "the re-forward never happened"
+    for ids, mask in zip(seen["ids"], seen["masks"], strict=True):
+        assert ids.shape == mask.shape
+        padded = (ids == 0)
+        assert not bool((mask.bool() & padded).any()), (
+            "a pad token is marked as real content, so the margin was read in a context "
+            "beginning with end-of-sequence tokens")
+    # The short prompt carries two pads, so its mask must be strictly narrower than its ids.
+    narrow = min(int(m.sum()) for m in seen["masks"])
+    widest = max(m.shape[1] for m in seen["masks"])
+    assert narrow < widest, "no row was actually padded, so this test proved nothing"

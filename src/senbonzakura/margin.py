@@ -306,8 +306,25 @@ def margins_past_preamble(model, tok, prompts, harmful_ids, benign_ids, device, 
             # The position immediately AFTER the close token is where the verdict begins, so the
             # logits that predict it are the ones conditioned on everything up to and including it.
             upto = int(hit[0].item()) + 1
-            ids = torch.cat([enc["input_ids"][j], new[:upto]]).unsqueeze(0)
-            mask = torch.ones_like(ids)
+            # THE PADDING THIS RE-FORWARD USED TO ATTEND TO. `enc` is built with `padding=True`
+            # and this tokeniser pads on the LEFT with the end-of-sequence token, so every prompt
+            # shorter than the longest in its batch carried a run of pad tokens at the front. The
+            # mask here was `ones_like(ids)`, which marks them as real content, so the model read
+            # a prompt prefixed with N end-of-sequence tokens and the margin came out of a
+            # different conditioning context than the one the figure claims.
+            #
+            # It is also batch-size dependent in a way the docs attribute to something else:
+            # `limits.md` explains compass batch sensitivity as floating-point reduction order
+            # and tells a reader to check their batch size before filing a bug. On this path the
+            # sensitivity was a correctness defect, and at `--batch 1` there is no padding and
+            # the figure was right, which is the worst way for a bug like this to behave.
+            #
+            # The first read-out path (`margins`) was always correct: it uses the tokeniser's own
+            # mask. Only this one built its own.
+            prompt_ids = enc["input_ids"][j]
+            prompt_mask = enc["attention_mask"][j]
+            ids = torch.cat([prompt_ids, new[:upto]]).unsqueeze(0)
+            mask = torch.cat([prompt_mask, torch.ones_like(new[:upto])]).unsqueeze(0)
             logits = model(input_ids=ids, attention_mask=mask).logits[0, -1]
             probs = logits.softmax(dim=-1)
             h = logits[harmful_ids].max()

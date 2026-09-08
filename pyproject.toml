@@ -130,7 +130,7 @@ where = ["src"]
 # with no binaries in it; `setup.py` makes the tag follow the contents, so the two cannot
 # disagree. A `py3-none-any` wheel holding a Linux executable is the state this arrangement makes
 # impossible to build.
-senbonzakura = ["data/*.bin", "vendor/*.json", "vendor/bin/*/*", "vendor/src/**/*"]
+senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor/bin/*/*", "vendor/src/**/*"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

@@ -1145,3 +1145,67 @@ def test_the_default_records_which_position_was_read(loaded, tmp_path):
                        "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
     assert res["readout"]["position"] == "first"
     assert "past_preamble" not in res["readout"]
+
+
+# ── --n defaulting to what is actually held out ────────────────────────────────────
+def test_the_default_n_is_every_held_out_prompt(loaded, tmp_path, capsys):
+    """THE DEFAULT COULD NOT WORK ON OUR OWN CORPUS.
+
+    --n defaulted to 200. The shipped track holds 259 harmful rows and records a skip of 128,
+    leaving 131, so every invocation on the corpus this project publishes was refused before it
+    scored anything. A fixed number cannot know how big a corpus is.
+    """
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--device", "cpu",
+                       "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
+    # The fixture holds 4 harmful and 6 harmless, so the balanced default is 4.
+    assert res["n_harmful"] == 4
+    assert res["n_harmless"] == 4
+    assert "defaulted to 4" in capsys.readouterr().out, (
+        "the resolved n must be named in the record: two runs at different n are different "
+        "measurements and a reader has to be able to tell")
+
+
+def test_the_default_balances_the_two_arms(loaded, tmp_path):
+    """It takes the SMALLER arm. Scoring 3 harmful against 2 harmless would silently compare
+    different sample sizes on an axis where that changes the interval.
+    """
+    from datasets import Dataset
+    bad = str(tmp_path / "bad")
+    good = str(tmp_path / "good")
+    Dataset.from_dict({"text": ["b1", "b2", "b3", "b4"]}).save_to_disk(bad)
+    Dataset.from_dict({"text": ["g1", "g2"]}).save_to_disk(good)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--device", "cpu",
+                       "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
+    assert res["n_harmful"] == res["n_harmless"] == 2
+
+
+def test_an_explicit_n_that_does_not_fit_is_still_refused(loaded, tmp_path):
+    """A default is a preference; a number somebody typed is a request, and quietly scoring
+    fewer than they asked for is how a result looks like every other one.
+    """
+    bad, good = _track(tmp_path)
+    with pytest.raises(SystemExit, match="does not fit"):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--n", "99", "--device", "cpu",
+                     "--skip-harmful", "0", "--skip-harmless", "0"])
+
+
+def test_a_skip_past_the_end_of_the_corpus_says_so(loaded, tmp_path):
+    """Without this the default resolves to zero or negative and dies inside a slice."""
+    bad, good = _track(tmp_path)
+    with pytest.raises(SystemExit, match="nothing is held out"):
+        margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                     "--out", str(tmp_path / "r.json"), "--device", "cpu",
+                     "--skip-harmful", "99", "--skip-harmless", "0", "--bootstrap", "0"])
+
+
+def test_a_small_arm_is_warned_about_rather_than_refused(loaded, tmp_path, capsys):
+    """A small corpus is a real situation and the interval already says what the number is worth."""
+    bad, good = _track(tmp_path)
+    margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                 "--out", str(tmp_path / "r.json"), "--device", "cpu",
+                 "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
+    assert "below 30" in capsys.readouterr().out

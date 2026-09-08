@@ -86,10 +86,13 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     # offer a knob that would change nothing.
     if chat_template:
         ap.add_argument("--chat-template", dest="chat_template", default="",
-                        help="Jinja chat template file, for a model that ships none. Prompt "
+                        help="a Jinja chat template for a model that ships none: either a path "
+                             "to one, or the name of one this tool bundles ('plain'). Prompt "
                              "format drives every measurement here, so a missing template is an "
                              "input you supply and the run records, not something the tool "
-                             "invents.")
+                             "invents. A bundled one is recorded by NAME, so two runs under it "
+                             "are comparable and a reader can see which format produced the "
+                             "numbers.")
     ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
                     help=four_bit_help or ("load in 4-bit (bitsandbytes nf4) to measure a large "
                                            "model on low VRAM. Safe on the forward-only paths; "

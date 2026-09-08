@@ -1618,6 +1618,28 @@ def _renders_a_chat_prompt(tok):
     return True
 
 
+#: Chat templates this tool ships, by name, for models that carry none of their own.
+#:
+#: A NAME rather than a silent fallback, and the distinction is the whole point. The old behaviour
+#: invented a "User:/Assistant:" wrapper whenever a model shipped no template, chosen silently and
+#: recorded nowhere, and every number measured that way is comparable to nothing. Naming it makes
+#: it an input the operator chose, puts its digest in the artefact, and makes two runs under the
+#: same name comparable to each other.
+#:
+#: `plain` exists because base models are a legitimate thing to abliterate and several ship no
+#: template at all. Bamba is the one that forced it: the reach check refused the model, correctly,
+#: and there was no way past the refusal that did not involve someone writing a template by hand
+#: and every one of them writing a different one.
+BUNDLED_TEMPLATES = ("plain",)
+
+
+def _bundled_template(name):
+    """The path of a template this tool ships, or None if the name is not one of them."""
+    if name not in BUNDLED_TEMPLATES:
+        return None
+    return Path(__file__).resolve().parent / "data" / "templates" / f"{name}.jinja"
+
+
 def ensure_chat_template(tok, template_path=None, log=None):
     """Guarantee the tokenizer renders chat prompts, or refuse to measure anything.
 
@@ -1634,10 +1656,14 @@ def ensure_chat_template(tok, template_path=None, log=None):
     """
     _log = log or (lambda _m: None)
     if template_path:
+        resolved = _bundled_template(template_path) or Path(template_path)
         try:
-            template = Path(template_path).read_text(encoding="utf-8")
+            template = resolved.read_text(encoding="utf-8")
         except OSError as e:
-            raise SystemExit(f"could not read --chat-template {template_path}: {e}") from e
+            known = ", ".join(sorted(BUNDLED_TEMPLATES))
+            raise SystemExit(f"could not read --chat-template {template_path}: {e}. It should be "
+                             f"a path to a Jinja template, or one of the names this tool ships: "
+                             f"{known}.") from e
         if not template.strip():
             raise SystemExit(f"--chat-template {template_path} is empty")
         tok.chat_template = template
@@ -1646,8 +1672,13 @@ def ensure_chat_template(tok, template_path=None, log=None):
                              f"It must be a Jinja chat template of the kind tokenizer_config.json "
                              f"carries in its chat_template field.")
         digest = hashlib.sha256(template.encode("utf-8")).hexdigest()[:16]
-        _log(f"  chat template: supplied from {template_path} (sha256:{digest})")
-        return {"source": str(template_path), "sha256": digest}
+        # A bundled template records its NAME, not the path it happened to live at on this
+        # machine. A reader comparing two runs needs to see that both used `bundled:plain`, and an
+        # absolute path inside somebody's virtualenv tells them nothing and differs per install.
+        source = (f"bundled:{template_path}" if _bundled_template(template_path)
+                  else str(template_path))
+        _log(f"  chat template: supplied from {source} (sha256:{digest})")
+        return {"source": source, "sha256": digest}
 
     if _renders_a_chat_prompt(tok):
         own = getattr(tok, "chat_template", None)
@@ -1655,12 +1686,17 @@ def ensure_chat_template(tok, template_path=None, log=None):
                   if isinstance(own, str) and own else None)
         return {"source": "tokenizer", "sha256": digest}
 
+    known = ", ".join(sorted(BUNDLED_TEMPLATES))
     raise SystemExit(
         "this model ships no chat template, so there is no defined way to turn a prompt into "
         "input for it. Every measurement here depends on that format: refusal rate, KL and the "
-        "compass all change with it. Supply one with --chat-template <file> (a Jinja template of "
-        "the kind tokenizer_config.json carries in chat_template) and it will be recorded with "
-        "the results, so the numbers say which format produced them.")
+        "compass all change with it.\n"
+        "  Supply one with --chat-template <file> (a Jinja template of the kind "
+        "tokenizer_config.json carries in chat_template),\n"
+        f"  or name one this tool ships: --chat-template {known}.\n"
+        "  Either way it is recorded with the results, so the numbers say which format produced "
+        "them. What this will not do is pick a format for you: the previous behaviour invented a "
+        "wrapper silently, and every number measured that way is comparable to nothing.")
 
 
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,

@@ -69,6 +69,11 @@ PREAMBLE_CLOSE_SPELLINGS = ("</think>", "</thinking>", "</reasoning>", "<|end_th
 #: land on: that would measure the budget, which is the mistake `score --length-sweep` exists for.
 PREAMBLE_BUDGET = 256
 
+#: Below this many prompts per arm the AUC is reported with a warning beside it. Not a refusal:
+#: a small corpus is a real situation and the interval already says how little the number is worth.
+#: It is the same floor the rest of the project reports rates against.
+MIN_ARM = 30
+
 
 
 def resolve_skips(track, skip_harmful, skip_harmless, log=None):
@@ -130,7 +135,14 @@ def build_parser():
     ap.add_argument("--no-margins", dest="margins", action="store_const", const="",
                     help="do not retain the per-prompt margins")
     ap.add_argument("--label", default="")
-    ap.add_argument("--n", type=int, default=200)
+    ap.add_argument("--n", type=int, default=None,
+                    help="prompts to score per arm. The default is EVERY held-out prompt, taking "
+                         "the smaller of the two arms so they stay balanced, because a fixed "
+                         "number cannot know how big the corpus is. It used to default to 200, "
+                         "which does not fit this project's own track: 259 harmful rows minus a "
+                         "recorded skip of 128 leaves 131, so the default refused every run on "
+                         "the corpus it ships with. An explicit value that does not fit is still "
+                         "refused, because that one is a request rather than a preference")
     ap.add_argument("--track", default=None,
                     help="the track these prompts came from. Its track.json records where the "
                          "partition boundaries actually fell, and passing it is the only way to "
@@ -761,7 +773,7 @@ def main(argv=None):
     # Slice arithmetic makes a nonsense argument silently produce a plausible file rather
     # than an error: --n 0 scores nothing and then dies inside round(None), and a negative
     # skip reads the TAIL of the set, which is real data from the wrong partition.
-    if a.n < 1:
+    if a.n is not None and a.n < 1:
         raise SystemExit(f"--n {a.n} scores no prompts; an AUC needs at least one per arm")
     for flag, value in (("--skip-harmful", a.skip_harmful), ("--skip-harmless", a.skip_harmless),
                         ("--skip-matched", a.skip_matched)):
@@ -774,6 +786,23 @@ def main(argv=None):
 
     harmful_all = load_prompts(a.harmful, "harmful")
     harmless_all = load_prompts(a.harmless, "harmless")
+    if a.n is None:
+        # Every held-out prompt, balanced across the arms. Resolved here rather than in the parser
+        # because it depends on the corpora and on the skips, neither of which the parser can see,
+        # and it is LOGGED because "the default" has to name a number in the record: two runs at
+        # different n are different measurements and a reader must be able to tell.
+        a.n = min(len(harmful_all) - a.skip_harmful, len(harmless_all) - a.skip_harmless)
+        if a.n < 1:
+            raise SystemExit(
+                f"nothing is held out to score: the harmful set has {len(harmful_all)} rows "
+                f"behind --skip-harmful {a.skip_harmful}, and the harmless set has "
+                f"{len(harmless_all)} behind --skip-harmless {a.skip_harmless}. One of those "
+                f"skips is past the end of its corpus.")
+        print(f"  --n defaulted to {a.n}, every held-out prompt in the smaller arm")
+        if a.n < MIN_ARM:
+            print(f"  WARNING: {a.n} prompts per arm is below {MIN_ARM}. The AUC will carry an "
+                  f"interval wide enough to include most answers, and the controls beside it are "
+                  f"measured on the same few rows.")
     harmful = harmful_all[a.skip_harmful:a.skip_harmful + a.n]
     harmless = harmless_all[a.skip_harmless:a.skip_harmless + a.n]
     # Both arms, the same check. Only the harmless arm was checked before, so asking

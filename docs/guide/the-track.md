@@ -106,6 +106,14 @@ Each partition is a HuggingFace dataset saved with `save_to_disk`, holding exact
 column named `text`, one prompt per row:
 
 ```python
+from senbonzakura import trackio
+trackio.write_text_column("mytrack/bad_ds", ["first prompt", "second prompt"])
+```
+
+That writes the same three files `datasets.save_to_disk` writes, and a directory written
+either way loads either way, so this still works if you'd rather use the library directly:
+
+```python
 from datasets import Dataset
 Dataset.from_dict({"text": ["first prompt", "second prompt"]}).save_to_disk("mytrack/bad_ds")
 ```

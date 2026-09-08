@@ -509,8 +509,8 @@ def flag_violations(m, *, eval_refusal=0, eval_refusal_final=0, dir_prompts=0, e
 
 
 def _save(rows: list[str], path: Path) -> None:
-    from datasets import Dataset
-    Dataset.from_dict({"text": rows}).save_to_disk(str(path))
+    from . import trackio
+    trackio.write_text_column(path, rows)
 
 
 def write_track(out: Path, harmful: dict[str, list[str]], harmless: dict[str, list[str]],
@@ -601,16 +601,16 @@ def load_partitions(track: Path) -> tuple[dict[str, list[str]], dict[str, list[s
     boundary arithmetic is the shape of this codebase's recurring defect: three copies of
     the prompt renderer disagreed and put the compass's read-out on the wrong token.
     """
-    from datasets import load_from_disk
+    from . import trackio
     try:
         m = json.loads((track / "track.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         raise SystemExit(f"{track} has no readable track.json, so its split cannot be checked: {e}") from e
 
     counts = m["counts"]
-    bad_fit = [r["text"] for r in load_from_disk(str(track / "bad_ds"))]
-    bad_eval = [r["text"] for r in load_from_disk(str(track / "bad_eval_ds"))]
-    good = [r["text"] for r in load_from_disk(str(track / "good_ds"))]
+    bad_fit = trackio.read_text_column(track / "bad_ds")
+    bad_eval = trackio.read_text_column(track / "bad_eval_ds")
+    good = trackio.read_text_column(track / "good_ds")
     hs, gf, gs = counts["harmful"]["search"], counts["harmless"]["fit"], counts["harmless"]["search"]
 
     expected = {

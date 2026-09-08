@@ -66,7 +66,9 @@ _INSTALL_HINT = {
     "torch": "pip install 'senbonzakura[cuda]'   (or the CPU build: pip install torch)",
     "transformers": "pip install senbonzakura",
     "optuna": "pip install senbonzakura",
-    "datasets": "pip install senbonzakura",
+    "pyarrow": "pip install senbonzakura",
+    # Only the Hub reader and a couple of local shapes need it; local tracks do not.
+    "datasets": "pip install 'senbonzakura[hub]'",
     "bitsandbytes": "pip install 'senbonzakura[quant]'",
     "shtab": "pip install 'senbonzakura[completion]'",
 }

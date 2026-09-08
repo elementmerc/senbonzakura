@@ -49,11 +49,16 @@ dependencies = [
   "torch>=2.9; python_version >= '3.14'",
   "transformers>=4.56",
   "accelerate>=0.26",
-  # 2.15 is the first release that does not call pyarrow.PyExtensionType, which pyarrow
-  # removed in 14. The declared 2.0 floor resolved cleanly and then died at import with
-  # "module 'pyarrow' has no attribute 'PyExtensionType'", which is precisely what the
-  # dependency-floor CI job exists to catch, and did, on its first ever run.
-  "datasets>=2.15",
+  # `datasets` USED TO BE HERE and is now the `hub` extra below. It is the heaviest thing in
+  # this tree, Debian does not package it in stable, testing or unstable, and it was carrying
+  # a single job: reading and writing a one-column table. `senbonzakura/trackio.py` does that
+  # job on pyarrow, which Debian does package, and the on-disk format is unchanged in both
+  # directions. Reading a Hub dataset id still needs `datasets`, and says so when asked to.
+  #
+  # 14 is the floor because it is the release that removed `pyarrow.PyExtensionType`, and
+  # every pyarrow this project has ever run against is newer. Nothing here uses an API added
+  # since 8, so the floor is about the ecosystem around it rather than about our own calls.
+  "pyarrow>=14",
   # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
   # it ("assert version is not None"), which took out 17 tests in the floors job.
   # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.
@@ -97,7 +102,18 @@ quant = ["bitsandbytes>=0.43"]
 # in `dev` as well so the developer and CI parser surface stays identical, which
 # the argument-namespace fixture depends on.
 completion = ["shtab>=1.6"]
-dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff==0.16.0", "shtab>=1.6"]
+# Reading a dataset straight off the HuggingFace Hub by its `owner/name` id, and reading the
+# few local shapes `trackio` declines to guess at (a DatasetDict, a formatted set). Local
+# tracks, the bundled corpora and every file format the tool accepts work without it.
+#
+# 2.15 is the first release that does not call `pyarrow.PyExtensionType`, which pyarrow
+# removed in 14. The old 2.0 floor resolved cleanly and then died at import, which is
+# precisely what the dependency-floor CI job exists to catch, and did, on its first ever run.
+hub = ["datasets>=2.15"]
+# `datasets` is in `dev` because the test suite asserts BOTH backends read and write the same
+# bytes, and a suite that can only exercise the backend it happens to have installed is how a
+# fallback path rots into something nobody has ever run.
+dev = ["pytest>=7", "pytest-cov>=4", "build>=1.0", "ruff==0.16.0", "shtab>=1.6", "datasets>=2.15"]
 
 [project.urls]
 Homepage = "https://github.com/elementmerc/senbonzakura"

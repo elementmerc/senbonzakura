@@ -35,6 +35,13 @@ huggingface-hub==1.23.0
 safetensors==0.8.0
 accelerate==1.14.0
 datasets==5.0.0
+# A DIRECT dependency since `trackio.py`, and the library that now hands the prompts to every
+# run. It was present transitively underneath `datasets` in every measurement to date, but the
+# July sweep did not record it and neither did the card, so this is the version the development
+# machine carries rather than one read off a run. Runs from here on record it themselves:
+# `crashsafe.PROVENANCE_PACKAGES` names it, so the next published number can say which pyarrow
+# read its corpus instead of leaving a reader to work it out from the `datasets` pin.
+pyarrow==25.0.0
 optuna==4.9.0
 numpy==2.5.1
 scipy==1.18.0

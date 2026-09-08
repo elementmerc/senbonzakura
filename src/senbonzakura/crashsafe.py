@@ -351,7 +351,9 @@ def config_to_bake_args(cfg):
 # keeps this module free of heavy imports and, more usefully, records what is INSTALLED
 # rather than what happened to be importable.
 PROVENANCE_PACKAGES = (
-    "torch", "transformers", "datasets", "optuna", "accelerate",
+    # `pyarrow` and `datasets` are both here because either can be the thing that read a
+    # run's corpus off disk, and "which library handed us the prompts" is provenance.
+    "torch", "transformers", "pyarrow", "datasets", "optuna", "accelerate",
     "safetensors", "tokenizers", "numpy", "bitsandbytes",
 )
 

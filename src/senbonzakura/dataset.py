@@ -274,8 +274,9 @@ def _read_table(path, spec):
             import pyarrow.parquet as pq
         except ImportError as e:
             raise DatasetError(
-                f"{spec}: reading parquet needs pyarrow. It ships with `datasets`, so "
-                f"`pip install datasets` fixes it.") from e
+                f"{spec}: reading parquet needs pyarrow, which senbonzakura depends on "
+                f"directly, so this install is damaged: pip install --force-reinstall "
+                f"senbonzakura") from e
         return pq.read_table(str(path)).to_pylist()
     raise DatasetError(f"{spec}: no reader for '{suffix}' files.")
 
@@ -308,6 +309,20 @@ def _select_split(obj, split, spec):
 
 
 def _from_disk(body, split, spec, what="dataset"):
+    # A plain single-table directory, which is every track this tool writes and every corpus
+    # it bundles, is read without `datasets` at all. See trackio's module docstring for why
+    # that path is the ordinary one rather than the fallback. A DatasetDict, or anything else
+    # `trackio` declines to guess at, still goes through `datasets` below.
+    from . import trackio
+
+    if split is None:
+        try:
+            plain = trackio.read_table_if_plain(body)
+        except trackio.TrackIOError as e:
+            raise DatasetError(f"could not load the {what} at {body}: {e}") from e
+        if plain is not None:
+            return plain
+
     from datasets import load_from_disk
     try:
         obj = load_from_disk(body)
@@ -325,8 +340,8 @@ def _from_hub(body, split, spec, token, streaming, limit):
         from datasets import load_dataset
     except ImportError as e:
         raise DatasetError(
-            f"{spec} looks like a Hub dataset id and reading one needs the `datasets` package "
-            f"(`pip install datasets`).") from e
+            f"{spec} looks like a Hub dataset id and reading one needs the `datasets` package: "
+            f"pip install 'senbonzakura[hub]'. Reading a track or a local file does not.") from e
     body, config = split_hub_config(body)
     kwargs = {}
     if token:

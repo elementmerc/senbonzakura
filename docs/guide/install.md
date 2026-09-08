@@ -7,9 +7,24 @@ pip install .          # or: uv pip install .
 senbonzakura --help
 ```
 
-That pulls in torch, transformers, accelerate, datasets and optuna, which is most of a
+That pulls in torch, transformers, accelerate, pyarrow and optuna, which is most of a
 gigabyte and takes a few minutes on a decent connection. If you'd rather type
 `python -m senbonzakura` than `senbonzakura`, both work and they're the same thing.
+
+## Reading datasets straight off the HuggingFace Hub
+
+```sh
+pip install '.[hub]'
+```
+
+The tool doesn't need the `datasets` package for ordinary work. It reads and writes tracks
+with pyarrow, and every file format it accepts (`.txt`, `.csv`, `.json`, `.jsonl`,
+`.parquet`) works without it. What needs the extra is pointing a flag at a Hub id like
+`--good-ds tatsu-lab/alpaca`, which has to go and fetch it. Ask for one without the extra
+and the tool says so and names what to install.
+
+If you're packaging this for a distribution, that's the reason for the split: `datasets`
+isn't in Debian at all, and pyarrow is.
 
 A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your
 system picks up manuals from wherever pip put them. Mine doesn't. Yours might.

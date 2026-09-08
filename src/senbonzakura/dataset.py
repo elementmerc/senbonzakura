@@ -405,7 +405,10 @@ def resolve(spec, *, text_column=None, token=None, streaming=False, limit=None,
     # cannot silently shadow it and change which corpus a published number came from.
     if body == BUNDLED_ALIAS or body.startswith(BUNDLED_ALIAS + "/"):
         from . import bundled
-        root = bundled.ensure()
+        try:
+            root = bundled.ensure()
+        except bundled.BundledTrackError as e:
+            raise DatasetError(str(e)) from e
         rest = body[len(BUNDLED_ALIAS) + 1:] if "/" in body else ""
         body = str(root / rest) if rest else str(root)
 

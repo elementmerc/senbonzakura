@@ -450,7 +450,10 @@ def read_manifest(track_dir):
     """
     if str(track_dir) == dataset.BUNDLED_ALIAS:
         from . import bundled
-        track_dir = bundled.ensure()
+        try:
+            track_dir = bundled.ensure()
+        except bundled.BundledTrackError as e:
+            raise SystemExit(str(e)) from e
     try:
         m = json.loads((Path(track_dir) / "track.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

@@ -61,11 +61,11 @@ DELEGATED: dict[str, tuple[str, str]] = {
 
 
 #: Which optional install brings each heavy dependency in, so a failure can say what to type.
-#: Only the ones a partial install actually loses; anything absent from here gets the generic line.
-#: The extras a user can actually type, read from the package metadata rather than remembered.
-#: `torch` used to be advertised here as `senbonzakura[cuda]`, an extra that has never existed
-#: in any version of this package, so the one line whose job was to tell somebody what to type
-#: named something they could not type. Now a test walks these against the metadata.
+#: Only the ones a partial install actually loses; anything absent gets the generic line.
+#:
+#: `torch` was advertised here as `senbonzakura[cuda]`, an extra that has never existed in any
+#: version of this package, so the one line whose whole job is to tell somebody what to type
+#: named something they could not type. A test now walks every hint against the metadata.
 _INSTALL_HINT = {
     "torch": "pip install 'senbonzakura[abliterate]'   (CPU only: pip install torch)",
     "transformers": "pip install 'senbonzakura[abliterate]'",
@@ -159,6 +159,19 @@ def exit_status(value):
         return value
     # A result object: the command ran and produced something. Its own failures are raised.
     return 0
+
+
+def module_entry(fn, argv=None):
+    """`python -m senbonzakura.<module>` reports what the console script reports.
+
+    Eight modules had no `__main__` guard at all, so running them that way executed nothing and
+    exited 0. `doctor` is the one that matters: it exists to be run before a long job, it is
+    invoked in this form in four places in the documentation, and it printed nothing and passed.
+    That is the original defect `exit_status` was written for, still live on the documented path,
+    found by a review pass that asked what the two invocation forms actually do rather than
+    assuming they agree.
+    """
+    sys.exit(exit_status(fn(argv)))
 
 
 def main(argv=None):

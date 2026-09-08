@@ -1197,3 +1197,8 @@ def main(argv=None):
         json.dump(record, f, indent=2)
     log(f"written to {own.out}")
     return 0
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

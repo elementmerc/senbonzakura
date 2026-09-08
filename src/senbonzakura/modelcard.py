@@ -207,3 +207,8 @@ def main(argv=None):
     else:
         print(text)
     return 0
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

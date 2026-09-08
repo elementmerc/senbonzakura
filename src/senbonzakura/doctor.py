@@ -441,3 +441,8 @@ def main(argv=None):
                          "Slower, and the only check that proves the whole chain")
     a = ap.parse_args(argv)
     return report(run_checks(deep=a.deep))
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

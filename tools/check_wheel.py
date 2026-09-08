@@ -67,6 +67,7 @@ def inspect(path):
         "filename_tag": _filename_tag(path),
         "metadata_tags": meta_tags,
         "platform_payload": payload,
+        "pycache": sorted(n for n in names if "__pycache__" in n or n.endswith(".pyc")),
     }
 
 
@@ -90,6 +91,20 @@ def problems(info):
         found.append(f"the tag {ftag} restricts it to one platform and there is no platform "
                      f"payload to justify that, so it refuses to install everywhere else for "
                      f"nothing")
+
+    # COMPILED BYTECODE FROM THE BUILD MACHINE. The vendored converter is a set of real Python
+    # packages, so importing or running it leaves `__pycache__` directories in the source tree,
+    # and setuptools sweeps them into the wheel. The published platform wheel carried 93 of them:
+    # 2 MB of stale bytecode compiled against one developer's Python 3.14, shipped to strangers
+    # on other versions, and enough to make two builds of identical source produce different
+    # bytes. Deleting them is not the fix, because running the converter once puts them back.
+    cached = info["pycache"]
+    if cached:
+        found.append(
+            f"the wheel carries {len(cached)} compiled bytecode file(s) from the build machine "
+            f"({cached[0]}). They are stale the moment anyone on another Python version installs "
+            f"it, and they make two builds of the same source differ. Remove them with: "
+            f"find src -name __pycache__ -type d -exec rm -rf {{}} +")
     return found
 
 
@@ -149,6 +164,7 @@ def main(argv=None):
     print(f"  wheel          {a.wheel.name}")
     print(f"  filename tag   {info['filename_tag']}")
     print(f"  metadata tag   {', '.join(info['metadata_tags'] or ['(none)'])}")
+    print(f"  bytecode files {len(info['pycache'])}")
     print(f"  platform files {len(info['platform_payload'])}"
           + (f": {', '.join(info['platform_payload'][:3])}" if info["platform_payload"] else ""))
 

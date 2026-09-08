@@ -541,3 +541,8 @@ def run(argv=None, log=print):
 
 def main(argv=None):
     return run(argv)
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

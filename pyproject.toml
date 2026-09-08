@@ -164,7 +164,13 @@ where = ["src"]
 # with no binaries in it; `setup.py` makes the tag follow the contents, so the two cannot
 # disagree. A `py3-none-any` wheel holding a Linux executable is the state this arrangement makes
 # impossible to build.
-senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor/bin/*/*", "vendor/src/**/*"]
+# `vendor/src/**/*` swept `__pycache__` as well, so the published platform wheel carried 93
+# `.pyc` files compiled on one developer's Python 3.14: 2 MB of stale bytecode shipped to
+# strangers, and two builds of the same source were not byte-identical. Named by extension
+# instead. The vendored tree is 103 `.py` files, a LICENSE and a `py.typed`, and each of
+# those is listed rather than swept, so a new kind of file has to be added deliberately.
+senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor/bin/*/*",
+                "vendor/src/**/*.py", "vendor/src/**/LICENSE", "vendor/src/**/py.typed"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

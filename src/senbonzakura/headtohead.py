@@ -49,6 +49,19 @@ GUEST_CORPUS = "/corpus"
 GUEST_EVAL = "/corpus-eval"
 GUEST_OUT = "/work/out"
 
+#: The harness directory, named ONCE, on each side of the container boundary.
+#:
+#: THE NAME DRIFTED THREE WAYS AND NOBODY NOTICED. `6cb6149` renamed `bench/` to `head-to-head/`
+#: and changed the mount to `/work/bench`, updating the directory and the shell script. These
+#: constants were left saying `headtohead`, which is a THIRD name that has never existed on
+#: either side: the host directory has hyphens (so it is not an importable package at all) and
+#: the container mounts `/work/bench`. So `python -m headtohead.run_heretic` could not resolve
+#: under any interpreter, and every Heretic arm failed at import for five seeds without writing
+#: a byte. Its output directory was created first, so from outside it looked like a completed
+#: arm, and it was reported as one.
+BENCH_DIR_NAME = "head-to-head"
+GUEST_BENCH = "/work/bench"
+
 # The prompt files every tool is scored on, staged once so no tool brings its own.
 SLICE_FILES = ("good.txt", "bad.txt", "keyword_prompts.txt", "final_prompts.txt",
                "kl_prompts.txt")
@@ -134,7 +147,11 @@ def _heretic_argv(*, model, track, out, seed, trials, slices, extra):
             "heretic needs the staged evaluation slices; pass --eval-slices. They are what make "
             "both tools read the same prompts, and without them Heretic fetches its own")
     s = Path(slices)
-    return ["python", "-u", "-m", "headtohead.run_heretic",
+    # A FILE PATH, not a module name. `head-to-head` has hyphens and no `__init__.py`, so it is
+    # not an importable package on the host, and the container mounts it somewhere else again.
+    # `_heretic_finalise` below already did it this way; these two sibling functions disagreed
+    # and only one of them was right.
+    return ["python", "-u", str(_bench_dir_for(out) / "run_heretic.py"),
             "--model", str(model), "--out", str(out),
             "--good", str(s / "good.txt"), "--bad", str(s / "bad.txt"),
             "--keyword-prompts", str(s / "keyword_prompts.txt"),
@@ -163,20 +180,30 @@ def _heretic_finalise(*, out, slices, **_):
 
 
 def _bench_dir_for(out) -> Path:
-    """Where `headtohead/` is, as the pass will see it.
+    """Where the harness directory is, as the pass will see it.
 
-    Inside the container it is mounted at /work/headtohead; outside it sits beside the package. The
+    Inside the container it is mounted at `GUEST_BENCH`; outside it sits beside the package. The
     caller tells us which by the output path it passed, because that is already the guest-or-host
-    decision run_arm made.
+    decision `run_arm` made.
+
+    A host lookup that finds nothing REFUSES. It used to return a bare relative path as a last
+    resort, which turns "the harness is not where I expected" into a command that runs and fails
+    later with a message about a missing file, at which point the reader is looking for the wrong
+    problem. Every Heretic arm of a five-seed comparison died that way in one run.
     """
     if str(out) == GUEST_OUT:
-        return Path("/work/headtohead")
+        return Path(GUEST_BENCH)
     here = Path(__file__).resolve()
-    for root in (here.parent.parent.parent, Path.cwd(), Path.home()):
-        candidate = root / "headtohead"
+    roots = (here.parent.parent.parent, Path.cwd(), Path.home())
+    for root in roots:
+        candidate = root / BENCH_DIR_NAME
         if (candidate / "best_of_n_heretic.py").is_file():
             return candidate
-    return Path("headtohead")
+    raise BenchError(
+        f"the {BENCH_DIR_NAME}/ harness directory could not be found. It holds the Heretic "
+        f"runner and the equal-budget selection pass, and no arm of a comparison can run "
+        f"without it. Looked beside the package and under: "
+        f"{', '.join(str(r) for r in roots)}.")
 
 
 def _heretic_report(arm: Path):
@@ -396,10 +423,11 @@ def find_run_isolated() -> Path | None:
         return p if p.is_file() else None
     here = Path(__file__).resolve()
     # A checkout has it beside the package; a machine the code was shipped to has it wherever the
-    # shipping put it, which on this project's card is ~/headtohead rather than beside the source.
+    # shipping put it, which on this project's card is a copy in the home directory rather than
+    # beside the source. Same constant as everything else, so a rename cannot leave one behind.
     roots = (here.parent.parent.parent, Path.cwd(), Path.home())
     for root in roots:
-        candidate = root / "headtohead" / "run-isolated.sh"
+        candidate = root / BENCH_DIR_NAME / "run-isolated.sh"
         if candidate.is_file():
             return candidate
     return None
@@ -882,9 +910,23 @@ def drift_arms(results, *, base: Path, prompts: Path, out: Path, batch=16,
 # model, seven and a half hours for a table, and measured on different rows from the other two axes.
 REFUSAL_EVAL_N = 200
 
+#: How many tokens each reply gets before it is judged refused or not.
+#:
+#: NOT `score`'s default, which is 64, and that is the whole point of naming it here. This
+#: project's own length sweep on Qwen3-1.7B (2026-09-07, n=4,636) found the answer still moving
+#: below 192 tokens and settled there: a shorter budget measures how much the model had got out
+#: before it was cut off. A ten-arm comparison ran at 64 and printed its own BUDGET_WARNING five
+#: times, which is the tool correctly reporting that the number describes the budget.
+#:
+#: Both arms share it, so a comparison at 64 is not invalid on its face. It is optimistic in
+#: absolute terms, and it flatters whichever tool's replies run longer, which is exactly the
+#: axis a head-to-head is trying to read. 192 is measured on one model; `--max-new` overrides it.
+REFUSAL_MAX_NEW = 192
+
 
 def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
-                 skip: int, batch: int, n: int = REFUSAL_EVAL_N) -> list[str]:
+                 skip: int, batch: int, n: int = REFUSAL_EVAL_N,
+                 max_new: int = REFUSAL_MAX_NEW) -> list[str]:
     """The refusal ruler, invoked the one right way, on the host for the same reason as the rest.
 
     THE COUNTS ARE CHECKED HERE, and the reason is a 108-minute run that produced nothing.
@@ -898,7 +940,7 @@ def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
     silently count refusals on the rows the search selected on. That is the contamination this
     project exists to detect. So an unresolved boundary is a refusal, not a default.
     """
-    for name, value in (("skip", skip), ("n", n), ("batch", batch)):
+    for name, value in (("skip", skip), ("n", n), ("batch", batch), ("max_new", max_new)):
         if not isinstance(value, int) or isinstance(value, bool):
             raise BenchError(
                 f"refusal scoring was handed {name}={value!r}, which is not a count. Interpolating "
@@ -907,11 +949,12 @@ def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
                 f"it from the track's manifest before scoring.")
     return [sys.executable, "-u", "-m", "senbonzakura", "score",
             "--model", str(model), "--eval", str(harmful), "--out", str(out),
-            "--label", label, "--skip", str(skip), "--n", str(n), "--batch", str(batch)]
+            "--label", label, "--skip", str(skip), "--n", str(n), "--batch", str(batch),
+            "--max-new", str(max_new)]
 
 
 def refusal_arms(results, *, harmful: Path, out: Path, skip=128, batch=16,
-                 n=REFUSAL_EVAL_N,
+                 n=REFUSAL_EVAL_N, max_new=REFUSAL_MAX_NEW,
                  runner=None, log=print, force=False) -> list[dict]:
     """Count every model's refusals with ONE ruler on ONE slice.
 
@@ -942,7 +985,7 @@ def refusal_arms(results, *, harmful: Path, out: Path, skip=128, batch=16,
                              "path": str(target)})
             continue
         code = runner(refusal_argv(model=model, harmful=harmful, out=target, label=label,
-                                   skip=skip, batch=batch, n=n), log=log)
+                                   skip=skip, batch=batch, n=n, max_new=max_new), log=log)
         # Exit zero is not a count. The file is.
         ok = code == 0 and target.is_file()
         measured.append({"label": label, "ok": ok,
@@ -1004,6 +1047,12 @@ def build_parser():
     h.add_argument("--batch", type=int, default=16,
                    help="scoring batch size, held fixed across every arm so no two arms are "
                         "measured under different conditions")
+    h.add_argument("--max-new", dest="max_new", type=int, default=REFUSAL_MAX_NEW,
+                   help=f"tokens each reply gets before it is judged refused or not (default: "
+                        f"{REFUSAL_MAX_NEW}). The scorer's own default is 64, which this "
+                        f"project's length sweep measured as still climbing: below the "
+                        f"convergence point a refusal rate describes the budget rather than the "
+                        f"model, and it flatters whichever tool answers at greater length")
     h.add_argument("--no-score", dest="score", action="store_false",
                    help="run the arms and stop, leaving scoring and the report for later")
     h.add_argument("--force", action="store_true",
@@ -1120,7 +1169,7 @@ def main(argv=None):
         skip_harmful, _ = resolve_skips(a.track, a.skip_harmful, None, log=print)
         refused = refusal_arms([r for r in results if r.ok], harmful=Path(a.harmful),
                                out=Path(a.out), skip=skip_harmful, batch=a.batch,
-                               force=a.force)
+                               max_new=a.max_new, force=a.force)
         summary["refusal"] = refused
         summary["uncounted"] = [x["label"] for x in refused if not x["ok"]]
 

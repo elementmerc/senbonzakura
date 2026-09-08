@@ -99,3 +99,26 @@ def test_a_resolved_boundary_produces_the_command_it_should(tmp_path):
     assert "--skip" in argv
     assert argv[argv.index("--skip") + 1] == "128"
     headtohead.check_argv(argv), "the composer must produce something the guard accepts"
+
+
+def test_the_refusal_axis_is_scored_above_the_measured_convergence_point():
+    """A refusal rate below the convergence budget describes the budget, not the model.
+
+    `score`'s own default is 64 tokens. This project's length sweep on Qwen3-1.7B found the
+    answer still moving below 192 and settled there, and a ten-arm comparison then ran at 64 and
+    printed its own BUDGET_WARNING five times. Both arms share the budget, so the comparison is
+    not invalid on its face; it is optimistic, and it flatters whichever tool answers at greater
+    length, which is the axis a head-to-head exists to read.
+    """
+    from senbonzakura import lengthsweep
+    assert headtohead.REFUSAL_MAX_NEW > lengthsweep.LEGACY_BUDGET
+    argv = headtohead.refusal_argv(model=Path("m"), harmful=Path("h"), out=Path("o"),
+                                   label="x", skip=128, batch=16)
+    assert "--max-new" in argv, "the budget is left to the scorer's default, which is too small"
+    assert int(argv[argv.index("--max-new") + 1]) == headtohead.REFUSAL_MAX_NEW
+
+
+def test_the_budget_is_checked_like_every_other_count(tmp_path):
+    with pytest.raises(headtohead.BenchError, match="max_new"):
+        headtohead.refusal_argv(model=tmp_path, harmful=tmp_path, out=tmp_path,
+                                label="x", skip=128, batch=16, max_new=None)

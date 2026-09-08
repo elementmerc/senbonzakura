@@ -501,3 +501,8 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         raise
     else:
         return code
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(run)

@@ -182,8 +182,12 @@ def extract(destination, log=print):
     DIRECTORY with a `track.json` beside the partitions, and inventing a second in-memory path
     through the whole tool to save one extraction would be a lot of new surface for no gain.
     """
-    notice(log=log)
+    # The blob is read BEFORE the notice, not after. Printed first, the notice announced a
+    # licensed corpus and its attribution terms, and the very next line said the corpus is not
+    # installed. A user on a fresh clone got a paragraph about what they were using, followed by
+    # being told they were not using it.
     raw = unpack(_read())
+    notice(log=log)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
@@ -243,9 +247,25 @@ def _cache_is_current(target):
         return False
 
 
+class BundledTrackError(Exception):
+    """The bundled track is not in this install, said in a form callers can turn into a refusal.
+
+    A `ValueError` used to come out of here and nothing between the loader and the command line
+    caught it, so `--track default` on an install without the packed track was a traceback rather
+    than the one-line refusal every other missing-input path produces. That install is a normal
+    thing to have: the blob is a generated artefact kept out of git, so every source checkout has
+    none until it is built.
+    """
+
+
 def ensure(log=print):
     """The bundled track as a directory on disk, extracting it the first time it is needed."""
     target = cache_dir()
+    if not is_available() and not _cache_is_current(target):
+        raise BundledTrackError(
+            f"no bundled evaluation track is installed at {data_path()}. A source checkout does "
+            f"not carry one until `python tools/pack_track.py` has been run; a wheel should. "
+            f"Pass --track with your own corpus, or build one with `senbonzakura track`.")
     if _cache_is_current(target):
         notice(log=log)
         return target

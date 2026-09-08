@@ -207,3 +207,8 @@ def main(argv=None):
         Path(a.out).write_text(json.dumps(v, indent=2), encoding="utf-8")
     # Non-zero when not certified, so a pipeline cannot proceed to grade with it by accident.
     return 0 if v["certified"] else 1
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

@@ -142,3 +142,45 @@ def test_the_other_track_branches_also_exit_zero_from_a_real_process(tmp_path, m
     proc = run("--out", str(track), *extra)
     assert proc.returncode == 0, f"{mode} succeeded and told the shell it failed:\n{proc.stderr}"
     assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.parametrize("command", sorted(entry.DELEGATED))
+def test_the_two_invocation_forms_agree_about_failure(command):
+    """`python -m senbonzakura.<module>` and `senbonzakura <command>` must report the same thing.
+
+    EIGHT MODULES HAD NO `__main__` GUARD AT ALL, so running them that way executed nothing and
+    exited 0. `doctor` is the one that matters: its whole purpose is to be run before a long job,
+    the documentation invokes it in this form in four places, and it printed nothing and passed.
+    That is the original defect this file is named for, still live on the documented path,
+    surviving the fix because every test in the repository used the package form.
+
+    Run with no arguments, so each command hits its own "you did not give me what I need" path.
+    What is asserted is that the two forms AGREE, not what either says: the commands differ
+    legitimately, and a test that pinned each exit code would be a copy of the implementation.
+    """
+    module, _attr = entry.DELEGATED[command]
+
+    def rc(args):
+        return subprocess.run(
+            [sys.executable, *args], capture_output=True, text=True,
+            cwd=str(ROOT), timeout=300, check=False).returncode
+
+    package_form = rc(["-m", "senbonzakura", command])
+    module_form = rc(["-m", f"senbonzakura.{module}"])
+    assert module_form == package_form, (
+        f"'python -m senbonzakura.{module}' exits {module_form} where "
+        f"'senbonzakura {command}' exits {package_form}. A script gating on the module form "
+        f"gets a different answer about the same run.")
+
+
+@pytest.mark.parametrize("command", sorted(entry.DELEGATED))
+def test_no_delegated_module_runs_silently(command):
+    """Exiting 0 having done nothing is the specific failure, so it gets its own assertion."""
+    module, _attr = entry.DELEGATED[command]
+    proc = subprocess.run(
+        [sys.executable, "-m", f"senbonzakura.{module}"],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=300, check=False)
+    if proc.returncode == 0:
+        assert (proc.stdout + proc.stderr).strip(), (
+            f"'python -m senbonzakura.{module}' exited 0 and printed nothing, which is a "
+            f"command that did not run reporting success.")

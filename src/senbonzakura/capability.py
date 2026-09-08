@@ -717,3 +717,8 @@ def main(argv=None):
     # number and carry on. `tools/e2_arms.sh` did exactly that: three arms of capability figures
     # at 20.5% indeterminate, on every arm including the unedited reference.
     return 0 if summary["graded"] and not summary.get("budget_suspect") else 1
+
+
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

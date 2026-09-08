@@ -50,6 +50,28 @@ currently measure it, and we would rather publish that than wait for a friendlie
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
 not comparable to what this version produces.
 
+### If you are coming from 0.3.0, this is what you can now run
+
+0.3.0 installed four things you could type: abliterating a model, `score`, `coherence` and
+`metrics`. Everything below is a command that release did not contain at all, so if you read
+about one of them and could not find it, this is why.
+
+- `senbonzakura compass` — does the model still recognise harm, as opposed to still refusing?
+- `senbonzakura capability` — what did the edit cost, on five graded tasks?
+- `senbonzakura validate` — the checks behind a published number, including the experiments.
+- `senbonzakura judge` — validates a judge before it grades anything, and refuses a bad one.
+- `senbonzakura track` — build an evaluation split, and check it for contamination.
+- `senbonzakura head-to-head` — run this tool and another one on the same model, one ruler.
+- `senbonzakura convert`, `quantise`, `imatrix` — GGUF conversion and quantisation.
+- `senbonzakura doctor` — can this install actually do what it claims, before a long run?
+- `senbonzakura fetch` — fetch a model, resumable.
+- `senbonzakura report` — the model card for a finished run.
+- `senbonzakura interactive` — a guided mode for people who don't want to read 40 flags.
+- `senbonzakura drift` — how far the edited model moved from the original.
+
+Also: the corpora ship inside the package, so `--track default` works offline on a fresh
+install rather than only in a source checkout.
+
 ### Measurement
 
 - The compass, a harm-recognition score, is now a first-class command: it asks whether an
@@ -177,7 +199,14 @@ not comparable to what this version produces.
 - Continuous integration, which this repository had never had, on Linux, Windows and macOS
   across five Python versions.
 - Declared dependency floors are tested at the floor, because a floor nothing installs at is
-  not a tested floor.
+  not a tested floor. A check now enforces that the pinned floors and the declared ones are the
+  same versions, which was previously a note in a file asking to be remembered.
+- The `datasets` package is no longer needed for ordinary work and is now an optional extra,
+  `pip install 'senbonzakura[hub]'`. Tracks, the bundled corpora and every file format the tool
+  accepts are read and written with pyarrow instead. Nothing about the files on disk changed: a
+  track built by an older version reads the same, and a track built by this one still loads in
+  `datasets`. What still needs the extra is naming a dataset by its HuggingFace id, and asking
+  for one without it says so and names what to install.
 - Importing the package no longer imports the whole command-line interface, so running any
   module with `-m` no longer prints a warning about unpredictable behaviour.
 - Container images, so the tool can be run without installing anything. The CPU image converts,

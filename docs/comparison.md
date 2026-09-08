@@ -135,6 +135,13 @@ beats five tasks graded by our own code, for the specific purpose of convincing 
 Ours are chosen so they can be graded without a judge at all, which is a different trade, but
 it is a trade and not a win.
 
+**Breadth of attack, where we have nothing at all.** abliterix carries helpers for JALMBench
+(single-turn jailbreak success), MTJ-Bench and Crescendo (multi-turn), and TamperBench, which
+asks whether an abliterated model stays compliant after a small safety-recovery finetune
+(`src/abliterix/external_eval.py:10`). We measure whether refusal went away and what it cost;
+we do not measure whether the result survives being attacked or repaired. Those are real
+questions about an abliterated model and this tool cannot answer any of them.
+
 **Single-model evidence.** Most of the numbers here come from Qwen3-1.7B, because that is
 what fits on the card this was built on. A claim measured on one model is a claim about one
 model.

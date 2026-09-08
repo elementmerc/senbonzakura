@@ -59,6 +59,15 @@ def build_args(argv=None):
                          "which is how the first run of this sweep measured nothing.")
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--chat-template", dest="chat_template", default="",
+                    help="a Jinja chat template for a model that ships none: a path, or the name "
+                         "of one this tool bundles ('plain'). Every experiment here loads a model "
+                         "and renders prompts through it, so a base model with no template of its "
+                         "own is refused without this. `reach` on Bamba-9B and "
+                         "Nemotron-H-4B-Base-8K both need it, and both failed with "
+                         "'unrecognized arguments' until this flag existed here")
+    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
+                    help="some architectures ship their modelling code with the weights")
     ap.add_argument("--max-directions", type=int, default=8)
     ap.add_argument("--direction-clusters", type=int, default=8)
     ap.add_argument("--dir-prompts", type=int, default=128)
@@ -77,7 +86,12 @@ def build_args(argv=None):
         "--direction-clusters", str(own.direction_clusters),
         "--dir-prompts", str(own.dir_prompts),
         "--eval-refusal", str(own.eval_refusal), "--eval-kl", str(own.eval_kl),
-        "--seed", str(own.seed)])
+        "--seed", str(own.seed),
+        # Passed through rather than defaulted. A flag accepted on this parser and dropped before
+        # the loader sees it is worse than not having it: the run starts, refuses the model for
+        # having no template, and names a flag the operator just used.
+        *(["--chat-template", own.chat_template] if own.chat_template else []),
+        *(["--trust-remote-code"] if own.trust_remote_code else [])])
     return own, args
 
 

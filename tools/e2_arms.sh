@@ -165,17 +165,26 @@ mkdir -p "$OUT" || die "cannot create '$OUT'."
 RUN_LOG="$OUT/run.log"
 say() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$RUN_LOG" >&2; }
 
-# doctor exits 0 clean, 1 advisory, 2 for something that makes the install unable to do what it
-# claims. Only the last of those is worth stopping a person over; advisories cover surfaces this
-# run does not touch (conversion, quantisation) and would cry wolf on every machine.
+# `doctor` is RECORDED, never a gate here, and that distinction cost a release morning.
+#
+# It answers "can this install do everything senbonzakura claims", which is a superset of what
+# this experiment needs. On the ROG it fails nine of fourteen checks: no llama-quantize, no
+# vendored converter, no bundled track, no bundled corpora. Not one of those is used by an
+# abliterate-then-grade run, which takes its corpus from --track and its benchmark from --eval,
+# and blocking on them stopped two arms from starting on a machine that could have run them
+# perfectly well. The gate was stricter than the job.
+#
+# What this run actually needs is checked above and below: the console script, the three track
+# parts, a writable output, and room on the disk. Those are the preflight. This is a note.
 doctor_rc=0
 "$SZ" doctor >"$OUT/doctor.log" 2>&1 || doctor_rc=$?
-if [ "$doctor_rc" -ge 2 ]; then
-  cat "$OUT/doctor.log" >&2
-  die "\`senbonzakura doctor\` says this install cannot do what it claims (above, and in
-        $OUT/doctor.log). Finding that out with the weights already loaded costs GPU hours."
+if [ "$doctor_rc" -eq 0 ]; then
+  say "NOTE  doctor is clean."
+else
+  say "NOTE  doctor reports problems (rc=$doctor_rc), recorded in $OUT/doctor.log and NOT
+        blocking: it checks conversion, quantisation and the bundled corpora, none of which this
+        experiment uses. If an arm fails later, read that log first."
 fi
-[ "$doctor_rc" -eq 0 ] || say "NOTE  doctor raised advisories; they are in $OUT/doctor.log."
 
 # Weights are kept by default, so the check is against holding every arm at once. A dry run is
 # allowed to report the shortfall rather than refuse, since it writes nothing.

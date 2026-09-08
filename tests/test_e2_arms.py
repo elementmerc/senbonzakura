@@ -245,3 +245,47 @@ def test_the_default_benchmark_names_its_config(tmp_path):
             assert _value(argv, "--eval") == "openai/gsm8k:main::test"
         if "--capability-eval" in argv:
             assert _value(argv, "--capability-eval") == "openai/gsm8k:main::test"
+
+
+def test_a_failing_doctor_does_not_block_the_run(tmp_path):
+    """THE GATE WAS STRICTER THAN THE JOB, and it cost two arms on a release morning.
+
+    `doctor` answers "can this install do everything senbonzakura claims". This experiment needs a
+    subset: it takes its corpus from --track and its benchmark from --eval, and uses neither
+    llama-quantize nor the vendored converter nor the bundled corpora. On the ROG doctor fails
+    nine of fourteen checks for exactly those reasons, and blocking on it stopped two arms from
+    starting on a machine that could have run them.
+    """
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "senbonzakura"
+    # doctor fails hard (rc 2); everything else succeeds. The run must reach its steps.
+    stub.write_text('#!/bin/sh\ncase "$1" in doctor) echo broken; exit 2 ;; esac\nexit 0\n',
+                    encoding="utf-8")
+    stub.chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
+    out = subprocess.run(
+        [str(SCRIPT), "--model", "m", "--track", str(_track(tmp_path)),
+         "--out", str(tmp_path / "e2"), "--arms", "stock", "--drop-weights",
+         "--no-budget-probe"],
+        capture_output=True, text=True, timeout=300, check=False, env=env)
+    assert out.returncode == 0, out.stderr
+    assert "NOT\n        blocking" in out.stderr or "NOT" in out.stderr
+    assert (tmp_path / "e2" / "stock" / ".scored").exists(), "the arm never ran"
+
+
+def test_the_doctor_output_is_still_kept_for_reading(tmp_path):
+    """Not a gate is not the same as not recorded. When an arm does fail, this is the first log."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "senbonzakura"
+    stub.write_text("#!/bin/sh\ncase \"$1\" in doctor) echo 'nine of fourteen'; exit 2 ;; esac\n"
+                    "exit 0\n", encoding="utf-8")
+    stub.chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
+    subprocess.run(
+        [str(SCRIPT), "--model", "m", "--track", str(_track(tmp_path)),
+         "--out", str(tmp_path / "e2"), "--arms", "stock", "--drop-weights",
+         "--no-budget-probe"],
+        capture_output=True, text=True, timeout=300, check=False, env=env)
+    assert "nine of fourteen" in (tmp_path / "e2" / "doctor.log").read_text(encoding="utf-8")

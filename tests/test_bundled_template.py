@@ -122,3 +122,34 @@ def test_a_name_that_is_not_bundled_resolves_to_no_bundled_path():
     assert cli._bundled_template("plain") is not None
     assert cli._bundled_template("../../../etc/passwd") is None
     assert cli._bundled_template("") is None
+
+
+def test_validate_accepts_and_forwards_a_chat_template():
+    """`reach` is a `validate` sub-command and `validate` had no such flag, so both blocked reach
+    runs died on `unrecognized arguments` naming a flag the operator had just been told to use.
+
+    Forwarding matters as much as accepting: a flag taken here and dropped before the loader sees
+    it would start the run, refuse the model for having no template, and name that same flag.
+    """
+    from senbonzakura import validate
+
+    own, args = validate.build_args(
+        ["--model", "m", "--out", "o", "--experiment", "reach", "--chat-template", "plain"])
+    assert own.chat_template == "plain"
+    assert args.chat_template == "plain", "accepted here and dropped before the loader"
+
+
+def test_validate_forwards_trust_remote_code():
+    from senbonzakura import validate
+
+    _own, args = validate.build_args(
+        ["--model", "m", "--out", "o", "--trust-remote-code"])
+    assert args.trust_remote_code is True
+
+
+def test_validate_without_a_template_forwards_nothing():
+    """The default must stay empty, or every model gets a template it did not ask for."""
+    from senbonzakura import validate
+
+    _own, args = validate.build_args(["--model", "m", "--out", "o"])
+    assert args.chat_template == ""

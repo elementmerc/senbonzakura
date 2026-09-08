@@ -208,6 +208,36 @@ def check_track():
         return _fail("bundled track", f"cannot be read ({e})", "reinstall")
 
 
+def check_table_io():
+    """Can this install read and write a track at all?
+
+    THE CHECK THAT WAS MISSING THE MOMENT PYARROW BECAME THE ONLY BASE DEPENDENCY. `doctor`
+    exists to say what an install cannot do, and with pyarrow and datasets both removed it
+    reported 16 passes, 2 advisories, 0 failures and exited 0, while `track --audit` and
+    `track` build both died in the same environment. Nothing in the roster touched the table
+    reader: the bundled-track check stats a packed blob and the corpora check unpacks one, and
+    neither goes near Arrow.
+
+    Written as a round trip rather than an import, because "the package is present" is the kind
+    of check this project has already been caught by twice.
+    """
+    import tempfile
+
+    from . import trackio
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            table = Path(d) / "probe"
+            trackio.write_text_column(table, ["a prompt", "another"])
+            got = trackio.read_text_column(table)
+        if got != ["a prompt", "another"]:
+            return _fail("track tables", f"a round trip returned {got!r}",
+                         "reinstall; the table reader and writer disagree")
+        return _pass("track tables", "written and read back")
+    except Exception as e:
+        return _fail("track tables", f"cannot be read or written ({e})",
+                     "pip install --force-reinstall senbonzakura")
+
+
 def check_torch():
     try:
         import torch
@@ -374,6 +404,7 @@ def run_checks(*, deep=False, log=print):
     checks.append(check_quantize())
     checks += check_converter()
     checks.append(check_track())
+    checks.append(check_table_io())
     checks += check_corpora()
     if deep:
         checks += deep_check(log=log)

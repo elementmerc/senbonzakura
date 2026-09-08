@@ -52,9 +52,10 @@ not comparable to what this version produces.
 
 ### If you are coming from 0.3.0, this is what you can now run
 
-0.3.0 installed four things you could type: abliterating a model, `score`, `coherence` and
-`metrics`. Everything below is a command that release did not contain at all, so if you read
-about one of them and could not find it, this is why.
+0.3.0 installed three things you could run: abliterating a model (as `senbonzakura --model ...`
+or `senbonzakura kageyoshi`, the only mode word it knew), plus `python -m senbonzakura.score` and
+`python -m senbonzakura.coherence`. Everything below is a command that release did not contain at
+all, so if you read about one of them and could not find it, this is why.
 
 - `senbonzakura compass` — does the model still recognise harm, as opposed to still refusing?
 - `senbonzakura capability` — what did the edit cost, on five graded tasks?
@@ -66,7 +67,7 @@ about one of them and could not find it, this is why.
 - `senbonzakura doctor` — can this install actually do what it claims, before a long run?
 - `senbonzakura fetch` — fetch a model, resumable.
 - `senbonzakura report` — the model card for a finished run.
-- `senbonzakura interactive` — a guided mode for people who don't want to read 40 flags.
+- `senbonzakura interactive` — a guided mode for people who don't want to read the flag list.
 - `senbonzakura drift` — how far the edited model moved from the original.
 
 Also: the corpora ship inside the package, so `--track default` works offline on a fresh
@@ -199,14 +200,18 @@ install rather than only in a source checkout.
 - Continuous integration, which this repository had never had, on Linux, Windows and macOS
   across five Python versions.
 - **`pip install senbonzakura` no longer installs the deep-learning stack.** It is now one
-  library and about 210 MB against roughly 1.5 GB before, measured on one Linux machine, and
-  it gets you the commands that check things: building an
+  library, and it gets you the commands that check things: building an
   evaluation split, auditing one, checking a benchmark for contamination, checking what an
   install can do. None of those need a model or a graphics card. Editing a model needs
-  `pip install 'senbonzakura[abliterate]'`.
-- **If you are upgrading from 0.3.0, `senbonzakura abliterate` will stop working until you add
-  that extra.** This is the one breaking change in the release. The tool says so and prints the
-  exact command; it does not fail with a traceback.
+  `pip install 'senbonzakura[abliterate]'`. Measured on Linux with Python 3.14 and the CPU-only
+  torch wheel, that is roughly 210 MB against roughly 1.5 GB; the default CUDA wheel is
+  considerably larger again, so read these as the size of the difference rather than as what you
+  will see.
+- **If you are upgrading from 0.3.0, abliterating a model needs that extra.** The tool says so
+  and prints the exact command; it does not fail with a traceback.
+- **Two other things move behind extras in this release.** Naming a dataset by its HuggingFace id
+  (`--good-ds owner/name`) needs `pip install 'senbonzakura[hub]'`, and shell completion needs
+  `pip install 'senbonzakura[completion]'`. Both were part of a plain install in 0.3.0.
 - Declared dependency floors are tested at the floor, because a floor nothing installs at is
   not a tested floor. A check now enforces that the pinned floors and the declared ones are the
   same versions, which was previously a note in a file asking to be remembered.

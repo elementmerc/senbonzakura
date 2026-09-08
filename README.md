@@ -16,12 +16,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-c77b5a?labelColor=2b3038" alt="AGPL-3.0-or-later" /></a>
 </p>
 <p>
-  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/every%20figure-has%20an%20interval-3d4d6b?labelColor=2b3038" alt="Every published figure carries a confidence interval" /></a>
+  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/compass%20%26%20capability-every%20figure%20has%20an%20interval-3d4d6b?labelColor=2b3038" alt="Every compass and capability figure carries a confidence interval" /></a>
   <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/comparison-KL%20at%20matched%20refusal-c77b5a?labelColor=2b3038" alt="Compared at matched refusal removal" /></a>
   <a href="https://elementmerc.github.io/senbonzakura/guide/the-track"><img src="https://img.shields.io/badge/evaluation-held%20out%2C%20three--way%20split-3d4d6b?labelColor=2b3038" alt="Held-out evaluation, three-way split" /></a>
   <a href="https://elementmerc.github.io/senbonzakura/guide/contamination"><img src="https://img.shields.io/badge/benchmarks-contamination%20checked-3d4d6b?labelColor=2b3038" alt="Contamination checked against public benchmarks" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-1090-3d4d6b?labelColor=2b3038" alt="1090 tests" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95.4%25-3d4d6b?labelColor=2b3038" alt="95.4% branch coverage, gated in CI" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-2600%2B-3d4d6b?labelColor=2b3038" alt="over 2600 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95%25-3d4d6b?labelColor=2b3038" alt="95% branch coverage, gated in CI" /></a>
 </p>
 
 <a href="https://elementmerc.github.io/senbonzakura"><strong>Documentation</strong></a>
@@ -117,12 +117,15 @@ audit one, check whether a benchmark figure was measured on rows the model was a
 on, and check what an install can actually do. None of that needs a model or a graphics card.
 The second adds the deep-learning stack, which is what you need to edit a model.
 
-Measured on one machine, so treat them as the order of magnitude rather than the figure:
-about 210 MB installed for the first line against about 1.5 GB for both, and the second one
+Measured on Linux with Python 3.14 and the CPU-only torch wheel, so treat them as the size of
+the difference rather than as the figure you will see: about 210 MB installed for the first line
+against about 1.5 GB for both. The default CUDA torch wheel is larger again, and the second line
 also wants a CUDA card with 6 GB on it.
 
-If you had 0.3.0 and `senbonzakura abliterate` has stopped working, that is this change: add
-the extra. The tool says so and prints the exact line if you forget.
+If you had 0.3.0 and abliterating a model has stopped working, that is this change: add the
+extra. (In 0.3.0 the command was `senbonzakura --model ... --out ...` or
+`senbonzakura kageyoshi`; `abliterate` as a word came later.) The tool says so and prints the
+exact line if you forget.
 
 ## One worked example
 

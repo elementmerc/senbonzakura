@@ -15,6 +15,26 @@ ds/
 *_ds/
 data/
 *.arrow
+# THE PACKAGE'S OWN data directory was collateral damage from the line above. `data/` has no
+# leading slash, so git matches it at any depth, and `src/senbonzakura/data/` was therefore in
+# nobody's clone. That is not a tidiness problem: it made `--chat-template plain` fail on a
+# fresh clone naming a template the tool claims to ship, and it is why `doctor` reported
+# corpora "that have never existed" on a second machine. Found on 2026-09-08 by a peer running
+# a pinned clone; a tar of the working tree would never have shown it.
+#
+# The templates come back in. They are Jinja chat formats with no prompts in them. Git cannot
+# un-ignore a file inside an ignored DIRECTORY, so the parent has to be re-included first and
+# then narrowed again; that is why this is four lines rather than one negation.
+!src/senbonzakura/data/
+src/senbonzakura/data/*
+!src/senbonzakura/data/templates/
+!src/senbonzakura/data/templates/*.jinja
+# `corpora.bin` and `default-track.bin` DELIBERATELY STAY OUT, and the rule above keeps them
+# out. They hold 4,895 harmful prompts under a shipping key, and the project publishes that
+# corpus as a GATED dataset on purpose. The wheel carries them because building one is a
+# deliberate act that attaches the licence notice; a public git tree would hand them to a
+# crawler and remove the gate. A clone rebuilds them, and the tool says how when they are
+# absent rather than failing obscurely.
 # Retained generations and per-prompt margins. These hold harmful prompts and the
 # replies a model gave to them, so the default is out.
 *.jsonl

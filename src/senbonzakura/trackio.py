@@ -56,7 +56,7 @@ import hashlib
 import json
 import os
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -107,10 +107,26 @@ def _pyarrow():
 
 
 def _datasets_load(path: Path):
-    """`datasets.load_from_disk`, or a failure that names what to install."""
+    """`datasets.load_from_disk`, or a failure that names what is actually missing.
+
+    The two ways of ending up here are different faults and used to get the same sentence. A
+    directory this reader declines to model (a DatasetDict, a formatted set) genuinely needs
+    `datasets`, which is an optional extra: that install is INCOMPLETE. A perfectly ordinary
+    track that got here only because pyarrow is gone is a DAMAGED install of a base dependency,
+    and telling that person to install the `hub` extra sends them somewhere that will not help.
+    """
     try:
         from datasets import load_from_disk
     except ImportError as e:
+        # WHICH package is missing decides which sentence is true, and the old message always
+        # said the second one. A directory this reader declines to model genuinely needs the
+        # optional extra. An ordinary track that only got here because pyarrow is gone is a
+        # damaged base install, and sending that person to `[hub]` sends them nowhere useful.
+        if _pyarrow() is None:
+            raise TrackIOError(
+                f"{path} could not be read because pyarrow is not installed, and pyarrow is a "
+                f"base dependency of this tool rather than an optional one. The install is "
+                f"damaged: pip install --force-reinstall senbonzakura") from e
         raise TrackIOError(
             f"{path} is not a shape this tool can read on its own, and reading it needs the "
             f"`datasets` package: pip install 'senbonzakura[hub]'") from e
@@ -138,6 +154,14 @@ def _read_state(path: Path) -> dict | None:
     if state.get("_format_type") is not None:
         # A torch- or numpy-formatted set hands back tensors, not the strings on disk.
         return None
+    # AND a column SELECTION, which `_format_type: null` does not rule out. `set_format(None,
+    # columns=["prompt"])` leaves the type null and hides every other column, so `datasets`
+    # would refuse a track whose 'text' column is masked while a reader looking only at the
+    # Arrow file happily returns it. That is reading the directory nearly correctly, which is
+    # the one failure this module says it cannot have, and it took an adversarial pass to find
+    # because no test had ever constructed a formatted set.
+    if state.get("_format_columns") is not None or state.get("_output_all_columns"):
+        return None
     return state
 
 
@@ -151,12 +175,24 @@ def _shard_paths(path: Path, state: dict) -> list[Path]:
     out = []
     for entry in state["_data_files"]:
         name = entry.get("filename") if isinstance(entry, dict) else None
-        if not isinstance(name, str) or not name.endswith(_SHARD_SUFFIX) or "/" in name or name.startswith("."):
+        # `"/" in name` was the whole separator check and this package declares Windows
+        # support, where `..\\..\\elsewhere.arrow` passes every clause of it. `PurePath().name`
+        # asks the question the check meant to ask on whichever platform is running.
+        if (not isinstance(name, str) or not name.endswith(_SHARD_SUFFIX)
+                or PurePosixPath(name).name != name or PureWindowsPath(name).name != name
+                or name.startswith(".")):
             raise TrackIOError(
                 f"{path / STATE_FILE} lists a shard as {entry!r}, which is not a plain "
                 f"'*{_SHARD_SUFFIX}' filename beside it. Refusing rather than guessing at "
                 f"what it meant.")
         shard = path / name
+        # `is_file()` follows symlinks, so a shard replaced by a link reads a file from outside
+        # the track and reports rows that came from somewhere the manifest does not describe.
+        if shard.is_symlink():
+            raise TrackIOError(
+                f"{path}: the shard {name} is a symbolic link. Following it would read rows "
+                f"from outside the track while everything downstream slices them at boundaries "
+                f"recorded for the track. Replace it with the file itself.")
         if not shard.is_file():
             raise TrackIOError(
                 f"{path} is missing the shard {name} that its own {STATE_FILE} lists, so it "
@@ -166,17 +202,38 @@ def _shard_paths(path: Path, state: dict) -> list[Path]:
     return out
 
 
+def _unreadable(shard: Path, e: Exception) -> TrackIOError:
+    """A corrupt shard, said in this tool's words rather than pyarrow's.
+
+    A truncated, zero-byte or garbage `.arrow` raises `pyarrow.lib.ArrowInvalid`, which is not a
+    `TrackIOError`, so it sailed past every handler between here and the command line and
+    reached the user as "Expected to read 152 metadata bytes, but only read 28". Under the old
+    reader the same directory produced a sentence naming the file. A half-finished download must
+    not be a regression in the message.
+    """
+    return TrackIOError(
+        f"{shard} is not a readable Arrow file ({e}). A track shard that will not open is "
+        f"usually a download or a copy that stopped early; rebuild or re-fetch the track rather "
+        f"than reading part of one.")
+
+
 def _iter_batches(shard: Path):
     """Record batches out of one Arrow IPC stream, memory-mapped so a big shard is not copied."""
     pa = _pyarrow()
-    with pa.memory_map(str(shard), "rb") as source:
-        yield from pa.ipc.open_stream(source)
+    try:
+        with pa.memory_map(str(shard), "rb") as source:
+            yield from pa.ipc.open_stream(source)
+    except (pa.ArrowInvalid, pa.ArrowIOError) as e:
+        raise _unreadable(shard, e) from e
 
 
 def _column_names(shard: Path) -> list[str]:
     pa = _pyarrow()
-    with pa.memory_map(str(shard), "rb") as source:
-        return list(pa.ipc.open_stream(source).schema.names)
+    try:
+        with pa.memory_map(str(shard), "rb") as source:
+            return list(pa.ipc.open_stream(source).schema.names)
+    except (pa.ArrowInvalid, pa.ArrowIOError) as e:
+        raise _unreadable(shard, e) from e
 
 
 def iter_text_column(path, column: str = TEXT_COLUMN) -> Iterator[str]:
@@ -213,19 +270,25 @@ def _iter_text_pyarrow(path: Path, state: dict, column: str) -> Iterator[str]:
         raise TrackIOError(
             f"{path} has no '{column}' column. It holds: {names or 'no columns at all'}. "
             f"A track's prompts live in a '{TEXT_COLUMN}' column.")
-    for index, shard in enumerate(shards):
+    for shard in shards:
+        # Counted across the whole shard, not restarted per batch. `datasets` writes 1000-row
+        # record batches, so a null at row 1500 was reported as "row 500" and anybody grepping
+        # their corpus for row 500 found a perfectly good prompt. The shard is named rather than
+        # numbered, so this diagnostic and the missing-shard one above point at the same thing.
+        row = 0
         for batch in _iter_batches(shard):
             if column not in batch.schema.names:
                 raise TrackIOError(
                     f"{path}: shard {shard.name} has no '{column}' column while shard "
                     f"{shards[0].name} does, so the shards of one table disagree about their "
                     f"own shape. Rebuild the track.")
-            for row, value in enumerate(batch.column(column).to_pylist()):
+            for value in batch.column(column).to_pylist():
                 if not isinstance(value, str):
                     raise TrackIOError(
-                        f"{path}: row {row} of shard {index} holds {value!r} in the "
+                        f"{path}: row {row} of shard {shard.name} holds {value!r} in the "
                         f"'{column}' column, which is not text. A null or a number here would "
                         f"reach a model as the word it prints as.")
+                row += 1
                 yield value
 
 
@@ -332,20 +395,55 @@ def write_text_column(path, rows, column: str = TEXT_COLUMN) -> None:
     staging = path.with_name(path.name + ".partial")
     replaced = path.with_name(path.name + ".replacing")
     for leftover in (staging, replaced):
-        if leftover.exists():
-            shutil.rmtree(leftover)
+        _clear(leftover)
     staging.mkdir(parents=True)
+
+    moved_aside = False
     try:
         _write_shard(staging, rows, column)
         # Move the old table aside rather than deleting it first, so the window in which
         # neither table is at `path` is one rename wide rather than a recursive delete wide.
         if path.exists():
             path.rename(replaced)
+            moved_aside = True
         staging.rename(path)
-    finally:
-        for leftover in (staging, replaced):
-            if leftover.exists():
-                shutil.rmtree(leftover, ignore_errors=True)
+    except BaseException:
+        # THE CLEANUP THAT DESTROYED WHAT IT WAS PROTECTING. This used to be a `finally` that
+        # deleted BOTH staging directories. Once the old table had been renamed aside, those two
+        # directories held the only copy of the old corpus and the only copy of the new one, so
+        # any failure at the final rename (an OSError, or a Ctrl+C, which a bare `finally` also
+        # catches) left the path empty and both copies gone. Proven by patching `rename` to fail
+        # and watching the directory end up with nothing in it.
+        #
+        # Now: before the old table is moved, cleaning up is safe and correct. After it, the
+        # surviving copy is PUT BACK if it can be, and if even that fails the directories are
+        # left on disk and named in the message, because a recoverable mess beats a tidy void.
+        if moved_aside and not path.exists():
+            try:
+                replaced.rename(path)
+            except OSError:
+                raise TrackIOError(
+                    f"writing {path} failed and the previous table could not be put back. It is "
+                    f"still on disk at {replaced}, and the partly written replacement at "
+                    f"{staging}. Neither has been deleted. Rename {replaced} back to {path} to "
+                    f"recover.") from None
+        else:
+            _clear(staging)
+        raise
+    _clear(replaced)
+
+
+def _clear(leftover: Path) -> None:
+    """Remove a leftover staging path, whether a previous run left a directory or a file.
+
+    A stray FILE named `<track>.partial` made `shutil.rmtree` raise NotADirectoryError, and the
+    old cleanup swallowed that with `ignore_errors=True`, so the file stayed and every later
+    write to that track failed the same way with an errno instead of a sentence.
+    """
+    if leftover.is_symlink() or leftover.is_file():
+        leftover.unlink()
+    elif leftover.is_dir():
+        shutil.rmtree(leftover)
 
 
 def _write_shard(staging: Path, rows: list[str], column: str) -> None:

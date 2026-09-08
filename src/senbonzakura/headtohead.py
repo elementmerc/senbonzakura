@@ -512,6 +512,30 @@ class ArmResult:
 ARM_TIMEOUT_S = 12 * 3600
 
 
+def check_argv(argv) -> None:
+    """Refuse to launch a command whose flag has been handed the word "None".
+
+    THE LAST LINE OF DEFENCE FOR A WHOLE CLASS OF DEFECT. Roughly thirty places in this codebase
+    build an argv by interpolating `str(value)` next to a flag, and `str()` renders anything: a
+    `None` that means "not set" becomes the four characters N-o-n-e, the child's argparse refuses
+    them, and the run dies at parsing after the expensive part is already done. It cost a
+    108-minute ten-arm comparison its entire scoring pass.
+
+    Fixing the one composer that did it fixes one composer. This is at the choke point every
+    composer goes through, so a new one written next month is covered without anybody
+    remembering. Only a value directly after a `--flag` is checked, because a bare "None" can be
+    a legitimate label or a filename, and refusing those would be a worse rule than no rule.
+    """
+    tokens = [str(a) for a in argv]
+    for i, word in enumerate(tokens[1:], 1):
+        if word == "None" and tokens[i - 1].startswith("--"):
+            raise BenchError(
+                f"the command being launched passes {tokens[i - 1]} the word 'None', which means "
+                f"a value that was never resolved has been rendered as text. The child would "
+                f"refuse it at argument parsing, after the expensive part of this run. Resolve "
+                f"the value or omit the flag.\n  $ {' '.join(tokens)}")
+
+
 def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
     """Run one arm to completion, streaming its output. Returns the exit code.
 
@@ -524,9 +548,17 @@ def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
     On expiry the child is killed and the arm is reported as failed rather than as never-run, so
     the sweep continues and the artefact records which arm died and why.
     """
+    check_argv(argv)
     log(f"  $ {' '.join(str(a) for a in argv)}")
     try:
-        proc = subprocess.run(argv, cwd=cwd, check=False, timeout=timeout)
+        # The child's stderr is merged into ITS STDOUT, so both follow the parent's stdout to
+        # wherever the run is being logged. Left separate, a harness redirecting only stdout to a
+        # file sends every diagnostic somewhere else: a ten-arm run failed on a one-line argparse
+        # error that was printed, went to a different stream from the log, and had to be
+        # rediscovered by re-running the command by hand. The failure path is where the output
+        # matters most and it was the one path where it went missing.
+        proc = subprocess.run(argv, cwd=cwd, check=False, timeout=timeout,
+                              stderr=subprocess.STDOUT)
     except FileNotFoundError as e:
         raise BenchError(f"could not start {argv[0]!r}: {e}") from e
     except subprocess.TimeoutExpired as e:
@@ -853,7 +885,26 @@ REFUSAL_EVAL_N = 200
 
 def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,
                  skip: int, batch: int, n: int = REFUSAL_EVAL_N) -> list[str]:
-    """The refusal ruler, invoked the one right way, on the host for the same reason as the rest."""
+    """The refusal ruler, invoked the one right way, on the host for the same reason as the rest.
+
+    THE COUNTS ARE CHECKED HERE, and the reason is a 108-minute run that produced nothing.
+    `--skip-harmful` defaults to None, meaning "read the boundary from the track". The compass
+    path handles that by omitting the flag; this one interpolated it, so the child received the
+    literal string `None` and argparse refused it in under a second, ten times, after every arm
+    had already been trained. `str()` will render anything, which is exactly the problem: the
+    same value was correct in one composer and nonsense in the other, and nothing compared them.
+
+    Omitting the flag is NOT the fallback here, because `score --skip` defaults to 0 and would
+    silently count refusals on the rows the search selected on. That is the contamination this
+    project exists to detect. So an unresolved boundary is a refusal, not a default.
+    """
+    for name, value in (("skip", skip), ("n", n), ("batch", batch)):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise BenchError(
+                f"refusal scoring was handed {name}={value!r}, which is not a count. Interpolating "
+                f"it would pass the child the text {str(value)!r} and every arm would fail at "
+                f"argument parsing after being trained. If this is the held-out boundary, resolve "
+                f"it from the track's manifest before scoring.")
     return [sys.executable, "-u", "-m", "senbonzakura", "score",
             "--model", str(model), "--eval", str(harmful), "--out", str(out),
             "--label", label, "--skip", str(skip), "--n", str(n), "--batch", str(batch)]
@@ -1060,8 +1111,15 @@ def main(argv=None):
         # THE AXIS THE TOOL EXISTS TO MOVE, finally on one ruler and one slice. The same
         # held-out rows the compass reads, so all three axes describe the same exam.
         print("counting refusals, with one ruler on one slice")
+        # Resolved HERE rather than passed through, because `score` has no `--track` and cannot
+        # read the boundary for itself the way the compass does. Same resolver the compass uses,
+        # so the two axes cannot end up reading different rows: a second copy of this arithmetic
+        # is how three copies of the prompt renderer drifted and put the compass's read-out on
+        # the wrong token.
+        from .margin import resolve_skips
+        skip_harmful, _ = resolve_skips(a.track, a.skip_harmful, None, log=print)
         refused = refusal_arms([r for r in results if r.ok], harmful=Path(a.harmful),
-                               out=Path(a.out), skip=a.skip_harmful, batch=a.batch,
+                               out=Path(a.out), skip=skip_harmful, batch=a.batch,
                                force=a.force)
         summary["refusal"] = refused
         summary["uncounted"] = [x["label"] for x in refused if not x["ok"]]

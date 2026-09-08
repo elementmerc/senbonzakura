@@ -470,3 +470,163 @@ def test_an_empty_table_with_the_wrong_column_still_refuses(tmp_path):
     _datasets_write(p, [], column="goal")
     with pytest.raises(trackio.TrackIOError, match="no 'text' column"):
         trackio.read_text_column(p)
+
+
+# --- what three independent review passes found, each with the test that was missing --------
+
+def test_a_failed_final_rename_puts_the_previous_table_back(tmp_path, monkeypatch):
+    """THE ONE THAT DESTROYED WHAT IT WAS PROTECTING, and no test entered the window.
+
+    The old cleanup was a `finally` that removed both staging directories. Once the old table
+    had been renamed aside, those two held the ONLY copy of the old corpus and the only copy of
+    the new one, so a failure at the final rename deleted both and left the path empty. The
+    existing interruption test patched `_write_shard`, which raises BEFORE the old table moves,
+    so it never once ran through the dangerous half. Proven by mutation: deleting the recovery
+    outright left that test green.
+    """
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+
+    real_rename = Path.rename
+
+    def _fail_the_last_move(self, target):
+        # Only the staging-into-place move. Failing every rename to this name would also block
+        # the recovery, which is a different scenario and has its own test below.
+        if self.name.endswith(".partial"):
+            raise OSError("no space left on device")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", _fail_the_last_move)
+    with pytest.raises(OSError, match="no space"):
+        trackio.write_text_column(p, ["replacement"])
+    monkeypatch.undo()
+
+    assert p.is_dir(), "the previous table was deleted by the cleanup that exists to protect it"
+    assert trackio.read_text_column(p) == ROWS
+
+
+def test_when_even_the_recovery_fails_nothing_is_deleted(tmp_path, monkeypatch):
+    """A recoverable mess beats a tidy void, and the message has to say where the pieces are."""
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+
+    def _fail_every_move(self, target):
+        raise OSError("the filesystem went away")
+
+    monkeypatch.setattr(Path, "rename", _fail_every_move)
+    with pytest.raises(Exception) as e:
+        trackio.write_text_column(p, ["replacement"])
+    monkeypatch.undo()
+    said = str(e.value)
+    assert "no space" not in said
+    # Either the write failed before anything moved (old table intact), or it failed after and
+    # the message names both directories. Both are acceptable; silently losing the corpus is not.
+    assert p.is_dir() or (".replacing" in said and ".partial" in said)
+
+
+def test_a_stray_file_where_a_staging_directory_goes_does_not_brick_the_track(tmp_path):
+    """`shutil.rmtree` on a file raises NotADirectoryError, and the old cleanup swallowed it, so
+    the file stayed and every later write to that track failed with an errno rather than words.
+    """
+    p = tmp_path / "t"
+    (tmp_path / "t.partial").write_text("left by something that crashed")
+    trackio.write_text_column(p, ROWS)
+    assert trackio.read_text_column(p) == ROWS
+
+
+def test_a_column_selection_is_handed_over_even_though_the_format_type_is_null(tmp_path):
+    """THE NEARLY-CORRECT READ, which is the one failure this module says it cannot have.
+
+    `set_format(None, columns=[...])` leaves `_format_type` null and hides every other column.
+    `datasets` then refuses a track whose 'text' column is masked, while a reader looking only
+    at the Arrow file returns it happily. Two backends, two different corpora, no complaint.
+    """
+    from datasets import Dataset
+    p = tmp_path / "masked"
+    ds = Dataset.from_dict({"text": ROWS, "other": list(range(len(ROWS)))})
+    ds.set_format(None, columns=["other"])
+    ds.save_to_disk(str(p))
+    state = json.loads((p / "state.json").read_text())
+    assert state["_format_columns"] == ["other"], "this test needs a genuinely masked set"
+    assert trackio.read_table_if_plain(p) is None
+
+
+@pytest.mark.parametrize("damage", ["truncated", "empty", "garbage"])
+def test_a_corrupt_shard_is_reported_in_our_words_not_pyarrows(tmp_path, damage):
+    """A half-finished download used to arrive as "Expected to read 152 metadata bytes"."""
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+    shard = p / "data-00000-of-00001.arrow"
+    raw = shard.read_bytes()
+    shard.write_bytes({"truncated": raw[:28], "empty": b"",
+                       "garbage": b"not an arrow file at all" * 8}[damage])
+    with pytest.raises(trackio.TrackIOError, match="not a readable Arrow file"):
+        trackio.read_text_column(p)
+
+
+def test_a_symlinked_shard_is_refused_rather_than_followed(tmp_path):
+    """Following it reads rows from outside the track while everything downstream slices them
+    at boundaries recorded for the track.
+    """
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+    elsewhere = tmp_path / "elsewhere"
+    trackio.write_text_column(elsewhere, ["a row from somewhere else"])
+    shard = p / "data-00000-of-00001.arrow"
+    shard.unlink()
+    shard.symlink_to(elsewhere / "data-00000-of-00001.arrow")
+    with pytest.raises(trackio.TrackIOError, match="symbolic link"):
+        trackio.read_text_column(p)
+
+
+def test_a_windows_style_traversal_is_refused_too(tmp_path):
+    """`"/" in name` was the whole separator check, and this package declares Windows support."""
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+    state = json.loads((p / "state.json").read_text())
+    state["_data_files"] = [{"filename": r"..\..\elsewhere\data-00000-of-00001.arrow"}]
+    (p / "state.json").write_text(json.dumps(state))
+    with pytest.raises(trackio.TrackIOError, match="not a plain"):
+        trackio.read_text_column(p)
+
+
+def test_the_row_number_in_a_refusal_survives_a_batch_boundary(tmp_path):
+    """`datasets` writes 1000-row batches, and the count restarted at each one, so a null at
+    row 1500 was reported as row 500 and anybody grepping for row 500 found a good prompt.
+    """
+    import pyarrow as pa
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ["seed"])
+    good = pa.array([f"row {i}" for i in range(1000)], type=pa.string())
+    bad = pa.array([*[f"row {i}" for i in range(1000, 1500)], None], type=pa.string())
+    schema = pa.schema([("text", pa.string())])
+    with pa.OSFile(str(p / "data-00000-of-00001.arrow"), "wb") as sink, \
+            pa.ipc.new_stream(sink, schema) as w:
+        w.write_batch(pa.record_batch([good], schema=schema))
+        w.write_batch(pa.record_batch([bad], schema=schema))
+    with pytest.raises(trackio.TrackIOError) as e:
+        trackio.read_text_column(p)
+    assert "row 1500" in str(e.value), f"the row number restarted at the batch: {e.value}"
+
+
+def test_a_missing_pyarrow_is_named_as_a_damaged_install_not_a_missing_extra(tmp_path, monkeypatch):
+    """`[hub]` is not the answer to a missing base dependency, and it used to be the only one
+    offered. The two faults are different and the messages now say which is which.
+    """
+    import builtins
+
+    p = tmp_path / "t"
+    trackio.write_text_column(p, ROWS)
+
+    real_import = builtins.__import__
+
+    def _neither(name, *a, **k):
+        if name.split(".")[0] in ("datasets", "pyarrow"):
+            raise ImportError(f"No module named {name!r}", name=name.split(".")[0])
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(trackio, "_pyarrow", lambda: None)
+    monkeypatch.setattr(builtins, "__import__", _neither)
+    monkeypatch.delitem(__import__("sys").modules, "datasets", raising=False)
+    with pytest.raises(trackio.TrackIOError, match="force-reinstall"):
+        trackio.read_text_column(p)

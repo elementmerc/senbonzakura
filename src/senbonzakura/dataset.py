@@ -323,7 +323,17 @@ def _from_disk(body, split, spec, what="dataset"):
         if plain is not None:
             return plain
 
-    from datasets import load_from_disk
+    # OUTSIDE the try below, this raised a bare ModuleNotFoundError on a base install for two
+    # reachable specs: a DatasetDict directory, and any `path::split`. `_preflight_datasets`
+    # catches DatasetError only, so the gate whose whole job is to report every fault at once
+    # died on the first one with a traceback.
+    try:
+        from datasets import load_from_disk
+    except ImportError as e:
+        raise DatasetError(
+            f"reading the {what} at {body} needs the `datasets` package, because it is a split "
+            f"or a multi-split directory rather than a single table: "
+            f"pip install 'senbonzakura[hub]'") from e
     try:
         obj = load_from_disk(body)
     except Exception as e:

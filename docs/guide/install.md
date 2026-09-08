@@ -7,7 +7,8 @@ pip install .          # or: uv pip install .
 senbonzakura --help
 ```
 
-That pulls in one library, pyarrow, and lands at about 210 MB installed. It gets you the
+That pulls in pyarrow (and numpy, which pyarrow needs), landing at about 210 MB installed on
+Linux with Python 3.14. It gets you the
 commands that *check* things: build an evaluation split, audit one, check a benchmark for
 contamination, check what your install can do. None of those need a model or a graphics card,
 so none of them should make you download one.
@@ -18,9 +19,10 @@ To edit a model, add the extra:
 pip install '.[abliterate]'
 ```
 
-That's torch, transformers, accelerate and optuna, taking the install to about 1.5 GB and a
-few minutes on a decent connection. Both figures were measured on one Linux machine, so read
-them as the size of the difference rather than as what you will see. If you type
+That's torch, transformers, accelerate and optuna, taking the install to about 1.5 GB with the
+CPU-only torch wheel and a few minutes on a decent connection. The default CUDA wheel and its
+`nvidia-*` dependencies are larger again. Read both figures as the size of the difference rather
+than as what you will see. If you type
 `senbonzakura abliterate` without the extra, the tool tells you and prints the line above
 rather than showing you a traceback.
 

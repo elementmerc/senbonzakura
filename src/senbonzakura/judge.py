@@ -43,6 +43,19 @@ MIN_KAPPA = 0.6
 #: exactly the direction that flatters a model under test.
 MIN_PER_CLASS_RECALL = 0.5
 
+#: How many items a judge may decline to decide before its validation stops meaning anything.
+#:
+#: `None` verdicts were silently excluded from kappa, from per-class recall and from the floor,
+#: with no ceiling on how many, so a judge abstaining on the forty hardest of a hundred items was
+#: validated on the easy sixty and certified. `capability.py` establishes exactly this reasoning
+#: for exactly this failure: the items that fail to produce a verdict are NOT missing at random,
+#: they are the hard ones, and what survives is an easier exam. The module whose entire purpose
+#: is to be hostile to a judge had no equivalent.
+#:
+#: The same number as `capability.MAX_INDETERMINATE`, deliberately, because it is the same
+#: argument about the same kind of missingness.
+MAX_ABSTENTION = 0.10
+
 
 def cohens_kappa(judge, reference):
     """Agreement above what chance would give, on the same items.
@@ -93,7 +106,7 @@ def per_class(judge, reference):
 
 
 def validate(judge, reference, *, min_kappa=MIN_KAPPA, min_recall=MIN_PER_CLASS_RECALL,
-             floor=MIN_REPORTABLE_N):
+             floor=MIN_REPORTABLE_N, max_abstention=MAX_ABSTENTION):
     """Whether a judge may be used, and every reason it may not.
 
     Returns a verdict dict. `certified` is the only field a caller should branch on, and the
@@ -113,6 +126,11 @@ def validate(judge, reference, *, min_kappa=MIN_KAPPA, min_recall=MIN_PER_CLASS_
     pairs = [(j, r) for j, r in zip(judge, reference, strict=True)
              if j is not None and r is not None]
     n = len(pairs)
+    # How many the judge DECLINED, which was excluded and never counted. See MAX_ABSTENTION.
+    abstained = sum(1 for j, r in zip(judge, reference, strict=True)
+                    if r is not None and j is None)
+    scorable = sum(1 for r in reference if r is not None)
+    abstain_rate = (abstained / scorable) if scorable else 0.0
     agreement = (sum(1 for j, r in pairs if j == r) / n) if n else None
     kappa = cohens_kappa(judge, reference)
     classes = per_class(judge, reference)
@@ -131,6 +149,13 @@ def validate(judge, reference, *, min_kappa=MIN_KAPPA, min_recall=MIN_PER_CLASS_
             f"agreement above chance is {kappa:.2f}, below {min_kappa}. Raw agreement of "
             f"{agreement:.2f} is not the number that matters: a judge answering the common label "
             f"every time scores well on it and learns nothing.")
+    if abstain_rate > max_abstention:
+        reasons.append(
+            f"it returned no verdict on {abstained} of {scorable} items ({abstain_rate:.0%}), "
+            f"above the {max_abstention:.0%} ceiling. Those are not a random sample: an item a "
+            f"judge cannot decide is a hard one, so the {n} it did decide are an easier exam "
+            f"than the set it was given, and agreement measured on them does not describe how "
+            f"it behaves on the whole.")
     for lab, stats in classes.items():
         if stats["recall"] is not None and stats["recall"] < min_recall:
             reasons.append(
@@ -146,6 +171,9 @@ def validate(judge, reference, *, min_kappa=MIN_KAPPA, min_recall=MIN_PER_CLASS_
             "it counts a judge that always answers the common label as correct that often"),
         "kappa": round(kappa, 4) if kappa is not None else None,
         "per_class": classes,
+        "abstained": abstained,
+        "abstention_rate": round(abstain_rate, 4),
+        "abstention_ceiling": max_abstention,
         "reasons": reasons,
     }
 

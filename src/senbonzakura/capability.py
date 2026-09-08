@@ -527,6 +527,15 @@ def report(summary, change=None):
                      f"rate: {summary['accuracy_withheld_because']}")
     else:
         lines.append("  accuracy: nothing could be graded")
+    ref_rate = (change or {}).get("reference_indeterminate_rate")
+    if change and ref_rate is not None and ref_rate > MAX_INDETERMINATE:
+        lines.append(
+            f"  THE COMPARISON IS NOT QUOTABLE, because the run it is compared AGAINST left "
+            f"{ref_rate:.1%} of its answers ungraded, past the {MAX_INDETERMINATE:.0%} ceiling. "
+            f"A pair is dropped when EITHER arm failed to grade it, and the ones that fail are "
+            f"the long answers, so the pairs that survive are dominated by the reference's easy "
+            f"items. That understates the cost in the flattering direction. Re-run the reference "
+            f"with a larger --max-new before reading the change.")
     if summary.get("budget_suspect"):
         lines.append(
             f"  BUDGET, NOT MODEL. {summary['indeterminate']} of {summary['n']} answers "
@@ -559,12 +568,28 @@ def report(summary, change=None):
 
 
 def load_reference(path):
-    """A previous run's verdicts, for the paired comparison. Returns None when not asked for."""
+    """A previous run's verdicts AND its summary, for the paired comparison.
+
+    THE SUMMARY WAS THROWN AWAY, and with it the reference run's indeterminate rate. The
+    comparison drops any item either arm failed to grade, and the warning that says the graded
+    subset is an easier exam was guarded on the CURRENT run's `budget_suspect` alone. So a stock
+    arm at 35% indeterminate compared against an edited arm at 2% produced a change figure with
+    no warning at all.
+
+    The bias is the flattering one. Indeterminates are the long answers, and abliteration makes
+    a model terser, so the dropped pairs are dominated by the BASE model's truncations, which are
+    its hard items. What is left is an easier exam for the arm that was already struggling, and
+    the measured capability loss is systematically understated. That is the same missing-not-at-
+    random argument this module is built around, one level up, in the function that produces the
+    number the module exists to produce.
+
+    Returns `(verdicts, summary)`; both are None when no reference was asked for.
+    """
     if not path:
-        return None
+        return None, None
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
-    return doc.get("verdicts")
+    return doc.get("verdicts"), doc.get("summary")
 
 
 def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
@@ -691,7 +716,7 @@ def main(argv=None):
         raise SystemExit(f"--n {a.n} exceeds the {len(questions)} items available after --skip.")
     questions, answers = questions[:a.n], answers[:a.n]
 
-    reference = load_reference(a.compare_to)
+    reference, reference_summary = load_reference(a.compare_to)
     if reference is not None and len(reference) != len(questions):
         # Refused rather than truncated to fit. Two arms compared on different item sets is not a
         # paired comparison, and silently aligning them by position would produce a number that
@@ -714,6 +739,12 @@ def main(argv=None):
     change = None
     if reference is not None and a.bootstrap:
         change = paired_change(reference, verdicts, seed=a.seed, resamples=a.bootstrap)
+        # The reference run's OWN ungraded rate, carried into the comparison so the warning can
+        # read both arms rather than only this one. `None` when the reference predates the field,
+        # which is a different thing from zero and is reported as unknown rather than as fine.
+        if change is not None:
+            change["reference_indeterminate_rate"] = (
+                (reference_summary or {}).get("indeterminate_rate"))
 
     print(f"capability: {a.label or a.model} on {a.eval}")
     print(f"  task {task.name}: {task.grades}")

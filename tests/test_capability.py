@@ -460,8 +460,9 @@ def test_a_reference_file_is_read_back_as_verdicts(tmp_path):
 
     p = tmp_path / "r.json"
     p.write_text(json.dumps({"verdicts": ["correct", "wrong"]}), encoding="utf-8")
-    assert capability.load_reference(p) == ["correct", "wrong"]
-    assert capability.load_reference("") is None
+    verdicts, _summary = capability.load_reference(p)
+    assert verdicts == ["correct", "wrong"]
+    assert capability.load_reference("") == (None, None)
 
 
 def test_the_command_runs_end_to_end_and_reports_nothing_gradeable(tmp_path, monkeypatch,
@@ -782,3 +783,61 @@ def test_a_genuine_answer_of_a_or_i_still_reads(reply, want):
     from senbonzakura import capability
 
     assert capability.choice_answer(reply) == want
+
+
+def test_the_comparison_warns_when_the_reference_run_could_not_grade_its_answers():
+    """THE MNAR ARGUMENT, ONE LEVEL UP, IN THE FUNCTION THAT PRODUCES THE HEADLINE NUMBER.
+
+    `load_reference` returned only the verdicts and threw the summary away, so the reference
+    run's own indeterminate rate was lost. The "NOT QUOTABLE" warning was then guarded on the
+    CURRENT run's `budget_suspect` alone, and a stock arm at 35% ungraded compared against an
+    edited arm at 2% produced a change figure with no warning at all.
+
+    The bias is the flattering one, which is why it matters. A pair is dropped when either arm
+    failed to grade it, indeterminates are the long answers, and abliteration makes a model
+    terser: so the dropped pairs are dominated by the BASE model's truncations, which are its
+    hard items. What survives is an easier exam for the arm that was already struggling, and the
+    measured capability loss is systematically understated.
+    """
+    from senbonzakura import capability
+
+    change = {"delta_accuracy": -0.02, "delta_ci": [-0.05, 0.01], "compared_on": 60,
+              "dropped_indeterminate": 4, "distinguishable_from_zero": False,
+              "items_broken": 3, "items_fixed": 1,
+              "reference_indeterminate_rate": 0.35}
+    summary = {"n": 60, "graded": 59, "correct": 40, "accuracy": 0.678,
+               "accuracy_ci": [0.55, 0.79], "indeterminate": 1, "indeterminate_rate": 0.017,
+               "budget_suspect": False, "budget_threshold": capability.MAX_INDETERMINATE}
+    printed = "\n".join(capability.report(summary, change))
+    assert "NOT QUOTABLE" in printed, printed
+    assert "35.0%" in printed
+    assert "flattering" in printed or "understates" in printed
+
+
+def test_a_healthy_reference_produces_no_such_warning():
+    """The warning must not fire on every comparison, or it stops being read."""
+    from senbonzakura import capability
+
+    change = {"delta_accuracy": -0.02, "delta_ci": [-0.05, 0.01], "compared_on": 60,
+              "dropped_indeterminate": 4, "distinguishable_from_zero": False,
+              "items_broken": 3, "items_fixed": 1,
+              "reference_indeterminate_rate": 0.01}
+    summary = {"n": 60, "graded": 59, "correct": 40, "accuracy": 0.678,
+               "accuracy_ci": [0.55, 0.79], "indeterminate": 1, "indeterminate_rate": 0.017,
+               "budget_suspect": False, "budget_threshold": capability.MAX_INDETERMINATE}
+    assert "NOT QUOTABLE" not in "\n".join(capability.report(summary, change))
+
+
+def test_a_reference_that_recorded_no_rate_is_not_treated_as_zero():
+    """An older artefact has no such field, and unknown is not the same as fine."""
+    from senbonzakura import capability
+
+    change = {"delta_accuracy": -0.02, "delta_ci": [-0.05, 0.01], "compared_on": 60,
+              "dropped_indeterminate": 4, "distinguishable_from_zero": False,
+              "items_broken": 3, "items_fixed": 1,
+              "reference_indeterminate_rate": None}
+    summary = {"n": 60, "graded": 59, "correct": 40, "accuracy": 0.678,
+               "accuracy_ci": [0.55, 0.79], "indeterminate": 1, "indeterminate_rate": 0.017,
+               "budget_suspect": False, "budget_threshold": capability.MAX_INDETERMINATE}
+    # It does not claim a problem it cannot see, and it does not crash on the missing field.
+    assert "NOT QUOTABLE" not in "\n".join(capability.report(summary, change))

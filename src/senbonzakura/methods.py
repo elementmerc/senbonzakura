@@ -113,9 +113,14 @@ METHODS = {
         name="single-pass-raw",
         summary="A single pass WITHOUT restoring the original row norms. Present as a control, "
                 "not as a recommendation.",
+        # `no_good_orth` sits under `args` because that is the key `_apply_method_args` reads.
+        # It was a bare top-level key from the day this recipe was written, and NOTHING read that,
+        # so this arm was byte-identical to `single-pass` in every run: same accuracy, same delta,
+        # same interval to four decimal places. Caught when a peer noticed two methods that differ
+        # precisely in whether row norms are restored agreeing exactly.
         settings={"bake_profile": {"o_profile": FLAT, "d_profile": FLAT,
                                    "num_directions": 1, "dir_mode": "per_layer"},
-                  "no_good_orth": True},
+                  "args": {"no_good_orth": True}},
         resembles="the naive formulation most tutorials describe",
         edit="length and direction both change",
         search="none",

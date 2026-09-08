@@ -72,7 +72,7 @@ def test_the_exchange_rate_is_one_for_one_and_stated():
 def _abl(**over):
     obj = cli.Abliterator.__new__(cli.Abliterator)
     args = dict(capability_eval="", capability_n=0, capability_task="numeric",
-                capability_max_new=32, hf_token=None, batch_size=2)
+                capability_max_new=32, hf_token=None, gen_batch=2)
     args.update(over)
     obj.args = types.SimpleNamespace(**args)
     obj.log = lambda _m: None

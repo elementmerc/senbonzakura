@@ -3026,7 +3026,12 @@ class Abliterator:
         prompts = [task.prompt.format(q) for q, _a in items]
         gens, truncated = capability.generate_with_truncation(
             self.model, self.tok, prompts, self.dev,
-            batch=max(1, int(self.args.batch_size)),
+            # `gen_batch`, which is the flag that exists. This read `batch_size` from the day it
+            # was written, so `--capability-eval` raised AttributeError the moment it was asked to
+            # score anything and the in-search capability gate has NEVER RUN. It survived a green
+            # suite because the test built its namespace by hand and invented `batch_size=2` in
+            # it, so the code and the test agreed with each other and neither matched the parser.
+            batch=max(1, int(self.args.gen_batch)),
             max_new=int(getattr(self.args, "capability_max_new", 320)))
         verdicts = capability.grade(gens, [a for _q, a in items], truncated,
                                     task=getattr(self.args, "capability_task", "numeric"))

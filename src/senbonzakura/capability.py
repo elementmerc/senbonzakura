@@ -690,11 +690,20 @@ def main(argv=None):
     for line in report(summary, change):
         print(line)
 
+    from .crashsafe import atomic_write, provenance
+
     result = {"label": a.label, "model": a.model, "eval": a.eval, "task": a.task,
               "n": len(questions),
               "max_new": a.max_new, "seed": a.seed, "summary": summary,
-              "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change}
-    with open(a.out, "w", encoding="utf-8") as f:
+              "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change,
+              # Which build produced this. Every other artefact in this project carries it and
+              # this one did not, so a night of arm results came back citable everywhere except
+              # the capability figures, which are the ones the whole experiment exists for.
+              "provenance": provenance(device=a.device)}
+    # Atomic, like every other result here. A capability run is a generation pass over hundreds of
+    # prompts and a kill partway through the write used to leave a file that exists, is not empty,
+    # and is not a result.
+    with atomic_write(a.out) as f:
         _json.dump(result, f, indent=2)
     if a.save_generations:
         with open(a.save_generations, "w", encoding="utf-8") as f:

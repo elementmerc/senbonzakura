@@ -109,3 +109,85 @@ def test_a_defaulted_getattr_is_not_counted():
 
 def test_every_exemption_carries_a_reason():
     assert all(isinstance(v, str) and v.strip() for v in SET_ELSEWHERE.values())
+
+
+# ── the abliterator, which the check above never looked at ─────────────────────────
+#
+# ADDED 2026-09-07 after `_capability_score` read `self.args.batch_size` from the day it was
+# written. The flag is `--gen-batch`, dest `gen_batch`; `batch_size` has never existed. So
+# `--capability-eval` raised AttributeError the moment it was asked to score anything, and the
+# in-search capability gate, the one thing in this tool that PREVENTS damage rather than measuring
+# it, had never run once.
+#
+# The check above did not see it because it walks the sub-command modules and binds only the local
+# names `a` and `args`. The abliterator reads its flags as `self.args.X` from inside a class in
+# `cli.py`, which nothing was looking at.
+
+#: Read off `self.args` in cli.py without a parser flag behind them, each with the reason. An
+#: entry here is a decision a reviewer can weigh; its absence is how a typo ships.
+CLI_SET_ELSEWHERE = {
+    "bankai": "set by entry.split_mode before the namespace reaches the run",
+}
+
+
+def _self_args_reads(path):
+    """Every `self.args.<attr>` read in a file. Attribute access only, same rule as above."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)):
+            continue
+        inner = node.value
+        if (isinstance(inner, ast.Attribute) and inner.attr == "args"
+                and isinstance(inner.value, ast.Name) and inner.value.id == "self"):
+            found.add(node.attr)
+    return found
+
+
+def test_the_abliterator_never_reads_a_flag_its_parser_does_not_define():
+    """THE ONE THAT WOULD HAVE CAUGHT IT.
+
+    An AttributeError here does not fail at parse time. It fails after the model is loaded, the
+    directions are extracted and the baseline is measured, which on a rented card is an hour spent
+    to reach a typo, and in the case that prompted this it was a feature nobody had ever run.
+    """
+    from senbonzakura.parser import build_parser
+
+    dests = {a.dest for a in build_parser()._actions}
+    read = _self_args_reads(SRC / "cli.py")
+    missing = sorted(n for n in read
+                     if n not in dests and n not in CLI_SET_ELSEWHERE and not n.startswith("_"))
+    assert not missing, (
+        f"cli.py reads {missing} off self.args and the abliterate parser defines no such flag. "
+        f"That is an AttributeError after the model is loaded, not at parse time.")
+
+
+def test_the_new_check_would_have_caught_the_defect_it_was_written_for():
+    """A gate only ever seen passing has not been shown to work."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "m.py"
+        p.write_text("class A:\n"
+                     "    def f(self):\n"
+                     "        return g(batch=int(self.args.batch_size), n=self.args.gen_batch)\n",
+                     encoding="utf-8")
+        read = _self_args_reads(p)
+    assert read == {"batch_size", "gen_batch"}
+
+    from senbonzakura.parser import build_parser
+    dests = {a.dest for a in build_parser()._actions}
+    assert "gen_batch" in dests, "the flag that exists"
+    assert "batch_size" not in dests, "the flag that never did, and shipped for weeks"
+
+
+def test_a_plain_args_read_is_not_mistaken_for_a_self_args_read():
+    """`args.x` inside a module-level function is a different binding and is covered elsewhere;
+    counting it here would make this check duplicate the other one and drift from it.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "m.py"
+        p.write_text("def f(args):\n    return args.nope\n", encoding="utf-8")
+        assert _self_args_reads(p) == set()

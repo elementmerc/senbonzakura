@@ -130,3 +130,38 @@ def test_the_conflict_is_refused_before_the_model_is_constructed(monkeypatch):
     with pytest.raises(SystemExit, match="--max-directions"):
         cli.run_parsed(_args(max_directions=4), None, [])
     assert not built
+
+
+def test_the_raw_arm_actually_turns_the_norm_restoration_off():
+    """THE CONTROL THAT WAS NOT A CONTROL.
+
+    `single-pass-raw` exists to be the naive formulation `single-pass` has to be better than: the
+    difference between them is precisely whether row norms are restored. Its setting sat as a bare
+    top-level key that nothing read, so the two arms were byte-identical in every run, agreeing to
+    four decimal places on accuracy, delta and interval. A control that is a copy of the thing it
+    controls for is worse than no control, because it reads as agreement.
+    """
+    args = _args(method="single-pass-raw", no_good_orth=False,
+                 max_directions=_default_max_directions())
+    cli._apply_method_args(args, _log)
+    assert args.no_good_orth is True
+
+
+def test_the_plain_single_pass_arm_leaves_it_on():
+    """The pair only means anything if exactly one of them changes."""
+    args = _args(method="single-pass", no_good_orth=False,
+                 max_directions=_default_max_directions())
+    cli._apply_method_args(args, _log)
+    assert args.no_good_orth is False
+
+
+def test_every_setting_a_recipe_declares_is_read_by_something():
+    """A key nobody reads is a recipe that silently does not do what it says.
+
+    Both consumers are named here, so a recipe growing a third kind of setting fails this rather
+    than shipping as a no-op the way `no_good_orth` did.
+    """
+    consumed = {"bake_profile", "args"}
+    for name in methods.CHOICES:
+        extra = set(methods.get(name).settings) - consumed
+        assert not extra, f"{name} declares {sorted(extra)}, which nothing applies"

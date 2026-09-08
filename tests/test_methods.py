@@ -102,12 +102,20 @@ def test_a_single_pass_profile_is_uniform_across_the_window():
 def test_the_two_single_pass_arms_differ_only_in_the_norm_restoration():
     """They are a controlled pair: same directions, same strength, same layers. If they differed
     in anything else, a difference between them would not be attributable to the edit.
+
+    CHANGED 2026-09-08. This asserted `settings["no_good_orth"]`, a bare top-level key, which is
+    exactly where the recipe put it and exactly where NOTHING READ IT. The test agreed with the
+    code and both were wrong: the two arms were byte-identical in every run, agreeing to four
+    decimal places on accuracy, delta and interval, and a peer caught it by noticing that two
+    methods which differ precisely in whether row norms are restored cannot agree exactly.
+
+    It is now asserted where the applier looks, so the shape being tested is the shape that runs.
     """
     a = methods.get("single-pass").settings
     b = methods.get("single-pass-raw").settings
     assert a["bake_profile"] == b["bake_profile"]
-    assert b.get("no_good_orth") is True
-    assert a.get("no_good_orth") is None
+    assert b["args"]["no_good_orth"] is True
+    assert "args" not in a, "the plain arm must pin nothing, or the pair varies twice"
 
 
 def test_the_recipes_are_distinct_settings_not_distinct_labels():

@@ -98,6 +98,7 @@ export default {
           items: [
             { text: 'The compass', link: '/guide/compass' },
             { text: 'Benchmarking against another tool', link: '/guide/benchmark' },
+            { text: 'How this compares to other tools', link: '/comparison' },
           ],
         },
         {

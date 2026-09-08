@@ -335,3 +335,32 @@ def test_the_source_is_recorded_so_a_reader_can_weigh_it():
     into one field would hand a reader a commit with no idea where it came from.
     """
     assert {"git", "stamp", "declared"} >= {"stamp", "declared"}
+
+
+def test_provenance_records_which_table_backend_read_the_corpus(monkeypatch):
+    """The version list cannot say which of two installed backends actually ran.
+
+    In any development or `[all]` install both pyarrow and datasets are present, so two runs
+    that took genuinely different paths through the reader produced identical provenance. A
+    comment in this module claimed this property before the code had it.
+    """
+    from senbonzakura import crashsafe, trackio
+
+    monkeypatch.delenv(trackio.BACKEND_ENV, raising=False)
+    got = crashsafe.resolved_versions()
+    assert got["table_backend"] == "auto"
+    assert got["table_backend_pinned"] is False
+
+    monkeypatch.setenv(trackio.BACKEND_ENV, "datasets")
+    pinned = crashsafe.resolved_versions()
+    assert pinned["table_backend"] == "datasets"
+    assert pinned["table_backend_pinned"] is True
+
+
+def test_an_unreadable_backend_setting_does_not_take_down_a_run(monkeypatch):
+    """Provenance is a record of a run, and failing to record it must never end the run."""
+    from senbonzakura import crashsafe, trackio
+
+    monkeypatch.setenv(trackio.BACKEND_ENV, "not-a-backend")
+    got = crashsafe.resolved_versions()
+    assert got["table_backend"] == "unknown"

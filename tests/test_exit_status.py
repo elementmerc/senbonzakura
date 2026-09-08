@@ -21,8 +21,10 @@ the numbers; a command whose whole job is a verdict returns the verdict. What wa
 a place that knows it is talking to a shell. That place is `entry.exit_status`, and this file
 is what stops the next well-meant change to `__main__` from swinging the same axe again.
 
-It is the eighth time in this project's history that an exit code has been measured through
-the wrong thing, and the first that a test could have caught before a user did.
+Measuring an exit code through the wrong thing is a defect this project has shipped
+repeatedly: a doctor gate that read a return value nobody returned, a shell `if` that
+evaluated to zero when its command failed, a runner that read a pipeline's status instead of
+its command's. This is the first one a test catches before a user does.
 """
 from __future__ import annotations
 
@@ -184,3 +186,18 @@ def test_no_delegated_module_runs_silently(command):
         assert (proc.stdout + proc.stderr).strip(), (
             f"'python -m senbonzakura.{module}' exited 0 and printed nothing, which is a "
             f"command that did not run reporting success.")
+
+
+@pytest.mark.parametrize("value", [256, 512, -1, 10_000])
+def test_a_status_that_would_wrap_to_success_is_clamped(value):
+    """`sys.exit(256)` exits 0: the shell keeps the low byte, so a failure reports success.
+
+    No command returns one today. This is the same shape as every other defect in this file:
+    a verdict that inverts silently, in a place nobody is looking.
+    """
+    assert entry.exit_status(value) == 1
+
+
+def test_a_normal_status_is_untouched():
+    for value in (0, 1, 2, 255):
+        assert entry.exit_status(value) == value

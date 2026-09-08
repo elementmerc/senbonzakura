@@ -41,9 +41,6 @@ EXEMPT = {
     # Documented in floors.txt: the `quant` extra is not installed by `[dev]`, so the
     # dependency-floor job never has it and a pin here would constrain nothing.
     "bitsandbytes": "the quant extra is not installed by the floors job",
-    # Not pinned, and that is a gap rather than a decision. Recorded in DEFERRED.md.
-    "gguf": "no floor pin yet; see DEFERRED.md",
-    "sentencepiece": "no floor pin yet; see DEFERRED.md",
 }
 
 

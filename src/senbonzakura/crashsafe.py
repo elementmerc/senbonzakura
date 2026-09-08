@@ -368,8 +368,23 @@ def _installed(name):
 
 
 def resolved_versions(packages=PROVENANCE_PACKAGES):
-    """Installed version of each package, or None where it is absent."""
-    return {name: _installed(name) for name in packages}
+    """Installed version of each package, or None where it is absent.
+
+    Plus which table backend actually READ the corpus, which the version list cannot say. In any
+    development or `[all]` install both pyarrow and datasets are present, so two runs that took
+    genuinely different code paths through the reader produced identical provenance blocks, and
+    the environment variable whose whole purpose is to reproduce a report on the other backend
+    was recorded nowhere. A comment here claimed this property before the code had it.
+    """
+    out = {name: _installed(name) for name in packages}
+    try:
+        from .trackio import BACKEND_ENV, chosen_backend
+        out["table_backend"] = chosen_backend()
+        out["table_backend_pinned"] = bool(os.environ.get(BACKEND_ENV))
+    except Exception:
+        out["table_backend"] = "unknown"
+        out["table_backend_pinned"] = False
+    return out
 
 
 # The commit a run declares when it is not executing from a checkout. The name is the one

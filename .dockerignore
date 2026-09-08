@@ -1,0 +1,59 @@
+# What never enters a Docker build context.
+#
+# WHY THIS FILE EXISTS, and it is two separate reasons.
+#
+# THE DISCLOSURE ONE. Docker's build context ignores `.gitignore` entirely, so without this file
+# `docker build .` from a working tree uploads `private/`, the operator's local state, `.venv/`,
+# `.git/` and everything else beside the source. Nothing `COPY`s them today, so nothing reaches a
+# layer, and that is a property of the current Dockerfiles rather than of the boundary. A future
+# `COPY . .` would turn it into a disclosure with no warning. The baseline asks for the boundary
+# to be declared rather than to depend on nobody adding that line.
+#
+# THE HONESTY ONE, which is what actually bit. Because the context ignores `.gitignore`, an image
+# built on the maintainer's machine picked up files that are in no clone: the bundled corpora were
+# excluded from git by an unanchored ignore rule, so the image worked here and would have shipped
+# empty from CI, while both `doctor` gates in the image job grep for two lines that say nothing
+# about the bundled data.
+#
+# The corpora are NOT excluded here, deliberately. An image is a release artefact like a wheel and
+# should carry them; what was missing is a check that it does, and the image job now greps for
+# that too. The exclusions below are for things no image should ever see.
+
+# Version control and build state
+.git/
+.gitignore
+build/
+dist/
+dist-ci/
+dist-cleanroom/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+docs/node_modules/
+
+# Private and operator state, which no image has any business seeing
+private/
+catastrophic/
+scripts/
+holst/
+DEFERRED.md
+.claude/
+evidence/
+
+# Generated artefacts and results
+results/
+plots/
+checkpoints/
+abliterated/
+out/
+*.safetensors
+*.gguf
+*.jsonl

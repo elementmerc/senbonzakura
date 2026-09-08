@@ -1661,6 +1661,16 @@ def ensure_chat_template(tok, template_path=None, log=None):
             template = resolved.read_text(encoding="utf-8")
         except OSError as e:
             known = ", ".join(sorted(BUNDLED_TEMPLATES))
+            # A NAME that resolved and then would not open is a broken INSTALL, not a typo, and
+            # answering it with "or one of the names this tool ships: plain" tells the reader to
+            # do the thing they just did. That was the exact message two runs died on when the
+            # bundled template turned out to be excluded from every clone by an ignore rule.
+            if str(template_path) in BUNDLED_TEMPLATES:
+                raise SystemExit(
+                    f"--chat-template {template_path} is a template this build advertises and "
+                    f"cannot open at {resolved} ({e}). That is a packaging fault rather than "
+                    f"anything you typed: reinstall with `pip install --force-reinstall "
+                    f"senbonzakura`, or pass a path to a Jinja template of your own.") from e
             raise SystemExit(f"could not read --chat-template {template_path}: {e}. It should be "
                              f"a path to a Jinja template, or one of the names this tool ships: "
                              f"{known}.") from e

@@ -226,13 +226,22 @@ def test_an_interrupted_write_leaves_the_previous_table_intact(tmp_path, monkeyp
 
 
 def test_a_leftover_staging_directory_does_not_block_the_next_write(tmp_path):
-    """Idempotent by default: a re-run after an interruption has to be safe to re-run."""
+    """Idempotent by default: a re-run after an interruption has to be safe to re-run.
+
+    It is NOT deleted, and that changed deliberately. The staging names used to be fixed, so a
+    write swept anything sitting at `<name>.partial` before starting; with two writers that
+    sweep was deleting the other one's in-flight directory. Names now carry a per-writer
+    suffix, so a stray leftover is simply not in the way, which is the safer answer: this code
+    cannot tell a crashed run's debris from a live run's working directory, and only one of
+    those is safe to remove.
+    """
     p = tmp_path / "t"
     (tmp_path / "t.partial").mkdir()
     (tmp_path / "t.partial" / "junk").write_text("from a previous crash")
     trackio.write_text_column(p, ROWS)
     assert trackio.read_text_column(p) == ROWS
-    assert not (tmp_path / "t.partial").exists()
+    assert (tmp_path / "t.partial" / "junk").is_file(), (
+        "a leftover this write did not create must be left where it is")
 
 
 def test_writing_over_an_existing_table_replaces_it_completely(tmp_path):
@@ -492,7 +501,7 @@ def test_a_failed_final_rename_puts_the_previous_table_back(tmp_path, monkeypatc
     def _fail_the_last_move(self, target):
         # Only the staging-into-place move. Failing every rename to this name would also block
         # the recovery, which is a different scenario and has its own test below.
-        if self.name.endswith(".partial"):
+        if ".partial." in self.name:
             raise OSError("no space left on device")
         return real_rename(self, target)
 
@@ -527,11 +536,35 @@ def test_when_even_the_recovery_fails_nothing_is_deleted(tmp_path, monkeypatch):
 def test_a_stray_file_where_a_staging_directory_goes_does_not_brick_the_track(tmp_path):
     """`shutil.rmtree` on a file raises NotADirectoryError, and the old cleanup swallowed it, so
     the file stayed and every later write to that track failed with an errno rather than words.
+
+    Two shapes, because the staging name gained a per-writer suffix when concurrent writers
+    turned out to delete each other's work: an old fixed-name leftover from a previous version
+    must simply be ignored, and a leftover that DOES collide must be cleared rather than raise.
     """
     p = tmp_path / "t"
-    (tmp_path / "t.partial").write_text("left by something that crashed")
+    (tmp_path / "t.partial").write_text("left by an older version that crashed")
     trackio.write_text_column(p, ROWS)
     assert trackio.read_text_column(p) == ROWS
+    assert (tmp_path / "t.partial").is_file(), "an unrelated leftover must be left alone"
+
+    import senbonzakura.trackio as t
+    seen = {}
+    real_clear = t._clear
+
+    def _spy(leftover):
+        seen.setdefault("first", leftover)
+        return real_clear(leftover)
+
+    monkey = t._clear
+    t._clear = _spy
+    try:
+        trackio.write_text_column(p, ["again"])
+    finally:
+        t._clear = monkey
+    stray = seen["first"]
+    stray.write_text("a file exactly where a staging directory goes")
+    t._clear(stray)
+    assert not stray.exists(), "a file in the staging position must be removed, not raise"
 
 
 def test_a_column_selection_is_handed_over_even_though_the_format_type_is_null(tmp_path):
@@ -630,3 +663,124 @@ def test_a_missing_pyarrow_is_named_as_a_damaged_install_not_a_missing_extra(tmp
     monkeypatch.delitem(__import__("sys").modules, "datasets", raising=False)
     with pytest.raises(trackio.TrackIOError, match="force-reinstall"):
         trackio.read_text_column(p)
+
+
+def test_two_writers_get_disjoint_staging_paths(tmp_path, monkeypatch):
+    """THE FIX ITSELF, asserted directly, because the race is not reliably reproducible.
+
+    The staging names were fixed (`<name>.partial`, `<name>.replacing`), so a second writer's
+    leftover sweep deleted the first writer's in-flight directory. Pass 1 of the review
+    reproduced the worst ending with two threads: B completes and RETURNS NORMALLY, A then
+    renames B's freshly written table aside, fails its own rename, and the cleanup deletes it,
+    leaving no table at all and one process exited zero.
+
+    A threaded test of that is a bad instrument. Two writers of fifty rows finish before they
+    can collide, so a first version of this passed on the broken code exactly as happily as on
+    the fixed code. What separates the two versions deterministically is whether the paths
+    overlap at all, so that is what is measured.
+    """
+    seen = []
+    real_mkdir = Path.mkdir
+
+    def _record(self, *a, **k):
+        seen.append(self)
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(Path, "mkdir", _record)
+    trackio.write_text_column(tmp_path / "t", ["one"])
+    trackio.write_text_column(tmp_path / "t", ["two"])
+    monkeypatch.undo()
+
+    staging = [d for d in seen if ".partial" in d.name]
+    assert len(staging) == 2, f"expected one staging directory per write, saw {staging}"
+    assert staging[0] != staging[1], (
+        "two writers to the same track stage in the SAME directory, so each one's leftover "
+        "sweep deletes the other's in-flight work")
+
+
+def test_a_writer_never_removes_a_directory_it_did_not_create(tmp_path):
+    """The mechanism behind the disjointness, stated as the property that matters.
+
+    This code cannot tell a crashed run's debris from a live run's working directory, and only
+    one of those is safe to delete. So it deletes neither unless it owns the name.
+    """
+    p = tmp_path / "t"
+    others = [tmp_path / "t.partial", tmp_path / "t.replacing",
+              tmp_path / "t.partial.999.deadbeef"]
+    for d in others:
+        d.mkdir()
+        (d / "someone-elses-work").write_text("in flight")
+    trackio.write_text_column(p, ROWS)
+    for d in others:
+        assert (d / "someone-elses-work").is_file(), f"{d.name} was swept by an unrelated write"
+
+
+def test_the_contents_reach_the_disk_before_the_rename(tmp_path, monkeypatch):
+    """"Atomic" was true against the process dying and not against power loss.
+
+    A rename can reach the disk before the bytes do, leaving a `state.json` that parses beside a
+    shard that is short or zero-filled, which is the half-written corpus this module calls its
+    worst outcome. Asserted by watching the syscall rather than by trusting the comment: every
+    file in the staging directory is synced, and so is the directory, before anything moves.
+    """
+    import os as _os
+
+    synced = []
+    real_fsync = _os.fsync
+    monkeypatch.setattr(_os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+
+    real_rename = Path.rename
+    order = []
+
+    def _watch_rename(self, target):
+        order.append(("rename", len(synced)))
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", _watch_rename)
+    trackio.write_text_column(tmp_path / "t", ROWS)
+    monkeypatch.undo()
+
+    assert synced, "nothing was flushed to disk at all"
+    assert order and order[0][1] >= len(synced), (
+        "a rename happened before the contents were flushed, which is the ordering the "
+        "durability claim depends on")
+
+
+def test_a_filesystem_that_cannot_sync_a_directory_still_writes(tmp_path, monkeypatch):
+    """Windows will not open a directory for syncing, and that is not a failed write.
+
+    The files were still flushed; only the directory entry's durability is unavailable. A
+    platform difference must not become a refusal on a platform this package declares support
+    for.
+    """
+    import os as _os
+
+    real_open = _os.open
+
+    def _refuse_dirs(path, flags, *a, **k):
+        if Path(path).is_dir():
+            raise OSError("directories cannot be opened here")
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(_os, "open", _refuse_dirs)
+    trackio.write_text_column(tmp_path / "t", ROWS)
+    monkeypatch.undo()
+    assert trackio.read_text_column(tmp_path / "t") == ROWS
+
+
+def test_a_directory_sync_that_fails_is_not_a_failed_write(tmp_path, monkeypatch):
+    """Syncing a directory is unsupported on some filesystems and reported as an error there."""
+    import os as _os
+    import stat as _stat
+
+    real_fsync = _os.fsync
+
+    def _fail_on_dirs(fd):
+        if _stat.S_ISDIR(_os.fstat(fd).st_mode):
+            raise OSError("fsync on a directory is not supported here")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(_os, "fsync", _fail_on_dirs)
+    trackio.write_text_column(tmp_path / "t", ROWS)
+    monkeypatch.undo()
+    assert trackio.read_text_column(tmp_path / "t") == ROWS

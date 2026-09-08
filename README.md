@@ -158,13 +158,10 @@ tool, and every condition attached to every number this project has published.
 By design, this is methods and results, not a loaded weapon:
 
 - **No model weights in this git tree.** Nothing here is a model you can download and run.
-  Being straight about what that does and doesn't cover: abliterated checkpoints from this
-  work **do exist**, published by the author on HuggingFace alongside the writeups that
-  explain them, each one a separate decision rather than a by-product of a run. Each stays
-  under its base model's own licence, which travels with the weights and is not ours to
-  loosen. So this bullet is a statement about the repository, not a claim that the method
-  produces nothing. If it had been the second, everything else on this page would deserve
-  less credit.
+  Abliterated checkpoints from this work do exist and are published separately on HuggingFace,
+  each under its base model's own licence, which travels with the weights and is not ours to
+  loosen. So this bullet covers the repository and is not a claim that the method produces
+  nothing.
 - **No harmful prompt sets in this repository.** The evaluation track is published separately as
   a **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
   CC BY-NC 4.0, so checking our numbers is possible while taking the

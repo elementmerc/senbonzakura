@@ -156,7 +156,10 @@ def exit_status(value):
             f"a command returned {value!r}. Return an int for a status or the result object "
             f"for the numbers; a bool means neither and exits backwards.")
     if isinstance(value, int):
-        return value
+        # Clamped, because `sys.exit(256)` exits 0 on POSIX: the shell keeps the low byte, so a
+        # status that overflows reports success. No command here returns one today, and a
+        # verdict that silently inverts is not a thing to leave to nobody doing it later.
+        return value if 0 <= value < 256 else 1
     # A result object: the command ran and produced something. Its own failures are raised.
     return 0
 

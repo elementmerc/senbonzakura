@@ -153,3 +153,23 @@ def test_validate_without_a_template_forwards_nothing():
 
     _own, args = validate.build_args(["--model", "m", "--out", "o"])
     assert args.chat_template == ""
+
+
+def test_a_bundled_track_that_is_not_installed_refuses_by_name(monkeypatch, tmp_path):
+    """A source checkout genuinely has no packed track, so this is a normal thing to meet.
+
+    It used to raise a bare ValueError that nothing caught, and it printed the corpus licence
+    notice with its attribution terms FIRST, so the reader was told what they were using and
+    then told they were not using it.
+    """
+    import pytest
+
+    from senbonzakura import bundled
+
+    monkeypatch.setattr(bundled, "data_path",
+                        lambda: tmp_path / "nowhere" / "default-track.bin")
+    monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "cache")
+    said = []
+    with pytest.raises(bundled.BundledTrackError, match=r"pack_track\.py"):
+        bundled.ensure(log=said.append)
+    assert not said, f"the licence notice was printed for a corpus that is not installed: {said}"

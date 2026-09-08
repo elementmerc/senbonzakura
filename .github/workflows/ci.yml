@@ -249,6 +249,13 @@ jobs:
           cat cpu.txt
           grep -qE '^\s*✓\s+llama-quantize' cpu.txt
           grep -qE '^\s*✓\s+architecture modules' cpu.txt
+          # The bundled data, checked because an image that ships without it looks identical
+          # from outside: it builds, imports, answers --help, and fails --track default for
+          # every user. Docker's context ignores .gitignore, so an image built on a machine
+          # that HAS the generated blobs works while the same build from a clone does not.
+          grep -qE '^\s*✓\s+corpus advbench' cpu.txt
+          grep -qE '^\s*✓\s+bundled track' cpu.txt
+          grep -qE '^\s*✓\s+track tables' cpu.txt
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
       - name: The CUDA image carries a CUDA torch

@@ -12,8 +12,9 @@ migration away. And we use it for a single job. Every call site in the tool is o
     [r["text"] for r in load_from_disk(path)]
     Dataset.from_dict({"text": rows}).save_to_disk(path)
 
-which is reading and writing a one-column table. `pyarrow` is packaged (23.0.1 in testing),
-is what `datasets` stores the rows with underneath, and can do both.
+which is reading and writing a one-column table. `pyarrow` is packaged for Debian (23.0.1 in
+testing when this was checked, 2026-07-30), is what `datasets` stores the rows with underneath,
+and can do both.
 
 WHAT A save_to_disk DIRECTORY ACTUALLY IS
 
@@ -55,6 +56,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import shutil
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
@@ -378,10 +380,14 @@ def fingerprint(rows: list[str]) -> str:
 def write_text_column(path, rows, column: str = TEXT_COLUMN) -> None:
     """Write one column of text as a save_to_disk directory, atomically.
 
-    Atomic through a staging directory and a rename, so an interrupted write leaves either
-    the previous table or nothing, never a table holding half a corpus. A half-written track
-    is the worst outcome available here: everything downstream would read it, slice it at the
+    Atomic through a staging directory and a rename, so an interrupted write leaves either the
+    previous table or the new one, never a table holding half a corpus. A half-written track is
+    the worst outcome available here: everything downstream would read it, slice it at the
     recorded offsets, and report numbers about a corpus that never existed.
+
+    The contents are flushed to the disk before the rename, so this holds against power loss and
+    not only against the process dying. It said "atomically" before doing that, which is a claim
+    about the wrong failure.
     """
     path = Path(path)
     rows = list(rows)
@@ -392,8 +398,21 @@ def write_text_column(path, rows, column: str = TEXT_COLUMN) -> None:
                 f"Prompts are strings; writing anything else produces a table that reads back "
                 f"as the word the value prints as.")
 
-    staging = path.with_name(path.name + ".partial")
-    replaced = path.with_name(path.name + ".replacing")
+    # A PER-WRITER staging name, not a fixed one. Two writers to the same path shared
+    # `<name>.partial` and `<name>.replacing`: the second one's leftover sweep deleted the
+    # first one's in-flight directory, the second completed and RETURNED NORMALLY, and the
+    # first then renamed the second's freshly written table aside and failed. End state: no
+    # table at the path, and a process that exited zero having written a corpus that is not
+    # there. Reproduced with two threads.
+    #
+    # The pid and a random suffix make the names disjoint, so concurrent writers no longer
+    # delete each other's work. They still race on the final rename, and the loser now finds
+    # the winner's table rather than a hole; a lock would order them, and ordering two writers
+    # of the SAME corpus is not a property worth the machinery, because whichever wins wrote
+    # the same rows.
+    unique = f"{os.getpid()}.{secrets.token_hex(4)}"
+    staging = path.with_name(f"{path.name}.partial.{unique}")
+    replaced = path.with_name(f"{path.name}.replacing.{unique}")
     for leftover in (staging, replaced):
         _clear(leftover)
     staging.mkdir(parents=True)
@@ -475,6 +494,36 @@ def _write_shard(staging: Path, rows: list[str], column: str) -> None:
     }
     (staging / STATE_FILE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     (staging / INFO_FILE).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    _flush(staging)
+
+
+def _flush(directory: Path) -> None:
+    """Force the shard and its sidecars to the disk before anything is renamed into place.
+
+    Without this, "atomically" was true against process death and not against power loss: the
+    rename can reach the disk before the file contents do, leaving a directory whose
+    `state.json` is intact and whose `.arrow` is short or zero-filled. Everything downstream
+    would read it and slice it at the recorded boundaries, which is the "table holding half a
+    corpus" this module names as the worst outcome available to it.
+
+    The directory itself is synced too, because on most filesystems that is what makes the
+    entries durable rather than just the bytes inside them. A platform that will not open a
+    directory for syncing (Windows) is not a failure: the files were still flushed.
+    """
+    for child in sorted(directory.iterdir()):
+        if child.is_file():
+            with open(child, "rb+") as f:
+                os.fsync(f.fileno())
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def _write_shard_datasets(staging: Path, rows: list[str], column: str) -> None:

@@ -47,6 +47,25 @@ SENBON_REQUIRE_BUNDLED=1 python -m pytest
 Run that **after** packing and **before** building the wheel. A skip is a statement about a
 source checkout; in a release it is a defect.
 
+## Before the wheel leaves this machine
+
+```sh
+python tools/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
+python tools/pack_track.py             # writes src/senbonzakura/data/default-track.bin
+python -m build --wheel
+python tools/check_wheel.py dist/*.whl --release
+```
+
+`--release` is the part that is easy to skip and expensive to skip. The two `.bin` files are
+generated artefacts kept out of git on purpose: they hold harmful prompts and the corpus is
+published as a gated dataset. So a wheel built from a plain clone contains neither, installs
+happily, imports happily, answers `--help` happily, and then fails `--track default` for every
+person who installs it. Nothing about that wheel looks wrong from the outside.
+
+This was live on 2026-09-08: CI builds from a clean checkout, so the wheel it checked had no
+corpora, and the clean-room check that was supposed to catch it asked whether `doctor` printed
+the words "corpus advbench". It prints those words on both outcomes.
+
 ## Build and check the wheel
 
 ```sh

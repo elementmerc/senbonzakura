@@ -47,6 +47,16 @@ def check(name, condition, detail=""):
     return bool(condition)
 
 
+def note(message):
+    """Something the reader has to know that is not a pass or a fail.
+
+    A code-only wheel legitimately carries no corpora, and calling that a failure would make
+    the gate cry wolf on every CI run. Calling it a pass would let a release wheel ship empty.
+    So it is neither, and it is loud.
+    """
+    print(f"  NOTE  {message}")
+
+
 def run(args, timeout=120):
     """Run the installed console script, never a checkout."""
     return subprocess.run([sys.executable, "-m", "senbonzakura", *args],
@@ -146,15 +156,44 @@ def main(argv=None):
         check("doctor says plainly that the install is not usable",
               "cannot do what it claims" in out, out[-300:])
 
-    # ── the corpora DO ship, and work with no network ────────────────────────────
+    # ── the corpora, and whether this wheel is meant to carry them ───────────────
+    #
+    # THE CHECK THAT WAS A LABEL RATHER THAN A RESULT. This asked whether the string
+    # "corpus advbench" appeared in doctor's output, and doctor prints that string on BOTH
+    # outcomes: "✓ corpus advbench  520 prompts" and "✗ corpus advbench  the bundled corpora
+    # are not installed". So it passed on a wheel containing no corpora at all, which is
+    # precisely the presence-versus-works failure this file's own docstring exists to prevent.
+    # Only the neighbouring row-count check ever caught it.
+    #
+    # And a wheel built from a plain CLONE genuinely has no corpora: `corpora.bin` and
+    # `default-track.bin` are generated release artefacts that are deliberately not in git,
+    # because they hold harmful prompts and the corpus is published as a gated dataset. So
+    # there are two legitimate wheels, and the check now says which one it is looking at
+    # rather than failing the honest case or passing the broken one.
     r = run(["doctor"])
-    check("bundled corpora are present in the wheel", "corpus advbench" in (r.stdout + r.stderr))
-    try:
-        from senbonzakura import corpora
-        rows = corpora.load("advbench")
-        check("a bundled corpus loads offline", len(rows) == 520, f"{len(rows)} rows")
-    except Exception as e:
-        check("a bundled corpus loads offline", False, f"{type(e).__name__}: {e}")
+    out = r.stdout + r.stderr
+    carries_corpora = "\u2713  corpus advbench" in out or "\u2713 corpus advbench" in out
+    if carries_corpora:
+        check("bundled corpora are present in the wheel AND load", True, "doctor reports a pass")
+        try:
+            from senbonzakura import corpora
+            rows = corpora.load("advbench")
+            check("a bundled corpus loads offline", len(rows) == 520, f"{len(rows)} rows")
+        except Exception as e:
+            check("a bundled corpus loads offline", False, f"{type(e).__name__}: {e}")
+    else:
+        note("this wheel carries NO bundled corpora, so it is a code-only build. A RELEASE "
+             "wheel must carry them: run tools/build_corpora.py and tools/pack_track.py first.")
+        # The property that has to hold for a code-only wheel is that the absence is legible.
+        try:
+            from senbonzakura import corpora
+            corpora.load("advbench")
+            check("a wheel without corpora refuses rather than pretending", False,
+                  "it returned rows from somewhere")
+        except Exception as e:
+            said = str(e)
+            check("a wheel without corpora refuses in words that name the builder",
+                  "build_corpora.py" in said, said[:200])
 
     # ── the refusals are clean, not tracebacks ───────────────────────────────────
     # True of both wheel kinds: a missing INPUT file must be refused with a sentence rather than

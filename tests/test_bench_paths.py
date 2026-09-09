@@ -102,5 +102,12 @@ def test_a_missing_harness_directory_is_refused_rather_than_guessed_at(monkeypat
 
 
 def test_the_guest_path_is_used_when_the_output_path_says_container():
-    """The guest-or-host decision is made by the output path, and must not touch the filesystem."""
-    assert headtohead._bench_dir_for(headtohead.GUEST_OUT) == Path(headtohead.GUEST_BENCH)
+    r"""The guest-or-host decision is made by the output path, and must not touch the filesystem.
+
+    Text, not a `Path`, and that is the assertion. `Path("/work/bench")` on a Windows host is
+    `\work\bench`, which named a directory inside a Linux container that could never exist, so a
+    guest path stays a string until `_child` joins onto it.
+    """
+    got = headtohead._bench_dir_for(headtohead.GUEST_OUT)
+    assert got == headtohead.GUEST_BENCH
+    assert isinstance(got, str)

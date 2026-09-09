@@ -13,6 +13,7 @@ No test here starts a container, touches a GPU, or runs a model. The subprocess 
 injected, which is the whole reason the operation is worth having in Python.
 """
 import json
+import pathlib
 import types
 
 import pytest
@@ -863,6 +864,36 @@ def test_heretics_staged_slices_are_addressed_inside_the_box(tmp_path, runner, m
                   image="img", **_args(tmp_path))
     argv = runner.calls[0]
     assert argv[argv.index("--good") + 1] == f"{headtohead.GUEST_EVAL}/good.txt"
+
+
+@pytest.mark.parametrize("build", ["argv", "finalise"])
+def test_a_windows_host_still_addresses_the_linux_box_in_posix(monkeypatch, build):
+    r"""Every path the container will see stays POSIX, even when the host builds paths with `\`.
+
+    THIS RUNS EVERYWHERE, WHICH IS THE POINT. The real defect was found by the Windows CI job:
+    `--good` arrived as `\corpus-eval\good.txt`, which no Linux container can open. The helper
+    that decides POSIX-or-native was correct; two callers had already wrapped the guest path in
+    `Path`, and `str(Path("/corpus-eval"))` on Windows is `\corpus-eval`, so the leading `/` the
+    helper reads was gone before it was called. A third instance sat in `_bench_dir_for` and no
+    test noticed, because the only assertion was about `--good`.
+
+    Swapping in `PureWindowsPath` reproduces that on any machine: it is what `Path` IS on Windows
+    for pure path handling, and every guest path here is joined rather than touched on disk. So a
+    developer on Linux fails this test instead of learning about it from a CI job on another
+    platform a day later.
+    """
+    monkeypatch.setattr(headtohead, "Path", pathlib.PureWindowsPath)
+    guest = dict(out=headtohead.GUEST_OUT, slices=headtohead.GUEST_EVAL)
+    if build == "argv":
+        argv = headtohead._heretic_argv(model=headtohead.GUEST_MODEL,
+                                        track=headtohead.GUEST_CORPUS, seed=1, trials=2,
+                                        extra=[], **guest)
+    else:
+        argv = headtohead._heretic_finalise(**guest)
+    offenders = [a for a in argv if "\\" in a]
+    assert not offenders, f"these name a place inside the box and cannot contain `\\`: {offenders}"
+    assert any(a.startswith(f"{headtohead.GUEST_BENCH}/") for a in argv), \
+        "the harness script itself is a guest path too, and it was the instance nothing checked"
 
 
 # ── the pass that finishes an arm the tool cannot finish itself ───────────────────────

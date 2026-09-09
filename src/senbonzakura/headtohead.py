@@ -149,12 +149,16 @@ def _heretic_argv(*, model, track, out, seed, trials, slices, extra):
         raise BenchError(
             "heretic needs the staged evaluation slices; pass --eval-slices. They are what make "
             "both tools read the same prompts, and without them Heretic fetches its own")
-    s = Path(slices)
+    # NOT `Path(slices)`. `_child` decides POSIX or native by whether the path is rooted at `/`,
+    # and `str(Path("/corpus-eval"))` on Windows is `\corpus-eval`, so wrapping it here threw away
+    # the one character `_child` reads and every guest path came out with backslashes in it. The
+    # helper was correct and its input had already been spoiled before it saw it.
+    s = slices
     # A FILE PATH, not a module name. `head-to-head` has hyphens and no `__init__.py`, so it is
     # not an importable package on the host, and the container mounts it somewhere else again.
     # `_heretic_finalise` below already did it this way; these two sibling functions disagreed
     # and only one of them was right.
-    return ["python", "-u", str(_bench_dir_for(out) / "run_heretic.py"),
+    return ["python", "-u", _child(_bench_dir_for(out), "run_heretic.py"),
             "--model", str(model), "--out", str(out),
             "--good", _child(s, "good.txt"), "--bad", _child(s, "bad.txt"),
             "--keyword-prompts", _child(s, "keyword_prompts.txt"),
@@ -190,15 +194,20 @@ def _heretic_finalise(*, out, slices, **_):
         raise BenchError(
             "heretic's selection pass needs the staged evaluation slices; pass --eval-slices. "
             "They are what make both tools' winners chosen on the same prompts")
-    s = Path(slices)
-    return ["python", str(_bench_dir_for(out) / "best_of_n_heretic.py"),
+    s = slices  # see `_heretic_argv`: Path() here would spoil a guest path before `_child` reads it
+    return ["python", _child(_bench_dir_for(out), "best_of_n_heretic.py"),
             "--out", str(out), "--top-n", "6",
             "--final-prompts", _child(s, "final_prompts.txt"),
             "--keyword-prompts", _child(s, "keyword_prompts.txt")]
 
 
-def _bench_dir_for(out) -> Path:
-    """Where the harness directory is, as the pass will see it.
+def _bench_dir_for(out):
+    r"""Where the harness directory is, as the pass will see it.
+
+    Returns a `str` for the guest and a `Path` for the host, on purpose, and callers join onto it
+    with `_child` rather than with `/`. Returning `Path(GUEST_BENCH)` on a Windows host produced
+    `\\bench\\run_heretic.py` for a path inside a Linux container, the same way wrapping the
+    staged slices in `Path` did; a guest path stays text until the moment it is joined.
 
     Inside the container it is mounted at `GUEST_BENCH`; outside it sits beside the package. The
     caller tells us which by the output path it passed, because that is already the guest-or-host
@@ -210,7 +219,7 @@ def _bench_dir_for(out) -> Path:
     problem. Every Heretic arm of a five-seed comparison died that way in one run.
     """
     if str(out) == GUEST_OUT:
-        return Path(GUEST_BENCH)
+        return GUEST_BENCH
     here = Path(__file__).resolve()
     roots = (here.parent.parent.parent, Path.cwd(), Path.home())
     for root in roots:

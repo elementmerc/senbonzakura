@@ -103,9 +103,28 @@ def test_the_study_path_matches_heretics_own_naming_rule():
         "/work/out/checkpoints/Qwen--Qwen3-1--7B.jsonl"
 
 
-def test_the_study_path_is_under_the_writable_output(tmp_path):
-    """The container's root filesystem is read-only; a study written anywhere else is lost."""
-    assert rh.study_path("/model", str(tmp_path)).startswith(str(tmp_path))
+def test_the_study_path_is_under_the_writable_output():
+    """The container's root filesystem is read-only; a study written anywhere else is lost.
+
+    The workdir is a literal rather than `tmp_path` because the only workdir this function is ever
+    given is the one inside the box, which is Linux whatever the host is. Handed a Windows
+    `tmp_path` the test compared a POSIX result against a backslash path and failed, which said
+    nothing about the property it names: the function deliberately returns POSIX separators, and
+    `test_the_harness_can_be_driven_from_a_windows_host` below is where that is asserted.
+    """
+    assert rh.study_path("/model", "/work/out").startswith("/work/out/")
+
+
+def test_the_harness_can_be_driven_from_a_windows_host():
+    r"""A Windows host addressing a Linux container must not emit backslashes into the box.
+
+    `os.path.join` here produced `C:\work\out\checkpoints\...` for a path the container would
+    never find, and it did so silently: the arm ran, wrote its study somewhere else, and the
+    best-of-N pass read an empty one.
+    """
+    got = rh.study_path("Qwen/Qwen3-1.7B", "C:\\work\\out")
+    assert "\\" not in got
+    assert got == "C:/work/out/checkpoints/Qwen--Qwen3-1--7B.jsonl"
 
 
 def test_a_mounted_model_path_still_yields_a_usable_study_name():

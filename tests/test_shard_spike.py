@@ -207,9 +207,19 @@ def test_a_small_run_completes_and_records_its_numbers(tmp_path):
     out = tmp_path / "r.json"
     rc = spike.main(["--work", str(tmp_path / "w"), "--layers", "3", "--hidden", "64",
                      "--ffn", "128", "--json", str(out)])
-    assert rc == 0
+    # 0 and 2 both mean the run completed. 2 is the spike reporting that streaming did not pay,
+    # which is a verdict about the IDEA, and at this size it is not one a test can hold the code
+    # to: the checkpoint is 0.5 MB and a layer is 0.1 MB, so the "did it stay within three layers"
+    # question is asked of a quantity smaller than the noise in a process's peak RSS. It answered
+    # yes on Linux and no on macOS for the same correct code, which is a flaky test wearing a
+    # platform as a disguise. What must never happen is rc 1: the streamed edit disagreeing with
+    # the resident one is a correctness failure at any size, and this still fails on it.
+    assert rc in (0, 2), f"the spike did not complete (rc {rc})"
     recorded = json.loads(out.read_text(encoding="utf-8"))
     assert recorded["exact"] is True
+    # The exit code has to follow the recorded verdict rather than being reached separately: a
+    # judgement that nothing downstream acts on is the failure this project keeps finding.
+    assert recorded["cheap"] is (rc == 0)
     # Not asserted to be zero. `exact` means "within what two correct float32 runs may differ by",
     # and the difference is recorded beside the tolerance it was judged against so a reader can
     # see what the word was measured against rather than trusting it.

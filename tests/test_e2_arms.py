@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,20 @@ SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "e2_arms.sh"
 _HAS_TIMEOUT = any(shutil.which(t) for t in ("timeout", "gtimeout"))
 
 pytestmark = [
+    # The script is bash and is executed directly, which Windows cannot do: every test here died
+    # with "[WinError 193] %1 is not a valid Win32 application", fifteen of them.
+    #
+    # The two guards below did not catch it, and the `timeout` one could not: Windows ships its
+    # own `timeout.exe`, which waits for a keypress and is not GNU coreutils at all, so
+    # `shutil.which("timeout")` answers yes to a question about a program that is not there. A
+    # guard that reads a name and infers a program is the shape worth remembering.
+    #
+    # Skipped rather than made to work through Git Bash. This is an experiment driver for the
+    # machine that owns the GPU, and every one of these tests is about what it tells the CLI; none
+    # is about Windows.
+    pytest.mark.skipif(
+        sys.platform.startswith("win"),
+        reason="tools/e2_arms.sh is a POSIX shell script and Windows cannot execute it"),
     pytest.mark.skipif(
         shutil.which("senbonzakura") is None,
         reason="the script drives the installed console script, which this environment lacks"),

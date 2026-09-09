@@ -6,6 +6,8 @@ These are the pure cores of the fixes from the first large-model H100 run, where
 forced re-running a 34-minute search and a stale torch failed only after a 31 GB download. Kept in
 crashsafe.py (no heavy imports) precisely so they can be tested without torch/optuna present.
 """
+import os
+
 from senbonzakura import crashsafe
 from senbonzakura.crashsafe import (
     MIN_TORCH,
@@ -48,7 +50,14 @@ class TestTorchVersionOk:
 class TestStudyDbPath:
     def test_persists_by_default(self):
         # The whole point: with nothing set, the study persists so a crash resumes, not re-searches.
-        assert study_db_path(None, False, "track") == "track/senbon-study.db"
+        #
+        # Built with os.path.join rather than compared against a literal "track/senbon-study.db".
+        # This is a path on the local filesystem, so the separator is the host's, and the literal
+        # was asserting the platform the test was written on: it failed on Windows against a
+        # perfectly correct `track\senbon-study.db`. What the test is for is that the name is
+        # derived from the track directory and is the one constant, and that survives.
+        assert study_db_path(None, False, "track") == os.path.join("track",
+                                                                   crashsafe.STUDY_DB_NAME)
 
     def test_explicit_study_db_wins(self):
         assert study_db_path("/tmp/my.db", False, "track") == "/tmp/my.db"

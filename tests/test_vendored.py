@@ -21,6 +21,19 @@ from senbonzakura.vendored import VendorError
 needs_posix = pytest.mark.skipif(sys.platform.startswith("win"),
                                  reason="POSIX execute bit / advisory locking; Windows has neither")
 
+#: The key and filename the HOST would actually use.
+#:
+#: Two tests below asked whether a vendored copy is found, and asked it with a hardcoded
+#: `linux-x86_64` key and a file called `tool`. Run on Windows that is a question with a correct
+#: answer of no: there is no execute bit there, so `_executable` reads the extension instead, and
+#: a file with none is not something Windows runs. The tests were asserting the platform they were
+#: written on rather than the behaviour they name. Asking about the host's own convention keeps
+#: them about resolution; the cross-platform naming rule is covered on its own by
+#: `test_a_windows_key_looks_for_an_exe` and by the parametrised platform_key cases above.
+_ON_WINDOWS = sys.platform.startswith("win")
+HOST_KEY = "windows-x86_64" if _ON_WINDOWS else "linux-x86_64"
+HOST_BINARY = "tool.exe" if _ON_WINDOWS else "tool"
+
 
 # ── naming the platform ────────────────────────────────────────────────────────────
 @pytest.mark.parametrize(("machine", "plat", "want"), [
@@ -58,7 +71,7 @@ def test_this_machine_resolves_to_something():
 
 
 # ── finding a binary ───────────────────────────────────────────────────────────────
-def _fake_vendored(monkeypatch, tmp_path, key="linux-x86_64", name="tool"):
+def _fake_vendored(monkeypatch, tmp_path, key=HOST_KEY, name=HOST_BINARY):
     d = tmp_path / key
     d.mkdir(parents=True)
     exe = d / name
@@ -70,7 +83,7 @@ def _fake_vendored(monkeypatch, tmp_path, key="linux-x86_64", name="tool"):
 
 def test_a_vendored_binary_is_found_and_labelled(monkeypatch, tmp_path):
     exe = _fake_vendored(monkeypatch, tmp_path)
-    got, source = vendored.find_binary("tool", key="linux-x86_64")
+    got, source = vendored.find_binary("tool", key=HOST_KEY)
     assert got == exe
     assert source == "vendored"
 
@@ -79,7 +92,7 @@ def test_the_vendored_copy_beats_one_on_path(monkeypatch, tmp_path):
     """A comparison must be able to say which build produced it, so PATH is never preferred."""
     exe = _fake_vendored(monkeypatch, tmp_path)
     monkeypatch.setattr(vendored.shutil, "which", lambda _n: "/usr/bin/tool")
-    got, source = vendored.find_binary("tool", key="linux-x86_64")
+    got, source = vendored.find_binary("tool", key=HOST_KEY)
     assert (got, source) == (exe, "vendored")
 
 

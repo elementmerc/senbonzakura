@@ -130,21 +130,37 @@ What comes back is worth reading closely, because it demonstrates the instrument
 good result would:
 
 ```
-MARGIN_DONE  auc=1.0000 ci=[1.0000,1.0000]
-MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=1.0000
-MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=1.0000
+MARGIN_DONE  auc=0.9826 ci=[0.9375,1.0000]
+MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=0.9826
+MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=0.9826
               characters_auc=0.0000  mean_word_length_auc=1.0000
               punctuation_density_auc=1.0000  uppercase_ratio_auc=0.5000
               word_count_auc=0.0000
 MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0611  top=['Request']
+MARGIN_READOUT_SUSPECT  arm(s)=harmful,harmless: ... THE AUC ABOVE IS NOT A
+              MEASUREMENT OF HARM DISCRIMINATION on this run.
 ```
 
-**A perfect score you should not believe, and three separate lines saying so.**
+**A near-perfect score you should not believe, and four separate lines saying so.**
 
 The null panel is the loudest. A ruler that reads nothing but the **average length of the words**
-scores 1.0000 on this data, which is exactly what the compass scored. So does one that reads only
+scores 1.0000 on this data, which is *better than the compass managed*. So does one that reads only
 punctuation density. Whatever the compass is separating here, a reader who understood nothing
-could separate it just as well.
+could separate it just as well, and in fact separated it slightly better.
+
+::: warning These figures read 1.0000 until 2026-09-08, and the page did not notice
+The block above used to say `auc=1.0000` throughout, and the paragraph under it claimed the null
+had matched the compass rather than beaten it. The padding-mask fix in `5fcd4c0` changed the
+read-out: `margins_past_preamble` built its own attention mask as `ones_like(ids)` over a
+LEFT-padded encoding, so every prompt shorter than the longest in its batch was scored on a context
+beginning with a run of end-of-sequence tokens marked as real content. Correcting that moved this
+figure to 0.9826.
+
+Nothing pinned these numbers, so the page went on printing the old ones. This is a documentation
+example rather than a published result, and the lesson it teaches is unchanged and slightly
+sharper now, but a reproduction that does not reproduce teaches a reader to distrust the next one.
+Measured twice, byte-identical, on 2026-09-09.
+:::
 
 Note what a single null would have told you. `length_only_auc`, counting tokens, gives 0.8333, and
 0.83 against 1.00 reads like the compass comfortably beating the baseline. It took a panel to show

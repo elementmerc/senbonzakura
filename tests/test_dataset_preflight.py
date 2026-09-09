@@ -23,6 +23,7 @@ case and needs no network.
 import types
 
 import pytest
+from artefacts import needs_track
 
 from senbonzakura import cli
 
@@ -68,6 +69,7 @@ def test_the_bundled_track_is_offered_when_the_track_is_the_problem():
         cli._preflight_datasets(_args(track="definitely-not-a-track"))
 
 
+@needs_track
 def test_the_bundled_track_hint_is_absent_when_the_track_was_fine():
     """Advice that does not apply is noise, and noise in an error is how errors stop being read.
 
@@ -81,6 +83,7 @@ def test_the_bundled_track_hint_is_absent_when_the_track_was_fine():
     assert "--track default" not in msg
 
 
+@needs_track
 def test_the_bundled_track_passes():
     """The happy path, and it is load-bearing.
 
@@ -90,6 +93,7 @@ def test_the_bundled_track_passes():
     cli._preflight_datasets(_args(track="default"))
 
 
+@needs_track
 def test_an_optional_dataset_is_only_checked_when_it_was_given():
     """Empty means "not asked for", and must not be reported as a missing dataset."""
     cli._preflight_datasets(_args(track="default", hedge_ds="", clean_ds="",

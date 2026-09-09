@@ -17,30 +17,10 @@ import json
 from pathlib import Path
 
 import pytest
+from artefacts import needs_converter
 
 from senbonzakura import convert
 from senbonzakura.convert import ConvertError
-
-
-def _have_converter():
-    """Is the vendored `convert_hf_to_gguf.py` present in this checkout?"""
-    from senbonzakura.vendored import VendorError, find_script
-    try:
-        find_script("convert_hf_to_gguf.py")
-    except VendorError:
-        return False
-    return True
-
-
-#: The converter is fetched at build time rather than committed, so a fresh clone does not have
-#: it. Fifteen of the tests below then FAILED, where the quantise suite next door SKIPS for the
-#: same reason: `git clone && pytest` looked like broken code and was a missing artefact. Found by
-#: deploying a `git archive` of this tree to another machine, which is a fresh clone by another
-#: name.
-needs_converter = pytest.mark.skipif(
-    not _have_converter(),
-    reason="no vendored convert_hf_to_gguf.py; run tools/vendor_llama.py")
-
 
 
 def _checkpoint(d, *, arch="Qwen3ForCausalLM", weights=True, extra=None):

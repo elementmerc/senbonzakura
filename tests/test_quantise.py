@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from artefacts import needs_binary
 
 from senbonzakura import gguf_io, quantise, vendored
 from senbonzakura.vendored import VendorError
@@ -63,17 +64,8 @@ def _tiny_gguf(path, *, n_layer=2, n_embd=256, n_ff=512, n_head=4, n_vocab=512, 
     return path
 
 
-def _have_binary():
-    try:
-        vendored.find_binary("llama-quantize", search_path=True)
-    except VendorError:
-        return False
-    return True
 
 
-needs_binary = pytest.mark.skipif(
-    not _have_binary(),
-    reason="no vendored or system llama-quantize; run tools/vendor_llama.py")
 
 
 # ── the output name, which is what makes the output checkable ───────────────────────
@@ -329,6 +321,7 @@ def test_a_missing_imatrix_is_refused_before_the_job(tmp_path, monkeypatch):
 # The confound that motivated this landed next door in the same week: an abliterated arm quantised
 # `i1-Q4_K_M` compared against a stock arm quantised plain `Q4_K_M`, two variables in a
 # one-variable comparison, caught only because somebody read the filenames.
+@needs_binary
 def test_build_info_reads_what_the_binary_says_about_itself():
     exe, _src = vendored.find_binary("llama-quantize", search_path=True)
     info = quantise.build_info(exe)
@@ -347,6 +340,7 @@ def test_build_info_survives_a_binary_that_does_not_exist(tmp_path):
     assert quantise.build_info(tmp_path / "nope") is None
 
 
+@needs_binary
 def test_identity_keeps_the_claim_and_the_report_as_separate_fields():
     """Recording only one would make the interesting case unrepresentable."""
     exe, src = vendored.find_binary("llama-quantize", search_path=True)

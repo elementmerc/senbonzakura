@@ -17,6 +17,7 @@ import pathlib
 import sys
 
 import pytest
+from artefacts import needs_converter, needs_corpora
 
 from senbonzakura import doctor
 
@@ -57,6 +58,7 @@ def test_a_passing_check_does_not_print_a_fix():
 
 
 # ── the converter check, and the defect doctor itself had ────────────────────────
+@needs_converter
 def test_a_broken_module_does_not_leave_an_architecture_marked_supported(monkeypatch):
     """THE regression. `names` is the converter's static registry; while any module is failing to
     import, membership of that registry means "mentioned", not "works".
@@ -76,6 +78,7 @@ def test_a_broken_module_does_not_leave_an_architecture_marked_supported(monkeyp
             f"static-registry lie this command exists to catch")
 
 
+@needs_converter
 def test_every_target_architecture_passes_when_nothing_is_broken(monkeypatch):
     import senbonzakura.convert as c
     monkeypatch.setattr(c, "supported_architectures",
@@ -86,6 +89,7 @@ def test_every_target_architecture_passes_when_nothing_is_broken(monkeypatch):
     assert _by_name(checks, "architecture modules")[0].status == "pass"
 
 
+@needs_converter
 def test_an_architecture_absent_at_this_pin_is_an_advisory_not_a_failure(monkeypatch):
     """A pin that predates an architecture is a scheduling fact, not a broken install."""
     import senbonzakura.convert as c
@@ -95,6 +99,7 @@ def test_an_architecture_absent_at_this_pin_is_an_advisory_not_a_failure(monkeyp
     assert lfm2 and lfm2[0].status == "warn"
 
 
+@needs_converter
 def test_a_converter_reporting_nothing_at_all_is_a_failure(monkeypatch):
     import senbonzakura.convert as c
     monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: (set(), []))
@@ -154,6 +159,7 @@ def test_a_corpus_of_the_wrong_size_is_a_failure(monkeypatch):
     assert "expected" in bad[0].detail
 
 
+@needs_corpora
 def test_the_real_install_has_all_its_corpora():
     """Not a mock: the shipped pack has to actually decode at its declared sizes."""
     from senbonzakura import corpora

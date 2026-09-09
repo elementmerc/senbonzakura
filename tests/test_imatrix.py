@@ -16,12 +16,14 @@ import json
 import pathlib
 
 import pytest
+from artefacts import needs_corpora
 
 from senbonzakura import imatrix
 from senbonzakura.imatrix import ImatrixError
 
 
 # ── the calibration set, which is the part that carries meaning ──────────────────
+@needs_corpora
 def test_a_bundled_corpus_is_resolved_and_its_provenance_recorded():
     text, prov = imatrix.calibration_text(corpus="advbench")
     assert text.strip()
@@ -32,6 +34,7 @@ def test_a_bundled_corpus_is_resolved_and_its_provenance_recorded():
     assert prov["upstream"] and prov["commit"]
 
 
+@needs_corpora
 def test_the_harmful_arm_is_recorded_so_it_can_be_warned_about():
     """A matrix calibrated on harmful prompts preserves the machinery those prompts exercise,
     which on a refusal-abliteration tool is not a neutral act. The tool cannot decide that for
@@ -182,6 +185,7 @@ def _ok(monkeypatch, ran):
     monkeypatch.setattr(imatrix.subprocess, "run", ran)
 
 
+@needs_corpora
 def test_a_successful_run_writes_the_sidecar_beside_the_matrix(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     out = tmp_path / "im.gguf"
@@ -195,6 +199,7 @@ def test_a_successful_run_writes_the_sidecar_beside_the_matrix(tmp_path, monkeyp
     assert d["architecture"] == "lfm2"
 
 
+@needs_corpora
 def test_the_harmful_corpus_warning_is_printed_every_time(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     ran = _Ran(rc=0, write=b"matrix")
@@ -205,6 +210,7 @@ def test_the_harmful_corpus_warning_is_printed_every_time(tmp_path, monkeypatch)
     assert any("not a neutral choice" in m for m in msgs), msgs
 
 
+@needs_corpora
 def test_a_benign_corpus_does_not_print_the_harmful_warning(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     ran = _Ran(rc=0, write=b"matrix")
@@ -215,6 +221,7 @@ def test_a_benign_corpus_does_not_print_the_harmful_warning(tmp_path, monkeypatc
     assert not any("not a neutral choice" in m for m in msgs)
 
 
+@needs_corpora
 def test_a_failed_run_leaves_no_matrix_behind(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     out = tmp_path / "im.gguf"
@@ -224,6 +231,7 @@ def test_a_failed_run_leaves_no_matrix_behind(tmp_path, monkeypatch):
     assert not out.exists()
 
 
+@needs_corpora
 def test_the_calibration_temp_file_is_cleaned_up(tmp_path, monkeypatch):
     """It writes the corpus to a temp file for the binary. Leaving harmful prompts in /tmp is not
     something to do by accident.
@@ -238,6 +246,7 @@ def test_the_calibration_temp_file_is_cleaned_up(tmp_path, monkeypatch):
     assert not Path(cal).exists(), "the calibration text was left on disk"
 
 
+@needs_corpora
 def test_the_chunk_count_and_gpu_layers_reach_the_binary(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     ran = _Ran(rc=0, write=b"matrix")
@@ -269,6 +278,7 @@ def test_no_disk_space_is_caught_before_the_job(tmp_path, monkeypatch):
         imatrix.preflight(src, tmp_path / "o.gguf", force=False)
 
 
+@needs_corpora
 def test_a_missing_binary_is_a_plain_failure(tmp_path, monkeypatch):
     src = _gguf(tmp_path / "m.gguf")
     monkeypatch.setattr(imatrix.gguf_io, "verify",

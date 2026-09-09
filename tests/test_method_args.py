@@ -30,6 +30,7 @@ from __future__ import annotations
 import types
 
 import pytest
+from artefacts import needs_track
 
 from senbonzakura import cli, methods
 
@@ -116,6 +117,7 @@ def test_nothing_is_announced_when_the_pin_changes_nothing():
     assert not said
 
 
+@needs_track
 def test_the_conflict_is_refused_before_the_model_is_constructed(monkeypatch):
     """The order is the point: this fault is visible from the command line alone, and finding it
     after a download costs a rented card an hour for nothing.

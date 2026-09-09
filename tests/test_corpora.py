@@ -11,6 +11,7 @@ import io
 import json
 
 import pytest
+from artefacts import needs_corpora
 
 from senbonzakura import corpora, dataset
 from senbonzakura.corpora import CorpusError
@@ -158,31 +159,23 @@ def test_the_notices_are_generated_from_the_same_table_the_loader_reads():
 
 
 # ── loading from the pack that ships ─────────────────────────────────────────────
-def _packed():
-    try:
-        corpora.load("advbench")
-    except CorpusError:
-        return False
-    return True
 
 
-needs_pack = pytest.mark.skipif(
-    not _packed(), reason="corpora are not packed; run tools/build_corpora.py")
 
 
-@needs_pack
+@needs_corpora
 @pytest.mark.parametrize("key", sorted(corpora.CORPORA))
 def test_every_bundled_corpus_loads_at_its_declared_size(key):
     assert len(corpora.load(key)) == corpora.CORPORA[key].rows
 
 
-@needs_pack
+@needs_corpora
 def test_the_prompts_are_real_text():
     rows = corpora.load("advbench")
     assert all(isinstance(r, str) and r.strip() for r in rows)
 
 
-@needs_pack
+@needs_corpora
 def test_xstests_two_halves_do_not_overlap():
     """They are minimal contrasts of each other, so they are close. They must not be the same."""
     safe = set(corpora.load("xstest-safe"))
@@ -190,7 +183,7 @@ def test_xstests_two_halves_do_not_overlap():
     assert not (safe & unsafe)
 
 
-@needs_pack
+@needs_corpora
 def test_harmbench_and_its_copyright_half_are_disjoint():
     assert not (set(corpora.load("harmbench")) & set(corpora.load("harmbench-copyright")))
 
@@ -225,17 +218,17 @@ def test_a_corpus_absent_from_the_pack_is_named(tmp_path):
 
 
 # ── reaching them the way a user does ────────────────────────────────────────────
-@needs_pack
+@needs_corpora
 def test_a_bundled_corpus_resolves_by_name():
     assert len(dataset.resolve("advbench", what="prompt set")) == 520
 
 
-@needs_pack
+@needs_corpora
 def test_a_limit_applies_through_the_normal_path():
     assert len(dataset.resolve("advbench", limit=64, what="prompt set")) == 64
 
 
-@needs_pack
+@needs_corpora
 def test_a_local_directory_cannot_shadow_a_bundled_name(tmp_path, monkeypatch):
     """The same guard `default` has: a stray directory must not silently become the corpus a
     published number came from.

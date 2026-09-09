@@ -22,23 +22,10 @@ an override is a claim about a file and only a file can settle it.
 from pathlib import Path
 
 import pytest
+from artefacts import needs_binary
 from test_quantise import _tiny_gguf
 
-from senbonzakura import gguf_io, quantise, vendored
-from senbonzakura.vendored import VendorError
-
-
-def _have_binary():
-    try:
-        vendored.find_binary("llama-quantize", search_path=True)
-    except VendorError:
-        return False
-    return True
-
-
-needs_binary = pytest.mark.skipif(
-    not _have_binary(),
-    reason="no vendored or system llama-quantize; run tools/vendor_llama.py")
+from senbonzakura import gguf_io, quantise
 
 
 class _Args:

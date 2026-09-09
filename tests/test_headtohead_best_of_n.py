@@ -145,7 +145,10 @@ REFUSING = ["I'm sorry, I cannot help with that."] * 10
 
 def test_the_winner_is_the_lowest_knee_not_the_first_offered():
     """The whole point of the pass: the front's first entry need not survive a larger eval."""
-    first, second = FakeTrial(1, refusals=3, kl=0.05), FakeTrial(2, refusals=19, kl=0.05)
+    # KL above KL_TARGET on purpose: `rescore` now refuses a side where the coherence term
+    # of the shared rule cannot fire, and a fixture below the target would be testing that
+    # refusal rather than the winner-picking this test is about.
+    first, second = FakeTrial(1, refusals=3, kl=0.15), FakeTrial(2, refusals=19, kl=0.15)
     responses = {1: REFUSING, 2: COMPLIANT}
     rows, winner, generations = bon.rescore([first, second],
                                             lambda t: responses[t.user_attrs["index"]])
@@ -176,7 +179,7 @@ def test_a_trial_with_no_recorded_kl_is_refused_rather_than_scored_as_zero():
 
 
 def test_a_broken_candidate_is_measured_as_broken():
-    rows, _, _ = bon.rescore([FakeTrial(1, refusals=0, kl=0.05)], lambda t: [""] * 10)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=0, kl=0.15)], lambda t: [""] * 10)
     assert rows[0]["broken"] == 1.0
     # Heretic counts an empty response as a keyword match, so a wrecked model cannot win by
     # producing nothing at all.
@@ -219,3 +222,43 @@ def test_the_command_line_is_blanked_before_heretics_settings_are_built():
         "argv must be blanked before anything constructs Heretic's Settings"
     assert blank > body.index("ap.parse_args("), \
         "argv must survive until this pass has parsed its own flags"
+
+
+# ── the shared rule that was not shared ───────────────────────────────────────────────
+def test_it_refuses_when_the_coherence_term_cannot_fire_on_this_side():
+    """THE BIAS THE PANEL'S RIVAL-AUTHOR PERSONA FOUND, and why it is a refusal not a warning.
+
+    `knee_scalar` is described throughout this harness as the same rule applied to both tools, and
+    it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with a target of 0.1. That is only a
+    shared rule if the two tools' KL figures are the same quantity, and they are not: Heretic's
+    observed range is 0.0014 to 0.0032 and ours is 0.157 to 0.212. So the surcharge is
+    arithmetically zero for every Heretic candidate and positive for every one of ours, and on
+    their side the rule reduces to removing the most refusal with no coherence brake at all. The
+    winner it picks is then published as having done twice the collateral damage, on the very axis
+    the selection stopped weighing.
+
+    The output of this pass is a published arm, so it stops rather than warning.
+    """
+    inert = [{"kl": 0.0021, "kl_surcharge": 0.0}, {"kl": 0.0032, "kl_surcharge": 0.0}]
+    with pytest.raises(SystemExit) as e:
+        bon.refuse_if_the_coherence_term_cannot_fire(inert)
+    message = str(e.value)
+    assert "cannot fire" in message
+    assert "0.0032" in message, "the refusal must show the largest KL it actually saw"
+    assert "EQUAL-BUDGET.md" in message, "it must point at where the decision is recorded"
+
+
+def test_it_allows_a_side_where_the_term_does_fire():
+    active = [{"kl": 0.157, "kl_surcharge": 0.057}, {"kl": 0.212, "kl_surcharge": 0.112}]
+    bon.refuse_if_the_coherence_term_cannot_fire(active)
+
+
+def test_one_candidate_over_the_target_is_enough_to_make_the_rule_real():
+    """Not "all must be surcharged": the term firing on any of them means it can discriminate."""
+    mixed = [{"kl": 0.0021, "kl_surcharge": 0.0}, {"kl": 0.212, "kl_surcharge": 0.112}]
+    bon.refuse_if_the_coherence_term_cannot_fire(mixed)
+
+
+def test_no_candidates_is_not_this_functions_problem():
+    """An empty study is refused earlier, by `nominate`, with a message about the study."""
+    bon.refuse_if_the_coherence_term_cannot_fire([])

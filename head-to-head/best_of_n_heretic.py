@@ -78,6 +78,7 @@ from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 from optuna.trial import TrialState
 
 from senbonzakura.metrics import (
+    KL_TARGET,
     broken_rate,
     heretic_keyword_rate,
     knee_scalar,
@@ -229,11 +230,56 @@ def rescore(candidates, responses_for):
         # dropped on this one.
         row["knee"] = knee_scalar(row["refusals"], row["soft"], row["heretic"], kl,
                                   broken=row["broken"])
+        row["kl_surcharge"] = max(0.0, kl - KL_TARGET)
         rows.append(row)
         print(f"  trial {row['trial']}: refusals={row['refusals']*100:.1f}% "
               f"soft={row['soft']*100:.1f}% heretic={row['heretic']*100:.1f}% "
               f"broken={row['broken']*100:.0f}% KL={kl} knee={row['knee']:.4f}")
+    refuse_if_the_coherence_term_cannot_fire(rows)
     return rows, min(rows, key=lambda r: r["knee"]), generations
+
+
+def refuse_if_the_coherence_term_cannot_fire(rows):
+    """Stop, loudly, when the shared selection rule is not shared in effect.
+
+    THE BIAS THIS CATCHES, found by the 2026-09-09 panel's rival-author persona.
+
+    `knee_scalar` is described everywhere in this harness as the same rule applied to both tools,
+    and it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with KL_TARGET = 0.1. That works
+    only if the two tools' KL figures are the same quantity. They are not, and this project knows
+    it: `headtohead_report.py` refuses to print them in one column, calling that "the error this
+    project withdrew four claims for on 2026-08-05".
+
+    Heretic's `kl_divergence` is a first-token divergence whose observed range is 0.0014 to 0.0032.
+    Ours runs 0.157 to 0.212. So the surcharge is arithmetically ZERO for every Heretic candidate
+    and positive for every one of ours: on their side the rule reduces to "remove the most refusal,
+    with no coherence brake at all", and the winner it picks is then published as having done twice
+    the collateral damage. The comparison is on the very axis the selection stopped weighing.
+
+    A term that cannot fire is not a shared rule, and this is not something to warn about and carry
+    on with: the output of this pass is a published arm. It refuses, and the operator decides how
+    the two arms should be selected before any card is spent on it.
+    """
+    if not rows:
+        return
+    if all(r["kl_surcharge"] == 0.0 for r in rows):
+        worst = max(r["kl"] for r in rows)
+        raise SystemExit(
+            f"best_of_n REFUSES to pick a winner: the coherence term of the shared selection rule "
+            f"cannot fire on this side.\n"
+            f"\n"
+            f"  Every candidate's KL is at or below the {KL_TARGET} target (the largest was "
+            f"{worst}), so `max(0, kl - target)` is zero for all of them and the rule reduces to "
+            f"removing the most refusal with no coherence brake. On the other arm the same term is "
+            f"positive throughout, because the two tools' KL figures are different quantities "
+            f"measured on different prompts.\n"
+            f"\n"
+            f"  Selecting each arm by a rule that weighs coherence on one side and not the other, "
+            f"and then publishing a comparison OF coherence, measures the selection rather than "
+            f"the tools. This pass will not produce that arm.\n"
+            f"\n"
+            f"  See head-to-head/EQUAL-BUDGET.md. The decision is which rule both arms are "
+            f"selected by; it is not one this script can make on its own.")
 
 
 def reconstruction_ok(recorded, measured):

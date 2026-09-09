@@ -151,9 +151,10 @@ def corpus_section(abl):
     return lines or [NOT_MEASURED]
 
 
-def build(abl=None, cap=None, command=None):
+def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
     """The card, as markdown lines."""
-    out = ["# Abliteration report", ""]
+    out = front_matter(abl, licence or "other", licence_link)
+    out += ["# Abliteration report", ""]
     if abl and abl.get("model"):
         out += [f"Base model: `{abl['model']}`", ""]
     out += [
@@ -167,7 +168,8 @@ def build(abl=None, cap=None, command=None):
     out += ["## Refusal and coherence", "", *refusal_section(abl), ""]
     out += ["## Capability, which is what the edit cost", "", *capability_section(cap), ""]
     out += ["## Corpus", "", *corpus_section(abl), ""]
-    out += ["## Licence, and what this model is", "", *licence_section(), ""]
+    out += ["## Licence, and what this model is", "",
+            *licence_section(abl, licence, licence_link), ""]
     out += ["## Reproducing it", ""]
     if command:
         out += ["```sh", command, "```", ""]
@@ -180,7 +182,28 @@ def build(abl=None, cap=None, command=None):
     return out
 
 
-def licence_section():
+def front_matter(abl, licence, licence_link):
+    """The YAML block HuggingFace reads to render licence and lineage metadata.
+
+    WITHOUT THIS THE PAGE HAS NO LICENCE AT ALL, whatever the prose below says. HuggingFace renders
+    the licence badge, the base-model lineage and the model's tags from this block and from nothing
+    else, so a card that discusses the licence in three careful paragraphs and omits the block
+    publishes weights that the Hub itself reports as unlicensed.
+
+    `base_model` is the lineage. It is not decoration: it is how a reader of the derived weights
+    finds the terms they are actually bound by, and it is the one fact this tool always knows,
+    because the run recorded it.
+    """
+    out = ["---", f"license: {licence}"]
+    if licence_link:
+        out.append(f"license_link: {licence_link}")
+    if abl and abl.get("model"):
+        out += ["base_model:", f"  - {abl['model']}"]
+    out += ["tags:", "  - abliterated", "  - senbonzakura", "---", ""]
+    return out
+
+
+def licence_section(abl=None, licence=None, licence_link=None):
     """What travels with the weights, said on the page that travels with the weights.
 
     THE GAP THIS CLOSES. The repository says all of this carefully: that a base model's licence
@@ -189,14 +212,43 @@ def licence_section():
     of it reached the HuggingFace page of a checkpoint somebody abliterated with this tool,
     which is the only artefact a downstream user of those weights will ever see.
 
-    Fixed rather than templated, because the two statements are the same for every run and a
-    field somebody can leave blank is a field that gets left blank.
+    WHAT THIS USED TO OMIT, and why it mattered. The paragraph below asserted that the base
+    model's licence applies and then never said WHICH licence, never linked it, and reproduced not
+    one term of it. A reader of the published weights was told they were bound by something
+    unnamed. Two reviewers reached that independently, and the fix is not more prose: it is that
+    the licence is now DATA the publisher supplies, refused rather than guessed, the same way
+    every bundled corpus in `corpora.py` carries its licence and its attribution as fields.
+
+    The tool does not infer it. A model's terms are not derivable from its weights, a wrong guess
+    is worse than a blank, and this project does not publish figures it did not measure.
     """
+    unresolved = [] if licence else [
+        ("> **LICENCE UNRESOLVED.** This card was generated with `--licence-unknown`, so the "
+         "licence governing these weights is not stated here and the metadata above says "
+         "`other`. Publishing weights beside this card publishes them effectively unlicensed. "
+         "Resolve it and regenerate with `--base-licence` before you do."),
+        "",
+    ]
+    named = (f"**This model is under `{licence}`, its base model's licence, unchanged.**"
+             if licence else
+             "**This model is under its base model's licence, unchanged, and this card does not "
+             "say which licence that is.**")
+    link = f" The terms are at {licence_link}." if licence_link else ""
+    base = f" The base model is `{abl['model']}`." if abl and abl.get("model") else ""
     return [
-        ("**This model is under its base model's licence, unchanged.** Abliteration is an edit "
+        *unresolved,
+        (named + base + link + " Abliteration is an edit "
          "to existing weights. It does not create a new work with a new licence, and nothing "
          "this tool does can loosen the terms the base model came with. Whatever they permit "
          "and forbid, they still permit and forbid here. Check them before redistributing this."),
+        "",
+        ("**These weights have been modified from the base model.** Several licences require a "
+         "derived work to say so prominently, Apache-2.0 among them (section 4(b), which asks "
+         "that modified files carry notices stating that you changed them). Some go further: "
+         "families exist whose terms require a naming prefix, an attribution string, or that the "
+         "original terms and use policy are passed on to whoever you give the weights to. This "
+         "tool does not know which of those apply to your base model and does not guess. Read the "
+         "licence named above and satisfy it before you publish."),
         "",
         ("**Its refusal behaviour has been removed on purpose.** That is what the numbers above "
          "measure. It will answer requests the original declined, including harmful ones, and "
@@ -219,6 +271,18 @@ def build_parser():
     ap.add_argument("--capability", default="",
                     help="a capability run's output, ideally one with --compare-to so the card "
                          "can state what the edit cost rather than only an absolute score")
+    ap.add_argument("--base-licence", dest="base_licence", default="",
+                    help="the base model's licence, as an SPDX identifier where one exists "
+                         "(apache-2.0, mit, gemma, llama3.2, other). REQUIRED, because the card "
+                         "states that this licence governs the weights and a card that says so "
+                         "without naming it tells a reader they are bound by something unnamed. "
+                         "It is not inferred: a model's terms are not derivable from its weights.")
+    ap.add_argument("--base-licence-link", dest="base_licence_link", default="",
+                    help="URL of the base model's licence text, rendered on the Hub beside it")
+    ap.add_argument("--licence-unknown", dest="licence_unknown", action="store_true",
+                    help="generate the card without a licence, marking it UNRESOLVED on the page "
+                         "and in the metadata. For a card you are reading yourself; publishing "
+                         "weights with it is publishing them unlicensed")
     ap.add_argument("--command", default="", help="the command that produced the model")
     ap.add_argument("--out", default="", help="write here instead of standard output")
     return ap
@@ -231,7 +295,19 @@ def main(argv=None):
             "nothing to report on: pass --abliteration, --capability, or both. A card with no "
             "artefacts behind it would be a template, and this exists to stop those being "
             "published.")
-    lines = build(load(a.abliteration), load(a.capability), a.command or None)
+    if not a.base_licence and not a.licence_unknown:
+        raise SystemExit(
+            "--base-licence is required. This card states that the base model's licence governs "
+            "the weights, and it used to say that without naming the licence, linking it, or "
+            "reproducing a term of it, which tells a reader they are bound by something unnamed.\n"
+            "  * Pass --base-licence with the base model's licence (apache-2.0, mit, gemma, "
+            "llama3.2, other), and --base-licence-link where there is a URL for the text.\n"
+            "  * Or pass --licence-unknown to generate a card marked UNRESOLVED, which is for "
+            "reading rather than for publishing weights beside.\n"
+            "It is not inferred from the model, deliberately: a model's terms are not derivable "
+            "from its weights and a wrong guess is worse than a blank one.")
+    lines = build(load(a.abliteration), load(a.capability), a.command or None,
+                  licence=a.base_licence or None, licence_link=a.base_licence_link or None)
     text = "\n".join(lines)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

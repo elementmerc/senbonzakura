@@ -155,7 +155,10 @@ def test_the_command_writes_a_file_when_asked(tmp_path):
     abl = tmp_path / "a.json"
     abl.write_text(json.dumps(_abl()), encoding="utf-8")
     out = tmp_path / "card.md"
-    assert modelcard.main(["--abliteration", str(abl), "--out", str(out)]) == 0
+    # --base-licence is required now (panel finding C6): the card states that the base model's
+    # licence governs the weights, and it must name it rather than assert an unnamed one.
+    assert modelcard.main(["--abliteration", str(abl), "--out", str(out),
+                           "--base-licence", "apache-2.0"]) == 0
     assert "Abliteration report" in out.read_text(encoding="utf-8")
 
 
@@ -193,3 +196,67 @@ def test_the_licence_section_needs_no_inputs():
     assert "licence and use" in modelcard.SECTIONS
     page = "\n".join(modelcard.build(abl=None, cap=None, command=None))
     assert "not ours to loosen" in page or "base model's licence" in page
+
+
+# ── the licence, which the card asserted and never named (panel finding C6) ───────────
+#
+# The card told a reader of the published weights that the base model's licence governs them, and
+# then never said WHICH licence, never linked it, and reproduced not one term of it. Two reviewers
+# reached that independently. It also emitted no HuggingFace front matter, so the Hub rendered the
+# page with no licence at all whatever the prose said.
+#
+# The fix is not more prose. The licence is DATA the publisher supplies, refused rather than
+# guessed, the same way every bundled corpus carries its licence as a field.
+
+def test_the_card_refuses_to_assert_a_licence_it_cannot_name(tmp_path, capsys):
+    abl = tmp_path / "a.json"
+    abl.write_text('{"model": "Qwen/Qwen3-1.7B"}', encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        modelcard.main(["--abliteration", str(abl)])
+    message = str(e.value)
+    assert "--base-licence is required" in message
+    assert "--licence-unknown" in message, "the escape hatch has to be named in the refusal"
+    assert "not derivable from its weights" in message, "and why it is not guessed"
+
+
+def test_the_licence_reaches_the_metadata_the_hub_actually_reads():
+    """Prose is not metadata. The Hub renders the badge from the YAML block and nothing else."""
+    lines = modelcard.build({"model": "Qwen/Qwen3-1.7B"}, licence="apache-2.0",
+                            licence_link="https://www.apache.org/licenses/LICENSE-2.0")
+    assert lines[0] == "---"
+    head = "\n".join(lines[:lines.index("---", 1)])
+    assert "license: apache-2.0" in head
+    assert "license_link: https://www.apache.org/licenses/LICENSE-2.0" in head
+    assert "- Qwen/Qwen3-1.7B" in head, "base_model is how a reader finds the terms they are under"
+
+
+def test_the_licence_is_named_in_the_prose_too():
+    body = "\n".join(modelcard.build({"model": "Qwen/Qwen3-1.7B"}, licence="apache-2.0"))
+    assert "under `apache-2.0`" in body
+    assert "The base model is `Qwen/Qwen3-1.7B`" in body
+
+
+def test_the_card_says_the_weights_were_modified():
+    """Apache-2.0 section 4(b) asks a derived work to say so, and several families ask for more."""
+    body = "\n".join(modelcard.build({"model": "m"}, licence="apache-2.0"))
+    assert "have been modified from the base model" in body
+    assert "4(b)" in body
+
+
+def test_an_unresolved_licence_is_loud_rather_than_absent():
+    """Absent reads as "nothing to report", which is a different and flattering claim."""
+    body = "\n".join(modelcard.build({"model": "m"}))
+    assert "LICENCE UNRESOLVED" in body
+    assert "effectively unlicensed" in body
+    assert "license: other" in body, "the metadata must not claim a licence either"
+
+
+def test_nothing_about_the_licence_is_inferred_from_the_model_name():
+    """A Llama base does not silently acquire a Llama licence, and must not.
+
+    Guessing would be the same failure as every withdrawn number in this project: a value that
+    looks right, is never checked, and is published.
+    """
+    body = "\n".join(modelcard.build({"model": "meta-llama/Llama-3.2-1B"}))
+    assert "LICENCE UNRESOLVED" in body
+    assert "llama3" not in body.lower().split("base_model")[0]

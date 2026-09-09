@@ -9,6 +9,7 @@ exactly the wiring that produced the withdrawn gemma numbers.
 """
 import pytest
 import torch
+from artefacts import needs_architecture
 from torch import nn
 
 from senbonzakura import cli
@@ -41,6 +42,7 @@ def _qwen3(hidden=64, layers=2):
 
 
 # ── LFM2's containers, which the walker did not know ─────────────────────────────────
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_the_walker_finds_lfm2s_feed_forward_block():
     """`layer.feed_forward`, where every other family this tool supports says `mlp`."""
     for layer in _lfm2_moe().model.layers:
@@ -53,6 +55,7 @@ def test_an_lfm2_dense_layer_uses_w2_as_its_down_projection():
     assert kinds == ["dense"]
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_the_fused_expert_stack_is_read_as_one():
     """`Lfm2MoeExperts` exposes `down_proj` and is NOT iterable, so the unfused fallback must
     not be reached for it: `list(experts)` raises.
@@ -62,6 +65,7 @@ def test_the_fused_expert_stack_is_read_as_one():
     assert kinds == ["fused3d"]
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_the_fused_expert_tensor_is_the_layout_the_bake_assumes():
     """`[E, out, in]`. Read from the class source rather than inferred: the parameter is declared
     `empty(num_experts, hidden_dim, intermediate_dim)`. Getting this transposed would edit the
@@ -91,6 +95,7 @@ def test_a_convolution_output_projection_is_found_as_a_residual_writer():
     assert cli._conv_outproj(attn_layer) is None, "an attention layer has no conv block"
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_every_layer_of_a_hybrid_yields_exactly_one_attention_side_writer():
     """One or the other per layer, never neither: a layer with nothing here would be a layer the
     bake silently skips.
@@ -116,6 +121,7 @@ def test_an_ordinary_model_is_unchanged_by_the_hybrid_path():
         assert cli.layer_attn_writers(layer) == [cli._attn_outproj(layer)]
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_a_hybrid_is_no_longer_refused_now_that_the_convolutions_are_edited():
     cli.refuse_unrecognised_writers(_lfm2_moe().model.layers, 64)
 
@@ -131,6 +137,7 @@ def test_skipping_the_convolutions_still_refuses_unless_it_is_asked_for_in_writi
     assert "layer 0" in message and "Lfm2MoeShortConv" in message
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_the_control_arm_is_allowed_but_never_quiet():
     """It warns per run, names the layers, and hands the caller the list to record."""
     said = []
@@ -189,6 +196,7 @@ def test_an_attention_layer_is_edited_either_way():
             == cli.layer_attn_writers(attn_layer, ablate_conv=True))
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_an_all_attention_lfm2_is_not_refused():
     """The guard must object to the convolution blocks specifically, not to the family."""
     m = _lfm2_moe(layer_types=("full_attention", "full_attention"))
@@ -279,6 +287,7 @@ def test_a_two_dimensional_writer_is_still_caught():
     assert any("mystery" in u for u in unrecognised)
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_the_real_lfm2_moe_has_no_unrecognised_writers():
     """The whole point of the widening is that it must not start refusing a model we support."""
     model = _lfm2_moe()

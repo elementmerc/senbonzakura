@@ -96,3 +96,49 @@ needs_track = _guard(_have_track(), "the packed evaluation track", "tools/pack_t
 needs_corpora = _guard(_have_corpora(), "the packed corpora", "tools/build_corpora.py")
 needs_binary = _guard(_have_binary(), "the vendored llama-quantize", "tools/vendor_llama.py")
 needs_converter = _guard(_have_converter(), "the vendored converter", "tools/vendor_llama.py")
+
+
+# ── architectures the installed transformers may not carry ───────────────────────────
+#
+# THE SAME SHAPE ONE LAYER OUT. The guards above are about artefacts this repository does not
+# ship. These are about model classes the DECLARED DEPENDENCY FLOOR does not have.
+#
+# `transformers>=4.56` is what pyproject declares, and the floors job installs exactly that. Eleven
+# tests then failed there, because LFM2-MoE and glm4_moe_lite arrived in transformers after 4.56:
+# `AttributeError: module transformers has no attribute Lfm2MoeConfig`, and `ValueError:
+# Unrecognized model identifier: glm4_moe_lite`.
+#
+# The floor is not wrong. This project's support for an architecture is conditional on the
+# installed transformers having it, which is a true statement about a plugin-shaped dependency, and
+# forcing every user onto a newer transformers for a family they may never touch would be worse.
+# What was wrong is that the tests asserted the conditional as though it were unconditional.
+
+
+def has_architecture(*names):
+    """Whether the installed transformers carries every one of these model classes."""
+    import transformers
+    return all(hasattr(transformers, n) for n in names)
+
+
+def has_model_type(name):
+    """Whether the installed transformers recognises this `model_type` string."""
+    from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+    return name in CONFIG_MAPPING_NAMES
+
+
+def needs_architecture(*names):
+    """Skip unless the installed transformers has these classes, and say which are missing."""
+    import transformers
+    missing = [n for n in names if not hasattr(transformers, n)]
+    return pytest.mark.skipif(
+        bool(missing),
+        reason=f"transformers {getattr(transformers, '__version__', '?')} has no "
+               f"{', '.join(missing) or ''}; this architecture arrived after the declared floor")
+
+
+def needs_model_type(name):
+    """Skip unless the installed transformers recognises this `model_type`."""
+    return pytest.mark.skipif(
+        not has_model_type(name),
+        reason=f"transformers does not recognise the model type {name!r}; it arrived after the "
+               f"declared floor")

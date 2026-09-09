@@ -385,6 +385,26 @@ def test_shards_of_one_table_that_disagree_about_their_shape_are_refused(tmp_pat
         trackio.read_text_column(p)
 
 
+def _drop_shards(directory):
+    """Force the no-shard shape, whichever `datasets` wrote this directory.
+
+    THE TWO TESTS BELOW WERE PINNED TO ONE LIBRARY VERSION. A recent `datasets` writes an empty
+    set as `state.json` and `dataset_info.json` and no Arrow file at all, which is the shape that
+    makes `dataset_info.json` load-bearing for the column names. `datasets` 2.15, the DECLARED
+    FLOOR, writes `data-00000-of-00001.arrow` for the same empty set, so on the floors job these
+    read `[{'filename': ...}]` where they expected `[]` and failed.
+
+    That is a fact about `datasets`, not about `trackio`, and `trackio` reads both shapes
+    correctly. So the shape under test is constructed here rather than requested from a library
+    that answers differently by version.
+    """
+    state = json.loads((directory / "state.json").read_text())
+    for entry in state.get("_data_files", []):
+        (directory / entry["filename"]).unlink(missing_ok=True)
+    state["_data_files"] = []
+    (directory / "state.json").write_text(json.dumps(state))
+
+
 def test_an_empty_table_written_by_datasets_has_no_shards_at_all(tmp_path):
     """The one shape where the Arrow files cannot say what the columns are.
 
@@ -395,6 +415,7 @@ def test_an_empty_table_written_by_datasets_has_no_shards_at_all(tmp_path):
     """
     p = tmp_path / "empty"
     _datasets_write(p, [])
+    _drop_shards(p)
     assert json.loads((p / "state.json").read_text())["_data_files"] == []
     assert trackio.read_table_if_plain(p) == ([], ["text"])
     assert trackio.read_text_column(p) == []
@@ -404,6 +425,7 @@ def test_an_unreadable_info_file_reports_no_columns_rather_than_raising(tmp_path
     """The shape is unknown, and saying so beats crashing on a corrupted sidecar."""
     p = tmp_path / "empty"
     _datasets_write(p, [])
+    _drop_shards(p)
     (p / "dataset_info.json").write_text("{not json")
     assert trackio.read_table_if_plain(p) == ([], [])
 

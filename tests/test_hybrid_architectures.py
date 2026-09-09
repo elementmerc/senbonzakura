@@ -43,6 +43,7 @@ import warnings
 
 import pytest
 import torch
+from artefacts import has_model_type, needs_architecture
 
 from senbonzakura import cli
 
@@ -74,8 +75,20 @@ MLA = dict(_BASE, num_hidden_layers=4, num_key_value_heads=4, q_lora_rank=32, kv
 
 
 def _build(model_type, meta=True, **extra):
-    """One architecture, from its config. On the meta device unless real weights are needed."""
+    """One architecture, from its config. On the meta device unless real weights are needed.
+
+    Skips, rather than fails, when the installed transformers has never heard of this model type.
+    Support for an architecture is conditional on the dependency carrying it, and several of these
+    arrived after the declared `transformers>=4.56` floor, so the floors job met
+    "ValueError: Unrecognized model identifier: glm4_moe_lite" and read as eleven broken tests.
+    The floor is not wrong; the tests were asserting a conditional as if it were unconditional.
+    """
     from transformers import AutoConfig, AutoModelForCausalLM
+
+    if not has_model_type(model_type):
+        import transformers
+        pytest.skip(f"transformers {getattr(transformers, '__version__', '?')} does not recognise "
+                    f"the model type {model_type!r}; it arrived after the declared floor")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -172,6 +185,7 @@ def test_the_edit_actually_lands_on_a_state_space_hybrid():
 
 
 # ── NemotronH: one child name, four meanings ──────────────────────────────────────
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_a_polymorphic_mixer_is_read_by_its_contents_not_its_name():
     """Every one of the four kinds appears in an 8-layer stack, and each must resolve correctly."""
     model, cfg = _build("nemotron_h", num_hidden_layers=8)
@@ -189,6 +203,7 @@ def test_a_polymorphic_mixer_is_read_by_its_contents_not_its_name():
     assert len(kinds) >= 3, f"the fixture did not exercise the polymorphism: {kinds}"
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_a_layer_with_only_one_populated_position_is_allowed():
     """NemotronH's layers each hold ONE writer. Every architecture before it held two."""
     model, _cfg = _build("nemotron_h", meta=False, num_hidden_layers=8)
@@ -271,6 +286,7 @@ def test_skipping_the_mixer_path_is_still_reported_on_a_state_space_hybrid():
         assert unrecognised, "a skipped mamba writer was silently accepted"
 
 
+@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
 def test_an_attention_mixer_is_not_reported_as_skipped():
     """The mirror image, and the trap the shared `mixer` name creates.
 

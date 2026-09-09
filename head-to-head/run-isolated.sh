@@ -79,8 +79,13 @@ die() { echo "run-isolated: $*" >&2; exit 2; }
 # senbonzakura arm starts happily in the base image and dies on `import optuna` minutes later.
 IMAGE="${IMAGE_OVERRIDE:-${BENCH_IMAGE:-$(image_for "$TOOL")}}"
 IMAGE="${IMAGE:-senbon-bench:tool}"
-docker image inspect "$IMAGE" >/dev/null 2>&1 \
-  || die "no image $IMAGE for tool '$TOOL'. Build it first (head-to-head/Dockerfile.*), or name one with --image."
+# Under BENCH_DRY_RUN the command is printed and not run, so the image and the card are not
+# involved. Both checks stay mandatory for a real run: they are the two that turn "it started and
+# died on the first import" into a refusal, and this is the only branch that skips them.
+if [ -z "${BENCH_DRY_RUN:-}" ]; then
+  docker image inspect "$IMAGE" >/dev/null 2>&1 \
+    || die "no image $IMAGE for tool '$TOOL'. Build it first (head-to-head/Dockerfile.*), or name one with --image."
+fi
 [ -n "$MODEL" ] || die "--model is required and must already exist on disk (nothing is downloaded)"
 [ -n "$OUT" ]   || die "--out is required"
 [ $# -gt 0 ]    || die "no command given after --"
@@ -112,9 +117,70 @@ if [ -e /dev/dxg ] && [ -d /usr/lib/wsl/lib ]; then
             -v /usr/lib/wsl/drivers:/usr/lib/wsl/drivers:ro)
 elif [ -e /dev/nvidia0 ]; then
   GPU_ARGS=(--gpus all)                    # a normal Linux host with the toolkit installed
+elif [ -n "${BENCH_DRY_RUN:-}" ]; then
+  GPU_ARGS=()                              # printing the command, not running it; see above
 else
   die "no GPU found: neither /dev/dxg (WSL2) nor /dev/nvidia0. A CPU-only abliteration run would take days and would not be comparable to a GPU one, so this refuses rather than quietly producing an incomparable row."
 fi
+
+# ── mounted is not the same thing as readable ─────────────────────────────────────────
+#
+# INVARIANT 7, and it cost a run to find. A bind mount carries a directory, not the things its
+# entries point at. The HuggingFace cache keeps real bytes in <repo>/blobs and fills
+# <repo>/snapshots/<sha> with RELATIVE symlinks into it, so mounting only the snapshot hands the
+# container a directory full of dangling links: every file `ls` lists, and not one of them
+# openable.
+#
+# What that looks like from inside is not what it is. transformers reports
+# "You need sentencepiece or tiktoken installed to convert a slow tokenizer", which sends the
+# reader to the dependency list; the error underneath is `No such file or directory (os error 2)`.
+# Two hours went into package versions before anyone asked tokenizers directly.
+#
+# So: for every symlink under a mounted input, work out where it will point INSIDE the container,
+# and mount the directory holding its real bytes at exactly that place. Derived from the links
+# themselves rather than special-cased for HuggingFace, because any layout that keeps content
+# beside a directory of links behaves the same way.
+assert_links_resolve_on_the_host() {
+  # A symlink already broken OUTSIDE the container will certainly be broken inside it, and the
+  # message it produces there will be about something else entirely. Checked in its own loop, not
+  # inside a pipeline, because `die` in a subshell exits the subshell and the run carries on.
+  local host_dir="$1" link
+  [ -d "$host_dir" ] || return 0
+  while IFS= read -r link; do
+    [ -n "$link" ] || continue
+    [ -e "$link" ] || die "broken symlink in a mounted input: $link -> $(readlink "$link"). Nothing inside the container will be able to open it, and the error it reports will name something else."
+  done < <(find "$host_dir" -type l 2>/dev/null)
+}
+
+link_mounts() {
+  # host_dir:guest_dir pairs, one per line, deduplicated: where the real bytes are, and where the
+  # container will go looking for them.
+  local host_dir="$1" guest_dir="$2"
+  local link target guest host
+  [ -d "$host_dir" ] || return 0
+  while IFS= read -r link; do
+    [ -n "$link" ] || continue
+    target=$(readlink "$link")
+    case "$target" in
+      /*) guest="$target" ;;
+      # Resolved from the link's own directory as the CONTAINER will see it, so a link nested
+      # deeper than the top level lands in the right place too.
+      *)  guest=$(realpath -m "$guest_dir/${link#"$host_dir"/}/../$target") ;;
+    esac
+    host=$(readlink -f "$link")
+    printf '%s:%s:ro\n' "$(dirname "$host")" "$(dirname "$guest")"
+  done < <(find "$host_dir" -type l 2>/dev/null) | sort -u
+}
+
+EXTRA_MOUNTS=()
+collect_link_mounts() {
+  local spec
+  assert_links_resolve_on_the_host "$1"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    EXTRA_MOUNTS+=(-v "$spec")
+  done < <(link_mounts "$1" "$2")
+}
 
 CORPUS_ARGS=()
 [ -n "$CORPUS" ] && CORPUS_ARGS=(-v "$CORPUS:/corpus:ro")
@@ -124,6 +190,12 @@ if [ -n "$EVAL" ]; then
   [ -d "$EVAL" ] || die "--eval $EVAL does not exist. The slices are written by head-to-head/stage_eval_slices.py before the arms start, because the container has no network and no corpus loader."
   EVAL_ARGS=(-v "$EVAL:/corpus-eval:ro")
 fi
+
+# The three inputs that are somebody else's directories rather than ours. `--out` is created here
+# and `/work/bench` is this repository, so neither can be a pile of links into a cache.
+collect_link_mounts "$MODEL" /model
+if [ -n "$CORPUS" ]; then collect_link_mounts "$CORPUS" /corpus; fi
+if [ -n "$EVAL" ]; then collect_link_mounts "$EVAL" /corpus-eval; fi
 
 SRC_ARGS=()
 if [ -n "$SENBON_SRC" ]; then
@@ -154,15 +226,25 @@ echo "run-isolated: $TOOL${REF:+ @ $REF} on $(basename "$MODEL"), no network, in
 # Prove the GPU is reachable INSIDE the sealed box before spending hours in it. Without the driver
 # store mount this returns False while every other flag looks right, and the arm would run on CPU,
 # take a day, and produce a runtime column that is not comparable with anything.
-if ! docker run --rm --network none "${GPU_ARGS[@]}" "$IMAGE" \
+if [ -z "${BENCH_DRY_RUN:-}" ] && ! docker run --rm --network none "${GPU_ARGS[@]}" "$IMAGE" \
      python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
   die "the GPU is not visible inside the container. Check that /usr/lib/wsl/drivers is mounted as well as /usr/lib/wsl/lib; with only the latter, libcuda loads but reports no devices."
 fi
 
 # `timeout --signal=TERM --kill-after` so a hung run is killed rather than left holding the card.
+# BENCH_DRY_RUN prints the command this would run and stops. The mount arithmetic above is the
+# part that failed silently, so it needs to be checkable without a GPU, a card or an image.
+DOCKER_RUN=(docker run --rm)
+if [ -n "${BENCH_DRY_RUN:-}" ]; then
+  DOCKER_RUN=(echo DRY-RUN docker run --rm)
+  TIMEOUT_CMD=()
+else
+  TIMEOUT_CMD=(timeout --signal=TERM --kill-after=60 "$TIMEOUT")
+fi
+
 set +e
-timeout --signal=TERM --kill-after=60 "$TIMEOUT" \
-docker run --rm \
+"${TIMEOUT_CMD[@]}" \
+"${DOCKER_RUN[@]}" \
   --network none \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=2g \
@@ -172,6 +254,8 @@ docker run --rm \
   --pids-limit "$PIDS" \
   "${GPU_ARGS[@]}" \
   -v "$MODEL:/model:ro" \
+  `# whatever the inputs' symlinks point at, mounted where they will look for it` \
+  "${EXTRA_MOUNTS[@]}" \
   "${CORPUS_ARGS[@]}" \
   "${EVAL_ARGS[@]}" \
   "${SRC_ARGS[@]}" \

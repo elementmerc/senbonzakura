@@ -278,7 +278,7 @@ def test_a_directory_with_a_study_is_resumable(tmp_path):
     (tmp_path / "brain").mkdir()
     (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
     found = interactive.resumable_runs(tmp_path)
-    assert [p for p, _w in found] == [str(tmp_path / "brain")]
+    assert [p for p, _w, _r in found] == [str(tmp_path / "brain")]
     assert "completed trials" in found[0][1]
 
 
@@ -329,12 +329,34 @@ def test_nothing_is_offered_when_there_is_nothing_to_offer(tmp_path):
     assert lines == []
 
 
-def test_choosing_a_found_run_produces_a_resume_command(tmp_path):
-    (tmp_path / "brain").mkdir()
-    (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
+def test_choosing_a_found_run_produces_a_resume_command_that_can_actually_run(tmp_path):
+    """THE TEST THAT ENCODED THE DEFECT. It asserted the printed line character for character,
+    and the line it asserted was `senbonzakura kageyoshi --out <dir> --resume`, which argparse
+    rejects: `--model` is required. A comparator can be a real test and still be pointed at the
+    wrong property, and the property that matters here is that the command runs.
+
+    The inputs come off the record a run now writes before it starts searching, and `--track` is
+    on the line for the same reason `--model` is: it has a default, so a resume that omits it
+    scores new trials on a corpus the completed ones never saw.
+    """
+    from senbonzakura import parser, runrecord
+
+    run = tmp_path / "brain"
+    run.mkdir()
+    (run / interactive.STUDY_DB).write_text("", encoding="utf-8")
+    runrecord.write(run, model="Qwen/Qwen3-1.7B", track="mytrack")
+
     plan = interactive.offer_resume(tmp_path, ask_fn=lambda _p: "1", log=lambda _m: None)
     line = interactive.render_command(plan["command"], plan["options"])
-    assert line == f"senbonzakura kageyoshi --out {tmp_path / 'brain'} --resume"
+    assert line == (f"senbonzakura kageyoshi --model Qwen/Qwen3-1.7B --track mytrack "
+                    f"--out {run} --resume")
+
+    bankai, rest = parser.split_mode(interactive._argv_for(plan))
+    assert bankai
+    args = parser.build_parser().parse_args(rest)
+    assert args.model == "Qwen/Qwen3-1.7B"
+    assert args.track == "mytrack"
+    assert args.resume is True
 
 
 def test_starting_fresh_is_always_the_last_option(tmp_path):

@@ -47,6 +47,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from . import (
     dataset,  # every accepted way of saying "the prompts are here"
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
+    runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     separation,  # the candidate statistics for "does this axis carry refusal?" (Q-14)
 )
 
@@ -3275,6 +3276,22 @@ class Abliterator:
         # as unknown and refused rather than assumed compatible.
         refuse_resume_across_builds(study, code_version(), resume=args.resume)
 
+        # WHICH INPUTS THE TRIALS WERE SCORED ON, and a refusal when this run brought others.
+        #
+        # The build guard above covers a change of code. This covers a change of question, which
+        # is the quieter half: `--resume` continues the study and takes `--model` and `--track`
+        # from the command line, and `--track` has a default, so a resume that omits it carries on
+        # one corpus's trials while scoring new ones against another. Nothing in any artefact says
+        # the run changed corpus halfway through.
+        #
+        # Written before the search rather than at the end, because a run that finishes needs no
+        # resuming. `abliteration.json` records the model and is the last thing written.
+        record_values = {"model": args.model, "track": args.track}
+        if args.resume:
+            runrecord.refuse_across_inputs(args.out, record_values)
+        runrecord.write(args.out, trials=args.trials, device=str(args.device),
+                        bankai=bool(getattr(args, "bankai", False)), **record_values)
+
         # --resume on a study that already finished its search (ran the budget or early-stopped)
         # must skip straight to bake+save, not re-search it. Without this, resume re-runs the whole
         # search on a completed study (the trap that wasted ~34 min of GPU on the first large run).
@@ -3760,33 +3777,12 @@ def main(argv=None, *, emit_banner=True):
     return run_parsed(args, bankai, argv)
 
 
-#: What a finished or half-finished run leaves in `--out`. Presence of any of these means the
-#: directory is not empty in the way that matters: something already used it as a destination.
-RUN_ARTEFACTS = ("abliteration.json", "best-config.json", "trials.json", "model.safetensors",
-                 "model.safetensors.index.json", "config.json")
-
-
-def occupied_by(out):
-    """The artefacts of a previous run sitting in `--out`, sorted. Empty when it is safe to write.
-
-    THE MISTAKE THIS PROJECT HAS LOST THREE RESULTS TO. On 2026-08-12 three separate defects were
-    traced to one mechanism: a previous run's output sitting in the directory while something
-    reported the work already done. The failure is quiet by construction. A resumed study skips
-    straight to bake and save; a re-run overwrites some files and leaves others; and the artefact
-    that describes the run ends up describing two runs, with no field that says so.
-
-    Deliberately a list of what was found rather than a boolean, because the message a person can
-    act on names the files. "The directory is not empty" sends them to look; "these four artefacts
-    are a previous run" tells them what they are about to lose.
-    """
-    d = Path(out)
-    if not d.is_dir():
-        return []
-    found = [name for name in RUN_ARTEFACTS if (d / name).exists()]
-    # Sharded weights are named per shard, so the exact filename is not knowable in advance.
-    if any(d.glob("model-*-of-*.safetensors")):
-        found.append("model-*.safetensors")
-    return sorted(found)
+#: Both live in `runrecord`, which imports nothing heavy, and are re-exported here because
+#: everything already asks `cli` for them. The guided mode needs `occupied_by` and runs on a base
+#: install with no torch, and reaching it through this module imported optuna to answer a question
+#: about which files are in a directory.
+RUN_ARTEFACTS = runrecord.RUN_ARTEFACTS
+occupied_by = runrecord.occupied_by
 
 
 def _preflight_output(args):
@@ -3912,6 +3908,10 @@ def run_parsed(args, bankai, argv):
     `entry.main` does the parse against the light parser and calls straight in here, so a person
     who typed a bad flag has already been told so before this module is imported at all.
     """
+    # The mode word is not a flag, so it never reaches `args`, and the run record needs it: a
+    # resume of a `kageyoshi` run typed as `abliterate` is a different search.
+    args.bankai = bool(bankai)
+
     if args.load_in_4bit:
         # The abliterator rewrites weights in place (the norm-preserving bake), which needs full
         # precision; 4-bit Params4bit can't be orthogonalised. Reject early with a clear pointer

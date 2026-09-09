@@ -120,6 +120,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history, in exactly one job. The AGPL 5(a) date check compares the notice against
+          # the last commit that touched the file carrying the copied code, and in a shallow clone
+          # every file's last commit is the tip, so the check silently becomes "is the notice dated
+          # today". It skips on a shallow clone now, and this is where it runs for real.
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.14"

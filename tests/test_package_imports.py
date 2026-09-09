@@ -159,6 +159,18 @@ def test_the_modification_date_is_not_older_than_the_code_it_describes():
     assert m, "the section 5(a) notice in metrics.py no longer records a modification date"
     recorded = datetime.date.fromisoformat(m.group(1))
 
+    # A SHALLOW CLONE MAKES THIS CHECK MEANINGLESS, and it does not say so, which is worse than
+    # being unavailable. With `fetch-depth: 1` the single fetched commit appears to introduce the
+    # entire tree, so `git log -1 -- <path>` returns the TIP date for every file. On CI this
+    # compared the notice against today and would have failed every day after the notice was
+    # written, while looking like a licence finding. One CI job checks out full history so this
+    # runs somewhere real; everywhere else it skips and says why.
+    shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                             capture_output=True, text=True, check=False)
+    if shallow.stdout.strip() == "true":
+        pytest.skip("shallow clone: every file's last-commit date is the tip's, so the recorded "
+                    "date cannot be checked against history here")
+
     r = subprocess.run(
         ["git", "log", "-1", "--format=%cd", "--date=short", "--", str(carrier)],
         capture_output=True, text=True, cwd=root, check=False, timeout=60)

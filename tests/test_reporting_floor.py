@@ -48,6 +48,30 @@ def test_a_large_enough_sample_gets_its_rate():
     assert r["rate"] == pytest.approx(62 / 120)
 
 
+# ── the floor's own edge ─────────────────────────────────────────────────────────
+#
+# The tests above use 5 and 120, so `n >= floor` could have been `n > floor` and every one of
+# them would still pass. The floor is the number this module exists to enforce, and the value it
+# was never asked about is the only one where the operator is what it means: a sample of exactly
+# MIN_REPORTABLE_N is enough, because a floor is a line to reach, not to beat.
+
+def test_a_sample_exactly_at_the_floor_is_reportable():
+    n = metrics.MIN_REPORTABLE_N
+    r = metrics.reportable_rate(n // 2, n)
+    assert r["reportable"] is True
+    assert r["rate"] == pytest.approx((n // 2) / n)
+    assert r["why_not"] is None
+
+
+def test_one_observation_short_of_the_floor_is_not():
+    n = metrics.MIN_REPORTABLE_N - 1
+    r = metrics.reportable_rate(n // 2, n)
+    assert r["reportable"] is False
+    assert r["rate"] is None
+    assert str(metrics.MIN_REPORTABLE_N) in r["why_not"], \
+        "the refusal has to name the floor it is measuring against"
+
+
 def test_the_rog_result_that_reversed_would_have_shown_overlapping_intervals():
     """The specific number this was built after.
 

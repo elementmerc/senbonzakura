@@ -221,3 +221,88 @@ def test_the_ceiling_matches_capabilitys_because_it_is_the_same_argument():
     from senbonzakura import capability, judge
 
     assert judge.MAX_ABSTENTION == capability.MAX_INDETERMINATE
+
+
+# ── the boundaries themselves ────────────────────────────────────────────────────
+#
+# EVERY GATE HERE IS A COMPARISON, AND NONE OF THEM HAD A TEST ON ITS EDGE. Mutation testing
+# found it: flipping `<` to `<=` or `>` to `>=` in any of the four changed no test's answer, so
+# the numbers were pinned everywhere except at the one value where the choice of operator is what
+# the gate means. A judge sitting exactly on a floor is the case a reviewer argues about, and it
+# was the case nothing described.
+#
+# The rule, stated once and asserted four times: a judge exactly AT a threshold is acceptable.
+# The thresholds are floors to clear and a ceiling not to exceed, not values to beat.
+
+def test_a_validation_set_exactly_at_the_floor_is_enough():
+    n = judge.MIN_REPORTABLE_N
+    ref = ["correct"] * (n // 2) + ["wrong"] * (n - n // 2)
+    v = judge.validate(list(ref), ref)
+    assert v["n"] == n
+    assert v["certified"] is True, v["reasons"]
+
+
+def test_one_item_below_the_floor_is_not():
+    n = judge.MIN_REPORTABLE_N - 1
+    ref = ["correct"] * (n // 2) + ["wrong"] * (n - n // 2)
+    v = judge.validate(list(ref), ref)
+    assert v["certified"] is False
+    assert any("below the floor" in r for r in v["reasons"])
+
+
+def test_a_judge_sitting_exactly_on_the_kappa_and_recall_floors_is_certified():
+    """One fixture, both edges: kappa is exactly 0.60 and recall on the rare class exactly 0.50.
+
+    Constructed rather than asserted approximately, and the two figures are checked before the
+    verdict is, so this cannot quietly stop being a boundary case if the statistics change.
+    """
+    ref = ["correct"] * 30 + ["wrong"] * 10
+    graded = ["correct"] * 30 + ["wrong"] * 5 + ["correct"] * 5
+
+    v = judge.validate(graded, ref)
+    assert v["kappa"] == pytest.approx(judge.MIN_KAPPA)
+    assert v["per_class"]["wrong"]["recall"] == pytest.approx(judge.MIN_PER_CLASS_RECALL)
+    assert v["certified"] is True, v["reasons"]
+
+
+def test_just_below_the_kappa_floor_is_refused():
+    v = judge.validate(["correct"] * 30 + ["wrong"] * 5 + ["correct"] * 5,
+                       ["correct"] * 30 + ["wrong"] * 10,
+                       min_kappa=judge.MIN_KAPPA + 0.01)
+    assert v["certified"] is False
+    assert any("agreement above chance is" in r for r in v["reasons"])
+
+
+def test_just_below_the_per_class_recall_floor_is_refused():
+    """Four of ten found is 0.40, one step under the floor the case above sits exactly on."""
+    ref = ["correct"] * 30 + ["wrong"] * 10
+    graded = ["correct"] * 30 + ["wrong"] * 4 + ["correct"] * 6
+    v = judge.validate(graded, ref)
+    assert v["per_class"]["wrong"]["recall"] == pytest.approx(0.4)
+    assert v["certified"] is False
+    assert any("blind to one class" in r for r in v["reasons"])
+
+
+def _with_abstentions(k, scorable=40):
+    ref = ["correct"] * (scorable // 2) + ["wrong"] * (scorable - scorable // 2)
+    graded = list(ref)
+    for i in range(k):
+        graded[i * 3] = None  # spread over both classes, so recall is not what fails
+    return judge.validate(graded, ref)
+
+
+def test_abstaining_on_exactly_the_ceiling_is_allowed():
+    """The one gate of the four that is a ceiling rather than a floor, so its operator is `>`.
+
+    Exactly at the ceiling has to pass, or the constant does not mean what its name says.
+    """
+    v = _with_abstentions(4)
+    assert v["abstention_rate"] == pytest.approx(judge.MAX_ABSTENTION)
+    assert v["certified"] is True, v["reasons"]
+
+
+def test_abstaining_above_the_ceiling_is_refused():
+    v = _with_abstentions(5)
+    assert v["abstention_rate"] > judge.MAX_ABSTENTION
+    assert v["certified"] is False
+    assert any("ceiling" in r for r in v["reasons"])

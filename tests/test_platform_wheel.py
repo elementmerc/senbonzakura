@@ -254,3 +254,60 @@ def test_a_name_that_is_not_a_wheel_is_refused(tmp_path):
     cw = _wheel_check()
     with pytest.raises(ValueError, match="not a wheel filename"):
         cw._filename_tag("thing.whl")
+
+
+# ── the tag PyPI refuses, caught before the release rather than after it (S7) ─────────
+#
+# This tree builds `py3-none-linux_x86_64` once tools/vendor_llama.py has run, which is the
+# correct tag for the contents and is NOT one PyPI accepts. `check_wheel` asked only whether the
+# tag matched the contents, and `twine check` validates metadata renderability and says nothing
+# about platform tags, so both gates passed it.
+#
+# The order of events is what makes it expensive. publish.yml downloads artefacts from a GitHub
+# Release that already exists, checks them, and uploads. The refusal lands at the upload, by which
+# time the Release is public, the tag is pushed, and the version number is spent: PyPI will not
+# take that version again even once the wheel is fixed.
+
+_spec = importlib.util.spec_from_file_location(
+    "check_wheel", ROOT / "tools" / "check_wheel.py")
+check_wheel = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check_wheel)
+
+
+def _info(tag):
+    return {"filename_tag": tag, "metadata_tags": [tag]}
+
+
+def test_the_tag_this_tree_builds_with_binaries_is_refused_for_pypi():
+    """THE DEFECT. `linux_x86_64` is what setup.py produces when the binaries are vendored."""
+    bad = check_wheel.unacceptable_to_pypi(_info("py3-none-linux_x86_64"))
+    assert bad, "the tag PyPI actually rejects has to be rejected here first"
+    assert "after the GitHub Release is already published" in bad[0], (
+        "the message has to say WHEN the failure lands, because that is what makes it expensive")
+    assert "auditwheel" in bad[0] and "attach this one to the Release" in bad[0], (
+        "and name both ways out")
+
+
+@pytest.mark.parametrize("tag", [
+    "py3-none-any",
+    "py3-none-manylinux_2_28_x86_64",
+    "py3-none-musllinux_1_2_x86_64",
+    "py3-none-macosx_11_0_arm64",
+    "py3-none-win_amd64",
+])
+def test_every_tag_pypi_does_accept_passes(tag):
+    """A gate that refuses everything is as useless as one that refuses nothing."""
+    assert check_wheel.unacceptable_to_pypi(_info(tag)) == []
+
+
+def test_a_disagreement_between_the_two_tags_is_caught_on_either():
+    """A wheel states its tag twice and the two can disagree; both are read."""
+    assert check_wheel.unacceptable_to_pypi(
+        {"filename_tag": "py3-none-any", "metadata_tags": ["py3-none-linux_x86_64"]})
+    assert check_wheel.unacceptable_to_pypi(
+        {"filename_tag": "py3-none-linux_x86_64", "metadata_tags": ["py3-none-any"]})
+
+
+def test_a_wheel_with_no_metadata_tag_is_still_read_from_its_filename():
+    assert check_wheel.unacceptable_to_pypi(
+        {"filename_tag": "py3-none-linux_x86_64", "metadata_tags": None})

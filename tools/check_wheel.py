@@ -164,6 +164,48 @@ def missing_release_data(wheel: Path) -> list[str]:
             if not any(n.endswith(want) for n in names)]
 
 
+#: Platform tags the Python Package Index will accept on upload. Anything else is refused there,
+#: whatever the wheel says about itself and whatever the local gates think of it.
+#:
+#: Bare `linux_*` is the one that catches projects out, and it caught this one. A Linux wheel has
+#: to declare the glibc or musl floor it was built against (`manylinux_2_28_x86_64`,
+#: `musllinux_1_2_x86_64`), because "linux" alone tells an installer nothing about whether the
+#: binary inside will run. macOS and Windows carry their compatibility in the tag already.
+UPLOADABLE_PREFIXES = ("any", "manylinux", "musllinux", "macosx", "win")
+
+
+def unacceptable_to_pypi(info):
+    """Tags PyPI will reject at upload, which is AFTER the release has been published.
+
+    THE ORDER OF EVENTS IS THE WHOLE PROBLEM. `publish.yml` downloads the artefacts from a GitHub
+    Release that already exists, checks them here, runs `twine check`, and uploads. `twine check`
+    validates the metadata's renderability and says nothing about platform tags, and this file
+    used to ask only whether the tag matched the contents. Both passed a
+    `py3-none-linux_x86_64` wheel, which is exactly what this tree builds once
+    `tools/vendor_llama.py` has run, and PyPI refuses it with "unsupported platform tag".
+
+    By then the Release is public, the tag is pushed, and the version is burned: PyPI will not
+    accept that version number again even once the wheel is fixed. Catching it here costs nothing
+    and catches it before any of that.
+
+    A bare `linux_x86_64` wheel is not wrong, and nothing here says it is. It is the right thing
+    to attach to a GitHub Release for people who want the binaries. It simply cannot go to PyPI,
+    and the two destinations need different artefacts.
+    """
+    tags = set(filter(None, [info["filename_tag"], *(info["metadata_tags"] or [])]))
+    bad = []
+    for tag in sorted(tags):
+        plat = tag.rsplit("-", 1)[-1]
+        if not plat.startswith(UPLOADABLE_PREFIXES):
+            bad.append(
+                f"the platform tag `{plat}` is not one PyPI accepts, so `twine upload` will "
+                f"refuse this wheel after the GitHub Release is already published and the "
+                f"version number is spent. PyPI takes {', '.join(UPLOADABLE_PREFIXES)}. Either "
+                f"publish the universal wheel to PyPI and attach this one to the Release, or "
+                f"repair it to a manylinux tag with auditwheel.")
+    return bad
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("wheel", type=Path)
@@ -201,7 +243,8 @@ def main(argv=None):
         # artefact we are about to hand to strangers? The tool is also pointed at synthetic
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
-        found += missing_release_data(a.wheel) + missing_licences(a.wheel)
+        found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
+                  + unacceptable_to_pypi(info))
     for line in found:
         print(f"  PROBLEM: {line}")
 

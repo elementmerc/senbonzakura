@@ -840,6 +840,31 @@ def load_margins_jsonl(path, harmful_prompts, harmless_prompts):
     return tuple(out)
 
 
+def suspect_readout_arms(res):
+    """Which arms of a compass result were read at a position that does not hold the verdict.
+
+    ONE PREDICATE, BECAUSE TWO THINGS HAVE TO ACT ON IT AND ONLY ONE USED TO.
+
+    The compass already computed `suspect`, already recorded it, and already printed "THE AUC ABOVE
+    IS NOT A MEASUREMENT OF HARM DISCRIMINATION on this run" beside the number. The key was then
+    read nowhere outside this module. So the command exited 0, and `headtohead.score_arms`, which
+    decides an arm is fine on `exit == 0 and the file exists`, recorded the arm as scored and the
+    benchmark rendered its AUC under the heading "This is the axis where a comparison means
+    something".
+
+    That is the failure shape the 2026-09-09 panel named: a correct check that reaches no
+    consequence. The diagnostic was not missing, was not wrong, and was not quiet. Nothing was
+    wired to it.
+
+    Takes a whole result record rather than one readout so it can be used on the parsed artefact
+    as well as in-process, which is what the benchmark needs: it has a JSON file, not a return
+    value.
+    """
+    readout = (res or {}).get("readout") or {}
+    return [arm for arm in ("harmful", "harmless")
+            if readout.get(arm) and readout[arm].get("suspect")]
+
+
 def main(argv=None):
     a = build_parser().parse_args(argv)
     # Before the model loads, deliberately. A contradicted boundary is a mistake about which rows
@@ -1111,8 +1136,7 @@ def main(argv=None):
                   f"verdict_prob_mass={ra['verdict_prob_mass_mean']:.4f} "
                   f"top={[t['text'] for t in ra['top_tokens'][:3]]}")
     r = res["readout"]["harmful"]
-    suspect_arms = [arm for arm in ("harmful", "harmless")
-                    if res["readout"][arm] and res["readout"][arm]["suspect"]]
+    suspect_arms = suspect_readout_arms(res)
     if suspect_arms:
         r = res["readout"][suspect_arms[0]]
         # Printed BESIDE the AUC, not buried in the JSON. The diagnostic already existed, was
@@ -1146,4 +1170,9 @@ if __name__ == "__main__":   # pragma: no cover
     import sys
 
     from .entry import exit_status
-    sys.exit(exit_status(main()))
+    _res = main()
+    # A suspect read-out is not a low score, it is the absence of a measurement, so a script
+    # gating on this command has to be told. `main` still RETURNS the result object, because its
+    # in-process callers want the numbers and that is the convention `entry.exit_status` exists
+    # to serve; the status is decided here, where a shell is the caller.
+    sys.exit(1 if suspect_readout_arms(_res) else exit_status(_res))

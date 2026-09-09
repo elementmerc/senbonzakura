@@ -623,11 +623,18 @@ def test_main_runs_the_e4_grid_and_records_it(base_args, tiny_model, tiny_tok, t
                   "--experiment", "e4", "--strengths", "0.5,1.0",
                   "--dir-prompts", "4", "--eval-refusal", "2", "--eval-kl", "2",
                   "--out", str(out)])
-    assert rc == 0
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["experiment"] == "e4"
     assert record["e4"]["strengths"] == [0.5, 1.0]
     assert "matched_refusal" in record["e4"]
+    # The status has to FOLLOW the verdict in the record rather than be asserted beside it. This
+    # used to read `assert rc == 0`, which passed because the command returned a literal zero for
+    # every outcome it could reach. On this fixture the grid is legitimately degenerate: a toy
+    # model with random weights has no spread to read, so 1 is the correct answer here and 0 would
+    # be the bug. Tying the two together is what makes this test able to fail.
+    degenerate = record["e4"]["degenerate_reason"]
+    assert rc == (1 if degenerate else 0), (
+        f"the record says degenerate_reason={degenerate!r} and the command exited {rc}")
 
 
 def test_all_prepares_exactly_once(base_args, tiny_model, tiny_tok, track, tmp_path, monkeypatch):

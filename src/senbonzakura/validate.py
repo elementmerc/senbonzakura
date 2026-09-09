@@ -1167,6 +1167,38 @@ def experiments_2_and_3(a, log, which, directions_from=None):
     return {"rows": rows, "max_k_available": kmax}
 
 
+def unusable_reasons(record):
+    """Why this record holds no usable measurement, or an empty list when it does.
+
+    THE DISTINCTION THIS FUNCTION EXISTS TO HOLD, because the obvious fix gets it backwards.
+
+    `main` used to return a literal 0 whatever it found, including when `reach` said the edit never
+    touched the residual stream, which is the question that withdrew a family of numbers when it
+    was answered wrongly on Gemma. Every sibling command maps a verdict to a status; the flagship
+    did not, so a script gating on it was told everything was fine.
+
+    The correction is not "exit non-zero when an experiment disagrees with us". e1 answering "the
+    extra directions do NOT generalise" is a RESULT, and a command that reports failure for an
+    unwelcome finding is one nobody can use to find anything out; the whole point of running an
+    experiment is that it is allowed to say no. What earns a non-zero status is an instrument that
+    could not take a reading at all, because then every number in the record describes something
+    other than what it claims to.
+
+    A separate function so the mapping can be tested against a record without a model, and so the
+    two halves of it sit in one place where a third experiment can be added deliberately rather
+    than by whoever next edits the tail of `main`.
+    """
+    reasons = []
+    failing = (record.get("reach") or {}).get("architectures_failing")
+    if failing:
+        reasons.append(f"the edit did not reach the residual stream on: {', '.join(failing)}. "
+                       f"Nothing measured downstream of that describes the edit.")
+    degenerate = (record.get("e4") or {}).get("degenerate_reason")
+    if degenerate:
+        reasons.append(f"the e4 grid cannot be read: {degenerate}")
+    return reasons
+
+
 def main(argv=None):
     own, args = build_args(argv)
     log = lambda m: print(m, flush=True)   # noqa: E731
@@ -1226,6 +1258,27 @@ def main(argv=None):
     with cli.atomic_write(own.out) as f:
         json.dump(record, f, indent=2)
     log(f"written to {own.out}")
+
+    # WHAT THE STATUS MEANS HERE, and the distinction the obvious fix would get wrong.
+    #
+    # This used to `return 0` whatever it found, including when `reach` said the edit never
+    # touched the residual stream, which is the question that withdrew a family of numbers when it
+    # was answered wrongly on Gemma. Every sibling command maps a verdict to a status; the
+    # flagship did not, so a script gating on it was told everything was fine.
+    #
+    # The correction is NOT "exit non-zero when an experiment disagrees with us". e1 answering
+    # "the extra directions do NOT generalise" is a result, and a command that reports failure
+    # for an unwelcome finding is one nobody can use to find anything out. What earns a non-zero
+    # status is an instrument that could not take a reading at all: the edit never landed, or the
+    # grid has no spread to read. In those cases every number in the record is describing
+    # something other than what it claims to.
+    unusable = unusable_reasons(record)
+    if unusable:
+        log("\nVALIDATE: the run completed and the record is written, but it does not hold a "
+            "usable measurement:")
+        for reason in unusable:
+            log(f"  * {reason}")
+        return 1
     return 0
 
 

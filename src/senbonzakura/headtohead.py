@@ -835,13 +835,36 @@ def score_arms(results, *, harmful: Path, harmless: Path, out: Path, skip_harmfu
         code = runner(score_argv(model=model, harmful=harmful, harmless=harmless, out=target,
                                  label=label, skip_harmful=skip_harmful, batch=batch,
                                  track=track), log=log)
-        # Exit zero is not a score. The file is.
+        # Exit zero is not a score. The file is. AND A FILE IS NOT A MEASUREMENT: the compass
+        # decides for itself whether the position it read holds the model's verdict, and when it
+        # does not it says "THE AUC ABOVE IS NOT A MEASUREMENT OF HARM DISCRIMINATION on this run".
+        # That verdict was written into this very file and read by nothing, so the arm was recorded
+        # as scored and its AUC went into the table under "the axis where a comparison means
+        # something". An unusable number in a comparison is worse than a missing one, because a
+        # missing one is visible.
         ok = code == 0 and target.is_file()
-        scored.append({"label": label, "ok": ok,
-                       "reason": "scored" if ok else f"scoring failed (exit {code})",
+        suspect = []
+        if ok:
+            from .margin import suspect_readout_arms
+            try:
+                suspect = suspect_readout_arms(_read_json(target))
+            except BenchError as e:
+                # One arm's artefact being unreadable is this arm's failure, not the sweep's:
+                # the whole contract of this function is to score what it can and say plainly
+                # which ones it could not.
+                ok, suspect = False, []
+                log(f"  {label}: wrote a score file that cannot be read: {e}")
+        if suspect:
+            ok = False
+            reason = (f"the compass read a position that does not hold the verdict on "
+                      f"{', '.join(suspect)}, so its AUC is not a measurement of harm "
+                      f"discrimination for this arm")
+        else:
+            reason = "scored" if ok else f"scoring failed (exit {code})"
+        scored.append({"label": label, "ok": ok, "reason": reason,
                        "path": str(target) if ok else None})
         if not ok:
-            log(f"  {label}: SCORING FAILED")
+            log(f"  {label}: SCORING FAILED: {reason}" if suspect else f"  {label}: SCORING FAILED")
     return scored
 
 

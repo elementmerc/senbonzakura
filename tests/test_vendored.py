@@ -15,6 +15,12 @@ import pytest
 from senbonzakura import vendored
 from senbonzakura.vendored import VendorError
 
+#: The execute bit and advisory file locking are POSIX mechanisms. Windows has neither, and
+#: the production code no longer pretends otherwise, so the tests that assert the mechanism
+#: itself skip there rather than asserting something that cannot be true.
+needs_posix = pytest.mark.skipif(sys.platform.startswith("win"),
+                                 reason="POSIX execute bit / advisory locking; Windows has neither")
+
 
 # ── naming the platform ────────────────────────────────────────────────────────────
 @pytest.mark.parametrize(("machine", "plat", "want"), [
@@ -83,6 +89,7 @@ def test_a_windows_key_looks_for_an_exe(monkeypatch, tmp_path):
     assert got == exe
 
 
+@needs_posix
 def test_falling_back_to_path_warns_that_the_version_is_unpinned(monkeypatch, tmp_path):
     monkeypatch.setattr(vendored, "VENDOR_BIN", tmp_path / "empty")
     monkeypatch.setattr(vendored.shutil, "which", lambda _n: "/usr/bin/tool")
@@ -95,6 +102,7 @@ def test_falling_back_to_path_warns_that_the_version_is_unpinned(monkeypatch, tm
     assert "record it beside any number" in joined
 
 
+@needs_posix
 def test_a_non_executable_file_does_not_count(monkeypatch, tmp_path):
     """A wheel is a zip and zip does not carry the executable bit, so this case is real."""
     d = tmp_path / "linux-x86_64"
@@ -107,6 +115,7 @@ def test_a_non_executable_file_does_not_count(monkeypatch, tmp_path):
         vendored.find_binary("tool", key="linux-x86_64")
 
 
+@needs_posix
 def test_make_executable_restores_the_bit(tmp_path):
     p = tmp_path / "tool"
     p.write_text("x", encoding="utf-8")

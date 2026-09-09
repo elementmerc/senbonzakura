@@ -13,6 +13,12 @@ from pathlib import Path
 
 import pytest
 
+#: The execute bit and advisory file locking are POSIX mechanisms. Windows has neither, and
+#: the production code no longer pretends otherwise, so the tests that assert the mechanism
+#: itself skip there rather than asserting something that cannot be true.
+needs_posix = pytest.mark.skipif(sys.platform.startswith("win"),
+                                 reason="POSIX execute bit / advisory locking; Windows has neither")
+
 _SPEC = importlib.util.spec_from_file_location(
     "fetch_model", Path(__file__).resolve().parent.parent / "tools" / "fetch_model.py")
 fm = importlib.util.module_from_spec(_SPEC)
@@ -20,6 +26,7 @@ sys.modules["fetch_model"] = fm
 _SPEC.loader.exec_module(fm)
 
 
+@needs_posix
 def test_the_lock_is_taken_and_released(tmp_path):
     d = str(tmp_path / "out")
     with fm.exclusive(d, log=lambda *a: None):

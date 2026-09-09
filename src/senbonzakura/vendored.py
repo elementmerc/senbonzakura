@@ -71,8 +71,24 @@ def platform_key():
     return None
 
 
+#: What counts as runnable on Windows, which has no execute bit. `os.access(p, os.X_OK)` returns
+#: True there for ANY readable file, so the POSIX test does not merely fail to help, it actively
+#: says yes to a text file. Windows decides by extension instead.
+_WINDOWS_EXECUTABLE_SUFFIXES = frozenset({".exe", ".bat", ".cmd", ".com"})
+
+
 def _executable(p):
-    return p.is_file() and os.access(p, os.X_OK)
+    """Whether this path is something the operating system will actually run.
+
+    Two rules, because the two systems answer differently. On POSIX it is the execute bit. On
+    Windows there is no such bit and `os.access(..., X_OK)` answers True for every readable file,
+    so a downloaded README would have counted as a vendored binary; there it is the extension.
+    """
+    if not p.is_file():
+        return False
+    if sys.platform.startswith("win"):
+        return p.suffix.lower() in _WINDOWS_EXECUTABLE_SUFFIXES
+    return os.access(p, os.X_OK)
 
 
 def find_binary(name, *, key=None, search_path=True, log=None):
@@ -135,6 +151,10 @@ def make_executable(p):
     everything except `ls -l`.
     """
     p = Path(p)
+    if sys.platform.startswith("win"):
+        # A documented no-op rather than a silent one. Windows has no execute bit to restore, and
+        # chmod'ing S_IXUSR there changes nothing while reading as though it did.
+        return p
     mode = p.stat().st_mode
     p.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return p

@@ -149,6 +149,20 @@ esac
 # ---------------------------------------------------------------- pre-flight
 # Everything checked before the first GPU hour, not halfway through the fourth.
 
+# GNU `timeout`, WHICH macOS DOES NOT SHIP. Every step is run under it, and when it is absent the
+# shell returns 127 for the missing command, so the harness reported each arm as having failed
+# with an exit code of its own. That is a failure described as something it is not, which is the
+# exact class this script's own comments are about. Found on 2026-09-09 by CI's macOS job, which
+# had been red since August. `gtimeout` is what Homebrew's coreutils installs it as.
+TIMEOUT_BIN=""
+for _t in timeout gtimeout; do
+  if command -v "$_t" >/dev/null 2>&1; then TIMEOUT_BIN="$_t"; break; fi
+done
+[ -n "$TIMEOUT_BIN" ] || die "neither 'timeout' nor 'gtimeout' is on PATH, and every step here runs
+        under one: a wedged generate loop would otherwise hold the card until somebody noticed.
+        They come from GNU coreutils, which macOS does not ship. Install it (brew install
+        coreutils) and re-run; the experiment resumes from whatever already finished."
+
 command -v "$SZ" >/dev/null 2>&1 || die "the 'senbonzakura' command is not on PATH. Activate the
         environment the wheel is installed into first."
 
@@ -242,7 +256,7 @@ probe_budget() {
   mkdir -p "$d"
   for _try in 1 2 3 4; do
     say "budget probe: trying --max-new $want on the stock model"
-    if timeout --signal=INT --kill-after=60 "$ARM_TIMEOUT"         "$SZ" capability --model "$MODEL" --device "$DEVICE" --eval "$EVAL_SET" --task "$TASK"           --n 40 --skip "$PROBE_N" --max-new "$want" --batch "$BATCH"           --label "budget-probe-$want" --out "$d/probe-$want.json" >>"$RUN_LOG" 2>&1; then
+    if "$TIMEOUT_BIN" --signal=INT --kill-after=60 "$ARM_TIMEOUT"         "$SZ" capability --model "$MODEL" --device "$DEVICE" --eval "$EVAL_SET" --task "$TASK"           --n 40 --skip "$PROBE_N" --max-new "$want" --batch "$BATCH"           --label "budget-probe-$want" --out "$d/probe-$want.json" >>"$RUN_LOG" 2>&1; then
       say "budget probe: $want tokens clears the ungradeable threshold; using it for every arm"
       MAX_NEW="$want"
       return 0
@@ -285,7 +299,7 @@ run_step() {
   # The timeout is per step and it is not optional: a wedged generate loop would otherwise hold
   # the card until somebody noticed.
   local rc=0
-  timeout --signal=INT --kill-after=120 "$ARM_TIMEOUT" "$@" >>"$RUN_LOG" 2>&1 || rc=$?
+  "$TIMEOUT_BIN" --signal=INT --kill-after=120 "$ARM_TIMEOUT" "$@" >>"$RUN_LOG" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$(date -u +%FT%TZ)" >"$marker"
     say "DONE  $what in $(( $(date +%s) - began ))s"

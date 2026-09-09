@@ -80,6 +80,14 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
+      - name: GNU coreutils, on macOS only
+        # `tools/e2_arms.sh` runs every step under `timeout`, which is GNU coreutils and is not on
+        # a macOS runner. Installed rather than skipped, because the two tests it gates assert
+        # that a failed arm does not exit 0 and that a failing doctor does not block the run, and
+        # those are exactly the properties this project keeps finding broken.
+        if: runner.os == 'macOS'
+        run: brew install coreutils
+
       - name: Install torch (CPU build)
         # The CPU wheel is a fraction of the CUDA one and the suite never touches
         # a GPU: every test runs against hand-built fixtures, no model downloads.
@@ -295,24 +303,13 @@ jobs:
           # failure worth catching, and this catches it.
           grep -qE '^\s*✗\s+corpus advbench' cpu.txt
           grep -q 'build_corpora.py' cpu.txt
-          docker run --rm senbonzakura:ci-cpu python -c "
-          from senbonzakura import corpora
-          try:
-              corpora.load('advbench')
-          except Exception as e:
-              assert 'build_corpora.py' in str(e), f'the refusal does not name the builder: {e}'
-          else:
-              raise SystemExit('an image with no corpora returned rows from somewhere')
-          "
-          # The licence notice, which MUST be present whether or not the corpora are, because it
-          # is what discharges the MIT and CC-BY attribution for anything the image does carry.
-          docker run --rm senbonzakura:ci-cpu python -c "
-          import pathlib, senbonzakura
-          root = pathlib.Path(senbonzakura.__file__).resolve().parents[2]
-          hits = list(root.rglob('THIRD-PARTY-CORPORA.md'))
-          assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'
-          print('attribution present at', hits[0])
-          "
+          # WHATEVER THE IMAGE CARRIES, IT MUST BE HONEST ABOUT IT. A runner builds without the
+          # blobs and a release build has them, so this asserts the property that matches what is
+          # actually there: corpora present must load at their declared size, corpora absent must
+          # REFUSE and name the builder. Asserting only one of those is how this job came to hold
+          # an assertion a runner could never satisfy.
+          docker run --rm -v "$PWD/tools:/check:ro" senbonzakura:ci-cpu python /check/image_is_honest.py
+          docker run --rm senbonzakura:ci-cpu python -c "import pathlib, senbonzakura; hits = list(pathlib.Path(senbonzakura.__file__).resolve().parents[2].rglob('THIRD-PARTY-CORPORA.md')); assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'; print('attribution present at', hits[0])"
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
       - name: The CUDA image carries a CUDA torch

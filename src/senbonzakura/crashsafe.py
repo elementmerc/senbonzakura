@@ -59,11 +59,16 @@ def atomic_write(path, encoding="utf-8", binary=False):
             os.fsync(f.fileno())
         try:
             os.replace(tmp, path)
-        except FileNotFoundError as e:
-            # Our own temp file vanished between writing and renaming it. The realistic
-            # cause is a second writer of the SAME path finishing first and renaming it away.
-            # Say that, because the bare error names a `.part` file the caller never asked
-            # for and reads like a missing-output bug rather than a race.
+        except (FileNotFoundError, PermissionError) as e:
+            # THE SAME RACE, WEARING TWO ERRORS. On POSIX the loser's own temp file has
+            # vanished, because the winner renamed it away: FileNotFoundError. On Windows a
+            # rename over a file another process holds open is refused outright, so the loser
+            # gets PermissionError ([WinError 32], "being used by another process") and never
+            # reaches the branch below.
+            #
+            # Both are the same event and the diagnosis is the same, so both get it. Left as it
+            # was, a Windows user met a raw permission error naming a `.part` file they never
+            # asked for, which reads like a missing-output bug rather than a race.
             raise RuntimeError(
                 f"could not finish writing {path}: its temporary file {tmp.name} disappeared "
                 f"before it could be renamed. The usual cause is two processes writing the "
@@ -267,6 +272,10 @@ def torch_version_ok(version, minimum=MIN_TORCH):
     return parsed >= minimum
 
 
+#: The persisted Optuna study, named once so the four places that build its path agree.
+STUDY_DB_NAME = "senbon-study.db"
+
+
 def study_db_path(study_db, no_persist, track, out=None):
     """Where to persist the Optuna study. Persist BY DEFAULT so a killed run resumes instead of
     re-searching; return None (in-memory) only when explicitly opted out. Explicit --study-db wins.
@@ -283,12 +292,17 @@ def study_db_path(study_db, no_persist, track, out=None):
         return None
     if study_db:
         return study_db
+    # `os.path.join`, not an f-string with a literal separator. These are HOST paths, on whatever
+    # machine is running the search, and on Windows the f-string produced
+    # `C:\Users\...\out/senbon-study.db`: a mixed-separator string that the file APIs accept and
+    # that no two pieces of code compare equal. Anything that recorded one path and matched it
+    # against another built a different way would silently fail to find its own study.
     if out is None:
-        return f"{track}/senbon-study.db"
-    legacy = Path(f"{track}/senbon-study.db")
+        return os.path.join(str(track), STUDY_DB_NAME)
+    legacy = Path(track) / STUDY_DB_NAME
     if legacy.is_file():
         return str(legacy)
-    return f"{out}/senbon-study.db"
+    return os.path.join(str(out), STUDY_DB_NAME)
 
 
 def search_already_done(user_attrs):

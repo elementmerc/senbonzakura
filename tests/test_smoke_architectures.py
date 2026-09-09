@@ -75,7 +75,25 @@ def _lfm2(hidden=32, layer_types=("conv", "conv", "full_attention", "conv")):
         layer_types=list(layer_types)))
 
 
+def _require_lfm2_moe():
+    """LFM2-MoE arrived in transformers after the declared `>=4.56` floor.
+
+    Support for an architecture is conditional on the dependency carrying it, so the floors job
+    must skip these rather than report eleven broken tests. Named here, at the construction site,
+    because parametrised cases reach it through fixtures and a per-test marker misses them.
+    """
+    import transformers
+    missing = [n for n in ("Lfm2MoeConfig", "Lfm2MoeForCausalLM") if not hasattr(transformers, n)]
+    if missing:
+        pytest.skip(f"transformers {getattr(transformers, '__version__', '?')} has no "
+                    f"{', '.join(missing)}; this architecture arrived after the declared floor")
+
+
 def _lfm2_moe(hidden=32, layer_types=("conv", "conv", "full_attention", "full_attention")):
+    # Skips rather than fails where the installed transformers predates this architecture.
+    # Guarded at the construction site so every parametrisation that reaches it is covered,
+    # rather than the handful of test names that happened to fail on one runner.
+    _require_lfm2_moe()
     return transformers.Lfm2MoeForCausalLM(transformers.Lfm2MoeConfig(
         hidden_size=hidden, num_hidden_layers=len(layer_types), num_attention_heads=4,
         num_key_value_heads=2, intermediate_size=64, vocab_size=128, num_experts=4,

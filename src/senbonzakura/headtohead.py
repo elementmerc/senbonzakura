@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -155,10 +156,25 @@ def _heretic_argv(*, model, track, out, seed, trials, slices, extra):
     # and only one of them was right.
     return ["python", "-u", str(_bench_dir_for(out) / "run_heretic.py"),
             "--model", str(model), "--out", str(out),
-            "--good", str(s / "good.txt"), "--bad", str(s / "bad.txt"),
-            "--keyword-prompts", str(s / "keyword_prompts.txt"),
-            "--kl-prompts", str(s / "kl_prompts.txt"),
+            "--good", _child(s, "good.txt"), "--bad", _child(s, "bad.txt"),
+            "--keyword-prompts", _child(s, "keyword_prompts.txt"),
+            "--kl-prompts", _child(s, "kl_prompts.txt"),
             "--seed", str(seed), "--trials", str(trials), *extra]
+
+
+def _child(base, name):
+    r"""`base/name`, keeping POSIX separators for anything that names a place inside the container.
+
+    THE SAME ARGUMENT LIST IS BUILT TWICE OVER. Sealed, these are container paths (`/corpus-eval`);
+    unsealed, they are host paths. `Path("/corpus-eval") / "good.txt"` is `\corpus-eval\good.txt`
+    on Windows, which no Linux container will ever find, and `posixpath.join` on a host path would
+    be just as wrong the other way. So the separator follows the path, not the machine: anything
+    rooted at `/` is a guest path and stays POSIX.
+    """
+    text = str(base)
+    if text.startswith("/"):
+        return posixpath.join(text, name)
+    return str(Path(text) / name)
 
 
 def _heretic_finalise(*, out, slices, **_):
@@ -177,8 +193,8 @@ def _heretic_finalise(*, out, slices, **_):
     s = Path(slices)
     return ["python", str(_bench_dir_for(out) / "best_of_n_heretic.py"),
             "--out", str(out), "--top-n", "6",
-            "--final-prompts", str(s / "final_prompts.txt"),
-            "--keyword-prompts", str(s / "keyword_prompts.txt")]
+            "--final-prompts", _child(s, "final_prompts.txt"),
+            "--keyword-prompts", _child(s, "keyword_prompts.txt")]
 
 
 def _bench_dir_for(out) -> Path:

@@ -14,7 +14,6 @@ old one or a complete new one.
 """
 import json
 import os
-import signal
 import subprocess
 import sys
 import textwrap
@@ -146,7 +145,11 @@ def test_a_process_killed_mid_write_leaves_the_previous_result_intact(tmp_path):
             time.sleep(0.05)
         assert (tmp_path / "r.json.part").exists(), "the child never reached the write"
 
-        os.kill(proc.pid, signal.SIGKILL)
+        # `proc.kill()`, not `os.kill(pid, SIGKILL)`. Windows has no SIGKILL and the module
+        # attribute does not exist there, so the test failed with AttributeError before it could
+        # kill anything. `Popen.kill` is SIGKILL on POSIX and TerminateProcess on Windows, which
+        # is the same uncatchable stop this test is about.
+        proc.kill()
         proc.wait(timeout=10)
     finally:
         if proc.poll() is None:

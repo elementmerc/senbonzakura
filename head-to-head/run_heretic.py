@@ -45,6 +45,7 @@ read-only by design and only `/work/out` is mounted read-write. So this runs fro
 import argparse
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -97,16 +98,21 @@ dataset = "{args.kl_prompts}"
 
 
 def study_path(model, workdir):
-    """Where Heretic leaves its Optuna study, derived the way Heretic derives it.
+    r"""Where Heretic leaves its Optuna study, derived the way Heretic derives it.
 
     `study_checkpoint_dir` defaults to `checkpoints` relative to the working directory, and the
     file within it is the model identifier with every character that is not alphanumeric, an
     underscore or a hyphen replaced by a double hyphen (heretic/main.py, the study checkpoint
     block). Recording the path here means the best-of-N pass finds the study by being told, rather
     than by guessing at a naming rule that could change under it.
+
+    POSIX separators, always, and NOT `os.path.join`. This path names a location inside the
+    sealed Linux container the arm runs in, so on a Windows host `os.path.join` produced
+    `C:\work\out\checkpoints\...` for a path the container would never find. The harness can be
+    driven from anywhere; the box it drives is always Linux.
     """
     stem = "".join(c if (c.isalnum() or c in ("_", "-")) else "--" for c in model)
-    return os.path.join(workdir, "checkpoints", stem + ".jsonl")
+    return posixpath.join(str(workdir).replace("\\", "/"), "checkpoints", stem + ".jsonl")
 
 
 def count_trials(study_file):

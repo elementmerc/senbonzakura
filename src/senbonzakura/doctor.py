@@ -36,6 +36,28 @@ from pathlib import Path
 OK, WARN, FAIL = 0, 1, 2
 
 
+#: The tick and cross, unless the console cannot write them.
+#:
+#: THE PRE-FLIGHT COMMAND CRASHED ON WINDOWS. A Windows console is cp1252 by default, which has no
+#: U+2713, so `doctor` died with a UnicodeEncodeError traceback partway through printing its own
+#: report. The one command whose entire job is to tell somebody whether their install works was
+#: the one that could not finish saying so, and it took the whole CI job down with it.
+#:
+#: Decided once, at import, from what stdout can actually encode. ASCII marks are still aligned and
+#: still distinguishable; a traceback is neither.
+def _marks():
+    glyphs = {"pass": "\u2713", "warn": "!", "fail": "\u2717"}
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        "".join(glyphs.values()).encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return {"pass": "OK", "warn": " !", "fail": "XX"}
+    return glyphs
+
+
+_MARKS = _marks()
+
+
 class Check:
     """One question, its answer, and what to do about it."""
 
@@ -44,7 +66,7 @@ class Check:
 
     @property
     def mark(self):
-        return {"pass": "✓", "warn": "!", "fail": "✗"}[self.status]
+        return _MARKS[self.status]
 
 
 def _pass(name, detail):

@@ -34,9 +34,21 @@ from senbonzakura import methods
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "e2_arms.sh"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("senbonzakura") is None,
-    reason="the script drives the installed console script, which this environment lacks")
+#: The script runs every step under GNU `timeout`, which macOS does not ship. Without it the
+#: script now refuses in its pre-flight rather than reporting each arm as failing with an exit
+#: code of its own, so these tests would be measuring the refusal. Skipped with the reason, and
+#: CI's macOS job installs coreutils so they actually run there.
+_HAS_TIMEOUT = any(shutil.which(t) for t in ("timeout", "gtimeout"))
+
+pytestmark = [
+    pytest.mark.skipif(
+        shutil.which("senbonzakura") is None,
+        reason="the script drives the installed console script, which this environment lacks"),
+    pytest.mark.skipif(
+        not _HAS_TIMEOUT,
+        reason="neither timeout nor gtimeout is on PATH; the script refuses without one "
+               "(GNU coreutils, which macOS does not ship)"),
+]
 
 
 def _track(tmp_path):

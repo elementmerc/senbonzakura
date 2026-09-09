@@ -93,6 +93,15 @@ def _build(model_type, meta=True, **extra):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         cfg = AutoConfig.for_model(model_type, **{**_BASE, **extra})
+        # VERSION-ADAPTIVE, not hard-coded, because the two ends of the supported range disagree
+        # about this field. transformers 4.56, the declared floor, leaves `layers_block_type` as
+        # None for granitemoehybrid and then dies with "'NoneType' object is not subscriptable"
+        # inside its own decoder layer. Newer versions fill it in, and reject the older
+        # vocabulary ("mamba", "attention") if it is supplied. So it is filled in only when the
+        # installed transformers has left it empty, using that version's own allowed values.
+        if getattr(cfg, "layers_block_type", "absent") is None:
+            n = getattr(cfg, "num_hidden_layers", 4)
+            cfg.layers_block_type = ["attention" if i % 2 == 0 else "mamba" for i in range(n)]
         if meta:
             with torch.device("meta"):
                 return AutoModelForCausalLM.from_config(cfg), cfg

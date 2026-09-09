@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "senbonzakura"
-version = "0.3.0"
+version = "0.3.1"
 description = "Multi-direction refusal abliteration for transformer language models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [

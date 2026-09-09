@@ -5,22 +5,36 @@ abliteration tool with an automated search, has been run: five seeds each, both 
 us on one machine, every model scored afterwards by our instruments on prompts neither tool was
 fitted on.
 
-::: warning These numbers are provisional, and two things are still open
+::: warning These numbers are provisional, and several things are still open
 They are published here because the alternative is a page that says nothing while we know
-something. Both open items are named below the table. Neither is hidden and neither is settled.
+something. Every open item is named below the table, and one row has since been withdrawn
+outright. Nothing here is hidden and nothing here is settled.
 :::
 
 | Axis | Senbonzakura | Heretic |
 |---|---|---|
 | Hard refusal | 0.0% | 0.0% |
-| Noncompliance (refusal plus hedging) | 3.6% | **1.9%** |
+| Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ withdrawn, see below |
 | Keyword rate | 16.1% | **9.6%** |
 | Coherence drift | **0.191** | 0.341 |
 | Harm recognition | 0.9807 | 0.9821 (tie) |
 
 **Both tools took hard refusal to zero, which is what makes the rest readable.** At the same
 refusal rate the only thing left to compare is the price paid for it, and we did roughly half the
-collateral damage. Heretic left less hedging behind and won its own keyword metric.
+collateral damage. Heretic won its own keyword metric.
+
+::: danger The noncompliance row is withdrawn, 2026-09-09
+This run was scored on 2026-08-12. On 2026-09-08 the hedging detector was found to count
+statements of fact about legality or danger as hedging, so a complete, compliant technical answer
+that mentioned an activity is illegal was scored as a soft refusal. That fires asymmetrically: a
+more explanatory model collects more of them whether or not it complied. Both figures in that row
+were produced by it, so neither is a measurement of what its name says, and the row used to bold
+the other tool's number as a win.
+
+The row stays visible with a line through it rather than being deleted, because it was published
+and people read it. It will be re-measured when the head-to-head is re-run under the corrected
+detector, and not before.
+:::
 
 **The reversal is the interesting part.** Heretic self-reports a coherence divergence of 0.0014 to
 0.0032 against our 0.157 to 0.212, a hundredfold apart, and reading those two as a comparison is
@@ -47,8 +61,13 @@ order reverses.
   same dataset family, and Heretic optimises against that ruler by default. Counting the overlap
   is queued work.
 
-The recipe below is the same command that produced the table, so you do not have to take our word
-for any of it.
+The recipe below is how you run this comparison today. It is **not**, as this page used to claim,
+the same command that produced the table: that run was scored on 2026-08-12, and the harness has
+been renamed and repaired since, so the command shown here did not exist in this form when those
+figures were measured. No record of the run is kept in this repository either, which the harness's
+own contract requires and which this page should have said. Re-running it under the current code
+is queued work, and until that happens the figures above are a report of what we saw rather than
+something you can reproduce from this page.
 
 ## Run it yourself
 

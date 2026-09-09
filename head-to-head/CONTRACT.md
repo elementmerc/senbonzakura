@@ -4,8 +4,15 @@
 two numbers from two tools mean the same thing. The contract is the contribution. The results
 table is downstream of it, and we publish ours whether or not they flatter us.
 
-**Status: draft, no results yet.** The senbonzakura column is not filled in either. If you are
-reading this and the table below is empty, that is the current state and not an oversight.
+**Status: no results in this repository, and a published table that predates them.** Section 4 is
+still empty and that is the honest state of this contract: nothing under `results/` records a run.
+
+A run did happen. Five arms of each tool were scored on 2026-08-12 and the figures are published
+on the documentation site's benchmark page. No record of it was kept here, so those figures do not
+meet the traceability this contract promises in section 4, and the page now says so. The harness
+has also been renamed and repaired since, so the commands in this directory are not the ones that
+produced them. Re-running under the current code, and keeping the records this time, is what
+closes the gap.
 
 **Run it yourself and tell us we are wrong.** Everything needed is in this directory. If a number
 here is unfair to a tool you wrote or use, we would rather hear it than defend it: open an issue
@@ -176,8 +183,10 @@ not published as a property of a model.
 
 ## 4. Results
 
-Nothing yet. The table lands here when the first arms have run, with every cell traceable to a
-record under `results/`.
+Nothing here yet, and that is the point rather than an oversight: the 2026-08-12 run was published
+without leaving a record under `results/`, so this section stayed empty while a table went up. A
+cell with no record behind it is not traceable however carefully it was measured. The table lands
+here when the re-run finishes, with every cell traceable to a record under `results/`.
 
 ## 5. What would make this benchmark wrong
 

@@ -149,8 +149,18 @@ that nothing was fitted or selected on.
 
 | Direction budget | Coherence drift | Hard refusal | Noncompliance |
 |---|---|---|---|
-| One | **0.0497** (spread 0.0177) | 0.1% | 3.8% |
-| Two | 0.0932 (spread 0.0482) | 0.3% | 4.2% |
+| One | **0.0497** (spread 0.0177) | 0.1% | ~~3.8%~~ |
+| Two | 0.0932 (spread 0.0482) | 0.3% | ~~4.2%~~ |
+
+::: warning The noncompliance column is withdrawn, 2026-09-09
+These arms were scored on 2026-09-07. The next day the hedging detector was found to count
+statements of fact about legality or danger as hedging, so a complete, compliant technical answer
+that mentioned an activity is illegal was scored as a soft refusal. Both figures came from it.
+
+The conclusion of this section does not rest on them: it is argued on coherence drift at matched
+hard refusal, and hard refusal is measured by a different ruler that this defect did not touch.
+The column is struck through rather than deleted because it was published.
+:::
 
 Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
 at matched refusal, where the only thing left to differ is the price paid for it. Two directions

@@ -180,31 +180,91 @@ def test_the_bundled_track_is_the_first_choice():
     assert it.KNOWN_DATASETS[0]["key"] == "default"
 
 
-def test_the_menu_shows_the_licence_before_the_choice_is_made():
+def test_every_corpus_is_offered_for_the_side_it_actually_holds():
+    """THE DEFECT THIS ENCODES. There was one menu, and whatever it returned went to `--track`.
+
+    `--track` takes a directory holding bad_ds, good_ds and bad_eval_ds. Three of the four
+    corpora on that menu are a single Hub split holding ONE side of the contrast, so choosing any
+    of them printed a command that dies in the pre-flight. Only the bundled entry ever worked.
+    """
+    assert {e["side"] for e in it.KNOWN_DATASETS} <= {"track", "harmful", "harmless"}
+    by_key = {e["key"]: e["side"] for e in it.KNOWN_DATASETS}
+    assert by_key["advbench"] == "harmful"
+    assert by_key["harmless-alpaca"] == "harmless"
+    assert by_key["default"] == "track"
+
+
+def test_a_side_menu_shows_the_licence_before_the_choice_is_made():
     said = []
-    it.pick_dataset(ask_fn=_answers("2"), log=said.append)
-    joined = "\n".join(said)
-    assert "MIT" in joined
-    assert "CC BY-NC 4.0" in joined
+    it.pick_side("harmful", "which?", ask_fn=_answers("1"), log=said.append)
+    assert "MIT" in "\n".join(said)
+    assert "undeclared upstream" in "\n".join(said)
 
 
-def test_picking_a_known_dataset_returns_its_spec():
-    spec, licence = it.pick_dataset(ask_fn=_answers("2"), log=lambda *a: None)
+def test_picking_a_known_corpus_returns_its_spec():
+    spec, licence = it.pick_side("harmful", "which?", ask_fn=_answers("2"),
+                                 log=lambda *a: None)
     assert spec == "walledai/AdvBench::train"
     assert licence == "MIT"
 
 
+def test_a_gated_corpus_is_not_the_default_and_says_it_is_gated():
+    """AdvBench was the first harmful choice, so it was what pressing Enter picked, and it is
+    gated: a newcomer with no Hugging Face account met an authentication error from a menu that
+    had just called it the field's common yardstick.
+    """
+    harmful = it.by_side("harmful")
+    assert harmful[0]["key"] != "advbench"
+    advbench = next(e for e in harmful if e["key"] == "advbench")
+    assert "GATED" in advbench["note"]
+    assert "huggingface-cli login" in advbench["note"]
+
+
 def test_picking_your_own_asks_for_the_path():
-    spec, licence = it.pick_dataset(ask_fn=_answers("5", "~/mytrack"), log=lambda *a: None)
-    assert spec == "~/mytrack"
+    """"Something of my own" is always last, whichever side is being asked for."""
+    n = len(it.by_side("harmless"))
+    spec, licence = it.pick_side("harmless", "which?", ask_fn=_answers(str(n), "~/mine.txt"),
+                                 log=lambda *a: None)
+    assert spec == "~/mine.txt"
     assert licence == "yours"
+
+
+def test_two_hub_corpora_become_a_track_build_step_rather_than_a_broken_track_flag():
+    spec, licence, build = it.pick_track(
+        ask_fn=_answers("2", "1", "1", "mytrack"), log=lambda *a: None)
+    assert spec == "mytrack"
+    assert build == {"command": "track",
+                     "options": {"--harmful": "mlabonne/harmful_behaviors::train",
+                                 "--harmless": "mlabonne/harmless_alpaca::train",
+                                 "--out": "mytrack"}}
+    # Two corpora under two different licences, and the answer carries both rather than
+    # reporting one of them as the licence of the pair.
+    assert "(harmful)" in licence and "(harmless)" in licence
+
+
+def test_a_track_directory_already_built_needs_no_build_step():
+    spec, _licence, build = it.pick_track(ask_fn=_answers("3", "~/mytrack"),
+                                          log=lambda *a: None)
+    assert spec == "~/mytrack"
+    assert build is None
 
 
 def test_choosing_the_bundled_track_without_one_says_how_to_get_it(monkeypatch):
     monkeypatch.setattr(it.bundled, "is_available", lambda: False)
     said = []
-    it.pick_dataset(ask_fn=_answers("1"), log=said.append)
+    it.pick_track(ask_fn=_answers("1"), log=said.append)
     assert any("pack_track.py" in s for s in said)
+
+
+def test_scoring_asks_for_one_prompt_set_rather_than_a_three_way_split():
+    """`score --eval` takes a prompt set. The walk used to append `/bad_eval_ds` to whatever the
+    corpus menu returned, which made a real path out of the bundled alias and nonsense out of
+    every other answer: `walledai/AdvBench::train/bad_eval_ds` exists nowhere.
+    """
+    spec, _licence = it.pick_eval(ask_fn=_answers("1"), log=lambda *a: None)
+    assert spec == "default/bad_eval_ds"
+    spec, _licence = it.pick_eval(ask_fn=_answers("2"), log=lambda *a: None)
+    assert spec == "mlabonne/harmful_behaviors::train"
 
 
 # ── the plan ─────────────────────────────────────────────────────────────────────
@@ -263,7 +323,7 @@ def test_abandoning_exits_cleanly_without_running_anything():
 
 def test_declining_the_run_exits_zero():
     said = []
-    code = it.run(ask_fn=_answers("1", "M", "5", "mytrack", "2", "OUT", "3", "n"),
+    code = it.run(ask_fn=_answers("1", "M", "3", "mytrack", "2", "OUT", "3", "n"),
                   log=said.append, stdin=_Tty())
     assert code == 0
 
@@ -278,7 +338,7 @@ def test_accepting_calls_the_cli_with_the_displayed_flags(monkeypatch):
     from senbonzakura import cli
     monkeypatch.setattr(cli, "main", fake_main)
     said = []
-    code = it.run(ask_fn=_answers("1", "MODEL", "5", "mytrack", "2", "OUT", "7", "y"),
+    code = it.run(ask_fn=_answers("1", "MODEL", "3", "mytrack", "2", "OUT", "7", "y"),
                   log=said.append, stdin=_Tty())
     assert code == 0
     argv = seen["argv"]
@@ -296,3 +356,158 @@ def test_interactive_is_a_registered_subcommand():
     from senbonzakura import cli
     assert "interactive" in cli.DELEGATED
     assert cli._delegate("interactive") is it.run
+
+
+# ── the way back in ──────────────────────────────────────────────────────────────
+def _paused_run(tmp_path, name="run1", record=None):
+    d = tmp_path / name
+    d.mkdir()
+    (d / it.STUDY_DB).touch()
+    if record is not None:
+        from senbonzakura import runrecord
+        runrecord.write(d, **record)
+    return d
+
+
+def test_the_resume_command_carries_the_model_and_the_track(tmp_path):
+    """THE SCREEN THAT PRINTED A COMMAND NOBODY COULD RUN.
+
+    It offered `senbonzakura kageyoshi --out <dir> --resume`. `--model` is required, so the one
+    screen written to save somebody hours produced an argparse error instead. Adding `--model`
+    alone would have been worse: `--track` has a default, so a resume that omits it carries on one
+    corpus's trials while scoring new ones against another.
+    """
+    _paused_run(tmp_path, record={"model": "Qwen/Qwen3-1.7B", "track": "mytrack"})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["options"]["--model"] == "Qwen/Qwen3-1.7B"
+    assert plan["options"]["--track"] == "mytrack"
+    assert plan["options"]["--resume"] is True
+    assert plan["options"]["--out"] == str(tmp_path / "run1")
+
+
+def test_a_run_from_before_the_record_asks_rather_than_guessing(tmp_path):
+    _paused_run(tmp_path)
+    said = []
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1", "MODEL", "TRACK"),
+                           log=said.append)
+    assert plan["options"]["--model"] == "MODEL"
+    assert plan["options"]["--track"] == "TRACK"
+    assert any("does not say which model" in s for s in said)
+
+
+def test_the_menu_row_says_which_model_the_paused_run_was_editing(tmp_path):
+    _paused_run(tmp_path, record={"model": "Qwen/Qwen3-1.7B", "track": "default"})
+    said = []
+    it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=said.append)
+    assert any("Qwen/Qwen3-1.7B" in s for s in said)
+
+
+def test_the_resume_command_uses_the_mode_word_the_run_used(tmp_path):
+    _paused_run(tmp_path, record={"model": "M", "track": "T", "bankai": False})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["command"] == "abliterate"
+
+
+def test_starting_fresh_is_still_the_last_option(tmp_path):
+    _paused_run(tmp_path, record={"model": "M", "track": "T"})
+    assert it.offer_resume(root=tmp_path, ask_fn=_answers("2"), log=lambda *a: None) is None
+
+
+# ── several commands, in order ───────────────────────────────────────────────────
+def test_a_track_build_runs_before_the_abliteration_that_needs_it():
+    plan = it.plan_abliteration(
+        ask_fn=_answers("1", "M", "2", "1", "1", "mytrack", "2", "OUT", "5"),
+        log=lambda *a: None)
+    ordered = it.steps(plan)
+    assert [s["command"] for s in ordered] == ["track", "kageyoshi"]
+    assert ordered[1]["options"]["--track"] == "mytrack"
+
+
+def test_every_step_is_shown_before_any_of_them_runs():
+    plan = it.plan_abliteration(
+        ask_fn=_answers("2", "M", "2", "1", "1", "mytrack", "2", "OUT", "5"),
+        log=lambda *a: None)
+    said = []
+    it.present(plan, ask_fn=_answers("n"), log=said.append)
+    joined = "\n".join(said)
+    for step in it.steps(plan):
+        assert it.render_command(step["command"], step["options"]) in joined
+    assert "three commands" in joined
+
+
+def test_a_failing_step_stops_the_ones_after_it(monkeypatch):
+    calls = []
+
+    def fake_main(argv):
+        calls.append(argv[0])
+        return 1 if argv[0] == "track" else 0
+
+    from senbonzakura import cli
+    monkeypatch.setattr(cli, "main", fake_main)
+    said = []
+    code = it.run(ask_fn=_answers("1", "M", "2", "1", "1", "mytrack", "2", "OUT", "5", "y"),
+                  log=said.append, stdin=_Tty())
+    assert code == 1
+    assert calls == ["track"]
+
+
+def test_a_failure_before_the_search_does_not_promise_completed_trials(monkeypatch):
+    """Telling somebody whose track build failed that their trials are safe on disk would be a
+    comforting sentence about a search that never started.
+    """
+    def fake_main(argv):
+        return 1 if argv[0] == "track" else 0
+
+    from senbonzakura import cli
+    monkeypatch.setattr(cli, "main", fake_main)
+    said = []
+    it.run(ask_fn=_answers("1", "M", "2", "1", "1", "mytrack", "2", "OUT", "5", "y"),
+           log=said.append, stdin=_Tty())
+    joined = "\n".join(said)
+    assert "no partial run to recover" in joined
+    assert "completed trials are not lost" not in joined
+
+
+def test_a_nonzero_status_gets_the_same_recovery_line_as_a_crash(monkeypatch):
+    """The recovery line used to be reserved for exceptions, so a command that reported failure
+    by returning a status printed its error and then nothing.
+    """
+    from senbonzakura import cli
+    monkeypatch.setattr(cli, "main", lambda argv: 1)
+    said = []
+    code = it.run(ask_fn=_answers("1", "M", "1", "2", "OUT", "5", "y"),
+                  log=said.append, stdin=_Tty())
+    assert code == 1
+    assert any("To pick up where it stopped" in s for s in said)
+
+
+def test_the_whole_walk_completes_on_an_install_with_no_deep_learning_stack():
+    """It asked four questions and then died on an eleven-frame ImportError.
+
+    `ask_output` reached through `cli` for `occupied_by`, and `cli` imports torch, optuna and
+    transformers at module scope. On a base install (the dependency split put those behind the
+    `[abliterate]` extra) the guided mode got as far as "Where should it run?" and then handed the
+    person a traceback that named none of the things they needed to install.
+
+    Run in a subprocess with those imports blocked, because the check is about what an import
+    pulls in and this process has already imported everything.
+    """
+    import subprocess
+    import sys
+    probe = r"""
+import sys
+class Block:
+    def find_spec(self, name, target=None, path=None):
+        if name.split(".")[0] in ("torch", "optuna", "transformers", "accelerate"):
+            raise ImportError("blocked for this probe: " + name)
+        return None
+sys.meta_path.insert(0, Block())
+from senbonzakura import interactive as it
+answers = iter(["1", "M", "1", "2", "OUT", "5"])
+plan = it.plan_abliteration(ask_fn=lambda _p: next(answers), log=lambda *a: None)
+print(plan["options"]["--out"])
+"""
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
+                         check=False, timeout=180)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "OUT"

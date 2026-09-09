@@ -31,7 +31,7 @@ beats a job that hangs in CI until something kills it.
 import sys
 from pathlib import Path
 
-from . import bundled
+from . import bundled, runrecord
 
 #: Datasets offered by name. Nothing here ships with the package except `default`: the rest are
 #: fetched on demand from the Hub, under the licence shown, so a user chooses with the terms in
@@ -39,46 +39,65 @@ from . import bundled
 #:
 #: The licence column is the reason this list is short. Every entry has to be one whose position
 #: has actually been checked, and a corpus nobody has traced does not go on a menu.
+#:
+#: `side` IS LOAD-BEARING, AND ITS ABSENCE WAS THE DEFECT. There was one menu and one question, and whatever
+#: came back went straight to `--track`, which takes a directory holding `bad_ds`, `good_ds` and
+#: `bad_eval_ds`. Three of the four corpora offered are a single Hub split with one side of the
+#: contrast in it, so picking any of them printed a command that dies in the pre-flight with
+#: "nothing exists at that path". Only the bundled entry ever worked. A corpus is now offered for
+#: the side it actually holds, and a pair of sides is turned into a track by the command that
+#: exists for it.
 KNOWN_DATASETS = [
     {
         "key": "default",
         "spec": "default",
+        "side": "track",
         "title": "The Senbonzakura evaluation track (bundled)",
         "licence": "CC BY-NC 4.0",
         "note": "9,877 prompts, three-way split, ships inside the package. Attribution "
                 "required, non-commercial only.",
     },
     {
-        "key": "advbench",
-        "spec": "walledai/AdvBench::train",
-        "title": "AdvBench (Zou et al. 2023)",
-        "licence": "MIT",
-        "note": "520 harmful behaviours. The field's common yardstick, and small: it has no "
-                "harmless arm, so you will need one.",
-    },
-    {
         "key": "harmful-behaviors",
         "spec": "mlabonne/harmful_behaviors::train",
+        "side": "harmful",
         "title": "mlabonne/harmful_behaviors",
         "licence": "undeclared upstream",
-        "note": "What Heretic's defaults fit on, so choose it to compare like with like. "
-                "Declares no licence; see the dataset card.",
+        "note": "416 requests, and what Heretic's defaults fit on, so choose it to compare like "
+                "with like. Declares no licence; see the dataset card.",
+    },
+    {
+        "key": "advbench",
+        "spec": "walledai/AdvBench::train",
+        "side": "harmful",
+        "title": "AdvBench (Zou et al. 2023)",
+        "licence": "MIT",
+        # OFFERED SECOND, AND SAYING SO, because it is gated. It was the first harmful choice and
+        # therefore the default, and taking the default gave a newcomer with no Hugging Face
+        # account an authentication error from a menu that had promised them a yardstick.
+        "note": "520 harmful behaviours, the field's common yardstick. GATED on the Hub: it "
+                "needs a Hugging Face account and `huggingface-cli login` before it will fetch.",
     },
     {
         "key": "harmless-alpaca",
         "spec": "mlabonne/harmless_alpaca::train",
-        "title": "mlabonne/harmless_alpaca (harmless side)",
+        "side": "harmless",
+        "title": "mlabonne/harmless_alpaca",
         "licence": "undeclared upstream, probably CC BY-NC 4.0",
         "note": "The harmless arm most abliteration tutorials use.",
     },
-    {
-        "key": "own",
-        "spec": None,
-        "title": "Something of my own",
-        "licence": "yours",
-        "note": "A track directory, a text/CSV/JSON file, or a Hub id.",
-    },
 ]
+
+
+def by_side(side):
+    """The corpora that hold `side`, plus a way to name one that is not on the list."""
+    entries = [e for e in KNOWN_DATASETS if e["side"] == side]
+    entries.append({
+        "key": "own", "spec": None, "side": side, "licence": "yours",
+        "title": "Something of my own",
+        "note": "a text file (one prompt per line), a CSV/JSON with a prompt column, or a Hub id",
+    })
+    return entries
 
 DEVICES = [
     ("cuda", "an NVIDIA card. Needed to edit a model in any reasonable time"),
@@ -180,23 +199,93 @@ def confirm(question, *, default=True, ask_fn=input, log=print):
         log("  Please answer y or n.")
 
 
-def pick_dataset(ask_fn=input, log=print):
-    """Which corpus, with its licence shown before the choice rather than after."""
-    options = []
-    for entry in KNOWN_DATASETS:
-        label = f"{entry['title']}  ({entry['licence']})"
-        options.append((label, entry["note"]))
+def warn_if_unbundled(log=print):
+    """The bundled track is packed at release time, so a source clone has none."""
+    if bundled.is_available():
+        return
+    log("")
+    log("  NOTE: no bundled track is installed in this checkout. It is packed at release")
+    log("        time, so a wheel has one and a source clone does not. Run")
+    log("        `python tools/pack_track.py --track <dir>`, or choose another option.")
+
+
+def pick_side(side, question, ask_fn=input, log=print):
+    """One side of the contrast, as (spec, licence). Licences are shown before the choice."""
+    entries = by_side(side)
+    options = [(f"{e['title']}  ({e['licence']})", e["note"]) for e in entries]
+    entry = entries[choose(question, options, default=0, ask_fn=ask_fn, log=log)]
+    if entry["spec"] is None:
+        return ask("  Path, or Hub id (add ::split[:N] to slice it)",
+                   ask_fn=ask_fn, log=log), "yours"
+    return entry["spec"], entry["licence"]
+
+
+def pick_device(ask_fn=input, log=print):
+    index = choose("Where should it run?", [(name, note) for name, note in DEVICES],
+                   default=0, ask_fn=ask_fn, log=log)
+    return DEVICES[index][0]
+
+
+def pick_track(ask_fn=input, log=print):
+    """Which track the search fits and scores on, as (spec, licence, build step or None).
+
+    A track is a directory with three partitions in it, and the three ways to get one are the
+    three options here. Building one is a real command with its own flags, so it is returned as a
+    step to run first rather than folded into the abliterate line: the rule this file keeps is
+    that what it prints is what it runs.
+    """
+    options = [
+        ("The Senbonzakura evaluation track (bundled)  (CC BY-NC 4.0)",
+         ("9,877 prompts, three-way split, ships inside the package. Attribution required, "
+          "non-commercial only.")),
+        ("Build a track from a harmful set and a harmless set",
+         ("pick one of each; `senbonzakura track` splits them into fit, search and measure "
+          "partitions and checks the three do not overlap")),
+        ("A track directory I already built",
+         "one holding bad_ds, good_ds and bad_eval_ds"),
+    ]
     index = choose("Which prompts should it learn refusal from?", options,
                    default=0, ask_fn=ask_fn, log=log)
-    entry = KNOWN_DATASETS[index]
+
+    if index == 0:
+        warn_if_unbundled(log=log)
+        return "default", "CC BY-NC 4.0", None
+    if index == 2:
+        return ask("  Path to the track directory", ask_fn=ask_fn, log=log), "yours", None
+
+    harmful, harmful_licence = pick_side(
+        "harmful", "Which harmful prompts?", ask_fn=ask_fn, log=log)
+    harmless, harmless_licence = pick_side(
+        "harmless", "Which harmless prompts to contrast them against?", ask_fn=ask_fn, log=log)
+    out = ask("\n  Where should the built track go?", default="track", ask_fn=ask_fn, log=log)
+    licence = harmful_licence if harmful_licence == harmless_licence else \
+        f"{harmful_licence} (harmful) and {harmless_licence} (harmless)"
+    build = {"command": "track",
+             "options": {"--harmful": harmful, "--harmless": harmless, "--out": out}}
+    return out, licence, build
+
+
+def pick_eval(ask_fn=input, log=print):
+    """The prompts a `score` run is measured on, as (spec, licence).
+
+    Scoring needs ONE prompt set, not a three-way split, so this asks for one rather than sending
+    somebody to build a track they will use a third of. The bundled entry names its held-out
+    partition directly, which is the partition a published number should come from.
+    """
+    entries = by_side("harmful")
+    options = [("The bundled track's held-out harmful prompts  (CC BY-NC 4.0)",
+                ("4,636 prompts nothing was fitted or searched on, which is where a number worth "
+                 "publishing comes from"))]
+    options += [(f"{e['title']}  ({e['licence']})", e["note"]) for e in entries]
+    index = choose("Which prompts should it be measured on?", options,
+                   default=0, ask_fn=ask_fn, log=log)
+    if index == 0:
+        warn_if_unbundled(log=log)
+        return "default/bad_eval_ds", "CC BY-NC 4.0"
+    entry = entries[index - 1]
     if entry["spec"] is None:
-        spec = ask("  Path, or Hub id (add ::split[:N] to slice it)", ask_fn=ask_fn, log=log)
-        return spec, "yours"
-    if entry["key"] == "default" and not bundled.is_available():
-        log("")
-        log("  NOTE: no bundled track is installed in this checkout. It is packed at release")
-        log("        time, so a wheel has one and a source clone does not. Run")
-        log("        `python tools/pack_track.py --track <dir>`, or choose another option.")
+        return ask("  Path, or Hub id (add ::split[:N] to slice it)",
+                   ask_fn=ask_fn, log=log), "yours"
     return entry["spec"], entry["licence"]
 
 
@@ -250,8 +339,44 @@ def resumable_runs(root="."):
             what = "a winning config, so it re-bakes in minutes rather than re-searching"
         else:
             continue
-        out.append((str(d), what))
+        record = runrecord.read(d)
+        if record and record.get("model"):
+            what += f"; it was editing {record['model']}"
+        out.append((str(d), what, record))
     return out
+
+
+def resume_plan(path, record, ask_fn=input, log=print):
+    """The command that carries on the run in `path`, filled in from what that run recorded.
+
+    THE SCREEN THAT PRINTED A COMMAND NOBODY COULD RUN. This offered
+    `senbonzakura kageyoshi --out <dir> --resume`, and `--model` is required, so the one screen
+    written to save somebody hours produced an argparse error. Adding `--model` alone would have
+    been worse: `--track` has a default, so a resume that omits it carries on one corpus's trials
+    while scoring new ones against another, and no artefact says the run changed corpus halfway.
+
+    Both come off the record the run writes before it starts searching. A run from a build that
+    predates that record cannot be reconstructed, so its inputs are asked for rather than guessed,
+    and the same guard in the abliterator refuses the pair if they disagree with the study anyway.
+    """
+    options = {}
+    if record and record.get("model"):
+        options["--model"] = record["model"]
+    else:
+        log("")
+        log(f"  {path} does not say which model it was editing, so it predates the record runs")
+        log("  now keep. Resuming with the wrong one would continue this search against a")
+        log("  different model, so it has to be named.")
+        options["--model"] = ask("  Which model was it?", ask_fn=ask_fn, log=log)
+    if record and record.get("track"):
+        options["--track"] = record["track"]
+    else:
+        options["--track"] = ask("  And which track was it scored on?", default="default",
+                                 ask_fn=ask_fn, log=log)
+    options["--out"] = path
+    options["--resume"] = True
+    command = "abliterate" if record and record.get("bankai") is False else "kageyoshi"
+    return {"command": command, "options": options, "licence": "yours", "recipe": "resume"}
 
 
 def offer_resume(root=".", ask_fn=input, log=print):
@@ -263,18 +388,17 @@ def offer_resume(root=".", ask_fn=input, log=print):
     found = resumable_runs(root)
     if not found:
         return None
-    options = [(f"Carry on with {path}", what) for path, what in found]
+    options = [(f"Carry on with {path}", what) for path, what, _record in found]
     options.append(("Start a new run", "leaves everything above untouched"))
     index = choose("There is a run here you can pick up. What would you like to do?",
                    options, default=0, ask_fn=ask_fn, log=log)
     if index == len(found):
         return None
-    path, _what = found[index]
+    path, _what, record = found[index]
     log("")
     log(f"  Carrying on with {path}. Nothing there is overwritten: the search continues from the")
     log("  trials it already has, and if it had already finished it goes straight to baking.")
-    return {"command": "kageyoshi", "options": {"--out": path, "--resume": True},
-            "licence": "yours"}
+    return resume_plan(path, record, ask_fn=ask_fn, log=log)
 
 
 def ask_output(ask_fn=input, log=print):
@@ -289,12 +413,14 @@ def ask_output(ask_fn=input, log=print):
     being walked through it, refusing would be a dead end, so the three ways out are offered
     directly and the loop repeats until one of them is taken.
     """
-    from .cli import occupied_by
-
     while True:
         out = ask("\nWhere should the edited model go?", default="abliterated",
                   ask_fn=ask_fn, log=log)
-        found = occupied_by(out)
+        # `runrecord`, not `cli`. This used to reach through `cli`, which imports torch, optuna
+        # and transformers at module scope, so on a base install the guided mode asked four
+        # questions and then died on an eleven-frame ImportError at this line, having told the
+        # person nothing about what to install. The function itself only lists files.
+        found = runrecord.occupied_by(out)
         if not found:
             return out, False
         log(f"\n  {out} already holds a previous run:")
@@ -336,24 +462,27 @@ def plan_abliteration(ask_fn=input, log=print):
 
     model = ask("\nWhich model? (a Hub id, or a local directory)",
                 default="Qwen/Qwen3-1.7B", ask_fn=ask_fn, log=log)
-    track, licence = pick_dataset(ask_fn=ask_fn, log=log)
-    device_index = choose("Where should it run?",
-                          [(name, note) for name, note in DEVICES],
-                          default=0, ask_fn=ask_fn, log=log)
-    device = DEVICES[device_index][0]
 
     if recipe == "measure":
-        # Stops here on purpose. The remaining abliterate questions are where the edited model
-        # goes and how many search trials to run, and this recipe edits nothing and searches for
-        # nothing. Asking them would be the exact defect finding 2 names: screens built for a
-        # different job, reached after the person has already committed to the path.
+        # Stops after the questions this recipe's command actually takes. The remaining abliterate
+        # questions are where the edited model goes and how many search trials to run, and this
+        # recipe edits nothing and searches for nothing. Asking them would be the exact defect
+        # finding 2 names: screens built for a different job, reached after the person has already
+        # committed to the path. `score` also takes ONE prompt set rather than a three-way split,
+        # which is why it asks a different corpus question: the old one appended `/bad_eval_ds` to
+        # whatever came back, which made a valid path out of the bundled alias and nonsense out of
+        # every other answer.
+        evalset, licence = pick_eval(ask_fn=ask_fn, log=log)
+        device = pick_device(ask_fn=ask_fn, log=log)
         results = ask("\nWhere should the results go?", default="scores.json",
                       ask_fn=ask_fn, log=log)
         return {"command": "score",
-                "options": {"--model": model, "--eval": f"{track}/bad_eval_ds",
+                "options": {"--model": model, "--eval": evalset,
                             "--device": device, "--out": results},
                 "licence": licence, "recipe": recipe}
 
+    track, licence, build = pick_track(ask_fn=ask_fn, log=log)
+    device = pick_device(ask_fn=ask_fn, log=log)
     out, resume = ask_output(ask_fn=ask_fn, log=log)
     trials = ask("How many search trials? More is better and slower; 200 is the usual",
                  default="200", ask_fn=ask_fn, log=log)
@@ -370,6 +499,11 @@ def plan_abliteration(ask_fn=input, log=print):
         # is the command it runs, so a decision taken in the walkthrough has to appear on the line.
         options["--resume"] = True
     plan = {"command": "kageyoshi", "options": options, "licence": licence, "recipe": recipe}
+    if build:
+        # Built first, because `--track` is checked before the model is downloaded and a track
+        # that does not exist yet fails that check. Shown as its own command for the same reason
+        # `then` is: it is a separate program with its own flags.
+        plan["first"] = build
     if recipe == "brain":
         # Two commands, shown as two. The convert step is a separate program with its own flags,
         # and pretending one line does both would break the rule this file exists to keep.
@@ -378,22 +512,41 @@ def plan_abliteration(ask_fn=input, log=print):
     return plan
 
 
-def present(plan, *, ask_fn=input, log=print):
-    """Show the command, the licence, and ask. Returns the command line, or None if declined."""
-    line = render_command(plan["command"], plan["options"])
-    log("")
+#: Named counts, because "These are the 2 commands" reads like a machine wrote it.
+_HOW_MANY = {2: "two", 3: "three"}
+
+
+def steps(plan):
+    """Every command the plan will run, in the order it will run them.
+
+    `first` builds something the main command needs (a track), `then` does something with what it
+    produced (a conversion). Each stays a separate command with its own flags, because collapsing
+    them into one line would print something nobody could type, and printing what cannot be typed
+    is the one thing this file is built not to do.
+    """
+    ordered = []
+    if plan.get("first"):
+        ordered.append(plan["first"])
+    ordered.append({"command": plan["command"], "options": plan["options"]})
     if plan.get("then"):
-        # Two commands, shown as two. The second is a separate program with its own flags, and
-        # collapsing them into one line would print something nobody could type.
-        log("These are the two commands that will run, in order. They are also what goes in a")
+        ordered.append(plan["then"])
+    return ordered
+
+
+def present(plan, *, ask_fn=input, log=print):
+    """Show the commands, the licence, and ask. Returns the first command line, or None if declined."""
+    ordered = steps(plan)
+    lines = [render_command(s["command"], s["options"]) for s in ordered]
+    log("")
+    if len(ordered) > 1:
+        count = _HOW_MANY.get(len(ordered), str(len(ordered)))
+        log(f"These are the {count} commands that will run, in order. They are also what goes in a")
         log("method section, and what to type next time:")
-        log("")
-        log(f"    {line}")
-        log(f"    {render_command(plan['then']['command'], plan['then']['options'])}")
     else:
         log("This is the command that will run. It is also the one to put in a method section,")
         log("and the one to type next time:")
-        log("")
+    log("")
+    for line in lines:
         log(f"    {line}")
     log("")
     if plan.get("licence") and plan["licence"] != "yours":
@@ -401,12 +554,12 @@ def present(plan, *, ask_fn=input, log=print):
         log("includes a non-commercial term then commercial use of the corpus is not permitted.")
         log("")
     if not confirm("Run it?", default=True, ask_fn=ask_fn, log=log):
-        log("Nothing was run. The command above still works if you want it later.")
+        log("Nothing was run. The commands above still work if you want them later.")
         return None
-    return line
+    return lines[0]
 
 
-def log_failure(plan, reason, *, log=print):
+def log_failure(plan, reason, *, step=None, log=print):
     """What a person needs when a guided run dies partway: what is kept, and the way back in.
 
     THE FAILURE SCREEN, in the form this codebase can deliver today (critique finding 1, ranked
@@ -417,12 +570,26 @@ def log_failure(plan, reason, *, log=print):
     Deliberately not a summary of the error. The tool's own message and the traceback are better
     than anything reconstructable here and they are still on the way out; this adds the sentence
     they do not carry, which is that the search is on disk and one command resumes it.
+
+    `step` says WHICH command died, because the advice is only true of one of them. A plan can
+    build a track first and convert a model afterwards, and telling somebody whose track build
+    failed that their completed trials are safe on disk would be a comforting sentence about a
+    search that never started.
     """
-    out = plan.get("options", {}).get("--out")
     log("── the run stopped ───────────────────────────────────────────")
     if reason:
         log(f"  {reason}")
     log("")
+    if step is not None and step.get("command") != plan.get("command"):
+        log(f"  It was the '{step['command']}' step that failed, before the search began, so")
+        log("  there is no partial run to recover. Once the cause is fixed, this is the command:")
+        log("")
+        log(f"    {render_command(step['command'], step['options'])}")
+        log("")
+        log("  If this looks like a bug, the traceback above is the useful part of a report.")
+        log("──────────────────────────────────────────────────────────────")
+        return
+    out = plan.get("options", {}).get("--out")
     if out:
         log(f"  What is on disk, in {out}:")
         log("    the persisted study, so completed trials are not lost")
@@ -473,15 +640,23 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     if line is None:
         return 0
     from .cli import main as cli_main
+    ordered = steps(plan)
+    step = ordered[0]
     try:
-        code = cli_main(_argv_for(plan))
-        if code == 0 and plan.get("then"):
-            log("")
-            log("Now the second command.")
-            code = cli_main(_argv_for(plan["then"]))
+        code = 0
+        for i, step in enumerate(ordered):
+            if i:
+                log("")
+                log(f"Now: {step['command']}.")
+            code = cli_main(_argv_for(step))
+            # Stop at the first failure. The steps are ordered because each needs what the one
+            # before it produced, so carrying on would abliterate against a track that was not
+            # built, or convert a model that was never saved.
+            if code:
+                break
     except KeyboardInterrupt:
         log("")
-        log_failure(plan, "You stopped it.", log=log)
+        log_failure(plan, "You stopped it.", step=step, log=log)
         return 130
     except SystemExit as e:
         # A refusal the tool phrased itself. Its message has already been printed and is better
@@ -489,7 +664,7 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
         if code:
             log("")
-            log_failure(plan, None, log=log)
+            log_failure(plan, None, step=step, log=log)
         raise
     except Exception as e:
         # Deliberately broad, and deliberately not swallowing. The traceback is what a bug report
@@ -497,9 +672,15 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         # saying their GPU hours are not gone. `cli.py` records that a traceback out of
         # `_save_weights` has twice meant hours of card time producing nothing usable.
         log("")
-        log_failure(plan, f"{type(e).__name__}: {e}", log=log)
+        log_failure(plan, f"{type(e).__name__}: {e}", step=step, log=log)
         raise
     else:
+        # A non-zero status is a failure the command reported without raising, and it used to
+        # return silently: the guided mode printed the tool's error and then nothing, with the
+        # recovery line reserved for exceptions. The two paths now say the same thing.
+        if code:
+            log("")
+            log_failure(plan, None, step=step, log=log)
         return code
 
 

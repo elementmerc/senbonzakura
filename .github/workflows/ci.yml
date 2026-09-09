@@ -208,6 +208,15 @@ jobs:
       - name: Build, which fails on a dead link
         working-directory: docs
         run: npm run build
+      - name: Every documentation link in the README resolves to a built page
+        # The build checks links between pages of the site. This checks the links pointing INTO
+        # it from the README, which is the direction a reader arrives from and the direction that
+        # was broken: the site was never deployed at all and all eleven of them returned 404,
+        # here and on the PyPI project page, while this job stayed green.
+        #
+        # It runs on `dev` as well as on the publish path so a page rename is caught where it
+        # lands rather than on the release that publishes it.
+        run: python3 tools/readme_links_resolve.py docs/.vitepress/dist
       - name: Nothing from the docs tree reached the package
         # A guard rather than a comment. If npm ever installs into the repository root, or a
         # docs dependency finds its way under src/, the wheel would carry it.
@@ -308,8 +317,13 @@ jobs:
           # actually there: corpora present must load at their declared size, corpora absent must
           # REFUSE and name the builder. Asserting only one of those is how this job came to hold
           # an assertion a runner could never satisfy.
-          docker run --rm -v "$PWD/tools:/check:ro" senbonzakura:ci-cpu python /check/image_is_honest.py
-          docker run --rm senbonzakura:ci-cpu python -c "import pathlib, senbonzakura; hits = list(pathlib.Path(senbonzakura.__file__).resolve().parents[2].rglob('THIRD-PARTY-CORPORA.md')); assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'; print('attribution present at', hits[0])"
+          #
+          # `--entrypoint python` IS LOAD-BEARING. The image's ENTRYPOINT is `senbonzakura`, so
+          # `docker run <image> python foo.py` hands `python foo.py` to the CLI's argument parser
+          # as positional arguments rather than running python at all. That is what happened here:
+          # the step printed a `usage:` block and exited 2, and every grep above it had passed.
+          docker run --rm -v "$PWD/tools:/check:ro" --entrypoint python senbonzakura:ci-cpu /check/image_is_honest.py
+          docker run --rm --entrypoint python senbonzakura:ci-cpu -c "import pathlib, senbonzakura; hits = list(pathlib.Path(senbonzakura.__file__).resolve().parents[2].rglob('THIRD-PARTY-CORPORA.md')); assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'; print('attribution present at', hits[0])"
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
       - name: The CUDA image carries a CUDA torch
@@ -318,7 +332,7 @@ jobs:
         # that the image shipped a CPU torch while calling itself the CUDA image.
         run: |
           set -euo pipefail
-          docker run --rm senbonzakura:ci-cuda python -c "
+          docker run --rm --entrypoint python senbonzakura:ci-cuda -c "
           import torch
           print('torch', torch.__version__)
           assert '+cu' in torch.__version__, f'the CUDA image carries {torch.__version__}, which is not a CUDA build'

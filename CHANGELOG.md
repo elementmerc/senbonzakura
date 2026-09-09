@@ -194,6 +194,15 @@ install rather than only in a source checkout.
   and `report`. The old name was the word a newcomer reaches for when asking whether a model is
   any good on their machine, which is a different question from comparing two abliteration tools.
 - `drift` and the head-to-head were both dispatched without being listed in the help.
+- The guided mode asks the corpus question each command actually takes. Abliterating needs a
+  track with three partitions in it, and scoring needs one prompt set, and both used to be
+  answered by one menu whose answer only worked for the bundled track.
+- Picking two Hub corpora in the guided mode now builds a track from them and shows that as its
+  own command, run before the abliteration that needs it.
+- A paused run records the model and the corpus it was working on, so the guided mode's "carry
+  on with this run" offer produces a command that runs.
+- `--resume` refuses a directory whose completed trials used a different model or a different
+  track, and names both ways forward.
 
 ### Documentation
 
@@ -318,6 +327,17 @@ install rather than only in a source checkout.
 - Nine orthonormal directions cannot exist in an eight-dimensional space, and the code
   believed they could.
 - Nonsense slice arguments produced a plausible-looking result file instead of an error.
+- The guided mode's corpus menu offered four corpora, and three of them printed a command that
+  could not run. Only the bundled track ever worked.
+- The guided mode's "carry on with a run you already have" screen printed a command with no
+  model on it, which is the one flag that has no default.
+- AdvBench is gated on the Hub and was the first harmful corpus offered, so pressing Enter gave
+  anyone without a Hugging Face account an authentication error. It is still offered, second,
+  and says what it needs.
+- The guided mode read a helper out of a module that imports the deep-learning stack, so on an
+  install without it the walkthrough asked four questions and then produced a traceback.
+- A command that reported failure by returning a status, rather than by raising, ended the
+  guided run silently. Both now print what is on disk and how to carry on.
 
 ### Other
 

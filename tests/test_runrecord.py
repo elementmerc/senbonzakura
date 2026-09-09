@@ -134,3 +134,43 @@ def test_occupied_by_is_reachable_without_importing_torch():
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
                          check=True, timeout=120)
     assert out.stdout.strip() == "[]"
+
+
+# ── the search strategy, which a resume used to ignore (panel finding S10) ────────────
+def test_the_search_strategy_is_pinned_across_a_resume():
+    """A resume with a different --search silently started a fresh full-budget search.
+
+    The Optuna study is named `senbon-<search>` and the database it lives in is not named for the
+    search, so two strategies share one file. Asking to resume with a different one requests a
+    study name that is not in that file, and `load_if_exists` CREATES it: trial zero, full budget,
+    under a log line that said "(resuming)".
+
+    Every other guard declined correctly by its own terms. The build guard is gated on the study
+    having trials, and this record pinned only the model and the corpus. Nothing was wrong; the
+    thing that would have caught it was simply not in the set.
+    """
+    assert "search" in runrecord.PINNED
+
+
+def test_a_resume_that_changes_the_search_is_refused(tmp_path):
+    runrecord.write(tmp_path, model="M", track="T", search="pareto")
+    with pytest.raises(SystemExit) as e:
+        runrecord.refuse_across_inputs(tmp_path, {"model": "M", "track": "T", "search": "knee"})
+    message = str(e.value)
+    assert "search" in message
+    assert "pareto" in message and "knee" in message, "both values have to be shown"
+
+
+def test_a_resume_that_keeps_the_search_is_allowed(tmp_path):
+    runrecord.write(tmp_path, model="M", track="T", search="pareto")
+    runrecord.refuse_across_inputs(tmp_path, {"model": "M", "track": "T", "search": "pareto"})
+
+
+def test_a_record_written_before_search_was_pinned_does_not_block_a_resume(tmp_path):
+    """Records already on disk carry no `search`, and an absent value is not a mismatch.
+
+    Turning a new pin into a refusal for every run started before it existed would make the guard
+    the thing that broke resuming.
+    """
+    runrecord.write(tmp_path, model="M", track="T")
+    runrecord.refuse_across_inputs(tmp_path, {"model": "M", "track": "T", "search": "pareto"})

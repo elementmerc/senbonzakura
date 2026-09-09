@@ -35,6 +35,13 @@ NAME = "run.json"
 PINNED = {
     "model": "the model the completed trials were scored on",
     "track": "the corpus the completed trials were scored on",
+    # ADDED after panel finding S10. The Optuna study is named `senbon-<search>` and the database
+    # it lives in is NOT named for the search, so two strategies share one file. Resuming with a
+    # different `--search` therefore asks for a study name that does not exist yet, and
+    # `load_if_exists` CREATES it: a full fresh search, from trial zero, under a log line saying
+    # "(resuming)". Every other guard declines correctly by its own terms, because the build guard
+    # is gated on the study having trials and this record pinned only the model and the corpus.
+    "search": "the search strategy whose trials are in the study being resumed",
 }
 
 

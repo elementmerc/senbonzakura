@@ -3263,7 +3263,21 @@ class Abliterator:
             # can be released; see _study_storage_scope.
             storage = optuna.storages.RDBStorage(f"sqlite:///{db}")
             self._study_storage = storage
-            log(f"persistent study at {db} ({'resuming' if args.resume else 'fresh'}); "
+            # WHETHER IT IS ACTUALLY RESUMING, rather than whether resuming was ASKED FOR.
+            # `--resume` is a request; what happens depends on whether a study of this name is in
+            # that file. The two differ exactly when they matter most: the study is named
+            # `senbon-<search>` and the file is not, so asking to resume with a different
+            # `--search` creates a second study and starts from trial zero. This used to print
+            # "(resuming)" for that, which is the run telling you the opposite of what it did.
+            existing = set(optuna.study.get_all_study_names(storage))
+            resuming = args.resume and study_name in existing
+            if args.resume and not resuming:
+                others = sorted(existing - {study_name})
+                log(f"  NOTE: --resume was given and there is no study named {study_name!r} in "
+                    f"{db}, so this starts a FRESH search from trial zero"
+                    + (f". The file holds {others}, which came from a different --search."
+                       if others else "."))
+            log(f"persistent study at {db} ({'resuming' if resuming else 'fresh'}); "
                 f"a killed run resumes with --resume (or --no-persist-study to disable)")
         if args.search == "pareto":
             study = optuna.create_study(
@@ -3301,7 +3315,8 @@ class Abliterator:
         #
         # Written before the search rather than at the end, because a run that finishes needs no
         # resuming. `abliteration.json` records the model and is the last thing written.
-        record_values = {"model": args.model, "track": args.track}
+        record_values = {"model": args.model, "track": args.track,
+                         "search": args.search}
         if args.resume:
             runrecord.refuse_across_inputs(args.out, record_values)
         runrecord.write(args.out, trials=args.trials, device=str(args.device),

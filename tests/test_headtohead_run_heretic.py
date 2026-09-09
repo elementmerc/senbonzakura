@@ -12,6 +12,7 @@ None of those would surface as an error at launch. They surface as a job that ha
 for six hours with nothing on the card.
 """
 import importlib.util
+import inspect
 import sys
 import types
 from pathlib import Path
@@ -129,3 +130,51 @@ def test_the_trial_count_is_read_through_optuna_not_matched_out_of_the_journal()
     """The journal is an internal format; a pattern guess at its shape fails silently on change."""
     source = (Path(__file__).resolve().parent.parent / "head-to-head" / "run_heretic.py").read_text()
     assert "optuna.load_study" in source
+
+
+# ── the repo-id recogniser ────────────────────────────────────────────────────────────
+def test_a_repo_id_whose_last_component_reads_as_a_suffix_is_still_a_repo_id():
+    """`Qwen/Qwen3-1.7B` is the model this comparison runs on and `.7B` is not a file suffix.
+
+    A `splitext`-style "does it have a dot near the end" check rejects it, which is why the
+    recogniser names the suffixes it cares about instead of detecting them.
+    """
+    assert rh._looks_like_hub_id("Qwen/Qwen3-1.7B")
+    assert rh._looks_like_hub_id("ibm-ai-platform/Bamba-9B")
+    assert rh._looks_like_hub_id("nvidia/Nemotron-H-4B-Base-8K")
+
+
+def test_a_relative_path_to_a_file_is_not_a_repo_id():
+    """The hole the naming fixes: one slash and a file suffix passed the regex.
+
+    Latent when found, because only `--model` reaches this and the four prompt paths take a plain
+    existence check. It goes live the moment the recogniser is reused for an argument that can
+    legitimately be relative, which is what a helper this small invites.
+    """
+    assert not rh._looks_like_hub_id("slices/good.txt")
+    assert not rh._looks_like_hub_id("output/model.safetensors")
+    assert not rh._looks_like_hub_id("out/config.json")
+    assert not rh._looks_like_hub_id("staging/corpus.parquet")
+
+
+def test_paths_of_every_other_shape_are_not_repo_ids():
+    assert not rh._looks_like_hub_id("/home/daniel/senbon-seed41")
+    assert not rh._looks_like_hub_id("./local-model")
+    assert not rh._looks_like_hub_id("~/models/thing")
+    assert not rh._looks_like_hub_id("a/b/c")
+    assert not rh._looks_like_hub_id("plain-name")
+
+
+def test_the_recogniser_does_not_ask_whether_there_is_a_suffix():
+    """A regression guard on the fix itself, not on its effect.
+
+    Both defects in this function came from reasoning about suffixes in general rather than about
+    the specific ones that mean "file". A future edit that reintroduces `splitext` or a bare
+    `.suffix` truth test passes the cases above only until someone runs a model with a version
+    number in its name.
+    """
+    body = inspect.getsource(rh._looks_like_hub_id)
+    code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+    code = code.replace(inspect.getdoc(rh._looks_like_hub_id) or "", "")
+    assert "splitext" not in code
+    assert "_FILE_SUFFIXES" in code

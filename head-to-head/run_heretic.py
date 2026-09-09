@@ -49,6 +49,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import PurePosixPath
 
 
 def write_config(args, workdir):
@@ -128,22 +129,37 @@ def count_trials(study_file):
 
 _HUB_ID = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 
+#: Suffixes named one by one rather than detected. A file with any of these is a file, whatever
+#: else its shape looks like; anything not on the list (`.7B`, `.5`, `.1`) is part of a model name.
+#: Weight and config formats first, then the plain-text and tabular ones a prompt slice arrives in.
+_FILE_SUFFIXES = frozenset({
+    ".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".npy", ".npz",
+    ".txt", ".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".parquet", ".arrow",
+    ".yaml", ".yml", ".toml", ".md", ".gz", ".zip", ".tar",
+})
+
 
 def _looks_like_hub_id(value):
     """Whether `value` is a Hugging Face repo id rather than a path that failed to exist.
 
     Deliberately the same shape as `senbonzakura.dataset.looks_like_hub_id`, and deliberately
-    narrow: one slash, no suffix, no leading dot or separator. A mistyped directory does not
+    narrow: one slash, no file suffix, no leading dot or separator. A mistyped directory does not
     accidentally pass as a repo id and skip the check that exists to stop an hour of GPU going
     into the wrong prompts.
     """
     p = str(value)
-    # NO `splitext` CHECK. The obvious version of this rejected `Qwen/Qwen3-1.7B`, because
-    # `.7B` reads as a file suffix, and that is the exact model this comparison runs on. The
-    # regex already does the work: one slash, and the character classes exclude a path with
-    # directories in it. `senbonzakura.dataset.looks_like_hub_id` hit the same trap and solved it
-    # by naming the suffixes it cares about rather than by asking whether there is one.
+    # NO `splitext` CHECK, and no "does it have a suffix at all" check. The obvious version of
+    # this rejected `Qwen/Qwen3-1.7B`, because `.7B` reads as a file suffix, and that is the exact
+    # model this comparison runs on. `senbonzakura.dataset.looks_like_hub_id` hit the same trap
+    # and solved it by NAMING the suffixes it cares about, which is what `_FILE_SUFFIXES` does
+    # here. The first copy of this function kept that comment and dropped the list, so
+    # `slices/good.txt` passed as a repo id. Latent then (only `--model` reaches this, and the
+    # prompt paths take a plain existence check), live the moment it is reused for an argument
+    # that may legitimately be relative. Found by hephaestus-c9 on 2026-09-09, on paper, before
+    # the card was spent.
     if p.startswith((".", "/", "~")):
+        return False
+    if PurePosixPath(p).suffix.lower() in _FILE_SUFFIXES:
         return False
     return bool(_HUB_ID.match(p))
 

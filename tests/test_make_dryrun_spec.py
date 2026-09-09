@@ -153,7 +153,7 @@ def _leaves(pred):
 
 def _jobs(spec_text):
     """(id, needle, command) for every job in a spec, parsed with the stdlib TOML reader."""
-    import tomllib
+    from tomlread import tomllib
     doc = tomllib.loads(spec_text)
     out = []
     for job in doc.get("job", []):
@@ -164,7 +164,7 @@ def _jobs(spec_text):
 
 
 def _spec_jobs(spec_text):
-    import tomllib
+    from tomlread import tomllib
     return tomllib.loads(spec_text).get("job", [])
 
 

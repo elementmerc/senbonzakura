@@ -115,7 +115,7 @@ def test_the_statement_of_modification_ships_inside_the_distribution():
     """
     from pathlib import Path
 
-    import tomllib
+    from tomlread import tomllib
 
     root = Path(__file__).resolve().parent.parent
     with open(root / "pyproject.toml", "rb") as f:
@@ -203,7 +203,7 @@ def test_every_module_in_the_source_tree_reaches_the_distribution():
     """
     from pathlib import Path
 
-    import tomllib
+    from tomlread import tomllib
 
     root = Path(__file__).resolve().parent.parent
     with open(root / "pyproject.toml", "rb") as f:

@@ -18,6 +18,10 @@ from pathlib import Path
 import pytest
 import torch
 
+#: The spike is a memory measurement and `resource` is POSIX-only. Skipped rather than failed,
+#: so a Windows run says so instead of taking the whole collection down.
+needs_posix = pytest.mark.skipif(sys.platform == "win32", reason="peak RSS needs POSIX `resource`")
+
 _spec = importlib.util.spec_from_file_location(
     "shard_spike", Path(__file__).resolve().parent.parent / "tools" / "shard_spike.py")
 spike = importlib.util.module_from_spec(_spec)
@@ -188,6 +192,7 @@ def test_a_missing_tensor_is_infinite_rather_than_ignored():
 
 
 # ── the run refuses rather than dying ───────────────────────────────────────────────
+@needs_posix
 def test_a_run_that_would_not_fit_on_disk_is_refused(tmp_path, capsys):
     rc = spike.main(["--work", str(tmp_path), "--layers", "200", "--hidden", "4096",
                      "--ffn", "11008"])
@@ -197,6 +202,7 @@ def test_a_run_that_would_not_fit_on_disk_is_refused(tmp_path, capsys):
     assert "--layers" in err, "it has to say what the reader can do about it"
 
 
+@needs_posix
 def test_a_small_run_completes_and_records_its_numbers(tmp_path):
     out = tmp_path / "r.json"
     rc = spike.main(["--work", str(tmp_path / "w"), "--layers", "3", "--hidden", "64",

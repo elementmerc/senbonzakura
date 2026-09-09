@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
+from tomlread import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
@@ -106,14 +106,38 @@ def test_every_pin_matches_the_floor_it_claims_to_test():
         + "; ".join(f"{n}: pyproject says >={f}, floors.txt pins =={p}" for n, (f, p) in sorted(wrong.items())))
 
 
+#: Transitive dependencies pinned ON PURPOSE, with the reason. This is the case the test below
+#: exists to catch, so an intentional one has to be declared rather than tolerated.
+TRANSITIVE_PINS = {
+    # pyarrow 14's extension modules are compiled against numpy 1 while its metadata says only
+    # `numpy>=1.16.6`, so the resolver pairs the declared pyarrow floor with numpy 2 and the
+    # floors job dies at import with "numpy.core.multiarray failed to import". Pinning the last
+    # numpy 1 is what makes the pyarrow floor claim installable and therefore testable. Users are
+    # unaffected: pip gives them a recent pyarrow that is built for numpy 2.
+    "numpy": "pyarrow 14 is built against numpy 1 and does not say so",
+}
+
+
+@pytest.mark.parametrize("name", sorted(TRANSITIVE_PINS))
+def test_each_transitive_pin_is_still_pinned(name):
+    """An allowance for a pin nobody makes any more is dead text that hides the next one."""
+    assert name in _pins(), (
+        f"{name} is listed in TRANSITIVE_PINS with the reason "
+        f"'{TRANSITIVE_PINS[name]}' and is no longer pinned in constraints/floors.txt. "
+        f"Remove the allowance.")
+
+
 def test_nothing_is_pinned_that_nothing_declares():
     """A pin for a dependency that no longer exists holds an old version in place silently.
 
     `datasets` is the case that made this worth asserting: it stopped being a runtime
     dependency and stayed a `dev` one, so its pin is still correct. Had it left entirely,
     the pin would have quietly constrained a transitive dependency instead.
+
+    A transitive pinned deliberately goes in `TRANSITIVE_PINS` above, with its reason, so the
+    decision is written down where the next reader meets it rather than inferred from the file.
     """
-    stray = sorted(set(_pins()) - set(_requirements()))
+    stray = sorted(set(_pins()) - set(_requirements()) - set(TRANSITIVE_PINS))
     assert not stray, (
         f"constraints/floors.txt pins {stray}, which pyproject.toml no longer declares with a "
         f"floor. Remove the pin, or restore the declaration.")

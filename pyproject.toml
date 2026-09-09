@@ -89,7 +89,7 @@ abliterate = [
   # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
   # it ("assert version is not None"), which took out 17 tests in the floors job.
   # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.
-  "optuna>=3.1",
+  "optuna>=4.0",
   # Needed by the vendored `convert_hf_to_gguf.py`, whose first real statement is `import gguf`.
   # A 0.11 MB pure-Python `py3-none-any` wheel, and its four dependencies (numpy, pyyaml,
   # requests, tqdm) all arrive anyway via torch, transformers and datasets, so this adds a tenth
@@ -139,7 +139,11 @@ hub = ["datasets>=2.15"]
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.
 dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=7", "pytest-cov>=4",
-       "build>=1.0", "ruff==0.16.0"]
+       "build>=1.0", "ruff==0.16.0",
+       # `tomllib` is stdlib from 3.11 and this project supports 3.10, where the suite could not
+       # be collected at all. Test-only, and only on the versions that lack it, so nothing a user
+       # installs grows because of it.
+       'tomli>=2.0; python_version < "3.11"']
 # Everything. For anyone who does not want to think about which half they need.
 all = ["senbonzakura[abliterate,hub,quant,completion]"]
 
@@ -336,6 +340,12 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # the CPU box for months because the route there strips `private/`, and the tests that guard
 # the rehearsal spec were the ones being dropped. The reason has to be on the screen.
 addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs"
+# THE REPO ROOT ON sys.path, EXPLICITLY, because the two ways of starting pytest do not agree.
+# `python -m pytest` puts the working directory on sys.path and the `pytest` console script does
+# not. Several tests share fixtures with `from tests.test_abliterator import ...`, which therefore
+# worked for anyone running the first form and failed with "No module named 'tests'" for anyone
+# running the second. CI runs the second, and had been failing on it on every platform.
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["senbonzakura"]              # without this, a run measures whatever happened to import

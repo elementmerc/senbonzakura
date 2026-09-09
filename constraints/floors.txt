@@ -17,7 +17,18 @@
 transformers==4.56
 accelerate==0.26
 pyarrow==14
-optuna==3.1
+# numpy is not a declared dependency of this project and is pinned here anyway, because the floor
+# combination is otherwise not installable. pyarrow 14's extension modules are compiled against
+# numpy 1 and its metadata says only `numpy>=1.16.6`, so the resolver is free to pair it with
+# numpy 2 and did: the floors job failed with "ImportError: numpy.core.multiarray failed to
+# import" from `pyarrow.lib`. Users are unaffected, because pip gives them a recent pyarrow; it is
+# the FLOOR claim that was incoherent. 1.26.4 is the last numpy 1 and supports Python 3.10.
+numpy==1.26.4
+# 4.0, not 3.1. `head-to-head/best_of_n_heretic.py` imports
+# `optuna.storages.journal.JournalFileBackend`, which arrived in Optuna 4.0; at 3.1 the floors job
+# died at collection with "No module named 'optuna.storages.journal'". A floor the project's own
+# suite cannot pass is not a floor, it is a number.
+optuna==4.0.0
 # Both of these were declared with a floor and pinned nowhere, so the floors job resolved them
 # to whatever was newest and called it the floor. `gguf` is precisely the dependency where an
 # untested floor has already bitten this project: PyPI gguf 0.19.0 and llama.cpp's own gguf-py
@@ -40,6 +51,8 @@ pytest==7.0.0
 pytest-cov==4.0.0
 build==1.0.0
 shtab==1.6.0
+# Test-only, and only where `tomllib` is not in the standard library.
+tomli==2.0.0
 # ruff is already pinned exactly in pyproject, so it has no floor to test.
 
 # bitsandbytes (the `quant` extra) is absent: it is not installed by `[dev]`,

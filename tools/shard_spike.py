@@ -49,9 +49,17 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import resource
 import sys
 from pathlib import Path
+
+# `resource` is POSIX-only, and importing it at module scope took the whole Windows CI job down
+# with "No module named 'resource'" at COLLECTION time, so every test in the run failed rather
+# than the handful that need it. The badge in the README says this project is tested on Windows;
+# it had not been, because the job never got as far as running a test.
+try:
+    import resource
+except ModuleNotFoundError:   # Windows
+    resource = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -69,8 +77,15 @@ def peak_rss_bytes():
     "did this approach ever need to hold the model" cannot be answered by sampling current usage
     and hoping to catch the peak.
 
-    Linux reports kilobytes; macOS reports bytes.
+    Linux reports kilobytes; macOS reports bytes. Windows has no `resource` at all, and this
+    raises rather than returning a plausible zero: the whole spike is a memory measurement, and a
+    memory measurement that quietly reports nothing is worse than one that refuses.
     """
+    if resource is None:
+        raise RuntimeError(
+            "peak RSS cannot be read on this platform: Python's `resource` module is POSIX-only. "
+            "This spike measures memory and has nothing to say without it. Run it on Linux or "
+            "macOS.")
     raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return raw if sys.platform == "darwin" else raw * 1024
 

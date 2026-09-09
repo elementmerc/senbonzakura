@@ -119,10 +119,33 @@ def is_tty(stream=None):
     return bool(getattr(stream, "isatty", lambda: False)())
 
 
+#: Characters that need no quoting anywhere. `\` is here for Windows and only for Windows: see
+#: `quote`. On POSIX a backslash is an escape character and must be quoted.
+_SAFE = "-_./:=[]@,"
+
+
 def quote(value):
-    """Shell-quote a value only when it needs it, so the printed command stays readable."""
+    r"""Shell-quote a value only when it needs it, so the printed command stays readable.
+
+    THE QUOTE CHARACTER FOLLOWS THE SHELL THE READER WILL PASTE INTO. This line exists to be
+    copied out of the terminal and run, so quoting it for the wrong shell does not make it ugly,
+    it makes it wrong.
+
+    On POSIX that is single quotes, with the usual `'\''` dance for an embedded one. On Windows
+    every path contains backslashes, so POSIX rules quoted every single path, and it quoted them
+    as `'C:\Users\...'`: `cmd.exe` has no single-quote syntax at all and passes those quotes
+    through as part of the path, so the command reliably failed for the one reader it was printed
+    for. Double quotes are what both `cmd.exe` and PowerShell understand, and a backslash needs no
+    quoting there, so an ordinary Windows path prints bare.
+    """
     text = str(value)
-    if text and all(c.isalnum() or c in "-_./:=[]@," for c in text):
+    if sys.platform.startswith("win"):
+        if text and all(c.isalnum() or c in _SAFE + "\\" for c in text):
+            return text
+        # `cmd.exe` cannot represent a double quote inside a quoted argument at all. Doubling it
+        # is what PowerShell reads, and it is the closest thing to a convention that exists.
+        return '"' + text.replace('"', '""') + '"'
+    if text and all(c.isalnum() or c in _SAFE for c in text):
         return text
     return "'" + text.replace("'", "'\\''") + "'"
 

@@ -6,6 +6,8 @@ The load-bearing property is that the printed command is exactly the run that ha
 mode that displayed one thing and passed another would be an excellent way to hide a mistake, so
 that equivalence is tested directly rather than assumed from the code reading correctly.
 """
+import sys
+
 import pytest
 
 from senbonzakura import interactive as it
@@ -27,21 +29,60 @@ def _answers(*values):
 
 
 # ── quoting ──────────────────────────────────────────────────────────────────────
+#
+# BOTH SHELLS ARE TESTED ON EVERY MACHINE. The printed command exists to be pasted and run, so
+# quoting it for the wrong shell makes it wrong rather than untidy, and the reader who meets that
+# is on the platform the author is not. These simulate the platform instead of waiting for a CI
+# job on another one to say so.
+@pytest.fixture(params=["posix", "windows"])
+def shell(request, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32" if request.param == "windows" else "linux")
+    return request.param
+
+
 @pytest.mark.parametrize("value", ["Qwen/Qwen3-1.7B", "out", "default", "train[:400]", "a=b"])
-def test_ordinary_values_are_not_quoted(value):
+def test_ordinary_values_are_not_quoted(value, shell):
     assert it.quote(value) == value
 
 
-def test_a_value_with_a_space_is_quoted():
-    assert it.quote("my track") == "'my track'"
+def test_a_value_with_a_space_is_quoted(shell):
+    assert it.quote("my track") == ('"my track"' if shell == "windows" else "'my track'")
 
 
-def test_a_value_with_a_quote_is_escaped():
-    assert it.quote("it's") == "'it'\\''s'"
+def test_an_empty_value_is_quoted(shell):
+    assert it.quote("") == ('""' if shell == "windows" else "''")
 
 
-def test_an_empty_value_is_quoted():
-    assert it.quote("") == "''"
+def test_a_value_with_a_quote_is_escaped(shell):
+    if shell == "windows":
+        # An apostrophe is an ordinary character to `cmd.exe`, so wrapping it changes nothing
+        # about how it is read; it stays quoted because quoting conservatively is free here.
+        assert it.quote("it's") == '"it\'s"'
+        # A double quote is the one character `cmd.exe` cannot carry inside a quoted argument.
+        # Doubling it is what PowerShell reads and is the nearest thing to a convention.
+        assert it.quote('say "hi"') == '"say ""hi"""'
+    else:
+        assert it.quote("it's") == "'it'\\''s'"
+
+
+def test_a_windows_path_prints_without_quotes():
+    """The defect this branch exists for: every path on Windows contains backslashes.
+
+    POSIX rules quoted all of them, and quoted them with single quotes, which `cmd.exe` passes
+    through as part of the path. The resume command the guided mode prints was unusable for the
+    only reader it was printed for.
+    """
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(sys, "platform", "win32")
+        assert it.quote(r"C:\Users\dan\brain") == r"C:\Users\dan\brain"
+        assert it.quote(r"C:\my runs\brain") == r'"C:\my runs\brain"'
+
+
+def test_a_backslash_is_still_quoted_on_posix():
+    """Where a backslash is an escape character rather than a separator, it has to stay quoted."""
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(sys, "platform", "linux")
+        assert it.quote("a\\b") == "'a\\b'"
 
 
 # ── the printed command ──────────────────────────────────────────────────────────

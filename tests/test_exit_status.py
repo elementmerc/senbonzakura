@@ -28,6 +28,7 @@ its command's. This is the first one a test catches before a user does.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -177,15 +178,53 @@ def test_the_two_invocation_forms_agree_about_failure(command):
 
 @pytest.mark.parametrize("command", sorted(entry.DELEGATED))
 def test_no_delegated_module_runs_silently(command):
-    """Exiting 0 having done nothing is the specific failure, so it gets its own assertion."""
+    """Exiting 0 having done nothing is the specific failure, so it gets its own assertion.
+
+    THE ASSERTION USED TO SIT BEHIND `if proc.returncode == 0:`. Every one of these modules needs
+    arguments, so with none they all exit 2 or 1, so the branch was never taken: sixteen green
+    tests executing zero assertions, guarding the defect this file is named for. A test can be
+    correct, run, and pass while asking nothing, and there is no way to tell from the report.
+
+    So both halves are asserted unconditionally. A module with no `__main__` guard imports, runs
+    nothing, prints nothing and exits 0, and either assertion catches it on its own.
+    """
     module, _attr = entry.DELEGATED[command]
     proc = subprocess.run(
         [sys.executable, "-m", f"senbonzakura.{module}"],
         capture_output=True, text=True, cwd=str(ROOT), timeout=300, check=False)
-    if proc.returncode == 0:
-        assert (proc.stdout + proc.stderr).strip(), (
-            f"'python -m senbonzakura.{module}' exited 0 and printed nothing, which is a "
-            f"command that did not run reporting success.")
+    printed = (proc.stdout + proc.stderr).strip()
+
+    assert printed, (
+        f"'python -m senbonzakura.{module}' printed nothing at all. Every command here needs "
+        f"arguments, so with none it owes the reader a message saying so.")
+    assert proc.returncode != 0, (
+        f"'python -m senbonzakura.{module}' exited 0 with no arguments. If this command genuinely "
+        f"does useful work with none, exempt it here by name and say why; leaving it to pass "
+        f"quietly is how a module with no `__main__` guard reported success for eight commands.")
+
+
+def test_the_silent_module_check_actually_detects_a_silent_module(tmp_path):
+    """The detector above, pointed at a module that has the defect.
+
+    Every test in this file verifies that a command reports correctly. None verified that the
+    checking would notice if one stopped, which is the gap that let the real assertion sit behind
+    a branch nothing took. This builds a package whose module has no `__main__` guard, which is
+    the original defect exactly, and confirms it exits 0 in silence.
+    """
+    pkg = tmp_path / "silentpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    # No `if __name__ == "__main__":` block, so `-m` imports this and runs nothing.
+    (pkg / "quiet.py").write_text("def main():\n    print('work')\n", encoding="utf-8")
+
+    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    proc = subprocess.run(
+        [sys.executable, "-m", "silentpkg.quiet"],
+        capture_output=True, text=True, cwd=str(tmp_path), timeout=300, check=False, env=env)
+
+    assert proc.returncode == 0 and not (proc.stdout + proc.stderr).strip(), (
+        "the shape this file exists to catch no longer behaves as described, so the assertions "
+        "above are being checked against something other than the real defect")
 
 
 @pytest.mark.parametrize("value", [256, 512, -1, 10_000])

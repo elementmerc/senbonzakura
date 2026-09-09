@@ -119,10 +119,16 @@ total generations consumed**. Those are in every arm's artefact, and the third i
 survives all three differences above, because a generation is the unit of work both tools
 actually spend.
 
-**Heretic was not given an equivalent best-of-N pass.** We are saying so rather than adjusting
-for it: the honest position is that our arm had a selection advantage the other did not, and any
-result where we win by less than that advantage is not a result. Where the two tied, this matters
-less; where we lead, read it with this paragraph in mind.
+**Heretic was not given an equivalent best-of-N pass in the run above.** We are saying so rather
+than adjusting for it: the honest position is that our arm had a selection advantage the other did
+not, and any result where we win by less than that advantage is not a result. Where the two tied,
+this matters less; where we lead, read it with this paragraph in mind.
+
+That changed on 2026-09-01, after the table above was measured. The harness now gives Heretic the
+same best-of-N selection, applied from outside its own code, and `head-to-head/EQUAL-BUDGET.md`
+records the reasoning. **It has not yet produced a number**: no Heretic arm has run through it, so
+the table above is still the one measured without it. The two paragraphs read as a contradiction
+if you meet them without their dates, so here are the dates.
 :::
 
 The slices record which corpus they were cut from, and the run refuses to start if that

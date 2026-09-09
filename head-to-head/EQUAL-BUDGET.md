@@ -51,6 +51,13 @@ A run's budget is the triple, all three recorded per arm:
 option, which was to state the advantage and leave it in place. Equalising is the stronger result:
 if senbonzakura wins with its selection advantages removed, the win is about the method.
 
+**Since 2026-09-01, and not yet exercised.** This describes the harness as it now stands, not the
+comparison published on the documentation site: that table was measured on 2026-08-12, three weeks
+before this pass was wired in, and its own page says Heretic was not given the pass. Both
+statements are true of different moments and neither used to say which, which read as a flat
+contradiction. No Heretic arm has run through this pass yet, so nothing published rests on it, and
+the rule it should apply is itself an open question (see the S1 decision brief).
+
 Concretely:
 
 - Heretic runs its search normally. Its Optuna study retains every trial.

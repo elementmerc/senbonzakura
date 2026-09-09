@@ -279,13 +279,40 @@ jobs:
           cat cpu.txt
           grep -qE '^\s*✓\s+llama-quantize' cpu.txt
           grep -qE '^\s*✓\s+architecture modules' cpu.txt
-          # The bundled data, checked because an image that ships without it looks identical
-          # from outside: it builds, imports, answers --help, and fails --track default for
-          # every user. Docker's context ignores .gitignore, so an image built on a machine
-          # that HAS the generated blobs works while the same build from a clone does not.
-          grep -qE '^\s*✓\s+corpus advbench' cpu.txt
-          grep -qE '^\s*✓\s+bundled track' cpu.txt
-          grep -qE '^\s*✓\s+track tables' cpu.txt
+          # THE BUNDLED DATA, AND WHY THIS ASKS THE OPPOSITE QUESTION ON A RUNNER.
+          #
+          # An image that ships without the blobs looks identical from outside: it builds,
+          # imports, answers --help, and fails --track default for every user. So this used to
+          # assert they were present. The comment above it said, correctly, that Docker's context
+          # ignores .gitignore and an image built where the blobs exist works while the same build
+          # from a clone does not, and the check was written anyway. A runner is always the second
+          # case, so the assertion could never hold here and the job had been red since August.
+          #
+          # A release image is built where the blobs are, and `check_wheel --release` plus the
+          # clean room already gate that. What a runner can prove is the property that must hold
+          # for the image it CAN build: that the absence is legible rather than silent. An image
+          # that quietly returned rows from somewhere, or reported a pass with no corpora, is the
+          # failure worth catching, and this catches it.
+          grep -qE '^\s*✗\s+corpus advbench' cpu.txt
+          grep -q 'build_corpora.py' cpu.txt
+          docker run --rm senbonzakura:ci-cpu python -c "
+          from senbonzakura import corpora
+          try:
+              corpora.load('advbench')
+          except Exception as e:
+              assert 'build_corpora.py' in str(e), f'the refusal does not name the builder: {e}'
+          else:
+              raise SystemExit('an image with no corpora returned rows from somewhere')
+          "
+          # The licence notice, which MUST be present whether or not the corpora are, because it
+          # is what discharges the MIT and CC-BY attribution for anything the image does carry.
+          docker run --rm senbonzakura:ci-cpu python -c "
+          import pathlib, senbonzakura
+          root = pathlib.Path(senbonzakura.__file__).resolve().parents[2]
+          hits = list(root.rglob('THIRD-PARTY-CORPORA.md'))
+          assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'
+          print('attribution present at', hits[0])
+          "
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
       - name: The CUDA image carries a CUDA torch

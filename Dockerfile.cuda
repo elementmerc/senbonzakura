@@ -53,7 +53,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PIP_RETRIES=10
 
 WORKDIR /build
-COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md ./
+COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md ./
 COPY src/ ./src/
 COPY tools/ ./tools/
 COPY man/ ./man/

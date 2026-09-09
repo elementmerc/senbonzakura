@@ -46,7 +46,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY pyproject.toml README.md LICENSE THIRD-PARTY-NOTICES.md ./
+COPY pyproject.toml README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md ./
 COPY src/ ./src/
 COPY tools/ ./tools/
 COPY man/ ./man/

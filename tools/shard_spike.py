@@ -34,9 +34,15 @@ already set, so "streaming added nothing" would mean "streaming did not exceed a
 else reached", which is not the claim. The first version of this spike did exactly that and
 reported +0.0 MB, which looked like the strongest possible result and was almost no evidence.
 
-Plus a correctness check that is not optional: the streamed result must be bit-identical to the
-resident one. A streaming path that is cheap and wrong is worth nothing, and it is the easy thing
-to accidentally build.
+Plus a correctness check that is not optional: the streamed result must match the resident one to
+within what two correct float32 runs may differ by. A streaming path that is cheap and wrong is
+worth nothing, and it is the easy thing to accidentally build.
+
+That check used to demand bit-identity, and bit-identity is not a property of this arrangement:
+feeding the same arithmetic tensors that arrived memory-mapped off disk rather than freshly
+allocated moves the last bit, and TWO RESIDENT RUNS show the same gap with no streaming involved.
+See `FLOAT32_SLACK_ULP` for the measurement. A structural error moves values by order 1 and is
+still caught.
 """
 from __future__ import annotations
 
@@ -143,7 +149,9 @@ def _edit(tensor, direction):
 
     Deliberately the same SHAPE of operation as the real orthogonalisation (a rank-one projection
     subtracted from the output rows) without being it. The spike is about whether the streaming
-    arrangement holds together and stays exact, not about the arithmetic, which already has tests.
+    arrangement holds together, not about the arithmetic, which already has tests. Note that both
+    paths call THIS function, so any difference between them is the route the tensors took, never
+    the operation applied to them.
     """
     if tensor.ndim != 2 or tensor.shape[1] != direction.shape[0]:
         return tensor.clone()
@@ -166,8 +174,52 @@ def reassemble(shard_dir):
     return out
 
 
+#: How far apart two float32 results of the SAME arithmetic may legitimately be.
+#:
+#: THE MEASUREMENT THAT SET THIS, because "exact" was the wrong claim and asserting it made the
+#: spike fail on a newer torch for a reason that had nothing to do with streaming. Under
+#: torch 2.14 on eight threads the streamed and resident edits differed by 2.384e-07, one ULP at
+#: float32, and the failure message blamed the streaming arrangement. They do not differ because
+#: of streaming:
+#:
+#:     resident vs resident, the same call twice        0.0
+#:     resident in memory vs resident FROM DISK         2.384e-07   <- no streaming at all
+#:     resident vs streamed                             2.384e-07
+#:
+#: The middle row is the finding. Feeding the identical arithmetic tensors that arrived by a
+#: different route, memory-mapped off disk rather than freshly allocated, moves the last bit,
+#: because a float32 reduction is not associative and the kernel chosen depends on the buffer.
+#: Two resident runs show it. So bit-identity was never a property of the streaming arrangement
+#: and demanding it tested the allocator.
+#:
+#: Eight ULP rather than one, scaled by the largest magnitude present: enough headroom that a
+#: legitimate difference in reduction order passes, and far too little for a structural error,
+#: which moves values by order 1. The measured worst difference is always reported either way.
+FLOAT32_SLACK_ULP = 8
+
+
+def tolerance_for(tensors):
+    """The largest difference two correct float32 runs may show, for these tensors.
+
+    Scaled by the largest magnitude present rather than fixed, because ULP is relative: the same
+    reduction on values around 1000 legitimately moves a thousand times further than on values
+    around 1.
+    """
+    import torch as _t
+    peak = 0.0
+    for t in tensors.values():
+        if t.numel():
+            peak = max(peak, float(t.float().abs().max()))
+    return FLOAT32_SLACK_ULP * _t.finfo(_t.float32).eps * max(peak, 1.0)
+
+
 def max_abs_difference(a, b):
-    """Bit-identical or not, and where. A cheap streaming path that is wrong is worth nothing."""
+    """How far apart the two results are, and where. Reported whatever the verdict.
+
+    A structural error, an edit applied to the wrong axis or skipped on some shard, moves values
+    by order 1 and is nowhere near the tolerance above. That is the failure this is guarding, and
+    it stays caught.
+    """
     missing = set(a) ^ set(b)
     if missing:
         return float("inf"), f"{len(missing)} tensor(s) present on only one side: {sorted(missing)[:3]}"
@@ -222,7 +274,10 @@ def _run_one(mode, a, work, direction):
         resident = load_file(str(work / "resident.safetensors"))
         streamed = reassemble(work / "edited")
         worst, where = max_abs_difference(resident, streamed)
-        print(json.dumps({"max_abs_difference": worst, "where": where}))
+        # The tolerance is computed HERE, in the pass that holds the tensors, because it is
+        # scaled by the magnitudes present and the parent process never sees them.
+        print(json.dumps({"max_abs_difference": worst, "where": where,
+                          "tolerance": tolerance_for(resident)}))
         return 0
     else:
         raise ValueError(f"unknown mode {mode!r}")
@@ -301,6 +356,7 @@ def main(argv=None):
         peaks = {m: child(m)["peak_rss_bytes"] for m in ("resident", "shard", "stream")}
         verdict = child("verify")
         worst, where = verdict["max_abs_difference"], verdict["where"]
+        slack = verdict["tolerance"]
 
         # An empty process, so the interpreter and torch are subtracted rather than counted as the
         # cost of an approach. Without it every number here is dominated by importing torch.
@@ -321,7 +377,7 @@ def main(argv=None):
 
         resident_cost = peaks["resident"] - floor
         stream_cost = peaks["stream"] - floor
-        exact = worst == 0.0
+        exact = worst <= slack
         # The claim is that streaming tracks a LAYER rather than the model. Three layers of
         # headroom, because a copy plus the tensor being written is legitimately more than one.
         cheap = stream_cost < layer_bytes * 3
@@ -333,14 +389,19 @@ def main(argv=None):
                 "empty_process_bytes": floor, "peaks": peaks,
                 "resident_cost_bytes": resident_cost, "stream_cost_bytes": stream_cost,
                 "max_abs_difference": worst, "exact": exact, "cheap": cheap,
+                # Recorded beside the verdict so a reader can see what "exact" was measured
+                # against, rather than having to trust the word.
+                "tolerance": slack, "float32_slack_ulp": FLOAT32_SLACK_ULP,
             }, indent=2), encoding="utf-8")
 
         print(f"\nthe resident edit needed {resident_cost / 1e6:.1f} MB, the streamed one "
               f"{stream_cost / 1e6:.1f} MB, and one layer is {layer_bytes / 1e6:.1f} MB")
         if not exact:
-            print("\nFAILED: the streamed edit does not match the resident one. A streaming path "
-                  "that is cheap and wrong is worth nothing, and it is the easy thing to build "
-                  "by accident.")
+            print(f"\nFAILED: the streamed edit differs from the resident one by {worst:.3e}, "
+                  f"which is more than the {slack:.3e} two correct float32 runs may differ by. A "
+                  f"streaming path that is cheap and wrong is worth nothing, and it is the easy "
+                  f"thing to build by accident. A difference this large is structural, not "
+                  f"rounding: look for an edit applied to the wrong axis or skipped on a shard.")
             return 1
         if not cheap:
             print("\nINCONCLUSIVE: the two results match and the streamed pass did not stay "
@@ -350,11 +411,11 @@ def main(argv=None):
         # A ratio against a cost of ~0 is a meaningless number, and printing "460554240x less
         # memory" would be the sort of figure that discredits everything beside it.
         if stream_cost < layer_bytes:
-            print(f"\nOK: the streamed edit is bit-identical to the resident one, and never "
+            print(f"\nOK: the streamed edit matches the resident one to within float32 rounding, and never "
                   f"raised this process above what importing torch already required. The resident "
                   f"edit needed {resident_cost / 1e6:.0f} MB more than that.")
         else:
-            print(f"\nOK: the streamed edit is bit-identical to the resident one and needed "
+            print(f"\nOK: the streamed edit matches the resident one to within float32 rounding and needed "
                   f"{resident_cost / stream_cost:.1f}x less memory.")
         return 0
     finally:

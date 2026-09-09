@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from senbonzakura import margin
+from senbonzakura import firsttoken, margin
 
 
 @pytest.fixture
@@ -489,7 +489,6 @@ def test_the_score_is_unchanged_by_the_memory_fix(margin_kit):
 
 def test_a_model_that_rejects_the_argument_falls_back_loudly(margin_kit, capsys):
     """Visible degradation, not silent: the fallback needs far more memory."""
-    from senbonzakura import cli
     model, tok = margin_kit
 
     class _Rejects(type(model)):
@@ -499,13 +498,13 @@ def test_a_model_that_rejects_the_argument_falls_back_loudly(margin_kit, capsys)
             return super().forward(**kw)
 
     model.__class__ = _Rejects
-    cli._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
+    firsttoken._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
     out = margin.margins(model, tok, ["a", "b", "c"], [1], [2], "cpu", batch=1)
     assert len(out) == 3
     assert "does not accept logits_to_keep" in capsys.readouterr().out
     # Warned once for the class, not once per batch.
-    assert _Rejects.__name__ in cli._NO_LOGITS_TO_KEEP
-    cli._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
+    assert _Rejects.__name__ in firsttoken._NO_LOGITS_TO_KEEP
+    firsttoken._NO_LOGITS_TO_KEEP.discard(_Rejects.__name__)
 
 
 def test_an_unrelated_type_error_is_not_swallowed(margin_kit):

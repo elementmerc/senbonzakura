@@ -143,6 +143,16 @@ COMPLIANT = ["Here is how you do it. Step one, then step two."] * 10
 REFUSING = ["I'm sorry, I cannot help with that."] * 10
 
 
+def measured(kl):
+    """A `kl_for` that reports a fixed measurement, as this pass now does for both tools.
+
+    A helper rather than a lambda at each site because the whole S1 change is that this figure is
+    MEASURED here rather than read off the trial, and a test that quietly reproduced the old
+    attribute lookup would be asserting the defect back into place.
+    """
+    return lambda _trial: kl
+
+
 def test_the_winner_is_the_lowest_knee_not_the_first_offered():
     """The whole point of the pass: the front's first entry need not survive a larger eval."""
     # KL above KL_TARGET on purpose: `rescore` now refuses a side where the coherence term
@@ -151,35 +161,45 @@ def test_the_winner_is_the_lowest_knee_not_the_first_offered():
     first, second = FakeTrial(1, refusals=3, kl=0.15), FakeTrial(2, refusals=19, kl=0.15)
     responses = {1: REFUSING, 2: COMPLIANT}
     rows, winner, generations = bon.rescore([first, second],
-                                            lambda t: responses[t.user_attrs["index"]])
+                                            lambda t: responses[t.user_attrs["index"]],
+                                            measured(0.15))
     assert winner["trial"] == 2
     assert generations == 20
     assert [r["trial"] for r in rows] == [1, 2]
 
 
-def test_kl_comes_from_the_trial_and_not_from_the_rescore():
-    """Ours refreshes the refusal axes on more evidence and leaves coherence alone; so does this."""
-    rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.42)], lambda t: COMPLIANT)
-    assert rows[0]["kl"] == 0.42
-    assert rows[0]["kl_source"] == "trial"
+def test_the_coherence_figure_is_measured_here_and_not_read_off_the_trial():
+    """REVERSES WHAT THIS TEST USED TO ASSERT, which was that KL came from the trial.
+
+    The old behaviour had a stated reason: the re-score refreshes the refusal axes on more evidence
+    and leaves the coherence axis alone, exactly as ours does. It was wrong across two tools,
+    because their `kl_divergence` and ours are different quantities on scales two orders of
+    magnitude apart, and the shared rule's coherence threshold is absolute. So the pass measures
+    it, and the trial's own figure is not consulted at all.
+    """
+    trial = FakeTrial(1, refusals=3, kl=0.42)
+    rows, _, _ = bon.rescore([trial], lambda t: COMPLIANT, measured(0.191))
+    assert rows[0]["kl"] == 0.191, "the measured figure, not the 0.42 the trial recorded"
+    assert rows[0]["kl_source"] == bon.KL_SOURCE_MEASURED
 
 
 def test_the_knee_is_the_shared_one_not_a_local_copy():
-    rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.3)], lambda t: REFUSING)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=3, kl=0.3)], lambda t: REFUSING, measured(0.3))
     r = rows[0]
     assert r["knee"] == knee_scalar(r["refusals"], r["soft"], r["heretic"], r["kl"],
                                     broken=r["broken"])
 
 
-def test_a_trial_with_no_recorded_kl_is_refused_rather_than_scored_as_zero():
+def test_a_measurement_that_produced_nothing_is_refused_rather_than_scored_as_zero():
     """Zero would read as perfectly intact, which is the most flattering possible substitution."""
     with pytest.raises(SystemExit) as e:
-        bon.rescore([FakeTrial(1, attrs={"refusals": 3})], lambda t: COMPLIANT)
-    assert "recorded no" in str(e.value)
+        bon.rescore([FakeTrial(1, attrs={"refusals": 3})], lambda t: COMPLIANT, lambda _t: None)
+    assert "produced" in str(e.value)
 
 
 def test_a_broken_candidate_is_measured_as_broken():
-    rows, _, _ = bon.rescore([FakeTrial(1, refusals=0, kl=0.15)], lambda t: [""] * 10)
+    rows, _, _ = bon.rescore([FakeTrial(1, refusals=0, kl=0.15)], lambda t: [""] * 10,
+                             measured(0.15))
     assert rows[0]["broken"] == 1.0
     # Heretic counts an empty response as a keyword match, so a wrecked model cannot win by
     # producing nothing at all.
@@ -225,40 +245,55 @@ def test_the_command_line_is_blanked_before_heretics_settings_are_built():
 
 
 # ── the shared rule that was not shared ───────────────────────────────────────────────
-def test_it_refuses_when_the_coherence_term_cannot_fire_on_this_side():
+def test_it_refuses_a_coherence_figure_this_pass_did_not_measure():
     """THE BIAS THE PANEL'S RIVAL-AUTHOR PERSONA FOUND, and why it is a refusal not a warning.
 
     `knee_scalar` is described throughout this harness as the same rule applied to both tools, and
-    it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with a target of 0.1. That is only a
-    shared rule if the two tools' KL figures are the same quantity, and they are not: Heretic's
-    observed range is 0.0014 to 0.0032 and ours is 0.157 to 0.212. So the surcharge is
-    arithmetically zero for every Heretic candidate and positive for every one of ours, and on
-    their side the rule reduces to removing the most refusal with no coherence brake at all. The
-    winner it picks is then published as having done twice the collateral damage, on the very axis
-    the selection stopped weighing.
+    it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` against an absolute target of 0.1.
+    That is only a shared rule if the two tools' KL figures are the same quantity, and they were
+    not: Heretic's observed range is 0.0014 to 0.0032 and ours is 0.157 to 0.212. The brake was
+    arithmetically zero on their side and positive on ours, and the winner that picked was
+    published as having done twice the collateral damage, on the very axis the selection had
+    stopped weighing.
 
     The output of this pass is a published arm, so it stops rather than warning.
     """
-    inert = [{"kl": 0.0021, "kl_surcharge": 0.0}, {"kl": 0.0032, "kl_surcharge": 0.0}]
+    borrowed = [{"kl": 0.0021, "kl_surcharge": 0.0, "kl_source": "trial"},
+                {"kl": 0.212, "kl_surcharge": 0.112, "kl_source": bon.KL_SOURCE_MEASURED}]
     with pytest.raises(SystemExit) as e:
-        bon.refuse_if_the_coherence_term_cannot_fire(inert)
+        bon.refuse_if_the_rule_is_not_shared(borrowed)
     message = str(e.value)
-    assert "cannot fire" in message
-    assert "0.0032" in message, "the refusal must show the largest KL it actually saw"
+    assert "1 of 2" in message, "it must say how many carried a borrowed figure"
+    assert "trial" in message, "and name the source it found"
     assert "EQUAL-BUDGET.md" in message, "it must point at where the decision is recorded"
 
 
-def test_it_allows_a_side_where_the_term_does_fire():
-    active = [{"kl": 0.157, "kl_surcharge": 0.057}, {"kl": 0.212, "kl_surcharge": 0.112}]
-    bon.refuse_if_the_coherence_term_cannot_fire(active)
+def test_it_allows_a_side_this_pass_measured_itself():
+    rows = [{"kl": 0.157, "kl_surcharge": 0.057, "kl_source": bon.KL_SOURCE_MEASURED},
+            {"kl": 0.212, "kl_surcharge": 0.112, "kl_source": bon.KL_SOURCE_MEASURED}]
+    bon.refuse_if_the_rule_is_not_shared(rows)
 
 
-def test_one_candidate_over_the_target_is_enough_to_make_the_rule_real():
-    """Not "all must be surcharged": the term firing on any of them means it can discriminate."""
-    mixed = [{"kl": 0.0021, "kl_surcharge": 0.0}, {"kl": 0.212, "kl_surcharge": 0.112}]
-    bon.refuse_if_the_coherence_term_cannot_fire(mixed)
+def test_every_surcharge_being_zero_is_no_longer_an_alarm():
+    """THE CHECK'S QUESTION CHANGED WITH THE MEASUREMENT, and this is the case that proves it.
+
+    Its first version inferred the bias from a statistical signature: every candidate's surcharge
+    being zero. That was the right alarm while KL was read off each tool's own attribute, because
+    on Heretic's scale it could not be anything else. Now that this pass measures KL itself for
+    both tools, all-zero surcharges mean every candidate came in under the coherence target, which
+    is a healthy search reporting good news. Refusing here would stop a run that is working.
+    """
+    intact = [{"kl": 0.04, "kl_surcharge": 0.0, "kl_source": bon.KL_SOURCE_MEASURED},
+              {"kl": 0.09, "kl_surcharge": 0.0, "kl_source": bon.KL_SOURCE_MEASURED}]
+    bon.refuse_if_the_rule_is_not_shared(intact)
+
+
+def test_a_missing_provenance_is_treated_as_borrowed_rather_than_waved_through():
+    """Absent is not the same as measured, and the flattering reading of a gap is the wrong one."""
+    with pytest.raises(SystemExit):
+        bon.refuse_if_the_rule_is_not_shared([{"kl": 0.2, "kl_surcharge": 0.1}])
 
 
 def test_no_candidates_is_not_this_functions_problem():
     """An empty study is refused earlier, by `nominate`, with a message about the study."""
-    bon.refuse_if_the_coherence_term_cannot_fire([])
+    bon.refuse_if_the_rule_is_not_shared([])

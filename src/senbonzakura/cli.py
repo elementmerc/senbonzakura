@@ -70,6 +70,11 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
     torch_version_ok,
     winning_config,
 )
+
+# The first-token measurement lives in a module that imports nothing but torch, so the best-of-N
+# pass can use it inside a sealed container holding another tool's dependency tree. Re-exported
+# here because every existing caller asks cli for them.
+from .firsttoken import last_token_logits, render_chat
 from .metrics import (
     KL_CEIL,  # the hard "too damaged" line; a trial above it is excluded outright
     KL_TARGET,  # where the knee's coherence surcharge starts, and what --max-kl moves
@@ -1601,41 +1606,6 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=(), composition=No
 
 
 
-# Model classes seen to reject logits_to_keep, so the warning fires once each rather
-# than once per batch. Keyed by class name because two models in one process (a base
-# and an abliterated copy) can be different classes with different support.
-_NO_LOGITS_TO_KEEP: set[str] = set()
-
-
-def last_token_logits(model, enc, log=None):
-    """Logits at the final position only, without materialising the whole sequence.
-
-    A full logits tensor is batch x sequence x vocabulary. At batch 16, 2048 tokens
-    and a 150k vocabulary that is roughly 10 GB in fp32 before anything else is
-    allocated, and every caller here immediately throws away all but the last
-    position. `logits_to_keep=1` asks the model to compute only the part that is
-    used, which is the difference between the compass running on a 6 GB card and
-    not running at all.
-
-    The shape contract is unchanged: with the argument honoured the result is
-    [B, 1, V], so [:, -1, :] still selects the same row.
-    """
-    key = type(model).__name__
-    if key not in _NO_LOGITS_TO_KEEP:
-        try:
-            return model(**enc, use_cache=False, logits_to_keep=1).logits[:, -1, :].float()
-        except TypeError as e:
-            # Only the unsupported-argument case falls back. Any other TypeError is a
-            # real bug in the forward pass and must not be converted into a quiet
-            # change of memory behaviour.
-            if "logits_to_keep" not in str(e):
-                raise
-            _NO_LOGITS_TO_KEEP.add(key)
-            (log or print)(f"{key} does not accept logits_to_keep; computing full logits instead, "
-                           f"which needs far more memory at large batch sizes")
-    return model(**enc, use_cache=False).logits[:, -1, :].float()
-
-
 def _kmeans_labels(X, k, seed, iters=25):
     """Cluster the rows of `X` into at most `k` groups. Returns per-row labels.
 
@@ -1681,32 +1651,6 @@ def _kmeans_labels(X, k, seed, iters=25):
     return labels
 
 
-
-
-def render_chat(tok, content):
-    """One user turn, rendered into a prompt, with thinking OFF where the model supports it.
-
-    Shared rather than duplicated, and that is the whole point of it existing. This project had
-    two copies: the generation path passed `enable_thinking=False`, and the compass did not.
-    On Qwen3 the difference is decisive, because the thinking template appends `<think>` to the
-    generation prompt, so the position the compass reads its verdict logits from is the position
-    the model was going to put `<think>` at. Measured on the held-out arm before this was shared:
-    the most likely token there was a verdict for **0.0%** of prompts and the two verdict sets
-    held ~0 probability, on both Qwen3-1.7B and Qwen3-0.6B. The refusal axis and the compass axis
-    of the same published table were therefore measured under different prompt formats.
-
-    No ValueError fallback: the loader has already established that this tokenizer renders chat
-    prompts, either its own template or one `--chat-template` supplied. A ValueError here would
-    mean that guarantee broke, and inventing a prompt format to paper over it is what made a
-    whole class of numbers incomparable.
-    """
-    msgs = [{"role": "user", "content": content}]
-    try:
-        return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
-                                       enable_thinking=False)
-    except TypeError:
-        # A tokenizer that does not accept enable_thinking; retry without it.
-        return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
 
 
 def accelerator_name(device):

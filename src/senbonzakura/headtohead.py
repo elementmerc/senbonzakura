@@ -198,7 +198,10 @@ def _heretic_finalise(*, out, slices, **_):
     return ["python", _child(_bench_dir_for(out), "best_of_n_heretic.py"),
             "--out", str(out), "--top-n", "6",
             "--final-prompts", _child(s, "final_prompts.txt"),
-            "--keyword-prompts", _child(s, "keyword_prompts.txt")]
+            "--keyword-prompts", _child(s, "keyword_prompts.txt"),
+            # The coherence slice. The pass measures KL on it with our estimator, for BOTH tools,
+            # rather than reading each tool's own figure: see `--kl-prompts` in that script.
+            "--kl-prompts", _child(s, "kl_prompts.txt")]
 
 
 def _bench_dir_for(out):

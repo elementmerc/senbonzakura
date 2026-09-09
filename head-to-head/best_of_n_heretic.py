@@ -62,9 +62,11 @@ import math
 import os
 import sys
 
-# Reaching senbonzakura's rulers rather than copying them. Only `metrics` is imported and that
-# module imports nothing at all, so this pulls in none of the abliterator and cannot collide with
-# the transformers version Heretic pins in this image.
+# Reaching senbonzakura's rulers and its coherence measurement rather than copying them. Only
+# `metrics` and `firsttoken` are imported: the first imports nothing at all, the second imports
+# nothing but torch. Between them they pull in none of the abliterator and cannot collide with the
+# transformers version Heretic pins in this image. Anything heavier is not importable here at all,
+# because our package is MOUNTED rather than installed and its dependencies are not in this image.
 sys.path.insert(0, "/work/senbon-src")
 
 import optuna
@@ -77,6 +79,8 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 from optuna.trial import TrialState
 
+from senbonzakura.firsttoken import first_token_logprobs
+from senbonzakura.firsttoken import kl as first_token_kl
 from senbonzakura.metrics import (
     KL_TARGET,
     broken_rate,
@@ -98,6 +102,19 @@ RECONSTRUCTION_TOLERANCE = 0.02
 # upstream must fail loudly rather than degrade to a missing value that reads as zero.
 REFUSAL_COUNT = "refusals"
 KL_ATTR = "kl_divergence"
+
+#: What this pass records as the source of a coherence figure, and what the shared-rule guard
+#: asserts. A literal rather than a bare string at the use site, because the guard compares against
+#: it and a typo on either side would silently turn the check off.
+KL_SOURCE_MEASURED = "measured by this pass"
+
+#: The estimator's own definition, recorded beside the numbers it produces. The peer reviewing this
+#: change put it plainly: a narrow instrument read two different ways is what produced the published
+#: claim being withdrawn, so what the instrument IS travels with its output.
+KL_ESTIMATOR = ("KL(pristine || abliterated) over the vocabulary at the first generated token, "
+                "log-softmax of the last-token logits on senbonzakura's chat rendering "
+                "(enable_thinking=False), averaged over prompts; senbonzakura.firsttoken, the same "
+                "code path the published drift figure and the abliterator's own search use")
 N_EVAL_ATTR = "n_bad_prompts"
 
 
@@ -196,32 +213,53 @@ def nominate(complete, top_n):
     return heretic_front(complete)[:max(1, top_n)]
 
 
-def rescore(candidates, responses_for):
+def rescore(candidates, responses_for, kl_for):
     """Re-score each candidate on the larger slice and pick the winner by the same knee scalar.
 
-    `responses_for(trial)` materialises the candidate and returns its generations, so the decision
-    can be exercised against fixed text with no model in the room.
+    `responses_for(trial)` materialises the candidate and returns its generations, and
+    `kl_for(trial)` measures its coherence, so the decision can be exercised against fixed numbers
+    with no model in the room.
+
+    WHY `kl_for` IS AN ARGUMENT AND NOT AN ATTRIBUTE LOOKUP (panel finding S1, option C).
+
+    This used to read `kl_divergence` off the trial, on the stated reasoning that "the re-score
+    refreshes the refusal axes and leaves the coherence axis alone". Three of the four inputs to
+    the shared rule were therefore re-measured by this harness on identical prompts, and the fourth
+    was whatever each tool had recorded about itself.
+
+    They are not the same quantity. Heretic's runs 0.0014 to 0.0032 and senbonzakura's runs 0.157
+    to 0.212. The rule surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with KL_TARGET at
+    0.1 in absolute units, so the brake was arithmetically zero for every Heretic candidate and
+    positive for every one of ours. On their side the rule reduced to "remove the most refusal,
+    with no coherence brake at all", and the winner it picked was then published as having done
+    twice the collateral damage, on the very axis the selection had stopped weighing.
+
+    So the pass measures it, for both tools, with `senbonzakura.firsttoken`, which is the same
+    module the published `drift` figure comes from and the same one the abliterator's own search
+    uses. One estimator, one renderer, one set of prompts.
     """
     rows, generations = [], 0
     for trial in candidates:
         responses = responses_for(trial)
         generations += len(responses)
-        kl = attr(trial, KL_ATTR)
+        kl = kl_for(trial)
         if kl is None:
             raise SystemExit(
-                f"best_of_n: trial {attr(trial, 'index')} recorded no '{KL_ATTR}'. The knee scalar "
-                f"surcharges KL above a target, so treating a missing value as zero would quietly "
-                f"rank a damaged candidate as an intact one.")
+                f"best_of_n: the coherence measurement for trial {attr(trial, 'index')} produced "
+                f"nothing. The knee scalar surcharges KL above a target, so treating a missing "
+                f"value as zero would quietly rank a damaged candidate as an intact one.")
         row = {
             "trial": attr(trial, "index"),
             "refusals": refusal_rate(responses),
             "soft": soft_refusal_rate(responses),
             "heretic": heretic_keyword_rate(responses),
             "broken": broken_rate(responses),
-            # KL comes from the trial, not from this pass, exactly as it does in ours: the re-score
-            # refreshes the refusal axes on more evidence and leaves the coherence axis alone.
+            # Measured here, on the shared coherence slice, with senbonzakura's estimator. The
+            # provenance is recorded rather than assumed because the guard below asserts it: a
+            # figure read off the tool's own trial is not comparable with ours and must never
+            # reach the shared rule again.
             "kl": kl,
-            "kl_source": "trial",
+            "kl_source": KL_SOURCE_MEASURED,
         }
         # `broken` is passed for the same reason it is on our side, and it matters MORE here: this
         # pass is what gives the competing tool the same best-of-N selection ours gets, so a
@@ -235,51 +273,63 @@ def rescore(candidates, responses_for):
         print(f"  trial {row['trial']}: refusals={row['refusals']*100:.1f}% "
               f"soft={row['soft']*100:.1f}% heretic={row['heretic']*100:.1f}% "
               f"broken={row['broken']*100:.0f}% KL={kl} knee={row['knee']:.4f}")
-    refuse_if_the_coherence_term_cannot_fire(rows)
+    refuse_if_the_rule_is_not_shared(rows)
     return rows, min(rows, key=lambda r: r["knee"]), generations
 
 
-def refuse_if_the_coherence_term_cannot_fire(rows):
+def refuse_if_the_rule_is_not_shared(rows):
     """Stop, loudly, when the shared selection rule is not shared in effect.
 
     THE BIAS THIS CATCHES, found by the 2026-09-09 panel's rival-author persona.
 
     `knee_scalar` is described everywhere in this harness as the same rule applied to both tools,
     and it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with KL_TARGET = 0.1. That works
-    only if the two tools' KL figures are the same quantity. They are not, and this project knows
-    it: `headtohead_report.py` refuses to print them in one column, calling that "the error this
-    project withdrew four claims for on 2026-08-05".
+    only if the two tools' KL figures are the same quantity. They were not: Heretic's own
+    `kl_divergence` runs 0.0014 to 0.0032 where senbonzakura's runs 0.157 to 0.212, so the brake was
+    arithmetically zero on their side and positive on ours, and the winner that picked was
+    published as having done twice the collateral damage on the very axis the selection had
+    stopped weighing.
 
-    Heretic's `kl_divergence` is a first-token divergence whose observed range is 0.0014 to 0.0032.
-    Ours runs 0.157 to 0.212. So the surcharge is arithmetically ZERO for every Heretic candidate
-    and positive for every one of ours: on their side the rule reduces to "remove the most refusal,
-    with no coherence brake at all", and the winner it picks is then published as having done twice
-    the collateral damage. The comparison is on the very axis the selection stopped weighing.
+    WHAT THIS CHECK ASKS, AND WHY IT CHANGED.
 
-    A term that cannot fire is not a shared rule, and this is not something to warn about and carry
-    on with: the output of this pass is a published arm. It refuses, and the operator decides how
-    the two arms should be selected before any card is spent on it.
+    Its first version inferred the bias from a statistical signature: every candidate's surcharge
+    being zero. That was the right alarm while KL came from each tool's own attribute, because on
+    Heretic's scale it could not be anything else. It is the WRONG alarm now. With the pass
+    measuring KL itself for both tools, every surcharge being zero means every candidate came in
+    under the coherence target, which is a healthy search reporting good news, and refusing there
+    would stop a run that is working.
+
+    So it asks the thing directly instead of a proxy for it: was each figure MEASURED by this pass,
+    on the shared slice, with the shared estimator. Provenance is a fact about where a number came
+    from and cannot be mimicked by a run that happens to land in a particular range.
+
+    That distinction is not academic here. Earlier the same day, a slice fix was justified by
+    checking a cheap proxy (a partition's total row count) instead of the thing that mattered
+    (where its boundary sits), and it read sixty rows of the published measurement into a
+    selection. Check the thing.
     """
     if not rows:
         return
-    if all(r["kl_surcharge"] == 0.0 for r in rows):
-        worst = max(r["kl"] for r in rows)
+    borrowed = [r for r in rows if r.get("kl_source") != KL_SOURCE_MEASURED]
+    if borrowed:
+        sources = sorted({str(r.get("kl_source")) for r in borrowed})
         raise SystemExit(
-            f"best_of_n REFUSES to pick a winner: the coherence term of the shared selection rule "
-            f"cannot fire on this side.\n"
+            f"best_of_n REFUSES to pick a winner: {len(borrowed)} of {len(rows)} candidates carry "
+            f"a coherence figure this pass did not measure (source: {', '.join(sources)}).\n"
             f"\n"
-            f"  Every candidate's KL is at or below the {KL_TARGET} target (the largest was "
-            f"{worst}), so `max(0, kl - target)` is zero for all of them and the rule reduces to "
-            f"removing the most refusal with no coherence brake. On the other arm the same term is "
-            f"positive throughout, because the two tools' KL figures are different quantities "
-            f"measured on different prompts.\n"
+            f"  The shared selection rule surcharges coherence against an absolute target of "
+            f"{KL_TARGET}. A figure taken from a tool's own trial is on that tool's own scale, and "
+            f"the two scales differ by two orders of magnitude, so the same threshold means "
+            f"'always intact' on one side and 'always penalised' on the other. Selecting each arm "
+            f"that way and then publishing a comparison OF coherence measures the selection rather "
+            f"than the tools.\n"
             f"\n"
-            f"  Selecting each arm by a rule that weighs coherence on one side and not the other, "
-            f"and then publishing a comparison OF coherence, measures the selection rather than "
-            f"the tools. This pass will not produce that arm.\n"
+            f"  This is the failure `headtohead_report.py` already refuses in the reporting, where "
+            f"it will not print the two tools' KL figures in one column, calling it the error this "
+            f"project withdrew four claims for on 2026-08-05. It must not come back through the "
+            f"arm construction, where the report's own guard cannot see it.\n"
             f"\n"
-            f"  See head-to-head/EQUAL-BUDGET.md. The decision is which rule both arms are "
-            f"selected by; it is not one this script can make on its own.")
+            f"  See head-to-head/EQUAL-BUDGET.md.")
 
 
 def reconstruction_ok(recorded, measured):
@@ -309,6 +359,17 @@ def main(argv=None):
     ap.add_argument("--keyword-prompts", required=True,
                     help="the slice Heretic's own search was scored on, used to check that "
                          "rebuilding a trial reproduces the score the search recorded for it")
+    ap.add_argument("--kl-prompts", required=True,
+                    help="the harmless coherence slice, one prompt per line. THIS PASS MEASURES "
+                         "KL ITSELF on these, with senbonzakura's estimator, rather than reading "
+                         "the tool's own kl_divergence attribute: the two are different quantities "
+                         "(Heretic's runs 0.0014 to 0.0032 where ours runs 0.157 to 0.212), so a "
+                         "shared selection rule with an absolute coherence threshold was a rule "
+                         "only one side ever paid")
+    ap.add_argument("--kl-batch", type=int, default=16,
+                    help="prompts per forward pass for the coherence measurement. The measurement "
+                         "itself is small (one row of logits per prompt); this bounds the "
+                         "activations, which is what a 6 GB card actually runs out of")
     ap.add_argument("--top-n", type=int, default=6,
                     help="how many candidates to re-score; 6 is what senbonzakura gives itself "
                          "(cli.py --top-rescore), so 6 is what Heretic gets")
@@ -391,11 +452,38 @@ def main(argv=None):
     final_prompts = load_prompts(settings, _text_file_spec(a.final_prompts))
     print(f"best_of_n: re-scoring on {len(final_prompts)} held-out prompts")
 
+    # THE COHERENCE BASELINE, TAKEN ONCE, WHILE THE MODEL IS STILL PRISTINE.
+    #
+    # Heretic applies abliteration as LoRA adapters and `reset_model()` returns to pristine by
+    # zeroing them, so there is never a second resident copy of the weights to diff against. That
+    # matters on the 6 GB card this runs on: Qwen3-1.7B is about 3.4 GB at fp16 and two copies
+    # would not fit. What is held instead is this one tensor of baseline log-probabilities, which
+    # `first_token_logprobs` returns on the CPU: one row per prompt over the vocabulary, tens of
+    # megabytes, not gigabytes.
+    kl_texts = [p.user for p in load_prompts(settings, _text_file_spec(a.kl_prompts))]
+    model.reset_model()
+    base_lp = first_token_logprobs(model.model, model.tokenizer, kl_texts, batch=a.kl_batch)
+    print(f"best_of_n: coherence baseline captured on {len(kl_texts)} harmless prompts "
+          f"({KL_ESTIMATOR})")
+
     def responses_for(trial):
         apply_trial(model, directions, trial)
         return model.get_responses_batched(final_prompts)
 
-    rows, winner, generations = rescore(candidates, responses_for)
+    def kl_for(trial):
+        """Measure this candidate's coherence here, rather than read it off its trial.
+
+        Applies the trial itself rather than relying on `responses_for` having just done so. The
+        saving from sharing that state is one LoRA re-application; the cost of depending on it is
+        that reordering two lines in `rescore` would measure the PREVIOUS candidate's coherence
+        and report it under this one's name, with nothing failing. That is the failure shape this
+        whole change exists to remove, so it does not get reintroduced to save an operation.
+        """
+        apply_trial(model, directions, trial)
+        lp = first_token_logprobs(model.model, model.tokenizer, kl_texts, batch=a.kl_batch)
+        return first_token_kl(base_lp, lp)
+
+    rows, winner, generations = rescore(candidates, responses_for, kl_for)
     own_pick = attr(candidates[0], "index")
     chosen = next(t for t in candidates if attr(t, "index") == winner["trial"])
     print(f"best_of_n: WINNER trial {winner['trial']} (knee {winner['knee']:.4f}); "

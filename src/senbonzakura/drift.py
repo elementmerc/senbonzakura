@@ -43,10 +43,13 @@ import json
 import os
 
 import torch
-import torch.nn.functional as F
 
-from .cli import last_token_logits, load_model_and_tokenizer, loader_parser, render_chat
+from .cli import load_model_and_tokenizer, loader_parser
 from .crashsafe import atomic_write
+
+# The measurement itself, from the torch-only module the sealed best-of-N pass also uses, so the
+# published drift figure and the figure that selects an arm cannot drift apart.
+from .firsttoken import first_token_logprobs, kl, kl_per_prompt
 
 CACHE_SCHEMA = "senbonzakura-drift-base/1"
 
@@ -93,24 +96,6 @@ def fingerprint(base, prompts, template):
         h.update(p.encode())
         h.update(b"\0")
     return h.hexdigest()[:32]
-
-
-@torch.no_grad()
-def first_token_logprobs(model, tok, prompts, batch=16, log=None):
-    """[N, V] log-probabilities of the next token after each rendered prompt.
-
-    The same three steps the search uses: render through the chat template, take the logits at the
-    last real token, log-softmax. Imported rather than reimplemented for the reason in the module
-    docstring.
-    """
-    rows = []
-    for i in range(0, len(prompts), batch):
-        chunk = [render_chat(tok, p) for p in prompts[i:i + batch]]
-        enc = tok(chunk, return_tensors="pt", padding=True,
-                  add_special_tokens=False).to(model.device)
-        logits = last_token_logits(model, enc, log)
-        rows.extend(F.log_softmax(logits, dim=-1).float().cpu())
-    return torch.stack(rows, 0)
 
 
 #: Below this, a KL computed from bf16 logits is not precise enough to quote.
@@ -172,27 +157,6 @@ def precision_verdict(value, dtype_name, *, floor=BF16_KL_FLOOR):
         f"float32 and bfloat16 diverges by under 0.1% at 0.01 and by 0.7% at 0.0007, growing as "
         f"the figure shrinks. Treat it as 'below {floor:.0e}' rather than as a value, or re-run "
         f"the pair in float32 if the exact number matters.")
-
-
-def kl_per_prompt(base_lp, cand_lp):
-    """KL(base || candidate) for EACH prompt, summed over the vocabulary.
-
-    Kept separately from the mean because the per-prompt values are what an interval is built
-    from, and they were being averaged away one line after they were computed.
-    """
-    p = base_lp.exp()
-    return (p * (base_lp - cand_lp)).sum(-1)
-
-
-def kl(base_lp, cand_lp):
-    """KL(base || candidate), summed over the vocabulary, averaged over prompts.
-
-    The direction matters and it is the one the search uses: it asks how surprised the ORIGINAL
-    model would be by the edited model's predictions, weighting each token by how much the
-    original cared about it. The reverse direction would let the edited model be rewarded for
-    collapsing onto a few tokens the original also liked.
-    """
-    return float(kl_per_prompt(base_lp, cand_lp).mean())
 
 
 def kl_interval(base_lp, cand_lp, *, seed=0, draws=BOOTSTRAP_DRAWS):

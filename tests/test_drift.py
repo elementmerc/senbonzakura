@@ -17,7 +17,7 @@ import json
 import pytest
 import torch
 
-from senbonzakura import drift
+from senbonzakura import drift, firsttoken
 
 
 # ── the prompt file ───────────────────────────────────────────────────────────────────
@@ -120,7 +120,9 @@ def stub_forward(monkeypatch):
     """Render and last-token-logits stubbed, so the batching is what is under test."""
     seen = {"batches": []}
 
-    monkeypatch.setattr(drift, "render_chat", lambda tok, p: f"<{p}>")
+    # Patched on `firsttoken`, which is where the measurement lives: `drift` re-exports it so
+    # the sealed best-of-N pass can import it without dragging the abliterator in.
+    monkeypatch.setattr(firsttoken, "render_chat", lambda tok, p: f"<{p}>")
 
     def _logits(model, enc, log):
         n = len(model_tok[1].last_chunk)
@@ -129,7 +131,7 @@ def stub_forward(monkeypatch):
         return torch.zeros(n, model.vocab)
 
     model_tok = (_FakeModel(), _FakeTok())
-    monkeypatch.setattr(drift, "last_token_logits", _logits)
+    monkeypatch.setattr(firsttoken, "last_token_logits", _logits)
     return model_tok, seen
 
 

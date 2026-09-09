@@ -11,7 +11,7 @@ import pytest
 from datasets import Dataset
 
 from senbonzakura import headtohead_stage as ses
-from senbonzakura.cli import kl_eval_slice
+from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
 
 
 @pytest.fixture
@@ -108,12 +108,32 @@ def test_the_kl_slice_is_the_one_the_abliterator_would_use(track, tmp_path):
     assert lines(out / "kl_prompts.txt") == ours
 
 
-def test_the_final_slice_contains_the_search_slice(track, tmp_path):
-    """The re-score has to see the search's evidence plus more of it, not a different sample."""
+def test_the_final_slice_is_held_out_from_the_search_slice(track, tmp_path):
+    """The re-score sees prompts the search did not, which REVERSES what this test used to say.
+
+    It used to assert containment, on the reasoning that "the re-score has to see the search's
+    evidence plus more of it, not a different sample". That is a real argument, and it is an
+    argument about comparability: a candidate's re-score number could be read against its search
+    number because the second set contained the first.
+
+    It is the wrong trade here, and two panel personas reached that independently. This pass is a
+    SELECTION over the top candidates, not a re-measurement to be compared against the search's
+    own figure, and its stated purpose is that the winner should not be the best of N draws over
+    the small evaluation set the search optimised against. Under containment most of the evidence
+    it selects on is that same set: 50% of it for a model under 5B, and 67% in the middle size
+    tier, where six extra generation rounds bought thirty-two rows the search had not seen.
+
+    So the sets are disjoint now, and the cost is nothing: `bad_eval_ds` holds 4636 rows in the
+    bundled track and the largest disjoint requirement is 192.
+    """
     out = tmp_path / "eval"
     run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
     search = lines(out / "keyword_prompts.txt")
-    assert lines(out / "final_prompts.txt")[:len(search)] == search
+    final = lines(out / "final_prompts.txt")
+    assert len(final) == 16, "the re-score set keeps the size it was asked for"
+    assert not set(search) & set(final), (
+        f"{len(set(search) & set(final))} prompts appear in both the search slice and the set "
+        f"chosen to be held out from it")
 
 
 # ── the ways a slice stops being the same list ────────────────────────────────────────
@@ -178,3 +198,48 @@ def test_a_written_slice_round_trips_through_heretics_reader(track, tmp_path):
     with open(out / "keyword_prompts.txt", encoding="utf-8") as f:
         as_heretic_reads_it = [line.strip() for line in f if line.strip()]
     assert as_heretic_reads_it == [f"harmful prompt {i}" for i in range(8)]
+
+
+# ── the re-score slice, on its own ────────────────────────────────────────────────────
+def test_the_rescore_slice_starts_where_the_search_slice_ends():
+    rows = [f"prompt {i}" for i in range(200)]
+    got = rescore_eval_slice(rows, 64, 128)
+    assert got == rows[64:192]
+    assert len(got) == 128
+
+
+def test_the_rescore_slice_shares_nothing_with_the_search_slice():
+    rows = [f"prompt {i}" for i in range(200)]
+    assert not set(rows[:64]) & set(rescore_eval_slice(rows, 64, 128))
+
+
+def test_a_track_too_small_to_hold_both_falls_back_and_says_so():
+    """Falls back to the OLD behaviour rather than to a short slice.
+
+    A shorter set would quietly change how many prompts the selection reports on, which is the
+    kind of silent change this project keeps finding. The warning has to say plainly that the
+    selection is not held out, because that is the property the caller thinks it is getting.
+    """
+    rows = [f"prompt {i}" for i in range(70)]
+    said = []
+    got = rescore_eval_slice(rows, 64, 128, said.append)
+    assert got == rows[:128], "the size the caller asked for, from the head, as before"
+    assert said, "falling back silently is the whole failure being guarded against"
+    assert "NOT held out" in said[0]
+    assert "6 prompts sit past" in said[0], "the message has to say how short the track actually is"
+
+
+def test_a_track_with_exactly_enough_rows_does_not_warn():
+    """The boundary: search plus re-score exactly, and nothing to spare."""
+    rows = [f"prompt {i}" for i in range(24)]
+    said = []
+    got = rescore_eval_slice(rows, 8, 16, said.append)
+    assert got == rows[8:24]
+    assert not said
+
+
+def test_one_row_short_of_enough_falls_back():
+    rows = [f"prompt {i}" for i in range(23)]
+    said = []
+    rescore_eval_slice(rows, 8, 16, said.append)
+    assert said, "15 fresh rows where 16 were asked for is the fallback case, not a short slice"

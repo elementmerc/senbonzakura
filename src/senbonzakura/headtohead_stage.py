@@ -41,7 +41,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from senbonzakura.cli import kl_eval_slice
+from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
 
 
 def load_texts(directory, n, *, text_column=None, token=None):
@@ -115,17 +115,25 @@ def main(argv=None):
             f"headtohead stage: --eval-refusal-final ({a.eval_refusal_final}) is smaller than "
             f"--eval-refusal ({a.eval_refusal}). The final slice is the LARGER one the best-of-N "
             f"pass re-scores on; with it smaller, the selection would see less evidence than the "
-            f"search did and the pass would be worse than not running it.")
+            f"search did and the pass would be worse than not running it. The two are disjoint, "
+            f"so this asks for {a.eval_refusal + a.eval_refusal_final} rows of bad_eval_ds.")
 
     counts = {}
     # The search-time refusal slice: what steers each tool's own optimisation.
     counts["keyword"] = write_slice(
         out / "keyword_prompts.txt", load_texts(track / "bad_eval_ds", a.eval_refusal),
         "search-time refusal eval, Heretic's KeywordRate scorer")
-    # The larger slice the best-of-N selection re-scores on, for both tools.
+    # The larger slice the best-of-N selection re-scores on, for both tools, cut from PAST the
+    # search-time rows above rather than from the head. Taken from the head it contained the
+    # search slice whole, so half the evidence the selection saw was evidence the search had
+    # already optimised against. Same helper the abliterator uses, so the two cannot drift.
     counts["final"] = write_slice(
-        out / "final_prompts.txt", load_texts(track / "bad_eval_ds", a.eval_refusal_final),
-        "best-of-N re-score, both tools")
+        out / "final_prompts.txt",
+        rescore_eval_slice(
+            load_texts(track / "bad_eval_ds", a.eval_refusal + a.eval_refusal_final),
+            a.eval_refusal, a.eval_refusal_final,
+            lambda m: print(f"headtohead stage: WARNING {m}", file=sys.stderr)),
+        "best-of-N re-score, both tools, held out from the search-time slice")
     # The coherence slice, disjoint from the extraction prompts by the same rule the abliterator
     # applies, computed by the same function rather than a second copy of the arithmetic.
     counts["kl"] = write_slice(

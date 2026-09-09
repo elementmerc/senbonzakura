@@ -1453,6 +1453,44 @@ def kl_eval_slice(good_prompts, dir_prompts, eval_kl, warn=None):
     return good_prompts[-eval_kl:]
 
 
+def rescore_eval_slice(bad_eval_prompts, eval_refusal, eval_refusal_final, warn=None):
+    """The refusal slice the best-of-N re-score uses: disjoint from the one the search scored on.
+
+    WHY DISJOINT, AND WHAT IT USED TO BE. This pass exists so the winner is not the best of N draws
+    over the small evaluation set the search itself optimised against. Both slices were taken as
+    the HEAD of the same partition, so the smaller was wholly contained in the larger and the
+    "fresh evidence" was mostly the search's own rows:
+
+        kageyoshi under 5B    search 64, re-score 128  ->  50% fresh
+        kageyoshi under 20B   search 64, re-score  96  ->  33% fresh
+        kageyoshi 20B and up  search 48, re-score  96  ->  50% fresh
+        head-to-head stage    search 64, re-score 128  ->  50% fresh
+
+    The middle tier is the one that shows what the defect costs: six extra generation rounds to
+    buy thirty-two rows the search had not already seen. A pass whose whole justification is that
+    the knee should not be overfit to the small search eval cannot be scored on the small search
+    eval.
+
+    The rows are cheap. `bad_eval_ds` holds 4636 rows in the bundled track and the largest disjoint
+    requirement is 192, which is 4.1% of it.
+
+    The same arithmetic as `kl_eval_slice` above, and here for the same reason: the head-to-head
+    hands a competing tool the same slice from a separate process that cannot load the abliterator,
+    and two copies of this would let the two tools be scored on prompts that merely look alike.
+    """
+    fresh = bad_eval_prompts[eval_refusal:eval_refusal + eval_refusal_final]
+    if len(fresh) == eval_refusal_final:
+        return fresh
+    # Falls back to the old behaviour rather than to a short slice, so the number of prompts the
+    # re-score reports on does not quietly change with the size of the track.
+    if warn:
+        warn(f"only {len(fresh)} prompts sit past the search's own {eval_refusal}, so a re-score "
+             f"set of {eval_refusal_final} disjoint from it cannot be cut. Falling back to the "
+             f"head, which the search has already seen: this selection is NOT held out from the "
+             f"search's evaluation, and a bigger bad_eval_ds is what fixes it.")
+    return bad_eval_prompts[:eval_refusal_final]
+
+
 def _kageyoshi_explicit(argv):
     """Which budget knobs the caller set by hand, so the preset can leave them alone.
 
@@ -3492,9 +3530,15 @@ class Abliterator:
             log(f"capability probe: {len(cap_items)} items, baseline accuracy "
                 f"{cap_baseline if cap_baseline is not None else 'not gradeable'}")
         if args.eval_refusal_final and args.eval_refusal_final > len(self.bad_eval):
-            big = self.load(f"{TR}/bad_eval_ds", args.eval_refusal_final)
+            # Loaded as search-slice PLUS re-score slice, then cut past the search's own rows, so
+            # this pass sees prompts the search did not. See `rescore_eval_slice`.
+            big = rescore_eval_slice(
+                self.load(f"{TR}/bad_eval_ds", args.eval_refusal + args.eval_refusal_final),
+                args.eval_refusal, args.eval_refusal_final,
+                lambda m: log(f"  WARNING: {m}"))
             ranked = sorted(_pool, key=_scalar_of)[:max(1, args.top_rescore)]
-            log(f"re-scoring top {len(ranked)} candidates on {len(big)} bad-eval prompts (lever 5)")
+            log(f"re-scoring top {len(ranked)} candidates on {len(big)} bad-eval prompts held out "
+                f"from the search's own {len(self.bad_eval)} (lever 5)")
             for t in ranked:
                 pr = _profiles_from_params(t.params)
                 K = t.params.get("num_directions", 1); mode = t.params.get("dir_mode", "per_layer")

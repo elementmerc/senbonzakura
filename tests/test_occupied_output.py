@@ -446,9 +446,16 @@ def test_the_printed_command_and_the_executed_one_cannot_drift():
 def test_a_positional_with_a_space_is_quoted():
     """A path with a space in it is a real thing, and an unquoted one silently becomes two
     arguments. `render_command` appended bare keys without quoting.
+
+    The quote character follows the shell the reader will paste into, so the expected line is
+    built from `interactive.quote` rather than written out with a POSIX quote in it. What this
+    test is about is that the positional is quoted at all, and hardcoding one shell's quote made
+    it fail on Windows against a correctly quoted command.
     """
     line = interactive.render_command("convert", {"my model dir": True, "--quantise": "Q4_K_M"})
-    assert line == "senbonzakura convert 'my model dir' --quantise Q4_K_M"
+    quoted = interactive.quote("my model dir")
+    assert quoted != "my model dir", "the point of the test is that a space forces quoting"
+    assert line == f"senbonzakura convert {quoted} --quantise Q4_K_M"
 
 
 def test_the_second_command_of_a_brain_only_runs_if_the_first_succeeded(monkeypatch):

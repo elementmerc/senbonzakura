@@ -140,6 +140,33 @@ fi
 # and mount the directory holding its real bytes at exactly that place. Derived from the links
 # themselves rather than special-cased for HuggingFace, because any layout that keeps content
 # beside a directory of links behaves the same way.
+# PORTABILITY, and it is not academic: this script is read by a test that runs on every platform
+# CI covers, and macOS ships BSD coreutils and bash 3.2. `realpath -m` and `readlink -f` are both
+# GNU-only, and the first version of this block used both. They failed on macOS with "illegal
+# option -- m", which is a clearer message than most of today's but still a red job.
+norm_path() {
+  # Lexical normalisation: collapse `.` and `..` without touching the filesystem, which is what
+  # `realpath -m` did. The path being normalised is a path INSIDE a container that does not exist
+  # yet, so there is nothing to resolve against and nothing to stat.
+  local p="$1" out="" part IFS=/
+  # shellcheck disable=SC2086
+  set -- $p
+  for part in "$@"; do
+    case "$part" in
+      ''|.) continue ;;
+      ..)   out="${out%/*}" ;;
+      *)    out="$out/$part" ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+physical_dir() {
+  # The real directory holding "$1", following symlinks, using only `cd` and `pwd -P`. What
+  # `readlink -f` would give, on any shell that can change directory.
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+
 assert_links_resolve_on_the_host() {
   # A symlink already broken OUTSIDE the container will certainly be broken inside it, and the
   # message it produces there will be about something else entirely. Checked in its own loop, not
@@ -165,10 +192,14 @@ link_mounts() {
       /*) guest="$target" ;;
       # Resolved from the link's own directory as the CONTAINER will see it, so a link nested
       # deeper than the top level lands in the right place too.
-      *)  guest=$(realpath -m "$guest_dir/${link#"$host_dir"/}/../$target") ;;
+      *)  guest=$(norm_path "$guest_dir/${link#"$host_dir"/}/../$target") ;;
     esac
-    host=$(readlink -f "$link")
-    printf '%s:%s:ro\n' "$(dirname "$host")" "$(dirname "$guest")"
+    case "$target" in
+      /*) host_dir_of_target=$(physical_dir "$(dirname "$target")") ;;
+      *)  host_dir_of_target=$(physical_dir "$(dirname "$link")/$(dirname "$target")") ;;
+    esac
+    [ -n "$host_dir_of_target" ] || continue
+    printf '%s:%s:ro\n' "$host_dir_of_target" "$(dirname "$guest")"
   done < <(find "$host_dir" -type l 2>/dev/null) | sort -u
 }
 
@@ -226,7 +257,7 @@ echo "run-isolated: $TOOL${REF:+ @ $REF} on $(basename "$MODEL"), no network, in
 # Prove the GPU is reachable INSIDE the sealed box before spending hours in it. Without the driver
 # store mount this returns False while every other flag looks right, and the arm would run on CPU,
 # take a day, and produce a runtime column that is not comparable with anything.
-if [ -z "${BENCH_DRY_RUN:-}" ] && ! docker run --rm --network none "${GPU_ARGS[@]}" "$IMAGE" \
+if [ -z "${BENCH_DRY_RUN:-}" ] && ! docker run --rm --network none ${GPU_ARGS[@]+"${GPU_ARGS[@]}"} "$IMAGE" \
      python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
   die "the GPU is not visible inside the container. Check that /usr/lib/wsl/drivers is mounted as well as /usr/lib/wsl/lib; with only the latter, libcuda loads but reports no devices."
 fi
@@ -243,8 +274,8 @@ else
 fi
 
 set +e
-"${TIMEOUT_CMD[@]}" \
-"${DOCKER_RUN[@]}" \
+${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} \
+${DOCKER_RUN[@]+"${DOCKER_RUN[@]}"} \
   --network none \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=2g \
@@ -252,13 +283,13 @@ set +e
   --cap-drop ALL \
   --memory "$MEM" \
   --pids-limit "$PIDS" \
-  "${GPU_ARGS[@]}" \
+  ${GPU_ARGS[@]+"${GPU_ARGS[@]}"} \
   -v "$MODEL:/model:ro" \
   `# whatever the inputs' symlinks point at, mounted where they will look for it` \
-  "${EXTRA_MOUNTS[@]}" \
-  "${CORPUS_ARGS[@]}" \
-  "${EVAL_ARGS[@]}" \
-  "${SRC_ARGS[@]}" \
+  ${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"} \
+  ${CORPUS_ARGS[@]+"${CORPUS_ARGS[@]}"} \
+  ${EVAL_ARGS[@]+"${EVAL_ARGS[@]}"} \
+  ${SRC_ARGS[@]+"${SRC_ARGS[@]}"} \
   -v "$OUT:/work/out:rw" \
   `# this directory read-only, so selftest.py and any per-tool adapter are reachable inside` \
   -v "$(cd "$(dirname "$0")" && pwd):/work/bench:ro" \

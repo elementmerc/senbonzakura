@@ -161,3 +161,56 @@ def test_the_same_target_directory_is_mounted_once(hf_cache):
     out = run(snap)
     blobs = str(repo / "blobs")
     assert out.count(f"-v {blobs}:") == 1, f"mounted {out.count(f'-v {blobs}:')} times"
+
+
+# ── portability, checked here rather than by a red macOS job ──────────────────────────
+#
+# The first version of the mount fix used `realpath -m` and `readlink -f`, both GNU-only, and
+# expanded arrays that can be empty as "${ARR[@]}", which is an error under `set -u` in the bash
+# 3.2 that macOS ships. It passed on Linux, passed review, and turned the macOS job red an hour
+# after four other platform defects had been fixed in the same session.
+#
+# CI is the wrong place to learn this. These read the script itself, on any platform, in
+# milliseconds.
+
+SCRIPT_TEXT = SCRIPT.read_text(encoding="utf-8")
+
+#: Flags that exist in GNU coreutils and not in the BSD tools macOS ships. Each one here was
+#: either used and removed, or is one keystroke away from being used by the next edit.
+GNU_ONLY = (
+    "realpath -m",      # BSD realpath has no -m: "illegal option -- m"
+    "readlink -f",      # BSD readlink has no -f
+    "sed -i ",          # BSD sed requires an argument to -i
+    "grep -P",          # BSD grep has no PCRE
+    "date -d",          # BSD date uses -v
+    "stat -c",          # BSD stat uses -f
+)
+
+
+@pytest.mark.parametrize("flag", GNU_ONLY)
+def test_the_script_uses_no_gnu_only_flag(flag):
+    """Every line that is not a comment. The comments discuss these deliberately."""
+    used = [ln for ln in SCRIPT_TEXT.splitlines()
+            if flag in ln and not ln.lstrip().startswith("#")]
+    assert not used, f"{flag} is GNU-only and macOS has BSD tools: {used}"
+
+
+def test_every_array_expansion_survives_an_empty_array():
+    """`"${ARR[@]}"` on an empty array is an unbound-variable error in bash 3.2 under `set -u`.
+
+    The portable form is `${ARR[@]+"${ARR[@]}"}`. Half these arrays are empty on a normal run: no
+    corpus, no eval slices, no extra mounts when the model is a directory of real files.
+    """
+    import re
+    # The guarded form CONTAINS the bare one: ${ARR[@]+"${ARR[@]}"}. A pattern that ignores that
+    # flags every correct line, which is what the first version of this test did. The `+` right
+    # before the quote is what distinguishes them.
+    bare = re.findall(r'(?<!\+)"\$\{([A-Z_]+)\[@\]\}"', SCRIPT_TEXT)
+    assert not bare, (
+        f"these expand an array that may be empty without the `${{ARR[@]+...}}` guard, which is "
+        f"an error under `set -u` on macOS's bash 3.2: {sorted(set(bare))}")
+
+
+def test_the_shebang_does_not_promise_a_shell_the_script_needs_more_than():
+    """`set -euo pipefail` needs bash, and the script says bash. Stated so a later edit keeps it."""
+    assert SCRIPT_TEXT.startswith("#!/usr/bin/env bash")

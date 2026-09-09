@@ -8,4 +8,4 @@ it before it knows which command is being run, and `doctor` needs to be able to 
 machine where torch is exactly what is missing.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0.dev0"

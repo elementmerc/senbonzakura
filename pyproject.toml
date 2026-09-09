@@ -4,7 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "senbonzakura"
-version = "0.3.0"
+# ONE SOURCE OF TRUTH. This used to be a literal here AND a literal in
+# `src/senbonzakura/_version.py`, with nothing checking they agreed, so the wheel's metadata
+# version and the version the tool prints about itself could drift silently. The panel found the
+# tree still saying 0.3.0 across 344 commits that included withdrawn measurements and a rewritten
+# search, which made two very different trees indistinguishable in every artefact they produced.
+dynamic = ["version"]
 description = "Precision abliteration, with receipts. Multi-direction refusal abliteration for transformer language models."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -149,6 +154,11 @@ senbonzakura = "senbonzakura.entry:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+# `_version.py` imports nothing, deliberately, so reading it costs no dependencies here and
+# `doctor` can still answer on a machine where torch is exactly what is missing.
+version = {attr = "senbonzakura._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -553,8 +553,28 @@ def test_parser_requires_model():
         cli.build_parser().parse_args([])   # --model is required
 
 
-def test_version_constant():
-    assert cli.__version__ == "0.3.0"
+def test_the_version_the_tool_reports_is_the_version_the_package_declares():
+    """A LITERAL HERE WAS THE WRONG CHECK, and it hid a real one.
+
+    This used to assert `cli.__version__ == "0.3.0"`, which pins a number rather than an
+    invariant: it fails on every legitimate release and passes while the two places that held the
+    version drift apart. `pyproject.toml` carried its own literal and nothing compared them, so
+    the wheel's metadata and the version the tool prints about itself could disagree and no test
+    would notice. The version is now declared once, in `_version.py`, and read from there by the
+    build; this asserts the two agree where a reader can see them.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from senbonzakura._version import __version__
+
+    assert cli.__version__ == __version__
+    try:
+        installed = version("senbonzakura")
+    except PackageNotFoundError:
+        pytest.skip("senbonzakura is not installed in this environment")
+    assert installed == __version__, (
+        f"the installed package declares {installed} and the source says {__version__}; the "
+        f"build is not reading the version from _version.py")
 
 
 # ── subcommands (task 18) ─────────────────────────────────────────────────────────────

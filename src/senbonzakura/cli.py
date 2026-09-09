@@ -3105,6 +3105,32 @@ class Abliterator:
                                  f"{TR}/track.json records:\n"
                                  + "\n".join(f"  {b}" for b in bad_flags))
             log(f"track boundaries: {manifest['counts']}")
+
+        # A PROBE THAT COSTS GENERATIONS AND CANNOT CHANGE THE ANSWER (panel finding S4).
+        #
+        # `--capability-eval` exists to measure what each FINALIST config cost in capability, and
+        # the finalists only exist inside the best-of-N re-score. That pass runs under
+        # `if args.eval_refusal_final and ...`, and `--eval-refusal-final` defaults to 0, which
+        # `kageyoshi` overwrites and `abliterate` does not. So on the mode the `--method` arms run
+        # under, asking for the probe bought a baseline measurement, paid for it in generations,
+        # and could not move the shipped model by a single trial.
+        #
+        # Only the `== 0` case is refused here, and deliberately so: it is inert whatever the
+        # corpus turns out to hold, so this cannot refuse a run that would have worked. The
+        # "set, but not larger than the search slice" case depends on how many rows `bad_eval_ds`
+        # actually has, which is not known until it is read, and guessing it here would refuse
+        # short-track runs that the gate itself would have allowed.
+        if getattr(args, "capability_eval", "") and not args.eval_refusal_final:
+            raise SystemExit(
+                "--capability-eval measures what each finalist configuration cost in capability, "
+                "and there are no finalists without the best-of-N re-score pass. That pass is off "
+                "here, because --eval-refusal-final is 0.\n"
+                "  * Set --eval-refusal-final (128 is what kageyoshi uses under 5B), or\n"
+                "  * use `kageyoshi`, which sets it as part of its budget.\n"
+                "Refusing before the run rather than after, because the probe costs generations "
+                "and every one of them would have been spent on a number that could not reach the "
+                "decision it exists to inform.")
+
         GOOD_DS = args.good_ds or f"{TR}/good_ds"
         clean_src = args.clean_ds or GOOD_DS
         self.extract_directions(f"{TR}/bad_ds", GOOD_DS, args.hedge_ds, clean_src)

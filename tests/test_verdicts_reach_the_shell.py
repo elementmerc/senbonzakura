@@ -175,3 +175,51 @@ def test_a_score_file_that_cannot_be_read_fails_only_its_own_arm(tmp_path, monke
     scored = headtohead.score_arms([r], harmful=tmp_path / "h", harmless=tmp_path / "l",
                                    out=out, runner=runner, log=lambda _m: None)
     assert scored[0]["ok"] is False
+
+
+# ── S4: a probe that could not reach the decision it exists to inform ─────────────────
+def test_asking_for_the_capability_probe_without_the_rescore_is_refused(base_args, tiny_model,
+                                                                        tiny_tok, track,
+                                                                        monkeypatch):
+    """`--capability-eval` on the abliterate path bought a number nothing could act on.
+
+    The probe measures what each FINALIST cost, and the finalists only exist inside the best-of-N
+    re-score, which runs under `if args.eval_refusal_final and ...`. That flag defaults to 0 and
+    `abliterate` never sets it, so the run paid for a baseline in generations and could not move
+    the shipped model by a single trial. Refused before the generations rather than after.
+    """
+    from senbonzakura import cli
+
+    base_args.track = track
+    base_args.capability_eval = "some/benchmark::test"
+    base_args.eval_refusal_final = 0
+    real = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    with pytest.raises(SystemExit) as e:
+        cli.Abliterator(base_args, lambda _m: None).run()
+    message = str(e.value)
+    assert "--eval-refusal-final" in message, "it has to name the flag that turns the probe on"
+    assert "kageyoshi" in message, "and the mode that sets it for you"
+
+
+def test_the_probe_is_allowed_once_the_rescore_can_run(base_args, tiny_model, tiny_tok, track,
+                                                       monkeypatch):
+    """The refusal must be about the probe being inert, not about the probe existing."""
+    from senbonzakura import cli
+
+    base_args.track = track
+    base_args.capability_eval = "some/benchmark::test"
+    base_args.eval_refusal_final = 128
+    real = cli.Abliterator
+    monkeypatch.setattr(cli, "Abliterator",
+                        lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    refusal = None
+    try:
+        cli.Abliterator(base_args, lambda _m: None).run()
+    except SystemExit as e:
+        refusal = str(e.value)
+    except Exception:
+        refusal = None  # any other failure is this fixture's business, not this test's subject
+    assert refusal is None or "--capability-eval" not in refusal, (
+        f"the S4 refusal fired on a run where the re-score pass can reach the probe: {refusal}")

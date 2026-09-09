@@ -1,0 +1,86 @@
+# Publish the documentation site to GitHub Pages.
+#
+# WHY THIS EXISTS, AND WHY IT DEPLOYS `main` AND NOT `dev`
+#
+# The docs were built and link-checked by CI on every push and then thrown away: the site was
+# never deployed, GitHub Pages was never enabled, and the eleven links in the README pointing at
+# https://elementmerc.github.io/senbonzakura returned 404 for the life of the project. The same
+# README is the PyPI project page, so those dead links met every stranger who found the tool.
+# `docs/.vitepress/config.mjs` said at the top that the site "deploys to GitHub Pages"; a build
+# whose output reaches no consequence is the failure shape this project keeps finding.
+#
+# Pages serves one site per repository, so `dev` and `main` cannot both own the root. This
+# publishes `main`, because the README's links are a promise made to people who install the
+# RELEASED tool from PyPI, and they should land on the documentation for the version they can
+# actually install. Publishing `dev` would put pages for unreleased work at a public URL, which
+# is what baseline section 16 exists to prevent. Documentation on `dev` is still built and
+# link-checked by the `docs` job in ci.yml on every push; it just is not published until it is
+# released.
+#
+# `workflow_dispatch` is here so a documentation correction can be published without waiting for
+# a release. It runs from the default branch only, which is a GitHub constraint on manual runs,
+# so it publishes whatever `main` holds.
+name: Documentation site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and never cancel one in flight: a cancelled deploy can leave the
+# published site mid-swap, and the queued run that follows would publish the same content anyway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # `lastUpdated` in the VitePress config reads each page's git history. A shallow clone
+          # gives every file the tip commit's date, so the whole site would claim to have been
+          # updated on the day it was built.
+          fetch-depth: 0
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v5.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
+      - name: Install, from the lockfile only
+        working-directory: docs
+        run: npm ci
+      - name: Build, which fails on a dead link
+        # `ignoreDeadLinks` is unset in the config, so a link from one page of the site to
+        # another cannot break without failing here.
+        working-directory: docs
+        run: npm run build
+      - name: Every documentation link in the README resolves to a built page
+        # The build checks links from inside the site. This checks the ones pointing INTO it,
+        # which is the direction that was broken, and the direction a reader arrives from.
+        run: python3 tools/readme_links_resolve.py docs/.vitepress/dist
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: Publish to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Scoped to this job alone. `pages: write` and `id-token: write` are what the deployment
+    # needs; the build job that runs `npm ci` over the dependency tree gets neither.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1

@@ -69,6 +69,23 @@ PREAMBLE_CLOSE_SPELLINGS = ("</think>", "</thinking>", "</reasoning>", "<|end_th
 #: land on: that would measure the budget, which is the mistake `score --length-sweep` exists for.
 PREAMBLE_BUDGET = 256
 
+#: A budget nobody sized is the defect this position exists to expose, one layer up.
+#:
+#: MEASURED, NOT ARGUED. On Qwen3-1.7B at 256 tokens, `past_preamble.available` came back TRUE
+#: (the model declares `</think>`, id 151668) and **0 of 127 prompts closed their block inside the
+#: budget**, so the second position was reported as existing and unmeasured. That is exactly the
+#: shape of the length-sweep defect: a fixed budget, never checked against the model, producing a
+#: number about the budget rather than about the model. The tool refused to invent a reading,
+#: which was right, and then left the question open for a day because nothing sized the budget.
+#:
+#: So the budget probes. It doubles from `PREAMBLE_BUDGET` on a small sample until enough prompts
+#: close, and stops at a ceiling rather than growing without bound: a model that will not close a
+#: reasoning block in two thousand tokens is telling you something, and the honest answer is to
+#: report that rather than to keep paying for tokens.
+PREAMBLE_PROBE_N = 16
+PREAMBLE_MIN_CLOSED = 0.90
+PREAMBLE_BUDGET_MAX = 2048
+
 #: Below this many prompts per arm the AUC is reported with a warning beside it. Not a refusal:
 #: a small corpus is a real situation and the interval already says how little the number is worth.
 #: It is the same floor the rest of the project reports rates against.
@@ -181,11 +198,18 @@ def build_parser():
                          "knowing the scored position holds a reasoning opener says the number is "
                          "wrong, and only the second position says what it should have been. "
                          "Costs a bounded generation per prompt, so it is not the default.")
-    ap.add_argument("--preamble-budget", dest="preamble_budget", type=int, default=PREAMBLE_BUDGET,
-                    help=f"tokens to let a reasoning block run for before giving up on it "
-                         f"(default {PREAMBLE_BUDGET}). A prompt whose block does not close "
-                         f"inside this is reported as indeterminate, never scored at whatever "
-                         f"token the budget stopped on")
+    ap.add_argument("--preamble-budget", dest="preamble_budget", default="auto",
+                    # `%%` because argparse expands `%` in help text: a bare one from an
+                    # f-string percentage is a "badly formed help string" at parser build, which
+                    # takes down every test that builds a parser rather than just this flag.
+                    help=("tokens to let a reasoning block run for before giving up on it, or "
+                          "'auto' (the default) to size it against the model. A prompt whose "
+                          "block does not close inside the budget is reported as indeterminate, "
+                          "never scored at whatever token the budget stopped on. 'auto' probes "
+                          f"{PREAMBLE_PROBE_N} prompts, doubling from {PREAMBLE_BUDGET} until "
+                          f"{PREAMBLE_MIN_CLOSED * 100:.0f}%% of them close, and gives up at "
+                          f"{PREAMBLE_BUDGET_MAX}. A fixed budget nobody sized is how this "
+                          "position came to be reported as available and unmeasured"))
     ap.add_argument("--skip-matched", dest="skip_matched", type=int, default=0,
                     help="drop the head of the topic-matched set, as --skip-harmless does for "
                          "the main harmless arm")
@@ -275,6 +299,46 @@ def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=
 
 
 @torch.no_grad()
+def size_preamble_budget(model, tok, prompts, harmful_ids, benign_ids, device, close_id,
+                         *, batch=4, canonical=None, log=print,
+                         start=PREAMBLE_BUDGET, ceiling=PREAMBLE_BUDGET_MAX,
+                         probe_n=PREAMBLE_PROBE_N, want=PREAMBLE_MIN_CLOSED):
+    """Find a budget at which the model's reasoning block actually closes, or say it does not.
+
+    Returns `(budget, closed_share, attempts)`. `attempts` is every (budget, share) pair tried,
+    so the artefact can show the curve rather than a bare number: a share that was 0.00 at 256
+    and 0.94 at 1024 is a different situation from one that crept from 0.80 to 0.94, and only the
+    first is a budget problem.
+
+    `closed_share` below `want` at the ceiling is a RESULT and the caller must report it as one.
+    It means this model does not finish thinking inside any budget worth paying for on this
+    corpus, so the second read-out position is unmeasurable here rather than merely unmeasured.
+
+    Probed on a sample rather than the whole arm because the point is to choose a budget, and
+    paying full price for the choice defeats it.
+    """
+    sample = list(prompts)[:probe_n]
+    attempts = []
+    if not sample:
+        return start, 0.0, attempts
+    budget = int(start)
+    while True:
+        rows = margins_past_preamble(model, tok, sample, harmful_ids, benign_ids, device,
+                                     close_id, batch=batch, budget=budget, canonical=canonical)
+        share = sum(1 for r in rows if r is not None) / len(rows)
+        attempts.append({"budget": budget, "closed": round(share, 4)})
+        log(f"  preamble probe: {share:.0%} of {len(sample)} prompts closed inside {budget} tokens")
+        if share >= want:
+            return budget, share, attempts
+        if budget >= ceiling:
+            log(f"  PREAMBLE BUDGET NOT FOUND: at {ceiling} tokens only {share:.0%} of the probe "
+                f"closed their reasoning block, below the {want:.0%} this needs. The second "
+                f"read-out position cannot be measured on this model and corpus, and that is the "
+                f"finding rather than a reason to score at the budget anyway.")
+            return budget, share, attempts
+        budget = min(budget * 2, ceiling)
+
+
 def margins_past_preamble(model, tok, prompts, harmful_ids, benign_ids, device, close_id,
                           batch=8, budget=PREAMBLE_BUDGET, canonical=None, log=None):
     """The same margin, read at the position AFTER the model's reasoning block closes.
@@ -918,19 +982,38 @@ def main(argv=None):
         else:
             print(f"  reading a second position, after token {close_id} "
                   f"({tok.decode([close_id])!r})")
+            probe = None
+            if str(a.preamble_budget).lower() == "auto":
+                budget, _closed, probe = size_preamble_budget(
+                    model, tok, harmful, hid, bid, a.device, close_id,
+                    batch=max(1, a.batch // 2), canonical=canonical)
+            else:
+                budget = int(a.preamble_budget)
             past_h = margins_past_preamble(model, tok, harmful, hid, bid, a.device, close_id,
                                            batch=max(1, a.batch // 2),
-                                           budget=a.preamble_budget, canonical=canonical)
+                                           budget=budget, canonical=canonical)
             past_l = margins_past_preamble(model, tok, harmless, hid, bid, a.device, close_id,
                                            batch=max(1, a.batch // 2),
-                                           budget=a.preamble_budget, canonical=canonical)
+                                           budget=budget, canonical=canonical)
             ph = [r["margin"] for r in past_h if r is not None]
             pl = [r["margin"] for r in past_l if r is not None]
             res["readout"]["past_preamble"] = {
                 "available": True,
                 "close_token_id": close_id,
                 "close_token": tok.decode([close_id]),
-                "budget": a.preamble_budget,
+                "budget": budget,
+                # How the budget was chosen, and the curve behind it. A share that was 0.00 at
+                # 256 and 0.94 at 1024 is a different situation from one that crept from 0.80,
+                # and only the first is a budget problem. `None` when the budget was given.
+                "budget_sized_automatically": probe is not None,
+                "budget_probe": probe,
+                # The share of the FULL arm that closed, which is what decides whether the AUC
+                # beside it means anything. Reported whether or not it is comfortable.
+                "closed_harmful": round(sum(1 for r in past_h if r is not None) / len(past_h), 4)
+                                  if past_h else None,
+                "closed_harmless": round(sum(1 for r in past_l if r is not None) / len(past_l), 4)
+                                   if past_l else None,
+                "closed_threshold": PREAMBLE_MIN_CLOSED,
                 # The headline number as it would read from the defensible position. Reported
                 # BESIDE the first-position AUC, never instead of it, so a reader can see both.
                 "auc": auc(ph, pl) if ph and pl else None,

@@ -1896,3 +1896,82 @@ def test_the_default_run_is_unmatched_and_says_so(base_args, tiny_model, tiny_to
     a.extract_directions("bad", "good", None, "good")
     assert a.matched_scoring is False
     assert a.matching_quality is None, "an unmatched run has no matching to report on"
+
+
+def test_resume_refuses_a_study_from_a_different_build():
+    """A RESUMED SEARCH CAN MIX TWO OBJECTIVES AND REPORT ONE NUMBER.
+
+    Resuming continues a search whose earlier trials were scored by whatever code was running
+    then, and this project's objective is not fixed across builds: the in-search capability gate
+    was found on 2026-09-08 to have never once executed, and the hedging half of the objective
+    changed the day after. Trials from before either change were selected under a different rule.
+
+    The case that prompted it: a `searched-capgate` output directory holding 60 trials written the
+    night BEFORE the gate was fixed. `--resume` was the obvious recovery and would have continued
+    a search begun under a gate that never fired. A peer caught it by opening the blocking file
+    rather than assuming what it was.
+    """
+    import optuna
+    import pytest
+
+    from senbonzakura import cli
+
+    study = optuna.create_study(direction="minimize")
+    study.set_user_attr("code_version", "some-older-build")
+    study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
+
+    with pytest.raises(SystemExit) as e:
+        cli.refuse_resume_across_builds(study, "the-build-running-now", resume=True)
+    said = str(e.value)
+    assert "some-older-build" in said and "the-build-running-now" in said
+    assert "Move the directory aside" in said, "the message must say what to do instead"
+
+
+def test_a_study_with_no_recorded_build_is_refused_rather_than_assumed_compatible():
+    """Code reaches the GPU box by file copy, so "probably the same" is the assumption that
+    produced an unattributable result once already.
+    """
+    import optuna
+    import pytest
+
+    from senbonzakura import cli
+
+    study = optuna.create_study(direction="minimize")
+    study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
+    with pytest.raises(SystemExit, match="an unrecorded build"):
+        cli.refuse_resume_across_builds(study, "current", resume=True)
+
+
+def test_the_same_build_resumes_normally():
+    """The guard must not make resume useless: a killed run is what it is for."""
+    import optuna
+
+    from senbonzakura import cli
+
+    study = optuna.create_study(direction="minimize")
+    study.set_user_attr("code_version", "same-build")
+    study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
+    cli.refuse_resume_across_builds(study, "same-build", resume=True)
+
+
+def test_a_fresh_study_records_the_build_that_made_it():
+    """So the NEXT resume has something to compare against, rather than an unknown."""
+    import optuna
+
+    from senbonzakura import cli
+
+    study = optuna.create_study(direction="minimize")
+    cli.refuse_resume_across_builds(study, "the-build", resume=False)
+    assert study.user_attrs["code_version"] == "the-build"
+
+
+def test_a_build_change_without_resume_is_not_refused():
+    """Starting fresh on new code is the correct thing to do and must not be blocked."""
+    import optuna
+
+    from senbonzakura import cli
+
+    study = optuna.create_study(direction="minimize")
+    study.set_user_attr("code_version", "old")
+    study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
+    cli.refuse_resume_across_builds(study, "new", resume=False)

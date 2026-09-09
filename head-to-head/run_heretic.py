@@ -45,6 +45,7 @@ read-only by design and only `/work/out` is mounted read-write. So this runs fro
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -125,6 +126,28 @@ def count_trials(study_file):
     return len(optuna.load_study(study_name=studies[0].study_name, storage=storage).trials)
 
 
+_HUB_ID = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
+def _looks_like_hub_id(value):
+    """Whether `value` is a Hugging Face repo id rather than a path that failed to exist.
+
+    Deliberately the same shape as `senbonzakura.dataset.looks_like_hub_id`, and deliberately
+    narrow: one slash, no suffix, no leading dot or separator. A mistyped directory does not
+    accidentally pass as a repo id and skip the check that exists to stop an hour of GPU going
+    into the wrong prompts.
+    """
+    p = str(value)
+    # NO `splitext` CHECK. The obvious version of this rejected `Qwen/Qwen3-1.7B`, because
+    # `.7B` reads as a file suffix, and that is the exact model this comparison runs on. The
+    # regex already does the work: one slash, and the character classes exclude a path with
+    # directories in it. `senbonzakura.dataset.looks_like_hub_id` hit the same trap and solved it
+    # by naming the suffixes it cares about rather than by asking whether there is one.
+    if p.startswith((".", "/", "~")):
+        return False
+    return bool(_HUB_ID.match(p))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="path to the staged weights, mounted read-only")
@@ -151,13 +174,35 @@ def main():
     # Heretic reads config.toml from the CURRENT directory, and only this path is writable.
     os.chdir(a.out)
 
-    for label, path in (("model", a.model), ("good prompts", a.good), ("bad prompts", a.bad),
+    # THE PRECONDITION THAT WAS SHAPED FOR THE CONTAINER AND FIRED OUTSIDE IT. Every one of these
+    # is a staged local path inside the sealed box, which has no network, so a missing one has to
+    # stop the run before an hour of GPU goes into a comparison that reads the wrong prompts.
+    #
+    # `--model` is the exception and it took five failed arms to notice. Outside the box the
+    # harness is pointed at a Hugging Face repo id (`Qwen/Qwen3-1.7B`), which transformers
+    # resolves from the local cache and which is not a filesystem path at all. So the check fired
+    # in the one mode where it should not, instantly, for all five seeds, after the module-name
+    # defect had just been fixed. Same family as that one: correct inside the container boundary,
+    # wrong outside it.
+    #
+    # A repo id is `owner/name` with no path separators beyond the one, no suffix and no leading
+    # dot or slash. If it looks like that and is not on disk, it is a Hub id and the caller meant
+    # it: the download either works or fails loudly at load, which is a better failure than
+    # refusing to start.
+    for label, path in (("good prompts", a.good), ("bad prompts", a.bad),
                         ("keyword eval slice", a.keyword_prompts),
                         ("KL eval slice", a.kl_prompts)):
         if not os.path.exists(path):
             print(f"run_heretic: {label} not found at {path}. Inputs are staged before the run "
                   f"because this container has no network to fetch them with.", file=sys.stderr)
             return 2
+
+    if not os.path.exists(a.model) and not _looks_like_hub_id(a.model):
+        print(f"run_heretic: model not found at {a.model}, and it is not a Hugging Face repo id "
+              f"either. Inside the sealed box the model is staged as a local directory; outside "
+              f"it, an 'owner/name' id is resolved from the local cache. This is neither.",
+              file=sys.stderr)
+        return 2
 
     cfg_path = write_config(a, a.out)
     print(f"run_heretic: config written to {cfg_path}")

@@ -36,6 +36,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .metrics import min_achievable_p
+
 # Every arm writes this when it has finished, and the runner checks the file rather than the word.
 # A marker in a log is a string, and anything that can print it can claim the work: that is how a
 # rehearsal once reported five jobs done having measured nothing.
@@ -1086,6 +1088,19 @@ def _parse_images(pairs):
     return out
 
 
+#: The significance level the report's verdict uses. Named here as well so the refusal below and
+#: the verdict itself cannot disagree about what a comparison has to clear.
+VERDICT_ALPHA = 0.05
+
+#: The fewest seeds per tool that can produce a verdict at all.
+#:
+#: An exact permutation test over `n` against `n` has `C(2n, n)` splits, so its smallest reachable
+#: two-sided p is `2 / C(2n, n)`: 0.10 at three per arm, 0.029 at four, 0.008 at five. Three is
+#: therefore incapable of clearing 0.05 no matter what the models do, which is a fact about the
+#: design of the run rather than about its result, and it belongs where the run is configured.
+MIN_SEEDS_FOR_A_VERDICT = 4
+
+
 def _parse_seeds(text):
     try:
         seeds = [int(s) for s in text.split(",") if s.strip()]
@@ -1096,6 +1111,21 @@ def _parse_seeds(text):
     if len(set(seeds)) != len(seeds):
         raise SystemExit(f"--seeds repeats a value: {text!r}. A repeated seed is one arm run "
                          f"twice, reported as two independent measurements")
+    # REFUSED AT THE POINT OF CHOOSING, not at the point of concluding. The verdict is an exact
+    # permutation test over seeds, and with three per arm there are only twenty ways to split six
+    # observations, so the smallest two-sided p reachable is 0.10: nothing the run could produce
+    # would clear 0.05, however cleanly the tools separate. Learning that after two hours of GPU
+    # is learning it in the most expensive possible place, and the old gap-versus-spread rule
+    # cheerfully declared winners there instead.
+    floor = min_achievable_p(len(seeds), len(seeds))
+    if floor is not None and floor > VERDICT_ALPHA:
+        raise SystemExit(
+            f"--seeds gives {len(seeds)} per tool, and a comparison that size cannot reach a "
+            f"verdict: the smallest p an exact permutation test can return on {len(seeds)} "
+            f"against {len(seeds)} is {floor:.3f}, above the {VERDICT_ALPHA} it would have to "
+            f"clear. The run would produce numbers and no finding.\n"
+            f"  Use at least {MIN_SEEDS_FOR_A_VERDICT} seeds per tool, or pass --no-score to "
+            f"train the arms now and decide later.")
     return seeds
 
 

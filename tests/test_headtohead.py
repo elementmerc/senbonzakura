@@ -630,26 +630,26 @@ def test_the_whole_operation_runs_from_one_command(tmp_path, monkeypatch, capsys
     monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
     summary = headtohead.main([
-        "run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+        "run", "--tools", "senbon,heretic", "--seeds", "42,43,44,45",
         "--model", "/models/qwen", "--track", str(track), "--out", str(out),
         "--eval-slices", str(_slices(tmp_path, track)),
         "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
         "--trials", "6"])
 
-    assert summary["failed"] == 0 and summary["ran"] == 6
+    assert summary["failed"] == 0 and summary["ran"] == 8
     # Six arms, six scores, and a verdict that reads them.
     for tool in ("senbon", "heretic"):
-        for seed in (42, 43, 44):
+        for seed in (42, 43, 44, 45):
             assert (out / f"{tool}-seed{seed}" / headtohead.ARM_MANIFEST).is_file()
             assert (out / f"scored-{tool}-seed{seed}.json").is_file()
     printed = capsys.readouterr().out
-    # THREE SEEDS PER ARM CANNOT PRODUCE A FINDING, and the report now says so instead of
-    # calling it a win. There are twenty ways to split six observations, so the smallest
-    # two-sided p a permutation test can return is 0.10: no arrangement of this data clears
-    # 0.05, however cleanly the two tools separate. The old rule compared the gap to the pooled
-    # spread, which never looks at how many seeds there are, and happily declared a winner here.
-    assert "NO VERDICT POSSIBLE at this many seeds" in printed, printed[-400:]
-    assert "Run at least 4 seeds per tool" in printed
+    # FOUR seeds per tool, because three is now refused when the seeds are CHOSEN rather than
+    # discovered to be useless after the arms have run: with three there are twenty ways to split
+    # six observations, so the smallest reachable two-sided p is 0.10 and nothing the run could
+    # produce would clear 0.05. Four is the floor, and at four the report reaches a real verdict,
+    # which is what this end-to-end test is for. The unreachable case has its own unit test.
+    assert "permutation p=" in printed, printed[-400:]
+    assert "harm recognition" in printed.lower()
     assert "NOT a comparison" in printed, "the two tools' own figures lost their warning"
     assert "length-only" in printed, "the null control did not reach the table"
 
@@ -702,7 +702,7 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
     # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
     monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
-    argv = ["run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+    argv = ["run", "--tools", "senbon,heretic", "--seeds", "42,43,44,45",
             "--model", "/models/qwen", "--track", str(track), "--out", str(out),
             "--eval-slices", str(_slices(tmp_path, track)),
             "--harmful", str(track / "bad_eval_ds"), "--harmless", str(track / "good_ds"),
@@ -713,7 +713,7 @@ def test_a_second_run_of_the_same_command_does_nothing_and_still_reports(tmp_pat
 
     second = headtohead.main(argv)
     assert len(calls) == first, "a completed run re-ran its arms"
-    assert second["ran"] == 0 and second["skipped"] == 6
+    assert second["ran"] == 0 and second["skipped"] == 8
     # Case-insensitive, and on the section header rather than the verdict sentence: with three
     # seeds per arm the verdict is now "NO VERDICT POSSIBLE at this many seeds", which is the
     # correct answer and does not contain the words the old assertion looked for.
@@ -771,7 +771,7 @@ def test_a_run_where_every_seed_returned_the_same_score_is_not_a_verdict(tmp_pat
     # main() now cuts its own drift slice from the harmless dataset, so the loader needs an answer.
     monkeypatch.setattr("senbonzakura.headtohead_stage.load_texts",
                         lambda d, n: [f"harmless {i}" for i in range(n)])
-    headtohead.main(["run", "--tools", "senbon,heretic", "--seeds", "42,43,44",
+    headtohead.main(["run", "--tools", "senbon,heretic", "--seeds", "42,43,44,45",
                 "--model", "/m", "--track", str(track), "--out", str(tmp_path / "out"),
                 "--eval-slices", str(_slices(tmp_path, track)),
                 "--harmful", str(track / "bad_eval_ds"),
@@ -1204,3 +1204,36 @@ def test_a_non_timeout_bench_error_still_stops_everything(tmp_path):
         headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=1, model=tmp_path / "m",
                       track=tmp_path / "t", out=tmp_path / "o", trials=2,
                       runner=broken_runner, log=lambda _m: None)
+
+
+@pytest.mark.parametrize(("seeds", "accepted"), [
+    ("41,42", False), ("41,42,43", False), ("41,42,43,44", True), ("41,42,43,44,45", True),
+])
+def test_a_seed_count_that_cannot_conclude_is_refused_when_it_is_chosen(seeds, accepted):
+    """REFUSED AT THE POINT OF CHOOSING, not after two hours of GPU.
+
+    The verdict is an exact permutation test over seeds. With three per arm there are twenty ways
+    to split six observations, so the smallest two-sided p reachable is 0.10: nothing the run
+    could produce would clear 0.05, however cleanly the tools separate. Learning that from the
+    report is learning it in the most expensive possible place, and the rule this replaced
+    compared a gap to a spread and cheerfully declared winners at three seeds.
+
+    The peer who ran the comparison asked for exactly this: the fact belongs in the tool's own
+    refusal, so the next person choosing three seeds meets it at the point of choosing.
+    """
+    if accepted:
+        assert len(headtohead._parse_seeds(seeds)) >= headtohead.MIN_SEEDS_FOR_A_VERDICT
+    else:
+        with pytest.raises(SystemExit) as e:
+            headtohead._parse_seeds(seeds)
+        said = str(e.value)
+        assert "cannot reach a verdict" in said
+        assert f"at least {headtohead.MIN_SEEDS_FOR_A_VERDICT} seeds" in said
+        assert "--no-score" in said, "the message must offer the thing that IS still useful"
+
+
+def test_the_seed_floor_and_the_report_agree_about_what_clears():
+    """Two constants for one threshold is how they drift apart."""
+    from senbonzakura import headtohead_report
+
+    assert headtohead.VERDICT_ALPHA == headtohead_report.ALPHA

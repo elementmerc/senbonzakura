@@ -92,6 +92,41 @@ from .track import (  # the recorded partition boundaries, and the flags that wo
 MIN_AXIS_SEPARATION = 0.5
 
 
+def refuse_resume_across_builds(study, here, *, resume):
+    """Refuse to continue a search whose earlier trials were scored by a different build.
+
+    THE OBJECTIVE IS NOT FIXED ACROSS BUILDS, which is what makes this more than tidiness. The
+    in-search capability gate was found on 2026-09-08 to have never once executed; the hedging
+    half of the objective changed the day after. Trials from before either change were selected
+    under a different rule, so a resumed study silently mixes two objectives and reports one
+    number for both.
+
+    The case that prompted it: a `searched-capgate` output directory holding 60 trials written
+    the night BEFORE the gate was fixed. `--resume` was the obvious recovery, and it would have
+    continued a search begun under a gate that never fired. A peer caught it by opening the
+    blocking file rather than assuming what it was.
+
+    Records the build on a study that has no trials yet, so the next resume has something to
+    compare against. A study with no record is UNKNOWN and is refused rather than assumed
+    compatible: this project has run code that reached the GPU by file copy, where "probably the
+    same" is exactly the assumption that produced an unattributable result.
+    """
+    was = study.user_attrs.get("code_version")
+    if resume and study.trials and was != here:
+        built_by = was or "an unrecorded build"
+        raise SystemExit(
+            f"--resume refuses this study: its trials were produced by {built_by} and this is "
+            f"{here}.\n"
+            f"  Resuming would continue a search whose earlier trials were scored under a "
+            f"different objective and report one number for two rules. The search objective in "
+            f"this project HAS changed between builds, more than once.\n"
+            f"  Move the directory aside and start fresh, or re-run on the build that produced "
+            f"it. `--resume` is the wrong recovery for a code change; it is the right one for a "
+            f"killed run.")
+    if not study.trials:
+        study.set_user_attr("code_version", here)
+
+
 def code_version():
     """Which build produced this artefact, as a git description or an honest admission.
 
@@ -3224,6 +3259,21 @@ class Abliterator:
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=args.seed, n_startup_trials=12),
                 storage=storage, study_name=study_name, load_if_exists=args.resume)
+
+        # WHICH BUILD THE TRIALS CAME FROM, and a refusal when it is not this one.
+        #
+        # Resuming continues a search whose earlier trials were scored by whatever code was
+        # running then, and the objective is not fixed across builds: the in-search capability
+        # gate was found on 2026-09-08 to have never once executed, and the hedging half of the
+        # objective changed the following day. Trials from before either change were selected
+        # under a different rule, so a resumed study silently mixes two objectives and reports one
+        # number. The real case: a `searched-capgate` directory holding 60 trials written the
+        # night BEFORE the gate was fixed, where `--resume` was the obvious recovery and would
+        # have continued a search begun under a gate that never fired.
+        #
+        # Recorded on the study rather than inferred, so an older study with no record is treated
+        # as unknown and refused rather than assumed compatible.
+        refuse_resume_across_builds(study, code_version(), resume=args.resume)
 
         # --resume on a study that already finished its search (ran the budget or early-stopped)
         # must skip straight to bake+save, not re-search it. Without this, resume re-runs the whole

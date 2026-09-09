@@ -188,7 +188,9 @@ def test_the_second_position_is_not_the_default():
     a = margin.build_parser().parse_args(
         ["--model", "m", "--harmful", "h", "--harmless", "l", "--out", "o"])
     assert a.readout == "first"
-    assert a.preamble_budget == margin.PREAMBLE_BUDGET
+    # 'auto' rather than a number, since 2026-09-08. A fixed 256 was how this position came to
+    # be reported as AVAILABLE and UNMEASURED on Qwen3: 0 of 127 prompts closed inside it.
+    assert a.preamble_budget == "auto"
 
 
 def test_the_budget_is_adjustable():
@@ -196,7 +198,8 @@ def test_the_budget_is_adjustable():
         ["--model", "m", "--harmful", "h", "--harmless", "l", "--out", "o",
          "--readout", "both", "--preamble-budget", "64"])
     assert a.readout == "both"
-    assert a.preamble_budget == 64
+    # Kept as a string by the parser because the flag also accepts 'auto'; the run converts it.
+    assert a.preamble_budget == "64"
 
 
 def test_the_flag_help_says_when_to_reach_for_it():
@@ -384,3 +387,112 @@ def test_the_second_readout_does_not_attend_to_padding():
     narrow = min(int(m.sum()) for m in seen["masks"])
     widest = max(m.shape[1] for m in seen["masks"])
     assert narrow < widest, "no row was actually padded, so this test proved nothing"
+
+
+def _probe_model(closes_at):
+    """A model whose reasoning block closes only once the budget reaches `closes_at`."""
+    import torch
+
+    class _Tok:
+        pad_token_id = 0
+
+        def apply_chat_template(self, msgs, **_kw):
+            return msgs[0]["content"]
+
+        def __call__(self, texts, **_kw):
+            n = len(texts)
+            ids = torch.full((n, 3), 7)
+            # A dict subclass, because the caller both indexes it and splats it into generate().
+            class _Enc(dict):
+                def to(self, _d):
+                    return self
+
+            return _Enc(input_ids=ids, attention_mask=torch.ones_like(ids))
+
+    class _Model:
+        def generate(self, input_ids=None, attention_mask=None, max_new_tokens=None, **_kw):
+            n = input_ids.shape[0]
+            new = torch.full((n, max_new_tokens), 5)
+            if max_new_tokens >= closes_at:
+                new[:, closes_at - 1] = 99          # the close token lands inside the budget
+            return torch.cat([input_ids, new], dim=1)
+
+        def __call__(self, input_ids=None, attention_mask=None, **_kw):
+            return type("O", (), {"logits": torch.zeros(1, input_ids.shape[1], 8)})()
+
+    return _Model(), _Tok()
+
+
+def test_the_budget_doubles_until_the_block_actually_closes():
+    """THE FIXED BUDGET NOBODY SIZED, which is the defect this position exists to expose.
+
+    On Qwen3-1.7B the tool reported `past_preamble.available: true` and then scored 0 of 127
+    prompts, because none of them closed their reasoning block inside 256 tokens. It refused to
+    invent a reading, which was right, and the question stayed open for a day because nothing
+    sized the budget against the model. That is the length-sweep defect one layer up.
+    """
+    from senbonzakura import margin
+
+    model, tok = _probe_model(closes_at=700)
+    said = []
+    budget, closed, attempts = margin.size_preamble_budget(
+        model, tok, [f"prompt {i}" for i in range(8)], [1], [2], "cpu", close_id=99,
+        log=said.append)
+    assert closed == 1.0
+    assert budget == 1024, f"expected the doubling to stop at 1024, got {budget}"
+    assert [a["budget"] for a in attempts] == [256, 512, 1024]
+    assert any("closed inside" in line for line in said)
+
+
+def test_a_model_that_never_closes_reports_that_rather_than_scoring_anyway():
+    """Not finding a budget is a RESULT: the second position is unmeasurable on this model."""
+    from senbonzakura import margin
+
+    model, tok = _probe_model(closes_at=99999)
+    said = []
+    budget, closed, attempts = margin.size_preamble_budget(
+        model, tok, [f"prompt {i}" for i in range(4)], [1], [2], "cpu", close_id=99,
+        log=said.append)
+    assert closed == 0.0
+    assert budget == margin.PREAMBLE_BUDGET_MAX, "it must stop at the ceiling, not grow forever"
+    assert attempts[-1]["budget"] == margin.PREAMBLE_BUDGET_MAX
+    assert any("NOT FOUND" in line for line in said), said
+
+
+def test_the_probe_stops_as_soon_as_enough_prompts_close():
+    """Doubling past a budget that already works is paying for tokens to learn nothing."""
+    from senbonzakura import margin
+
+    model, tok = _probe_model(closes_at=10)
+    budget, closed, attempts = margin.size_preamble_budget(
+        model, tok, ["a", "b", "c", "d"], [1], [2], "cpu", close_id=99, log=lambda _m: None)
+    assert budget == margin.PREAMBLE_BUDGET
+    assert closed == 1.0
+    assert len(attempts) == 1
+
+
+def test_the_prober_returns_the_starting_budget_when_there_is_nothing_to_probe():
+    """An empty arm is a real state (a track partition can be empty) and must not divide by zero."""
+    from senbonzakura import margin
+
+    model, tok = _probe_model(closes_at=10)
+    budget, closed, attempts = margin.size_preamble_budget(
+        model, tok, [], [1], [2], "cpu", close_id=99, log=lambda _m: None)
+    assert budget == margin.PREAMBLE_BUDGET
+    assert closed == 0.0
+    assert attempts == []
+
+
+def test_the_probe_records_every_budget_it_tried_not_just_the_one_it_kept():
+    """A share that was 0.00 at 256 and 0.94 at 1024 is a different situation from one that
+    crept up from 0.80, and only the first is a budget problem. The artefact carries the curve
+    so a reader can tell them apart.
+    """
+    from senbonzakura import margin
+
+    model, tok = _probe_model(closes_at=400)
+    _b, _c, attempts = margin.size_preamble_budget(
+        model, tok, ["a", "b"], [1], [2], "cpu", close_id=99, log=lambda _m: None)
+    assert [a["budget"] for a in attempts] == [256, 512]
+    assert attempts[0]["closed"] == 0.0
+    assert attempts[-1]["closed"] == 1.0

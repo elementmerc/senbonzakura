@@ -1,0 +1,142 @@
+name: Publish
+
+# Uploads to PyPI with trusted publishing (OIDC), so there is no long-lived API
+# token on anyone's laptop, in a repository secret, or in a shell history. GitHub
+# mints a short-lived identity for this workflow in this repository, and PyPI
+# accepts it only for the publisher it was told to expect.
+#
+# Actions are pinned by commit SHA, not by tag (baseline §5): a tag can be moved
+# to point at different code, and a compromised action runs with the workflow's
+# token. The version comment after each SHA is for humans; the SHA is the pin.
+#
+# WHY THIS EXISTS. The 0.3.0 release was published from a laptop, and nothing in
+# the repository records how, by whom, or from which commit. It also shipped
+# without the AGPL section 5(a) statement of modification, which is the kind of
+# thing a gate catches and a person doing it by hand does not.
+#
+# WHY IT DOES NOT BUILD THE WHEEL, which is the part that surprises anyone
+# reading this expecting an ordinary publish workflow.
+#
+# The wheel ships an evaluation track. The repository does not, deliberately:
+# `.gitignore` excludes it because a corpus of harmful prompts committed to a
+# public repository is in its history permanently and no later commit takes it
+# back out. `tools/pack_track.py` builds the blob from a track the operator holds
+# on their own machine. So a runner that has only this repository CANNOT produce
+# a release wheel, and making it able to would mean putting those prompts into
+# GitHub, which is the decision the exclusion exists to prevent.
+#
+# So the artefacts are built where the track lives and attached to a GitHub
+# Release, and this workflow verifies and uploads them. The wheel is going to a
+# public index either way, so attaching it to the release discloses nothing new.
+# See RELEASING.md for the local half.
+
+on:
+  release:
+    types: [published]
+  # Manual, for a re-run after a failed upload, or to rehearse against TestPyPI.
+  # It takes the release tag rather than reading the ref, so a dispatch cannot
+  # quietly publish something other than the release it names.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose attached artefacts to publish (e.g. v0.4.0)"
+        required: true
+        type: string
+      repository:
+        description: "Where to upload"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check the attached artefacts
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to the release tag, so the checks run against the source the
+      # artefacts claim to come from rather than against whatever is on a branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the artefacts attached to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.whl' --pattern '*.tar.gz' --dir dist
+          ls -l dist
+
+      # THE GATE, and it runs before anything leaves the runner. It refuses a
+      # wheel missing its licence files, its corpora or its templates, and one
+      # carrying the build machine's bytecode. A release that cannot pass this is
+      # not a release. It reads the wheel, so it needs none of the corpus sources.
+      - name: Check the wheel describes itself honestly
+        run: |
+          python -m pip install --upgrade pip
+          python tools/check_wheel.py dist/*.whl --release
+
+      - name: Check the metadata renders
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+
+      # The version in the artefacts must be the version the tag names. A wheel
+      # built from an uncommitted tree is the failure this catches: it uploads
+      # under a version number whose source nobody can find afterwards.
+      - name: Check the artefacts match the tag
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          expected="${TAG#v}"
+          for f in dist/*; do
+            case "$(basename "$f")" in
+              senbonzakura-"$expected"-*|senbonzakura-"$expected".tar.gz) ;;
+              *) echo "::error::$f is not version $expected, which is what $TAG names"; exit 1 ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: upload to ${{ inputs.repository || 'pypi' }}
+    needs: check
+    runs-on: ubuntu-latest
+    # A protected environment, so an upload waits for a human even when the
+    # workflow started on its own. Uploading is irreversible: a filename on PyPI
+    # can never be reused, and a version number can never be replayed.
+    environment:
+      name: ${{ inputs.repository || 'pypi' }}
+    permissions:
+      # The whole point. This is what lets PyPI verify the run rather than verify
+      # a secret, and it is scoped to this job alone.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          # Named in full both ways rather than leaving one to the action's
+          # default, so a misreading of the expression cannot upload to the real
+          # index when TestPyPI was asked for.
+          repository-url: >-
+            ${{ inputs.repository == 'testpypi'
+                && 'https://test.pypi.org/legacy/'
+                || 'https://upload.pypi.org/legacy/' }}
+          print-hash: true

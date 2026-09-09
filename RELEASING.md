@@ -137,6 +137,46 @@ A promotion to the release branch needs a multi-persona review artefact covering
 commits, under `private/reviews/YYYY-MM-DD-panel-<cluster>.md`. The push path refuses without
 one.
 
+## Publishing to PyPI
+
+**No API token, anywhere.** `.github/workflows/publish.yml` uploads with trusted publishing: PyPI
+verifies a short-lived identity GitHub mints for that one workflow in this one repository, so
+there is nothing to leak from a laptop, a shell history, or a repository secret. 0.3.0 went out
+from a laptop and nothing records how, by whom, or from which commit.
+
+**The workflow does not build the wheel, and cannot.** The track is not in this repository on
+purpose, so a runner holding only this repository cannot produce a release artefact. Making it
+able to would mean putting the harmful prompts into GitHub, which is the decision the exclusion
+exists to prevent. So the build stays local, the artefacts are attached to the GitHub Release,
+and the workflow verifies and uploads them.
+
+What it verifies before anything leaves the runner: `check_wheel --release`, `twine check`, and
+that the version in the filenames is the version the tag names.
+
+### One-time setup, on PyPI, by the operator
+
+Add a **pending publisher** under the project's publishing settings (or the account's, for a
+project that does not exist yet):
+
+| Field | Value |
+|---|---|
+| PyPI project name | `senbonzakura` |
+| Owner | `elementmerc` |
+| Repository name | `senbonzakura` |
+| Workflow name | `publish.yml` |
+| Environment name | `pypi` |
+
+Then, in the repository settings, create two environments, `pypi` and `testpypi`, and add
+yourself as a required reviewer on `pypi`. That is the second pair of eyes on an upload that
+cannot be undone: a filename on PyPI can never be reused and a version number can never be
+replayed. Repeat the publisher entry on TestPyPI with environment `testpypi` to rehearse.
+
+### Publishing
+
+Attach `dist/*.whl` and `dist/*.tar.gz` to the GitHub Release. Publishing the release starts the
+workflow; approving the `pypi` environment lets the upload run. To rehearse first, or to re-run
+after a failure, use the workflow's manual trigger with the tag and `testpypi`.
+
 ## Order
 
 1. Pack the track.
@@ -147,4 +187,5 @@ one.
 5. CHANGELOG entry, with the codename in the header.
 6. Panel artefact covering the range.
 7. Annotated tag with the `Codename:` line.
-8. Push, publish, paste the CHANGELOG into the GitHub Release.
+8. Push, then a GitHub Release with the CHANGELOG entry as its body and the built artefacts
+   attached. Publishing it runs the upload workflow; approve the `pypi` environment.

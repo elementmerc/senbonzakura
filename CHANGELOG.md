@@ -343,6 +343,22 @@ install rather than only in a source checkout.
 
 Bug fixes and improvements.
 
+## [0.3.1] "Petals" — 2026-09-09
+
+A licence-compliance patch on 0.3.0, with no code change. Every file in the package is
+byte-identical to the one 0.3.0 shipped.
+
+### Licence
+
+- The package now carries the AGPL section 5(a) statement of modification inside the artefact
+  itself. Senbonzakura includes code copied verbatim from Heretic, and 0.3.0 was published
+  carrying the licence text alone, so the statement saying this is a modified work and when it
+  was modified reached nobody who installed it.
+
+### Other
+
+Bug fixes and improvements.
+
 ## [0.3.0] "Pilot" — 2026-07-17
 
 The first public release: on PyPI, on GitHub, AGPL-3.0.

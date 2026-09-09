@@ -17,7 +17,7 @@ from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
 @pytest.fixture
 def track(tmp_path):
     """A track with enough rows for a disjoint KL slice and a final slice larger than the search's."""
-    def build(n_bad=40, n_good=40, bad_rows=None):
+    def build(n_bad=80, n_good=40, bad_rows=None):
         root = tmp_path / "track"
         bad = bad_rows if bad_rows is not None else [f"harmful prompt {i}" for i in range(n_bad)]
         Dataset.from_dict({"text": bad}).save_to_disk(str(root / "bad_eval_ds"))
@@ -46,9 +46,10 @@ def lines(path):
 # ── the slices themselves ─────────────────────────────────────────────────────────────
 def test_writes_three_slices_at_the_requested_sizes(track, tmp_path):
     out = tmp_path / "eval"
-    assert run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6) == 0
+    assert run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6) == 0
     assert len(lines(out / "keyword_prompts.txt")) == 8
-    assert len(lines(out / "final_prompts.txt")) == 16
+    # 48 requested minus the 8 the search already saw: the re-score keeps only the fresh tail.
+    assert len(lines(out / "final_prompts.txt")) == 40
     assert len(lines(out / "kl_prompts.txt")) == 6
 
 
@@ -58,7 +59,7 @@ def test_the_fitting_prompts_are_staged_too(track, tmp_path):
     would ever say so.
     """
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     assert len(lines(out / "bad.txt")) == 10
     assert len(lines(out / "good.txt")) == 10
 
@@ -70,7 +71,7 @@ def test_the_slices_record_the_corpus_they_were_cut_from(track, tmp_path):
     from senbonzakura import headtohead
     t = track()
     out = tmp_path / "eval"
-    run(t, out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(t, out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     recorded = json.loads((out / headtohead.SLICE_PROVENANCE).read_text(encoding="utf-8"))
     assert recorded["track"] == str(t.resolve())
     assert headtohead.slices_match_track(out, t) == []
@@ -82,7 +83,7 @@ def test_every_file_the_benchmark_expects_is_written(track, tmp_path):
     """
     from senbonzakura import headtohead
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     for name in headtohead.SLICE_FILES:
         assert (out / name).is_file(), f"{name} is expected by the runner and never written"
 
@@ -94,7 +95,7 @@ def test_the_kl_slice_is_disjoint_from_the_extraction_prompts(track, tmp_path):
     prompts its directions came from, which flatters both tools and flatters neither honestly.
     """
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     kl = lines(out / "kl_prompts.txt")
     extraction = [f"harmless prompt {i}" for i in range(10)]
     assert not (set(kl) & set(extraction))
@@ -103,7 +104,7 @@ def test_the_kl_slice_is_disjoint_from_the_extraction_prompts(track, tmp_path):
 def test_the_kl_slice_is_the_one_the_abliterator_would_use(track, tmp_path):
     """Not merely disjoint: byte for byte what our own run is scored on."""
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     ours = kl_eval_slice([f"harmless prompt {i}" for i in range(16)], 10, 6)
     assert lines(out / "kl_prompts.txt") == ours
 
@@ -127,10 +128,10 @@ def test_the_final_slice_is_held_out_from_the_search_slice(track, tmp_path):
     bundled track and the largest disjoint requirement is 192.
     """
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     search = lines(out / "keyword_prompts.txt")
     final = lines(out / "final_prompts.txt")
-    assert len(final) == 16, "the re-score set keeps the size it was asked for"
+    assert len(final) == 40, "the fresh tail of the window, not the whole window"
     assert not set(search) & set(final), (
         f"{len(set(search) & set(final))} prompts appear in both the search slice and the set "
         f"chosen to be held out from it")
@@ -138,7 +139,7 @@ def test_the_final_slice_is_held_out_from_the_search_slice(track, tmp_path):
 
 # ── the ways a slice stops being the same list ────────────────────────────────────────
 def test_a_prompt_with_a_line_break_is_refused(track, tmp_path):
-    rows = [f"harmful {i}" for i in range(40)]
+    rows = [f"harmful {i}" for i in range(80)]
     rows[3] = "first half\nsecond half"
     with pytest.raises(SystemExit) as e:
         run(track(bad_rows=rows), tmp_path / "eval", dir_prompts=10, eval_refusal=8,
@@ -147,7 +148,7 @@ def test_a_prompt_with_a_line_break_is_refused(track, tmp_path):
 
 
 def test_a_blank_prompt_is_refused(track, tmp_path):
-    rows = [f"harmful {i}" for i in range(40)]
+    rows = [f"harmful {i}" for i in range(80)]
     rows[2] = "   "
     with pytest.raises(SystemExit) as e:
         run(track(bad_rows=rows), tmp_path / "eval", dir_prompts=10, eval_refusal=8,
@@ -157,7 +158,7 @@ def test_a_blank_prompt_is_refused(track, tmp_path):
 
 def test_a_padded_prompt_is_refused(track, tmp_path):
     """Heretic strips each line on read and senbonzakura does not, so padding splits the two."""
-    rows = [f"harmful {i}" for i in range(40)]
+    rows = [f"harmful {i}" for i in range(80)]
     rows[5] = "  harmful with padding  "
     with pytest.raises(SystemExit) as e:
         run(track(bad_rows=rows), tmp_path / "eval", dir_prompts=10, eval_refusal=8,
@@ -165,12 +166,20 @@ def test_a_padded_prompt_is_refused(track, tmp_path):
     assert "whitespace" in str(e.value)
 
 
-def test_a_final_slice_no_larger_than_the_search_slice_is_refused(track, tmp_path):
-    """A corpus too short makes the two slices equal, and the re-score then tests nothing."""
+def test_a_rescore_slice_too_small_to_state_a_rate_over_is_refused(track, tmp_path):
+    """A corpus too short leaves no fresh rows at all, and the re-score then tests nothing.
+
+    THIS CHECK'S PREMISE INVERTED WITH THE SLICES. It used to demand that the final slice be
+    strictly LARGER than the search slice, because both were the head of the same file and equal
+    sizes meant the same rows twice. They share no rows now, so size stopped being a proxy for
+    freshness, and what has to hold instead is that there is enough evidence to be worth the
+    generations: the floor this project states a rate over.
+    """
     with pytest.raises(SystemExit) as e:
         run(track(n_bad=8), tmp_path / "eval", dir_prompts=10, eval_refusal=8,
             eval_refusal_final=16, eval_kl=6)
-    assert "not larger" in str(e.value)
+    assert "below the 30" in str(e.value)
+    assert "--search" in str(e.value), "it has to say what the operator can actually change"
 
 
 def test_a_final_count_below_the_search_count_is_refused_up_front(track, tmp_path):
@@ -194,18 +203,34 @@ def test_a_written_slice_round_trips_through_heretics_reader(track, tmp_path):
     in this environment. If that reader ever changes, this test still describes what we wrote for.
     """
     out = tmp_path / "eval"
-    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=16, eval_kl=6)
+    run(track(), out, dir_prompts=10, eval_refusal=8, eval_refusal_final=48, eval_kl=6)
     with open(out / "keyword_prompts.txt", encoding="utf-8") as f:
         as_heretic_reads_it = [line.strip() for line in f if line.strip()]
     assert as_heretic_reads_it == [f"harmful prompt {i}" for i in range(8)]
 
 
 # ── the re-score slice, on its own ────────────────────────────────────────────────────
-def test_the_rescore_slice_starts_where_the_search_slice_ends():
-    rows = [f"prompt {i}" for i in range(200)]
+def test_the_rescore_slice_is_the_tail_of_the_window_not_past_it():
+    """THE BOUNDARY THE FIRST VERSION OF THIS FIX WALKED STRAIGHT PAST.
+
+    `bad_eval_ds` is not an undifferentiated pile of rows. It is the track's SEARCH partition
+    followed immediately by its MEASURE partition, and the measure half is where every published
+    number comes from. The bundled track holds 132 search rows and 4504 measure rows.
+
+    The first attempt at this fix read `rows[eval_refusal : eval_refusal + eval_refusal_final]`,
+    reasoning that 4636 rows meant 192 was free. It put sixty rows of the published measurement
+    inside the selection: the original defect leaked the selection into the search's own rows, and
+    that leaked it into the rows the result is reported on, which is worse and is exactly what
+    `track.flag_violations` refuses.
+
+    So the slice stays inside the first `--eval-refusal-final` rows, which is the window that
+    guard already checks, and takes only the part of it the search has not seen.
+    """
+    rows = [f"prompt {i}" for i in range(4636)]
     got = rescore_eval_slice(rows, 64, 128)
-    assert got == rows[64:192]
-    assert len(got) == 128
+    assert got == rows[64:128]
+    assert len(got) == 64
+    assert rows.index(got[-1]) < 128, "nothing may be read past --eval-refusal-final"
 
 
 def test_the_rescore_slice_shares_nothing_with_the_search_slice():
@@ -213,33 +238,18 @@ def test_the_rescore_slice_shares_nothing_with_the_search_slice():
     assert not set(rows[:64]) & set(rescore_eval_slice(rows, 64, 128))
 
 
-def test_a_track_too_small_to_hold_both_falls_back_and_says_so():
-    """Falls back to the OLD behaviour rather than to a short slice.
-
-    A shorter set would quietly change how many prompts the selection reports on, which is the
-    kind of silent change this project keeps finding. The warning has to say plainly that the
-    selection is not held out, because that is the property the caller thinks it is getting.
-    """
-    rows = [f"prompt {i}" for i in range(70)]
+def test_a_gap_too_narrow_to_be_reportable_says_so():
+    """32 fresh prompts is what the middle size tier buys, and 8 is not worth the generations."""
+    rows = [f"prompt {i}" for i in range(200)]
     said = []
-    got = rescore_eval_slice(rows, 64, 128, said.append)
-    assert got == rows[:128], "the size the caller asked for, from the head, as before"
-    assert said, "falling back silently is the whole failure being guarded against"
-    assert "NOT held out" in said[0]
-    assert "6 prompts sit past" in said[0], "the message has to say how short the track actually is"
+    got = rescore_eval_slice(rows, 64, 72, said.append)
+    assert len(got) == 8
+    assert said and "below the reporting floor" in said[0]
+    assert "--eval-refusal-final" in said[0], "the message has to name the flag to move"
 
 
-def test_a_track_with_exactly_enough_rows_does_not_warn():
-    """The boundary: search plus re-score exactly, and nothing to spare."""
-    rows = [f"prompt {i}" for i in range(24)]
+def test_a_comfortable_gap_does_not_warn():
+    rows = [f"prompt {i}" for i in range(200)]
     said = []
-    got = rescore_eval_slice(rows, 8, 16, said.append)
-    assert got == rows[8:24]
+    assert len(rescore_eval_slice(rows, 64, 128, said.append)) == 64
     assert not said
-
-
-def test_one_row_short_of_enough_falls_back():
-    rows = [f"prompt {i}" for i in range(23)]
-    said = []
-    rescore_eval_slice(rows, 8, 16, said.append)
-    assert said, "15 fresh rows where 16 were asked for is the fallback case, not a short slice"

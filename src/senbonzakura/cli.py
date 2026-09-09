@@ -73,6 +73,7 @@ from .crashsafe import (  # crash-resilience: persist by default, recover a lost
 from .metrics import (
     KL_CEIL,  # the hard "too damaged" line; a trial above it is excluded outright
     KL_TARGET,  # where the knee's coherence surcharge starts, and what --max-kl moves
+    MIN_REPORTABLE_N,  # below this a rate is not stated; here it bounds the re-score slice
     broken_rate,  # fraction of a batch that is wrecked output
     heretic_keyword_rate,  # Heretic-comparable refusal metric (the axis Heretic wins)
     is_broken,  # wrecked-output detector (empty / garbage / repetition)
@@ -1471,24 +1472,30 @@ def rescore_eval_slice(bad_eval_prompts, eval_refusal, eval_refusal_final, warn=
     the knee should not be overfit to the small search eval cannot be scored on the small search
     eval.
 
-    The rows are cheap. `bad_eval_ds` holds 4636 rows in the bundled track and the largest disjoint
-    requirement is 192, which is 4.1% of it.
+    THE SLICE STAYS INSIDE `--eval-refusal-final` ROWS FROM THE HEAD, AND THAT BOUND IS THE POINT.
+    The first version of this fix took `rows[eval_refusal : eval_refusal + eval_refusal_final]`,
+    reasoning that `bad_eval_ds` holds 4636 rows so 192 was nothing. It is not nothing: that file
+    is the SEARCH partition followed immediately by the MEASURE partition, and the bundled track's
+    search partition is 132 rows. Reading 192 put sixty rows of the published measurement inside
+    the selection, which is the defect `track.flag_violations` exists to refuse and a worse one
+    than the overlap being fixed here. So the window is the one the existing guard already checks,
+    and only the part of it the search has not seen is returned.
+
+    The cost is honest and worth stating: the re-score set is smaller than it was. At 64 and 128 it
+    is 64 prompts rather than 128, all of them fresh, and in the middle size tier (64 and 96) it is
+    32. Below the reporting floor it warns, because at that point the pass is buying very little.
 
     The same arithmetic as `kl_eval_slice` above, and here for the same reason: the head-to-head
     hands a competing tool the same slice from a separate process that cannot load the abliterator,
     and two copies of this would let the two tools be scored on prompts that merely look alike.
     """
-    fresh = bad_eval_prompts[eval_refusal:eval_refusal + eval_refusal_final]
-    if len(fresh) == eval_refusal_final:
-        return fresh
-    # Falls back to the old behaviour rather than to a short slice, so the number of prompts the
-    # re-score reports on does not quietly change with the size of the track.
-    if warn:
-        warn(f"only {len(fresh)} prompts sit past the search's own {eval_refusal}, so a re-score "
-             f"set of {eval_refusal_final} disjoint from it cannot be cut. Falling back to the "
-             f"head, which the search has already seen: this selection is NOT held out from the "
-             f"search's evaluation, and a bigger bad_eval_ds is what fixes it.")
-    return bad_eval_prompts[:eval_refusal_final]
+    fresh = bad_eval_prompts[eval_refusal:eval_refusal_final]
+    if warn and len(fresh) < MIN_REPORTABLE_N:
+        warn(f"the re-score has only {len(fresh)} prompts the search did not already see "
+             f"(--eval-refusal {eval_refusal}, --eval-refusal-final {eval_refusal_final}), which "
+             f"is below the reporting floor of {MIN_REPORTABLE_N}. Widen the gap between the two "
+             f"flags, or rebuild the track with a larger --search.")
+    return fresh
 
 
 def _kageyoshi_explicit(argv):
@@ -3533,7 +3540,7 @@ class Abliterator:
             # Loaded as search-slice PLUS re-score slice, then cut past the search's own rows, so
             # this pass sees prompts the search did not. See `rescore_eval_slice`.
             big = rescore_eval_slice(
-                self.load(f"{TR}/bad_eval_ds", args.eval_refusal + args.eval_refusal_final),
+                self.load(f"{TR}/bad_eval_ds", args.eval_refusal_final),
                 args.eval_refusal, args.eval_refusal_final,
                 lambda m: log(f"  WARNING: {m}"))
             ranked = sorted(_pool, key=_scalar_of)[:max(1, args.top_rescore)]

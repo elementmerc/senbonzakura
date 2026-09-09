@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
+from senbonzakura.metrics import MIN_REPORTABLE_N
 
 
 def load_texts(directory, n, *, text_column=None, token=None):
@@ -116,7 +117,8 @@ def main(argv=None):
             f"--eval-refusal ({a.eval_refusal}). The final slice is the LARGER one the best-of-N "
             f"pass re-scores on; with it smaller, the selection would see less evidence than the "
             f"search did and the pass would be worse than not running it. The two are disjoint, "
-            f"so this asks for {a.eval_refusal + a.eval_refusal_final} rows of bad_eval_ds.")
+            f"and the re-score keeps only the {a.eval_refusal_final - a.eval_refusal} of them "
+            f"the search did not see.")
 
     counts = {}
     # The search-time refusal slice: what steers each tool's own optimisation.
@@ -130,7 +132,7 @@ def main(argv=None):
     counts["final"] = write_slice(
         out / "final_prompts.txt",
         rescore_eval_slice(
-            load_texts(track / "bad_eval_ds", a.eval_refusal + a.eval_refusal_final),
+            load_texts(track / "bad_eval_ds", a.eval_refusal_final),
             a.eval_refusal, a.eval_refusal_final,
             lambda m: print(f"headtohead stage: WARNING {m}", file=sys.stderr)),
         "best-of-N re-score, both tools, held out from the search-time slice")
@@ -162,15 +164,22 @@ def main(argv=None):
     from .headtohead import write_slice_provenance
     print(f"headtohead stage: recorded the source corpus in {write_slice_provenance(out, track)}")
 
-    # The final slice is a superset of the search slice by construction (both are the head of
-    # bad_eval_ds). Stated as a check because a corpus shorter than the final count would silently
-    # make them equal, and the re-score would then add nothing while the table said it had.
-    if counts["final"] <= counts["keyword"]:
+    # THIS CHECK'S PREMISE INVERTED WHEN THE SLICES BECAME DISJOINT, so its question changed with
+    # it. It used to require the final slice to be strictly LARGER than the search slice, because
+    # both were the head of `bad_eval_ds` and equal sizes meant the same rows twice, a re-score
+    # that added nothing while the table said it had. Now they share no rows at all, so size is no
+    # longer a proxy for freshness and "larger" is not the property to demand.
+    #
+    # What still has to hold is that the re-score has enough evidence to be worth the generations
+    # it costs. Below the floor at which this project will state a rate, it is not.
+    if counts["final"] < MIN_REPORTABLE_N:
         raise SystemExit(
-            f"headtohead stage: the best-of-N slice ({counts['final']}) is not larger than the "
-            f"search slice ({counts['keyword']}), so re-scoring on it would repeat the search's own "
-            f"measurement rather than test it on fresh evidence. bad_eval_ds is too small; either "
-            f"grow it or lower --eval-refusal.")
+            f"headtohead stage: the best-of-N slice holds {counts['final']} prompts, below the "
+            f"{MIN_REPORTABLE_N} this project will state a rate over. It is cut from the rows "
+            f"between --eval-refusal ({a.eval_refusal}) and --eval-refusal-final "
+            f"({a.eval_refusal_final}), so widen that gap, or rebuild the track with a larger "
+            f"--search partition. Selecting a published arm on fewer than {MIN_REPORTABLE_N} "
+            f"prompts is a coin toss with a decimal point.")
 
     print("STAGE_OK")
     return 0

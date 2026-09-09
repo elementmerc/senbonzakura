@@ -40,11 +40,12 @@ instrument on 200 prompts nothing was fitted or selected on:
 
 Both budgets removed hard refusal, so this is a comparison at matched refusal. Two directions
 did roughly twice the collateral damage and bought nothing for it, and they were less
-predictable run to run. The gap clears the pooled spread by about a fifth, which is real but
-slim; dropping the worst two-direction seed makes it wider rather than narrower, so it doesn't
-rest on one bad run. This is one model, Qwen3-1.7B, and it does not settle the question for
-every architecture. It does mean the project's central idea is unsupported where we can
-currently measure it, and we would rather publish that than wait for a friendlier model.
+predictable run to run. An exact permutation test over all 252 splits of the ten seeds puts the
+difference at p = 0.016. Dropping the worst two-direction seed halves the gap and moves that to
+p = 0.048, so the finding does not rest on one run and is weaker without it. This is one model,
+Qwen3-1.7B, and it does not settle the question for every architecture. It does mean the
+project's central idea is unsupported where we can currently measure it, and we would rather
+publish that than wait for a friendlier model.
 
 **If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is

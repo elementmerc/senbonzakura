@@ -157,9 +157,18 @@ at matched refusal, where the only thing left to differ is the price paid for it
 did roughly **twice the collateral damage and bought nothing**, and they were less predictable
 seed to seed (the spread is nearly three times as wide).
 
-The gap, 0.0435, clears the pooled spread of 0.0363 by about a fifth. That's real but slim.
-Drop the worst two-direction seed as an outlier and the result gets *stronger*, not weaker
-(0.0719 against 0.0497, now 1.6 times the spread), so it doesn't rest on one bad run.
+The gap is 0.0435, and an exact permutation test over all 252 ways of splitting these ten
+seeds puts it at **p = 0.016**. That is a real difference, and stronger than the way this
+paragraph used to describe it.
+
+**A correction, 2026-09-09.** This used to read "clears the pooled spread by about a fifth,
+real but slim", and then said that dropping the worst two-direction seed made the result
+*stronger*. Both sentences came from comparing a gap to a pooled spread, which this project's
+own code now says in as many words is not a test, because it ignores how many observations
+there are. Under the permutation test the second sentence is **wrong**: dropping that seed
+halves the gap, from 0.0435 to 0.0222, and moves p from 0.016 to **0.048**. The result does
+not rest on one bad run, but it is meaningfully weaker without it, and the opposite was
+published here for a month.
 
 **What it doesn't say.** This is Qwen3-1.7B alone. Refusal geometry may differ on larger models
 or on other families, and the honest position is that the question is open elsewhere and closed

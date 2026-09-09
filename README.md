@@ -56,7 +56,8 @@ it out of the weights.
 > every model scored afterwards by one instrument on prompts nothing was fitted or selected on:
 > both budgets removed hard refusal, and two directions did about **twice the collateral damage**
 > for no refusal benefit: drift 0.093 with a spread of 0.048, against 0.050 with a spread of
-> 0.018. More directions cost more and bought nothing.
+> 0.018. An exact permutation test over all 252 splits of the ten seeds puts that at p = 0.016.
+> More directions cost more and bought nothing.
 >
 > That is one model, Qwen3-1.7B, and it isn't the last word for every architecture. It is enough
 > to say the headline idea is **unsupported by this project's own evidence**, and we would rather

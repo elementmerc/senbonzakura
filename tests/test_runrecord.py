@@ -28,14 +28,35 @@ def test_a_directory_with_no_record_reads_as_none(tmp_path):
 
 
 @pytest.mark.parametrize("text", ["", "{", "not json", "[]", '"a string"'])
-def test_an_unreadable_record_reads_as_none_rather_than_raising(tmp_path, text):
-    """A convenience for reconstructing a command must not stop a run that would otherwise work.
+def test_a_damaged_record_is_distinguishable_from_an_absent_one(tmp_path, text):
+    """THE DEFECT THE PANEL FOUND, in code written that same morning.
 
-    Every failure is None, including a hand-edited or truncated file. The guard below treats that
-    as "cannot check" rather than as "nothing has changed", which is the direction that fails safe.
+    `read` used to return None for four conditions: no file, no permission, truncated JSON, and
+    JSON that is not an object. The guard returned silently on None, so "there is no record, which
+    is fine" and "the record is damaged, which is not" were one value with one behaviour. The
+    guard switched itself off on the only input it could not vouch for.
     """
     (tmp_path / runrecord.NAME).write_text(text, encoding="utf-8")
-    assert runrecord.read(tmp_path) is None
+    with pytest.raises(runrecord.UnreadableError):
+        runrecord.read(tmp_path)
+    # And the caller that only decorates a menu still gets its tolerant answer.
+    assert runrecord.read_quiet(tmp_path) is None
+
+
+def test_a_damaged_record_refuses_the_resume_instead_of_skipping_the_check(tmp_path):
+    """And it must refuse BEFORE the caller overwrites it.
+
+    `cli` calls the guard on one line and `runrecord.write` on the next. Declining to check meant
+    the damaged file was replaced with the new run's inputs, so the only evidence of what the
+    completed trials were scored on was destroyed by the act of not checking it.
+    """
+    (tmp_path / runrecord.NAME).write_text("{truncated", encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        runrecord.refuse_across_inputs(tmp_path, {"model": "M", "track": "T"})
+    message = str(e.value)
+    assert "cannot be read" in message
+    # It names both ways forward, because "try again" is not one of them.
+    assert "--model" in message and "fresh run" in message
 
 
 def test_a_second_run_overwrites_the_record(tmp_path):

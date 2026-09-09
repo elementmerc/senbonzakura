@@ -84,22 +84,60 @@ def write(out, *, model, track, **extra):
     return record
 
 
-def read(out):
-    """The record in `out`, or None when there is not a readable one.
+class UnreadableError(Exception):
+    """A record is there and cannot be read. Distinct from there being none.
 
-    None for every failure, including a truncated or hand-edited file. A record is a convenience
-    for reconstructing a command; a malformed one must not stop a run that would otherwise work,
-    and the guard below treats a missing record as "cannot check" rather than as "no mismatch".
+    THE DEFECT THIS SPLITS APART, found by the 2026-09-09 panel in code written that morning.
+    `read` returned None for four different conditions: no file, no permission, truncated JSON,
+    and JSON that parsed to something other than an object. `refuse_across_inputs` returned
+    silently on None, so "there is no record, which is fine" and "the record is damaged, which is
+    not" were the same value and produced the same behaviour. The guard turned itself off on the
+    one input it could not vouch for, and the next line overwrote the damaged file with the new
+    run's inputs, so the evidence was gone as well.
+
+    A truncated `run.json`, which is what an interrupted sync off a GPU box leaves, therefore
+    meant: the guard declines to check, the record is destroyed, and the study carries on
+    optimising one corpus's completed trials against another corpus's prompts. That is the exact
+    consequence `refuse_across_inputs` exists to prevent, reached through the guard rather than
+    around it.
     """
+
+
+def read(out):
+    """The record in `out`, or None when there is none.
+
+    Raises `Unreadable` when a file is present and cannot be read as a record. Absence is a fact
+    about a directory; damage is a fact about a file, and a caller that cannot tell them apart
+    cannot decide correctly. `read_quiet` is for the callers that genuinely only want to decorate
+    a menu.
+    """
+    path = Path(out) / NAME
     try:
-        text = (Path(out) / NAME).read_text(encoding="utf-8")
-    except (OSError, ValueError):
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
+    except (OSError, ValueError) as e:
+        raise UnreadableError(f"{path} exists and could not be read: {e}") from e
     try:
         record = json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        raise UnreadableError(f"{path} is not valid JSON: {e}") from e
+    if not isinstance(record, dict):
+        raise UnreadableError(f"{path} holds {type(record).__name__}, not an object")
+    return record
+
+
+def read_quiet(out):
+    """The record, or None for absent OR damaged. Only for callers with nothing at stake.
+
+    The guided mode's menu uses this to write "it was editing X" beside a resumable run. A damaged
+    record there costs a decoration, not a decision, and refusing to draw a menu because one entry
+    is unreadable would be worse than drawing it without that line.
+    """
+    try:
+        return read(out)
+    except UnreadableError:
         return None
-    return record if isinstance(record, dict) else None
 
 
 def mismatches(record, values):
@@ -126,7 +164,22 @@ def refuse_across_inputs(out, values):
     directory. Silence here means a study whose trials were scored on two different corpora,
     reported as one number, with nothing in the artefact saying so.
     """
-    record = read(out)
+    try:
+        record = read(out)
+    except UnreadableError as e:
+        # REFUSED, not skipped. This is the branch that used to be silent, and the caller
+        # overwrites the record on the next line, so declining here destroyed the only evidence of
+        # what the completed trials were scored on.
+        raise SystemExit(
+            f"--resume refuses this directory: {e}\n"
+            f"  {NAME} records the model and the track the completed trials were scored on, and "
+            f"this copy cannot be read, so there is no way to tell whether this run's inputs "
+            f"match them. Resuming anyway would risk scoring one corpus's trials against "
+            f"another and reporting the two as one number.\n"
+            f"\n"
+            f"  If you know what this study was built on, delete {NAME} and pass --model and "
+            f"--track explicitly; the run writes a fresh record and the study is untouched.\n"
+            f"  If you do not, start a fresh run in a directory of its own, which keeps both.") from e
     if record is None:
         return None
     bad = mismatches(record, values)

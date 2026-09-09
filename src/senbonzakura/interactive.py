@@ -339,7 +339,9 @@ def resumable_runs(root="."):
             what = "a winning config, so it re-bakes in minutes rather than re-searching"
         else:
             continue
-        record = runrecord.read(d)
+        # `read_quiet`: a damaged record here costs a line of decoration on a menu, not a
+        # decision. The strict `read` belongs where the answer gates a run.
+        record = runrecord.read_quiet(d)
         if record and record.get("model"):
             what += f"; it was editing {record['model']}"
         out.append((str(d), what, record))

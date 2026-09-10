@@ -7,6 +7,9 @@ forced re-running a 34-minute search and a stale torch failed only after a 31 GB
 crashsafe.py (no heavy imports) precisely so they can be tested without torch/optuna present.
 """
 import os
+import subprocess
+
+import pytest
 
 from senbonzakura import crashsafe
 from senbonzakura.crashsafe import (
@@ -18,6 +21,22 @@ from senbonzakura.crashsafe import (
     torch_version_ok,
     winning_config,
 )
+
+
+def _needs_a_checkout():
+    """Skip where there is no git index to ask, which is not the same as passing.
+
+    `install.md` tells a reader to run this suite, and a reader who installed from an sdist or
+    unpacked a `git archive` has every file and no repository. Two tests here assert facts that are
+    only true inside a checkout, and outside one they failed for a reason about the environment
+    rather than about the code. The behaviour off a checkout is already covered, deliberately, by
+    `test_outside_a_checkout_the_commit_is_none_rather_than_invented`.
+    """
+    inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            capture_output=True, text=True, check=False)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        pytest.skip("not a git checkout")
 
 
 class TestTorchVersionOk:
@@ -234,6 +253,7 @@ class TestProvenance:
         assert {"torch", "transformers", "datasets", "optuna"} <= set(got)
 
     def test_a_checkout_records_its_commit_and_whether_it_was_dirty(self):
+        _needs_a_checkout()
         got = crashsafe.git_commit()
         assert got is not None, "running from a checkout, so there is a commit"
         assert len(got["commit"]) >= 7
@@ -242,6 +262,7 @@ class TestProvenance:
 
     def test_a_checkout_ignores_a_declared_commit(self):
         """The git answer is the trustworthy one; a claim must not override it."""
+        _needs_a_checkout()
         got = crashsafe.git_commit(env={crashsafe.COMMIT_ENV: "deadbee"})
         assert got["source"] == "git" and got["commit"] != "deadbee"
 

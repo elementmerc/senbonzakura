@@ -48,11 +48,19 @@ NO_SHELL = ("drives a POSIX shell hook that needs timeout(1) to bound its own ne
 def test_the_hook_is_in_the_repository_at_all():
     """Not a formality. Its five sibling hooks were tracked and this one was not, so it lived on
     one machine and reached no clone: the gate about CI was the only gate a checkout did not get.
+
+    Skipped where there is no git to ask, which is not the same as passing. A `git archive`
+    extract, an sdist and a packaged wheel all have the files and none of them have the index, so
+    the question is unanswerable there rather than answered yes. The first version of this asserted
+    on the return code regardless and failed in a clean-room extract for a reason that had nothing
+    to do with the hook, which is a check reporting on its own environment.
     """
     assert HOOK.exists(), f"{HOOK} is missing from the checkout"
     tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(HOOK)],
                              capture_output=True, text=True, check=False,
                              cwd=HOOK.parents[2])
+    if "not a git repository" in (tracked.stderr or ""):
+        pytest.skip("not a git checkout")
     assert tracked.returncode == 0, "the hook exists here but git does not track it"
 
 

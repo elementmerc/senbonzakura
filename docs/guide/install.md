@@ -154,85 +154,10 @@ senbonzakura --print-completion bash | sudo tee /etc/bash_completion.d/senbonzak
 
 Without the extra, the `--print-completion` flag simply isn't there. Nothing else changes.
 
-## Running the tests
-
-You don't need a model, a download or a graphics card. The whole suite runs on CPU against
-small hand-built fixtures, which is deliberate: a test suite you can only run on the
-machine that has the card is a test suite that gets run once a week.
-
-```sh
-python -m venv .venv && .venv/bin/pip install --upgrade pip
-.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest              # add --cov for coverage
-```
-
-That first torch line pulls the CPU build, which is about a fifth of the size of the CUDA
-one. If you already have a CUDA torch installed, skip it; the tests don't care.
-
-## If you're going to commit
-
-Wire the local gates once per clone:
-
-```sh
-bash tools/install-local-hooks.sh
-```
-
-That hooks `tools/check_prompt_artefacts.py` into your pre-commit path, and it exists
-because of a specific hazard rather than as general tidiness.
-
-::: warning What the gate is actually stopping
-The tool keeps per-prompt margins and generations by default, because every single scoring
-bug in this project's history was invisible in the percentages and completely obvious in the
-text. Those rows contain harmful prompts and the replies a model gave to them. They're the
-most useful debugging artefact here and the last thing you want to push to a public
-repository at half past one in the morning.
-
-The gate refuses any staged JSON or JSONL carrying a `prompt` or `generation` field. CI runs
-the same check across the whole tree, but by the time CI sees it, the commit exists.
-:::
-
-## Which models it can actually open
-
-- Dense transformers: Llama, Qwen, Mistral, Gemma, Phi and the rest of that shape.
-- Fused-expert mixture-of-experts: Qwen3-MoE, Granite-MoE.
-- Mixtral, fused or unfused.
-- OLMoE.
-- Shared-expert MoE: Qwen2-MoE, DeepSeek-MoE.
-- LFM2, including its MoE variant. These are **hybrids**: some of their layers hold a short
-  convolution where other models hold attention, and that convolution writes into the model's
-  running state exactly as attention does. On LFM2.5-350M it is 10 layers out of 16. Those are
-  edited too, because editing the other six and reporting success would be an abliteration that
-  never reached most of the model.
-
-::: tip New words: dense and mixture-of-experts
-A **dense** model runs every one of its weights on every token. A **mixture-of-experts**
-model keeps a pile of specialist sub-networks and routes each token to a couple of them, so
-it's big on disk and cheap to run. It matters here because the two store their weights in
-different shapes, and abliteration is weight surgery: you have to know which drawer things
-are in.
-:::
-
-::: warning Quantised uploads can't be abliterated, and the popular ones are quantised
-Abliteration is weight surgery: it rewrites real matrices in place. A 4-bit or 8-bit upload
-doesn't store those matrices in a form that can be rewritten, so the tool refuses it rather than
-pretending. That includes the GGUF files most local runners use, and it includes the
-`bnb-4bit` uploads that repackage popular models at half the size.
-
-This catches people out because those uploads have a well-earned reputation for being smaller at
-no cost to quality, so they're the natural thing to reach for. Start from the original
-full-precision repository instead. You can quantise afterwards; you can't abliterate a
-quantisation.
-:::
-
-An architecture it doesn't recognise **fails loudly at load** with the layer type named. It
-would be easy to make it shrug and carry on, and the result would be a model that came back
-looking abliterated and wasn't, because the edit never reached the layers that mattered.
-That isn't a hypothetical. It's precisely what happened on Gemma for months, and it cost
-this project every Gemma number it had ever published.
-
 ## Where next
 
-- [Your first run](/guide/first-run) for the shortest path to an edited model.
-- [The method](/guide/how-it-works) if you'd like to know what it's about to do to your
-  weights before you let it.
+- [Quickstart](/guide/quickstart) is two commands and an edited model.
+- [Which models it can open](/reference/models) if you want to check yours is supported.
+- [Your first run](/guide/first-run) for what those commands are actually doing.
+- [Running the tests and contributing](/contributing) if you are here to work on the tool
+  rather than to use it.

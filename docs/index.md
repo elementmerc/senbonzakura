@@ -11,14 +11,17 @@ hero:
     alt: Senbonzakura
   actions:
     - theme: brand
+      text: Quickstart
+      link: /guide/quickstart
+    - theme: alt
       text: What it is
       link: /guide/what-it-is
     - theme: alt
-      text: Install
-      link: /guide/install
+      text: Check our numbers
+      link: /guide/what-we-know
     - theme: alt
-      text: View on GitHub
-      link: https://github.com/elementmerc/senbonzakura
+      text: Contribute
+      link: /contributing
 
 features:
   - title: Tested its own headline idea, and published the loss

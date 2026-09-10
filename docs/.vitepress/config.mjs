@@ -64,6 +64,7 @@ export default {
     nav: [
       { text: 'Guide', link: '/guide/what-it-is', activeMatch: '/guide/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '/reference/' },
+      { text: 'Contribute', link: '/contributing' },
       {
         text: 'v0.4 (unreleased)',
         items: [
@@ -78,6 +79,7 @@ export default {
         {
           text: 'Start here',
           items: [
+            { text: 'Quickstart', link: '/guide/quickstart' },
             { text: 'What it is', link: '/guide/what-it-is' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first run', link: '/guide/first-run' },
@@ -116,6 +118,7 @@ export default {
           items: [
             { text: 'Commands', link: '/reference/cli' },
             { text: 'Flags worth knowing', link: '/reference/flags' },
+            { text: 'Which models it can open', link: '/reference/models' },
           ],
         },
       ],

@@ -1,0 +1,196 @@
+{
+  "arms": 10,
+  "drift": [
+    {
+      "label": "senbon-seed42",
+      "ok": true,
+      "path": "drift-senbon-seed42.json",
+      "reason": "measured"
+    },
+    {
+      "label": "senbon-seed43",
+      "ok": true,
+      "path": "drift-senbon-seed43.json",
+      "reason": "measured"
+    },
+    {
+      "label": "senbon-seed44",
+      "ok": true,
+      "path": "drift-senbon-seed44.json",
+      "reason": "measured"
+    },
+    {
+      "label": "senbon-seed45",
+      "ok": true,
+      "path": "drift-senbon-seed45.json",
+      "reason": "measured"
+    },
+    {
+      "label": "senbon-seed46",
+      "ok": true,
+      "path": "drift-senbon-seed46.json",
+      "reason": "measured"
+    },
+    {
+      "label": "heretic-seed42",
+      "ok": true,
+      "path": "drift-heretic-seed42.json",
+      "reason": "measured"
+    },
+    {
+      "label": "heretic-seed43",
+      "ok": true,
+      "path": "drift-heretic-seed43.json",
+      "reason": "measured"
+    },
+    {
+      "label": "heretic-seed44",
+      "ok": true,
+      "path": "drift-heretic-seed44.json",
+      "reason": "measured"
+    },
+    {
+      "label": "heretic-seed45",
+      "ok": true,
+      "path": "drift-heretic-seed45.json",
+      "reason": "measured"
+    },
+    {
+      "label": "heretic-seed46",
+      "ok": true,
+      "path": "drift-heretic-seed46.json",
+      "reason": "measured"
+    }
+  ],
+  "failed": 0,
+  "failures": [],
+  "ran": 1,
+  "refusal": [
+    {
+      "label": "senbon-seed42",
+      "ok": true,
+      "path": "refusal-senbon-seed42.json",
+      "reason": "counted"
+    },
+    {
+      "label": "senbon-seed43",
+      "ok": true,
+      "path": "refusal-senbon-seed43.json",
+      "reason": "counted"
+    },
+    {
+      "label": "senbon-seed44",
+      "ok": true,
+      "path": "refusal-senbon-seed44.json",
+      "reason": "counted"
+    },
+    {
+      "label": "senbon-seed45",
+      "ok": true,
+      "path": "refusal-senbon-seed45.json",
+      "reason": "counted"
+    },
+    {
+      "label": "senbon-seed46",
+      "ok": true,
+      "path": "refusal-senbon-seed46.json",
+      "reason": "counted"
+    },
+    {
+      "label": "heretic-seed42",
+      "ok": true,
+      "path": "refusal-heretic-seed42.json",
+      "reason": "counted"
+    },
+    {
+      "label": "heretic-seed43",
+      "ok": true,
+      "path": "refusal-heretic-seed43.json",
+      "reason": "counted"
+    },
+    {
+      "label": "heretic-seed44",
+      "ok": true,
+      "path": "refusal-heretic-seed44.json",
+      "reason": "counted"
+    },
+    {
+      "label": "heretic-seed45",
+      "ok": true,
+      "path": "refusal-heretic-seed45.json",
+      "reason": "counted"
+    },
+    {
+      "label": "heretic-seed46",
+      "ok": true,
+      "path": "refusal-heretic-seed46.json",
+      "reason": "counted"
+    }
+  ],
+  "scored": [
+    {
+      "label": "senbon-seed42",
+      "ok": true,
+      "path": "scored-senbon-seed42.json",
+      "reason": "scored"
+    },
+    {
+      "label": "senbon-seed43",
+      "ok": true,
+      "path": "scored-senbon-seed43.json",
+      "reason": "scored"
+    },
+    {
+      "label": "senbon-seed44",
+      "ok": true,
+      "path": "scored-senbon-seed44.json",
+      "reason": "scored"
+    },
+    {
+      "label": "senbon-seed45",
+      "ok": true,
+      "path": "scored-senbon-seed45.json",
+      "reason": "scored"
+    },
+    {
+      "label": "senbon-seed46",
+      "ok": true,
+      "path": "scored-senbon-seed46.json",
+      "reason": "scored"
+    },
+    {
+      "label": "heretic-seed42",
+      "ok": true,
+      "path": "scored-heretic-seed42.json",
+      "reason": "scored"
+    },
+    {
+      "label": "heretic-seed43",
+      "ok": true,
+      "path": "scored-heretic-seed43.json",
+      "reason": "scored"
+    },
+    {
+      "label": "heretic-seed44",
+      "ok": true,
+      "path": "scored-heretic-seed44.json",
+      "reason": "scored"
+    },
+    {
+      "label": "heretic-seed45",
+      "ok": true,
+      "path": "scored-heretic-seed45.json",
+      "reason": "scored"
+    },
+    {
+      "label": "heretic-seed46",
+      "ok": true,
+      "path": "scored-heretic-seed46.json",
+      "reason": "scored"
+    }
+  ],
+  "skipped": 9,
+  "uncounted": [],
+  "undrifted": [],
+  "unscored": []
+}

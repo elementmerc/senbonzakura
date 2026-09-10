@@ -1,0 +1,20 @@
+{
+  "base": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+  "batch": 16,
+  "fingerprint": "1caba6a44d5928496bef20f4939e4e03",
+  "instrument": "senbonzakura.drift, KL(base||candidate) on first-token distributions",
+  "kl": 0.04557737708091736,
+  "kl_ci": [
+    0.030607473105192184,
+    0.0641532689332962
+  ],
+  "kl_ci_method": "seeded percentile bootstrap over prompts, 2000 draws",
+  "label": "heretic-seed46",
+  "logits_dtype": "bfloat16",
+  "model": "model",
+  "n_prompts": 200,
+  "precision_floor": 0.001,
+  "precision_note": null,
+  "precision_ok": true,
+  "prompts_file": "drift-prompts.txt"
+}

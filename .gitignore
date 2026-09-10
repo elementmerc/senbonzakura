@@ -10,6 +10,26 @@ out/
 checkpoints/
 results/
 plots/
+
+# THE ONE EXCEPTION TO `results/`, and it is deliberately narrow.
+#
+# `CONTRACT.md` section 4 requires a record of every head-to-head run, and for a month there was
+# none for the 2026-09-10 one: the figures on the public benchmark page existed on a single laptop
+# and nowhere a reader could reach. The review panel could not check them, and the first correction
+# to that page consequently carried two numbers taken from a synthetic fixture rather than from the
+# run. A published measurement whose artefacts are unreachable is a measurement nobody can dispute,
+# which is not a virtue.
+#
+# So aggregate JSON under `head-to-head/results/` is re-admitted, and NOTHING else is. The heading
+# above still governs: `*.safetensors`, `*.pt`, `*.pth`, `*.bin` and `*.gguf` are matched by their
+# own patterns and stay excluded wherever they sit, and `.jsonl` is deliberately NOT re-admitted
+# because that is the extension the per-prompt margin rows use, and those carry prompt text and the
+# replies to it. `tests/test_published_head_to_head.py` asserts both halves of that, so the
+# exception cannot quietly widen.
+!head-to-head/results/
+!head-to-head/results/*/
+!head-to-head/results/**/*.json
+!head-to-head/results/**/*.md
 # datasets (the harmful/harmless contrast + eval sets stay private)
 ds/
 *_ds/

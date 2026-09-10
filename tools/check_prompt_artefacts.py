@@ -43,6 +43,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Banned by NAME, whatever is underneath. That bluntness is the point and it has been tested:
+#: on 2026-09-10 this refused ten `drift-*.json` artefacts whose `prompts` field held a FILENAME
+#: rather than any prompt text, which was a false positive on the content and a true one on the
+#: shape. The resolution was to rename the field in the data (`prompts_file`), not to teach this
+#: check to inspect values. A gate that reasons about what a field contains is a gate with a hole
+#: in it, and this one guards a public remote.
 BANNED_KEYS = frozenset({"prompt", "prompts", "generation", "generations"})
 
 SUFFIXES = frozenset({".json", ".jsonl"})

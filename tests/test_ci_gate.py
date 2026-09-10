@@ -26,6 +26,7 @@ it actually prints can be read.
 """
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -33,9 +34,26 @@ import pytest
 
 HOOK = Path(__file__).resolve().parents[1] / "scripts" / "hooks" / "ci-check.sh"
 
-pytestmark = pytest.mark.skipif(
-    os.name == "nt" or not HOOK.exists(),
-    reason="drives a POSIX shell hook")
+#: The hook declines to run at all without a way to bound a network call, and says so in its own
+#: words. macOS ships neither `timeout` nor `gtimeout` unless coreutils were installed, so the
+#: assertions below would read that deliberate silence as a broken gate.
+HAS_DEADLINE = bool(shutil.which("timeout") or shutil.which("gtimeout"))
+
+#: Skipped inside the fixture rather than by a module mark, so the one check that needs no shell
+#: at all still runs on every platform CI covers. A mark on a fixture is silently ignored.
+NO_SHELL = ("drives a POSIX shell hook that needs timeout(1) to bound its own network call"
+            if os.name == "nt" or not HAS_DEADLINE else "")
+
+
+def test_the_hook_is_in_the_repository_at_all():
+    """Not a formality. Its five sibling hooks were tracked and this one was not, so it lived on
+    one machine and reached no clone: the gate about CI was the only gate a checkout did not get.
+    """
+    assert HOOK.exists(), f"{HOOK} is missing from the checkout"
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(HOOK)],
+                             capture_output=True, text=True, check=False,
+                             cwd=HOOK.parents[2])
+    assert tracked.returncode == 0, "the hook exists here but git does not track it"
 
 
 def _run(name, sha, status="completed", conclusion="success", created="2026-09-09T23:00:00Z"):
@@ -46,6 +64,8 @@ def _run(name, sha, status="completed", conclusion="success", created="2026-09-0
 @pytest.fixture
 def gate(tmp_path):
     """A git repo with one commit, and a `gh` that answers with whatever run list is asked for."""
+    if NO_SHELL:
+        pytest.skip(NO_SHELL)
     repo = tmp_path / "repo"
     repo.mkdir()
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",

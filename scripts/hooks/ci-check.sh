@@ -26,16 +26,29 @@ cd "$ROOT" 2>/dev/null || exit 0
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 command -v gh >/dev/null 2>&1 || exit 0
+
+# Every wait here is deadline-bounded, and macOS ships no `timeout`: it is GNU
+# coreutils, available there as `gtimeout` only if somebody installed them. With
+# neither, the choice is an unbounded network call in a SessionStart hook or no
+# gate, and a hook that can hang the start of a session is the worse of the two.
+if command -v timeout >/dev/null 2>&1; then
+    bounded() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    bounded() { gtimeout "$@"; }
+else
+    exit 0
+fi
+
 # `gh auth status` is cheap and local. Without it every call below would prompt or
 # hang, which is the one thing a SessionStart hook must never do.
-timeout 5 gh auth status >/dev/null 2>&1 || exit 0
+bounded 5 gh auth status >/dev/null 2>&1 || exit 0
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
 [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || exit 0
 
 # One request, hard-bounded. A slow network must cost the session a few seconds at
 # most, so a timeout is treated exactly like "no answer": silence.
-RUNS=$(timeout 12 gh run list --branch "$BRANCH" --limit 12 \
+RUNS=$(bounded 12 gh run list --branch "$BRANCH" --limit 12 \
         --json conclusion,status,headSha,createdAt,url 2>/dev/null) || exit 0
 [ -n "$RUNS" ] && [ "$RUNS" != "[]" ] || exit 0
 

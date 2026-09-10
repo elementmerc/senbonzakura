@@ -294,6 +294,26 @@ def main():
               f"holds {trials}. A short arm is not an equal-budget arm, so it is reported as a "
               f"failure rather than recorded as a row.", file=sys.stderr)
         return 3
+
+    # THE ARTEFACT HAS TO CARRY THE REASONING, NOT JUST THE CODE.
+    #
+    # `exit_code: 1` sat in budget.json for every successful arm of the 2026-09-10 comparison,
+    # because v1.4.0 ends with an interactive menu it cannot ask in a container and raises EOFError
+    # AFTER all 200 trials are on disk. The logic above reads that correctly. The FILE did not say
+    # so, and the file is what outlives the run: a later reader, or the review panel, opens ten
+    # arms and finds a failure code on all of them with nothing to say why it was accepted.
+    #
+    # So the acceptance is recorded beside the code that provoked it, with the evidence that made
+    # it acceptable. A number that needed a paragraph of context to interpret should travel with
+    # the paragraph.
+    budget["trials_completed"] = trials
+    if proc.returncode != 0:
+        budget["exit_code_accepted"] = (
+            f"non-zero exit accepted: the study holds {trials} of {a.trials} configured trials, "
+            f"so the search completed. Heretic v1.4.0 exits non-zero from an interactive menu it "
+            f"cannot present in a container, after every trial is already written.")
+    with open(os.path.join(a.out, "budget.json"), "w", encoding="utf-8") as f:
+        json.dump(budget, f, indent=2)
     return 0
 
 

@@ -136,3 +136,36 @@ def test_the_slice_the_pass_is_given_is_one_the_staging_step_writes():
     assert name in headtohead.SLICE_FILES, (
         f"the pass is handed {name}, which the staging step does not write "
         f"(it writes {sorted(headtohead.SLICE_FILES)})")
+
+
+# ── the artefact has to carry the reasoning, not just the code ──────────────────────
+#
+# Every successful Heretic arm of the 2026-09-10 comparison wrote `exit_code: 1` into its
+# budget.json, because v1.4.0 ends with an interactive menu it cannot present in a container and
+# raises EOFError AFTER all 200 trials are on disk. `run_heretic.py` reads that correctly and
+# accepts the arm. The FILE said only "1", and the file is what outlives the run.
+
+def test_a_non_zero_exit_that_is_accepted_says_why_in_the_artefact():
+    """Read from the source, because the script imports `heretic` and cannot be imported here.
+
+    A reviewer opening ten arms and finding a failure code on all of them, with nothing recording
+    why it was fine, is the position this project was in on the morning of 2026-09-10.
+    """
+    src = (ROOT / "head-to-head" / "run_heretic.py").read_text(encoding="utf-8")
+    assert "exit_code_accepted" in src, (
+        "a non-zero exit is expected from this tool and is accepted on the strength of the trial "
+        "count; the artefact has to record that, or the number reads as a failure forever")
+    assert "trials_completed" in src, (
+        "the evidence that made the exit acceptable is the trial count, so it travels with it")
+    # Written AFTER the trial count is known, or it cannot carry it.
+    assert src.index("trials = count_trials(study)") < src.index("exit_code_accepted")
+
+
+def test_the_short_arm_guard_still_refuses_before_any_of_that():
+    """Accepting a non-zero exit must not become accepting a short search.
+
+    The guard returns 3 on a short study, and it has to keep doing so before the acceptance is
+    ever recorded, or "the search completed" gets written about a search that did not.
+    """
+    src = (ROOT / "head-to-head" / "run_heretic.py").read_text(encoding="utf-8")
+    assert src.index("A short arm is not an equal-budget arm") < src.index("exit_code_accepted")

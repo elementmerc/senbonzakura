@@ -8,24 +8,32 @@ You need a GPU with 6 GB or more, and Python 3.10 or newer. No GPU? Skip to
 ## Install
 
 ```sh
-pip install 'senbonzakura[abliterate]'
+pip install senbonzakura
+senbonzakura setup
 ```
 
-That is 68 packages, because `abliterate` brings torch, transformers, accelerate and optuna. On
-Linux and Windows, 15 of them are CUDA libraries: **pip resolves by platform, not by hardware**, so
-you get the CUDA build of torch whether or not there is a card in the machine.
+The first command brings everything: torch, transformers, accelerate, optuna. It is 68 packages
+and a few gigabytes, and there is nothing else to choose.
 
-If you have no GPU, take torch from the CPU index first and the rest will fit around it. That is
-10 packages instead of 68, and none of them CUDA:
+The second command exists because **pip picks by platform, not by hardware**. There is no way for
+a package to say "install the CUDA build if there is a card", so what you get depends on which
+operating system you are on rather than on what is in the machine:
 
-```sh
-pip install --index-url https://download.pytorch.org/whl/cpu torch
-pip install 'senbonzakura[abliterate]'
-```
+| Your machine | What pip alone gives you |
+|---|---|
+| Linux with a GPU | the CUDA build. Correct |
+| Linux with no GPU | the CUDA build anyway, and about 15 CUDA packages you cannot use |
+| macOS | a build that uses Metal. Correct |
+| Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
-Plain `pip install senbonzakura`, with no extra, is two packages and no torch at all. It gets you
-the commands that check things: build a track, audit one, look for contamination, run `doctor`.
-None of those need a model or a card, so none of them make you download one.
+`senbonzakura setup` looks at the machine, says what it found, and prints the one command that
+fixes it. It changes nothing unless you add `--apply`.
+
+::: tip Why the Windows row is in bold
+PyPI's Windows torch is 124 MB; the CUDA one is not on PyPI at all. So a gaming laptop with a
+3060 in it installs a torch that cannot see the card, and nothing warns you. The search then runs
+on CPU and takes a day instead of an hour.
+:::
 
 ## Edit a model
 

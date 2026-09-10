@@ -158,6 +158,8 @@ def build_parser():
             "  imatrix      compute an importance matrix so a quantisation keeps the weights "
             "that matter, and record what it was calibrated on so two quantisations can be "
             "told apart\n"
+            "  setup        put the right build of torch on THIS machine: pip picks by platform, "
+            "not by hardware, so a Windows box with a GPU gets a CPU-only wheel\n"
             "  doctor       check this install can actually do the job: pins, the binary runs, "
             "every architecture module imports, the bundled data decodes, and with --deep a real "
             "model goes through convert and quantise\n"

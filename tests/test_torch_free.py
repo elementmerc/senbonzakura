@@ -200,6 +200,10 @@ def test_the_abliterate_path_refuses_in_words_rather_than_a_traceback(stripped):
         proc = _run(stripped, word, "--model", "x", "--track", "y", "--out", "z")
         said = proc.stderr + proc.stdout
         assert "Traceback" not in proc.stderr, f"'{word}' failed as a crash:\n{said}"
-        assert "senbonzakura[abliterate]" in said, f"'{word}' did not name what to install"
+        # Since Q-27 the editor's dependencies are BASE dependencies, so the remedy is a
+        # reinstall rather than an extra. What is asserted is unchanged: the message names
+        # a command the reader can actually type.
+        assert "pip install --force-reinstall senbonzakura" in said, \
+            f"'{word}' did not name what to install"
         assert f"'{word}'" in said, f"the message did not name the command typed: {said}"
         assert "'True'" not in said

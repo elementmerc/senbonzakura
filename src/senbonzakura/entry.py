@@ -55,6 +55,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "quantise": ("quantise", "main"),
     "convert": ("convert", "main"),
     "doctor": ("doctor", "main"),
+    "setup": ("envsetup", "main"),
     "imatrix": ("imatrix", "main"),
     "fetch": ("fetch", "main"),
 }
@@ -66,14 +67,18 @@ DELEGATED: dict[str, tuple[str, str]] = {
 #: `torch` was advertised here as `senbonzakura[cuda]`, an extra that has never existed in any
 #: version of this package, so the one line whose whole job is to tell somebody what to type
 #: named something they could not type. A test now walks every hint against the metadata.
+#: Since Q-27 the editor's dependencies are BASE dependencies, so missing one of them no longer
+#: means "you skipped an extra"; it means the install is damaged or was made with `--no-deps`.
+#: Telling that person to install an extra sends them to a command that changes nothing, which is
+#: the same failure the note above records, one release later.
 _INSTALL_HINT = {
-    "torch": "pip install 'senbonzakura[abliterate]'   (CPU only: pip install torch)",
-    "transformers": "pip install 'senbonzakura[abliterate]'",
-    "optuna": "pip install 'senbonzakura[abliterate]'",
-    "accelerate": "pip install 'senbonzakura[abliterate]'",
-    "gguf": "pip install 'senbonzakura[abliterate]'",
-    "sentencepiece": "pip install 'senbonzakura[abliterate]'",
-    # A base dependency, so missing it means a damaged install rather than a partial one.
+    "torch": "pip install --force-reinstall senbonzakura"
+             "   (then: senbonzakura setup, to get the build your hardware can use)",
+    "transformers": "pip install --force-reinstall senbonzakura",
+    "optuna": "pip install --force-reinstall senbonzakura",
+    "accelerate": "pip install --force-reinstall senbonzakura",
+    "gguf": "pip install --force-reinstall senbonzakura",
+    "sentencepiece": "pip install --force-reinstall senbonzakura",
     "pyarrow": "pip install --force-reinstall senbonzakura",
     # Only the Hub reader and a couple of local shapes need it; local tracks do not.
     "datasets": "pip install 'senbonzakura[hub]'",

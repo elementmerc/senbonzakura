@@ -176,6 +176,14 @@ def test_the_two_invocation_forms_agree_about_failure(command):
         f"gets a different answer about the same run.")
 
 
+#: Commands that are COMPLETE with no arguments, so exiting 0 having printed a report is the
+#: correct behaviour rather than the defect this file is named for. `setup` is the first: its whole
+#: job is to look at this machine and say what it found, and requiring an argument would be
+#: ceremony. The silence half of the check still applies to it, and is the half that catches a
+#: module with no `__main__` guard.
+NEEDS_NO_ARGUMENTS = {"setup"}
+
+
 @pytest.mark.parametrize("command", sorted(entry.DELEGATED))
 def test_no_delegated_module_runs_silently(command):
     """Exiting 0 having done nothing is the specific failure, so it gets its own assertion.
@@ -195,8 +203,10 @@ def test_no_delegated_module_runs_silently(command):
     printed = (proc.stdout + proc.stderr).strip()
 
     assert printed, (
-        f"'python -m senbonzakura.{module}' printed nothing at all. Every command here needs "
-        f"arguments, so with none it owes the reader a message saying so.")
+        f"'python -m senbonzakura.{module}' printed nothing at all. A module with no `__main__` "
+        f"guard imports, runs nothing, prints nothing and exits 0, and this is what catches it.")
+    if command in NEEDS_NO_ARGUMENTS:
+        return
     assert proc.returncode != 0, (
         f"'python -m senbonzakura.{module}' exited 0 with no arguments. If this command genuinely "
         f"does useful work with none, exempt it here by name and say why; leaving it to pass "

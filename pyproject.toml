@@ -56,23 +56,22 @@ dependencies = [
   # every pyarrow this project has ever run against is newer. Nothing here uses an API added
   # since 8, so the floor is about the ecosystem around it rather than about our own calls.
   "pyarrow>=14",
-]
-
-[project.optional-dependencies]
-
-# THE EDITOR. Everything needed to abliterate a model, convert it and quantise it.
-#
-# These were the base dependencies until 2026-09-08. They are most of a gigabyte and they
-# expect a GPU, and the largest single thing standing between this tool and the people who
-# would use it was that a plain `pip install` bought all of it whether or not you were going
-# to edit a model. Checking somebody else's published claim needs none of it: a track, its
-# audit, its contamination report and the installation check are text files, JSON and
-# arithmetic, and `tests/test_torch_free.py` runs them with every one of these made
-# unimportable, so this is a measured boundary rather than an intended one.
-#
-# BREAKING for anyone installed from 0.3.0: `senbonzakura abliterate` now needs this extra.
-# The refusal names the exact command rather than leaving it to be worked out.
-abliterate = [
+  # THE EDITOR, in the base install since 2026-09-10 (Q-27). These were the base dependencies until
+  # 2026-09-08, moved out to the `abliterate` extra under Q-3 so a checker could install
+  # torch-free, and moved back because the split served the wrong reader: somebody who types
+  # `pip install senbonzakura` wants to abliterate a model, and a skeleton that then asks them to
+  # work out which extra they needed is a worse first five minutes than a large download.
+  #
+  # THE TORCH-FREE CAPABILITY IS NOT WITHDRAWN, only the default. `tests/test_torch_free.py` still
+  # runs the checking commands with every one of these made unimportable, so the property Q-3
+  # actually wanted, that a Debian package or a verifier can be built with neither CUDA nor
+  # `datasets`, is still measured on every commit. What changed is what a bare `pip install`
+  # resolves to.
+  #
+  # pip CANNOT pick the right torch here: there is no environment marker for a GPU, a wheel runs no
+  # code at install time, and PyPI forbids depending on PyTorch's own index. So the default is the
+  # platform's wheel, which is CUDA on Linux and CPU-ONLY on Windows, and `senbonzakura setup`
+  # corrects it on the machine it is run on.
   # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE
   # path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
   # succeed into an environment the tool then rejects.
@@ -121,6 +120,26 @@ abliterate = [
   # PyPI is at 7.x, so adopting it would have meant carrying a pin nobody had shown was necessary.
   "sentencepiece>=0.1.98,<0.3.0",
 ]
+
+[project.optional-dependencies]
+
+# THE EDITOR. Everything needed to abliterate a model, convert it and quantise it.
+#
+# These were the base dependencies until 2026-09-08. They are most of a gigabyte and they
+# expect a GPU, and the largest single thing standing between this tool and the people who
+# would use it was that a plain `pip install` bought all of it whether or not you were going
+# to edit a model. Checking somebody else's published claim needs none of it: a track, its
+# audit, its contamination report and the installation check are text files, JSON and
+# arithmetic, and `tests/test_torch_free.py` runs them with every one of these made
+# unimportable, so this is a measured boundary rather than an intended one.
+#
+# BREAKING for anyone installed from 0.3.0: `senbonzakura abliterate` now needs this extra.
+# The refusal names the exact command rather than leaving it to be worked out.
+# KEPT, AND NOW AN ALIAS. Everything it used to bring is in the base install. The name appears in
+# 0.3.x-era documentation, in this project's own error messages and in whatever people have already
+# written down, and an extra that stops existing turns all of those into "senbonzakura has no extra
+# named abliterate" for no gain. It resolves to the package itself and keeps working.
+abliterate = ["senbonzakura"]
 # 4-bit loading for the head-to-head bench and low-VRAM runs.
 quant = ["bitsandbytes>=0.43"]
 # Shell completion. Optional because cli.py degrades gracefully without it; it is

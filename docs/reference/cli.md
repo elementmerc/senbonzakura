@@ -19,6 +19,13 @@ Every command is `python -m senbonzakura <name>`, or `senbonzakura <name>` after
 | `coherence` | Perplexity against a reference, so a model that stopped refusing because it stopped working is visible as such. |
 | `validate` | Compare direction budgets at matched refusal removal, which is the comparison this project exists to make. |
 
+## Setting up the install
+
+| Command | What it does |
+|---|---|
+| `setup` | Look at this machine and put the right build of torch on it. pip cannot: there is no environment marker for a GPU, and PyPI cannot depend on PyTorch's index. Prints the command; `--apply` runs it. |
+| `doctor` | Check this install can actually do the job, and say so loudly when it cannot. |
+
 ## The corpus
 
 | Command | What it does |

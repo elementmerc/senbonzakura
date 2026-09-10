@@ -135,7 +135,10 @@ def driver_cuda_version():
         out = subprocess.run([exe], capture_output=True, text=True, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
-    m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out.stdout or "")
+    # Windows nvidia-smi prints "CUDA UMD Version: 13.3"; Linux prints "CUDA Version: 13.0".
+    # Measured on the ROG 2026-09-10, where the first version of this regex read neither and
+    # the unread value then became a claim that the driver was too old.
+    m = re.search(r"CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)", out.stdout or "")
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
@@ -192,12 +195,22 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
             return ("unknown", reason, None)
         if not has_gpu:
             return ("ok", "no NVIDIA GPU, and the Windows default wheel is CPU-only already.", None)
+        if driver is None:
+            # NOT "your driver is too old". Measured on the ROG: nvidia-smi there prints
+            # "CUDA UMD Version", the regex read nothing, and the command told the operator to
+            # update a driver that had run CUDA all night. A refusal for a reason that is not
+            # true sends the reader to fix the wrong thing, which is the expensive kind of
+            # correct-looking answer.
+            reason = ("an NVIDIA GPU is present and the CUDA version this driver supports could "
+                      "not be read, so the right channel cannot be chosen for you. torch here is "
+                      "a CPU-only build, so the card is idle. Pass --cuda with a channel "
+                      "(cu130, cu128, ...) from https://pytorch.org/get-started/locally/.")
+            return ("unknown", reason, None)
         channel = pick_cuda_channel(driver)
         if channel is None:
-            seen = f"{driver[0]}.{driver[1]}" if driver else "an unreadable version"
-            reason = (f"an NVIDIA GPU is present and the driver reports CUDA {seen}, which is "
-                      f"older than any build PyTorch publishes. Update the driver, or pass --cuda "
-                      f"to choose a channel yourself.")
+            reason = (f"an NVIDIA GPU is present and the driver reports CUDA "
+                      f"{driver[0]}.{driver[1]}, which is older than any build PyTorch publishes. "
+                      f"Update the driver, or pass --cuda to choose a channel yourself.")
             return ("blocked", reason, None)
         if variant and variant.startswith("cu"):
             return ("ok", f"already on a CUDA build ({torch_version}).", None)
@@ -285,7 +298,11 @@ def main(argv=None):
 
     print(f"\n  {verdict.upper()}: {reason}")
     if args is None:
-        return 0
+        # "blocked" means there is a real problem here that this command cannot fix, which is not
+        # the same answer as "nothing to do". Exiting 0 on both makes them indistinguishable to
+        # anything that gates on this, and `doctor` already sets the precedent of exiting non-zero
+        # when the install cannot do its job.
+        return 3 if verdict == "blocked" else 0
 
     printable = " ".join([sys.executable, "-m", "pip", *args])
     print(f"\n  {printable}")

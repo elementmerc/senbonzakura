@@ -415,3 +415,79 @@ def test_the_live_table_is_consistent_with_itself():
     versions = [v for v, _ in envsetup.CUDA_CHANNELS]
     assert versions == sorted(versions, reverse=True)
     assert all(t.startswith("cu") and t[2:].isdigit() for t in tags)
+
+
+# ── measured on the ROG, 2026-09-10: both of these were wrong on real hardware ───────
+
+WINDOWS_SMI = """Thu Sep 10 15:04:00 2026
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.88                 KMD Version: 610.88        CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+"""
+
+LINUX_SMI = """Thu Sep 10 12:00:00 2026
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 580.00       Driver Version: 580.00       CUDA Version: 13.0      |
++-----------------------------------------------------------------------------+
+"""
+
+
+@pytest.mark.parametrize(("output", "want"), [
+    (WINDOWS_SMI, (13, 3)),
+    (LINUX_SMI, (13, 0)),
+])
+def test_both_nvidia_smi_wordings_are_read(monkeypatch, output, want):
+    """Windows says "CUDA UMD Version", Linux says "CUDA Version".
+
+    The first regex read only the Linux form. On the ROG it therefore read nothing, and the
+    unread value became a claim that the driver was too old.
+    """
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(envsetup.subprocess, "run", lambda *a, **k: _Proc(output))
+    assert envsetup.driver_cuda_version() == want
+
+
+def test_a_card_whose_cuda_version_is_unreadable_is_not_called_an_old_driver():
+    """THE WORSE OF THE TWO BUGS, and it only appeared on hardware.
+
+    A version we could not parse became "older than any build PyTorch publishes. Update the
+    driver", said to an operator whose driver had run CUDA all night. A refusal for a reason that
+    is not true sends the reader to fix the wrong thing.
+    """
+    got = envsetup.plan(system="Windows", machine="AMD64", gpus=["GPU 0: RTX 3060"],
+                        driver=None, torch_version="2.14.0", variant=None)
+    assert got[0] == "unknown"
+    assert "could not be read" in got[1]
+    assert "Update the driver" not in got[1]
+    assert "idle" in got[1], "the card being unused is still the thing they need to know"
+    assert got[2] is None, "no channel is guessed when the ceiling is unknown"
+
+
+def test_a_genuinely_old_driver_is_still_called_old():
+    """The blocked verdict is kept for the case where a version WAS read and is too low."""
+    got = envsetup.plan(system="Windows", machine="AMD64", gpus=["GPU 0: an old card"],
+                        driver=(10, 2), torch_version="2.14.0", variant=None)
+    assert got[0] == "blocked"
+    assert "10.2" in got[1]
+
+
+def test_blocked_exits_non_zero(capsys, monkeypatch):
+    """A problem this cannot fix is not the same answer as nothing to do."""
+    _machine(monkeypatch, system="Windows", gpus=["GPU 0: old"], driver=(10, 2),
+             torch_version="2.14.0", variant=None)
+    assert envsetup.main([]) == 3
+
+
+def test_the_real_rog_case_end_to_end(capsys, monkeypatch):
+    """Windows, a 3060, CUDA UMD 13.3, CPU-only torch: the machine this was written for."""
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup.subprocess, "run",
+                        lambda a, **k: _Proc(WINDOWS_SMI if len(a) == 1
+                                             else "GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU\n"))
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    assert envsetup.main([]) == 0
+    out = capsys.readouterr().out
+    assert "up to 13.3" in out
+    assert "cu132" in out, "13.3 carries the newest published channel"
+    assert "FIX:" in out

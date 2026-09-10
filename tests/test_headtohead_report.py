@@ -461,14 +461,21 @@ def _run_with_drift(tmp_path, sen, her, refusals=None):
 
 
 def test_the_drift_axis_now_gets_a_test_and_not_just_two_means(tmp_path):
-    """THE DEFECT, with the real numbers from the 2026-09-10 run.
+    """THE DEFECT, with the real per-seed values from the 2026-09-10 run.
 
-    Means 0.0545 against 0.1227 reads as "half the collateral damage". One seed at 0.3591 against
-    siblings of 0.0439 to 0.1075 carries all of it, and a permutation test says so.
+    Means 0.0545 against 0.1227 read as "half the collateral damage". One seed at 0.3591 against
+    siblings of 0.0439 to 0.1075 carries all of it, and a permutation test says so: p = 0.238.
+
+    These ten numbers were APPROXIMATED FROM MEMORY when this test was first written, because the
+    arms were still on the ROG and unreachable. The report driven by them printed p = 0.405, and
+    that figure went onto the public benchmark page as a measurement. It was a property of my
+    fixture, not of the run. The arms were fetched the same evening and these are the real values;
+    the conclusion was unchanged and the strength of it was overstated. A fixture is a claim about
+    the world, and a report driven by one tells you about your claim.
     """
     out = _run_with_drift(tmp_path,
-                          [0.0512, 0.0498, 0.0605, 0.0533, 0.0577],
-                          [0.0439, 0.0573, 0.1075, 0.0457, 0.3591])
+                          [0.0363, 0.0406, 0.0510, 0.0936, 0.0512],
+                          [0.1075, 0.3591, 0.0439, 0.0573, 0.0456])
     assert "TIE on coherence drift" in out, (
         "a gap this size across these seeds is not evidence, and the report has to say so where "
         "the reader meets the means")

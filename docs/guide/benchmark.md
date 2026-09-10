@@ -20,12 +20,19 @@ difference disappeared:
 |---|---|---|
 | mean over five seeds | 0.0545 | 0.1227 |
 | **median** over five seeds | **0.0510** | **0.0573** |
-| worst seed | 0.0605 | 0.3591 |
+| worst seed | 0.0936 | 0.3591 |
 
-One Heretic seed carries the entire mean difference. Drop it and the means are 0.0636 against
-0.0545, with overlapping intervals. A permutation test over the ten seeds returns p=0.405, so
-there is **no detectable coherence difference on this model at this size**, and the earlier
-"roughly half the collateral damage" is not a finding.
+One Heretic seed (seed 43, at 0.3591 against siblings of 0.0439 to 0.1075) carries the entire mean
+difference. Drop it and Heretic's mean is 0.0636 against our 0.0545. An exact permutation test over
+the ten seeds returns **p = 0.238**, so there is **no detectable coherence difference on this model
+at this size**, and the earlier "roughly half the collateral damage" is not a finding.
+
+The per-seed values are listed above in full precisely so this block does not have to be taken on
+trust. Publishing the run's thirty artefacts, which are aggregate JSON with no prompts and no
+weights in them, is an open decision rather than an oversight: this repository's ignore rules
+exclude every `results/` directory by default, under a heading that begins "No loaded guns", and
+widening that is not a change to make casually. `CONTRACT.md` §4 asks for the record; until it is
+here, these numbers are a report of what we measured rather than something you can re-derive.
 
 The same run put Heretic **marginally ahead** on refusal removal, not behind. Both differences are
 negligible; the direction was not, and it was reported the wrong way round here for a month.

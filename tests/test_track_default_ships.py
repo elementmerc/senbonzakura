@@ -39,6 +39,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from artefacts import needs_track
 
 import tools.check_wheel as cw
 from senbonzakura import bundled
@@ -185,6 +186,7 @@ def test_a_stamp_that_cannot_be_read_is_treated_as_no_cache(monkeypatch, tmp_pat
     assert bundled._cache_is_current(target) is False
 
 
+@needs_track
 def test_an_interrupted_extraction_leaves_no_half_track_behind(monkeypatch, tmp_path):
     """The leftover `.unpacking` directory is cleared before a retry, not extracted on top of.
 

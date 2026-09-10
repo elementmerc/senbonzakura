@@ -178,6 +178,18 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
     has_gpu = bool(gpus)
     cannot_tell = gpus is None
 
+    # NO TORCH AT ALL is a different state from the wrong torch, and it is checked first because
+    # every message below is about which BUILD is installed. Found while exercising an installed
+    # wheel with `--no-deps`: the command reported "nothing is broken" to an environment that
+    # cannot abliterate anything. torch is a base dependency now, so this means a damaged install
+    # or a deliberate `--no-deps`, and either way the remedy is not a channel.
+    if torch_version is None:
+        reason = ("torch is not installed at all, so nothing here can run. It is a base "
+                  "dependency, so this is a damaged install or one made with --no-deps: "
+                  "`pip install --force-reinstall senbonzakura`, then run this again to get the "
+                  "build your hardware can use.")
+        return ("blocked", reason, None)
+
     def swap(channel):
         return ["install", "--upgrade", "--force-reinstall",
                 "--index-url", f"{INDEX}/{channel}", "torch"]

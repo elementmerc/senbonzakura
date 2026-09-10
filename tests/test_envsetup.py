@@ -133,8 +133,11 @@ def test_macos_needs_no_choice_at_all():
 
 
 def test_an_unrecognised_platform_offers_nothing_rather_than_guessing():
+    """Torch IS installed here, so this reaches the platform fallback rather than the earlier
+    missing-torch branch. The subject is the unknown platform, not the absent package.
+    """
     got = envsetup.plan(system="FreeBSD", machine="amd64", gpus=None, driver=None,
-                        torch_version=None, variant=None)
+                        torch_version="2.14.0", variant=None)
     assert got[0] == "unknown"
     assert got[2] is None
 
@@ -491,3 +494,20 @@ def test_the_real_rog_case_end_to_end(capsys, monkeypatch):
     assert "up to 13.3" in out
     assert "cu132" in out, "13.3 carries the newest published channel"
     assert "FIX:" in out
+
+
+def test_no_torch_at_all_is_not_the_same_as_the_wrong_torch():
+    """Found by exercising an installed wheel with --no-deps during a review pass.
+
+    Every other message in `plan()` is about which BUILD is installed, and with none installed the
+    Linux branch reported "nothing is broken" to an environment that cannot abliterate anything.
+    torch is a base dependency now, so its absence is a damaged install, and the remedy is a
+    reinstall rather than a channel.
+    """
+    for system in ("Linux", "Windows", "Darwin"):
+        got = envsetup.plan(system=system, machine="x86_64", gpus=None, driver=None,
+                            torch_version=None, variant=None)
+        assert got[0] == "blocked", f"{system} did not notice torch was absent"
+        assert "not installed at all" in got[1]
+        assert "force-reinstall" in got[1]
+        assert got[2] is None, "a channel cannot fix a missing package"

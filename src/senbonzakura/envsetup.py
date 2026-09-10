@@ -60,6 +60,43 @@ CUDA_CHANNELS: tuple[tuple[tuple[int, int], str], ...] = (
 
 INDEX = "https://download.pytorch.org/whl"
 
+#: When the table above was last checked against the index, and how long that is good for. The
+#: same shape as `vendor/pins.json`: a hardcoded list of somebody else's versions rots, and a list
+#: that rots silently is worse than one that says how old it is. `tools/check_cuda_channels.py`
+#: does the network half at release time; the arithmetic here is pure so it can be tested.
+CHANNELS_CHECKED = "2026-09-10"
+CHANNELS_STALE_AFTER_DAYS = 90
+
+
+def channels_age_days(today, checked=None):
+    """Days since the channel table was verified against the index."""
+    from datetime import date
+    checked = checked or CHANNELS_CHECKED
+    y, m, d = (int(x) for x in checked.split("-"))
+    return (today - date(y, m, d)).days
+
+
+def channels_are_stale(today, checked=None, limit=None):
+    return channels_age_days(today, checked) > (limit or CHANNELS_STALE_AFTER_DAYS)
+
+
+def channel_problems(published, table=None):
+    """What is wrong with our table given what the index actually publishes.
+
+    Two different faults, reported separately because they need different fixes. A channel we
+    name that is NOT published is the dangerous one: the command prints an index URL that 404s,
+    and the user finds out by running it. A channel published that we do NOT name is only a
+    missed opportunity, and it means a new card gets an older build than it could have.
+    """
+    table = table or CUDA_CHANNELS
+    ours = [tag for _, tag in table]
+    gone = [tag for tag in ours if tag not in published]
+    newer = sorted(
+        (c for c in published
+         if c.startswith("cu") and c[2:].isdigit() and int(c[2:]) > max(int(t[2:]) for t in ours)),
+        key=lambda c: int(c[2:]))
+    return {"gone": gone, "newer": newer}
+
 #: What a torch version string tells us about the build it came from. `2.14.0+cpu` and
 #: `2.14.0+cu130` are explicit; a bare `2.14.0` is whatever the platform's default wheel is, which
 #: is the case that needs the platform table above to interpret it.

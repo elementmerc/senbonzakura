@@ -59,6 +59,17 @@ whether it complied, and it carried full weight in the rule that decides which t
 the finished model, so the search was being steered toward models that do not caveat. Noncompliance
 rates from before this date are not comparable with rates after it.
 
+### Breaking
+
+- `pip install senbonzakura` now installs torch, transformers, accelerate and optuna. It is
+  about 68 packages and a few gigabytes, where a bare install used to be two packages. If you
+  relied on a lightweight install for the commands that only check things, add `--no-deps` and
+  install what you need, or use a distribution package.
+- `pip install 'senbonzakura[abliterate]'` still works and now installs the same thing as a
+  plain install. Nothing needs changing.
+- `senbonzakura abliterate` needed the `abliterate` extra for two days in early September. It
+  does not any more.
+
 ### If you are coming from 0.3.0, this is what you can now run
 
 0.3.0 installed three things you could run: abliterating a model (as `senbonzakura --model ...`
@@ -78,6 +89,7 @@ all, so if you read about one of them and could not find it, this is why.
 - `senbonzakura report` — the model card for a finished run.
 - `senbonzakura interactive` — a guided mode for people who don't want to read the flag list.
 - `senbonzakura drift` — how far the edited model moved from the original.
+- `senbonzakura setup` — put the right build of torch on this machine, which pip cannot do for itself.
 
 Also: the corpora ship inside the package, so `--track default` works offline on a fresh
 install rather than only in a source checkout.

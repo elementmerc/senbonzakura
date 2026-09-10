@@ -363,3 +363,55 @@ def test_the_installed_torch_is_read_and_its_variant_parsed(monkeypatch):
     assert envsetup.installed_torch() == ("2.14.0+cu130", "cu130")
     monkeypatch.setattr("importlib.metadata.version", lambda name: "2.14.0")
     assert envsetup.installed_torch() == ("2.14.0", None)
+
+
+# ── the channel table's own freshness, which is the half that rots ──────────────────
+#
+# `CUDA_CHANNELS` is a hardcoded snapshot of somebody else's release schedule. The network half
+# lives in `tools/check_cuda_channels.py` and runs once per release; the arithmetic is here, for
+# the same reason `vendoring.py` holds the pin arithmetic and `check_vendor_pins.py` the fetch.
+
+from datetime import date  # noqa: E402
+
+
+def test_a_fresh_table_is_not_stale():
+    assert not envsetup.channels_are_stale(date(2026, 9, 10))
+    assert envsetup.channels_age_days(date(2026, 9, 10)) == 0
+
+
+def test_a_table_past_the_limit_is_stale():
+    assert envsetup.channels_are_stale(date(2026, 12, 31))
+    assert envsetup.channels_age_days(date(2026, 12, 31)) > 90
+
+
+def test_the_limit_is_a_boundary_not_a_range():
+    """Exactly at the limit is still good; a day past it is not."""
+    at = date(2026, 9, 10)
+    assert not envsetup.channels_are_stale(at, checked="2026-06-12", limit=90)
+    assert envsetup.channels_are_stale(at, checked="2026-06-11", limit=90)
+
+
+def test_a_channel_we_name_that_is_gone_is_the_dangerous_one():
+    """The command would print an index URL that 404s, and the reader runs it before finding out."""
+    got = envsetup.channel_problems({"cpu", "cu130", "cu132"},
+                                    table=(((13, 0), "cu130"), ((12, 8), "cu128")))
+    assert got["gone"] == ["cu128"]
+
+
+def test_a_channel_we_miss_is_reported_separately():
+    """Not a failure: a newer card gets an older build than it could have, which is different
+    from being sent to a URL that does not exist.
+    """
+    got = envsetup.channel_problems({"cpu", "cu130", "cu134"},
+                                    table=(((13, 0), "cu130"),))
+    assert got["gone"] == []
+    assert got["newer"] == ["cu134"]
+
+
+def test_the_live_table_is_consistent_with_itself():
+    """Newest first, and every entry a plausible channel name."""
+    tags = [tag for _, tag in envsetup.CUDA_CHANNELS]
+    assert tags == sorted(tags, key=lambda t: int(t[2:]), reverse=True)
+    versions = [v for v, _ in envsetup.CUDA_CHANNELS]
+    assert versions == sorted(versions, reverse=True)
+    assert all(t.startswith("cu") and t[2:].isdigit() for t in tags)

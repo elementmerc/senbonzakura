@@ -54,6 +54,7 @@ python tools/build_corpora.py          # writes src/senbonzakura/data/corpora.bi
 python tools/pack_track.py             # writes src/senbonzakura/data/default-track.bin
 python -m build --wheel
 python tools/check_wheel.py dist/*.whl --release
+python tools/check_cuda_channels.py     # the channels `senbonzakura setup` recommends still exist
 ```
 
 `--release` is no longer the part that is easy to skip, because it is no longer skippable:

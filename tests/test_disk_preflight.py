@@ -135,30 +135,59 @@ class _PathStub:
 
 # ── the wiring, because a check nothing calls is not a check ─────────────────────────
 
+def _flight(tmp_path, model, **kw):
+    (tmp_path / "corpus").mkdir(exist_ok=True)
+    return headtohead.preflight(
+        tools=["senbon", "heretic"], track=tmp_path / "corpus", out=tmp_path / "out",
+        model=str(model), isolate="none", images={}, **kw)
+
+
 def test_the_preflight_reports_the_shortfall_when_there_is_one(tmp_path, model, monkeypatch):
     """Driven with a host volume that has nothing left, which is the state that caused this."""
-    (tmp_path / "corpus").mkdir()
     monkeypatch.setattr(headtohead, "host_free_bytes", lambda: 1 * GB)
-    problems = headtohead.preflight(
-        tools=["senbon", "heretic"], track=tmp_path / "corpus", out=tmp_path / "out",
-        model=str(model), isolate="none", images={}, arms=10)
+    problems = _flight(tmp_path, model, seeds=[42, 43, 44, 45, 46], trials=200)
     assert any("Windows volume" in p for p in problems), (
         f"preflight ran the disk check and did not surface it: {problems}")
+    assert any("10 arms" in p for p in problems), "five seeds of two tools is ten arms, not five"
 
 
-def test_a_run_that_does_not_say_how_many_arms_is_not_second_guessed(tmp_path, model):
-    """`arms` defaults to 0, so a caller that does not say gets no estimate rather than a guess
-    built from a number nobody passed.
+def test_a_run_that_names_no_seeds_is_not_second_guessed(tmp_path, model):
+    """No seeds means no arm count, so no estimate rather than a guess from a number nobody gave."""
+    assert not any("arms need about" in p for p in _flight(tmp_path, model))
+
+
+# ── the recovery case, which the first version of this gate would have blocked ───────
+
+def test_arms_already_on_disk_are_not_sized_for_again(tmp_path, model, monkeypatch):
+    """THE DEFECT IN THE FIX. A run that died with nine of ten complete needs room for ONE arm.
+
+    Sizing the resumed run against all ten would refuse the recovery, which is the moment the
+    check matters most. Counted through the runner's own `arm_is_done` so the two cannot drift.
     """
-    (tmp_path / "corpus").mkdir()
-    problems = headtohead.preflight(
-        tools=["senbon", "heretic"], track=tmp_path / "corpus", out=tmp_path / "out",
-        model=str(model), isolate="none", images={})
-    assert not any("arms need about" in p for p in problems)
+    monkeypatch.setattr(headtohead, "arm_is_done",
+                        lambda arm, expected, adapter: (Path(arm).name != "heretic-seed46",
+                                                        "pretend"))
+    n = headtohead.arms_to_run(tools=["senbon", "heretic"], seeds=[42, 43, 44, 45, 46],
+                               model=str(model), out=tmp_path / "out", trials=200)
+    assert n == 1, f"nine arms are already done and it wants room for {n}"
 
 
-def test_the_arm_count_is_tools_times_seeds():
-    """Five seeds of two tools is ten models on disk, not five."""
-    text = Path(headtohead.__file__).read_text(encoding="utf-8")
-    assert "arms=len(tools) * len(seeds)" in text, (
-        "the estimate must count every arm; counting seeds alone halves it")
+def test_force_sizes_for_every_arm_again(tmp_path, model, monkeypatch):
+    """`--force` re-runs what is on disk, so the space has to be there for all of it."""
+    monkeypatch.setattr(headtohead, "arm_is_done", lambda *a: (True, "done"))
+    n = headtohead.arms_to_run(tools=["senbon", "heretic"], seeds=[42, 43], model=str(model),
+                               out=tmp_path / "out", trials=200, force=True)
+    assert n == 4
+
+
+def test_a_run_with_nothing_on_disk_sizes_for_all_of_it(tmp_path, model):
+    n = headtohead.arms_to_run(tools=["senbon", "heretic"], seeds=[42, 43, 44],
+                               model=str(model), out=tmp_path / "nothing-here", trials=200)
+    assert n == 6
+
+
+def test_an_unknown_tool_is_left_to_the_check_that_owns_it(tmp_path, model):
+    """It is already a complaint elsewhere; counting it here would double-report and mis-size."""
+    n = headtohead.arms_to_run(tools=["senbon", "nonsense"], seeds=[42],
+                               model=str(model), out=tmp_path / "nothing", trials=200)
+    assert n == 1

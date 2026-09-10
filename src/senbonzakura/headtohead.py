@@ -578,6 +578,32 @@ def _gb(n):
     return f"{n / 1024 ** 3:.1f} GB"
 
 
+def arms_to_run(*, tools, seeds, model, out, trials, force=False) -> int:
+    """How many arms this run will EXECUTE, which is not how many it names.
+
+    The runner skips an arm whose identical output is already on disk, so a resumed run can name
+    ten arms and execute one. Sizing the disk against the ten would refuse the recovery of a run
+    that died with nine of them complete, which is the exact moment the disk check matters and the
+    exact moment it would be wrong; the first version of this gate did that.
+
+    Asked through the runner's own `arm_is_done`, so a second copy of "is this arm finished"
+    cannot drift from the one that decides.
+    """
+    if force:
+        return len([t for t in tools if t in ADAPTERS]) * len(seeds)
+    n = 0
+    for tool in tools:
+        adapter = ADAPTERS.get(tool)
+        if adapter is None:
+            continue
+        for seed in seeds:
+            arm = Path(out) / f"{adapter.name}-seed{seed}"
+            done, _ = arm_is_done(arm, arm_manifest(adapter, seed, model, trials), adapter)
+            if not done:
+                n += 1
+    return n
+
+
 def disk_complaints(*, out: Path, model: str, arms: int, free=None, host_free=None) -> list[str]:
     """Whether there is room for every arm, asked of the host as well as of this filesystem."""
     if arms <= 0:
@@ -608,7 +634,8 @@ def disk_complaints(*, out: Path, model: str, arms: int, free=None, host_free=No
 
 # ── preflight # ── preflight ─────────────────────────────────────────────────────────────────────────
 def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images,
-              slices=None, score=False, harmful=None, harmless=None, arms=0) -> list[str]:
+              slices=None, score=False, harmful=None, harmless=None, seeds=(),
+              trials=0, force=False) -> list[str]:
     """Everything checkable before the first GPU second is spent, returned as complaints.
 
     A long run that dies forty minutes in on something knowable at the start is the most expensive
@@ -666,7 +693,12 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
         if missing:
             problems.append(f"--isolate docker needs an image per tool; none given for: "
                             f"{', '.join(missing)}")
-    problems.extend(disk_complaints(out=Path(out), model=model, arms=arms))
+    # Counted rather than assumed: a resumed run names every arm and executes only the
+    # ones not already on disk.
+    problems.extend(disk_complaints(
+        out=Path(out), model=model,
+        arms=arms_to_run(tools=tools, seeds=seeds, model=model, out=Path(out),
+                         trials=trials, force=force)))
     return problems
 
 
@@ -1319,7 +1351,7 @@ def main(argv=None):
     problems = preflight(tools=tools, track=Path(a.track), out=Path(a.out), model=a.model,
                          isolate=a.isolate, images=images, slices=slices, score=a.score,
                          harmful=a.harmful, harmless=a.harmless,
-                         arms=len(tools) * len(seeds))
+                         seeds=seeds, trials=a.trials, force=a.force)
     if problems:
         print("BENCH REFUSED: nothing was run, because this comparison would not be trustworthy:",
               file=sys.stderr)

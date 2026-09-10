@@ -116,6 +116,32 @@ def load_json(path):
         return None
 
 
+#: What `best_of_n_heretic.py` stamps on a KL figure it measured itself. It lives HERE, in the
+#: reporter, and `headtohead` re-exports it, because the fix for "the summary attributed our
+#: measurement to the other tool" was applied to one of two reporters and the one left behind was
+#: the one that runs at the end of every `head-to-head run`. One definition, one reader.
+KL_SOURCE_MEASURED = "measured by this pass"
+
+
+def kl_estimator_for(winner):
+    """Whose estimator produced this arm's KL, READ FROM THE ARTEFACT rather than asserted.
+
+    `own_numbers` used to hardcode "Heretic, its own evaluation (its full harmless set)" over a
+    number the selection pass had measured with our estimator on the shared slice, and printed a
+    paragraph above it explaining that ours was "the harder ground". Every clause of that was
+    false about the figure beneath it.
+    """
+    source = (winner or {}).get("kl_source")
+    if source == KL_SOURCE_MEASURED:
+        return ("senbonzakura.firsttoken, measured by the equal-budget selection pass on the "
+                "shared coherence slice")
+    if source:
+        return str(source)
+    # An unlabelled number is what made the two tools' KL figures unreadable across each other in
+    # the first place, so it is named as unlabelled rather than given a plausible owner.
+    return "UNRECORDED: this artefact carries no kl_source"
+
+
 def collect(run_dir):
     """Every scored arm in the directory, keyed by tool, with its own artefact beside it."""
     arms = []
@@ -202,6 +228,14 @@ def one_ruler_drift(run_dir, tool, seed, variant):
         "drift_kl": d.get("kl"),
         "drift_prompts": d.get("prompts"),
         "drift_n": d.get("n_prompts"),
+        # `drift.py` has written these into every artefact since the axis every headline
+        # comparison turns on was found to have no uncertainty at all. Until 2026-09-10 nothing
+        # outside that file read any of them: computed, tested, serialised, and consumed by
+        # nobody, while the report printed a bare mean under the word "comparable".
+        "drift_kl_ci": d.get("kl_ci"),
+        "drift_kl_ci_method": d.get("kl_ci_method"),
+        "drift_precision_ok": d.get("precision_ok"),
+        "drift_precision_note": d.get("precision_note"),
     }
 
 
@@ -224,10 +258,51 @@ def own_numbers(run_dir, tool, seed):
     return {
         "own_refusals": winner.get("refusals"),
         "own_kl": winner.get("kl"),
-        # Named precisely, because this is the pairing that must never be read as one column.
-        "own_kl_estimator": "Heretic, its own evaluation (its full harmless set)",
+        # Read from the stamp. This was hardcoded to "Heretic, its own evaluation (its full
+        # harmless set)" long after the selection pass began measuring it with our estimator.
+        "own_kl_estimator": kl_estimator_for(winner),
+        "own_kl_is_ours": winner.get("kl_source") == KL_SOURCE_MEASURED,
         "own_refusal_estimator": "senbonzakura rulers, shared re-score slice",
     }
+
+
+def median(xs):
+    ys = sorted(xs)
+    n = len(ys)
+    return ys[n // 2] if n % 2 else (ys[n // 2 - 1] + ys[n // 2]) / 2
+
+
+def per_tool_summary(readable, key, fmt, scale=1.0, suffix=""):
+    """Mean, MEDIAN and n for each tool, plus how many arms were left out for want of a figure.
+
+    The median is here because the mean is what misled. On 2026-09-10 one Heretic seed at 0.3591
+    against siblings of 0.0439 to 0.1075 carried an entire published gap, and nothing in this
+    report would have shown a reader that: the means were 0.0545 and 0.1227 and the medians were
+    0.0510 and 0.0573. The outlier only became visible when somebody looked past the mean.
+
+    The dropped count is here because `by_tool_drift` silently skipped arms whose figure was
+    missing, so five arms and two arms printed side by side with no note that the n's differed.
+    """
+    by_tool, dropped = {}, {}
+    for a in readable:
+        if a["variant"]:
+            continue
+        v = a.get(key)
+        if v is None:
+            dropped[a["tool"]] = dropped.get(a["tool"], 0) + 1
+        else:
+            by_tool.setdefault(a["tool"], []).append(v)
+    out = []
+    for tool in sorted(by_tool):
+        xs = by_tool[tool]
+        spread = fmt.format(stdev(xs) * scale) if len(xs) > 1 else "-"
+        miss = dropped.get(tool, 0)
+        note = f"  ({miss} arm(s) had no figure and are NOT in this mean)" if miss else ""
+        out.append(f"  {tool:<10} n={len(xs)}  mean {fmt.format(mean(xs) * scale)}{suffix}  "
+                   f"median {fmt.format(median(xs) * scale)}{suffix}  spread {spread}{note}")
+    out.extend(f"  {tool:<10} n=0  every arm ({dropped[tool]}) is missing this figure"
+               for tool in sorted(set(dropped) - set(by_tool)))
+    return out, by_tool
 
 
 ALPHA = 0.05
@@ -242,16 +317,30 @@ def _fmt_p(pv):
     return "<0.001" if pv < 0.0005 else f"{pv:.3f}"
 
 
-def verdict(by_tool):
-    """Compare the two tools on the compass, and refuse to call anything inside the noise."""
+def verdict(by_tool, key="auc", axis="harm recognition", fmt="{:.4f}", higher_is_better=True):
+    """Compare the two tools on one axis, and refuse to call anything inside the noise.
+
+    WHY THIS TAKES AN AXIS NOW
+
+    It used to be hardwired to the compass AUC, and it was the only axis that got a test. Drift
+    and refusal printed a per-tool mean and spread under a heading calling the column comparable,
+    with no test, no minimum-seed gate and no interval: every guard built here was absent there.
+
+    The 2026-09-10 panel reached that from two directions. Our own AUC spans 0.9860 to 0.9887
+    across ten arms and a 32.8-point refusal swing, so the tested axis is the one this instrument
+    cannot move, and the report was structurally guaranteed to return TIE where it tested while
+    handing the reader an untested mean-versus-mean table on the two axes where a claim actually
+    gets made. That is the route by which "roughly half the collateral damage" reached the site
+    from a run whose own medians were 0.0510 against 0.0573.
+    """
     tools = sorted(by_tool)
     if len(tools) != 2:
         return f"NO VERDICT: {len(tools)} tool(s) present; a head-to-head needs two."
     a, b = tools
-    xa = [arm["auc"] for arm in by_tool[a]]
-    xb = [arm["auc"] for arm in by_tool[b]]
+    xa = [arm[key] for arm in by_tool[a] if arm.get(key) is not None]
+    xb = [arm[key] for arm in by_tool[b] if arm.get(key) is not None]
     if min(len(xa), len(xb)) < MIN_SEEDS_FOR_A_SPREAD:
-        return (f"NO VERDICT: {a} has {len(xa)} seed(s) and {b} has {len(xb)}. Below "
+        return (f"NO VERDICT on {axis}: {a} has {len(xa)} seed(s) and {b} has {len(xb)}. Below "
                 f"{MIN_SEEDS_FOR_A_SPREAD} a spread is not an estimate of anything, so no gap "
                 f"can be judged against it.")
     ma, mb = mean(xa), mean(xb)
@@ -265,10 +354,10 @@ def verdict(by_tool):
         # was supposed to vary. With no gap either there is nothing to say; with a gap, the gap is
         # reported and the implausibility is reported beside it rather than quietly ignored.
         if gap < SPREAD_IS_ZERO:
-            return ("NO VERDICT: both tools scored identically on every seed. That is a "
-                    "measurement to investigate rather than a result to publish.")
-        winner = a if ma > mb else b
-        return (f"{winner} scores higher ({max(ma, mb):.4f} against {min(ma, mb):.4f}), but "
+            return (f"NO VERDICT on {axis}: both tools scored identically on every seed. That "
+                    f"is a measurement to investigate rather than a result to publish.")
+        winner = (a if ma > mb else b) if higher_is_better else (a if ma < mb else b)
+        return (f"{winner} is ahead ({fmt.format(max(ma, mb))} against {fmt.format(min(ma, mb))}), but "
                 f"EVERY seed of both tools returned an identical score, so the spread is exactly "
                 f"zero. Check that the seed reaches the search before reading the gap: a spread "
                 f"of zero across five seeds is not a tight measurement, it is usually a seed that "
@@ -291,27 +380,30 @@ def verdict(by_tool):
     floor = min_achievable_p(len(xa), len(xb))
     if floor is not None and floor > ALPHA:
         need = 4 if ALPHA >= 0.029 else 5
-        return (f"NO VERDICT POSSIBLE at this many seeds: {a} has {len(xa)} and {b} has "
-                f"{len(xb)}, and the smallest p a permutation test can return on those group "
+        return (f"NO VERDICT POSSIBLE on {axis} at this many seeds: {a} has {len(xa)} and {b} "
+                f"has {len(xb)}, and the smallest p a permutation test can return on those group "
                 f"sizes is {floor:.3f}. Nothing in the data could clear {ALPHA}. The observed "
-                f"gap is {gap:.4f} ({a} {ma:.4f}, {b} {mb:.4f}), which is a description and not "
-                f"a finding. Run at least {need} seeds per tool.")
+                f"gap is {fmt.format(gap)} ({a} {fmt.format(ma)}, {b} {fmt.format(mb)}), which is "
+                f"a description and not a finding. Run at least {need} seeds per tool.")
     if pv is None or pv > ALPHA:
         note = ""
         if clears_spread:
             note = (f" The gap does clear the pooled spread, which an earlier version of this "
                     f"report would have called a win; with {len(xa)} and {len(xb)} seeds that "
                     f"comparison ignores how little evidence there is.")
-        return (f"TIE on harm recognition: {a} {ma:.4f}, {b} {mb:.4f}, gap {gap:.4f}, pooled "
-                f"spread {spread:.4f}, permutation p={_fmt_p(pv)}. Chance alone reorders these seeds "
-                f"into a gap this large often enough that the gap is not evidence.{note}")
-    winner, loser = (a, b) if ma > mb else (b, a)
+        return (f"TIE on {axis}: {a} {fmt.format(ma)}, {b} {fmt.format(mb)}, gap "
+                f"{fmt.format(gap)}, pooled spread {fmt.format(spread)}, permutation "
+                f"p={_fmt_p(pv)}. Chance alone reorders these seeds into a gap this large often "
+                f"enough that the gap is not evidence.{note}")
+    ahead = (ma > mb) if higher_is_better else (ma < mb)
+    winner, loser = (a, b) if ahead else (b, a)
     caveat = "" if clears_spread else (
         " The gap does NOT clear the pooled spread, so read it as a small effect that survives a "
         "test rather than as a comfortable margin.")
-    return (f"{winner} scores higher on harm recognition than {loser}: {max(ma, mb):.4f} against "
-            f"{min(ma, mb):.4f}, gap {gap:.4f}, pooled spread {spread:.4f}, permutation "
-            f"p={_fmt_p(pv)} over {len(xa)} and {len(xb)} seeds.{caveat}")
+    best, worst = (max(ma, mb), min(ma, mb)) if higher_is_better else (min(ma, mb), max(ma, mb))
+    return (f"{winner} is ahead of {loser} on {axis}: {fmt.format(best)} against "
+            f"{fmt.format(worst)}, gap {fmt.format(gap)}, pooled spread {fmt.format(spread)}, "
+            f"permutation p={_fmt_p(pv)} over {len(xa)} and {len(xb)} seeds.{caveat}")
 
 
 def partial_comparison(controls, whole):
@@ -444,49 +536,49 @@ def render(arms):
         lines.append("  No refusal files found. This axis is still two self-reports on different")
         lines.append("  prompts, so no sentence may be written across the tools about it.")
     else:
-        by_tool_ref = {}
-        for a in readable:
-            if a["variant"] or a.get("one_refusal") is None:
-                continue
-            by_tool_ref.setdefault(a["tool"], []).append(a["one_refusal"])
+        summary, by_tool_ref = per_tool_summary(readable, "one_refusal", "{:.1f}",
+                                                scale=100.0, suffix="%")
         lines.append("")
-        for tool in sorted(by_tool_ref):
-            xs = by_tool_ref[tool]
-            spread = f"{stdev(xs)*100:.1f}%" if len(xs) > 1 else "-"
-            lines.append(f"  {tool:<10} n={len(xs)}  mean refusal {mean(xs)*100:.1f}%  "
-                         f"spread {spread}")
+        lines.extend(summary)
+        lines.append("")
+        # A TEST, not two means side by side. This axis had none until 2026-09-10, while the
+        # heading above called the column comparable.
+        lines.append(verdict({t: [{"refusal": v} for v in xs] for t, xs in by_tool_ref.items()},
+                             key="refusal", axis="refusals removed", fmt="{:.4f}",
+                             higher_is_better=False))
 
     lines.append("")
     lines.append("=== Coherence drift, one instrument over every model ===")
     lines.append("KL(base || edited) on first-token distributions, same prompts and same batch")
-    lines.append("size for every model, measured by us afterwards. THIS column is comparable.")
+    lines.append("size for every model, measured by us afterwards. This column is comparable")
+    lines.append("ACROSS TOOLS; whether any gap in it is real is the verdict printed below it,")
+    lines.append("not the means. A mean is not a finding, and one seed can carry a whole gap.")
     lines.append("Lower is less collateral damage. Read it beside the refusal rates below: a tool")
     lines.append("that left refusals standing has paid less for its coherence, so a lower number")
     lines.append("here is only a better result at a matched refusal rate.")
     lines.append("")
-    lines.append(f"{'arm':<28} {'drift KL':>10} {'prompts':>9}")
+    lines.append(f"{'arm':<28} {'drift KL':>10} {'95% interval':>20} {'prompts':>9}")
     have_drift = False
     for a in sorted(readable, key=lambda a: (a["tool"], a["seed"], a["variant"])):
-        dk, dn = a.get("drift_kl"), a.get("drift_n")
+        dk, dn, ci = a.get("drift_kl"), a.get("drift_n"), a.get("drift_kl_ci")
         if dk is not None:
             have_drift = True
+        shown = f"[{ci[0]:.4f},{ci[1]:.4f}]" if (ci and len(ci) == 2) else "-"
+        flag = "" if a.get("drift_precision_ok", True) else "  BELOW PRECISION"
         lines.append(f"{a['name']:<28} {(f'{dk:.4f}' if dk is not None else '-'):>10} "
-                     f"{(dn if dn is not None else '-'):>9}")
+                     f"{shown:>20} {(dn if dn is not None else '-'):>9}{flag}")
     if not have_drift:
         lines.append("")
         lines.append("  No drift files found. Run `senbonzakura head-to-head run` with scoring")
         lines.append("  enabled, or `senbonzakura drift` per model, to fill this in.")
     else:
-        by_tool_drift = {}
-        for a in readable:
-            if a["variant"] or a.get("drift_kl") is None:
-                continue
-            by_tool_drift.setdefault(a["tool"], []).append(a["drift_kl"])
+        summary, by_tool_drift = per_tool_summary(readable, "drift_kl", "{:.4f}")
         lines.append("")
-        for tool in sorted(by_tool_drift):
-            xs = by_tool_drift[tool]
-            spread = f"{stdev(xs):.4f}" if len(xs) > 1 else "-"
-            lines.append(f"  {tool:<10} n={len(xs)}  mean drift {mean(xs):.4f}  spread {spread}")
+        lines.extend(summary)
+        lines.append("")
+        lines.append(verdict({t: [{"kl": v} for v in xs] for t, xs in by_tool_drift.items()},
+                             key="kl", axis="coherence drift", fmt="{:.4f}",
+                             higher_is_better=False))
 
     lines.append("")
     lines.append("=== What each tool reported about itself ===")
@@ -495,10 +587,22 @@ def render(arms):
     lines.append("for on 2026-08-05. Read each row against its own label, never across rows.")
     lines.append("The comparable coherence number is the drift column above, not these.")
     lines.append("")
-    lines.append("The slices differ in a way that matters and does not favour us: ours is measured")
-    lines.append("on harmless prompts HELD BACK from direction fitting, while Heretic's is measured")
-    lines.append("on the harmless prompts it was given, its directions included. Ours is therefore")
-    lines.append("the harder ground, which is one more reason these two numbers are not a column.")
+    # CONDITIONAL, because it stopped being true. This paragraph asserted that Heretic's KL was
+    # measured on the prompts it was given, its own directions included, and that ours was
+    # therefore the harder ground. Since the selection pass began measuring both tools with one
+    # estimator on one shared slice, every clause of that is false about the number printed under
+    # it. The artefact's own stamp decides which sentence a reader gets.
+    if any(a.get("own_kl_is_ours") for a in readable):
+        lines.append("On the rows stamped as measured by this pass, the KL was produced by OUR")
+        lines.append("estimator on the shared coherence slice, so it is not that tool's self-report")
+        lines.append("at all. The per-row estimator lines below say which is which; read those")
+        lines.append("rather than assuming, because this paragraph was wrong for exactly as long as")
+        lines.append("it was hardcoded.")
+    else:
+        lines.append("The slices differ in a way that matters and does not favour us: ours is measured")
+        lines.append("on harmless prompts HELD BACK from direction fitting, while Heretic's is measured")
+        lines.append("on the harmless prompts it was given, its directions included. Ours is therefore")
+        lines.append("the harder ground, which is one more reason these two numbers are not a column.")
     for a in sorted(readable, key=lambda a: (a["tool"], a["seed"], a["variant"])):
         if a["variant"]:
             continue

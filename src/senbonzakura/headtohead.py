@@ -243,10 +243,15 @@ def _bench_dir_for(out):
         f"{', '.join(str(r) for r in roots)}.")
 
 
-#: What `best_of_n_heretic.py` stamps on a KL figure it measured itself. Duplicated here rather
-#: than imported because that script imports `heretic`, which exists only inside the sealed image;
-#: `test_headtohead_argv_matches_scripts.py` reads the script's source and holds the two together.
-KL_SOURCE_MEASURED = "measured by this pass"
+#: What `best_of_n_heretic.py` stamps on a KL figure it measured itself. Defined in
+#: `headtohead_report` and re-exported here so the two reporters cannot drift: the first version
+#: of this fix taught THIS module to read the stamp and left `headtohead_report.own_numbers`
+#: asserting the old provenance, and that is the one printed at the end of every run.
+#: `test_headtohead_argv_matches_scripts.py` reads the script's source and holds it to this value.
+from .headtohead_report import (  # noqa: E402, F401 - KL_SOURCE_MEASURED is a deliberate re-export
+    KL_SOURCE_MEASURED,
+    kl_estimator_for,
+)
 
 
 def _heretic_report(arm: Path):
@@ -257,16 +262,7 @@ def _heretic_report(arm: Path):
     # both tools with one estimator and stamps every row it measured. A hardcoded provenance is
     # wrong the moment the thing it describes changes, and it stayed wrong silently, which is the
     # failure the stamp was introduced to prevent one layer down.
-    source = winner.get("kl_source")
-    if source == KL_SOURCE_MEASURED:
-        estimator = ("senbonzakura.firsttoken, measured by the equal-budget selection pass on the "
-                     "shared coherence slice")
-    elif source:
-        estimator = str(source)
-    else:
-        # An unlabelled number is what made the two tools' KL figures unreadable across each other
-        # in the first place, so it is named as unlabelled rather than given a plausible owner.
-        estimator = "UNRECORDED: this artefact carries no kl_source"
+    estimator = kl_estimator_for(winner)
     return {
         "refusals": winner.get("refusals"),
         "kl": winner.get("kl"),

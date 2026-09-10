@@ -88,12 +88,12 @@ def test_a_gap_clearing_the_spread_names_a_winner(run_dir):
     d = run_dir([0.95, 0.94, 0.96, 0.95, 0.94], [0.60, 0.61, 0.59, 0.60, 0.62])
     out = report(d)
     assert "TIE" not in out
-    assert "senbon scores higher on harm recognition than heretic" in out
+    assert "senbon is ahead of heretic on harm recognition" in out
 
 
 def test_the_winner_can_be_either_tool(run_dir):
     d = run_dir([0.60, 0.61, 0.59, 0.60, 0.62], [0.95, 0.94, 0.96, 0.95, 0.94])
-    assert "heretic scores higher on harm recognition than senbon" in report(d)
+    assert "heretic is ahead of senbon on harm recognition" in report(d)
 
 
 def test_a_zero_spread_is_flagged_rather_than_trusted(run_dir):
@@ -135,7 +135,13 @@ def test_the_two_kl_figures_are_never_offered_as_a_comparison(run_dir):
     out = report(run_dir([0.9] * 5, [0.8] * 5))
     assert "NOT a comparison" in out
     assert "senbonzakura, our coherence slice" in out
-    assert "Heretic, its own evaluation" in out
+    # These fixtures carry no `kl_source`, so the Heretic row is reported as UNLABELLED rather
+    # than given a plausible owner. Before the selection pass existed, hardcoding "Heretic, its
+    # own evaluation" here was right; afterwards it was printed over a figure our own estimator
+    # had produced. An unstamped number is now named as unstamped, which is the only honest
+    # answer available from the artefact alone.
+    assert "UNRECORDED" in out
+    assert "Heretic, its own evaluation" not in out
 
 
 def test_every_self_reported_row_carries_its_estimator(run_dir):
@@ -150,7 +156,7 @@ def test_the_verdict_reads_the_compass_not_the_self_reported_numbers(run_dir):
     # Five seeds per arm: at three, no permutation test can clear 0.05, so the report
     # correctly refuses a verdict and this test's subject is unreachable.
     d = run_dir([0.95] * 5, [0.60] * 5)
-    assert "senbon scores higher" in report(d)
+    assert "senbon is ahead" in report(d)
 
 
 # ── an incomplete run must not read as a complete one ─────────────────────────────────
@@ -190,7 +196,7 @@ def test_heretics_own_pick_is_shown_but_kept_out_of_the_verdict(run_dir):
     d = run_dir([0.95, 0.95, 0.95], [0.60, 0.60, 0.60], own_pick=0.99)
     out = report(d)
     assert "scored-heretic-seed42-own-pick" in out
-    assert "senbon scores higher" in out
+    assert "senbon is ahead" in out
     assert "  heretic    n=3" in out
 
 
@@ -403,7 +409,7 @@ def test_a_comparison_that_could_not_have_concluded_says_so(n, possible):
     if possible:
         assert "NO VERDICT POSSIBLE" not in said, said
     else:
-        assert "NO VERDICT POSSIBLE" in said or "NO VERDICT:" in said, said
+        assert "NO VERDICT" in said, said
 
 
 def test_a_p_that_rounds_to_zero_is_printed_as_a_bound():
@@ -415,3 +421,106 @@ def test_a_p_that_rounds_to_zero_is_printed_as_a_bound():
     said = hh.verdict({"alpha": _arms("alpha", a), "beta": _arms("beta", b)})
     assert "p=0.000" not in said, "printing p=0.000 claims a certainty the method cannot express"
     assert "p=<0.001" in said
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# The two axes that printed a mean under the word "comparable" and had no test at all.
+#
+# Reached independently by two personas on 2026-09-10. Only the compass AUC ever went
+# through `verdict()`, and our own AUC spans 0.9860 to 0.9887 across ten arms and a
+# 32.8-point refusal swing, so the report was structurally guaranteed to return TIE on
+# the axis it tested and to hand the reader an untested mean-versus-mean table on the
+# two axes where a claim actually gets made. That is the route by which "roughly half
+# the collateral damage" reached the published site.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def _run_with_drift(tmp_path, sen, her, refusals=None):
+    """A run directory carrying compass, drift and refusal artefacts for each arm."""
+    for tool, xs in (("senbon", sen), ("heretic", her)):
+        for i, kl in enumerate(xs):
+            seed = 42 + i
+            (tmp_path / f"scored-{tool}-seed{seed}.json").write_text(json.dumps(
+                {"auc": 0.987, "controls": {"length_only_auc": 0.5}}), encoding="utf-8")
+            (tmp_path / f"drift-{tool}-seed{seed}.json").write_text(json.dumps(
+                {"kl": kl, "n_prompts": 200, "kl_ci": [kl * 0.8, kl * 1.2],
+                 "kl_ci_method": "percentile bootstrap over prompts", "precision_ok": True}),
+                encoding="utf-8")
+            r = (refusals or {}).get(tool, [0.0] * len(xs))[i]
+            (tmp_path / f"refusal-{tool}-seed{seed}.json").write_text(json.dumps(
+                {"refusal": r, "n": 128, "heretic": 0.02, "broken": 0.0, "noncompliant": 0.03}),
+                encoding="utf-8")
+            arm = tmp_path / f"{tool}-seed{seed}"
+            arm.mkdir(exist_ok=True)
+            if tool == "senbon":
+                (arm / "abliteration.json").write_text(json.dumps(
+                    {"post_bake_refusals": r, "post_bake_kl": kl}), encoding="utf-8")
+            else:
+                (arm / "best_of_n.json").write_text(json.dumps(
+                    {"winner": {"refusals": r, "kl": kl}}), encoding="utf-8")
+    return rh.render(rh.collect(str(tmp_path)))[0]
+
+
+def test_the_drift_axis_now_gets_a_test_and_not_just_two_means(tmp_path):
+    """THE DEFECT, with the real numbers from the 2026-09-10 run.
+
+    Means 0.0545 against 0.1227 reads as "half the collateral damage". One seed at 0.3591 against
+    siblings of 0.0439 to 0.1075 carries all of it, and a permutation test says so.
+    """
+    out = _run_with_drift(tmp_path,
+                          [0.0512, 0.0498, 0.0605, 0.0533, 0.0577],
+                          [0.0439, 0.0573, 0.1075, 0.0457, 0.3591])
+    assert "TIE on coherence drift" in out, (
+        "a gap this size across these seeds is not evidence, and the report has to say so where "
+        "the reader meets the means")
+    assert "permutation p=" in out
+
+
+def test_a_real_drift_difference_is_still_reported(tmp_path):
+    """The gate must not be so blunt that nothing can ever be found."""
+    out = _run_with_drift(tmp_path,
+                          [0.0510, 0.0498, 0.0505, 0.0512, 0.0501],
+                          [0.3010, 0.2998, 0.3005, 0.3012, 0.3001])
+    assert "senbon is ahead of heretic on coherence drift" in out
+    assert "TIE on coherence drift" not in out
+
+
+def test_lower_drift_is_the_better_direction(tmp_path):
+    """Unlike AUC, less is better here. Getting this backwards would invert the headline."""
+    out = _run_with_drift(tmp_path,
+                          [0.3010, 0.2998, 0.3005, 0.3012, 0.3001],
+                          [0.0510, 0.0498, 0.0505, 0.0512, 0.0501])
+    assert "heretic is ahead of senbon on coherence drift" in out
+
+
+def test_the_refusal_axis_gets_the_same_treatment(tmp_path):
+    out = _run_with_drift(tmp_path, [0.05] * 5, [0.05] * 5,
+                          refusals={"senbon": [0.00, 0.00, 0.00, 0.00, 0.005],
+                                    "heretic": [0.0] * 5})
+    assert "refusals removed" in out
+    assert "TIE on refusals removed" in out
+
+
+def test_the_median_is_printed_beside_the_mean(tmp_path):
+    """The outlier only became visible when somebody looked past the mean."""
+    out = _run_with_drift(tmp_path,
+                          [0.0512, 0.0498, 0.0605, 0.0533, 0.0577],
+                          [0.0439, 0.0573, 0.1075, 0.0457, 0.3591])
+    assert "median 0.0573" in out, "heretic's median, against a mean of 0.1227"
+    assert "median 0.0533" in out
+
+
+def test_the_interval_drift_already_wrote_finally_reaches_the_reader(tmp_path):
+    """`drift.py` has written kl_ci into every artefact since the axis was found to have no
+    uncertainty at all, and until 2026-09-10 nothing outside that file read it."""
+    out = _run_with_drift(tmp_path, [0.05] * 5, [0.06] * 5)
+    assert "95% interval" in out
+    assert "[0.0400,0.0600]" in out, "the per-arm interval, not just the point estimate"
+
+
+def test_an_arm_missing_its_figure_is_counted_rather_than_silently_dropped(tmp_path):
+    """Five arms and two arms printed side by side with no note that the n's differed."""
+    _run_with_drift(tmp_path, [0.05] * 5, [0.06] * 5)
+    for seed in (44, 45, 46):
+        (tmp_path / f"drift-heretic-seed{seed}.json").unlink()
+    out = rh.render(rh.collect(str(tmp_path)))[0]
+    assert "3 arm(s) had no figure and are NOT in this mean" in out

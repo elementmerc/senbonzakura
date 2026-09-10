@@ -43,6 +43,7 @@ from pathlib import Path
 
 from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
 from senbonzakura.metrics import MIN_REPORTABLE_N
+from senbonzakura.track import flag_violations, read_manifest
 
 
 def load_texts(directory, n, *, text_column=None, token=None):
@@ -119,6 +120,33 @@ def main(argv=None):
             f"search did and the pass would be worse than not running it. The two are disjoint, "
             f"and the re-score keeps only the {a.eval_refusal_final - a.eval_refusal} of them "
             f"the search did not see.")
+
+    # THE GUARD THAT EXISTS FOR EXACTLY THIS, and whose only caller was the abliterate path.
+    #
+    # This command takes the same five counts as free integers and reads each dataset by
+    # head-count, so on a track whose harmful search partition is 96 rows the default
+    # --eval-refusal-final 128 cuts 32 rows out of the MEASURE partition. Both tools are then
+    # selected by best-of-N on rows they are later scored on, every artefact is present, every arm
+    # completes, and the published refusal comparison describes the rows the winner was chosen on.
+    #
+    # That is the C4 defect from the September panel reappearing through the one path that builds
+    # the slices BOTH tools share. The bundled track happens to survive it today; nothing enforced
+    # that. Checked before anything is written, because a slice already on disk is a slice
+    # something can pick up.
+    manifest = read_manifest(track)
+    if manifest:
+        bad_flags = flag_violations(
+            manifest, eval_refusal=a.eval_refusal, eval_refusal_final=a.eval_refusal_final,
+            dir_prompts=a.dir_prompts, eval_kl=a.eval_kl)
+        if bad_flags:
+            raise SystemExit(
+                f"headtohead stage: these counts would read past the boundaries "
+                f"{track}/track.json records, and both tools would be selected on rows they are "
+                f"later scored on:\n" + "\n".join(f"  {b}" for b in bad_flags))
+    else:
+        print(f"headtohead stage: {track} carries no track.json, so the partition boundaries "
+              f"cannot be checked. The slices below are cut by head-count and NOTHING here can "
+              f"tell you whether they cross a held-out boundary.", file=sys.stderr)
 
     counts = {}
     # The search-time refusal slice: what steers each tool's own optimisation.

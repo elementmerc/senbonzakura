@@ -28,7 +28,7 @@ import ast
 import json
 from pathlib import Path
 
-from senbonzakura import headtohead
+from senbonzakura import headtohead, headtohead_report
 
 SCRIPT = Path(__file__).resolve().parents[1] / "head-to-head" / "best_of_n_heretic.py"
 
@@ -105,3 +105,83 @@ def test_our_own_kl_column_says_it_is_not_the_other_tool_s_exam(tmp_path):
     assert "NOT comparable" in got["kl_estimator"]
     assert "drift" in got["kl_estimator"], (
         "a caveat that does not name the axis that IS comparable leaves the reader nowhere")
+
+
+# ── THE REPORTER THAT WAS LEFT BEHIND ────────────────────────────────────────────────
+#
+# This file's own docstring says it covers "the run's own summary", and until the
+# 2026-09-10 panel it did not: the fix landed in `headtohead._heretic_report` and
+# `headtohead_report.own_numbers` went on hardcoding the old provenance. That is the
+# reporter `head-to-head run` prints at the end and `head-to-head report` prints on
+# demand, so the fixed one fed the lesser summary while the reader met the stale one.
+
+def _run_dir(tmp_path, **winner):
+    arm = tmp_path / "heretic-seed42"
+    arm.mkdir()
+    (arm / "best_of_n.json").write_text(
+        json.dumps({"trials_ran": 200, "winner": {"refusals": 0.0, "kl": 0.2439, **winner}}),
+        encoding="utf-8")
+    return tmp_path
+
+
+def test_the_run_summary_reads_the_stamp_too(tmp_path):
+    got = headtohead_report.own_numbers(
+        str(_run_dir(tmp_path, kl_source=headtohead.KL_SOURCE_MEASURED)), "heretic", 42)
+    assert got["own_kl"] == 0.2439
+    assert "senbonzakura.firsttoken" in got["own_kl_estimator"]
+    assert "Heretic, its own evaluation" not in got["own_kl_estimator"], (
+        "this is the label the reader actually meets at the end of every run")
+    assert got["own_kl_is_ours"] is True
+
+
+def test_the_run_summary_names_an_unstamped_figure_as_unlabelled(tmp_path):
+    got = headtohead_report.own_numbers(str(_run_dir(tmp_path)), "heretic", 42)
+    assert "UNRECORDED" in got["own_kl_estimator"]
+    assert got["own_kl_is_ours"] is False
+
+
+def test_both_reporters_give_the_same_answer_to_the_same_artefact(tmp_path):
+    """The point of the shared helper: this is what would have caught the original miss.
+
+    Neither reporter is asked what it believes. Both are handed the same winner document and the
+    two labels are compared with each other, so a fix applied to one and not the other fails here
+    whichever one was left behind.
+    """
+    for i, stamp in enumerate((headtohead.KL_SOURCE_MEASURED, "somewhere else", None)):
+        winner = {"kl_source": stamp} if stamp else {}
+        a_dir = tmp_path / f"a{i}"
+        a_dir.mkdir()
+        b_dir = tmp_path / f"b{i}"
+        b_dir.mkdir()
+        a = headtohead._heretic_report(_arm(a_dir, **winner))
+        b = headtohead_report.own_numbers(str(_run_dir(b_dir, **winner)), "heretic", 42)
+        assert a["kl_estimator"] == b["own_kl_estimator"], (
+            f"the two reporters disagree about a {stamp!r} artefact, which is exactly the drift "
+            f"that let one be fixed and the other left")
+
+
+def test_the_harder_ground_paragraph_is_not_printed_over_our_own_measurement(tmp_path):
+    """The prose above the table, not just the per-row label.
+
+    It told the reader that Heretic's figure came from "the harmless prompts it was given, its
+    directions included" and that ours was "therefore the harder ground". Once the selection pass
+    measures both with one estimator on one slice, every clause of that is false about the number
+    printed beneath it. So this drives the real report over a real run directory and reads what it
+    printed, rather than asserting anything about a fixture of my own making.
+    """
+    run = _run_dir(tmp_path, kl_source=headtohead.KL_SOURCE_MEASURED)
+    (run / "scored-heretic-seed42.json").write_text(
+        json.dumps({"auc": 0.98, "controls": {"length_only_auc": 0.5}}), encoding="utf-8")
+    text = headtohead_report.render(headtohead_report.collect(str(run)))[0]
+    assert "the harder ground" not in text, (
+        "printed over a figure our own estimator produced, this claim is false in every clause")
+    assert "measured by this pass" in text or "OUR" in text
+
+
+def test_the_harder_ground_paragraph_survives_where_it_is_still_true(tmp_path):
+    """An unstamped artefact is a genuine self-report, and the old sentence describes it."""
+    run = _run_dir(tmp_path)
+    (run / "scored-heretic-seed42.json").write_text(
+        json.dumps({"auc": 0.98, "controls": {"length_only_auc": 0.5}}), encoding="utf-8")
+    text = headtohead_report.render(headtohead_report.collect(str(run)))[0]
+    assert "the harder ground" in text

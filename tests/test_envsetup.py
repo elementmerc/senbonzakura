@@ -90,7 +90,12 @@ def test_a_linux_box_with_no_card_is_offered_the_slim_build():
     got = envsetup.plan(system="Linux", machine="x86_64", gpus=[], driver=None,
                         torch_version="2.14.0", variant=None)
     assert got[0] == "slim"
-    assert "gigabytes" in got[1]
+    # NOT "reclaims several gigabytes". pip has no autoremove, so swapping torch leaves the
+    # nvidia-* wheels (which are the gigabytes) installed as orphans, and the reader who ran the
+    # command would have reclaimed almost nothing. The reason has to say that the removal is a
+    # separate step, or the command is a promise the tool does not keep.
+    assert "separately" in got[1]
+    assert "reclaims several gigabytes" not in got[1]
     assert got[2][-3:] == ["--index-url", "https://download.pytorch.org/whl/cpu", "torch"]
 
 
@@ -511,3 +516,169 @@ def test_no_torch_at_all_is_not_the_same_as_the_wrong_torch():
         assert "not installed at all" in got[1]
         assert "force-reinstall" in got[1]
         assert got[2] is None, "a channel cannot fix a missing package"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Branches the 2026-09-10 panel found unreached. Every one of these was a state
+# the code already had an opinion about, and the opinion was wrong.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_linux_with_an_unreadable_driver_refuses_rather_than_guessing_cu130():
+    """The fallback used to be `pick_cuda_channel(driver) or "cu130"`.
+
+    Windows already returned `unknown` for this exact state, with a comment saying why guessing is
+    wrong. Linux invented a channel, so a driver capped below 13.0 got a build it cannot run and
+    the symptom was the silent idle card this module exists to end.
+    """
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=["GPU 0: RTX 3060"], driver=None,
+                        torch_version="2.14.0+cpu", variant="cpu")
+    assert got[0] == "unknown", "an unreadable driver is not a licence to pick a channel"
+    assert got[2] is None
+    assert "--cuda" in got[1]
+    # cu130 may appear in the prose as an example of what to pass; what must not exist is a
+    # COMMAND built from a channel nobody established this driver can carry, which got[2] pins.
+
+
+def test_linux_with_a_driver_older_than_every_channel_is_blocked_not_guessed():
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=["GPU 0: old"], driver=(10, 2),
+                        torch_version="2.14.0+cpu", variant="cpu")
+    assert got[0] == "blocked"
+    assert got[2] is None
+
+
+def test_a_pascal_card_on_a_new_driver_is_given_a_build_it_can_actually_run():
+    """The driver's CUDA ceiling is necessary and NOT sufficient.
+
+    A GTX 1080 (sm_61) on a current driver reports CUDA 13.x, so asking only the driver recommends
+    cu130, whose wheels carry no kernels that old. It installs cleanly and dies at the first kernel
+    launch with `no kernel image is available`, minutes into a run.
+    """
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=["GPU 0: GTX 1080"], driver=(13, 0),
+                        compute=(6, 1), torch_version="2.14.0+cpu", variant="cpu")
+    assert got[0] == "fix"
+    assert "cu129" in " ".join(got[2]), "should step back to a channel that still has sm_61"
+    assert "cu130" not in " ".join(got[2])
+
+
+def test_a_card_older_than_every_channel_is_blocked_with_the_reason_that_is_true():
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=["GPU 0: K80"], driver=(13, 0),
+                        compute=(3, 0), torch_version="2.14.0+cpu", variant="cpu")
+    assert got[0] == "blocked"
+    assert "compute capability 3.0" in got[1]
+    assert "Update the driver" not in got[1], "the driver is fine; saying so sends them to the wrong fix"
+
+
+def test_an_intel_mac_is_not_told_it_uses_metal():
+    """MPS needs Apple silicon. This branched on the operating system alone."""
+    got = envsetup.plan(system="Darwin", machine="x86_64", torch_version="2.14.0")
+    assert got[0] == "ok"
+    assert "Metal" not in got[1] or "no Metal" in got[1]
+    assert "Intel" in got[1]
+
+
+def test_apple_silicon_still_gets_the_metal_answer():
+    got = envsetup.plan(system="Darwin", machine="arm64", torch_version="2.14.0")
+    assert got[0] == "ok"
+    assert "Metal" in got[1]
+
+
+def test_a_rocm_install_is_recognised_rather_than_called_the_cuda_default():
+    """`test_a_local_version_tag_is_read` already asserts the parse. The parse reached no
+    consequence: plan ignored the variant and said "the default Linux wheel is the CUDA build
+    either way", which is a statement about a wheel this machine is not running.
+    """
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=None, driver=None,
+                        torch_version="2.14.0+rocm6.4", variant="rocm6.4")
+    assert got[0] == "ok"
+    assert "ROCm" in got[1]
+    assert "CUDA build" not in got[1]
+
+
+def test_linux_with_no_driver_says_the_driver_is_what_is_missing():
+    """Windows says "Install the driver" for this state and Linux said "nothing is broken"."""
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=None, driver=None,
+                        torch_version="2.14.0", variant=None)
+    assert got[0] == "unknown"
+    assert "driver is not installed" in got[1]
+
+
+def test_a_mistyped_channel_is_refused_rather_than_turned_into_a_url_that_404s():
+    """`--cuda cu13O` (capital O) printed a confident install command against a dead channel.
+
+    That is precisely what tools/check_cuda_channels.py exists to prevent, reached through the one
+    path that never consulted the table.
+    """
+    accepted, complaint = envsetup.check_channel("cu13O")
+    assert not accepted
+    assert "cu130" in complaint, "the refusal should name the channels that do exist"
+
+
+def test_a_rocm_channel_is_accepted_with_a_note_rather_than_refused():
+    """The table is CUDA-only, so an unknown non-CUDA channel is unverified, not wrong."""
+    accepted, complaint = envsetup.check_channel("rocm6.4")
+    assert accepted
+    assert complaint and "unverified" in complaint
+
+
+def test_every_channel_in_the_table_is_accepted():
+    for _, tag in envsetup.CUDA_CHANNELS:
+        assert envsetup.check_channel(tag) == (True, None)
+    assert envsetup.check_channel("cpu") == (True, None)
+
+
+def test_cuda_flag_does_not_outrank_torch_being_absent(capsys, monkeypatch):
+    """Proposing a channel for a package that is not installed sends the reader to the wrong fix."""
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: (None, None))
+    assert envsetup.main(["--cuda", "cu128"]) == 3
+    out = capsys.readouterr().out
+    assert "not installed at all" in out
+    assert "whl/cu128" not in out
+
+
+def test_the_mistyped_channel_reaches_the_shell_as_a_refusal(capsys, monkeypatch):
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    assert envsetup.main(["--cuda", "cu13O"]) == 2
+    assert "whl/cu13O" not in capsys.readouterr().out
+
+
+def test_the_driver_version_is_not_believed_when_nvidia_smi_failed(monkeypatch):
+    """`nvidia_gpus` checked the return code and this did not, so a number printed by a run that
+    failed would have been read as the driver's answer.
+    """
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup.subprocess, "run",
+                        lambda *a, **k: _Proc("CUDA Version: 13.0\n", returncode=1))
+    assert envsetup.driver_cuda_version() is None
+
+
+def test_compute_capability_takes_the_oldest_card(monkeypatch):
+    """A build has to carry kernels for every card it will be asked to run on."""
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup.subprocess, "run", lambda *a, **k: _Proc("8.6\n6.1\n"))
+    assert envsetup.compute_capability() == (6, 1)
+
+
+def test_compute_capability_is_none_when_it_cannot_be_asked(monkeypatch):
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    assert envsetup.compute_capability() is None
+
+
+def test_the_slim_command_names_the_packages_pip_will_leave_behind(capsys, monkeypatch):
+    """The reason says the removal is separate; the command that does it has to be printed too."""
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup.subprocess, "run", lambda *a, **k: _Proc(""))
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "cuda_orphans", lambda: ["nvidia-cublas-cu12", "triton"])
+    assert envsetup.main([]) == 0
+    out = capsys.readouterr().out
+    assert "uninstall -y nvidia-cublas-cu12 triton" in out
+
+
+def test_cuda_orphans_finds_the_packages_that_are_actually_the_gigabytes():
+    got = envsetup.cuda_orphans(["requests", "nvidia-cublas-cu12", "triton", "torch", "NVIDIA-cudnn-cu12"])
+    assert got == ["NVIDIA-cudnn-cu12", "nvidia-cublas-cu12", "triton"]

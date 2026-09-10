@@ -516,9 +516,99 @@ def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, 
             "--", *argv]
 
 
+#: What one arm writes beside its logs: a full copy of the edited model, plus a study database and
+#: per-trial artefacts. Measured on Qwen3-1.7B, where the model is 3.4 GB and the rest is under 50
+#: MB, so the margin is for the difference between a dense 1.7B and something larger rather than
+#: for the bookkeeping.
+ARM_OVERHEAD_BYTES = 512 * 1024 * 1024
+
+
+def _tree_bytes(path: Path, cap: int = 50_000) -> int:
+    """Bytes a directory really occupies, following symlinks so a cache of links is not read as 0.
+
+    The HuggingFace layout keeps every real byte in `blobs/` and fills the snapshot with links into
+    it, so a size that does not follow links reports a multi-gigabyte model as a few kilobytes.
+    """
+    total = 0
+    for i, child in enumerate(Path(path).rglob("*")):
+        if i >= cap:
+            break
+        try:
+            if child.is_file():           # is_file() follows the link; so does stat()
+                total += child.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def host_free_bytes():
+    """Free bytes on the volume that BACKS this filesystem, or None when that question is moot.
+
+    THE CHECK THAT WAS MISSING, and the one that cost a ten-arm run eight hours in.
+
+    On WSL2 the Linux root is a sparse virtual disk sitting on the Windows volume. `df` inside the
+    guest reports that disk's APPARENT size, which is a promise the host may be unable to keep: a
+    run read 534 GB free here, wrote until the Windows volume hit zero, and every operation inside
+    WSL then began returning EIO, down to `getpwuid` failing to read `/etc/passwd`.
+
+    The general rule, and it is worth more than this one check: a measurement taken inside the
+    thing you are measuring cannot see the constraint that contains it. The same shape produced a
+    container listing a directory full of files it could not open, because the bind mount carried
+    the directory and not what its entries pointed at.
+
+    Returns None off WSL, and None when the host volume is not reachable, because an unanswerable
+    question must not read as a reassuring answer.
+    """
+    try:
+        release = Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if "microsoft" not in release.lower():
+        return None
+    try:
+        for mount in (Path("/mnt/c"), Path("/mnt/host/c")):
+            if mount.is_dir():
+                return shutil.disk_usage(mount).free
+    except OSError:
+        return None
+    return None
+
+
+def _gb(n):
+    return f"{n / 1024 ** 3:.1f} GB"
+
+
+def disk_complaints(*, out: Path, model: str, arms: int, free=None, host_free=None) -> list[str]:
+    """Whether there is room for every arm, asked of the host as well as of this filesystem."""
+    if arms <= 0:
+        return []
+    model_bytes = _tree_bytes(Path(model)) if model and Path(model).is_dir() else 0
+    if not model_bytes:
+        return []                         # nothing to size against; other checks cover a bad model
+    need = arms * (model_bytes + ARM_OVERHEAD_BYTES)
+    problems = []
+    try:
+        here = shutil.disk_usage(out).free if free is None else free
+    except OSError:
+        here = None
+    if here is not None and here < need:
+        problems.append(
+            f"{arms} arms need about {_gb(need)} and {out} has {_gb(here)} free. Each arm saves a "
+            f"full copy of the model ({_gb(model_bytes)}), so this runs out partway through and "
+            f"the arms already finished are what you keep")
+    backing = host_free_bytes() if host_free is None else host_free
+    if backing is not None and backing < need:
+        problems.append(
+            f"{arms} arms need about {_gb(need)} and the Windows volume backing this filesystem "
+            f"has {_gb(backing)} free. The free space df reports here is the virtual disk's "
+            f"apparent size, which the host cannot honour once its own volume fills; when that "
+            f"happened every operation inside WSL began returning I/O errors, mid-run")
+    return problems
+
+
 # ── preflight # ── preflight ─────────────────────────────────────────────────────────────────────────
 def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images,
-              slices=None, score=False, harmful=None, harmless=None) -> list[str]:
+              slices=None, score=False, harmful=None, harmless=None, arms=0) -> list[str]:
     """Everything checkable before the first GPU second is spent, returned as complaints.
 
     A long run that dies forty minutes in on something knowable at the start is the most expensive
@@ -576,6 +666,7 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
         if missing:
             problems.append(f"--isolate docker needs an image per tool; none given for: "
                             f"{', '.join(missing)}")
+    problems.extend(disk_complaints(out=Path(out), model=model, arms=arms))
     return problems
 
 
@@ -1227,7 +1318,8 @@ def main(argv=None):
     slices = Path(a.eval_slices) if a.eval_slices else None
     problems = preflight(tools=tools, track=Path(a.track), out=Path(a.out), model=a.model,
                          isolate=a.isolate, images=images, slices=slices, score=a.score,
-                         harmful=a.harmful, harmless=a.harmless)
+                         harmful=a.harmful, harmless=a.harmless,
+                         arms=len(tools) * len(seeds))
     if problems:
         print("BENCH REFUSED: nothing was run, because this comparison would not be trustworthy:",
               file=sys.stderr)

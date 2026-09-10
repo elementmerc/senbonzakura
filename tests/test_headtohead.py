@@ -422,7 +422,17 @@ def test_every_adapter_declares_what_proves_it_ran():
 
 
 def test_each_tool_reports_its_own_estimator_by_name(tmp_path):
-    """Two tools' KL figures come from different estimators; one column would repeat a withdrawn claim."""
+    """Two tools' KL figures are measured on different slices; one column would repeat a withdrawn claim.
+
+    THIS TEST USED TO ASSERT THE DEFECT. It wrote a winner carrying no `kl_source` and required
+    the label to say "Heretic", which is the reporter handing an unlabelled number a plausible
+    owner. Since panel finding S1 the selection pass measures KL itself and stamps what it
+    measured, so the label is read from the artefact; an unstamped figure is now named as
+    unstamped, and `test_kl_provenance_labels.py` covers that case directly.
+
+    What the test was actually protecting survives unchanged: the two columns must not read as one
+    measurement, because they are not taken on the same prompts.
+    """
     arm = tmp_path / "arm"
     arm.mkdir()
     (arm / "abliteration.json").write_text(
@@ -430,9 +440,10 @@ def test_each_tool_reports_its_own_estimator_by_name(tmp_path):
     r = headtohead.ADAPTERS["senbon"].self_report(arm)
     assert "senbonzakura" in r["kl_estimator"]
     (arm / "best_of_n.json").write_text(
-        json.dumps({"winner": {"refusals": 0.05, "kl": 0.004}}), encoding="utf-8")
+        json.dumps({"winner": {"refusals": 0.05, "kl": 0.004,
+                               "kl_source": headtohead.KL_SOURCE_MEASURED}}), encoding="utf-8")
     h = headtohead.ADAPTERS["heretic"].self_report(arm)
-    assert "Heretic" in h["kl_estimator"]
+    assert "selection pass" in h["kl_estimator"]
     assert r["kl_estimator"] != h["kl_estimator"]
 
 

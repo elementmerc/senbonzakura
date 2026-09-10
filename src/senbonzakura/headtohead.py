@@ -136,7 +136,14 @@ def _senbon_report(arm: Path):
         "kl": doc.get("post_bake_kl"),
         "trials_ran": doc.get("trials_ran"),
         "refusal_estimator": "senbonzakura rulers, our search eval",
-        "kl_estimator": "senbonzakura, our coherence slice",
+        # NOT the slice the Heretic arm's figure is measured on. Ours comes from the abliterator's
+        # own coherence slice, cut from the track by the run itself; Heretic's comes from the
+        # selection pass on the staged shared slice. Both go through `senbonzakura.firsttoken`, so
+        # they look like one instrument and are not one exam, and the two sit in adjacent columns.
+        # The axis that IS comparable is `drift`, which re-measures every model against one base on
+        # rows neither tool has seen. Said here because this is where a reader meets the number.
+        "kl_estimator": ("senbonzakura, our own coherence slice; NOT comparable with the other "
+                         "tool's kl column, see the drift axis for coherence on one exam"),
     }
 
 
@@ -236,15 +243,36 @@ def _bench_dir_for(out):
         f"{', '.join(str(r) for r in roots)}.")
 
 
+#: What `best_of_n_heretic.py` stamps on a KL figure it measured itself. Duplicated here rather
+#: than imported because that script imports `heretic`, which exists only inside the sealed image;
+#: `test_headtohead_argv_matches_scripts.py` reads the script's source and holds the two together.
+KL_SOURCE_MEASURED = "measured by this pass"
+
+
 def _heretic_report(arm: Path):
     doc = _read_json(arm / "best_of_n.json")
     winner = doc.get("winner") or {}
+    # THE LABEL IS READ FROM THE ARTEFACT, NOT ASSERTED OVER IT. This said "Heretic, its own
+    # evaluation" while the number beside it was ours: since S1 the selection pass measures KL for
+    # both tools with one estimator and stamps every row it measured. A hardcoded provenance is
+    # wrong the moment the thing it describes changes, and it stayed wrong silently, which is the
+    # failure the stamp was introduced to prevent one layer down.
+    source = winner.get("kl_source")
+    if source == KL_SOURCE_MEASURED:
+        estimator = ("senbonzakura.firsttoken, measured by the equal-budget selection pass on the "
+                     "shared coherence slice")
+    elif source:
+        estimator = str(source)
+    else:
+        # An unlabelled number is what made the two tools' KL figures unreadable across each other
+        # in the first place, so it is named as unlabelled rather than given a plausible owner.
+        estimator = "UNRECORDED: this artefact carries no kl_source"
     return {
         "refusals": winner.get("refusals"),
         "kl": winner.get("kl"),
         "trials_ran": doc.get("trials_ran"),
         "refusal_estimator": "Heretic, its own keyword scorer",
-        "kl_estimator": "Heretic, its own evaluation",
+        "kl_estimator": estimator,
     }
 
 

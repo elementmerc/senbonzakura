@@ -84,7 +84,31 @@ def test_the_headline_count_matches_the_lines_that_justify_it():
         f"the page claims {claimed} diagnostic lines and the output block shows {printed}")
 
 
-def test_the_figures_carry_the_date_they_were_measured():
-    """A number with no date rots silently; this one rotted for a day and nobody could tell."""
-    assert re.search(r"Measured twice, byte-identical, on \d{4}-\d{2}-\d{2}", TEXT), (
-        "the worked example must record when its output was last actually produced")
+def test_the_figures_say_which_environment_produced_them():
+    """A date is not enough. "Measured twice, byte-identical" was true and still misled.
+
+    The page used to carry that sentence with a date, and a review pass on 2026-09-10 ran the same
+    command against the same cached model snapshot and got a different number, because the
+    environment had moved to transformers 5.14.1. Both readings were real measurements. Neither
+    said what it was read on, and a figure that does not name its environment cannot be checked by
+    anyone who is not standing on the machine that produced it.
+    """
+    assert "constraints/ci.txt" in TEXT, (
+        "the worked example must name the environment its figures were measured under, because "
+        "the AUC moves with the transformers version and a bare number cannot be reproduced")
+    assert re.search(r"transformers \d+\.\d+", TEXT), (
+        "name the actual version, not just the constraints file")
+
+
+def test_the_smoke_checks_this_page_against_the_tool():
+    """The prose-versus-numbers checks in this file cannot catch the numbers going stale.
+
+    They compare the page to itself. What closes the loop is `tools/smoke_end_to_end.py`, which
+    runs the command the page prints and compares the AUC it gets to the AUC the page promises.
+    This asserts that check still points at this page, so removing it is a deliberate act rather
+    than something that quietly stops happening.
+    """
+    smoke = (Path(__file__).resolve().parent.parent / "tools" / "smoke_end_to_end.py"
+             ).read_text(encoding="utf-8")
+    assert "documented_compass_auc" in smoke
+    assert "compass.md" in smoke, "the smoke must still be reading this page's figure"

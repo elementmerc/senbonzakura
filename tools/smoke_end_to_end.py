@@ -36,6 +36,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,8 +61,15 @@ def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False, 
     """One stage. Reports what it looked for, not merely that something happened."""
     started = time.time()
     print(f"\n=== {name} ===", flush=True)
-    p = subprocess.run([sys.executable, "-m", *argv], capture_output=True, text=True,
-                       timeout=timeout, check=False, cwd=str(ROOT))
+    try:
+        p = subprocess.run([sys.executable, "-m", *argv], capture_output=True, text=True,
+                           timeout=timeout, check=False, cwd=str(ROOT))
+    except subprocess.TimeoutExpired as e:
+        # Without this the one case TIMEOUT exists for gets a raw traceback instead of this
+        # file's own diagnosis, which is the worst message for the worst failure.
+        tail = (e.output or b"")[-2000:] if isinstance(e.output, bytes) else (e.output or "")[-2000:]
+        raise SmokeError(f"{name}: still running after {timeout}s and was killed. A smoke job that "
+                         f"hangs burns a runner and tells nobody anything.\n{tail}") from None
     out = p.stdout + p.stderr
     took = time.time() - started
 
@@ -80,6 +89,20 @@ def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False, 
     return out
 
 
+#: Strings the guided mode's FIRST screen prints before it asks anything. Content, not volume: the
+#: first version of this stage asserted only that some bytes arrived and that they were not the
+#: no-terminal refusal, and a Python traceback satisfies both. See `drive_the_guided_mode`.
+GUIDED_FIRST_SCREEN = ("Senbonzakura, guided mode.", "What would you like to do?")
+
+#: The read loop stops when it sees this, because it is the point past which the mode is waiting
+#: for a keystroke. Stopping on a bare ">" instead meant stopping on `File "<frozen runpy>"`.
+GUIDED_SENTINEL = "What would you like to do?"
+
+#: How long the guided mode must still be alive after asking, before we believe it is waiting for
+#: an answer rather than having printed the screen on its way out.
+GUIDED_MUST_WAIT_FOR = 3.0
+
+
 def drive_the_guided_mode():
     """Start the guided mode on a REAL terminal and check it asks its first question.
 
@@ -87,9 +110,23 @@ def drive_the_guided_mode():
     having never run: a fake terminal cannot catch a real one. This allocates a pty, so the code
     takes the branch a person takes.
 
-    Deliberately shallow. Walking the whole menu in CI is a keystroke-ordering test that breaks
-    every time a question is reworded, and what is worth protecting here is that the mode starts,
-    detects the terminal, and renders. The wording assertions live in the unit tests.
+    WHAT THIS ASSERTS, AND WHY IT IS NOT "SOME BYTES ARRIVED"
+
+    The 2026-09-10 panel proved by mutation that the first version of this stage passed against a
+    guided mode that crashed on every real terminal. It broke its read loop on `"?" in seen or ">"
+    in seen` and then asserted only that the output was non-empty and was not the no-terminal
+    refusal. A Python traceback contains `>` (`File "<frozen runpy>"`, `in <module>`), so a crash
+    satisfied the break condition and failed neither assertion.
+
+    Two mutations were run. Raising unconditionally in `interactive.run` was caught by the unit
+    tests, so the suite was not blind. Raising only when `sys.stdin.isatty()` is genuinely true is
+    the mutant the unit tests structurally cannot see, and it passed: seventy unit tests green and
+    a stage reporting `ok, it rendered 1654 bytes on a terminal`.
+
+    So this now asserts on what the first screen says, refuses a traceback explicitly, and checks
+    the child was still alive when the read ended. It stays deliberately shallow past that point:
+    walking the whole menu in CI is a keystroke-ordering test that breaks on every rewording, and
+    the wording assertions belong in the unit tests.
     """
     import pty
     import select
@@ -99,12 +136,17 @@ def drive_the_guided_mode():
     pid, fd = pty.fork()
     if pid == 0:                                   # pragma: no cover - the child is replaced
         os.chdir(str(ROOT))
-        os.execv(sys.executable,  # noqa: S606 - fixed argv, no shell, in a pty child
-                 [sys.executable, "-m", "senbonzakura", "interactive"])
+        try:
+            os.execv(sys.executable,  # noqa: S606 - fixed argv, no shell, in a pty child
+                     [sys.executable, "-m", "senbonzakura", "interactive"])
+        finally:
+            # execv only returns if it FAILED. Without this the child falls through into the
+            # parent's code below and reads a file descriptor that means nothing to it.
+            os._exit(127)
 
     seen, deadline = "", time.time() + 90
     try:
-        while time.time() < deadline and len(seen) < 4000:
+        while time.time() < deadline and len(seen) < 8000:
             r, _, _ = select.select([fd], [], [], 5)
             if not r:
                 break
@@ -115,8 +157,21 @@ def drive_the_guided_mode():
             if not chunk:
                 break
             seen += chunk.decode("utf-8", "replace")
-            if "?" in seen or ">" in seen:
+            if GUIDED_SENTINEL in seen:
                 break
+        # Still waiting for a keystroke, rather than having exited while we were reading? A
+        # process that printed the right screen and then died is not a working guided mode.
+        #
+        # The grace period is load-bearing. Asking immediately after the read loop breaks is a
+        # race: the mutant that printed the question and then exited was still alive at that
+        # instant, so a bare WNOHANG call reported it as waiting and the stage passed. Give it time
+        # to actually be gone before concluding it is not.
+        alive, until = True, time.time() + GUIDED_MUST_WAIT_FOR
+        while time.time() < until:
+            if os.waitpid(pid, os.WNOHANG) != (0, 0):
+                alive = False
+                break
+            time.sleep(0.1)
     finally:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -125,15 +180,80 @@ def drive_the_guided_mode():
         os.close(fd)
         try:
             os.waitpid(pid, 0)
-        except ChildProcessError:
+        except (ChildProcessError, OSError):
             pass
 
+    if "Traceback (most recent call last)" in seen:
+        raise SmokeError("interactive CRASHED on a real terminal. The unit tests fake isatty, so "
+                         f"they cannot see this:\n{seen[-2000:]}")
     if not seen.strip():
         raise SmokeError("interactive on a pty printed nothing at all. It detects a terminal with "
-                     "isatty, so on a real one it should render its first question.")
+                         "isatty, so on a real one it should render its first question.")
     if "needs a terminal" in seen:
-        raise SmokeError(f"interactive was given a real pty and still said it needs a terminal:\n{seen[:600]}")
-    print(f"  ok, it rendered {len(seen)} bytes on a terminal", flush=True)
+        raise SmokeError(f"interactive was given a real pty and still said it needs a terminal:"
+                         f"\n{seen[:600]}")
+    for needle in GUIDED_FIRST_SCREEN:
+        if needle not in seen:
+            raise SmokeError(f"interactive rendered {len(seen)} bytes on a terminal without ever "
+                             f"printing {needle!r}, so whatever it did was not asking its first "
+                             f"question.\n{seen[-2000:]}")
+    if not alive:
+        raise SmokeError("interactive printed its first screen and then exited instead of waiting "
+                         f"for an answer.\n{seen[-2000:]}")
+    print(f"  ok, it asked its first question on a terminal and waited ({len(seen)} bytes)",
+          flush=True)
+
+
+#: How far the documented compass AUC may sit from the one the tool prints. Not zero: the figure
+#: moves with the transformers version (0.9653 on 5.14.1, 0.9861 on 5.13.1) and the page says so.
+#: Wide enough to survive a minor dependency bump, narrow enough that the 1.0000 the page printed
+#: for months, and the 0.9826 it printed after that, would both have failed here.
+COMPASS_TOLERANCE = 0.02
+COMPASS_DOC = ROOT / "docs" / "guide" / "compass.md"
+
+
+def documented_compass_auc(path=COMPASS_DOC):
+    """The AUC the compass page tells the reader they will see."""
+    text = path.read_text(encoding="utf-8")
+    m = re.search(r"^MARGIN_DONE\s+auc=([0-9.]+)", text, re.MULTILINE)
+    if not m:
+        raise SmokeError(f"{path} no longer contains a MARGIN_DONE line, so the worked example "
+                         f"this stage checks has moved or gone. Update the stage or the page.")
+    return float(m.group(1))
+
+
+def check_the_documented_compass_figure(out):
+    """Run the command the compass page prints, and compare what comes back to what it promises.
+
+    A review pass on 2026-09-10 ran that command verbatim and got 0.9653 where the page said
+    0.9826 and claimed "measured twice, byte-identical". Both readings were real; neither said
+    which environment produced it, and the difference was the transformers version. The page had
+    already carried a warning box about exactly this having happened once before, and nothing
+    checked it, because `tests/test_documented_figures.py` deliberately pins the prose against the
+    numbers rather than the numbers against the tool.
+
+    The smoke already downloads this model and runs on CPU, so closing that gap costs one command.
+    """
+    want = documented_compass_auc()
+    written = out / "compass-doc.json"
+    text = run("the compass figure the docs promise",
+               ["senbonzakura", "compass", "--model", MODEL,
+                "--harmful", str(TRACK / "bad_eval_ds"), "--harmless", str(TRACK / "good_ds"),
+                "--skip-harmful", "0", "--skip-harmless", "0", "--n", "12",
+                "--out", str(written), "--device", "cpu"],
+               expect_marker="MARGIN_DONE")
+    m = re.search(r"MARGIN_DONE\s+auc=([0-9.]+)", text)
+    if not m:
+        raise SmokeError("compass printed MARGIN_DONE with no auc= on it")
+    got = float(m.group(1))
+    if abs(got - want) > COMPASS_TOLERANCE:
+        raise SmokeError(
+            f"docs/guide/compass.md promises the reader auc={want:.4f} and running the command it "
+            f"prints gives auc={got:.4f}, a gap of {abs(got - want):.4f} against a tolerance of "
+            f"{COMPASS_TOLERANCE}. A worked example that does not reproduce teaches a reader to "
+            f"distrust the next one. Re-run the block and update the page, or the environment "
+            f"moved and the page's note about which one it was measured on needs updating too.")
+    print(f"  ok, the page promises {want:.4f} and the tool gives {got:.4f}")
 
 
 def main(argv=None):
@@ -145,6 +265,9 @@ def main(argv=None):
     out = a.out
     out.mkdir(parents=True, exist_ok=True)
     model_dir = out / "model"
+    # CI gets a fresh RUNNER_TEMP, but the docstring invites a person to run this by hand, and the
+    # second run then trips the abliterator's output pre-flight on an occupied directory.
+    shutil.rmtree(model_dir, ignore_errors=True)
     started = time.time()
 
     # Reports honestly on a source checkout, where the release-time artefacts are absent. Its
@@ -170,13 +293,49 @@ def main(argv=None):
     for key in ("post_bake_refusals", "post_bake_kl"):
         if doc.get(key) is None:
             raise SmokeError(f"abliteration.json carries no {key}, so the run measured nothing")
-    print(f"  the edited model records refusals={doc['post_bake_refusals']} kl={doc['post_bake_kl']:.4f}")
+
+    # THE ASSERTION THAT MAKES THIS STAGE MEAN ITS OWN TITLE. Checking the keys are non-null
+    # distinguishes "abliterated" from "crashed", not from "wrote a file with a number in it": a
+    # bake applying a zero-magnitude edit writes both and passes.
+    #
+    # WHAT THIS CANNOT ASSERT, AND WHY. The obvious check is that refusal fell. It cannot be made
+    # here: the toy track's harmful rows are synthetic placeholders ("example harmful request
+    # number 0..."), so `baseline_refusals` is already 0.0 and there is nothing to remove. This
+    # smoke proves the machinery runs end to end and edits real weights; it does NOT demonstrate
+    # refusal removal, and saying otherwise would be exactly the kind of green this file exists to
+    # refuse. Demonstrating that needs a real track and a real model, which is a GPU job.
+    #
+    # What does discriminate, on any track: an edit that changed nothing leaves the output
+    # distribution identical to the base, so the measured KL is exactly zero. A non-zero KL is the
+    # model itself reporting that its weights moved.
+    kl, edits = doc["post_bake_kl"], sum(doc.get("directions_per_layer") or [])
+    if not kl > 0:
+        raise SmokeError(
+            f"the bake changed nothing: post_bake_kl is {kl}, so the edited model's output "
+            f"distribution is identical to the base model's. This job is titled 'it can actually "
+            f"abliterate a model', and a zero-magnitude edit has not done that however cleanly it "
+            f"exited.")
+    if not edits > 0:
+        raise SmokeError(f"no layer received a direction ({doc.get('directions_per_layer')}), so "
+                         f"nothing was ablated anywhere.")
+    baseline = doc.get("baseline_refusals")
+    if baseline is None:
+        raise SmokeError("abliteration.json carries no baseline_refusals, so nothing records what "
+                         "the model did before the edit")
+    if baseline > 0 and not doc["post_bake_refusals"] < baseline:
+        raise SmokeError(f"the track had refusals to remove ({baseline}) and the edit removed none "
+                         f"({doc['post_bake_refusals']})")
+    print(f"  the edit reached {edits} layers and moved the model: kl={kl:.4f} "
+          f"(refusal {baseline} -> {doc['post_bake_refusals']}; the toy track has no real refusals "
+          f"to remove, so this stage proves the machinery, not the result)")
 
     run("score the model that was just made",
         ["senbonzakura", "score", "--model", str(model_dir),
          "--eval", str(TRACK / "bad_eval_ds"), "--out", str(out / "score.json"),
          "--device", "cpu", "--n", "8", "--skip", "0", "--max-new", "16", "--batch", "4"],
         expect_marker="SCORE_DONE")
+
+    check_the_documented_compass_figure(out)
 
     run("the compass, on the same model",
         ["senbonzakura", "compass", "--model", str(model_dir),

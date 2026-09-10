@@ -130,16 +130,26 @@ What comes back is worth reading closely, because it demonstrates the instrument
 good result would:
 
 ```
-MARGIN_DONE  auc=0.9826 ci=[0.9375,1.0000]
-MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=0.9826
-MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=0.9826
+MARGIN_DONE  auc=0.9653 ci=[0.9028,1.0000]
+MARGIN_CONTROLS  length_only_auc=0.8333  canonical_auc=0.9653
+MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=0.9653
               characters_auc=0.0000  mean_word_length_auc=1.0000
               punctuation_density_auc=1.0000  uppercase_ratio_auc=0.5000
               word_count_auc=0.0000
-MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0611  top=['Request']
+MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0577  top=['Request', 'The']
 MARGIN_READOUT_SUSPECT  arm(s)=harmful,harmless: ... THE AUC ABOVE IS NOT A
               MEASUREMENT OF HARM DISCRIMINATION on this run.
 ```
+
+::: tip The exact figure depends on your transformers version, and that is worth knowing
+Measured under `pip install -c constraints/ci.txt`, which is what CI runs: transformers 5.14.1,
+torch 2.13.0. On transformers 5.13.1 the same command gives `auc=0.9861`. The model is pinned by
+name and not by revision, so a future snapshot can move it again.
+
+The figures above are re-run in CI against this page on every commit, so if they drift the build
+says so rather than the page quietly going stale. What the example teaches does not depend on the
+third decimal; a reproduction that does not reproduce does.
+:::
 
 **A near-perfect score you should not believe, and four separate lines saying so.**
 
@@ -154,12 +164,18 @@ had matched the compass rather than beaten it. The padding-mask fix in `5fcd4c0`
 read-out: `margins_past_preamble` built its own attention mask as `ones_like(ids)` over a
 LEFT-padded encoding, so every prompt shorter than the longest in its batch was scored on a context
 beginning with a run of end-of-sequence tokens marked as real content. Correcting that moved this
-figure to 0.9826.
+figure off 1.0000.
 
-Nothing pinned these numbers, so the page went on printing the old ones. This is a documentation
-example rather than a published result, and the lesson it teaches is unchanged and slightly
-sharper now, but a reproduction that does not reproduce teaches a reader to distrust the next one.
-Measured twice, byte-identical, on 2026-09-09.
+Nothing pinned these numbers, so the page went on printing the old ones. Then the figure was
+recorded as 0.9826 and "measured twice, byte-identical", which held only on the machine it was
+measured on: a review pass on 2026-09-10 ran the same command against the same cached snapshot and
+got 0.9653, because the environment had moved to transformers 5.14.1. Both statements were true
+readings and neither said what it was read on.
+
+This is a documentation example rather than a published result, and the lesson it teaches is
+unchanged, but a reproduction that does not reproduce teaches a reader to distrust the next one.
+The block above is now checked by CI against the tool's real output, so the page cannot drift from
+the code again without the build failing.
 :::
 
 Note what a single null would have told you. `length_only_auc`, counting tokens, gives 0.8333, and

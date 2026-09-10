@@ -11,6 +11,22 @@ You need a GPU with 6 GB or more, and Python 3.10 or newer. No GPU? Skip to
 pip install 'senbonzakura[abliterate]'
 ```
 
+That is 68 packages, because `abliterate` brings torch, transformers, accelerate and optuna. On
+Linux and Windows, 15 of them are CUDA libraries: **pip resolves by platform, not by hardware**, so
+you get the CUDA build of torch whether or not there is a card in the machine.
+
+If you have no GPU, take torch from the CPU index first and the rest will fit around it. That is
+10 packages instead of 68, and none of them CUDA:
+
+```sh
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install 'senbonzakura[abliterate]'
+```
+
+Plain `pip install senbonzakura`, with no extra, is two packages and no torch at all. It gets you
+the commands that check things: build a track, audit one, look for contamination, run `doctor`.
+None of those need a model or a card, so none of them make you download one.
+
 ## Edit a model
 
 ```sh

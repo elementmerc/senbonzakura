@@ -337,3 +337,65 @@ jobs:
           print('torch', torch.__version__)
           assert '+cu' in torch.__version__, f'the CUDA image carries {torch.__version__}, which is not a CUDA build'
           "
+
+  smoke:
+    # THE JOB THAT ACTUALLY DOES THE THING.
+    #
+    # Everything above this runs unit tests, checks packaging, or builds documentation.
+    # Not one of them abliterates a model. On 2026-09-10 that was measured: 3048 tests
+    # across three operating systems and three interpreters, and the product itself had
+    # been exercised by nothing except hand-run jobs on one laptop. A suite that green
+    # lights every commit without once doing the job is measuring the parts.
+    #
+    # It does not need a GPU. SmolLM2-135M-Instruct against the toy track committed in
+    # `examples/toy-track` runs a genuine two-trial search, bakes the winner and saves a
+    # real model in about 25 seconds of CPU, and the whole chain below finishes in
+    # roughly a minute.
+    #
+    # WHY IT ASSERTS REFUSALS TOO. Three stages require the tool to say NO: `kageyoshi`
+    # on a track too small for its own auto budget, and the guided mode both without a
+    # terminal and with one. A tool that cannot refuse is a tool whose approvals mean
+    # nothing, and the guided mode's 48 unit tests all fake `isatty`, so the pty stage
+    # is the only place a real terminal is ever used.
+    name: it can actually abliterate a model
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install torch (CPU build)
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install the package
+        # Plain install, no extras: since the editor's dependencies became base
+        # dependencies this is what a user gets, and the smoke should exercise that
+        # rather than a developer environment.
+        run: pip install -e .
+
+      - name: Abliterate a model, measure it, and drive the guided mode
+        # The script asserts on the markers each command prints when it has done the
+        # work, not on exit codes. Five benchmark jobs once reported success having
+        # measured nothing, because success was printed unconditionally.
+        run: python tools/smoke_end_to_end.py
+
+      - name: The artefacts it produced are readable
+        # A separate step so a failure here is distinguishable from a failure in the
+        # run: the model existing and the model being loadable are different claims.
+        run: |
+          set -euo pipefail
+          ls -la "${RUNNER_TEMP}/smoke/model"
+          python - <<'PY'
+          import json, os, pathlib
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "smoke"
+          for name in ("score.json", "compass.json", "drift.json"):
+              doc = json.loads((out / name).read_text(encoding="utf-8"))
+              assert doc, f"{name} is empty"
+              print(f"  {name}: {len(doc)} keys")
+          card = (out / "CARD.md").read_text(encoding="utf-8")
+          assert "NOT MEASURED" in card or "Capability" in card, "the card lost its sections"
+          print(f"  CARD.md: {len(card.splitlines())} lines")
+          PY

@@ -222,7 +222,12 @@ after a failure, use the workflow's manual trigger with the tag and `testpypi`.
 4. Build BOTH wheels and the sdist, per the section above; confirm the blob is inside each
    wheel, and that `check_wheel.py` passes on the universal wheel with `--release` and on the
    sdist.
-4a. Fast-forward `main` **before** the PyPI step, or the README banner ships broken.
+4a. Fast-forward `main` **before** the PyPI step. Two things depend on it and only one was
+   written down: the README banner image, and every documentation link in the README. The docs
+   site deploys from `main` alone, so uploading to PyPI first publishes a project page whose
+   links 404 until `main` moves. The deploy workflow now fetches four of those URLs from the
+   published site and fails if any is not a 200, so a wrong order is caught rather than met by
+   a reader.
 5. CHANGELOG entry, with the codename in the header.
 6. Panel artefact covering the range.
 7. Annotated tag with the `Codename:` line.

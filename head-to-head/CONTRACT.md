@@ -155,6 +155,15 @@ that cannot reach the network cannot download anything mid-run, so every input i
 advance and the run is reproducible. The security property and the reproducibility property are
 the same property.
 
+*Amended 2026-09-10, on what "inputs mounted read-only" actually means.* The model directory is
+mounted by resolving each symlink and bind-mounting the directory its target lives in. For a
+HuggingFace cache that target is `<cache>/models--org--name/blobs`, which is per-model; on a cache
+laid out with a shared blob store it is **every model this host has ever downloaded**, read-only,
+inside a container that is otherwise `--network none --read-only --cap-drop ALL`. Read-only limits
+what that can do and it still widens the box the invariants above describe, so it is stated here
+rather than left for a reader to discover from `link_mounts`. Mount a model directory that is not
+a shared cache if the difference matters to you.
+
 ## 3. Scope, and its honest limits
 
 **Hardware.** One 6 GB laptop GPU. That is the ceiling and it is a real one: it puts models above

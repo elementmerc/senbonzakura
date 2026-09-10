@@ -1775,6 +1775,31 @@ def ensure_chat_template(tok, template_path=None, log=None):
         "wrapper silently, and every number measured that way is comparable to nothing.")
 
 
+def _track_digests(track):
+    """A content digest per split, or None when there is no track to digest.
+
+    A run recorded `--track /home/somebody/track-heldout`, which nobody else can resolve and
+    nothing can verify. `track.dataset_digest` already exists and is what stamps a promoted track,
+    so this is a lookup rather than new arithmetic.
+    """
+    if not track:
+        return None
+    from .track import dataset_digest
+    root = Path(track)
+    if not root.is_dir():
+        return None
+    out = {}
+    for split in ("bad_ds", "good_ds", "bad_eval_ds", "good_eval_ds", "good_matched_ds"):
+        d = root / split
+        if not d.is_dir():
+            continue
+        try:
+            out[split] = dataset_digest(d)
+        except Exception:                     # provenance must never fail a run
+            out[split] = "UNREADABLE"
+    return out or None
+
+
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
                    needs_chat_template=True):
     """The tokenizer half of the loader, on its own.
@@ -3338,7 +3363,11 @@ class Abliterator:
                          "search": args.search}
         if args.resume:
             runrecord.refuse_across_inputs(args.out, record_values)
+        # The digest rides along because `run.json` is the file that survives a killed run, and
+        # "which corpus was this" is exactly the question a survivor is asked. The path in
+        # `track` is a fact about somebody else's disk; this is checkable anywhere.
         runrecord.write(args.out, trials=args.trials, device=str(args.device),
+                        track_digest=_track_digests(args.track),
                         bankai=bool(getattr(args, "bankai", False)), **record_values)
 
         # --resume on a study that already finished its search (ran the budget or early-stopped)
@@ -3705,6 +3734,16 @@ class Abliterator:
                        # part a stranger can look up.
                        "model": args.model,
                        "model_id": getattr(getattr(self.model, "config", None), "_name_or_path", None),
+                       # WHICH REVISION, not just which name. A Hub id resolves to whatever the
+                       # Hub serves on the day, so a third party redoing this next year gets a
+                       # different checkpoint under the same string and no artefact says so.
+                       # transformers has already resolved it, so this costs an attribute read.
+                       "model_revision": getattr(getattr(self.model, "config", None),
+                                                 "_commit_hash", None),
+                       # And WHICH corpus. `--track` is recorded as a path, which is a fact about
+                       # somebody else's disk; the digest is the part that can be checked from
+                       # anywhere. The function already exists and stamps track promotion.
+                       "track_digest": _track_digests(getattr(args, "track", None)),
                        "seed": args.seed, "search": args.search, "trials": args.trials,
                        # `trials` is what was ASKED for; this is what the study actually holds.
                        # They came apart on 2026-08-06, when a resumed arm ran its full budget a

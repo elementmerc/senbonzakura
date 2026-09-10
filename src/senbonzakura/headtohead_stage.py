@@ -172,6 +172,25 @@ def main(argv=None):
                       a.dir_prompts, a.eval_kl,
                       lambda m: print(f"headtohead stage: NOTE good_ds {m}", file=sys.stderr)),
         "KL divergence, disjoint from direction extraction")
+    # THE SELECTION'S OWN COHERENCE SLICE, and it must not be the file above.
+    #
+    # `kl_prompts.txt` is handed to Heretic during its search as the set its own KL is computed
+    # on, so ranking best-of-N candidates by a KL measured there asks each tool how it did on
+    # prompts one of them tuned against. `drift_prompt_slice` already refuses exactly this
+    # confound for the PUBLISHED coherence figure and says so in as many words; the argument was
+    # never carried across to the selection, where it decides which candidate wins.
+    #
+    # Bounded rather than fatal: it biases which of six candidates is chosen, not the headline,
+    # and it is roughly symmetric because our own search also optimises KL on its own slice. Cut
+    # from past `--dir-prompts + --eval-kl`, by the same rule that makes `final_prompts` disjoint.
+    counts["kl_select"] = write_slice(
+        out / "bestofn_kl_prompts.txt",
+        kl_eval_slice(load_texts(track / "good_ds", a.dir_prompts + a.eval_kl + a.eval_kl),
+                      a.dir_prompts + a.eval_kl, a.eval_kl,
+                      lambda m: print(f"headtohead stage: WARNING the selection's coherence slice "
+                                      f"is {m}, so it overlaps the one Heretic tunes against",
+                                      file=sys.stderr)),
+        "best-of-N coherence, held out from the slice Heretic's search optimises against")
 
     # The prompts each tool FITS its directions on. Heretic takes these as files; senbonzakura
     # reads them from the track directly. Same rows either way, which is the point: a tool given a

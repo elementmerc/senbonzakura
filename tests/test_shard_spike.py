@@ -106,12 +106,18 @@ def test_the_streamed_edit_matches_the_resident_one(tmp_path):
     resident = spike.edit_resident(state, direction)
     spike.shard(state, tmp_path / "s")
     spike.edit_streamed(tmp_path / "s", direction, tmp_path / "e")
-    worst, where = spike.max_abs_difference(resident, spike.reassemble(tmp_path / "e"))
+    streamed = spike.reassemble(tmp_path / "e")
+    worst, where = spike.max_abs_difference(resident, streamed)
     slack = spike.tolerance_for(resident)
-    assert worst <= slack, (
+    assert worst <= slack[None], (
         f"the streamed edit differs from the resident one by {worst:.3e} at {where}, more than "
-        f"the {slack:.3e} two correct float32 runs may differ by. That is structural, not "
+        f"the {slack[None]:.3e} two correct float32 runs may differ by. That is structural, not "
         f"rounding.")
+    # PER TENSOR too. The global bound is scaled by the largest magnitude anywhere in the
+    # checkpoint, so a structural error in a tensor whose values live near 1 could hide under
+    # headroom sized for one whose values live near 1000.
+    bad = spike.breaches(resident, streamed, slack)
+    assert not bad, f"tensors past their own tolerance: {bad[:3]}"
 
 
 def test_bit_identity_was_never_a_property_of_the_streaming_arrangement(tmp_path):
@@ -143,7 +149,7 @@ def test_bit_identity_was_never_a_property_of_the_streaming_arrangement(tmp_path
     # Not asserted to be non-zero: a machine where it IS zero is fine and must not fail here.
     # What must hold is that whatever the route costs, it is rounding and not structure, which is
     # the only thing the tolerance is claiming.
-    assert gap <= spike.tolerance_for(in_memory), (
+    assert gap <= spike.tolerance_for(in_memory)[None], (
         f"a resident edit of the same tensors read off disk differs by {gap:.3e}, which is beyond "
         f"rounding. The route the tensors take is changing the arithmetic, not just its last bit.")
 
@@ -229,3 +235,41 @@ def test_a_small_run_completes_and_records_its_numbers(tmp_path):
     # Each pass ran in its own process, so their peaks are independent rather than a high-water
     # mark one of them set for the others.
     assert set(recorded["peaks"]) == {"resident", "shard", "stream"}
+
+
+def test_a_quiet_tensor_cannot_hide_under_a_loud_one_s_headroom():
+    """The finding: one global tolerance, taken from the largest magnitude anywhere.
+
+    A checkpoint whose embedding weights live near 1000 and whose norm weights live near 1 got a
+    single bound sized for the embeddings, and a structural error in the norms sat well under it.
+    Harmless on this spike's synthetic weights, where every tensor has the same scale; not
+    harmless on a real model, and the docstring read as though it already handled this.
+    """
+    import torch
+
+    loud = torch.full((64,), 1000.0)
+    quiet = torch.full((64,), 1.0)
+    a = {"embed": loud, "norm": quiet}
+    # A structural error in the quiet tensor: 5e-4, which is five hundred times its own
+    # tolerance (8 ULP of 1.0 is about 9.5e-7) and comfortably UNDER the global bound derived
+    # from 1000 (about 9.5e-4). That gap is exactly the hiding place.
+    b = {"embed": loud.clone(), "norm": quiet + 5e-4}
+
+    slack = spike.tolerance_for(a)
+    worst, _where = spike.max_abs_difference(a, b)
+    assert worst <= slack[None], (
+        "the global bound does not catch this, which is the whole point of the finding")
+
+    bad = spike.breaches(a, b, slack)
+    assert bad and bad[0][0] == "norm", (
+        "judged against its own scale, the quiet tensor is far outside tolerance and must be "
+        "reported")
+
+
+def test_a_clean_checkpoint_reports_no_breaches():
+    """The gate must not be so tight that correct rounding fails it."""
+    import torch
+
+    a = {"embed": torch.full((64,), 1000.0), "norm": torch.full((64,), 1.0)}
+    b = {k: v.clone() for k, v in a.items()}
+    assert spike.breaches(a, b, spike.tolerance_for(a)) == []

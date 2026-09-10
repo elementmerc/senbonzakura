@@ -219,13 +219,27 @@ def tolerance_for(tensors):
     Scaled by the largest magnitude present rather than fixed, because ULP is relative: the same
     reduction on values around 1000 legitimately moves a thousand times further than on values
     around 1.
+
+    PER TENSOR, not one global peak. It used to take `max(|t|)` across ALL tensors and apply the
+    resulting slack to a max-abs-difference taken across all of them, so a tensor whose values
+    live near 1 inherited a tolerance derived from one whose values live near 1000, and a
+    structural error in the quiet tensor could hide under the loud one's headroom. That is
+    harmless on the spike's synthetic weights, where every tensor has the same scale, and would
+    not survive contact with real model tensors, where embedding and norm weights differ by orders
+    of magnitude. The docstring read as though it already did this.
+
+    Returns a mapping so `max_abs_difference` can compare each tensor against its own bound, plus
+    the global figure under the key `None` for the summary line.
     """
     import torch as _t
-    peak = 0.0
-    for t in tensors.values():
-        if t.numel():
-            peak = max(peak, float(t.float().abs().max()))
-    return FLOAT32_SLACK_ULP * _t.finfo(_t.float32).eps * max(peak, 1.0)
+    eps = _t.finfo(_t.float32).eps
+    out, peak = {}, 0.0
+    for name, t in tensors.items():
+        m = float(t.float().abs().max()) if t.numel() else 0.0
+        peak = max(peak, m)
+        out[name] = FLOAT32_SLACK_ULP * eps * max(m, 1.0)
+    out[None] = FLOAT32_SLACK_ULP * eps * max(peak, 1.0)
+    return out
 
 
 def max_abs_difference(a, b):
@@ -244,6 +258,25 @@ def max_abs_difference(a, b):
         if d > worst:
             worst, where = d, name
     return worst, where
+
+
+def breaches(a, b, slack):
+    """Tensors whose own difference exceeds their OWN tolerance, worst first.
+
+    The comparison that a single global tolerance could not make. With one bound derived from the
+    largest magnitude anywhere in the checkpoint, a structural error in a tensor whose values live
+    near 1 sits comfortably under a bound sized for one whose values live near 1000.
+    """
+    missing = set(a) ^ set(b)
+    if missing:
+        return [(min(missing), float("inf"), 0.0)]
+    out = []
+    for name, left in a.items():
+        d = float((left.float() - b[name].float()).abs().max())
+        bound = slack.get(name, slack.get(None, 0.0))
+        if d > bound:
+            out.append((name, d, bound))
+    return sorted(out, key=lambda r: -(r[1] / r[2]) if r[2] else -r[1])
 
 
 def checkpoint_sizes(layers, hidden, ffn, bytes_per_element=4):
@@ -290,9 +323,16 @@ def _run_one(mode, a, work, direction):
         streamed = reassemble(work / "edited")
         worst, where = max_abs_difference(resident, streamed)
         # The tolerance is computed HERE, in the pass that holds the tensors, because it is
-        # scaled by the magnitudes present and the parent process never sees them.
+        # scaled by the magnitudes present and the parent process never sees them. Per tensor as
+        # well as globally, so a quiet tensor is judged against its own bound rather than against
+        # headroom borrowed from a loud one.
+        slack = tolerance_for(resident)
+        bad = breaches(resident, streamed, slack)
         print(json.dumps({"max_abs_difference": worst, "where": where,
-                          "tolerance": tolerance_for(resident)}))
+                          "tolerance": slack[None],
+                          "breaches": [{"tensor": n, "difference": d, "tolerance": t}
+                                       for n, d, t in bad[:5]],
+                          "n_breaches": len(bad)}))
         return 0
     else:
         raise ValueError(f"unknown mode {mode!r}")

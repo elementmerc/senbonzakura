@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 
 import torch
 
@@ -211,10 +212,27 @@ def load_base_logprobs(a, prompts, fp, log=print):
     if torch.cuda.is_available():       # pragma: no cover - depends on the machine
         torch.cuda.empty_cache()
     if cache:
-        with atomic_write(cache, binary=True) as f:
-            torch.save({"schema": CACHE_SCHEMA, "fingerprint": fp,
-                        "batch": int(a.batch), "logprobs": lp}, f)
-        log(f"drift: cached the base distributions at {cache}")
+        # SIZED BEFORE IT IS WRITTEN. This is an [N, V] float32 tensor: 311 MB at 512 prompts on a
+        # 151,936-token vocabulary, and it grows linearly with --prompts. The project has a disk
+        # pre-flight for smaller writes than this one (`crashsafe.disk_verdict`,
+        # `convert.SIZE_HEADROOM`, `quantise.SIZE_HEADROOM`) and this path had none, so a full
+        # volume turned a finished measurement into a truncated file and a traceback.
+        need = lp.numel() * lp.element_size()
+        try:
+            free = shutil.disk_usage(os.path.dirname(os.path.abspath(cache)) or ".").free
+        except OSError:
+            free = None
+        if free is not None and free < need * 1.1:
+            log(f"drift: NOT caching the base distributions. They are "
+                f"{need / 1024 ** 3:.2f} GB and {cache} has {free / 1024 ** 3:.2f} GB free, so "
+                f"writing them would fill the volume and leave a truncated file that the next run "
+                f"would have to notice. The measurement below is unaffected.")
+        else:
+            with atomic_write(cache, binary=True) as f:
+                torch.save({"schema": CACHE_SCHEMA, "fingerprint": fp,
+                            "batch": int(a.batch), "logprobs": lp}, f)
+            log(f"drift: cached the base distributions at {cache} "
+                f"({need / 1024 ** 3:.2f} GB)")
     return lp
 
 

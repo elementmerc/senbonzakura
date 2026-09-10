@@ -43,7 +43,7 @@ import warnings
 
 import pytest
 import torch
-from artefacts import has_model_type, needs_architecture
+from artefacts import has_model_type, needs_model_type
 
 from senbonzakura import cli
 
@@ -194,7 +194,7 @@ def test_the_edit_actually_lands_on_a_state_space_hybrid():
 
 
 # ── NemotronH: one child name, four meanings ──────────────────────────────────────
-@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
+@needs_model_type("nemotron_h")
 def test_a_polymorphic_mixer_is_read_by_its_contents_not_its_name():
     """Every one of the four kinds appears in an 8-layer stack, and each must resolve correctly."""
     model, cfg = _build("nemotron_h", num_hidden_layers=8)
@@ -212,7 +212,7 @@ def test_a_polymorphic_mixer_is_read_by_its_contents_not_its_name():
     assert len(kinds) >= 3, f"the fixture did not exercise the polymorphism: {kinds}"
 
 
-@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
+@needs_model_type("nemotron_h")
 def test_a_layer_with_only_one_populated_position_is_allowed():
     """NemotronH's layers each hold ONE writer. Every architecture before it held two."""
     model, _cfg = _build("nemotron_h", meta=False, num_hidden_layers=8)
@@ -295,7 +295,7 @@ def test_skipping_the_mixer_path_is_still_reported_on_a_state_space_hybrid():
         assert unrecognised, "a skipped mamba writer was silently accepted"
 
 
-@needs_architecture("Lfm2MoeConfig", "Lfm2MoeForCausalLM")
+@needs_model_type("nemotron_h")
 def test_an_attention_mixer_is_not_reported_as_skipped():
     """The mirror image, and the trap the shared `mixer` name creates.
 

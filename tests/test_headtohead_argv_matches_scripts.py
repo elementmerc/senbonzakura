@@ -122,7 +122,13 @@ def test_the_coherence_slice_reaches_the_pass_that_measures_it():
     """
     argv = finalise_argv()
     assert "--kl-prompts" in argv
-    assert argv[argv.index("--kl-prompts") + 1] == f"{headtohead.GUEST_EVAL}/kl_prompts.txt"
+    # `bestofn_kl_prompts.txt`, NOT `kl_prompts.txt`. The latter is what Heretic's search
+    # optimises its own KL against, so ranking six candidates by a KL measured there rewards
+    # overfitting it. `drift_prompt_slice` already refuses that confound for the published
+    # coherence figure; the selection pass got the same treatment on 2026-09-10.
+    given = argv[argv.index("--kl-prompts") + 1]
+    assert given == f"{headtohead.GUEST_EVAL}/bestofn_kl_prompts.txt"
+    assert given != f"{headtohead.GUEST_EVAL}/kl_prompts.txt"
 
 
 def test_the_slice_the_pass_is_given_is_one_the_staging_step_writes():

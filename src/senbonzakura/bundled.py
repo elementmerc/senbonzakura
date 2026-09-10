@@ -233,7 +233,12 @@ def extract(destination, log=print):
         if len(members) != len(tar.getmembers()):
             raise ValueError("the bundled track contains a path outside its own directory, which "
                              "a track this project packed never does. Refusing to extract it.")
-        tar.extractall(destination, members=members)     # noqa: S202 - members filtered above
+        # `filter="data"` on top of the name check above. The names are filtered; a symlink's
+        # TARGET is not, and the HMAC over the blob authenticates nothing against a deliberate
+        # substitution because the key ships beside it by design. Reachability is low (anyone who
+        # can replace `data/default-track.bin` already has write access to the install), the cost
+        # is one keyword, and Python 3.14 changes this default underneath us anyway.
+        tar.extractall(destination, members=members, filter="data")
     return destination
 
 

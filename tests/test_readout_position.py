@@ -552,3 +552,79 @@ def test_first_token_logprobs_left_pads_whatever_tokenizer_it_is_given():
         "the estimator read position -1 while the tokenizer padded right, so every short prompt "
         "was scored at a pad token")
     assert tok.padding_side == "right", "the caller's tokenizer must be left as it was found"
+
+
+def test_an_out_of_memory_halves_the_batch_instead_of_killing_the_pass():
+    """`resources.ResourceGovernor` does this for generation and this loop had a fixed stride.
+
+    One unlucky long prompt at batch 16 raised OutOfMemoryError and took down a sealed best-of-N
+    run hours in, with all the generation work already done. `cli.py` already treats a transient
+    CUDA OOM as something a trial survives; the coherence measurement did not.
+    """
+    from unittest import mock
+
+    import torch
+
+    from senbonzakura import firsttoken
+
+    class _Enc:
+        def to(self, _device):
+            return self
+
+    class _Tok:
+        padding_side = "left"
+
+        def __call__(self, chunk, **kw):
+            self.n = len(chunk)
+            return _Enc()
+
+    class _Model:
+        device = torch.device("cpu")
+
+    tok, widths, said = _Tok(), [], []
+
+    def _logits(_model, _enc, _log):
+        widths.append(tok.n)
+        if tok.n > 2:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        return torch.zeros(tok.n, 5)
+
+    with mock.patch.object(firsttoken, "render_chat", lambda _t, p: p), \
+         mock.patch.object(firsttoken, "last_token_logits", _logits):
+        out = firsttoken.first_token_logprobs(_Model(), tok, list("abcdefgh"), batch=8,
+                                              log=said.append)
+
+    assert out.shape == (8, 5), "every prompt still has a row"
+    assert widths[0] == 8 and min(widths) <= 2, f"the batch never shrank: {widths}"
+    assert any("halving the batch" in m for m in said), "and it has to say so"
+
+
+def test_a_real_error_is_not_mistaken_for_an_out_of_memory():
+    """Swallowing a genuine bug as a retryable OOM would turn a crash into a wrong number."""
+    from unittest import mock
+
+    import pytest as _pytest
+    import torch
+
+    from senbonzakura import firsttoken
+
+    class _Enc:
+        def to(self, _device):
+            return self
+
+    class _Tok:
+        padding_side = "left"
+
+        def __call__(self, chunk, **kw):
+            return _Enc()
+
+    class _Model:
+        device = torch.device("cpu")
+
+    def _logits(_model, _enc, _log):
+        raise RuntimeError("shape mismatch in the forward pass")
+
+    with mock.patch.object(firsttoken, "render_chat", lambda _t, p: p), \
+         mock.patch.object(firsttoken, "last_token_logits", _logits), \
+         _pytest.raises(RuntimeError, match="shape mismatch"):
+        firsttoken.first_token_logprobs(_Model(), _Tok(), ["a", "b"], batch=2)

@@ -100,3 +100,29 @@ def test_the_guard_is_the_same_one_the_abliterator_uses(toy):
     manifest = json.loads((toy / "track.json").read_text(encoding="utf-8"))
     assert track_mod.flag_violations(manifest, eval_refusal_final=128), (
         "the stage must be asking the same function, not a second implementation of it")
+
+
+def test_the_selection_gets_a_coherence_slice_the_rival_did_not_tune_against(toy, tmp_path):
+    """`kl_prompts.txt` is handed to Heretic during its search as the set its own KL is computed
+    on. Ranking six candidates by a KL measured there asks each tool how it did on prompts one of
+    them optimised against, which is the confound `drift_prompt_slice` already refuses for the
+    published figure and which was never carried across to the selection.
+    """
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit):          # the toy track trips the reporting floor
+        headtohead_stage.main(["--track", str(toy), "--out", str(out),
+                               "--eval-refusal", "2", "--eval-refusal-final", "4",
+                               "--dir-prompts", "4", "--eval-kl", "4"])
+    search = (out / "kl_prompts.txt").read_text(encoding="utf-8").split("\n")
+    select = (out / "bestofn_kl_prompts.txt").read_text(encoding="utf-8").split("\n")
+    assert search and select
+    overlap = {r for r in search if r.strip()} & {r for r in select if r.strip()}
+    assert not overlap, (
+        f"the selection's coherence slice shares {len(overlap)} row(s) with the one Heretic's "
+        f"search optimises against")
+
+
+def test_the_new_slice_is_one_the_harness_actually_asks_for():
+    """A file staged under a name nothing reads is not a fix."""
+    from senbonzakura import headtohead
+    assert "bestofn_kl_prompts.txt" in headtohead.SLICE_FILES

@@ -67,7 +67,7 @@ GUEST_BENCH = "/work/bench"
 
 # The prompt files every tool is scored on, staged once so no tool brings its own.
 SLICE_FILES = ("good.txt", "bad.txt", "keyword_prompts.txt", "final_prompts.txt",
-               "kl_prompts.txt")
+               "kl_prompts.txt", "bestofn_kl_prompts.txt")
 SLICE_PROVENANCE = "slices.json"
 
 
@@ -206,9 +206,10 @@ def _heretic_finalise(*, out, slices, **_):
             "--out", str(out), "--top-n", "6",
             "--final-prompts", _child(s, "final_prompts.txt"),
             "--keyword-prompts", _child(s, "keyword_prompts.txt"),
-            # The coherence slice. The pass measures KL on it with our estimator, for BOTH tools,
-            # rather than reading each tool's own figure: see `--kl-prompts` in that script.
-            "--kl-prompts", _child(s, "kl_prompts.txt")]
+            # The coherence slice, and NOT `kl_prompts.txt`. That file is what Heretic's search
+            # optimises its own KL against, so ranking candidates on it rewards overfitting it,
+            # for both tools. `bestofn_kl_prompts.txt` is cut from past it by the stage command.
+            "--kl-prompts", _child(s, "bestofn_kl_prompts.txt")]
 
 
 def _bench_dir_for(out):

@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 
 #: PyTorch's own channels, newest first. A build for a given CUDA version needs a driver that
 #: supports at least that version, so the pick is the newest channel the driver can carry.
@@ -495,7 +496,11 @@ def main(argv=None):
         verdict, reason, args = plan(system=system, machine=machine, gpus=gpus, driver=driver,
                                      torch_version=torch_version, variant=variant, compute=compute)
 
-    print(f"\n  {verdict.upper()}: {reason}")
+    # WRAPPED. The reasons are whole paragraphs by design (a verdict that does not say why sends
+    # the reader to fix the wrong thing), and the longest ran to 210 characters on one line.
+    print()
+    for i, line in enumerate(textwrap.wrap(f"{verdict.upper()}: {reason}", width=94)):
+        print(f"  {line}" if i == 0 else f"    {line}")
     if args is None:
         # "blocked" means there is a real problem here that this command cannot fix, which is not
         # the same answer as "nothing to do". Exiting 0 on both makes them indistinguishable to

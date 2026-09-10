@@ -84,3 +84,28 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1
+
+      # NOTHING MEASURED THE DEPLOYMENT until 2026-09-10. `tools/readme_links_resolve.py` checks
+      # the README's links against `docs/.vitepress/dist` on the runner, so it stays green whether
+      # or not anything is actually served, and the eleven dead links it was written for stayed
+      # dead behind it. A build whose output reaches no consequence is this project's recurring
+      # failure shape; so is a check that cannot see the thing it is about.
+      #
+      # Fetches the URLs a reader would actually click, from the site that was just published.
+      - name: The README's own links resolve on the published site
+        run: |
+          set -uo pipefail
+          base="${{ steps.deployment.outputs.page_url }}"
+          base="${base%/}"
+          rc=0
+          for path in "" "/guide/quickstart" "/guide/install" "/guide/compass"; do
+            url="$base$path"
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$url" || echo 000)"
+            if [ "$code" = "200" ]; then
+              echo "  ok   $code  $url"
+            else
+              echo "::error::$url returned $code, so a link in the README is dead for every reader"
+              rc=1
+            fi
+          done
+          exit "$rc"

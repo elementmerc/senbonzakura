@@ -224,6 +224,30 @@ def nominate(complete, top_n):
     return heretic_front(complete)[:max(1, top_n)]
 
 
+#: Above this, the [N, V] baseline stops being a rounding error and starts being the reason a run
+#: dies. Not a refusal: the pass may legitimately be given a large slice on a large machine, and a
+#: hard cap here would refuse a run somebody deliberately sized. It is said out loud instead,
+#: before the allocation rather than after it fails.
+BASELINE_WARN_BYTES = 2 * 1024 ** 3
+
+
+def _warn_if_the_baseline_will_not_fit(n_prompts, model, log=print):
+    """Say how large the coherence baseline is about to be, when that is worth saying."""
+    vocab = getattr(getattr(model, "config", None), "vocab_size", None) or getattr(
+        getattr(getattr(model, "model", None), "config", None), "vocab_size", 0)
+    if not vocab:
+        return None
+    need = n_prompts * vocab * 4                      # float32 on the CPU
+    if need < BASELINE_WARN_BYTES:
+        return None
+    gb = need / 1024 ** 3
+    log(f"best_of_n: WARNING the coherence baseline is {n_prompts} prompts over a {vocab}-token "
+        f"vocabulary, which is {gb:.1f} GB of float32 held on the CPU for the whole pass, and a "
+        f"candidate's own tensor sits beside it while it is scored. Reduce --kl-prompts if this "
+        f"machine cannot carry it.")
+    return need
+
+
 def rescore(candidates, responses_for, kl_for):
     """Re-score each candidate on the larger slice and pick the winner by the same knee scalar.
 
@@ -297,9 +321,17 @@ def refuse_if_the_rule_is_not_shared(rows):
     and it surcharges coherence as `0.5 * max(0, kl - KL_TARGET)` with KL_TARGET = 0.1. That works
     only if the two tools' KL figures are the same quantity. They were not: Heretic's own
     `kl_divergence` runs 0.0014 to 0.0032 where senbonzakura's runs 0.157 to 0.212, so the brake was
-    arithmetically zero on their side and positive on ours, and the winner that picked was
+    arithmetically zero on their side and positive on ours: the rule was not shared in effect,
+    whatever the harness said about it.
+
+    A CORRECTION TO THIS PARAGRAPH, 2026-09-10. It used to end "and the winner that picked was
     published as having done twice the collateral damage on the very axis the selection had
-    stopped weighing.
+    stopped weighing", which contradicted EQUAL-BUDGET.md's "no Heretic arm has run through this
+    pass yet, so nothing published rests on it". Both could not be true, and it matters which:
+    one version says the published table was biased against the rival by our own selection code,
+    the other says the table predates this pass entirely. The second is correct. The 2026-08-12
+    figures were produced before the selection pass existed, so no published number rests on the
+    biased rule. The bias was real and was caught before it decided anything published.
 
     WHAT THIS CHECK ASKS, AND WHY IT CHANGED.
 
@@ -469,9 +501,16 @@ def main(argv=None):
     # zeroing them, so there is never a second resident copy of the weights to diff against. That
     # matters on the 6 GB card this runs on: Qwen3-1.7B is about 3.4 GB at fp16 and two copies
     # would not fit. What is held instead is this one tensor of baseline log-probabilities, which
-    # `first_token_logprobs` returns on the CPU: one row per prompt over the vocabulary, tens of
-    # megabytes, not gigabytes.
+    # `first_token_logprobs` returns on the CPU: one row per prompt over the vocabulary.
+    #
+    # AND IT IS NOT FREE, which this comment used to claim by calling it "tens of megabytes, not
+    # gigabytes". That is true at the sizes actually used and false in general: the tensor is
+    # N x V float32, so at Qwen3's 151,936-token vocabulary each row is 608 KB, and 2,000
+    # coherence prompts would be 1.2 GB resident with a second one beside it while a candidate is
+    # scored. `--kl-prompts` is a file, so N is whatever a caller puts in it. The bound below is
+    # the honest version of the old sentence.
     kl_texts = [p.user for p in load_prompts(settings, _text_file_spec(a.kl_prompts))]
+    _warn_if_the_baseline_will_not_fit(len(kl_texts), model)
     model.reset_model()
     base_lp = first_token_logprobs(model.model, model.tokenizer, kl_texts, batch=a.kl_batch)
     print(f"best_of_n: coherence baseline captured on {len(kl_texts)} harmless prompts "

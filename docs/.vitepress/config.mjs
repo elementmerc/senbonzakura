@@ -66,10 +66,15 @@ export default {
       { text: 'Reference', link: '/reference/cli', activeMatch: '/reference/' },
       { text: 'Contribute', link: '/contributing' },
       {
-        text: 'v0.4 (unreleased)',
+        // NOT a version number. The site went live in this range, and baseline section 16 keeps
+        // unreleased versions out of public artefacts: naming one in the nav of a published site
+        // is a promise about a thing that does not exist yet. The changelog behind it says what
+        // is released and what is not.
+        text: 'Project',
         items: [
           { text: 'Changelog', link: 'https://github.com/elementmerc/senbonzakura/blob/main/CHANGELOG.md' },
           { text: 'Licence (AGPL-3.0-or-later)', link: 'https://github.com/elementmerc/senbonzakura/blob/main/LICENSE' },
+          { text: 'Source on GitHub', link: 'https://github.com/elementmerc/senbonzakura' },
         ],
       },
     ],

@@ -95,6 +95,30 @@ def last_token_logits(model, enc, log=None):
     return model(**enc, use_cache=False).logits[:, -1, :].float()
 
 
+def _is_out_of_memory(exc):
+    """True for a CUDA out-of-memory error, across torch versions.
+
+    Kept here rather than imported from `resources` because this module is imported by the sealed
+    head-to-head harness, which has no access to the abliterator's package internals.
+    """
+    try:
+        from torch.cuda import OutOfMemoryError
+        if isinstance(exc, OutOfMemoryError):
+            return True
+    except ImportError:                                 # pragma: no cover - very old torch
+        pass
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
+def _release():
+    """Give the allocator back what it can reuse before retrying."""
+    try:
+        if torch.cuda.is_available():                   # pragma: no cover - depends on the machine
+            torch.cuda.empty_cache()
+    except Exception:                                   # pragma: no cover - never fail a retry
+        pass
+
+
 @torch.no_grad()
 def first_token_logprobs(model, tok, prompts, batch=16, log=None):
     """[N, V] log-probabilities of the next token after each rendered prompt.
@@ -133,12 +157,32 @@ def first_token_logprobs(model, tok, prompts, batch=16, log=None):
                     "last position cannot be guaranteed to be a real token. Falling back to "
                     "batch=1, which needs no padding.")
                 batch = 1
-        for i in range(0, len(prompts), batch):
-            chunk = [render_chat(tok, p) for p in prompts[i:i + batch]]
-            enc = tok(chunk, return_tensors="pt", padding=True,
-                      add_special_tokens=False).to(model.device)
-            logits = last_token_logits(model, enc, log)
+        # OOM HALVES THE BATCH RATHER THAN KILLING THE PASS. `resources.ResourceGovernor` does
+        # this for the generation path and this loop had a fixed stride, so one unlucky long
+        # prompt at batch 16 raised OutOfMemoryError and took down a sealed best-of-N run hours
+        # in, with all the generation work already done. `cli.py` already treats a transient CUDA
+        # OOM as something a trial survives; the coherence measurement did not.
+        #
+        # Deliberately a local retry rather than the full governor: this function is imported by
+        # the sealed harness, which cannot see the abliterator, and dragging the governor in would
+        # widen that import surface for a loop whose only failure mode is this one.
+        i, width = 0, max(1, batch)
+        while i < len(prompts):
+            chunk = [render_chat(tok, p) for p in prompts[i:i + width]]
+            try:
+                enc = tok(chunk, return_tensors="pt", padding=True,
+                          add_special_tokens=False).to(model.device)
+                logits = last_token_logits(model, enc, log)
+            except Exception as e:
+                if width == 1 or not _is_out_of_memory(e):
+                    raise
+                width = max(1, width // 2)
+                (log or print)(f"first_token_logprobs: out of memory, halving the batch to "
+                               f"{width} and retrying from prompt {i}")
+                _release()
+                continue
             rows.extend(F.log_softmax(logits, dim=-1).float().cpu())
+            i += len(chunk)
     finally:
         if had is not None:
             try:

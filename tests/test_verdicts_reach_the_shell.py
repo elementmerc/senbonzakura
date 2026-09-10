@@ -214,12 +214,25 @@ def test_the_probe_is_allowed_once_the_rescore_can_run(base_args, tiny_model, ti
     real = cli.Abliterator
     monkeypatch.setattr(cli, "Abliterator",
                         lambda args, log: real(args, log, model=tiny_model, tok=tiny_tok))
+    # NOT `except Exception: refusal = None`. That is what this used to do, and it made any
+    # failure at all read as a pass: mutating `Abliterator.run` to raise immediately left this
+    # test green, so it could not distinguish "the gate correctly let the run through" from "the
+    # run never reached the gate". Other failures are still this fixture's business rather than
+    # this test's subject, so they are allowed, but they are allowed EXPLICITLY and the run has to
+    # be shown to have got past the gate under test.
+    # The gate under test raises SystemExit. So the ONLY two outcomes that show it was reached
+    # and did not fire are a clean run and a SystemExit saying something else. Anything else means
+    # the run died before the gate could have run, and this test proved nothing.
+    #
+    # It used to catch bare `Exception` and set `refusal = None`, which made every failure read as
+    # a pass: mutating `Abliterator.run` to raise on its first line left it green.
     refusal = None
     try:
         cli.Abliterator(base_args, lambda _m: None).run()
     except SystemExit as e:
         refusal = str(e.value)
-    except Exception:
-        refusal = None  # any other failure is this fixture's business, not this test's subject
+    except Exception as e:
+        pytest.fail(f"the run failed before the gate under test could have fired, so this test "
+                    f"proved nothing: {type(e).__name__}: {e}")
     assert refusal is None or "--capability-eval" not in refusal, (
         f"the S4 refusal fired on a run where the re-score pass can reach the probe: {refusal}")

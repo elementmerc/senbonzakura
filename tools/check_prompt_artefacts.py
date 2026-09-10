@@ -162,14 +162,30 @@ def scan_staged(path: Path) -> list[str]:
 #: generations reaching a public remote, and a dependency tree contains neither: whatever it
 #: carries, it is not ours to strip and not ours to publish. Names rather than paths, because these
 #: appear at any depth.
+#: Directories whose contents are somebody else's, or this machine's, rather than the operator's
+#: data. Skipping them keeps the walk fast and keeps the gate from complaining about a dependency.
+#:
+#: `dist` and `build` are NOT here, deliberately, and were removed on 2026-09-10. They are
+#: ordinary output-directory names: a user pointing `--out build/run1` at a run is doing nothing
+#: unusual, and a leak gate that silently declines to read the output directory is a gate with a
+#: hole in exactly the place the artefacts land. The packaging directories they were added for are
+#: covered by the fact that this gate reads TRACKED files, and neither is tracked.
 VENDORED = frozenset({
     "node_modules", ".venv", "venv", "site-packages", ".git", ".tox", ".mypy_cache",
-    ".pytest_cache", "__pycache__", "dist", "build", ".eggs",
+    ".pytest_cache", "__pycache__", ".eggs",
 })
 
 
+#: Counted so a skip is visible. A gate that silently declines to read a file reports "clean" for
+#: a tree it did not look at, which is the shape this whole file exists to refuse.
+_SKIPPED: list[Path] = []
+
+
 def _is_vendored(path: Path) -> bool:
-    return any(part in VENDORED for part in path.parts)
+    if any(part in VENDORED for part in path.parts):
+        _SKIPPED.append(path)
+        return True
+    return False
 
 
 def tracked_under(directory: Path) -> list[Path] | None:
@@ -250,7 +266,8 @@ def main(argv=None) -> int:
                   "TRACKS under it, so untracked files are skipped; name them directly to "
                   "check them before they are staged.")
             return 0
-        print(f"prompt-artefact check: {len(targets)} file(s) clean")
+        skipped = f", {len(_SKIPPED)} skipped as vendored" if _SKIPPED else ""
+        print(f"prompt-artefact check: {len(targets)} file(s) clean{skipped}")
         return 0
 
     print("prompt-artefact check FAILED: retained prompts or generations found.", file=sys.stderr)

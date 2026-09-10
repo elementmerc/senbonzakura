@@ -1,0 +1,29 @@
+# What the SOURCE distribution carries, which is not the same question as what a wheel carries.
+#
+# WHY THIS FILE EXISTS
+#
+# `setup.py` exists to make one artefact unbuildable: a platform-neutral package containing a
+# Linux executable. It hooks `bdist_wheel`, so it tags a wheel that carries binaries and refuses
+# to let it claim `py3-none-any`. It does not hook `sdist`, and nothing else did either.
+#
+# The result, measured on 2026-09-10: `python -m build --sdist` produced a tarball with 33 entries
+# under `vendor/bin/linux-x86_64/`, roughly 19 MB of `.so` files and `llama-quantize`, inside a
+# distribution that has no platform tag by construction. A macOS or Windows user with no matching
+# wheel, or anyone installing with `--no-binary`, builds from that sdist and gets Linux binaries.
+# `doctor` then reports that the vendored binary "cannot start", which is the corrupt-at-first-use
+# outcome `setup.py`'s own docstring names as the thing it prevents.
+#
+# So the binaries are pruned here. The sdist keeps the vendored SOURCE (`vendor/src/`), which is
+# what a source distribution should carry, and keeps every licence notice, because the MIT
+# obligation attaches to the source as much as to the binaries.
+
+prune src/senbonzakura/vendor/bin
+recursive-include src/senbonzakura/vendor/bin LICENSE
+
+include LICENSE
+include THIRD-PARTY-NOTICES.md
+include THIRD-PARTY-CORPORA.md
+include README.md
+include CHANGELOG.md
+include constraints.txt
+recursive-include constraints *.txt

@@ -52,7 +52,8 @@ def test_the_stage_refuses_counts_that_reach_into_the_measure_partition(toy, tmp
 
 def test_the_harmless_side_is_checked_too(toy, tmp_path):
     """--dir-prompts plus --eval-kl reaching past fit+search puts the KL reference on rows the
-    compass reports on."""
+    compass reports on.
+    """
     with pytest.raises(SystemExit) as e:
         headtohead_stage.main(["--track", str(toy), "--out", str(tmp_path / "out"),
                                "--eval-refusal", "2", "--eval-refusal-final", "4",

@@ -49,11 +49,37 @@ source checkout; in a release it is a defect.
 
 ## Before the wheel leaves this machine
 
+**Two wheels are built, not one.** This is the step the runbook used to leave out, and following
+it literally landed the operator at the verify step with a public GitHub Release and one wheel PyPI
+will not take.
+
+The reason is that `setup.py` refuses to let a wheel carrying `vendor/bin/` claim `py3-none-any`,
+and correctly tags it `linux_x86_64` instead, which PyPI does not accept. So:
+
+- the **universal** wheel (`py3-none-any`) goes to PyPI. It is built with the vendored binaries
+  moved aside, and `--track default` still resolves from it;
+- the **platform** wheel (`linux_x86_64`) is attached to the GitHub Release, where a platform tag
+  is not a problem;
+- the **sdist** goes to both, and carries no binaries at all (`MANIFEST.in` prunes them).
+
 ```sh
 python tools/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
 python tools/pack_track.py             # writes src/senbonzakura/data/default-track.bin
+
+# 1. the PLATFORM wheel, for the GitHub Release
 python -m build --wheel
-python tools/check_wheel.py dist/*.whl --release
+python tools/check_wheel.py dist/*.whl                 # tag-versus-contents only
+
+# 2. the UNIVERSAL wheel plus the sdist, for PyPI.
+#    `build/` must go too: a stale staging directory carries the binaries back in even after
+#    the source tree has none, which is the trap setup.py documents.
+mv src/senbonzakura/vendor/bin /tmp/senbon-vendor-bin
+rm -rf build
+python -m build --outdir dist-pypi
+mv /tmp/senbon-vendor-bin src/senbonzakura/vendor/bin
+
+python tools/check_wheel.py dist-pypi/*.whl --release  # the artefact strangers get
+python tools/check_wheel.py dist-pypi/*.tar.gz         # nothing platform-specific in the sdist
 python tools/check_cuda_channels.py     # the channels `senbonzakura setup` recommends still exist
 ```
 
@@ -181,7 +207,10 @@ replayed. Repeat the publisher entry on TestPyPI with environment `testpypi` to 
 
 ### Publishing
 
-Attach `dist/*.whl` and `dist/*.tar.gz` to the GitHub Release. Publishing the release starts the
+Attach the **platform** wheel (`dist/*.whl`) and the sdist to the GitHub Release, and let the
+workflow upload `dist-pypi/` to PyPI. Attaching the platform wheel to the Release and uploading the
+universal one is the whole point of building both; swapping them puts an artefact on PyPI that
+`twine` refuses after the Release is already public and the version number is spent. Publishing the release starts the
 workflow; approving the `pypi` environment lets the upload run. To rehearse first, or to re-run
 after a failure, use the workflow's manual trigger with the tag and `testpypi`.
 
@@ -190,7 +219,9 @@ after a failure, use the workflow's manual trigger with the tag and `testpypi`.
 1. Pack the track.
 2. `python tools/check_vendor_pins.py`; refresh any pin it reports as `DUE`.
 3. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
-4. Build the wheel; confirm the blob is inside it.
+4. Build BOTH wheels and the sdist, per the section above; confirm the blob is inside each
+   wheel, and that `check_wheel.py` passes on the universal wheel with `--release` and on the
+   sdist.
 4a. Fast-forward `main` **before** the PyPI step, or the README banner ships broken.
 5. CHANGELOG entry, with the codename in the header.
 6. Panel artefact covering the range.

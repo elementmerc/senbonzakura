@@ -511,7 +511,8 @@ def test_the_median_is_printed_beside_the_mean(tmp_path):
 
 def test_the_interval_drift_already_wrote_finally_reaches_the_reader(tmp_path):
     """`drift.py` has written kl_ci into every artefact since the axis was found to have no
-    uncertainty at all, and until 2026-09-10 nothing outside that file read it."""
+    uncertainty at all, and until 2026-09-10 nothing outside that file read it.
+    """
     out = _run_with_drift(tmp_path, [0.05] * 5, [0.06] * 5)
     assert "95% interval" in out
     assert "[0.0400,0.0600]" in out, "the per-arm interval, not just the point estimate"

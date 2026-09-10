@@ -198,6 +198,7 @@ def test_a_cache_built_for_a_different_question_is_rebuilt_loudly(
     cache = str(tmp_path / "base.pt")
     _write_cache(cache, cached_fp, cached_batch, 4)
     monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
     said = []
     out = drift.load_base_logprobs(_args(tmp_path, base_cache=cache, batch=16),
                                    ["a", "b"], "fp-1", log=said.append)
@@ -210,6 +211,7 @@ def test_the_recomputed_base_is_written_back_for_the_next_model(tmp_path, monkey
     (model, tok), _ = stub_forward
     cache = str(tmp_path / "base.pt")
     monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
     drift.load_base_logprobs(_args(tmp_path, base_cache=cache, batch=4), ["a"], "fp-1",
                              log=lambda _s: None)
     doc = torch.load(cache, map_location="cpu", weights_only=False)
@@ -220,6 +222,7 @@ def test_the_recomputed_base_is_written_back_for_the_next_model(tmp_path, monkey
 def test_no_cache_path_means_no_cache_file(tmp_path, monkeypatch, stub_forward):
     (model, tok), _ = stub_forward
     monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
     drift.load_base_logprobs(_args(tmp_path, base_cache=None, batch=4), ["a"], "fp-1",
                              log=lambda _s: None)
     assert list(tmp_path.glob("*.pt")) == []
@@ -239,6 +242,7 @@ def test_main_writes_the_result_with_what_produced_it(tmp_path, monkeypatch, pro
     figures measured on different slices were put in one column.
     """
     monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
     monkeypatch.setattr(drift, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     out = str(tmp_path / "drift.json")
@@ -261,6 +265,7 @@ def test_main_refuses_a_base_that_covers_a_different_number_of_prompts(tmp_path,
     one, which silently pairs each model with somebody else's question.
     """
     monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
     monkeypatch.setattr(drift, "load_base_logprobs",
                         lambda *a, **k: _lp([[0.5, 0.5]] * 5))
     with pytest.raises(SystemExit) as e:
@@ -278,6 +283,7 @@ def test_a_model_with_no_chat_template_still_fingerprints(tmp_path, monkeypatch,
 
     monkeypatch.setattr(drift, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeModel(), _NoTemplate()))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _NoTemplate())
     monkeypatch.setattr(drift, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     res = drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
@@ -348,3 +354,41 @@ def test_the_per_prompt_values_average_to_the_reported_figure():
     base = torch.log_softmax(torch.randn(24, 12), dim=-1)
     cand = torch.log_softmax(base + 0.1 * torch.randn(24, 12), dim=-1)
     assert abs(float(drift.kl_per_prompt(base, cand).mean()) - drift.kl(base, cand)) < 1e-9
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Two findings from the 2026-09-10 panel, both about what is resident and when.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_base_is_measured_and_freed_before_the_candidate_is_loaded(
+        tmp_path, monkeypatch, prompts_file):
+    """THE DEFECT. The candidate was loaded first and the base loaded on top of it.
+
+    Two bf16 copies of a 1.7B model do not fit the 6 GB card this project is sized for, and
+    `head-to-head/best_of_n_heretic.py` states that constraint in as many words and designs around
+    it. A warm --base-cache hid it, so only the first run against a given base was ever cold, and
+    that is the run the published coherence figure comes from.
+    """
+    order = []
+
+    def _model(model_id, **kw):
+        order.append(f"model:{model_id}")
+        return _FakeModel(), _FakeTok()
+
+    monkeypatch.setattr(drift, "load_model_and_tokenizer", _model)
+    monkeypatch.setattr(drift, "load_tokenizer",
+                        lambda *a, **k: order.append("tokenizer") or _FakeTok())
+    monkeypatch.setattr(drift, "first_token_logprobs",
+                        lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
+    drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
+                "--out", str(tmp_path / "d.json")])
+    assert order == ["tokenizer", "model:base", "model:cand"], (
+        f"the candidate must not be resident while the base is loaded; got {order}")
+
+
+def test_the_base_cache_is_read_without_arbitrary_code_execution(tmp_path):
+    """The cached payload is {str: str|int|Tensor}, and the path comes from a CLI flag."""
+    import inspect
+    src = inspect.getsource(drift.load_base_logprobs)
+    assert "weights_only=True" in src
+    assert "weights_only=False" not in src

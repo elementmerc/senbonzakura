@@ -1,8 +1,8 @@
 {
   "schema": "senbonzakura-track/1",
   "sources": {
-    "harmful": "/tmp/toysrc/harmful.txt",
-    "harmless": "/tmp/toysrc/harmless.txt"
+    "harmful": "harmful.txt",
+    "harmless": "harmless.txt"
   },
   "counts": {
     "harmful": {

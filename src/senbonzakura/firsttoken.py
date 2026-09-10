@@ -101,14 +101,50 @@ def first_token_logprobs(model, tok, prompts, batch=16, log=None):
 
     The three steps, in the one order every caller uses them: render through the chat template,
     take the logits at the last real token, log-softmax.
+
+    WHY THIS SETS `padding_side` ITSELF
+
+    `last_token_logits` reads position -1, which is the last REAL token only when padding is on
+    the left. `cli.py` sets `tok.padding_side = "left"` on the tokenisers it loads, so every path
+    through this project was correct; `head-to-head/best_of_n_heretic.py` calls this function with
+    HERETIC'S wrapper and Heretic's tokeniser, built by their loader inside the sealed image, and
+    nothing in that file mentions padding at all.
+
+    If a caller's tokeniser pads right, every prompt shorter than the longest in its batch is
+    scored at a pad position, in both the base and the candidate, so the KL comes out small and
+    plausible rather than obviously broken. That is the figure the equal-budget pass introduced to
+    make the two tools comparable. It is also the defect fixed in `margin.py` this cycle, which
+    hides the same way: at batch 1 there is no padding and the number is right.
+
+    A precondition a third party's tokeniser can change between revisions is not a precondition
+    worth asserting, so this owns it instead.
     """
     rows = []
-    for i in range(0, len(prompts), batch):
-        chunk = [render_chat(tok, p) for p in prompts[i:i + batch]]
-        enc = tok(chunk, return_tensors="pt", padding=True,
-                  add_special_tokens=False).to(model.device)
-        logits = last_token_logits(model, enc, log)
-        rows.extend(F.log_softmax(logits, dim=-1).float().cpu())
+    had = getattr(tok, "padding_side", None)
+    try:
+        try:
+            tok.padding_side = "left"
+        except (AttributeError, TypeError):
+            # Cannot set it, so cannot rely on it. One prompt at a time needs no padding, which
+            # is slower and correct; guessing would be faster and silently wrong.
+            if len(prompts) > 1 and batch > 1:
+                (log or print)(
+                    "first_token_logprobs: this tokenizer will not accept padding_side, so the "
+                    "last position cannot be guaranteed to be a real token. Falling back to "
+                    "batch=1, which needs no padding.")
+                batch = 1
+        for i in range(0, len(prompts), batch):
+            chunk = [render_chat(tok, p) for p in prompts[i:i + batch]]
+            enc = tok(chunk, return_tensors="pt", padding=True,
+                      add_special_tokens=False).to(model.device)
+            logits = last_token_logits(model, enc, log)
+            rows.extend(F.log_softmax(logits, dim=-1).float().cpu())
+    finally:
+        if had is not None:
+            try:
+                tok.padding_side = had
+            except (AttributeError, TypeError):
+                pass
     return torch.stack(rows, 0)
 
 

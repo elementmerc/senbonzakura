@@ -311,3 +311,74 @@ def test_a_disagreement_between_the_two_tags_is_caught_on_either():
 def test_a_wheel_with_no_metadata_tag_is_still_read_from_its_filename():
     assert check_wheel.unacceptable_to_pypi(
         {"filename_tag": "py3-none-linux_x86_64", "metadata_tags": None})
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# The build machine's filesystem, which shipped to every user for two releases.
+#
+# The 2026-09-10 panel unpacked `src/senbonzakura/data/default-track.bin` from the
+# published wheel and read this out of the track manifest inside it:
+#
+#     "labels":  "/home/heph-agent/track2-enriched-backup/contrast/axis-labels-both.tsv"
+#     "harmful": "/tmp/senbon-rebuild/harmful.txt"
+#
+# That unpacks into every user's ~/.cache/senbonzakura/bundled-track/. Baseline 13
+# forbids private paths in shipped artefacts. `74e571f` fixed the same class of defect
+# one level up and this survived, because the blob predates it and was never repacked,
+# which is the argument for a gate rather than a memory.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def _wheel_with(tmp_path, name, body):
+    import zipfile
+    w = tmp_path / "senbonzakura-9.9.9-py3-none-any.whl"
+    with zipfile.ZipFile(w, "w") as z:
+        z.writestr(name, body)
+    return w
+
+
+def test_a_build_machine_path_in_a_shipped_blob_is_refused(tmp_path):
+    w = _wheel_with(tmp_path, "senbonzakura/data/track.json",
+                    '{"sources": {"harmful": "/home/heph-agent/rebuild/harmful.txt"}}')
+    problems = check_wheel.leaks_a_build_path(w)
+    assert problems, "the exact string read out of the published wheel was not flagged"
+    assert "/home/heph-agent" in problems[0]
+    assert "pack_track" in problems[0], "the reader needs the remedy, not just the complaint"
+
+
+def test_a_scrubbed_manifest_passes(tmp_path):
+    w = _wheel_with(tmp_path, "senbonzakura/data/track.json",
+                    '{"sources": {"harmful": "harmful.txt"}}')
+    assert check_wheel.leaks_a_build_path(w) == []
+
+
+def test_a_tmp_path_counts_too(tmp_path):
+    w = _wheel_with(tmp_path, "senbonzakura/data/track.json",
+                    '{"sources": {"harmful": "/tmp/senbon-rebuild/harmful.txt"}}')
+    assert check_wheel.leaks_a_build_path(w)
+
+
+def test_source_files_are_not_scanned(tmp_path):
+    """Docstrings and comments mention /tmp legitimately, and a gate that flagged those would be
+    switched off within a week. Only the shipped data blobs are read.
+    """
+    w = _wheel_with(tmp_path, "senbonzakura/bundled.py",
+                    'CACHE = "/home/someone/.cache"  # an example in a comment\n')
+    assert check_wheel.leaks_a_build_path(w) == []
+
+
+def test_the_real_shipped_blob_carries_no_build_machine_path():
+    """The artefact itself, not a fixture of it.
+
+    A fixture is a claim about the world; this reads the blob that will actually ship.
+    """
+    import json
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+    from senbonzakura import bundled
+    if not bundled.is_available():
+        pytest.skip("no bundled track in this checkout")
+    track = pathlib.Path(bundled.ensure()) / "track.json"
+    doc = json.loads(track.read_text(encoding="utf-8"))
+    for key, value in (doc.get("sources") or {}).items():
+        assert not str(value).startswith(("/home/", "/tmp/", "/root/", "/Users/")), (
+            f"the shipped track manifest still carries the build machine's path for {key}: {value}")

@@ -85,6 +85,16 @@ jobs:
           python -m pip install --upgrade pip
           python tools/check_wheel.py dist/*.whl --release
 
+      # The sdist is a separate question with a separate answer. `setup.py` refuses to let a
+      # WHEEL carrying Linux binaries claim py3-none-any; nothing asked the same of the source
+      # distribution, and this job uploads dist/* after checking dist/*.whl alone. On 2026-09-10
+      # the sdist held 33 entries under vendor/bin/linux-x86_64, about 19 MB, inside an artefact
+      # that has no platform tag by construction.
+      - name: Check the source distribution carries nothing platform-specific
+        run: |
+          shopt -s nullglob
+          for f in dist/*.tar.gz; do python tools/check_wheel.py "$f"; done
+
       - name: Check the metadata renders
         run: |
           python -m pip install --upgrade twine

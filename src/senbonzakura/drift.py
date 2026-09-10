@@ -44,7 +44,7 @@ import os
 
 import torch
 
-from .cli import load_model_and_tokenizer, loader_parser
+from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
 # The measurement itself, from the torch-only module the sealed best-of-N pass also uses, so the
@@ -189,7 +189,10 @@ def load_base_logprobs(a, prompts, fp, log=print):
     """The base model's distributions, from cache when the cache is genuinely for this question."""
     cache = a.base_cache
     if cache and os.path.isfile(cache):
-        doc = torch.load(cache, map_location="cpu", weights_only=False)
+        # weights_only=True: the payload is {str: str|int|Tensor}, which it handles, and the
+        # path comes from a CLI flag, so the permissive mode was an arbitrary-code-execution
+        # surface bought for nothing.
+        doc = torch.load(cache, map_location="cpu", weights_only=True)
         if (doc.get("schema") == CACHE_SCHEMA and doc.get("fingerprint") == fp
                 and int(doc.get("batch", -1)) == int(a.batch)):
             log(f"drift: reusing the base distributions cached at {cache}")
@@ -219,9 +222,16 @@ def main(argv=None):
     a = build_parser().parse_args(argv)
     prompts = read_prompts(a.prompts)
 
-    cand, tok = load_model_and_tokenizer(
-        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code)
+    # ORDER IS LOAD-BEARING, and it used to be the other way round. The candidate was loaded
+    # first and `load_base_logprobs` then loaded the base while the candidate was still on the
+    # device, so the peak was two full bf16 copies. On the 6 GB card this project is sized for
+    # that does not fit, and `head-to-head/best_of_n_heretic.py` states the same constraint and
+    # designs around it. A warm --base-cache hid it, so only the FIRST run against a given base
+    # was ever cold, and that is the run the published coherence figure comes from.
+    #
+    # Only the tokenizer is needed to fingerprint the question, so the base is measured and freed
+    # before the candidate arrives, and the peak is one model.
+    tok = load_tokenizer(a.model, trust_remote_code=a.trust_remote_code)
     template = getattr(tok, "chat_template", None) or ""
     fp = fingerprint(a.base, prompts, template)
 
@@ -231,6 +241,9 @@ def main(argv=None):
             f"drift: the base distributions cover {base_lp.shape[0]} prompts and this run has "
             f"{len(prompts)}. Refusing to compare rows that are not the same prompts.")
 
+    cand, tok = load_model_and_tokenizer(
+        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        trust_remote_code=a.trust_remote_code)
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)
     value = kl(base_lp, cand_lp)
     kl_lo, kl_hi = kl_interval(base_lp, cand_lp, seed=int(getattr(a, "seed", 0) or 0))

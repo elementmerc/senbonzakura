@@ -250,6 +250,22 @@ jobs:
           python -m build --wheel --outdir dist-ci
       - name: The tag and the contents agree
         run: python tools/check_wheel.py dist-ci/*.whl
+      - name: The source distribution carries nothing platform-specific
+        run: |
+          python -m build --sdist --outdir dist-ci
+          python tools/check_wheel.py dist-ci/*.tar.gz
+
+      - name: A deliberately wrong sdist is refused
+        # The same argument as the mislabelled wheel below: a gate only ever seen passing has
+        # not been shown to work.
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          mkdir -p "$work/pkg/src/senbonzakura/vendor/bin/linux-x86_64"
+          echo x > "$work/pkg/src/senbonzakura/vendor/bin/linux-x86_64/libggml-base.so"
+          tar czf "$work/bad.tar.gz" -C "$work" pkg
+          python tools/check_wheel.py "$work/bad.tar.gz" --expect-failure
+
       - name: A deliberately mislabelled wheel is refused
         # Renaming a platform wheel to the universal tag produces the one combination
         # that installs on machines it cannot run on. If this step passes, the check

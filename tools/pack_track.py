@@ -67,7 +67,18 @@ def build_tar(track, log=print):
             for path in sorted(source.rglob("*")) if source.is_dir() else [source]:
                 if path.is_dir():
                     continue
-                tar.add(path, arcname=str(Path("track") / path.relative_to(track)), filter=norm)
+                arcname = str(Path("track") / path.relative_to(track))
+                if path.name == "track.json":
+                    # Rewritten rather than copied, so the build machine's paths never enter the
+                    # tar at all. See `scrub_manifest`.
+                    body = json.dumps(
+                        scrub_manifest(json.loads(path.read_text(encoding="utf-8"))),
+                        indent=2).encode("utf-8")
+                    info = tarfile.TarInfo(arcname)
+                    info.size = len(body)
+                    tar.addfile(norm(info), io.BytesIO(body))
+                    continue
+                tar.add(path, arcname=arcname, filter=norm)
     raw = buf.getvalue()
 
     counts = _counts(track)
@@ -88,6 +99,28 @@ def build_tar(track, log=print):
         info.size = len(blob)
         tar.addfile(norm(info), io.BytesIO(blob))
     return buf2.getvalue(), manifest
+
+
+def scrub_manifest(doc):
+    """The track manifest with the build machine's filesystem removed.
+
+    `track.json` records where each corpus came from, which on the machine that built it is an
+    absolute path. Packed as-is, that ships in every wheel and unpacks into every user's
+    `~/.cache/senbonzakura/bundled-track/`: the 2026-09-10 panel read
+    `/home/heph-agent/track2-enriched-backup/contrast/axis-labels-both.tsv` out of the published
+    blob. Baseline 13 forbids private paths in shipped artefacts, and `74e571f` fixed the same
+    class of defect one level up; this one survived because the blob predates it and was never
+    repacked.
+
+    The basename is kept because it is the only part that carries meaning to a reader (which
+    corpus, not whose disk).
+    """
+    out = dict(doc)
+    sources = out.get("sources")
+    if isinstance(sources, dict):
+        out["sources"] = {k: (os.path.basename(v) if isinstance(v, str) else v)
+                          for k, v in sources.items()}
+    return out
 
 
 def _counts(track):

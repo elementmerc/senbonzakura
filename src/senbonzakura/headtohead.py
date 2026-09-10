@@ -519,22 +519,60 @@ def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, 
 ARM_OVERHEAD_BYTES = 512 * 1024 * 1024
 
 
-def _tree_bytes(path: Path, cap: int = 50_000) -> int:
-    """Bytes a directory really occupies, following symlinks so a cache of links is not read as 0.
+#: Files the loader will actually read. A checkpoint directory routinely carries the SAME weights
+#: twice: a Llama-3 snapshot ships `model-*.safetensors` beside `original/consolidated.*.pth`.
+#: Summing everything doubled the estimate, and an over-count makes the disk gate refuse a run that
+#: would have fitted, which is the failure `arms_to_run` was written to avoid arriving through the
+#: other input.
+WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".gguf", ".msgpack", ".h5")
+
+#: Subdirectories holding a second copy of the weights in another format.
+_DUPLICATE_DIRS = ("original", "onnx", "openvino", "tflite", "coreml")
+
+
+def _tree_bytes(path: Path, cap: int = 200_000) -> tuple[int, bool]:
+    """(bytes the loader will read, whether the walk finished), following symlinks.
 
     The HuggingFace layout keeps every real byte in `blobs/` and fills the snapshot with links into
     it, so a size that does not follow links reports a multi-gigabyte model as a few kilobytes.
+
+    RETURNS COMPLETENESS, because it used to `break` at the cap and hand back the partial total as
+    though it were the size. A sharded tree over the cap then under-reported, and the gate passed a
+    run that would not fit: a truncated measurement presented as a measurement is the same defect
+    this module's disk checks exist to catch, one level down.
     """
-    total = 0
+    total, complete = 0, True
     for i, child in enumerate(Path(path).rglob("*")):
         if i >= cap:
+            complete = False
             break
         try:
-            if child.is_file():           # is_file() follows the link; so does stat()
-                total += child.stat().st_size
-        except OSError:
+            if not child.is_file():       # is_file() follows the link; so does stat()
+                continue
+            if child.suffix.lower() not in WEIGHT_SUFFIXES:
+                continue
+            if any(part in _DUPLICATE_DIRS for part in child.relative_to(path).parts[:-1]):
+                continue
+            total += child.stat().st_size
+        except (OSError, ValueError):
             continue
-    return total
+    return total, complete
+
+
+def _cached_model_dir(model: str):
+    """Where a Hub id already lives on this machine, or None.
+
+    `--model Qwen/Qwen3-1.7B` is the documented invocation and is not a directory, which is how the
+    disk gate came to be a silent no-op on the exact command line the docs teach.
+    """
+    if not model or Path(model).is_dir() or "/" not in model or model.count("/") > 1:
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+        got = snapshot_download(model, local_files_only=True)
+    except Exception:
+        return None
+    return Path(got) if got and Path(got).is_dir() else None
 
 
 def host_free_bytes():
@@ -604,11 +642,25 @@ def disk_complaints(*, out: Path, model: str, arms: int, free=None, host_free=No
     """Whether there is room for every arm, asked of the host as well as of this filesystem."""
     if arms <= 0:
         return []
-    model_bytes = _tree_bytes(Path(model)) if model and Path(model).is_dir() else 0
-    if not model_bytes:
-        return []                         # nothing to size against; other checks cover a bad model
-    need = arms * (model_bytes + ARM_OVERHEAD_BYTES)
     problems = []
+    where = Path(model) if (model and Path(model).is_dir()) else _cached_model_dir(model)
+    if where is None:
+        # AN UNANSWERABLE QUESTION MUST NOT READ AS A REASSURING ANSWER. This returned [] for any
+        # `--model` that is not a local directory, which is every Hub id, which is the documented
+        # command. The gate added because a ten-arm run filled the disk eight hours in was
+        # therefore silent on the invocation the docs teach, and said nothing about being silent.
+        return [(f"the disk check could not run: --model {model!r} is not a directory on this "
+                 f"host and no local snapshot of it was found, so the size of {arms} copies is "
+                 f"unknown. Download the model first, or pass a local path, to have this checked.")]
+    model_bytes, complete = _tree_bytes(where)
+    if not model_bytes:
+        return [(f"the disk check could not run: no weight files were found under {where}, so "
+                 f"the size of {arms} copies is unknown.")]
+    if not complete:
+        problems.append(
+            f"the size of {where} was measured over a truncated walk, so the figure below is a "
+            f"LOWER BOUND and the real requirement is larger.")
+    need = arms * (model_bytes + ARM_OVERHEAD_BYTES)
     try:
         here = shutil.disk_usage(out).free if free is None else free
     except OSError:

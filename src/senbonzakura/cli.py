@@ -1775,14 +1775,19 @@ def ensure_chat_template(tok, template_path=None, log=None):
         "wrapper silently, and every number measured that way is comparable to nothing.")
 
 
-def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
-                             trust_remote_code=False, attn_impl=None, log=None,
-                             chat_template=None, needs_chat_template=True):
-    # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
-    # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
-    # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
-    # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
-    # the weight bake rewrites tensors in place and needs full precision.
+def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
+                   needs_chat_template=True):
+    """The tokenizer half of the loader, on its own.
+
+    Split out so a caller that needs only the chat template does not have to put a model on the
+    device to get it. `drift` did: it loaded the candidate, then loaded the base while the
+    candidate was still resident, so the peak was two full copies. Two bf16 copies of a 1.7B model
+    do not fit the 6 GB card this project is sized for, and `best_of_n_heretic.py` says so in as
+    many words and designs around it.
+
+    Left-padding is set here because `firsttoken.last_token_logits` reads position -1, which is
+    the last REAL token only under left padding.
+    """
     _log = log or (lambda m: None)
     tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
     tok.padding_side = "left"
@@ -1796,6 +1801,20 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # there refused to measure base models for a reason that did not apply to them.
     tok.senbon_chat_template = (ensure_chat_template(tok, chat_template, _log)
                                 if needs_chat_template else None)
+    return tok
+
+
+def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
+                             trust_remote_code=False, attn_impl=None, log=None,
+                             chat_template=None, needs_chat_template=True):
+    # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
+    # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
+    # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
+    # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
+    # the weight bake rewrites tensors in place and needs full precision.
+    _log = log or (lambda m: None)
+    tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
+                         chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
     if attn_impl:
         kw["attn_implementation"] = attn_impl

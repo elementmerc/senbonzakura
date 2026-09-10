@@ -164,6 +164,40 @@ def missing_release_data(wheel: Path) -> list[str]:
             if not any(n.endswith(want) for n in names)]
 
 
+#: A path that belongs to whoever built the wheel rather than to whoever installs it. Baseline 13:
+#: no private paths in shipped artefacts. Found in the published blob on 2026-09-10, where
+#: `track.json` carried `/home/heph-agent/track2-enriched-backup/...` and unpacked it into every
+#: user's cache. `74e571f` fixed the same class one level up; the blob predated it and was never
+#: repacked, which is exactly why this is a gate and not a memory.
+_BUILD_MACHINE_PATH = re.compile(rb"""["'](/home/[^"']+|/Users/[^"']+|[A-Za-z]:\\Users\\[^"']+"""
+                                 rb"""|/tmp/[^"']+|/root/[^"']+)["']""")
+
+
+def leaks_a_build_path(wheel: Path) -> list[str]:
+    """Build-machine paths inside the shipped data blobs.
+
+    Only the data files are read: source files legitimately mention `/tmp` in docstrings and
+    comments, and a check that flagged those would be turned off within a week.
+    """
+    out = []
+    with zipfile.ZipFile(wheel) as z:
+        for name in z.namelist():
+            if not name.endswith((".bin", ".json")) or "dist-info" in name:
+                continue
+            try:
+                blob = z.read(name)
+            except (KeyError, OSError):
+                continue
+            for m in _BUILD_MACHINE_PATH.finditer(blob):
+                out.append(
+                    f"{name} carries a path from the machine that built it "
+                    f"({m.group(1).decode('utf-8', 'replace')[:80]}). That ships to every user "
+                    f"and unpacks into their cache. Re-pack it with tools/pack_track.py, which "
+                    f"reduces each source to its basename.")
+                break
+    return out
+
+
 #: Platform tags the Python Package Index will accept on upload. Anything else is refused there,
 #: whatever the wheel says about itself and whatever the local gates think of it.
 #:
@@ -236,6 +270,40 @@ def is_release_artefact(wheel: Path) -> bool:
     return bool(_RELEASE_VERSION.match(version))
 
 
+#: A source distribution has no platform tag by construction, so anything in it that only runs on
+#: one platform is a trap. Measured on 2026-09-10: the sdist carried 33 entries under
+#: `vendor/bin/linux-x86_64/`, about 19 MB of `.so` and `llama-quantize`. `setup.py` hooks
+#: `bdist_wheel` and refuses to let a wheel carrying those claim `py3-none-any`; nothing asked the
+#: same question of the sdist, and `publish.yml` uploads `dist/*` after checking `dist/*.whl`.
+_PLATFORM_SUFFIXES = (".so", ".dylib", ".dll", ".pyd", ".a", ".lib")
+
+
+def sdist_problems(path: Path) -> list[str]:
+    """Platform-specific binaries inside a source distribution."""
+    import tarfile
+    bad = []
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            # Files only. A directory entry has no extension either, and flagging
+            # `vendor/bin/linux-x86_64` as an executable is the kind of confidently wrong
+            # complaint that gets a gate switched off.
+            names = [m.name for m in tar.getmembers() if m.isfile()]
+    except (OSError, tarfile.TarError) as e:
+        return [f"{path} could not be read as a source distribution: {e}"]
+    for name in names:
+        base = name.rsplit("/", 1)[-1]
+        if any(base.endswith(suf) or f"{suf}." in base for suf in _PLATFORM_SUFFIXES):
+            bad.append(name)
+        elif "/vendor/bin/" in name and base not in ("", "LICENSE") and "." not in base:
+            bad.append(name)                      # an extensionless executable
+    if not bad:
+        return []
+    return [(f"the source distribution carries {len(bad)} platform-specific file(s), and an sdist "
+             f"has no platform tag: anyone on another operating system, or using --no-binary, "
+             f"builds from this and installs a binary that cannot run. First few: "
+             f"{', '.join(bad[:3])}. Prune them in MANIFEST.in.")]
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("wheel", type=Path)
@@ -254,6 +322,26 @@ def main(argv=None):
     if not a.wheel.is_file():
         print(f"check_wheel: no such file: {a.wheel}", file=sys.stderr)
         return 2
+
+    if str(a.wheel).endswith((".tar.gz", ".tgz")):
+        # Same tool, same argument, different artefact: the sdist question is "does this contain
+        # anything that only runs here", and nothing asked it until 2026-09-10.
+        found = sdist_problems(a.wheel)
+        print(f"  sdist          {a.wheel.name}")
+        for line in found:
+            print(f"  PROBLEM: {line}")
+        if a.expect_failure:
+            if found:
+                print("\nOK: the deliberately wrong sdist was rejected, so this check has teeth.")
+                return 0
+            print("\nFAILED: an sdist built to be wrong passed.")
+            return 1
+        if found:
+            print(f"\nFAILED: {a.wheel.name} would install a binary that cannot run.")
+            return 1
+        print(f"\nOK: {a.wheel.name} carries nothing platform-specific.")
+        return 0
+
     try:
         info = inspect(a.wheel)
     except (ValueError, zipfile.BadZipFile) as e:
@@ -278,7 +366,7 @@ def main(argv=None):
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
         found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
-                  + unacceptable_to_pypi(info))
+                  + unacceptable_to_pypi(info) + leaks_a_build_path(a.wheel))
     for line in found:
         print(f"  PROBLEM: {line}")
 

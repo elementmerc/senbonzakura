@@ -496,3 +496,59 @@ def test_the_probe_records_every_budget_it_tried_not_just_the_one_it_kept():
     assert [a["budget"] for a in attempts] == [256, 512]
     assert attempts[0]["closed"] == 0.0
     assert attempts[-1]["closed"] == 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# The coherence estimator's own precondition, which one caller could not honour.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def test_first_token_logprobs_left_pads_whatever_tokenizer_it_is_given():
+    """`last_token_logits` reads position -1, which is the last REAL token only under left padding.
+
+    `cli.load_tokenizer` sets it, so every path through this project was correct.
+    `head-to-head/best_of_n_heretic.py` calls this function with HERETIC'S wrapper and Heretic's
+    tokenizer, built by their loader inside the sealed image, and `grep -rn padding head-to-head/`
+    returns nothing. If that tokenizer pads right, every prompt shorter than the longest in its
+    batch is scored at a pad position in BOTH the base and the candidate, so the KL comes out small
+    and plausible rather than obviously broken.
+
+    A precondition a third party's tokenizer can change between revisions is not one worth
+    asserting, so the estimator owns it.
+    """
+    import torch
+
+    from senbonzakura import firsttoken
+
+    class _Enc:
+        def to(self, _device):
+            return self
+
+    class _Tok:
+        padding_side = "right"
+        chat_template = "tpl"
+
+        def __call__(self, chunk, **kw):
+            self.side_at_call = self.padding_side
+            self.n = len(chunk)
+            return _Enc()
+
+    class _Model:
+        device = torch.device("cpu")
+
+    from unittest import mock
+
+    tok = _Tok()
+    def _logits(_model, _enc, _log):
+        return torch.zeros(tok.n, 5)
+
+    def _render(_tok, prompt):
+        return prompt
+
+    with mock.patch.object(firsttoken, "render_chat", _render), \
+         mock.patch.object(firsttoken, "last_token_logits", _logits):
+        firsttoken.first_token_logprobs(_Model(), tok, ["a", "bb", "ccc"], batch=4)
+
+    assert tok.side_at_call == "left", (
+        "the estimator read position -1 while the tokenizer padded right, so every short prompt "
+        "was scored at a pad token")
+    assert tok.padding_side == "right", "the caller's tokenizer must be left as it was found"

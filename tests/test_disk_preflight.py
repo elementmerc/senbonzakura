@@ -58,7 +58,9 @@ def test_a_snapshot_of_symlinks_is_sized_by_what_they_point_at(model):
     """A size that does not follow links calls a multi-gigabyte model a few kilobytes, and then
     every arm fits in any amount of space at all.
     """
-    assert headtohead._tree_bytes(model) >= 4 * 1024 * 1024
+    total, complete = headtohead._tree_bytes(model)
+    assert total >= 4 * 1024 * 1024
+    assert complete, "the walk finished, so the figure is a size rather than a lower bound"
 
 
 def test_ten_arms_of_a_model_that_does_not_fit_is_refused(model):
@@ -100,9 +102,75 @@ def test_both_volumes_short_is_reported_as_two_separate_problems(model):
 
 # ── refusing to guess ────────────────────────────────────────────────────────────────
 
-def test_a_model_that_is_not_a_directory_is_left_to_the_checks_that_own_it(tmp_path):
-    """No size to work from means no arithmetic, not an invented estimate."""
-    assert complain(tmp_path, tmp_path / "nope", arms=10, free=0, host_free=0) == []
+def test_a_model_it_cannot_size_says_so_instead_of_staying_silent(tmp_path):
+    """AN UNANSWERABLE QUESTION MUST NOT READ AS A REASSURING ANSWER.
+
+    This returned [] for any --model that is not a local directory, which is every Hub id, which is
+    the documented invocation (`--model Qwen/Qwen3-1.7B` in docs/guide/benchmark.md). So the gate
+    added because a ten-arm run filled the disk eight hours in was silent on the exact command line
+    the docs teach, and silent about being silent. `host_free_bytes` twelve lines above it gets the
+    same question right by returning None rather than a comfortable zero.
+    """
+    got = complain(tmp_path, tmp_path / "nope", arms=10, free=0, host_free=0)
+    assert got, "no answer was available and the caller was told everything was fine"
+    assert "could not run" in got[0]
+    assert "10 copies" in got[0]
+
+
+def test_a_hub_id_with_no_local_snapshot_is_reported_as_unsizeable(tmp_path, monkeypatch):
+    """The documented invocation, on a machine that has not downloaded the model yet."""
+    monkeypatch.setattr(headtohead, "_cached_model_dir", lambda m: None)
+    got = complain(tmp_path, "Qwen/Qwen3-1.7B", arms=10, free=0, host_free=0)
+    assert got and "could not run" in got[0]
+
+
+def test_a_hub_id_already_in_the_cache_is_sized_from_it(tmp_path, model, monkeypatch):
+    """Having found the snapshot, the arithmetic is the same as for a local path."""
+    monkeypatch.setattr(headtohead, "_cached_model_dir", lambda m: model)
+    got = complain(tmp_path, "Qwen/Qwen3-1.7B", arms=10, free=1 * GB, host_free=None)
+    assert got and "10 arms" in got[0]
+    assert "could not run" not in got[0]
+
+
+def test_the_same_weights_in_two_formats_are_counted_once(tmp_path):
+    """A Llama-3 snapshot ships model-*.safetensors beside original/consolidated.*.pth.
+
+    Summing everything doubles the estimate, and an over-count makes the gate refuse a run that
+    would have fitted, which is the failure `arms_to_run` was written to avoid arriving through the
+    other input.
+    """
+    snap = tmp_path / "snap"
+    (snap / "original").mkdir(parents=True)
+    (snap / "model.safetensors").write_bytes(b"\0" * (4 * 1024 * 1024))
+    (snap / "original" / "consolidated.00.pth").write_bytes(b"\0" * (4 * 1024 * 1024))
+    total, _ = headtohead._tree_bytes(snap)
+    assert total == 4 * 1024 * 1024, "the same weights twice is one model, not two"
+
+
+def test_a_truncated_walk_reaches_the_reader_as_a_lower_bound(tmp_path, monkeypatch):
+    """The complaint, not just the flag. Driven through the real `disk_complaints` with a walk
+    reported as incomplete, because the cap is 200,000 entries and building that many files to
+    exercise one branch would trade minutes of test time for nothing.
+    """
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "model.safetensors").write_bytes(b"\0" * 1024)
+    monkeypatch.setattr(headtohead, "_tree_bytes", lambda p, cap=None: (1024, False))
+    got = headtohead.disk_complaints(out=tmp_path, model=str(snap), arms=2,
+                                     free=0, host_free=None)
+    assert any("LOWER BOUND" in g for g in got), (
+        "a truncated measurement presented as a measurement is the defect this file exists for")
+
+
+def test_a_truncated_walk_is_flagged_by_the_walker(tmp_path):
+    """It used to break at the cap and hand back the partial total as though it were the size."""
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    for i in range(20):
+        (snap / f"model-{i:05d}.safetensors").write_bytes(b"\0" * 1024)
+    total, complete = headtohead._tree_bytes(snap, cap=5)
+    assert not complete, "the walk hit the cap"
+    assert total < 20 * 1024, "and the total it returned is therefore partial"
 
 
 def test_zero_arms_asks_nothing(model):

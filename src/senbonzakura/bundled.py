@@ -62,6 +62,19 @@ ALIAS = "default"
 
 LICENCE = "CC BY-NC 4.0"
 
+#: Where a user with a defective install is asked to report it. A message that says "this is a
+#: packaging fault" and gives nowhere to say so leaves them exactly as stuck as no message.
+ISSUES = "https://github.com/elementmerc/senbonzakura/issues"
+
+
+def _installed_version():
+    """The version string to quote in a bug report, or a placeholder that cannot be mistaken."""
+    try:
+        from ._version import __version__
+    except ImportError:      # pragma: no cover - _version is generated and always present
+        return "(version unknown)"
+    return __version__
+
 #: Whether the licence notice has been printed in this process. A module-level flag in a mutable
 #: holder rather than a bare global, so the linter's objection to `global` does not have to be
 #: silenced and tests can reset it without reaching into module internals.
@@ -74,6 +87,23 @@ def data_path():
 
 def is_available():
     return data_path().is_file()
+
+
+def running_from_a_checkout():
+    """Is this package being imported out of a source tree, rather than out of an install?
+
+    The two need different advice and used to get one sentence covering both. A source checkout has
+    no packed track until `tools/pack_track.py` is run, which is normal and fixable in one command.
+    An installed wheel that has no packed track is DEFECTIVE, the user cannot build one without a
+    corpus of harmful prompts they do not have, and telling them to run a tool that is not in their
+    install sends them looking for a file that was never shipped.
+
+    Asked by looking for the packer itself rather than for a `.git` directory: a `git archive`
+    extract and an unpacked sdist are both source trees with no repository, and what actually
+    decides the advice is whether the command in the message exists to be run.
+    """
+    root = Path(__file__).resolve().parent.parent.parent
+    return (root / "tools" / "pack_track.py").is_file()
 
 
 def _derive(salt):
@@ -262,10 +292,25 @@ def ensure(log=print):
     """The bundled track as a directory on disk, extracting it the first time it is needed."""
     target = cache_dir()
     if not is_available() and not _cache_is_current(target):
+        if running_from_a_checkout():
+            raise BundledTrackError(
+                f"no bundled evaluation track is installed at {data_path()}. A source checkout "
+                f"does not carry one until it is built, because the blob holds harmful prompts and "
+                f"is kept out of git on purpose:\n"
+                f"  python tools/pack_track.py --track <your track>\n"
+                f"Or pass --track with your own corpus.")
+        # An INSTALL with no packed track is a packaging fault, not something the user did. Telling
+        # them to run `tools/pack_track.py` sends them looking for a file their install never had,
+        # and telling them to build their own track asks for a corpus of harmful prompts they have
+        # no way to obtain. Both were in the single sentence this replaced.
         raise BundledTrackError(
-            f"no bundled evaluation track is installed at {data_path()}. A source checkout does "
-            f"not carry one until `python tools/pack_track.py` has been run; a wheel should. "
-            f"Pass --track with your own corpus, or build one with `senbonzakura track`.")
+            f"this installation of senbonzakura {_installed_version()} was built without its "
+            f"bundled evaluation track, so `--track {ALIAS}` cannot work here. That is a fault in "
+            f"the package rather than anything you did, and it cannot be repaired from your side: "
+            f"the track is a generated artefact that has to be built into the wheel.\n"
+            f"  Please report it at {ISSUES}, quoting that version.\n"
+            f"  To carry on now, point --track at a corpus of your own; `senbonzakura track "
+            f"--help` builds one from prompt files you supply.")
     if _cache_is_current(target):
         notice(log=log)
         return target

@@ -56,7 +56,14 @@ python -m build --wheel
 python tools/check_wheel.py dist/*.whl --release
 ```
 
-`--release` is the part that is easy to skip and expensive to skip. The two `.bin` files are
+`--release` is no longer the part that is easy to skip, because it is no longer skippable:
+`check_wheel.py` reads the wheel's own version and turns the release checks on by itself for any
+wheel naming this project at a release version. Pass the flag anyway, so the intent is on the page,
+but a forgotten flag can no longer let a hollow wheel through. A flag can be forgotten; a version
+cannot.
+
+The reason this changed: the wheel published as 0.3.0 carries neither blob, and `--track default`
+therefore fails for everyone who installed it. The two `.bin` files are
 generated artefacts kept out of git on purpose: they hold harmful prompts and the corpus is
 published as a gated dataset. So a wheel built from a plain clone contains neither, installs
 happily, imports happily, answers `--help` happily, and then fails `--track default` for every

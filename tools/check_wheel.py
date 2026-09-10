@@ -206,6 +206,36 @@ def unacceptable_to_pypi(info):
     return bad
 
 
+#: This project's distribution name, normalised. The auto-detection below is deliberately narrow:
+#: it fires on OUR release artefact and on nothing else, because the tool is also pointed at
+#: synthetic wheels that are supposed to carry no corpora and no licences.
+PROJECT = "senbonzakura"
+
+#: A plain dotted number and nothing else. `0.4.0` is a release; `0.4.0.dev0`, `0.4.0rc1` and
+#: anything with a local segment are not, and a wheel that is not a release is allowed to be thin.
+_RELEASE_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def is_release_artefact(wheel: Path) -> bool:
+    """Is this our own package at a release version, whatever flags were typed?
+
+    THE HOLE THIS CLOSES, in RELEASING.md's own words: "`--release` is the part that is easy to
+    skip and expensive to skip." The two generated `.bin` files are kept out of git on purpose, so
+    a wheel built from a plain clone installs, imports and answers `--help` perfectly happily, then
+    fails `--track default` for every person who installs it. Nothing about it looks wrong from the
+    outside, and the only thing standing between that wheel and PyPI was somebody remembering a
+    flag. The wheel published as 0.3.0 carries neither file.
+
+    A flag can be forgotten. A version cannot: the artefact says what it is, so it is asked rather
+    than the operator.
+    """
+    name, _, rest = wheel.name.partition("-")
+    version = rest.split("-", 1)[0] if rest else ""
+    if name.replace("_", "-").lower() != PROJECT:
+        return False
+    return bool(_RELEASE_VERSION.match(version))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("wheel", type=Path)
@@ -238,7 +268,11 @@ def main(argv=None):
           + (f": {', '.join(info['platform_payload'][:3])}" if info["platform_payload"] else ""))
 
     found = problems(info)
-    if a.release:
+    release_mode = a.release
+    if not release_mode and is_release_artefact(a.wheel):
+        release_mode = True
+        print("  release checks  ON, because this wheel names this project at a release version")
+    if release_mode:
         # Behind --release with the data check, because both ask the same question: is this the
         # artefact we are about to hand to strangers? The tool is also pointed at synthetic
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),

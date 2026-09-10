@@ -3896,10 +3896,19 @@ def _preflight_datasets(args):
         return
     hint = ""
     if any(f.lstrip().startswith(track + "/") for f in faults):
-        # The single most common cause, and the fix is one flag. The bundled track ships inside
-        # the wheel, so it needs no network and no files on disk.
-        hint = ("\n\nIf you have not built a track, the one bundled in this install needs neither "
-                "a network nor a download:\n  --track default")
+        # The single most common cause, and the fix is one flag. THE CLAIM IS CHECKED BEFORE IT IS
+        # MADE: this said "the one bundled in this install" without asking this install, and the
+        # wheel published as 0.3.0 carries no bundled track, so it recommended a flag it could not
+        # honour and the user's next command failed for a second reason. A hint that has not been
+        # verified is a guess with an imperative mood.
+        from . import bundled
+        if bundled.is_available():
+            hint = ("\n\nIf you have not built a track, the one bundled in this install needs "
+                    "neither a network nor a download:\n  --track default")
+        else:
+            hint = ("\n\nThis install carries no bundled track, so `--track default` will not "
+                    "help here either. Build one from prompt files you supply with "
+                    "`senbonzakura track --help`.")
     raise SystemExit(
         f"{len(faults)} of the datasets this run needs cannot be read, and this is checked before "
         f"the model is downloaded so that finding out costs nothing:\n"

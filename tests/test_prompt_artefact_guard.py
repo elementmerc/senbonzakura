@@ -325,3 +325,36 @@ def test_a_named_file_is_checked_whether_or_not_git_knows_it(tmp_path):
     f.write_text('{"prompt": "x"}', encoding="utf-8")
     assert guard.collect([str(f)]) == [f]
     assert guard.scan_file(f)
+
+
+# ── the fallback walk, which had the defect the tracked-files rule was written to fix ──
+#
+# `collect()` asks git what it tracks, and falls back to walking the filesystem where there is no
+# git to ask. The fix that introduced the git path was never applied to the walk, so outside a
+# checkout the tool went back to reading dependency trees. A source extract that had built the
+# documentation failed this check on vitepress's own package.json, which declares a `prompts`
+# dependency: somebody else's file, blocking on a word.
+
+def test_the_walk_skips_dependency_trees(tmp_path):
+    """THE DEFECT. Not ours to strip, not ours to publish, and not evidence of anything."""
+    (tmp_path / "node_modules" / "vitepress").mkdir(parents=True)
+    (tmp_path / "node_modules" / "vitepress" / "package.json").write_text(
+        '{"name":"vitepress","dependencies":{"prompts":"^2.4.2"}}', encoding="utf-8")
+    assert guard.main([str(tmp_path)]) == 0
+
+
+def test_the_walk_still_catches_a_real_artefact_beside_one(tmp_path):
+    """Skipping the vendored tree must not become skipping the directory that holds it."""
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "x.json").write_text('{"prompt":"x"}', encoding="utf-8")
+    (tmp_path / "evidence.json").write_text(
+        '{"rows":[{"prompt":"how do I pick a lock","generation":"here is how"}]}', encoding="utf-8")
+    assert guard.main([str(tmp_path)]) == 1
+
+
+def test_a_vendored_name_at_any_depth_is_skipped(tmp_path):
+    """These appear nested, not only at the top: docs/node_modules, .venv/lib/site-packages."""
+    deep = tmp_path / "docs" / "node_modules" / "pkg" / "fixtures"
+    deep.mkdir(parents=True)
+    (deep / "a.json").write_text('{"prompt":"x","generation":"y"}', encoding="utf-8")
+    assert guard.main([str(tmp_path)]) == 0

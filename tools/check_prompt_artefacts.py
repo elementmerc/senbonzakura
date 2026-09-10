@@ -158,6 +158,20 @@ def scan_staged(path: Path) -> list[str]:
     return scan_bytes(path, out.stdout)
 
 
+#: Directories holding somebody else's files. This tool exists to stop OUR harmful prompts and
+#: generations reaching a public remote, and a dependency tree contains neither: whatever it
+#: carries, it is not ours to strip and not ours to publish. Names rather than paths, because these
+#: appear at any depth.
+VENDORED = frozenset({
+    "node_modules", ".venv", "venv", "site-packages", ".git", ".tox", ".mypy_cache",
+    ".pytest_cache", "__pycache__", "dist", "build", ".eggs",
+})
+
+
+def _is_vendored(path: Path) -> bool:
+    return any(part in VENDORED for part in path.parts)
+
+
 def tracked_under(directory: Path) -> list[Path] | None:
     """Version-controlled JSON and JSONL under a directory, or None if git cannot say."""
     # -C, so git is asked about the repository that CONTAINS the directory. Without it
@@ -186,7 +200,12 @@ def collect(paths: list[str]) -> list[Path]:
     what gets published, and that is what git tracks.
 
     Outside a repository it falls back to walking, so the tool still works on a loose
-    directory of results.
+    directory of results. THE FALLBACK HAD THE DEFECT THE PARAGRAPH ABOVE DESCRIBES: the
+    fix was applied to the git path and not to the walk, and the walk is the one that runs
+    outside a checkout. Building the documentation puts a third-party `package.json`
+    declaring a `prompts` dependency under `docs/`, and a source extract with no `.git`
+    then failed this check on somebody else's file, which is the false refusal the
+    tracked-files rule was introduced to prevent.
     """
     found: list[Path] = []
     for name in paths:
@@ -194,7 +213,9 @@ def collect(paths: list[str]) -> list[Path]:
         if p.is_dir():
             tracked = tracked_under(p)
             if tracked is None:
-                found.extend(sorted(q for q in p.rglob("*") if q.is_file() and q.suffix in SUFFIXES))
+                found.extend(sorted(
+                    q for q in p.rglob("*")
+                    if q.is_file() and q.suffix in SUFFIXES and not _is_vendored(q)))
             else:
                 found.extend(sorted(tracked))
         elif p.suffix in SUFFIXES:

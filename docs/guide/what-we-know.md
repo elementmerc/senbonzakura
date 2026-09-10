@@ -140,7 +140,7 @@ inside a real model is still unmeasured, and until it is, this question stays op
 **Does removing several directions beat removing one?** We ran it, and the answer on the one
 model we can measure properly is **no**. See the next section.
 
-## The answer, measured on 2026-08-13
+## The answer: run on 2026-08-13, noncompliance column scored later
 
 One direction against two. Same tool, same corpus, same search budget, same five seeds, one
 parameter apart, with the direction budget pinned at both ends so neither arm could drift into
@@ -153,7 +153,8 @@ that nothing was fitted or selected on.
 | Two | 0.0932 (spread 0.0482) | 0.3% | ~~4.2%~~ |
 
 ::: warning The noncompliance column is withdrawn, 2026-09-09
-These arms were scored on 2026-09-07. The next day the hedging detector was found to count
+The arms ran on 2026-08-13; the noncompliance column was scored separately on
+2026-09-07, which is why two dates appear on this page. The next day the hedging detector was found to count
 statements of fact about legality or danger as hedging, so a complete, compliant technical answer
 that mentioned an activity is illegal was scored as a soft refusal. Both figures came from it.
 
@@ -164,12 +165,20 @@ The column is struck through rather than deleted because it was published.
 
 Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
 at matched refusal, where the only thing left to differ is the price paid for it. Two directions
-did roughly **twice the collateral damage and bought nothing**, and they were less predictable
-seed to seed (the spread is nearly three times as wide).
+did roughly **1.5 to 1.9 times the collateral damage and bought nothing**, and they were less
+predictable seed to seed (the spread is nearly three times as wide).
 
 The gap is 0.0435, and an exact permutation test over all 252 ways of splitting these ten
 seeds puts it at **p = 0.016**. That is a real difference, and stronger than the way this
 paragraph used to describe it.
+
+::: tip You can recompute this yourself
+The ten per-seed drift values are committed at
+[`evidence/k-sweep-2026-08-13/drift-per-seed.json`](https://github.com/elementmerc/senbonzakura/blob/main/evidence/k-sweep-2026-08-13/drift-per-seed.json),
+and `tests/test_published_k_sweep.py` recomputes both figures on this page from that file through
+the project's own estimator. Until 2026-09-10 those numbers lived only in a working note that is
+not in this repository, so the most-quoted figure here traced to nothing a reader could open.
+:::
 
 **A correction, 2026-09-09.** This used to read "clears the pooled spread by about a fifth,
 real but slim", and then said that dropping the worst two-direction seed made the result

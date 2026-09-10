@@ -77,6 +77,20 @@ def _warn(name, detail, fix=""):
     return Check(name, "warn", detail, fix)
 
 
+def _vendor_remedy():
+    """The right advice for this install, which is not the same advice everywhere.
+
+    `tools/vendor_llama.py` exists in a checkout and in no wheel, so telling an installed user to
+    run it sends them looking for a file they do not have. Same shape as the `--track default`
+    fault that `bundled.running_from_a_checkout()` was written for.
+    """
+    from . import bundled
+    if bundled.running_from_a_checkout():
+        return "re-run `python tools/vendor_llama.py`"
+    return (f"this install's vendored converter is incomplete, which is a packaging fault rather "
+            f"than something you can fix locally. Please report it at {bundled.ISSUES}")
+
+
 def _fail(name, detail, fix=""):
     return Check(name, "fail", detail, fix)
 
@@ -149,14 +163,23 @@ def check_converter(timeout=300):
         return [_fail("converter", "not vendored", str(e).split(";")[-1].strip())]
 
     try:
-        names, broken = supported_architectures(script, timeout=timeout)
+        names, broken, died = supported_architectures(script, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as e:
-        return [_fail("converter", f"will not run ({e})", "re-run `python tools/vendor_llama.py`")]
+        return [_fail("converter", f"will not run ({e})", _vendor_remedy())]
 
     out = []
+    if died:
+        # THE SCRIPT DIED, which is a different fault from the script running and listing nothing.
+        # Reported as incomplete vendoring until 2026-09-10, on an install whose only problem was
+        # a missing torch, with a remedy naming a file no wheel contains.
+        out.append(_fail("converter", f"could not start: {died}",
+                         "that is the converter failing to import, not a vendoring problem. If it "
+                         "names a missing module, install it: the converter imports torch, numpy "
+                         "and gguf at module level."))
+        return out
     if not names:
-        out.append(_fail("converter", "reported no supported architectures at all",
-                         "the vendored package is incomplete; re-run the vendoring tool"))
+        out.append(_fail("converter", "ran and reported no supported architectures at all",
+                         _vendor_remedy()))
         return out
     if broken:
         out.append(_fail(

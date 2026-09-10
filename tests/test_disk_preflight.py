@@ -111,17 +111,21 @@ def test_a_model_it_cannot_size_says_so_instead_of_staying_silent(tmp_path):
     the docs teach, and silent about being silent. `host_free_bytes` twelve lines above it gets the
     same question right by returning None rather than a comfortable zero.
     """
-    got = complain(tmp_path, tmp_path / "nope", arms=10, free=0, host_free=0)
+    got = headtohead.disk_warnings(model=str(tmp_path / "nope"), arms=10)
     assert got, "no answer was available and the caller was told everything was fine"
-    assert "could not run" in got[0]
+    assert "did not run" in got[0]
     assert "10 copies" in got[0]
+    assert "Nothing here says there IS room" in got[0]
+    # And it is a WARNING, not a refusal: blocking here would stop the documented
+    # `--model <hub-id>` invocation on every machine that has not downloaded the model.
+    assert complain(tmp_path, tmp_path / "nope", arms=10, free=0, host_free=0) == []
 
 
 def test_a_hub_id_with_no_local_snapshot_is_reported_as_unsizeable(tmp_path, monkeypatch):
     """The documented invocation, on a machine that has not downloaded the model yet."""
     monkeypatch.setattr(headtohead, "_cached_model_dir", lambda m: None)
-    got = complain(tmp_path, "Qwen/Qwen3-1.7B", arms=10, free=0, host_free=0)
-    assert got and "could not run" in got[0]
+    got = headtohead.disk_warnings(model="Qwen/Qwen3-1.7B", arms=10)
+    assert got and "did not run" in got[0]
 
 
 def test_a_hub_id_already_in_the_cache_is_sized_from_it(tmp_path, model, monkeypatch):
@@ -129,7 +133,8 @@ def test_a_hub_id_already_in_the_cache_is_sized_from_it(tmp_path, model, monkeyp
     monkeypatch.setattr(headtohead, "_cached_model_dir", lambda m: model)
     got = complain(tmp_path, "Qwen/Qwen3-1.7B", arms=10, free=1 * GB, host_free=None)
     assert got and "10 arms" in got[0]
-    assert "could not run" not in got[0]
+    assert headtohead.disk_warnings(model="Qwen/Qwen3-1.7B", arms=10) == [], (
+        "the snapshot was found, so there is nothing unanswerable to warn about")
 
 
 def test_the_same_weights_in_two_formats_are_counted_once(tmp_path):

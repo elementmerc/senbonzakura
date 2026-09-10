@@ -15,7 +15,14 @@ somewhere else, so the track carries the upstream terms forward: it is distribut
 named below. Access is gated so that taking it is a deliberate act: a reader accepts the
 acceptable-use terms before downloading, and an automated scraper does not get it by accident.
 The gate collects nothing about you beyond what HuggingFace needs to operate it; it exists to
-make the agreement intentional, not to build a list. `tools/build_track.py` rebuilds a pool of
+make the agreement intentional, not to build a list.
+
+**The wheel you install from PyPI is a different matter, and you should know it.** The same rows
+ship inside the package as `--track default`, so `pip install senbonzakura` puts roughly 6,500
+harmful prompts in your site-packages with no gate and no terms accepted. They are obfuscated
+rather than protected: the key ships beside them, and anyone who wants them can have them in an
+afternoon. The gate on the HuggingFace copy does not apply to them. Saying only the paragraph
+above would leave the impression that a `pip install` is prompt-free, and it is not. `tools/build_track.py` rebuilds a pool of
 the same shape from the same upstreams for anyone who would rather fetch the sources themselves.
 
 ## What it is

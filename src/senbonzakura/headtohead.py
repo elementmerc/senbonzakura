@@ -638,24 +638,49 @@ def arms_to_run(*, tools, seeds, model, out, trials, force=False) -> int:
     return n
 
 
+def disk_warnings(*, model: str, arms: int) -> list[str]:
+    """Reasons the disk question could not be ANSWERED, which is not a reason to refuse a run.
+
+    Kept apart from `disk_complaints` on purpose. A complaint is "there is not enough room" and
+    stops the run; this is "nobody knows", and stopping on it would refuse the documented command
+    (`--model Qwen/Qwen3-1.7B`, a Hub id, downloaded on first use) on every machine that has not
+    fetched the model yet.
+
+    It still has to be SAID. Returning an empty complaint list, which is what this did until
+    2026-09-10, made "I could not measure" indistinguishable from "there is plenty of room" on the
+    exact invocation the docs teach, in the gate that exists because a ten-arm run filled the disk
+    eight hours in.
+    """
+    if arms <= 0:
+        return []
+    where = Path(model) if (model and Path(model).is_dir()) else _cached_model_dir(model)
+    if where is None:
+        return [(f"the disk check did not run: --model {model!r} is not a directory on this host "
+                 f"and no local snapshot of it was found, so the size of {arms} copies is "
+                 f"unknown. Nothing here says there IS room.")]
+    if not _tree_bytes(where)[0]:
+        return [(f"the disk check did not run: no weight files were found under {where}, so the "
+                 f"size of {arms} copies is unknown. Nothing here says there IS room.")]
+    return []
+
+
 def disk_complaints(*, out: Path, model: str, arms: int, free=None, host_free=None) -> list[str]:
-    """Whether there is room for every arm, asked of the host as well as of this filesystem."""
+    """Whether there is room for every arm, asked of the host as well as of this filesystem.
+
+    Returns only reasons to REFUSE. When the size cannot be established at all, that is reported
+    by `disk_warnings` instead, because an unanswerable question is not a failed answer.
+    """
     if arms <= 0:
         return []
     problems = []
     where = Path(model) if (model and Path(model).is_dir()) else _cached_model_dir(model)
     if where is None:
-        # AN UNANSWERABLE QUESTION MUST NOT READ AS A REASSURING ANSWER. This returned [] for any
-        # `--model` that is not a local directory, which is every Hub id, which is the documented
-        # command. The gate added because a ten-arm run filled the disk eight hours in was
-        # therefore silent on the invocation the docs teach, and said nothing about being silent.
-        return [(f"the disk check could not run: --model {model!r} is not a directory on this "
-                 f"host and no local snapshot of it was found, so the size of {arms} copies is "
-                 f"unknown. Download the model first, or pass a local path, to have this checked.")]
+        # Not a complaint: `disk_warnings` says this out loud instead. Refusing here would block
+        # the documented `--model <hub-id>` invocation on any machine that has not downloaded it.
+        return []
     model_bytes, complete = _tree_bytes(where)
     if not model_bytes:
-        return [(f"the disk check could not run: no weight files were found under {where}, so "
-                 f"the size of {arms} copies is unknown.")]
+        return []
     if not complete:
         problems.append(
             f"the size of {where} was measured over a truncated walk, so the figure below is a "
@@ -743,10 +768,12 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
                             f"{', '.join(missing)}")
     # Counted rather than assumed: a resumed run names every arm and executes only the
     # ones not already on disk.
-    problems.extend(disk_complaints(
-        out=Path(out), model=model,
-        arms=arms_to_run(tools=tools, seeds=seeds, model=model, out=Path(out),
-                         trials=trials, force=force)))
+    n_arms = arms_to_run(tools=tools, seeds=seeds, model=model, out=Path(out),
+                         trials=trials, force=force)
+    problems.extend(disk_complaints(out=Path(out), model=model, arms=n_arms))
+    # Said, and not fatal. See `disk_warnings`.
+    for line in disk_warnings(model=model, arms=n_arms):
+        print(f"headtohead: {line}", file=sys.stderr)
     return problems
 
 

@@ -39,8 +39,9 @@ instrument on 200 prompts nothing was fitted or selected on:
 | Two directions | 0.0932, spread 0.0482 | 0.3% |
 
 Both budgets removed hard refusal, so this is a comparison at matched refusal. Two directions
-did roughly twice the collateral damage and bought nothing for it, and they were less
-predictable run to run. An exact permutation test over all 252 splits of the ten seeds puts the
+cost roughly 1.5 to 1.9 times the collateral damage depending on whether one outlying seed is
+included, bought nothing for it, and were less predictable run to run. One direction beats two in
+24 of the 25 pairwise seed comparisons, so the direction of the result is sturdier than its size. An exact permutation test over all 252 splits of the ten seeds puts the
 difference at p = 0.016. Dropping the worst two-direction seed halves the gap and moves that to
 p = 0.048, so the finding does not rest on one run and is weaker without it. This is one model,
 Qwen3-1.7B, and it does not settle the question for every architecture. It does mean the
@@ -59,16 +60,20 @@ whether it complied, and it carried full weight in the rule that decides which t
 the finished model, so the search was being steered toward models that do not caveat. Noncompliance
 rates from before this date are not comparable with rates after it.
 
-### Breaking
+### Install
 
-- `pip install senbonzakura` now installs torch, transformers, accelerate and optuna. It is
-  about 68 packages and a few gigabytes, where a bare install used to be two packages. If you
-  relied on a lightweight install for the commands that only check things, add `--no-deps` and
-  install what you need, or use a distribution package.
-- `pip install 'senbonzakura[abliterate]'` still works and now installs the same thing as a
-  plain install. Nothing needs changing.
-- `senbonzakura abliterate` needed the `abliterate` extra for two days in early September. It
-  does not any more.
+- `pip install senbonzakura` installs torch, transformers, accelerate and optuna, as 0.3.0 also
+  did. It is about 68 packages and a few gigabytes. If you tracked `dev` in early September you
+  were told to add an `abliterate` extra; that extra still resolves and now installs exactly what
+  a plain install does, so nothing needs changing.
+- New: `senbonzakura setup` puts the right build of torch on the machine it is run on. pip picks
+  by platform rather than by hardware, so a Windows box with a GPU gets a CPU-only wheel and a
+  Linux box with no GPU gets fifteen CUDA packages it cannot use. It prints the command that fixes
+  it and changes nothing unless you pass `--apply`.
+- The wheel now carries the bundled evaluation track, so `--track default` works with no network
+  and nothing to assemble. That is roughly 6,500 harmful prompts inside your site-packages; the
+  install page says what is in it and how to build a wheel without it. 0.3.0 shipped no corpora at
+  all, so this is new.
 
 ### If you are coming from 0.3.0, this is what you can now run
 
@@ -165,9 +170,12 @@ install rather than only in a source checkout.
   failure and leaves no manifest, so the next run retries it.
 - Adding another tool is an adapter: how to invoke it, what proves it ran, where it leaves a
   model, how to read its own figures.
-- Fewer than three seeds gets no verdict, and a gap smaller than the spread is reported as a tie.
-  A gap equal to the spread is a tie too, as is one that clears it by less than the report prints,
-  because a margin the reader can't see in the figures given is not a margin they can check.
+- Every comparable axis (harm recognition, coherence drift, refusals removed) gets a permutation
+  test rather than two means side by side, with the median printed beside the mean because one
+  seed can carry a whole gap. Where the number of seeds makes it impossible for any arrangement of
+  the data to be significant, the report says the comparison could not have concluded rather than
+  calling it a tie. Comparing a gap against a spread is not a test, and was retired: it ignored
+  the number of seeds, so running ten times as many made a real effect harder to declare.
 - `senbonzakura drift` measures coherence the way the compass measures harm recognition: one
   instrument, run by us afterwards, on held-out prompts, over every model whoever made it. Two
   tools' self-reported divergences are two measurements wearing one name, and this release found

@@ -167,9 +167,16 @@ def notice(log=print):
         return
     _state["notified"] = True
     log(f"Using the bundled Senbonzakura evaluation track ({LICENCE}).")
-    log("  Attribution is required, and use is NON-COMMERCIAL. The prompts come from AdvBench")
-    log("  (Zou et al. 2023), Alpaca (Taori et al. 2023) and two HuggingFace datasets; the full")
-    log("  chain is in docs/evaluation-track-card.md.")
+    log("  Attribution is required, and use is NON-COMMERCIAL. The prompts are HARMFUL requests")
+    log("  and matched harmless ones, from AdvBench (Zou et al. 2023), Alpaca (Taori et al. 2023)")
+    log("  and two HuggingFace datasets: Bahushruth/abliteration-harmful-enriched (Apache-2.0)")
+    log("  and mlabonne/harmless_alpaca.")
+    # NOT docs/evaluation-track-card.md. That is not installed: `docs/` is in neither
+    # package-data nor license-files, so the notice pointed the reader at a file their install
+    # does not contain, which is the whole of the 2026-09-10 attribution finding. What ships is
+    # THIRD-PARTY-NOTICES.md, under dist-info/licenses/, and it now carries the chain.
+    log("  Full attribution and the licence chain: THIRD-PARTY-NOTICES.md, installed beside the")
+    log("  package under its dist-info/licenses/ directory.")
     log("  It is wrapped in the package to keep it out of automated scrapes, not to keep it")
     log("  secret: the key ships beside it and this is a speed bump rather than protection.")
     log("  Pass --track to use your own corpus instead.")

@@ -66,7 +66,7 @@ def test_a_broken_module_does_not_leave_an_architecture_marked_supported(monkeyp
     monkeypatch.setattr(doctor, "__name__", doctor.__name__)  # no-op, keeps the patch local
     import senbonzakura.convert as c
     monkeypatch.setattr(c, "supported_architectures",
-                        lambda _s, **k: ({"Lfm2MoeForCausalLM", "Qwen3ForCausalLM"}, ["lfm2"]))
+                        lambda _s, **k: ({"Lfm2MoeForCausalLM", "Qwen3ForCausalLM"}, ["lfm2"], None))
     checks = doctor.check_converter()
 
     modules = _by_name(checks, "architecture modules")
@@ -83,7 +83,7 @@ def test_every_target_architecture_passes_when_nothing_is_broken(monkeypatch):
     import senbonzakura.convert as c
     monkeypatch.setattr(c, "supported_architectures",
                         lambda _s, **k: ({"Lfm2ForCausalLM", "Lfm2MoeForCausalLM",
-                                          "Qwen3ForCausalLM", "LlamaForCausalLM"}, []))
+                                          "Qwen3ForCausalLM", "LlamaForCausalLM"}, [], None))
     checks = doctor.check_converter()
     assert all(c_.status == "pass" for c_ in _by_name(checks, "arch "))
     assert _by_name(checks, "architecture modules")[0].status == "pass"
@@ -93,7 +93,7 @@ def test_every_target_architecture_passes_when_nothing_is_broken(monkeypatch):
 def test_an_architecture_absent_at_this_pin_is_an_advisory_not_a_failure(monkeypatch):
     """A pin that predates an architecture is a scheduling fact, not a broken install."""
     import senbonzakura.convert as c
-    monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     checks = doctor.check_converter()
     lfm2 = [x for x in checks if x.name == "arch Lfm2MoeForCausalLM"]
     assert lfm2 and lfm2[0].status == "warn"
@@ -102,7 +102,7 @@ def test_an_architecture_absent_at_this_pin_is_an_advisory_not_a_failure(monkeyp
 @needs_converter
 def test_a_converter_reporting_nothing_at_all_is_a_failure(monkeypatch):
     import senbonzakura.convert as c
-    monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: (set(), []))
+    monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: (set(), [], None))
     checks = doctor.check_converter()
     assert checks[0].status == "fail"
     assert "no supported architectures" in checks[0].detail
@@ -431,3 +431,53 @@ def test_the_default_run_probes_cheaply_and_deep_probes_further(monkeypatch):
     assert seen["max_bytes"] is None, "the default run must use the cheap one-step probe"
     doctor.run_checks(deep=True, log=lambda _m: None)
     assert seen["max_bytes"] == doctor.PINNED_DEEP_MAX_BYTES
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# "the vendored package is incomplete" said to an install whose only fault was a
+# missing torch. Found on 2026-09-10 by running doctor against a --no-deps wheel.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_converter_that_could_not_start_is_not_called_incomplete_vendoring(monkeypatch):
+    """The script imports torch at module level, so on an install without it the process dies.
+
+    `supported_architectures` ran it with check=False and discarded the return code, so a
+    traceback became an empty name set, which read as an incomplete vendoring. The reason was
+    untrue and the remedy it named (`tools/vendor_llama.py`) is in no wheel. Same class as
+    telling the operator to update a driver that had run CUDA all night.
+    """
+    import senbonzakura.convert as c
+    monkeypatch.setattr(
+        c, "supported_architectures",
+        lambda _s, **k: (set(), [], "ModuleNotFoundError: No module named 'torch'"))
+    checks = doctor.check_converter()
+    said = " ".join(f"{x.detail} {x.fix}" for x in checks)
+    assert "No module named 'torch'" in said, "the real cause has to reach the reader"
+    # It may SAY "not a vendoring problem"; what it must not do is blame one.
+    assert "the vendored package is incomplete" not in said
+    assert "not a vendoring problem" in said
+    assert "vendor_llama.py" not in said
+
+
+def test_a_converter_that_ran_and_listed_nothing_is_still_a_vendoring_problem(monkeypatch):
+    """The distinction is the point: it ran, so the registry really is empty."""
+    import senbonzakura.convert as c
+    monkeypatch.setattr(c, "supported_architectures", lambda _s, **k: (set(), [], None))
+    checks = doctor.check_converter()
+    said = " ".join(f"{x.detail} {x.fix}" for x in checks)
+    assert "ran and reported no supported architectures" in said
+
+
+def test_an_installed_copy_is_not_told_to_run_a_tool_it_does_not_have(monkeypatch):
+    """`tools/vendor_llama.py` exists in a checkout and in no wheel."""
+    from senbonzakura import bundled
+    monkeypatch.setattr(bundled, "running_from_a_checkout", lambda: False)
+    remedy = doctor._vendor_remedy()
+    assert "vendor_llama.py" not in remedy
+    assert "packaging fault" in remedy and bundled.ISSUES in remedy
+
+
+def test_a_checkout_still_gets_the_command_that_works(monkeypatch):
+    from senbonzakura import bundled
+    monkeypatch.setattr(bundled, "running_from_a_checkout", lambda: True)
+    assert "vendor_llama.py" in doctor._vendor_remedy()

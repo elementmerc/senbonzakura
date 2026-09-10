@@ -1,6 +1,7 @@
 # Quickstart
 
-Two commands and about an hour, with nothing to download but the model.
+Two commands and about an hour. The install is a few gigabytes; after that there is nothing to
+download but the model.
 
 You need a GPU with 6 GB or more, and Python 3.10 or newer. No GPU? Skip to
 [try it without a graphics card](#try-it-without-a-graphics-card) below.
@@ -48,7 +49,10 @@ senbonzakura kageyoshi \
 Then go and make a cup of tea. On a 6 GB card, a 1.7B model takes about an hour.
 
 `--track default` is the evaluation track bundled inside the wheel. It needs no network and no
-files on disk, so there is nothing to assemble before your first run. When you want to measure
+files on disk, so there is nothing to assemble before your first run. It is also **roughly 6,500
+harmful prompts sitting inside your site-packages**, which is worth knowing before you put this on
+a shared machine; [the install page](/guide/install#what-comes-in-the-box-including-the-part-people-don-t-expect) says what is in it and
+how to build a wheel without it. When you want to measure
 your own model on your own prompts, [build a track](/guide/the-track); until then this is the one
 to use.
 
@@ -58,13 +62,26 @@ A model in `my-abliterated-model`, and beside it a `run.json` recording what was
 `abliteration.json` recording what it cost: how many refusals are left, how far the model drifted
 from the original, and whether the output turned to mush.
 
+::: warning What you are now holding
+The model will answer things the original declined to answer, and that is not reversible by
+loading it differently: the refusal behaviour has been removed from the weights. **The base
+model's licence still governs it**, unchanged, and this tool cannot loosen those terms. If you
+publish it, run `senbonzakura report` to generate the card that should travel beside the weights.
+
+The tool also writes a `margins` file next to your output by default, and those rows contain the
+prompts and what the model said to them. Pass `--no-margins` if you would rather it did not.
+:::
+
 While it runs you will see lines like this:
 
 ```
-trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% heretic=12.5% broken=0% KL=0.19
+trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 per_layer -> refusals=3.1% soft=5.2% heretic=12.5% broken=0% KL=0.1900 obj=0.2431
 ```
 
-`refusals` is the one you came for. `KL` is what it cost you.
+`refusals` is the one you came for: hard refusals left, as a percentage. `KL` is what it cost
+you, and lower is less damage. The rest, briefly: `soft` counts hedging as well as refusal,
+`heretic` is the other tool's keyword metric reported so the two are comparable, `broken` is
+output that stopped being English, and `obj` is the single number the search is minimising.
 
 ## Try it without a graphics card {#try-it-without-a-graphics-card}
 

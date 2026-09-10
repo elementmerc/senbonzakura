@@ -106,6 +106,24 @@ different things, and one of them is much worse to lose.
 That's [the compass](/guide/compass), and it's the reason most of these docs are about
 measurement rather than about cutting.
 
+## What you are actually making
+
+Abliteration removes safety guardrails wholesale. That is both the point and the danger.
+
+An abliterated model will answer things the original declined to answer, and the change is in the
+weights: it does not come back by loading the model differently or by prompting it politely. That
+is the whole purpose, and it is also the reason this is research tooling rather than something to
+put in front of other people without thinking about it.
+
+Two things follow, and neither is a formality:
+
+- **The base model's licence still governs the result.** This tool cannot loosen those terms, and
+  several licences additionally require a derived work to say it was modified. `senbonzakura
+  report` generates the card that carries that.
+- **What you do with it is yours.** A model with its refusals removed will answer things a
+  deployed model should not; putting one in front of other people is a decision with consequences
+  that belong to whoever makes it.
+
 ## Where next
 
 - [Install](/guide/install) if you just want it running.

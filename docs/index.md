@@ -27,8 +27,8 @@ features:
   - title: Tested its own headline idea, and published the loss
     details: >
       The tool can cut in several directions at once. Asked whether that beats cutting in one,
-      five seeds a side, the answer was no: two directions cost twice the collateral damage for
-      no gain. The capability stays, the claim does not.
+      five seeds a side, the answer was no: two directions cost roughly 1.5 to 1.9 times the
+      collateral damage for no gain. The capability stays, the claim does not.
     link: /guide/what-we-know
     linkText: What the run found
   - title: Ships its own instruments

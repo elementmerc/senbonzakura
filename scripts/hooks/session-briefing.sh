@@ -51,5 +51,12 @@ fi
 # preview, so a gate buried inside it can go unread. A standalone hook entry
 # arrives on its own.
 
+# Multi-persona review gate (baseline Section 25): the MANDATORY adoption
+# bootstrap in a repo that has not adopted it, else commits since the last
+# panel review. Wired by install-project.sh; fail-open, never blocks.
+if [ -x "$HERE/panel-check.sh" ]; then
+    CLAUDE_PROJECT_DIR="$ROOT" bash "$HERE/panel-check.sh" || true
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 exit 0

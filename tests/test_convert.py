@@ -108,7 +108,7 @@ def test_not_enough_disk_is_caught_before_the_job_not_during(tmp_path, monkeypat
 def test_an_unsupported_architecture_is_refused_before_the_weights_are_read(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m", arch="NoSuchForCausalLM")
     monkeypatch.setattr(convert, "supported_architectures",
-                        lambda _s, **k: ({"Qwen3ForCausalLM", "Lfm2MoeForCausalLM"}, []))
+                        lambda _s, **k: ({"Qwen3ForCausalLM", "Lfm2MoeForCausalLM"}, [], None))
     with pytest.raises(ConvertError, match="does not support NoSuchForCausalLM"):
         convert.preflight(d, tmp_path / "o.gguf", force=False, skip_arch_check=False)
 
@@ -117,7 +117,7 @@ def test_an_unsupported_architecture_is_refused_before_the_weights_are_read(tmp_
 def test_a_supported_architecture_passes(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     monkeypatch.setattr(convert, "supported_architectures",
-                        lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+                        lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     got = convert.preflight(d, tmp_path / "o.gguf", force=False, skip_arch_check=False)
     assert got["architecture"] == "Qwen3ForCausalLM"
     assert got["shards"] == 1
@@ -135,7 +135,7 @@ def test_a_module_that_failed_to_import_is_not_support(tmp_path, monkeypatch):
     """
     d = _checkpoint(tmp_path / "m", arch="Lfm2MoeForCausalLM")
     monkeypatch.setattr(convert, "supported_architectures",
-                        lambda _s, **k: ({"Lfm2MoeForCausalLM"}, ["lfm2"]))
+                        lambda _s, **k: ({"Lfm2MoeForCausalLM"}, ["lfm2"], None))
     with pytest.raises(ConvertError) as e:
         convert.preflight(d, tmp_path / "o.gguf", force=False, skip_arch_check=False)
     assert "advertised and absent" in str(e.value)
@@ -168,7 +168,7 @@ def test_supported_architectures_parses_names_and_broken_modules():
     real = c.subprocess.run
     c.subprocess.run = lambda *a, **k: _R()
     try:
-        names, broken = c.supported_architectures("x")
+        names, broken, _died = c.supported_architectures("x")
     finally:
         c.subprocess.run = real
     assert names == {"Qwen3ForCausalLM", "Lfm2MoeForCausalLM"}
@@ -217,7 +217,7 @@ def test_a_failed_conversion_removes_the_partial_file(tmp_path, monkeypatch, cap
     """
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=1, write=b"partial"))
     with pytest.raises(SystemExit, match="exited 1"):
         convert.run([str(d), str(out)], log=lambda _m: None)
@@ -231,7 +231,7 @@ def test_an_output_that_does_not_verify_is_kept_for_inspection(tmp_path, monkeyp
     """
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"not a gguf"))
 
     def _boom(*a, **k):
@@ -247,7 +247,7 @@ def test_an_output_that_does_not_verify_is_kept_for_inspection(tmp_path, monkeyp
 def test_a_successful_conversion_verifies_and_reports(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     ran = _Ran(rc=0, write=b"GGUF" + b"\0" * 64)
     monkeypatch.setattr(convert.subprocess, "run", ran)
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
@@ -262,7 +262,7 @@ def test_a_successful_conversion_verifies_and_reports(tmp_path, monkeypatch):
 def test_the_requested_precision_is_what_gets_checked(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
     seen = {}
 
@@ -278,7 +278,7 @@ def test_the_requested_precision_is_what_gets_checked(tmp_path, monkeypatch):
 def test_auto_precision_asserts_nothing_because_there_is_nothing_to_assert(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
     seen = {}
 
@@ -294,7 +294,7 @@ def test_auto_precision_asserts_nothing_because_there_is_nothing_to_assert(tmp_p
 def test_quantise_is_chained_and_the_intermediate_is_pruned_by_default(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
@@ -313,7 +313,7 @@ def test_quantise_is_chained_and_the_intermediate_is_pruned_by_default(tmp_path,
 def test_keeping_the_intermediate_is_honoured(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
@@ -328,7 +328,7 @@ def test_keeping_the_intermediate_is_honoured(tmp_path, monkeypatch):
 def test_a_failing_quantise_step_propagates_its_code(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
@@ -341,7 +341,7 @@ def test_use_temp_file_reaches_the_converter(tmp_path, monkeypatch):
     """The flag that makes a model larger than memory convertible at all."""
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
-    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, []))
+    monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     ran = _Ran(rc=0, write=b"GGUF")
     monkeypatch.setattr(convert.subprocess, "run", ran)
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())

@@ -25,6 +25,7 @@ those words, rather than being quietly omitted: an absent section reads as nothi
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from ._version import __version__
@@ -182,6 +183,25 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
     return out
 
 
+#: Identifiers the HuggingFace Hub actually renders a licence badge for. Not exhaustive of the
+#: Hub's list, and deliberately permissive about the shape rather than the membership: what is
+#: refused is a value the Hub will silently decline, such as `Apache 2.0` where it wants
+#: `apache-2.0`. The flag's help text already names the right forms; this stops a near-miss being
+#: written straight through into the YAML and publishing weights the Hub reports as unlicensed.
+_LICENCE_ID = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
+
+
+def licence_complaint(value):
+    """Why the Hub would not render this identifier, or None."""
+    if not value or _LICENCE_ID.match(value):
+        return None
+    return (f"--base-licence {value!r} is not a shape the HuggingFace Hub accepts: it wants a "
+            f"lowercase SPDX-style identifier such as `apache-2.0`, `mit`, `gemma` or "
+            f"`llama3.2`, and renders no licence at all for anything else. Writing it through "
+            f"would publish weights the Hub reports as unlicensed, which is the fault this card "
+            f"exists to prevent.")
+
+
 def front_matter(abl, licence, licence_link):
     """The YAML block HuggingFace reads to render licence and lineage metadata.
 
@@ -195,6 +215,11 @@ def front_matter(abl, licence, licence_link):
     because the run recorded it.
     """
     out = ["---", f"license: {licence}"]
+    # The Hub requires `license_name` alongside `license: other` and renders nothing without it,
+    # so `--licence-unknown` produced a card whose prose said UNRESOLVED loudly and whose metadata
+    # said nothing at all. A human reading the page was warned; the Hub was not.
+    if licence == "other":
+        out.append("license_name: unresolved-see-card")
     if licence_link:
         out.append(f"license_link: {licence_link}")
     if abl and abl.get("model"):
@@ -306,6 +331,9 @@ def main(argv=None):
             "reading rather than for publishing weights beside.\n"
             "It is not inferred from the model, deliberately: a model's terms are not derivable "
             "from its weights and a wrong guess is worse than a blank one.")
+    bad = licence_complaint(a.base_licence)
+    if bad:
+        raise SystemExit(bad)
     lines = build(load(a.abliteration), load(a.capability), a.command or None,
                   licence=a.base_licence or None, licence_link=a.base_licence_link or None)
     text = "\n".join(lines)

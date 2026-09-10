@@ -54,10 +54,14 @@ it out of the weights.
 > **Read this before quoting anything. On the one model where we can measure it properly, that
 > idea does not hold.** One direction against two, five seeds each, everything else held still,
 > every model scored afterwards by one instrument on prompts nothing was fitted or selected on:
-> both budgets removed hard refusal, and two directions did about **twice the collateral damage**
-> for no refusal benefit: drift 0.093 with a spread of 0.048, against 0.050 with a spread of
-> 0.018. An exact permutation test over all 252 splits of the ten seeds puts that at p = 0.016.
-> More directions cost more and bought nothing.
+> both budgets removed hard refusal, and two directions cost **about 1.5 to 1.9 times the
+> collateral damage** for no refusal benefit: drift 0.093 with a spread of 0.048, against 0.050
+> with a spread of 0.018. An exact permutation test over all 252 splits of the ten seeds puts that
+> at p = 0.016, and **one outlying two-direction seed carries much of it**: drop that seed and the
+> gap halves, 0.0435 to 0.0222, with p moving to 0.048. The multiplier and the p rest on one run.
+>
+> The *direction* is sturdier than the size: one direction beats two in 24 of the 25 pairwise seed
+> comparisons. More directions cost more and bought nothing.
 >
 > That is one model, Qwen3-1.7B, and it isn't the last word for every architecture. It is enough
 > to say the headline idea is **unsupported by this project's own evidence**, and we would rather
@@ -66,6 +70,11 @@ it out of the weights.
 > The feature also had never worked until 2026-08-03: the check deciding whether a candidate
 > direction carried refusal could not accept any direction, on any model, at any setting, so every
 > run before that applied exactly one direction whatever it was asked for.
+>
+> And one honest limit on the negative result itself: those arms ran before the held-out selection
+> existed, so their second directions were chosen by a filter now known to accept everything. What
+> was measured is that *arbitrary* second directions cost drift, which is a weaker claim than the
+> thesis it is being read against. Re-running it under the current selection is queued work.
 >
 > **What this tool is actually good at is the measurement**, and that part survived the same
 > scrutiny: [the head-to-head](https://elementmerc.github.io/senbonzakura/guide/benchmark).
@@ -114,25 +123,33 @@ a command you can run on data committed to this repository.
 ## Install
 
 ```sh
-pip install senbonzakura            # the checking commands. Small, no GPU needed
-pip install 'senbonzakura[abliterate]'   # and the editor: torch, transformers, a GPU
-senbonzakura --help
+pip install senbonzakura
+senbonzakura setup
 ```
 
-Two lines because they buy different things. The first lets you build an evaluation split,
-audit one, check whether a benchmark figure was measured on rows the model was already fitted
-on, and check what an install can actually do. None of that needs a model or a graphics card.
-The second adds the deep-learning stack, which is what you need to edit a model.
+The first command brings everything needed to edit a model: torch, transformers, accelerate,
+optuna. That is 68 packages and a few gigabytes, and there is nothing else to choose.
 
-Measured on Linux with Python 3.14 and the CPU-only torch wheel, so treat them as the size of
-the difference rather than as the figure you will see: about 210 MB installed for the first line
-against about 1.5 GB for both. The default CUDA torch wheel is larger again, and the second line
-also wants a CUDA card with 6 GB on it.
+The second exists because **pip picks by platform, not by hardware**. There is no way for a
+package to declare "install the CUDA build if there is a card", so what you get depends on your
+operating system rather than on what is in the machine:
 
-If you had 0.3.0 and abliterating a model has stopped working, that is this change: add the
-extra. (In 0.3.0 the command was `senbonzakura --model ... --out ...` or
-`senbonzakura kageyoshi`; `abliterate` as a word came later.) The tool says so and prints the
-exact line if you forget.
+| Your machine | What pip alone gives you |
+|---|---|
+| Linux with a GPU | the CUDA build. Correct |
+| Linux with no GPU | the CUDA build anyway, and about 15 CUDA packages you cannot use |
+| macOS on Apple silicon | a build that uses Metal. Correct |
+| Windows with a GPU | **a CPU-only build. Your card will sit idle** |
+
+That last row is the one that costs you a day. PyPI's Windows torch is 124 MB and CPU-only; the
+CUDA build is not on PyPI at all. So a gaming laptop with a 3060 in it installs a torch that
+cannot see the card, nothing warns you, and the search runs on CPU.
+
+`senbonzakura setup` looks at the machine, says what it found, and prints the one command that
+fixes it. It changes nothing unless you add `--apply`.
+
+Editing a model wants a CUDA card with 6 GB on it. The measuring commands (`compass`, `score`,
+`drift`, `capability`) run on CPU.
 
 ## One worked example
 
@@ -198,11 +215,18 @@ model with its refusals removed will answer things a deployed model should not; 
 front of other people is a decision with consequences that belong to whoever makes it. The
 licence terms of any base model you edit continue to apply to the result.
 
-Note on licences: this tool is **AGPL-3.0-or-later** (it embeds a keyword metric copied from
-Heretic, which is AGPL). Separately, a model
-you abliterate keeps the **base model's** licence and use restrictions: redistributing an
-abliterated checkpoint is governed by that upstream licence (Qwen, Llama, Gemma and so on), not by
-this repository's.
+Note on licences, and there are three separate ones in play:
+
+- **The code** is **AGPL-3.0-or-later** (it embeds a keyword metric copied from Heretic, which is
+  AGPL).
+- **The bundled evaluation track** under `senbonzakura/data/` is a separate work aggregated into
+  the same wheel, and it is **CC BY-NC 4.0: non-commercial**. The package metadata carries one
+  licence expression and that expression describes the code, so if you are using this
+  commercially, supply your own corpus with `--track` rather than using `--track default`. Full
+  attribution is in `THIRD-PARTY-NOTICES.md`, which is installed beside the package.
+- **A model you abliterate** keeps the **base model's** licence and use restrictions:
+  redistributing an abliterated checkpoint is governed by that upstream licence (Qwen, Llama,
+  Gemma and so on), not by this repository's.
 
 ## Credit
 

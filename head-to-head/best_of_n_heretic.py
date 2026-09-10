@@ -151,6 +151,17 @@ def open_study(path):
     return optuna.load_study(study_name=studies[0].study_name, storage=storage)
 
 
+# AGPL-3.0 SECTION 5(a) NOTICE, for the two functions below.
+# Copyright (C) 2025-2026 Philipp Emanuel Weidmann and contributors, licensed AGPL-3.0-or-later.
+# Upstream: https://github.com/p-e-w/heretic
+# `residual_directions_for` mirrors heretic/main.py's direction block, including its
+# projected-abliteration step, and `heretic_front` reproduces its trial loop. Modified by
+# Daniel Iwugo to run from outside Heretic's process so the equal-budget selection pass can be
+# applied to Heretic's trials the same way it is applied to ours. First included 2026-08-12;
+# last modified 2026-09-10.
+#
+# THIRD-PARTY-NOTICES.md previously said "that file says so about itself", which was slightly
+# stronger than what the file did: it stated functional provenance and carried no authorship.
 def residual_directions_for(settings, model, good_prompts, bad_prompts):
     """Recompute the directions the search used.
 

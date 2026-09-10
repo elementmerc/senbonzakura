@@ -121,6 +121,8 @@ RELEASE_LICENCES = {
     "LICENSE": "AGPL-3.0-or-later, the licence of the work",
     "THIRD-PARTY-NOTICES.md": "the AGPL section 5(a) statement of modification",
     "THIRD-PARTY-CORPORA.md": "attribution for the bundled corpora, which MIT and CC-BY require",
+    "APACHE-2.0.txt": ("the Apache-2.0 text, which section 4(a) requires to travel with the "
+                       "bundled evaluation track's Apache-2.0 component"),
 }
 
 RELEASE_DATA = {

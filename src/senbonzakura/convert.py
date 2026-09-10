@@ -148,7 +148,17 @@ def supported_architectures(script, *, timeout=SUPPORTED_TIMEOUT_S):
     # exact gap that hid the missing gguf-py: the list is static and the imports are not.
     broken = sorted({ln.split(":")[0].split()[-1] for ln in out.splitlines()
                      if "failed to load model module" in ln.lower()})
-    return names, broken
+    # THE EXIT STATUS, which was read and discarded. The script imports torch at module level, so
+    # on an install without it the process dies with a traceback and this returned an empty set,
+    # which `doctor` then reported as "the vendored package is incomplete; re-run the vendoring
+    # tool". Every clause of that was untrue, and the remedy it named is `tools/vendor_llama.py`,
+    # which no wheel contains. Same class as telling the operator to update a driver that had run
+    # CUDA all night: a refusal for a reason that is not true sends the reader to the wrong thing.
+    died = None
+    if r.returncode != 0 and not names:
+        tail = [ln for ln in out.splitlines() if ln.strip()][-3:]
+        died = " / ".join(tail) if tail else f"exited {r.returncode} with no output"
+    return names, broken, died
 
 
 def preflight(model_dir, out, *, force, skip_arch_check, log=print):
@@ -184,7 +194,7 @@ def preflight(model_dir, out, *, force, skip_arch_check, log=print):
         raise ConvertError(str(e)) from e
 
     if not skip_arch_check:
-        names, broken = supported_architectures(script)
+        names, broken, _died = supported_architectures(script)
         if broken:
             # Loud, because this is the failure that shipped: a module that did not import while
             # its architectures stayed on the advertised list.

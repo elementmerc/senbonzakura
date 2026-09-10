@@ -225,9 +225,27 @@ def test_every_module_in_the_source_tree_reaches_the_distribution():
     assert not find.get("exclude"), (
         f"packaging excludes {find['exclude']}, so a module in the source tree may not reach an "
         f"installed copy. Every module here is part of the tool; none is a test fixture.")
-    assert not (root / "MANIFEST.in").exists(), (
-        "a MANIFEST.in has appeared; it can narrow what ships, and this project has already "
-        "released a wheel missing the module its central claim depends on")
+    # A MANIFEST.in is allowed, and what it is allowed to remove is not. It exists to prune
+    # `vendor/bin` from the SOURCE distribution, which carried 33 Linux binaries inside an
+    # artefact that has no platform tag by construction. Anything that could drop a module is
+    # still the failure this test was written for, so the ban is on the rules rather than on the
+    # file: no exclusion may name a Python file, and none may reach into the package beyond the
+    # vendored binaries.
+    manifest = root / "MANIFEST.in"
+    if manifest.exists():
+        for raw in manifest.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            verb, _, rest = line.partition(" ")
+            if verb not in ("prune", "exclude", "recursive-exclude", "global-exclude"):
+                continue
+            assert ".py" not in rest, (
+                f"MANIFEST.in line {line!r} excludes Python files, which is how a wheel comes to "
+                f"be missing the module its central claim depends on")
+            assert rest.strip().startswith("src/senbonzakura/vendor/bin"), (
+                f"MANIFEST.in line {line!r} removes something outside the vendored binaries. "
+                f"Only those are meant to be pruned; widening it silently drops shipped code.")
 
     on_disk = {p.stem for p in (root / "src" / "senbonzakura").glob("*.py")}
     for required in ("margin", "crashsafe", "track", "validate", "metrics", "cli"):

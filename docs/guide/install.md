@@ -1,41 +1,48 @@
 # Install
 
-Two lines, and then you can go and read the interesting pages.
+Two commands, and then you can go and read the interesting pages.
 
 ```sh
-pip install .          # or: uv pip install .
-senbonzakura --help
+pip install senbonzakura
+senbonzakura setup
 ```
 
-That pulls in pyarrow (and numpy, which pyarrow needs), landing at about 210 MB installed on
-Linux with Python 3.14. It gets you the
-commands that *check* things: build an evaluation split, audit one, check a benchmark for
-contamination, check what your install can do. None of those need a model or a graphics card,
-so none of them should make you download one.
+The first brings everything: torch, transformers, accelerate, optuna, and the rest. It is 68
+packages and a few gigabytes, and there is nothing else to choose. Nothing is behind an extra.
 
-To edit a model, add the extra:
+The second exists because **pip picks by platform, not by hardware**. PEP 508 environment
+markers describe the interpreter, the operating system and the architecture, and there is no
+marker for "has an NVIDIA GPU". A wheel runs no code at install time, so it cannot look. So what
+you get depends on your operating system rather than on what is in the machine:
 
-```sh
-pip install '.[abliterate]'
-```
+| Your machine | What pip alone gives you |
+|---|---|
+| Linux with a GPU | the CUDA build. Correct |
+| Linux with no GPU | the CUDA build anyway, and about 15 CUDA packages you cannot use |
+| macOS on Apple silicon | a build that uses Metal. Correct |
+| Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
-That's torch, transformers, accelerate and optuna, taking the install to about 1.5 GB with the
-CPU-only torch wheel and a few minutes on a decent connection. The default CUDA wheel and its
-`nvidia-*` dependencies are larger again. Read both figures as the size of the difference rather
-than as what you will see. If you type
-`senbonzakura abliterate` without the extra, the tool tells you and prints the line above
-rather than showing you a traceback.
+::: tip Why the Windows row is in bold
+PyPI's Windows torch is 124 MB and CPU-only; the CUDA build is not on PyPI at all. So a gaming
+laptop with a 3060 in it installs a torch that cannot see the card, and nothing warns you. The
+search then runs on CPU and takes a day instead of an hour.
+:::
+
+`senbonzakura setup` asks the driver (not torch, which would report what the installed build can
+reach rather than what the machine has), says what it found, and prints the one command that
+fixes it. It changes nothing unless you add `--apply`.
 
 If you'd rather type `python -m senbonzakura` than `senbonzakura`, both work and they're the
 same thing.
 
-**Coming from 0.3.0?** Everything used to arrive in one install. `abliterate`, `convert` and
-the scoring commands now live behind `[abliterate]`; nothing else changed.
+**Coming from 0.3.x?** Nothing about your install changes: 0.3.0 also installed torch by
+default. If you tracked `dev` in early September you were told to add an `[abliterate]` extra;
+that extra still resolves, and now installs exactly what a bare install does.
 
 ## Reading datasets straight off the HuggingFace Hub
 
 ```sh
-pip install '.[hub]'
+pip install 'senbonzakura[hub]'
 ```
 
 The tool doesn't need the `datasets` package for ordinary work. It reads and writes tracks
@@ -127,11 +134,19 @@ and is checked at build time:
 docker run --rm -v "$PWD:/work" senbonzakura doctor
 ```
 
-## The two optional extras
+## The optional extras
 
-Neither is needed for a normal run, and the tool works without both.
+None of these is needed for a normal run, and the tool works without all of them.
 
-**`pip install ".[quant]"`** adds 4-bit loading through bitsandbytes, so you can *score* a
+| Extra | What it adds |
+|---|---|
+| `quant` | 4-bit loading through bitsandbytes, for *scoring* a model too big to sit on your card |
+| `completion` | tab completion for bash, zsh and tcsh |
+| `hub` | reading datasets straight off the HuggingFace Hub (see above) |
+| `abliterate` | nothing. It is an alias kept so 0.3.x instructions still resolve |
+| `all` | every one of the above |
+
+**`pip install "senbonzakura[quant]"`** adds 4-bit loading through bitsandbytes, so you can *score* a
 model that's too big to sit on your card in full precision:
 
 ```sh
@@ -145,7 +160,7 @@ multiplication done in place. A 4-bit tensor isn't a grid of numbers you can mul
 a compressed sketch of one, and you can't do surgery on a sketch. So the abliterator loads
 in full precision and there's no flag to talk it out of that.
 
-**`pip install ".[completion]"`** gets you tab completion for bash, zsh and tcsh. It's
+**`pip install "senbonzakura[completion]"`** gets you tab completion for bash, zsh and tcsh. It's
 generated on demand, the same one-time dance `pip`, `gh` and `poetry` all use:
 
 ```sh

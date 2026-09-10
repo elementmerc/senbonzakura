@@ -260,3 +260,50 @@ def test_nothing_about_the_licence_is_inferred_from_the_model_name():
     body = "\n".join(modelcard.build({"model": "meta-llama/Llama-3.2-1B"}))
     assert "LICENCE UNRESOLVED" in body
     assert "llama3" not in body.lower().split("base_model")[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# What the Hub reads, as opposed to what a human reads. Both findings below produce a
+# card whose prose is careful and whose metadata publishes the weights as unlicensed.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+def test_an_unresolved_licence_still_renders_on_the_hub():
+    """`license: other` with no `license_name` renders nothing at all.
+
+    So `--licence-unknown` produced a card that said UNRESOLVED loudly in its prose and said
+    nothing whatever in the block the Hub actually reads.
+    """
+    block = modelcard.front_matter({"model": "Qwen/Qwen3-1.7B"}, "other", None)
+    assert "license: other" in block
+    assert any(line.startswith("license_name:") for line in block), (
+        "the Hub requires license_name beside `license: other` and renders no badge without it")
+
+
+def test_a_normal_licence_needs_no_license_name():
+    block = modelcard.front_matter({"model": "Qwen/Qwen3-1.7B"}, "apache-2.0", None)
+    assert "license: apache-2.0" in block
+    assert not any(line.startswith("license_name:") for line in block)
+
+
+@pytest.mark.parametrize("good", ["apache-2.0", "mit", "gemma", "llama3.2", "cc-by-nc-4.0"])
+def test_the_identifiers_the_help_text_names_are_accepted(good):
+    assert modelcard.licence_complaint(good) is None
+
+
+@pytest.mark.parametrize("bad", ["Apache 2.0", "MIT", "Apache-2.0", "apache 2.0"])
+def test_a_near_miss_is_refused_rather_than_written_through(bad):
+    """The failure is silent on the Hub: it declines the value and shows no licence.
+
+    A publisher who typed the wrong case would have been told nothing by this tool and would
+    have found out from a reader, or not at all.
+    """
+    said = modelcard.licence_complaint(bad)
+    assert said and "apache-2.0" in said
+
+
+def test_the_refusal_reaches_the_shell(tmp_path):
+    abl = tmp_path / "abliteration.json"
+    abl.write_text('{"model": "Qwen/Qwen3-1.7B", "post_bake_refusals": 0.0}', encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        modelcard.main(["--abliteration", str(abl), "--base-licence", "Apache 2.0"])
+    assert "HuggingFace Hub accepts" in str(e.value)

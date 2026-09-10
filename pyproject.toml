@@ -24,7 +24,11 @@ license = "AGPL-3.0-or-later"
 # build time into the repository and left out of the artefact, so a user installing the
 # package received 520 MIT rows and 250 CC-BY rows with the attribution present nowhere
 # they could see it. `corpora.notice()` now prints it at load and points here.
-license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md"]
+# APACHE-2.0.txt is here because Apache-2.0 section 4(a) requires the licence text itself to
+# travel with the work, and the bundled evaluation track carries an Apache-2.0 component.
+# Documenting the obligation in docs/ did not satisfy it: docs/ does not ship.
+license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md",
+                 "APACHE-2.0.txt"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [

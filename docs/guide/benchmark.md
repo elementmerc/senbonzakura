@@ -11,17 +11,42 @@ something. Every open item is named below the table, and one row has since been 
 outright. Nothing here is hidden and nothing here is settled.
 :::
 
+::: danger The coherence row is superseded, 2026-09-10. Do not quote it.
+The table below is the 2026-08-12 run, in which **Heretic was not given the best-of-N selection
+pass that Senbonzakura gave itself**. When both tools got that pass, on 2026-09-10, the coherence
+difference disappeared:
+
+| Coherence drift, both tools selected the same way | Senbonzakura | Heretic |
+|---|---|---|
+| mean over five seeds | 0.0545 | 0.1227 |
+| **median** over five seeds | **0.0510** | **0.0573** |
+| worst seed | 0.0605 | 0.3591 |
+
+One Heretic seed carries the entire mean difference. Drop it and the means are 0.0636 against
+0.0545, with overlapping intervals. A permutation test over the ten seeds returns p=0.405, so
+there is **no detectable coherence difference on this model at this size**, and the earlier
+"roughly half the collateral damage" is not a finding.
+
+The same run put Heretic **marginally ahead** on refusal removal, not behind. Both differences are
+negligible; the direction was not, and it was reported the wrong way round here for a month.
+
+The re-run's arms are not yet committed to this repository, which is a gap named in
+[CONTRACT.md](https://github.com/elementmerc/senbonzakura/blob/main/head-to-head/CONTRACT.md) 4
+and not yet closed. Until they are, treat every number on this page as provisional in both
+directions.
+:::
+
 | Axis | Senbonzakura | Heretic |
 |---|---|---|
 | Hard refusal | 0.0% | 0.0% |
 | Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ withdrawn, see below |
 | Keyword rate | 16.1% | **9.6%** |
-| Coherence drift | **0.191** | 0.341 |
+| Coherence drift | ~~0.191~~ | ~~0.341~~ superseded, see above |
 | Harm recognition | 0.9807 | 0.9821 (tie) |
 
-**Both tools took hard refusal to zero, which is what makes the rest readable.** At the same
-refusal rate the only thing left to compare is the price paid for it, and we did roughly half the
-collateral damage. Heretic won its own keyword metric.
+**Both tools took hard refusal to zero, which is what makes the rest readable.** What that leaves
+is the price each paid for it, and on the one run where both tools were selected the same way,
+that price is indistinguishable. Heretic won its own keyword metric.
 
 ::: danger The noncompliance row is withdrawn, 2026-09-09
 This run was scored on 2026-08-12. On 2026-09-08 the hedging detector was found to count
@@ -36,11 +61,12 @@ and people read it. It will be re-measured when the head-to-head is re-run under
 detector, and not before.
 :::
 
-**The reversal is the interesting part.** Heretic self-reports a coherence divergence of 0.0014 to
-0.0032 against our 0.157 to 0.212, a hundredfold apart, and reading those two as a comparison is
-the mistake this whole page exists to avoid: each tool measured its own model on its own prompts
-during its own search. Measured afterwards on one instrument, on prompts held back from both, the
-order reverses.
+**The two tools' self-reported figures are not a comparison, and that is the durable point.**
+Heretic self-reports a coherence divergence of 0.0014 to 0.0032 against our 0.157 to 0.212, a
+hundredfold apart, because each measured its own model on its own prompts during its own search.
+Put them on one instrument, on prompts held back from both, and that hundredfold gap goes away. An
+apparent reversal was published here for a month on the strength of a run in which only one tool
+got the selection pass.
 
 ### What is still open
 
@@ -48,18 +74,22 @@ order reverses.
   it is three times theirs. A number moving the wrong way on your own objective is usually the
   ruler rather than the model, and that is being investigated before this table is treated as
   settled.
-- **The drift figures were measured on 64 prompts** where the other axes use 200, and that slice
-  is the one Heretic tunes against. It biases the comparison *toward* Heretic, which still lost
-  it, but a figure measured on a competitor's home ground is not the one to publish, and the
-  re-measurement on held-out prompts is pending.
-- **Some of these prompts are probably ones Heretic was fitted on, and we have not yet measured
-  how many.** Heretic's shipped defaults fit on `mlabonne/harmful_behaviors` `train[:400]`, which
-  is 400 of that split's 416 rows, and roughly 430 rows of our own harmful pool come from the same
-  dataset. So an unknown share of our evaluation is Heretic's training data. This flatters
-  Heretic, in a comparison Heretic mostly lost, so it does not put our conclusion at risk. It sits
-  directly on the axis we lose, though: the keyword rate is measured by a ruler built from the
-  same dataset family, and Heretic optimises against that ruler by default. Counting the overlap
-  is queued work.
+- **The drift figures in the table were measured on 64 prompts** where the other axes use 200,
+  and that slice is the one Heretic tunes against. The re-measurement on 200 held-out prompts has
+  since been done, and it is the superseding block at the top of this page: no detectable
+  difference.
+- **The equal-budget matching is not symmetric, and it should be.** Trials were matched UP to
+  Heretic's 200, on the stated principle that starving the comparison would decide it for us.
+  Direction-fitting prompts were matched DOWN to our 256, where Heretic's shipped default is 400
+  per side. Both moves went away from the other tool's larger default, and this one lands on the
+  estimator its method depends on. Re-running at 400 per side for both is queued work.
+- **A narrower contamination point than this page used to make.** It previously said an unknown
+  share of our evaluation was Heretic's training data and that this flattered Heretic. In the
+  harness both tools fit on the identical staged `bad.txt` and `good.txt` and are scored on
+  identical held-out slices, so within a run the overlap is symmetric and flatters neither. What
+  survives is narrower and still worth stating: Heretic's keyword scorer was developed against
+  this dataset family, so the keyword axis is measured by a ruler built on the ground one tool
+  optimises against.
 
 The recipe below is how you run this comparison today. It is **not**, as this page used to claim,
 the same command that produced the table: that run was scored on 2026-08-12, and the harness has

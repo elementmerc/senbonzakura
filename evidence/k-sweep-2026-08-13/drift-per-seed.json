@@ -1,0 +1,33 @@
+{
+  "schema": "senbonzakura-evidence/1",
+  "what": "Per-seed coherence drift for the one-direction versus two-direction comparison.",
+  "why_this_file_exists": "The p-value this project is quoted on most often (p = 0.016, the multi-direction negative result) traced to nothing a reader could open: the ten numbers behind it existed only in a git-excluded working note. Two neighbouring documentation pages were corrected for exactly that in the same cycle and this one was not. These are ten floats and no prompts, so there is no reason for them not to be here.",
+  "model": "Qwen/Qwen3-1.7B",
+  "run_date": "2026-08-13",
+  "prompts_per_score": 200,
+  "measured_by": "senbonzakura drift, one instrument, after the fact, on prompts nothing was fitted or selected on",
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "drift_kl": {
+    "k1": [
+      0.0468,
+      0.0232,
+      0.0608,
+      0.07,
+      0.0477
+    ],
+    "k2": [
+      0.0622,
+      0.0719,
+      0.0708,
+      0.0828,
+      0.1784
+    ]
+  },
+  "caveat": "These arms ran before the held-out direction selection existed, so the second directions were chosen by a filter now known to accept everything. What this measures is that ARBITRARY second directions cost drift, which is a weaker claim than the thesis it is usually read against."
+}

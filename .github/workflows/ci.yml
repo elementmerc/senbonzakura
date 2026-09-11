@@ -76,12 +76,25 @@ jobs:
         # macos-latest is arm64. Do not pin macos-13: the CPU index's newest x86_64
         # torch is 2.2.2, below this project's declared 2.5 floor, so an x86 runner
         # cannot install a supported torch at all.
+        #
+        # THE COVERAGE FLOOR IS PER CONFIGURATION, AND EVERY NUMBER IS MEASURED. A single floor
+        # has to be the weakest row's, which would stop the strong rows describing what they
+        # actually do; a single 95 fails a row for a reason that is not about its testing.
+        #
+        # Windows is genuinely lower and it is not thinner testing: `/proc/meminfo` does not
+        # exist there, POSIX permissions do not apply, and the code guarded on those is
+        # unreachable. Measured 2026-09-11: 94.53%, against 95.73% on Linux with the same
+        # dependencies. The floor sits just under the measurement, and is raised when the
+        # measurement rises.
+        #
+        # Read these off the job logs. Two floors were wrong today because I measured one
+        # configuration and wrote "the weakest" beside it.
         include:
-          - {os: ubuntu-latest, python: "3.10"}
-          - {os: ubuntu-latest, python: "3.12"}
-          - {os: ubuntu-latest, python: "3.14"}
-          - {os: windows-latest, python: "3.12"}
-          - {os: macos-latest, python: "3.12"}
+          - {os: ubuntu-latest, python: "3.10", floor: "95"}
+          - {os: ubuntu-latest, python: "3.12", floor: "95"}
+          - {os: ubuntu-latest, python: "3.14", floor: "95"}
+          - {os: windows-latest, python: "3.12", floor: "94.4"}
+          - {os: macos-latest, python: "3.12", floor: "95"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -142,11 +155,10 @@ jobs:
           python tools/build_corpora.py
 
       - name: Test, with the coverage gate
-        # No threshold here. `fail_under = 95` lives in pyproject and applies to every run of
-        # `pytest` anywhere, so the gate cannot drift between local and CI, and there is no
-        # second number to keep honest by hand. The comment block at the top of this file records
-        # why a softer runner floor existed until 2026-09-11 and why it stopped being true.
-        run: pytest --cov-report=xml
+        # The floor comes from this row's matrix entry, where the measurement that justifies it
+        # is written down. `pyproject.toml` still carries fail_under = 95, which is what a bare
+        # `pytest` meets locally and what four of these five rows meet here.
+        run: pytest --cov-report=xml --cov-fail-under=${{ matrix.floor }}
 
       - name: Publish coverage to Codecov
         # ONE matrix row uploads, not five. Five uploads of the same suite measured on five

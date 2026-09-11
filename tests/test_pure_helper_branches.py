@@ -27,14 +27,20 @@ from senbonzakura import capability, headtohead
 # ── headtohead._child: the separator follows the path, not the machine ───────────────────────
 
 def test_a_guest_path_keeps_posix_separators():
-    """A container path must stay POSIX even when this code runs on Windows.
+    r"""A container path must stay POSIX even when this code runs on Windows.
 
     `Path("/corpus-eval") / "good.txt"` is a backslash path on Windows, which no Linux container
     will ever find. The same argument list is built twice over, sealed and unsealed, so the two
     readings have to be told apart by the path rather than by the host.
+
+    A GUEST PATH IS PASSED AS A STRING, AND ON WINDOWS IT HAS TO BE. The first version of this
+    test also passed `Path("/corpus-eval")` and failed on the Windows runner, because
+    `str(Path("/corpus-eval"))` there is `\\corpus-eval`, which does not start with `/` and is
+    correctly read as a host path. That is the function behaving properly on a call shape no
+    caller uses: container paths are built as strings from constants, never through `Path`. The
+    constraint is real though, so it is written down here rather than discovered twice.
     """
     assert headtohead._child("/corpus-eval", "good.txt") == "/corpus-eval/good.txt"
-    assert headtohead._child(Path("/corpus-eval"), "good.txt") == "/corpus-eval/good.txt"
 
 
 def test_a_host_path_is_joined_the_way_this_machine_spells_it():
@@ -164,7 +170,10 @@ def test_on_wsl_the_windows_volume_is_what_gets_measured(monkeypatch):
     """
     monkeypatch.setattr(Path, "read_text",
                         lambda self, **k: "5.15.0-microsoft-standard-WSL2\n")
-    monkeypatch.setattr(Path, "is_dir", lambda self: str(self) == "/mnt/c")
+    # `as_posix()` and not `str()`: on a Windows runner `str(Path("/mnt/c"))` is `\mnt\c`, so a
+    # string comparison made this fixture match nothing and the test asserted None against a
+    # number. The code under test is POSIX-only by nature, but the TEST runs on every platform.
+    monkeypatch.setattr(Path, "is_dir", lambda self: self.as_posix() == "/mnt/c")
 
     class _Usage:
         free = 80 * 1024 ** 3

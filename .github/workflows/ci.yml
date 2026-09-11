@@ -106,7 +106,39 @@ jobs:
       - name: Test, with the coverage gate
         # fail_under lives in pyproject and ratchets upward; CI does not carry its
         # own threshold, so the gate cannot drift between local and CI.
-        run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS
+        run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS --cov-report=xml
+
+      - name: Publish coverage to Codecov
+        # ONE matrix row uploads, not five. Five uploads of the same suite measured on five
+        # environments would be merged by Codecov into a union, and a union of "Linux skipped the
+        # Windows branch" and "Windows skipped the Linux branch" reports coverage nobody has.
+        # This row is the one whose figure the badge quotes.
+        #
+        # The badge this feeds shows CI's number, which is LOWER than the local one, because a
+        # runner has none of the release artefacts (see COVERAGE_FLOOR_WITHOUT_ARTEFACTS above).
+        # That is the point: it is the figure a stranger cloning the repository can reproduce.
+        #
+        # `fail_ci_if_error` stays false deliberately. The coverage GATE is `--cov-fail-under`
+        # in the step above and it is unchanged; this step only reports. An outage at a third
+        # party must not turn this repository's build red, and a silent gap in the badge is
+        # visible on its own.
+        #
+        # Pinned by commit SHA per baseline section 5, and this action earns the rule more than
+        # most: Codecov's bash uploader was compromised in 2021 and shipped credential
+        # exfiltration to everyone who curled it at a tag.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: The tests badge states the real number
+        # The other half of the same problem Codecov solves for coverage. `tests-3166` was typed
+        # by hand and was 35 short by the time anyone looked. One matrix row, because the count
+        # is the same on all of them: a skipped test is still a collected test.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python tools/check_tests_badge.py
 
       - name: No committed prompts or generations
         # The hard gate. .gitignore stops an accidental `git add .`; it does nothing

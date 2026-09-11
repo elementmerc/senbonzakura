@@ -118,6 +118,21 @@ jobs:
         # runner has none of the release artefacts (see COVERAGE_FLOOR_WITHOUT_ARTEFACTS above).
         # That is the point: it is the figure a stranger cloning the repository can reproduce.
         #
+        # THREE NUMBERS, AND THEY ARE NOT IN CONFLICT. Read them before concluding one is wrong:
+        #
+        #     95.05  pyproject's gate, and what a developer sees. Everything present, and
+        #            coverage.py's total with branch=true, so branches are in the denominator:
+        #            (statements hit + branches taken) / (statements + branches).
+        #     92.98  the same measure on a runner, which is what COVERAGE_FLOOR_WITHOUT_ARTEFACTS
+        #            is set just under.
+        #     91.63  what Codecov shows, and therefore what the badge says. Codecov reads the
+        #            Cobertura XML and reports LINE coverage, counting partially-taken branches
+        #            as a separate `partials` bucket rather than blending them in.
+        #
+        # So the badge sits a point or so below the runner figure for a reason that has nothing
+        # to do with this repository: the two tools answer slightly different questions. Do not
+        # "fix" the gap by changing the gate.
+        #
         # `fail_ci_if_error` stays false deliberately. The coverage GATE is `--cov-fail-under`
         # in the step above and it is unchanged; this step only reports. An outage at a third
         # party must not turn this repository's build red, and a silent gap in the badge is

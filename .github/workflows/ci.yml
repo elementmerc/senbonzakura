@@ -103,9 +103,43 @@ jobs:
       - name: Lint
         run: ruff check src/ tests/ tools/
 
+      - name: Fetch the artefacts this row's tests need
+        # ONE row, and the reason is not coverage. 61 tests skip on every runner because the
+        # corpora blob and the vendored llama.cpp binaries are built at release time and are
+        # not in the tree. A skipped test covers nothing and, worse, gates nothing: `convert`,
+        # `quantise`, `imatrix` and the bundled-corpus paths have never once been exercised by
+        # CI, so a regression in them is invisible here and shows up in a release.
+        #
+        # That asymmetry is this project's most repeated failure shape. It is written down as
+        # "my machine has artefacts CI does not", and it turned CI red twice on 2026-09-11
+        # alone. This step closes it on the row that also reports coverage.
+        #
+        # It stays on ONE row deliberately. The other four, plus `pinned` and
+        # `dependency-floor`, keep running with no network at all, so "the suite runs without a
+        # network" is still proved on every commit by the rows that prove it today.
+        #
+        # Both fetches are hash-pinned: `vendor_llama.py` verifies against the sha256 recorded
+        # in `vendor/pins.json` and refuses a mismatch, and `build_corpora.py` reads files at
+        # pinned commits through `gh`. Neither accepts a hash typed by a human.
+        #
+        # It fails loud on purpose. A step that shrugged off a failed fetch would put the row
+        # back to skipping the same 61 tests while reporting green, which is the exact defect
+        # being fixed.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/vendor_llama.py
+          python tools/build_corpora.py
+
       - name: Test, with the coverage gate
         # fail_under lives in pyproject and ratchets upward; CI does not carry its
         # own threshold, so the gate cannot drift between local and CI.
+        #
+        # The floor is the same on every row even though the row above gives one of them more
+        # artefacts than the others. A floor is the number the WEAKEST configuration must
+        # clear, and raising it for the richer row would only mean the gate stopped describing
+        # what the other four actually do.
         run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS --cov-report=xml
 
       - name: Publish coverage to Codecov

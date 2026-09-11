@@ -1,0 +1,47 @@
+{
+  "id": "reported-on-the-rows-it-was-selected-on",
+  "title": "The rows a configuration was chosen on are the rows its result is reported on",
+  "detects": "A result that names both the set used to fit or select and the set used to report, and they overlap, or they are the same named split, or the artefact says outright that the evaluation was in-sample. Any of those makes the headline figure a measurement of how well the selection worked, not of how the model behaves on anything new.",
+  "incident": "Ours, twice. On 2026-08-17 an LFM2 refusal figure turned out to have been scored on the SEARCH partition, so the model was sound and the number was unmeasured. Separately, an evaluation set sat published and labelled clean for six weeks while 94.5% of its rows were inside its own fitting set. The second one is why this check looks at row identity and not only at split names: the names were right and the contents were not.",
+  "remedy": "Report on rows nothing was fitted or selected on. A three-way split (fit, select, report) is the cheap version, and the selection half is the one people leave out. If the run cannot be repeated, the figure's honest description is the training-set score, and it should be labelled as one rather than withdrawn silently.",
+  "confidence": "high",
+  "false_positive": "A deliberately in-sample number, published as one, is not this defect: reporting a fit-set figure and saying so is legitimate and sometimes the point. This check cannot tell that apart from the mistake, so a run that means it should record `in_sample: true` and expect the finding anyway. It also cannot see overlap that is not stated: two disjoint-looking split names over the same underlying rows read as clean here.",
+  "applies_to": {
+    "op": "any_of",
+    "rules": [
+      {"op": "present", "path": "eval_split"},
+      {"op": "present", "path": "eval_rows"},
+      {"op": "present", "path": "in_sample"}
+    ]
+  },
+  "rule": {
+    "op": "any_of",
+    "rules": [
+      {"op": "truthy", "path": "in_sample"},
+      {"op": "intersects", "paths": ["eval_rows", "fit_rows"]},
+      {"op": "intersects", "paths": ["eval_rows", "search_rows"]},
+      {
+        "op": "all_of",
+        "rules": [
+          {"op": "present", "path": "eval_split"},
+          {"op": "present", "path": "fit_split"},
+          {"op": "intersects", "paths": ["eval_split", "fit_split"]}
+        ]
+      }
+    ]
+  },
+  "control": {
+    "fires_on": [
+      {"eval_rows": [1, 2, 3], "fit_rows": [3, 4, 5]},
+      {"eval_rows": [7], "search_rows": [7, 8]},
+      {"eval_split": ["measure"], "fit_split": ["measure"]},
+      {"in_sample": true, "eval_rows": [1]}
+    ],
+    "passes_on": [
+      {"eval_rows": [1, 2], "fit_rows": [3, 4], "search_rows": [5, 6]},
+      {"eval_split": ["measure"], "fit_split": ["fit"]},
+      {"in_sample": false, "eval_rows": [1, 2]},
+      {"eval_rows": []}
+    ]
+  }
+}

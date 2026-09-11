@@ -263,7 +263,24 @@ jobs:
           python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"
           senbonzakura --help > /dev/null
       - name: Test
-        run: pytest
+        # THE ONE JOB WITH ITS OWN FLOOR, and the number is measured rather than chosen.
+        #
+        # It installs the LOWEST version every declared dependency permits, on Python 3.10, and
+        # an older library takes different branches: code guarded on a newer API is unreachable,
+        # and code that only runs on the old path is reached here and nowhere else. Measured on
+        # this configuration on 2026-09-11: 94.71%, against 95.73% on the same commit with
+        # current dependencies.
+        #
+        # That difference is a property of the dependency set, not thinner testing, so gating it
+        # at 95 would fail a job for succeeding at its actual purpose. 94.5 is set just under the
+        # measured figure, the same way the old global floor was.
+        #
+        # I removed the global floor earlier today on the strength of a Linux measurement with
+        # current dependencies and called it "the weakest configuration". It was not: this job is
+        # weaker, and CI said so within the hour. The lesson is the project's own and I walked
+        # past it: a claim about the weakest case has to be measured on every case, not on the
+        # one nearest to hand.
+        run: pytest --cov-fail-under=94.5
 
   docs:
     # The documentation site, built and link-checked on every change.

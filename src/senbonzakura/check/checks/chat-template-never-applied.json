@@ -1,0 +1,50 @@
+{
+  "id": "chat-template-never-applied",
+  "title": "A chat template was configured and the run recorded that it was not applied",
+  "detects": "A run whose configuration names a chat template, or asks for one, while the record of what actually happened says the prompts went to the model raw. Every number from that run describes an instruction-tuned model answering prompts in a format it was never trained on, which is not the model anybody meant to measure.",
+  "incident": "Ours, 2026-08-21. `--chat-template` was dead on the abliterate path: the flag parsed, the value was carried, and nothing applied it. It was found by a dead-flag audit, and the first version of that audit PASSED a tree with the bug deliberately reinstated, because it compared the flag against the tokeniser's own field of the same name rather than against what the run did.",
+  "remedy": "Re-run with the template actually applied, and compare. If the figures move, the previous ones describe a different experiment. Check the field your harness writes to record the rendered prompt, not the field that records the requested setting: the defect is exactly that the two disagree.",
+  "confidence": "high",
+  "false_positive": "A base model with no chat template is supposed to take raw prompts, and a run that deliberately measures the raw format is a legitimate arm rather than a mistake. This check fires on the DISAGREEMENT between asking for a template and recording that none was applied, so it stays quiet when nothing asked for one. It will still fire wrongly on a harness that records `chat_template_applied: false` to mean \"the model supplies its own\", which is a spelling this check does not know about.",
+  "applies_to": {
+    "op": "any_of",
+    "rules": [
+      {"op": "present", "path": "config.chat_template"},
+      {"op": "present", "path": "chat_template"},
+      {"op": "present", "path": "config.apply_chat_template"}
+    ]
+  },
+  "rule": {
+    "op": "all_of",
+    "rules": [
+      {
+        "op": "any_of",
+        "rules": [
+          {"op": "truthy", "path": "config.chat_template"},
+          {"op": "truthy", "path": "chat_template"},
+          {"op": "truthy", "path": "config.apply_chat_template"}
+        ]
+      },
+      {
+        "op": "any_of",
+        "rules": [
+          {"op": "falsy", "path": "chat_template_applied"},
+          {"op": "falsy", "path": "results.chat_template_applied"},
+          {"op": "equals", "path": "prompt_format", "value": "raw"}
+        ]
+      }
+    ]
+  },
+  "control": {
+    "fires_on": [
+      {"config": {"chat_template": "chatml"}, "chat_template_applied": false},
+      {"config": {"apply_chat_template": true}, "prompt_format": "raw"},
+      {"chat_template": "llama-3", "results": {"chat_template_applied": false}}
+    ],
+    "passes_on": [
+      {"config": {"chat_template": "chatml"}, "chat_template_applied": true},
+      {"config": {"chat_template": null}, "chat_template_applied": false},
+      {"config": {"chat_template": "chatml"}, "prompt_format": "chat"}
+    ]
+  }
+}

@@ -315,7 +315,20 @@ def test_an_empty_split_directory_still_digests(tmp_path):
     assert got["bad_ds"] != "UNREADABLE"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read a mode-000 file, so nothing raises")
+#: `os.geteuid` DOES NOT EXIST ON WINDOWS, and a `skipif` argument is evaluated at COLLECTION
+#: time, so referencing it directly does not skip the test on Windows: it raises AttributeError
+#: while pytest is still collecting, takes the whole file with it, and exits 2 with nothing run.
+#: That is the fifth time this project has shipped a collection-time error that is invisible on
+#: the machine it was written on, and the shape is always the same: my machine has something CI
+#: does not. Read off the Windows job's log rather than guessed at.
+_NOT_ROOT = getattr(os, "geteuid", lambda: 1)() != 0
+#: chmod(0o000) does not stop the owner reading a file on Windows either, so there is no way to
+#: make the read fail there and the test has nothing to assert.
+_POSIX_PERMISSIONS = os.name == "posix"
+
+
+@pytest.mark.skipif(not (_NOT_ROOT and _POSIX_PERMISSIONS),
+                    reason="needs POSIX permissions and a non-root user for a read to fail")
 def test_an_unreadable_split_is_recorded_rather_than_raising(tmp_path):
     """PROVENANCE MUST NEVER FAIL A RUN, and it must not quietly omit the split either.
 

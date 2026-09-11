@@ -218,7 +218,14 @@ senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor
                 # code beside it did not, which is the one omission an auditor can check
                 # in ten seconds. `vendor/bin/*/*` already sweeps this directory; it is
                 # named here so a reader can see the obligation being met on purpose.
-                "vendor/bin/*/LICENSE"]
+                "vendor/bin/*/LICENSE",
+                # The check registry. These are DATA THE ENGINE READS AT RUNTIME, not examples:
+                # `check/registry.py` globs this directory and a wheel without them installs a
+                # checker that loads zero checks and reports every artefact clean. That is the
+                # same shape as the 0.3.0 wheel shipping without its corpus, which installed,
+                # imported and answered `--help` perfectly while failing every user, so it is
+                # gated by a test rather than trusted to this glob.
+                "check/checks/*.json"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

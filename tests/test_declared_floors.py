@@ -202,3 +202,27 @@ def test_the_hint_table_covers_every_dependency_a_partial_install_can_lose():
     assert not missing, (
         f"{sorted(missing)} can be absent from a working install and no hint says what to "
         f"type to get them. Add them to entry._INSTALL_HINT.")
+
+
+def test_no_test_imports_tomllib_directly():
+    """`tomllib` is 3.11+, and this project declares `requires-python = ">=3.10"`.
+
+    THE FIFTH TIME. `tests/tomlread.py` exists solely to paper over this, and its docstring
+    records four test files having imported `tomllib` unconditionally, so that on the DECLARED
+    MINIMUM interpreter the suite could not be collected at all. On 2026-09-10 a sixth file did it
+    again and CI's 3.10 job went red at collection, while every interpreter on the machine the test
+    was written on was 3.14.
+
+    A shim that nobody is required to use is a convention, and conventions do not survive. This is
+    the check that makes it a rule.
+    """
+    here = Path(__file__).resolve().parent
+    offenders = []
+    for f in sorted(here.glob("test_*.py")):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith(("import tomllib", "from tomllib import")):
+                offenders.append(f"{f.name}:{n}")
+    assert not offenders, (
+        f"these import tomllib directly and will fail to collect on Python 3.10, which this "
+        f"project claims to support: {offenders}. Use `from tomlread import tomllib`.")

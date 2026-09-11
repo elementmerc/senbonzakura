@@ -30,7 +30,12 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+# NOT `import tomllib`: it entered the standard library in 3.11 and this project declares
+# `requires-python = ">=3.10"`. `tests/tomlread.py` exists for exactly this, and its docstring
+# records four test files having made the same mistake before. This was the fifth, and CI's 3.10
+# job caught it at collection while every interpreter on the machine it was written on was 3.14.
+from tomlread import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))

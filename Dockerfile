@@ -48,6 +48,10 @@ RUN apt-get update \
 WORKDIR /build
 COPY pyproject.toml README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md ./
 COPY src/ ./src/
+# The checker's own tree, because `senbonzakura` depends on `senbonzakura-check` and that name is
+# not on PyPI yet. Without this the pip line below reports "Invalid requirement: './checker'",
+# which is pip saying the path does not exist rather than anything being wrong with the package.
+COPY checker/ ./checker/
 COPY tools/ ./tools/
 COPY man/ ./man/
 

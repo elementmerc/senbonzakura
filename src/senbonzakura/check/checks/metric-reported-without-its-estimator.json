@@ -5,7 +5,8 @@
   "incident": "Ours, 2026-08-05. Four published claims were withdrawn because arms doing different amounts of work were compared as though they were the same measurement, and no field in any artefact said otherwise. The practice was read out of abliterix, which carries name, estimator and units on each measurement and refuses to call a continuation-NLL drift a KL divergence when the true log-probabilities were not available.",
   "remedy": "Record the estimator beside the number: which quantity, over what, with what normalisation. Until then the figure can be quoted only against other figures from the same tool at the same version, and not against anybody else's.",
   "confidence": "medium",
-  "false_positive": "A harness that records its estimator somewhere this check does not look, under a name it does not know, reads as missing. The check knows `kl_estimator`, `estimator`, `metrics.kl.estimator` and `kl_source`; anything else spelled differently will fire wrongly. It is medium confidence for that reason: it is evidence that provenance is absent from the obvious places, not proof that it is absent.",
+  "false_positive": "A harness that records its estimator somewhere this check does not look, under a name it does not know, reads as missing. The check knows `kl_estimator`, `estimator`, `kl_source`, the canonical `metrics.kl.estimator`, and a free-text `instrument` sentence; anything spelled differently will fire wrongly, which is why this is medium confidence rather than high. A prose `instrument` field is also WEAKER evidence than a named estimator and is accepted here anyway: it satisfies a reader and not a machine, so an artefact carrying only that one is a rewording away from being unreadable across tools.",
+
   "applies_to": {
     "op": "any_of",
     "rules": [
@@ -14,26 +15,33 @@
       {"op": "present", "path": "results.kl"}
     ]
   },
+
   "rule": {
     "op": "all_of",
     "rules": [
       {"op": "absent", "path": "kl_estimator"},
       {"op": "absent", "path": "estimator"},
       {"op": "absent", "path": "kl_source"},
-      {"op": "absent", "path": "metrics.kl.estimator"}
+      {"op": "absent", "path": "metrics.kl.estimator"},
+      {"op": "not", "rule": {"op": "truthy", "path": "instrument"}}
     ]
   },
+
   "control": {
     "fires_on": [
       {"kl": 0.031},
       {"metrics": {"kl": 0.031}},
-      {"results": {"kl": 0.12}, "model": "some/model"}
+      {"results": {"kl": 0.12}, "model": "some/model"},
+      {"metrics": {"kl": {"value": 0.031}}},
+      {"kl": 0.1, "instrument": ""}
     ],
     "passes_on": [
       {"kl": 0.031, "kl_estimator": "full-distribution"},
       {"kl": 0.031, "kl_source": "measured"},
-      {"metrics": {"kl": {"value": 0.031, "estimator": "continuation-nll"}}},
-      {"refusal_rate": 0.0}
+      {"metrics": {"kl": {"value": 0.031, "estimator": "continuation-nll-difference"}}},
+      {"metrics": {"kl": {"value": 0.031, "estimator": "first-token-full-distribution"}}},
+      {"refusal_rate": 0.0},
+      {"kl": 0.1, "instrument": "sometool.drift, KL(base||candidate) on first-token distributions"}
     ]
   }
 }

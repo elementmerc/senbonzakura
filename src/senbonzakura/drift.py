@@ -45,6 +45,7 @@ import shutil
 
 import torch
 
+from . import measurement
 from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
@@ -118,6 +119,15 @@ def fingerprint(base, prompts, template):
 #: used float32 throughout. Its formula was identical, so the two agree wherever the figure is large
 #: enough to matter, and that agreement is only knowable because it was checked.
 BF16_KL_FLOOR = 1e-3
+
+#: Which estimator produced the `kl` this module reports, named from `measurement.METRICS`.
+#:
+#: It matters that this is a constant rather than a literal at the call site. The metric `kl`
+#: accepts a second estimator, a continuation negative-log-likelihood difference, which is NOT a
+#: KL divergence and is only acceptable where the true log-probabilities were unavailable. This
+#: module always has them, so it always reports the first one, and saying so here means a future
+#: change of estimator is a change to a named constant rather than an unremarked edit.
+KL_ESTIMATOR = "first-token-full-distribution"
 
 #: Bootstrap replicates for the drift interval. The same count the compass uses, so the two
 #: intervals in one report are built the same way and a reader can compare their widths.
@@ -288,13 +298,31 @@ def main(argv=None):
         "precision_ok": precise,
         "precision_floor": BF16_KL_FLOOR,
         "precision_note": note,
-        "instrument": "senbonzakura.drift, KL(base||candidate) on first-token distributions",
+        # Generated from `measurement.METRICS` rather than written here, so the sentence a reader
+        # sees and the structured block below cannot say different things. The wording it produces
+        # is not the wording this line used to hold, and the old one is kept verbatim in the
+        # published 2026-09-10 arms: changing a committed artefact would rewrite a published
+        # measurement, which is the one thing this project does not do.
+        "instrument": measurement.instrument_sentence("kl", KL_ESTIMATOR),
         # An interval over prompt sampling, from the per-prompt values this already computed and
         # then averaged away. None when there is one prompt, because an interval from one
         # observation is a decoration.
         "kl_ci": None if kl_lo is None else [kl_lo, kl_hi],
         "kl_ci_method": f"seeded percentile bootstrap over prompts, {BOOTSTRAP_DRAWS} draws",
     }
+    # THE SAME NUMBER, WITH ITS IDENTITY, IN THE PLACE EVERY COMMAND PUTS IT.
+    #
+    # Additive: `kl` and `instrument` above are untouched, because the 2026-09-10 arms are
+    # committed to this repository and a test recomputes the published figures from them. What
+    # this adds is one location a reader, or the checker in `senbonzakura/check/`, can look in
+    # without knowing which command wrote the file. Before it, `drift` said `instrument`,
+    # `headtohead_report` said `kl_source`, and `score`, `capability` and `margin` said nothing.
+    measurement.stamp(res, "kl", value, KL_ESTIMATOR,
+                      n=len(prompts),
+                      interval=res["kl_ci"],
+                      interval_method=res["kl_ci_method"],
+                      computed_in=dtype_name,
+                      supported_by_precision=precise)
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     if not precise:

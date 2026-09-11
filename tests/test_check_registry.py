@@ -393,3 +393,45 @@ def test_the_check_subpackage_imports_nothing_heavy():
             offenders += [f"{py.name}:{node.lineno} imports {n}" for n in names if n in heavy]
     assert not offenders, (
         "the checker must import with no deep-learning stack at all:\n  " + "\n  ".join(offenders))
+
+
+# ── dogfooding: the checker, pointed at this project's own published evidence ────────────────
+
+def _published_arms():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "head-to-head" / "results"
+    return sorted(root.rglob("*.json"))
+
+
+@pytest.mark.parametrize("path", _published_arms(), ids=lambda p: p.name)
+def test_the_checker_finds_nothing_wrong_with_our_own_published_arms(path):
+    """POINTED AT OUR OWN EVIDENCE, which is the only honest way to calibrate a checker.
+
+    These thirty-one artefacts are the 2026-09-10 head-to-head, committed to this repository and
+    recomputed by `test_published_head_to_head.py`. If a check fires on one, either the artefact
+    has the defect, in which case the published figure needs re-examining, or the check is wrong,
+    in which case it would have fired on a stranger's artefact too.
+
+    It found one on the first run: `metric-reported-without-its-estimator` fired on every drift
+    arm, because the estimator is recorded in a prose `instrument` sentence under a field name
+    the check did not know. That was the check being incomplete rather than the artefacts being
+    wrong, and it is why `instrument` is now one of the places it looks.
+    """
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    findings, _ = run_checks(doc, CHECKS, artefact=path.name)
+    assert not findings, (
+        f"{path.name}: " + "; ".join(f"{f.check_id} ({f.title})" for f in findings))
+
+
+def test_the_dogfooding_above_is_not_vacuous():
+    """A checker that cannot fire reports everything clean, and that is what "0 findings" looks
+    like from the outside.
+
+    THIS IS NOT HYPOTHETICAL. The first version of the estimator check used `falsy` on
+    `instrument`, which is true only when the field is PRESENT and empty; on an artefact with no
+    `instrument` at all it answered false, the enclosing `all_of` could never hold, and the check
+    reported thirty-one published artefacts clean. That looked exactly like success.
+    """
+    findings, _ = run_checks({"kl": 0.1}, CHECKS)
+    assert [f.check_id for f in findings] == ["metric-reported-without-its-estimator"], (
+        "a bare metric with no provenance anywhere must still be caught")

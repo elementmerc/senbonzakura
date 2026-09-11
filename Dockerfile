@@ -58,8 +58,13 @@ COPY man/ ./man/
 #
 # CPU torch explicitly. Without the index the default wheel pulls the CUDA runtime and several
 # gigabytes of libraries this image has told the user it will not use.
+# The checker is installed FIRST, from this tree. `senbonzakura` depends on
+# `senbonzakura-check` by name (decision Q-29) and that name is not on PyPI yet, so a plain
+# install cannot resolve until it is. `--no-deps` on it is honest rather than defensive: the
+# distribution declares no dependencies at all, which is the property it exists to hold.
 RUN python -m pip install --no-cache-dir --quiet \
       --index-url https://download.pytorch.org/whl/cpu torch \
+ && python -m pip install --no-cache-dir --quiet --no-deps ./checker \
  && python -m pip install --no-cache-dir --quiet ".[abliterate]"
 
 # The pinned llama.cpp binaries, AFTER torch exists so the converter's smoke test can run.

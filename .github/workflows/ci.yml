@@ -120,7 +120,17 @@ jobs:
       - name: Install the package and its dev extra
         # From the published extras rather than a bespoke list, so a broken
         # dependency declaration fails here instead of failing a user.
-        run: pip install -e ".[dev]"
+        # THE CHECKER FIRST, AND IT HAS TO BE. `senbonzakura` depends on `senbonzakura-check`
+        # by name (decision Q-29), and that name is not on PyPI yet, so a plain install cannot
+        # resolve: "Could not find a version that satisfies the requirement senbonzakura-check".
+        # Installing the local one first satisfies it from this tree.
+        #
+        # This is the interim state RELEASING.md's ordering note is about, met from the inside:
+        # the small distribution is published FIRST at release time for exactly this reason, and
+        # until it is published every install path needs the local copy.
+        run: |
+          pip install -e ./checker --no-deps
+          pip install -e ".[dev]"
 
       - name: Lint
         run: ruff check src/ tests/ tools/
@@ -251,6 +261,7 @@ jobs:
       - name: Install the pinned environment
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+          pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/ci.txt
       - name: Lint
         run: ruff check src/ tests/ tools/
@@ -283,6 +294,7 @@ jobs:
         # record names, so it is the one worth holding the line at.
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/floors.txt --upgrade-strategy only-if-needed
       - name: The tool starts and reports its version
         run: |
@@ -355,16 +367,22 @@ jobs:
         # The exit code is 1 on purpose: a metric with no estimator is a finding, so a 0 here
         # would mean the checks did not load, which is the failure a wheel without its data has.
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cat > /tmp/arm.json <<'JSON'
           {"version": 2, "status": "success", "eval": {"task": "t", "model": "m"},
            "results": {"total_samples": 4, "completed_samples": 4,
                        "scores": [{"name": "s", "scorer": null, "scored_samples": 4,
                                    "metrics": {"accuracy": {"name": "accuracy", "value": 0.5}}}]}}
           JSON
-          senbonzakura-check /tmp/arm.json && { echo "expected a finding, got a clean run"; exit 1; }
-          test $? -eq 1
-          senbonzakura-check /tmp/arm.json | grep -q "metric-reported-without-its-estimator"
+          # `set -e` is DELIBERATELY NOT ON HERE. The expected exit code is 1, so `set -e` would
+          # kill the script on the very outcome being asserted; the first version of this step
+          # did exactly that and failed while the checker was behaving correctly.
+          out="$(senbonzakura-check /tmp/arm.json)"
+          code=$?
+          echo "$out"
+          test "$code" -eq 1 || { echo "expected exit 1 (a finding), got $code"; exit 1; }
+          echo "$out" | grep -q "metric-reported-without-its-estimator" \
+            || { echo "the finding did not name its check; are the checks in the wheel?"; exit 1; }
 
   docs:
     # The documentation site, built and link-checked on every change.
@@ -575,7 +593,9 @@ jobs:
         # Plain install, no extras: since the editor's dependencies became base
         # dependencies this is what a user gets, and the smoke should exercise that
         # rather than a developer environment.
-        run: pip install -e .
+        run: |
+          pip install -e ./checker --no-deps
+          pip install -e .
 
       - name: Abliterate a model, measure it, and drive the guided mode
         # The script asserts on the markers each command prints when it has done the

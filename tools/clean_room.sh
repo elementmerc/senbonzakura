@@ -52,15 +52,21 @@ command -v docker >/dev/null 2>&1 || [ -n "$HOST" ] || die "docker is not instal
 
 echo "clean room: building the wheel"
 rm -rf "$ROOT/dist-cleanroom"
+python -m build --wheel --outdir "$ROOT/dist-cleanroom" checker >/dev/null 2>&1 || {
+  echo "clean room: could not build the checker wheel" >&2; exit 1; }
 python -m build --wheel --outdir "$ROOT/dist-cleanroom" >/dev/null 2>&1 \
   || die "the wheel would not build, so there is nothing to install"
-WHEEL="$(ls "$ROOT"/dist-cleanroom/*.whl | head -1)"
+# TWO WHEELS SINCE Q-29. `senbonzakura` depends on `senbonzakura-check`, which is not on PyPI
+# yet, so the full install cannot resolve without the local one beside it. The senbonzakura
+# wheel is the one under test; the checker wheel is carried in so the dependency resolves.
+CHECK_WHEEL="$(ls "$ROOT"/dist-cleanroom/senbonzakura_check-*.whl | head -1)"
+WHEEL="$(ls "$ROOT"/dist-cleanroom/*.whl | grep -v senbonzakura_check | head -1)"
 [ -n "$WHEEL" ] || die "no wheel was produced"
 echo "clean room: $(basename "$WHEEL") ($(du -h "$WHEEL" | cut -f1))"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp "$WHEEL" "$ROOT/tools/clean_room_checks.py" "$WORK/"
+cp "$WHEEL" "$CHECK_WHEEL" "$ROOT/tools/clean_room_checks.py" "$WORK/"
 
 # The install needs a network and the checks must not have one, so they are two containers and
 # the installed tree is carried between them as a volume. A single container with the network
@@ -78,6 +84,7 @@ rm -rf /box/venv
 python -m venv /box/venv
 /box/venv/bin/pip install --quiet --upgrade pip
 echo "installing (${MODE})..."
+/box/venv/bin/pip install --quiet --no-deps /box/$(basename "$CHECK_WHEEL")
 /box/venv/bin/pip install --quiet ${INSTALL_FLAGS} /box/$(basename "$WHEEL")
 EOF
 )

@@ -456,7 +456,7 @@ def run_checks(*, deep=False, log=print):
     return checks
 
 
-def report(checks, log=print):
+def report(checks, log=print, *, advisories_ok=False):
     log("senbonzakura doctor")
     log("")
     width = max(len(c.name) for c in checks) + 2
@@ -475,6 +475,13 @@ def report(checks, log=print):
         log("  finding this on a rented card, with the weights already loaded, costs money.")
         return FAIL
     if warns:
+        if advisories_ok:
+            # ASKED FOR EXPLICITLY, so it is stated rather than silently different. A reader
+            # comparing two logs has to be able to see why one exited 0 and the other 1.
+            log("")
+            log(f"  Exit status {OK}: advisories only, and --advisories-ok was given. "
+                f"Nothing failed.")
+            return OK
         # SAY WHAT THE EXIT CODE MEANS, because the line above says "0 failed" and this returns 1.
         #
         # Reported from the ROG on 2026-09-11 as a possible defect: doctor exited 1 while its own
@@ -488,6 +495,7 @@ def report(checks, log=print):
         log(f"  Exit status {WARN}: advisories only, nothing failed. This install works; the "
             f"lines above are things it cannot do.")
         log(f"  ({OK} means nothing to report, {WARN} advisories, {FAIL} something failed.)")
+        log("  Pass --advisories-ok to exit 0 here; a real failure still exits 2.")
     return WARN if warns else OK
 
 
@@ -498,8 +506,13 @@ def main(argv=None):
     ap.add_argument("--deep", action="store_true",
                     help="also build a two-layer model and take it through convert and quantise. "
                          "Slower, and the only check that proves the whole chain")
+    ap.add_argument("--advisories-ok", action="store_true",
+                    help="exit 0 when the only complaints are advisories. For a CI step on a "
+                         "machine that is not meant to have a GPU: without it a healthy CPU-only "
+                         "install exits 1, because an advisory means this install cannot do "
+                         "something. A genuine failure still exits 2 either way")
     a = ap.parse_args(argv)
-    return report(run_checks(deep=a.deep))
+    return report(run_checks(deep=a.deep), advisories_ok=a.advisories_ok)
 
 
 if __name__ == "__main__":   # pragma: no cover

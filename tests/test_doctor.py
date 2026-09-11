@@ -483,3 +483,77 @@ def test_a_checkout_still_gets_the_command_that_works(monkeypatch):
     from senbonzakura import bundled
     monkeypatch.setattr(bundled, "running_from_a_checkout", lambda: True)
     assert "vendor_llama.py" in doctor._vendor_remedy()
+
+
+# ── --advisories-ok (Q-31, 2026-09-11) ───────────────────────────────────────────────────────
+
+def _checks(*statuses):
+    from senbonzakura.doctor import Check
+    return [Check(f"c{i}", s, "detail") for i, s in enumerate(statuses)]
+
+
+def test_advisories_exit_one_by_default():
+    """THE DOCUMENTED CONVENTION, and it is deliberate: an advisory means this install cannot do
+    something, which before an hour-long run is worth a non-zero.
+    """
+    from senbonzakura.doctor import WARN, report
+    assert report(_checks("pass", "warn"), log=lambda *_a: None) == WARN
+
+
+def test_advisories_exit_zero_when_asked(capsys):
+    """Q-31, taken 2026-09-11. Reported from the ROG: a healthy CPU-only install exits 1 while
+    its own summary says nothing failed, and a CI step that trusts the exit code fails on it.
+
+    The default is unchanged, because the three-way distinction is what the codes exist for. The
+    flag is how somebody scripting `doctor` on a machine that is not meant to have a GPU says so.
+    """
+    from senbonzakura.doctor import OK, report
+    assert report(_checks("pass", "warn"), advisories_ok=True) == OK
+    assert "--advisories-ok was given" in capsys.readouterr().out, (
+        "a reader comparing two logs has to see why one exited 0 and the other 1")
+
+
+def test_a_real_failure_still_exits_two_with_the_flag():
+    """THE FLAG MUST NOT BE A WAY TO TURN doctor OFF. It softens advisories and nothing else; a
+    check that failed is still a check that failed.
+    """
+    from senbonzakura.doctor import FAIL, report
+    assert report(_checks("pass", "warn", "fail"), log=lambda *_a: None,
+                  advisories_ok=True) == FAIL
+
+
+def test_a_clean_run_is_zero_either_way():
+    from senbonzakura.doctor import OK, report
+    quiet = {"log": lambda *_a: None}
+    assert report(_checks("pass"), **quiet) == OK
+    assert report(_checks("pass"), advisories_ok=True, **quiet) == OK
+
+
+def test_the_default_run_says_how_to_get_zero(capsys):
+    """The advisory path points at the flag, so the CI user does not have to find it by reading
+    `--help` after their pipeline has already gone red.
+    """
+    from senbonzakura.doctor import report
+    report(_checks("pass", "warn"))
+    assert "--advisories-ok" in capsys.readouterr().out
+
+
+def test_the_flag_reaches_report_from_the_command_line(monkeypatch):
+    """Through `main`, because a flag parsed and dropped is the defect this project found in
+    `--chat-template`: it parsed, it was carried, and nothing applied it.
+    """
+    from senbonzakura import doctor
+
+    seen = {}
+
+    def _fake_report(checks, log=print, *, advisories_ok=False):
+        seen["advisories_ok"] = advisories_ok
+        return 0
+
+    monkeypatch.setattr(doctor, "report", _fake_report)
+    monkeypatch.setattr(doctor, "run_checks", lambda deep=False: [])
+
+    doctor.main([])
+    assert seen["advisories_ok"] is False
+    doctor.main(["--advisories-ok"])
+    assert seen["advisories_ok"] is True

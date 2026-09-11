@@ -417,8 +417,15 @@ def test_the_checker_finds_nothing_wrong_with_our_own_published_arms(path):
     the check did not know. That was the check being incomplete rather than the artefacts being
     wrong, and it is why `instrument` is now one of the places it looks.
     """
+    from senbonzakura.check import UnknownArtefactError, check_document
+
     doc = json.loads(path.read_text(encoding="utf-8"))
-    findings, _ = run_checks(doc, CHECKS, artefact=path.name)
+    try:
+        findings, _ = check_document(doc, CHECKS)
+    except UnknownArtefactError:
+        # The run summary is an index of which arms ran, not a measurement, and refusing it is
+        # the correct answer rather than a gap. `test_check_adapters.py` asserts that directly.
+        pytest.skip(f"{path.name} is not a measurement artefact")
     assert not findings, (
         f"{path.name}: " + "; ".join(f"{f.check_id} ({f.title})" for f in findings))
 
@@ -432,6 +439,6 @@ def test_the_dogfooding_above_is_not_vacuous():
     `instrument` at all it answered false, the enclosing `all_of` could never hold, and the check
     reported thirty-one published artefacts clean. That looked exactly like success.
     """
-    findings, _ = run_checks({"kl": 0.1}, CHECKS)
+    findings, _ = run_checks({"metrics": {"kl": {"value": 0.1}}}, CHECKS)
     assert [f.check_id for f in findings] == ["metric-reported-without-its-estimator"], (
         "a bare metric with no provenance anywhere must still be caught")

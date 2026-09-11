@@ -174,6 +174,23 @@ def evaluate(rule: dict, doc: Any) -> bool:
             raise CheckError("`not` needs a `rule` object")
         return not evaluate(sub, doc)
 
+    if op == "any_missing":
+        # THE ONE OPERATOR ADDED AFTER THE FACT, and the rule for extending the vocabulary said
+        # to do it when a real check cannot be written otherwise and to name that check. This is
+        # it: "does any metric in this artefact lack an estimator" cannot be asked with fixed
+        # paths, because the metric keys differ per harness (`gsm8k.acc,none` under lm-eval,
+        # `choice.accuracy` under Inspect, `refusal_rate.heretic-keyword` under ours). Without a
+        # quantifier the estimator check would have to be rewritten once per harness, which is
+        # the per-harness maintenance the adapters exist to avoid.
+        mapping = dotted(doc, rule.get("path", ""))
+        field = rule.get("field")
+        if not isinstance(field, str):
+            raise CheckError("`any_missing` needs a string `field`")
+        if not isinstance(mapping, dict):
+            return False
+        return any(
+            not isinstance(v, dict) or not v.get(field) for v in mapping.values())
+
     if op == "intersects":
         paths = rule.get("paths")
         if not isinstance(paths, list) or len(paths) != 2:

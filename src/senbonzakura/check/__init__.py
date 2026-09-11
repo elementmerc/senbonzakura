@@ -29,6 +29,7 @@ a model" (Q-27) while the checker installs in seconds on any machine. This subpa
 out to be lifted out whole when that happens: it depends on nothing above it, and its data lives
 beside it rather than in the parent package's `data/`.
 """
+from .adapters import UnknownArtefactError, detect, normalise
 from .registry import (
     Check,
     CheckError,
@@ -38,4 +39,23 @@ from .registry import (
     run_checks,
 )
 
-__all__ = ["Check", "CheckError", "Finding", "evaluate", "load_checks", "run_checks"]
+
+def check_document(doc, checks=None):
+    """Normalise an artefact from any supported harness, then run the checks over it.
+
+    THE CHECKS READ THE NORMALISED DOCUMENT, NOT THE RAW ONE. That is what normalisation is for:
+    one set of checks over every harness, rather than a parallel set per harness, which is the
+    maintenance treadmill the artefact-level rule exists to avoid. The original is reachable at
+    `raw.*` for the handful of questions that genuinely need a harness's own spelling.
+
+    Raises `UnknownArtefactError` on a file nothing recognises. That is deliberate and is the
+    v0.8 plan's rule: a silent pass on a document nobody parsed is the worst possible output,
+    because it is indistinguishable from a clean bill of health.
+    """
+    return run_checks(normalise(doc), checks)
+
+
+__all__ = [
+    "Check", "CheckError", "Finding", "UnknownArtefactError",
+    "check_document", "detect", "evaluate", "load_checks", "normalise", "run_checks",
+]

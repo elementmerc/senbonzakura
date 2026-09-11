@@ -1,47 +1,29 @@
 {
   "id": "metric-reported-without-its-estimator",
   "title": "A metric is reported under a name that does not say how it was computed",
-  "detects": "A result carrying a field whose name is a metric with more than one estimator behind it, most often a KL divergence, with nothing recorded about which one produced the number. Two artefacts both labelled `kl` can be a true KL over full log-probabilities and a continuation negative log-likelihood, and those are not comparable figures even though they have the same name and a similar range.",
+  "detects": "A normalised result carrying a metric whose estimator is absent. Two artefacts both labelled `kl` can be a true KL over full log-probabilities and a continuation negative log-likelihood, and those are not comparable figures even though they have the same name and a similar range. The same holds for an accuracy under two different extraction filters.",
   "incident": "Ours, 2026-08-05. Four published claims were withdrawn because arms doing different amounts of work were compared as though they were the same measurement, and no field in any artefact said otherwise. The practice was read out of abliterix, which carries name, estimator and units on each measurement and refuses to call a continuation-NLL drift a KL divergence when the true log-probabilities were not available.",
-  "remedy": "Record the estimator beside the number: which quantity, over what, with what normalisation. Until then the figure can be quoted only against other figures from the same tool at the same version, and not against anybody else's.",
+  "remedy": "Record the estimator beside the number: which quantity, over what, with what normalisation. Inspect already does this in `EvalScore.scorer` and lm-evaluation-harness encodes its filter in the metric key after the comma; if your harness records it somewhere else, the adapter should be taught to read it. Until then the figure can be quoted only against other figures from the same tool at the same version.",
   "confidence": "medium",
-  "false_positive": "A harness that records its estimator somewhere this check does not look, under a name it does not know, reads as missing. The check knows `kl_estimator`, `estimator`, `kl_source`, the canonical `metrics.kl.estimator`, and a free-text `instrument` sentence; anything spelled differently will fire wrongly, which is why this is medium confidence rather than high. A prose `instrument` field is also WEAKER evidence than a named estimator and is accepted here anyway: it satisfies a reader and not a machine, so an artefact carrying only that one is a rewording away from being unreadable across tools.",
+  "false_positive": "A harness that records its estimator somewhere the adapter does not read it will look bare here, and the fault is then ours rather than the artefact's: the fix is to teach the adapter, not to ignore the finding. It is medium confidence for that reason. Note also that our own older artefacts satisfy this with a PROSE `instrument` sentence, which is weaker than a named estimator and is accepted anyway: prose satisfies a reader and not a machine, so an artefact carrying only that is a rewording away from being unreadable across tools.",
 
-  "applies_to": {
-    "op": "any_of",
-    "rules": [
-      {"op": "present", "path": "kl"},
-      {"op": "present", "path": "metrics.kl"},
-      {"op": "present", "path": "results.kl"}
-    ]
-  },
+  "applies_to": {"op": "truthy", "path": "metrics"},
 
-  "rule": {
-    "op": "all_of",
-    "rules": [
-      {"op": "absent", "path": "kl_estimator"},
-      {"op": "absent", "path": "estimator"},
-      {"op": "absent", "path": "kl_source"},
-      {"op": "absent", "path": "metrics.kl.estimator"},
-      {"op": "not", "rule": {"op": "truthy", "path": "instrument"}}
-    ]
-  },
+  "rule": {"op": "any_missing", "path": "metrics", "field": "estimator"},
 
   "control": {
     "fires_on": [
-      {"kl": 0.031},
-      {"metrics": {"kl": 0.031}},
-      {"results": {"kl": 0.12}, "model": "some/model"},
       {"metrics": {"kl": {"value": 0.031}}},
-      {"kl": 0.1, "instrument": ""}
+      {"metrics": {"acc": {"value": 0.5, "estimator": null}}},
+      {"metrics": {"a": {"value": 1, "estimator": "x"}, "b": {"value": 2}}},
+      {"metrics": {"acc": {"value": 0.5, "estimator": ""}}},
+      {"metrics": {"acc": "not even a block"}}
     ],
     "passes_on": [
-      {"kl": 0.031, "kl_estimator": "full-distribution"},
-      {"kl": 0.031, "kl_source": "measured"},
-      {"metrics": {"kl": {"value": 0.031, "estimator": "continuation-nll-difference"}}},
       {"metrics": {"kl": {"value": 0.031, "estimator": "first-token-full-distribution"}}},
-      {"refusal_rate": 0.0},
-      {"kl": 0.1, "instrument": "sometool.drift, KL(base||candidate) on first-token distributions"}
+      {"metrics": {"choice.accuracy": {"value": 0.8, "estimator": "choice"}}},
+      {"metrics": {"gsm8k.acc,none": {"value": 0.4, "estimator": "lm-eval filter none"}}},
+      {"metrics": {"kl": {"value": 0.1, "estimator": "senbonzakura.drift, KL over first tokens"}}}
     ]
   }
 }

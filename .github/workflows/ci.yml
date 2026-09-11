@@ -204,6 +204,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python tools/check_tests_badge.py
 
+      - name: The checker, run on this project's own published evidence
+        # DOGFOODING THE ACTION'S OWN COMMAND, on the row that already has the artefacts.
+        #
+        # Running the published action here would be circular: it installs from PyPI, so it
+        # would test the last release rather than this commit. This runs the same command the
+        # action runs, against the thirty-one committed head-to-head arms, so a change that
+        # makes the checker fire on our own evidence fails here rather than in somebody's CI.
+        #
+        # Exit 0 is required. A finding means either a published artefact has the defect, and
+        # the figure needs re-examining, or a check is wrong and would have fired on a
+        # stranger's file too. Both are worth stopping for.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python -m senbonzakura check head-to-head/results/
+
       - name: No committed prompts or generations
         # The hard gate. .gitignore stops an accidental `git add .`; it does nothing
         # about `git add -f`, a path that matches no pattern, or a file moved into a

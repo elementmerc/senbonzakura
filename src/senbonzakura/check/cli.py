@@ -27,12 +27,18 @@ that mostly could not run is a different statement from "no findings".
 cannot certify that a number is right. The output says so in its own words rather than leaving
 it to the README.
 
+NAMING A FILE IS A CLAIM ABOUT IT; SWEEPING A DIRECTORY IS NOT. An unrecognised file that was
+named explicitly is UNCHECKED and exits 2, because the user asserted it was a result. One swept
+out of a directory is reported as "not a result artefact" and costs nothing, because they did
+not. Found by pointing this at our own `head-to-head/results/`, where the run summary is
+correctly not a measurement and made the whole directory exit 2.
+
 EXIT CODES, and they distinguish the three outcomes on purpose, because a CI gate that treats
 "could not check" the same as "checked, nothing found" is worse than no gate:
 
     0  every file was read and nothing fired
     1  at least one finding
-    2  at least one file could not be read at all
+    2  at least one file NAMED EXPLICITLY could not be read at all
 """
 from __future__ import annotations
 
@@ -59,18 +65,28 @@ def build_parser():
 
 
 def _files(paths):
-    """Every file named, with directories expanded, in a stable order.
+    """Every file to check, as (path, named_explicitly), in a stable order.
+
+    THE FLAG IS THE USER'S CLAIM ABOUT THE FILE, and it decides how an unrecognised one is
+    reported. Naming a file is an assertion that it is a result; sweeping a directory is not.
+
+    Found by pointing the checker at this project's own `head-to-head/results/`, which holds
+    thirty per-arm artefacts and one run summary. The summary is an index of which arms ran and
+    is correctly not a measurement, so the whole directory exited 2 and would have failed CI for
+    a file that is exactly what it should be. Any real results directory has a config or a
+    manifest sitting beside the results, and a checker that exits 2 on all of them is a checker
+    nobody can point at a directory.
 
     Sorted because two runs over the same tree must produce the same report, per baseline
-    section 2.1. A report whose order depends on the filesystem cannot be diffed between runs.
+    section 2.1: a report whose order depends on the filesystem cannot be diffed between runs.
     """
     out = []
     for raw in paths:
         p = Path(raw)
         if p.is_dir():
-            out.extend(sorted(q for q in p.rglob("*.json") if q.is_file()))
+            out.extend((q, False) for q in sorted(p.rglob("*.json")) if q.is_file())
         else:
-            out.append(p)
+            out.append((p, True))
     return out
 
 
@@ -96,9 +112,15 @@ def inspect_file(path, checks):
     return findings, skipped, None
 
 
-def _render(path, findings, skipped, problem, out):
+def _render(path, findings, skipped, problem, out, *, named=True):
     if problem:
-        print(f"?  {path}\n   UNCHECKED: {problem}", file=out)
+        if named:
+            print(f"?  {path}\n   UNCHECKED: {problem}", file=out)
+        else:
+            # Swept out of a directory rather than named, so the user never claimed it was a
+            # result. Reported, because silence about a file that was read would be its own
+            # small dishonesty, but not counted against the run.
+            print(f"-  {path}: not a result artefact, skipped", file=out)
         return
     for f in findings:
         print(f"\n!  {path}", file=out)
@@ -122,15 +144,16 @@ def main(argv=None, out=None):
     checks = load_checks()
 
     results = []
-    for path in _files(args.paths):
+    for path, named in _files(args.paths):
         findings, skipped, problem = inspect_file(path, checks)
-        results.append((path, findings, skipped, problem))
+        results.append((path, findings, skipped, problem, named))
 
     if args.json:
         json.dump([
             {
                 "artefact": str(p),
-                "unchecked": problem,
+                "unchecked": problem if named else None,
+                "not_a_result": problem if not named else None,
                 "skipped": sk,
                 "findings": [{
                     "check": f.check_id, "title": f.title, "confidence": f.confidence,
@@ -138,21 +161,23 @@ def main(argv=None, out=None):
                     "false_positive": f.false_positive,
                 } for f in fs],
             }
-            for p, fs, sk, problem in results
+            for p, fs, sk, problem, named in results
         ], out, indent=2)
         print(file=out)
     else:
-        for path, findings, skipped, problem in results:
-            if args.quiet and not findings and not problem:
+        for path, findings, skipped, problem, named in results:
+            if args.quiet and not findings and not (problem and named):
                 continue
-            _render(path, findings, skipped, problem, out)
+            _render(path, findings, skipped, problem, out, named=named)
 
-    n_findings = sum(len(fs) for _, fs, _, _ in results)
-    n_unchecked = sum(1 for _, _, _, problem in results if problem)
+    n_findings = sum(len(fs) for _, fs, _, _, _ in results)
+    n_unchecked = sum(1 for _, _, _, problem, named in results if problem and named)
+    n_not_result = sum(1 for _, _, _, problem, named in results if problem and not named)
 
     if not args.json and not args.quiet:
+        tail = f", {n_not_result} not a result" if n_not_result else ""
         print(f"\n{len(results)} file(s), {n_findings} finding(s), "
-              f"{n_unchecked} unchecked, {len(checks)} checks available.", file=out)
+              f"{n_unchecked} unchecked{tail}, {len(checks)} checks available.", file=out)
         # LOOPHOLE 7, IN THE OUTPUT RATHER THAN THE README. Somebody will otherwise quote a
         # clean report as a claim of correctness, and it is not one.
         print("This looks for known failure modes. It cannot tell you a number is right.",

@@ -218,3 +218,111 @@ def test_the_checker_does_not_write_anything_where_it_looked(tmp_path):
     _run([str(tmp_path)])
     assert (p.read_bytes(), p.stat().st_mtime_ns,
             sorted(q.name for q in tmp_path.iterdir())) == before
+
+
+# ── naming a file is a claim about it; sweeping a directory is not ───────────────────────────
+
+def test_an_unrecognised_file_named_explicitly_is_unchecked(tmp_path):
+    """The user asserted this was a result, so failing to read it invalidates the run."""
+    p = tmp_path / "claimed.json"
+    p.write_text(json.dumps({"unrelated": 1}), encoding="utf-8")
+    code, text = _run([str(p)])
+    assert code == 2
+    assert "UNCHECKED" in text
+
+
+def test_an_unrecognised_file_swept_from_a_directory_costs_nothing(tmp_path):
+    """FOUND BY DOGFOODING, and it is a usability defect rather than a nicety.
+
+    `head-to-head/results/` holds thirty per-arm artefacts and one run summary. The summary is
+    an index of which arms ran and is correctly not a measurement, so the whole directory exited
+    2 and would have failed CI for a file that is exactly what it should be. Every real results
+    directory has a config or a manifest sitting beside the results, and a checker that exits 2
+    on all of them is a checker nobody can point at a directory.
+    """
+    _write(tmp_path, "result.json", GOOD)
+    (tmp_path / "manifest.json").write_text(json.dumps({"ran": ["a", "b"]}), encoding="utf-8")
+
+    code, text = _run([str(tmp_path)])
+    assert code == 0, "a manifest beside the results must not fail the run"
+    assert "not a result artefact" in text
+    assert "1 not a result" in text
+    assert "0 unchecked" in text
+
+
+def test_the_distinction_survives_into_the_json_report(tmp_path):
+    """A CI action branches on this, so the two states cannot share a field."""
+    (tmp_path / "manifest.json").write_text(json.dumps({"ran": []}), encoding="utf-8")
+    swept = json.loads(_run(["--json", str(tmp_path)])[1])[0]
+    assert swept["unchecked"] is None
+    assert swept["not_a_result"]
+
+    named = json.loads(_run(["--json", str(tmp_path / "manifest.json")])[1])[0]
+    assert named["unchecked"]
+    assert named["not_a_result"] is None
+
+
+def test_our_own_published_results_directory_passes_cleanly():
+    """The dogfooding case itself, pinned so it cannot regress.
+
+    CI runs exactly this command over the committed arms, and requires exit 0. A finding here
+    means either a published artefact has the defect and the figure needs re-examining, or a
+    check is wrong and would have fired on a stranger's file too.
+    """
+    from pathlib import Path
+
+    results = Path(__file__).resolve().parents[1] / "head-to-head" / "results"
+    if not results.is_dir():
+        pytest.skip("no published results in this checkout")
+    code, text = _run([str(results)])
+    assert code == 0, text
+    assert "0 finding(s)" in text
+    assert "0 unchecked" in text
+
+
+# ── the published action ─────────────────────────────────────────────────────────────────────
+
+def _action():
+    from pathlib import Path
+
+    import yaml
+    return yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "action.yml").read_text(encoding="utf-8"))
+
+
+def test_the_action_installs_without_the_deep_learning_stack():
+    """`--no-deps` IS THE WHOLE DESIGN, not an optimisation.
+
+    `pip install senbonzakura` brings torch, transformers, accelerate and optuna: most of a
+    gigabyte on every CI run of a repository that only wants its result files read. An action
+    costing five minutes of install per run is an action nobody keeps, which loses exactly the
+    property it was added for. `test_torch_free.py` is the evidence that the checker works that
+    way; this is the assertion that the action actually does it.
+    """
+    steps = _action()["runs"]["steps"]
+    install = [s for s in steps if "pip install" in (s.get("run") or "")]
+    assert install, "the action does not install the package"
+    assert all("--no-deps" in s["run"] for s in install), (
+        "the action installs the deep-learning stack into somebody else's CI")
+
+
+def test_the_action_can_be_told_not_to_block_on_findings_but_defaults_to_blocking():
+    """Advisory mode is the sensible first week on an existing repository; blocking is the
+    point of the thing, so it is what you get without asking.
+    """
+    inputs = _action()["inputs"]
+    assert inputs["fail-on-findings"]["default"] == "true"
+    assert inputs["fail-on-unchecked"]["default"] == "true"
+
+
+def test_the_action_exposes_both_counts_separately():
+    """A consumer has to be able to tell "we found something" from "we could not look"."""
+    outputs = _action()["outputs"]
+    assert {"findings", "unchecked", "report"} <= set(outputs)
+
+
+def test_the_action_asks_for_a_pinned_version_in_its_own_help():
+    """An unpinned checker changes what somebody's CI enforces without anything in their
+    repository changing, which is the supply-chain rule this project applies to itself.
+    """
+    assert "Pin it" in _action()["inputs"]["version"]["description"]

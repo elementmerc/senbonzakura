@@ -42,10 +42,18 @@ USES = re.compile(r"^\s*-?\s*uses:\s*(?P<action>[^@\s]+)@(?P<ref>\S+)", re.MULTI
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
+#: `action.yml` at the repository root is the action this project PUBLISHES, and its composite
+#: steps carry `uses:` lines exactly like a workflow's. Leaving it out would mean the one file
+#: strangers execute in their own CI was the one file not checked for pinned actions.
+def _yaml_files():
+    return (sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+            + [p for p in (ROOT / "action.yml", ROOT / "action.yaml") if p.exists()])
+
+
 def _steps():
-    """Every `uses:` line across every workflow, as (file, action, ref)."""
+    """Every `uses:` line across every workflow and the published action."""
     found = []
-    for wf in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml")):
+    for wf in _yaml_files():
         found.extend((wf.name, m.group("action"), m.group("ref"))
                      for m in USES.finditer(wf.read_text(encoding="utf-8")))
     return found
@@ -104,7 +112,7 @@ def test_the_coverage_badge_is_measured_rather_than_typed():
 # ── a workflow that GitHub will actually accept ──────────────────────────────────────────────
 
 def _workflow_files():
-    return sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+    return _yaml_files()
 
 
 #: Keys whose value GitHub requires to be a real mapping. A null here is refused outright.
@@ -133,7 +141,8 @@ def test_no_mapping_key_that_needs_a_value_is_left_empty(wf):
     """
     import yaml
 
-    doc = yaml.safe_load((WORKFLOWS / wf).read_text(encoding="utf-8"))
+    path = next(p for p in _yaml_files() if p.name == wf)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(doc, dict), f"{wf} does not parse to a mapping at all"
 
     def _check(node, path):
@@ -185,7 +194,8 @@ def test_every_job_has_steps_to_run(wf):
     """
     import yaml
 
-    doc = yaml.safe_load((WORKFLOWS / wf).read_text(encoding="utf-8"))
+    path = next(p for p in _yaml_files() if p.name == wf)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     for name, job in (doc.get("jobs") or {}).items():
         if "uses" in job:
             continue                      # a reusable workflow call carries no steps of its own

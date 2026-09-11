@@ -1,0 +1,128 @@
+name: "Senbonzakura check"
+description: >-
+  Read evaluation result files and report how the numbers could be wrong. Reads
+  lm-evaluation-harness results, Inspect eval logs, and senbonzakura artefacts. No model, no
+  GPU, no network.
+author: "Daniel Iwugo"
+
+branding:
+  icon: "search"
+  color: "purple"
+
+# WHY THIS ACTION EXISTS, AND WHY IT SHIPS WITH THE CLI RATHER THAN AFTER IT
+#
+# `strategy-2026-08-02.md` tweak 4, and the v0.8 exit gate: CI is where a tool runs without
+# anyone choosing to run it. Of the six properties shared by tools that took a domain in under
+# two years, "runs constantly rather than occasionally" is the one this project most clearly
+# failed, and it is the structural difference between Burp's decade and Ruff's eighteen months.
+# A checker somebody remembers to run is a checker that runs occasionally.
+#
+# WHY `--no-deps` IS THE WHOLE DESIGN AND NOT AN OPTIMISATION
+#
+# `pip install senbonzakura` brings torch, transformers, accelerate and optuna: most of a
+# gigabyte, on every CI run, of a repository that only wants its result files read. An action
+# that costs five minutes of install per run is an action nobody keeps, which would lose exactly
+# the property it was added for.
+#
+# The checker imports nothing beyond the standard library. That is a measured claim, not a
+# hoped-for one: `tests/test_torch_free.py` runs `senbonzakura check` in a subprocess with every
+# heavy package made unimportable at the import-machinery level, and asserts it produces a
+# finding and the right exit code rather than a traceback. A separate test walks the import
+# graph of `senbonzakura/check/` and fails on anything reaching the deep-learning stack.
+#
+# Decision Q-29 ships a torch-free distribution of its own, at which point this becomes an
+# ordinary install. `--no-deps` is what makes the action honest in the meantime rather than a
+# promise waiting on packaging work.
+
+inputs:
+  path:
+    description: "File or directory to check. Directories are searched for .json files."
+    required: false
+    default: "."
+  version:
+    description: >-
+      Version specifier for the package, e.g. "==0.4.0". Pin it. An unpinned checker changes
+      what your CI enforces without anything in your repository changing.
+    required: false
+    default: ""
+  fail-on-findings:
+    description: >-
+      Fail the step when a check fires. Set false to report without blocking, which is the
+      sensible first week on an existing repository.
+    required: false
+    default: "true"
+  fail-on-unchecked:
+    description: >-
+      Fail the step when a file could not be read at all. Left true on purpose: a file the
+      checker cannot parse is reported UNCHECKED, never clean, and a gate that ignores that goes
+      green on the day your result format changes under it.
+    required: false
+    default: "true"
+  python-version:
+    description: "Python to run on. 3.10 or newer."
+    required: false
+    default: "3.12"
+
+outputs:
+  findings:
+    description: "How many checks fired."
+    value: ${{ steps.run.outputs.findings }}
+  unchecked:
+    description: "How many files could not be read."
+    value: ${{ steps.run.outputs.unchecked }}
+  report:
+    description: "Path to the JSON report."
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install the checker, and nothing else
+      shell: bash
+      run: python -m pip install --quiet --no-deps "senbonzakura${{ inputs.version }}"
+
+    - name: Check the artefacts
+      id: run
+      shell: bash
+      run: |
+        set -uo pipefail
+        report="$RUNNER_TEMP/senbonzakura-check.json"
+        senbonzakura check "${{ inputs.path }}" --json > "$report" || true
+
+        # Run again for the log. The two formats come from different branches of the command, so
+        # a tee would show the reader JSON where they want the report, and rendering the report
+        # from the JSON here would be a third formatter to keep in step with the other two.
+        # Reading a handful of JSON files twice costs nothing.
+        senbonzakura check "${{ inputs.path }}" || true
+
+        findings=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(len(e['findings']) for e in d))" "$report")
+        unchecked=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1 for e in d if e['unchecked']))" "$report")
+        echo "findings=$findings" >> "$GITHUB_OUTPUT"
+        echo "unchecked=$unchecked" >> "$GITHUB_OUTPUT"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Senbonzakura check"
+          echo
+          echo "$findings finding(s), $unchecked file(s) unchecked."
+          echo
+          echo "This looks for known failure modes. It cannot tell you a number is right."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        # THE EXIT CODE IS REBUILT FROM THE INPUTS rather than passed through, because the two
+        # failure kinds are gated separately. `2` means a file could not be read, and that is
+        # the one worth failing on even when findings are advisory: it is the outcome that makes
+        # the rest of the report meaningless.
+        if [ "$unchecked" -gt 0 ] && [ "${{ inputs.fail-on-unchecked }}" = "true" ]; then
+          echo "::error::$unchecked file(s) could not be read. An unreadable artefact is reported unchecked, never clean."
+          exit 1
+        fi
+        if [ "$findings" -gt 0 ] && [ "${{ inputs.fail-on-findings }}" = "true" ]; then
+          echo "::error::$findings finding(s). See the step log for each one and what would make it wrong."
+          exit 1
+        fi
+        exit 0

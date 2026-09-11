@@ -30,6 +30,7 @@ work somebody would actually be doing.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -207,3 +208,42 @@ def test_the_abliterate_path_refuses_in_words_rather_than_a_traceback(stripped):
             f"'{word}' did not name what to install"
         assert f"'{word}'" in said, f"the message did not name the command typed: {said}"
         assert "'True'" not in said
+
+
+def test_the_checker_runs_with_no_deep_learning_stack(stripped, tmp_path):
+    """`check` IS THE COMMAND THIS WHOLE PROPERTY IS FOR.
+
+    Reading a result file and reporting how the number could be wrong needs no model, no corpus
+    and no card, and `roadmap.md` calls a torch-free checker the largest single adoption lever
+    this project has. A checker that needs a GPU gets run when somebody is already doing GPU
+    work, which is to say occasionally; one that installs in seconds gets run constantly, and
+    "runs constantly" is the property this project most clearly fails.
+
+    This is also what makes the CI action honest before the second distribution exists
+    (decision Q-29): `pip install senbonzakura --no-deps` yields a working `senbonzakura check`
+    today, and this test is the evidence for that claim rather than an assumption behind it.
+    """
+    artefact = tmp_path / "run.json"
+    artefact.write_text(json.dumps({
+        "version": 2, "status": "success", "eval": {"task": "t", "model": "m"},
+        "results": {"total_samples": 4, "completed_samples": 4,
+                    "scores": [{"name": "s", "scorer": None, "scored_samples": 4,
+                                "metrics": {"accuracy": {"name": "accuracy", "value": 0.5}}}]},
+    }), encoding="utf-8")
+
+    proc = _run(stripped, "check", artefact)
+    assert "Traceback" not in proc.stderr, proc.stderr
+    assert proc.returncode == 1, (
+        f"a missing estimator should be a finding, not a clean run or a crash: {proc.stderr}")
+    assert "metric-reported-without-its-estimator" in proc.stdout
+
+
+def test_the_checker_reports_an_unreadable_file_with_no_stack(stripped, tmp_path):
+    """The exit code a CI job branches on has to survive a stripped environment too, or the
+    action would report clean on the one machine shape it is designed for.
+    """
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    proc = _run(stripped, "check", bad)
+    assert "Traceback" not in proc.stderr, proc.stderr
+    assert proc.returncode == 2, "unreadable must stay distinct from clean without the stack"

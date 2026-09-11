@@ -326,3 +326,74 @@ def test_the_action_asks_for_a_pinned_version_in_its_own_help():
     repository changing, which is the supply-chain rule this project applies to itself.
     """
     assert "Pin it" in _action()["inputs"]["version"]["description"]
+
+
+# ── the pre-commit hook ──────────────────────────────────────────────────────────────────────
+
+def test_skip_unknown_turns_a_named_unreadable_file_into_a_report(tmp_path):
+    """A PATTERN CHOSE THESE PATHS, NOT A PERSON.
+
+    pre-commit hands the hook whatever matched its `files` regex, so the paths arrive named on
+    the command line while carrying none of the assertion that naming one usually carries.
+    Without this flag the hook would block a commit over a config file that happened to live in
+    `results/`, and a hook that blocks wrongly is a hook removed within the week.
+    """
+    p = tmp_path / "manifest.json"
+    p.write_text(json.dumps({"ran": ["a"]}), encoding="utf-8")
+
+    assert _run([str(p)])[0] == 2, "naming a file is still a claim about it"
+
+    code, text = _run(["--skip-unknown", str(p)])
+    assert code == 0
+    assert "not a result artefact" in text
+
+
+def test_skip_unknown_does_not_hide_a_finding(tmp_path):
+    """It changes how an UNRECOGNISED file is counted and nothing else. A flag that also
+    softened findings would be a flag that quietly turns the hook off.
+    """
+    code, text = _run(["--skip-unknown", str(_write(tmp_path, "bad.json", BAD))])
+    assert code == 1
+    assert "metric-reported-without-its-estimator" in text
+
+
+def _hooks():
+    from pathlib import Path
+
+    import yaml
+    return yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / ".pre-commit-hooks.yaml").read_text(
+            encoding="utf-8"))
+
+
+def test_the_pre_commit_hook_passes_skip_unknown():
+    """The hook's paths come from a regex, so it must not treat them as claims."""
+    hook = _hooks()[0]
+    assert hook["id"] == "senbonzakura-check"
+    assert "--skip-unknown" in hook["entry"]
+
+
+def test_the_pre_commit_hook_only_fires_on_plausible_results():
+    """A hook that runs on every commit regardless is a hook that gets skipped with
+    `--no-verify`, and a skipped hook is worth nothing at all.
+    """
+    import re
+
+    hook = _hooks()[0]
+    assert hook["always_run"] is False
+    pattern = re.compile(hook["files"])
+    for path in ("results/run.json", "evals/log.json", "a/b/logs/x.json"):
+        assert pattern.search(path), f"{path} should match"
+    for path in ("package.json", "src/config.json", "docs/data.json"):
+        assert not pattern.search(path), f"{path} should not match"
+
+
+def test_the_pre_commit_hook_needs_no_extra_dependencies():
+    """pre-commit builds an isolated environment from this repository, and a hook that pulls
+    torch into it is a hook people remove after a week. The checker imports nothing beyond the
+    standard library, which `test_torch_free.py` asserts by running it with the stack stripped.
+    """
+    hook = _hooks()[0]
+    assert hook["language"] == "python"
+    assert not hook.get("additional_dependencies"), (
+        "the hook declares extra dependencies, which defeats the point of a torch-free checker")

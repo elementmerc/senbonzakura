@@ -1,0 +1,46 @@
+# Hooks this repository provides to other people's pre-commit configurations.
+#
+# ITEM H OF THE SHORTLIST, AND PROPERTY 5: a distribution surface that already holds the users.
+# The pre-commit registry holds close to the exact population this is aimed at, and the cost of
+# reaching it is this file. It is listed apart from the Kali and Debian route because that one
+# is blocked on the dependency wall (`private/plans/kali-packaging.md`) and this one is not.
+#
+# Between this and `action.yml` the checker runs on every commit and on every CI run, which is
+# property 6 arriving through property 5's front door.
+#
+# HOW A STRANGER USES IT:
+#
+#   repos:
+#     - repo: https://github.com/elementmerc/senbonzakura
+#       rev: v0.4.0            # pin it; an unpinned checker changes what your commit must pass
+#       hooks:
+#         - id: senbonzakura-check
+#
+# WHY `always_run` IS FALSE AND `files` IS NARROW. pre-commit passes the staged files that match,
+# so the hook only fires when a result artefact actually changed. A hook that runs on every
+# commit regardless is a hook that gets skipped with `--no-verify`, and a skipped hook is worth
+# nothing at all.
+#
+# WHY THERE IS NO `additional_dependencies`. pre-commit builds an isolated environment from this
+# repository, and the checker imports nothing beyond the standard library, which
+# `tests/test_torch_free.py` asserts by running the command with every heavy package made
+# unimportable. So the environment is small and fast to build, which is the difference between a
+# hook people keep and one they remove after a week.
+
+- id: senbonzakura-check
+  name: check evaluation results for known failure modes
+  description: >-
+    Read evaluation result files (lm-evaluation-harness, Inspect, or senbonzakura) and report
+    how the numbers could be wrong. Each finding names the incident behind it, the fix, and what
+    would make the finding itself wrong. No model, no GPU, no network.
+  # `--skip-unknown` because pre-commit chose these paths with a regex and a person did not.
+  # Without it a config file living in `results/` would block the commit, and the command's
+  # ordinary rule is right: naming a file is a claim that it is a result. A pattern match is not.
+  entry: senbonzakura check --skip-unknown
+  language: python
+  # Only files that plausibly are results. A JSON file elsewhere in the tree is not a claim that
+  # it is one. With `--skip-unknown` above, a false match costs a line of output rather than a
+  # blocked commit.
+  files: '(^|/)(results?|eval|evals|logs|artefacts|artifacts)/.*\.json$'
+  pass_filenames: true
+  always_run: false

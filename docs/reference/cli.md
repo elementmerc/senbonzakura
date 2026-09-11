@@ -56,6 +56,44 @@ statement from "nothing found".
 **A clean report is not a certificate.** It looks for known failure modes. It cannot tell you a
 number is right, and it says so in its own output.
 
+### Running it without choosing to
+
+A checker somebody remembers to run is a checker that runs occasionally. Both of these install
+the package with `--no-deps`, so neither pulls torch into your CI or your commit hook.
+
+**In GitHub Actions:**
+
+```yaml
+- uses: elementmerc/senbonzakura@v0.4.0      # pin it
+  with:
+    path: results/
+    version: "==0.4.0"
+    fail-on-findings: true                    # false to report without blocking
+```
+
+It exposes `findings`, `unchecked` and `report` as outputs, so a later step can act on the two
+counts separately. `fail-on-unchecked` is true by default and is worth leaving that way: a gate
+that ignores a file it could not read goes green on the day your result format changes.
+
+**As a pre-commit hook:**
+
+```yaml
+repos:
+  - repo: https://github.com/elementmerc/senbonzakura
+    rev: v0.4.0                               # pin it
+    hooks:
+      - id: senbonzakura-check
+```
+
+It fires only on JSON under `results/`, `evals/`, `logs/` and similar, because a hook that runs
+on every commit regardless is a hook that gets skipped with `--no-verify`.
+
+One difference worth knowing between the two surfaces and the command line. **Naming a file is a
+claim that it is a result; a pattern match is not.** So `senbonzakura check run.json` on an
+unrecognised file exits 2, while the hook passes `--skip-unknown`, because pre-commit chose those
+paths with a regex rather than a person choosing them. Without that, a config file living in
+`results/` would block the commit.
+
 ## Setting up the install
 
 | Command | What it does |

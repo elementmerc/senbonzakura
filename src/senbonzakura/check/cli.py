@@ -61,6 +61,9 @@ def build_parser():
                     help="machine-readable output, one object per file")
     ap.add_argument("--quiet", action="store_true",
                     help="print findings only, no summary and no reassurance")
+    ap.add_argument("--skip-unknown", action="store_true",
+                    help="treat a named file that is not a result artefact the way a swept one "
+                         "is treated: report it and carry on, rather than exiting 2")
     return ap
 
 
@@ -143,8 +146,16 @@ def main(argv=None, out=None):
     out = out or sys.stdout
     checks = load_checks()
 
+    # A PATTERN CHOSE THESE PATHS, NOT A PERSON. pre-commit hands the hook whatever matched its
+    # `files` regex, so the paths arrive named on the command line while carrying none of the
+    # assertion that naming one usually carries. Without this the hook would block a commit over
+    # a config file that happened to live in `results/`, and a hook that blocks wrongly is a
+    # hook removed within the week.
+    claimed = not args.skip_unknown
+
     results = []
-    for path, named in _files(args.paths):
+    for path, was_named in _files(args.paths):
+        named = was_named and claimed
         findings, skipped, problem = inspect_file(path, checks)
         results.append((path, findings, skipped, problem, named))
 

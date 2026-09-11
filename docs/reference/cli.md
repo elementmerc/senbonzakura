@@ -23,6 +23,39 @@ Every command is `python -m senbonzakura <name>`, or `senbonzakura <name>` after
 | `validate` | Compare direction budgets at matched refusal removal, which is the comparison this project exists to make. |
 | `report` | Assemble a run's artefacts into the model card that should travel beside the weights. |
 
+## Checking somebody else's result
+
+| Command | What it does |
+|---|---|
+| `check` | Read an evaluation result file, from this tool or from another one, and report how the number could be wrong. Each finding names the incident behind it, what to do about it, and what would make the finding itself wrong. |
+
+`check` is the one command that needs nothing: no model, no corpus, no card, no network. It
+reads files and does arithmetic. It understands
+[lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) result files,
+[Inspect](https://inspect.aisi.org.uk) eval logs, and this project's own artefacts.
+
+```sh
+senbonzakura check results/            # a directory, searched for .json
+senbonzakura check run.json --json     # machine-readable, for a CI job
+```
+
+Three exit codes, and they mean different things on purpose:
+
+| Code | Meaning |
+|---|---|
+| `0` | every file was read, and nothing fired |
+| `1` | at least one finding |
+| `2` | at least one file could not be read at all |
+
+That last one matters more than it looks. A file the checker cannot parse is reported as
+**unchecked**, never as clean, because a clean report on something nobody read is
+indistinguishable from a clean bill of health. For the same reason the summary says how many
+checks did not apply to a file: "nothing found" across checks that could not run is a different
+statement from "nothing found".
+
+**A clean report is not a certificate.** It looks for known failure modes. It cannot tell you a
+number is right, and it says so in its own output.
+
 ## Setting up the install
 
 | Command | What it does |

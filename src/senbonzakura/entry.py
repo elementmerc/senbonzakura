@@ -58,6 +58,10 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "setup": ("envsetup", "main"),
     "imatrix": ("imatrix", "main"),
     "fetch": ("fetch", "main"),
+    # THE ONE COMMAND THAT NEEDS NOTHING. It reads result files and does arithmetic: no torch,
+    # no model, no corpus, no network. That is the whole point of it (roadmap, property 3), and
+    # `tests/test_check_registry.py` walks its import graph to keep it true.
+    "check": ("check.cli", "main"),
 }
 
 

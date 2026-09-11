@@ -47,7 +47,7 @@ senbonzakura setup
 ```
 
 The first command brings everything needed to edit a model: torch, transformers, accelerate,
-optuna. That is 68 packages and a few gigabytes, and there is nothing else to choose.
+optuna. That is **68 packages and 5.8 GB on disk**, measured on a clean Python 3.12 environment on 2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton wheels, which is where almost all of the size goes. (`pip list` will say 69, because it counts pip itself.)
 
 The second exists because **pip picks by platform, not by hardware**. There is no way for a
 package to declare "install the CUDA build if there is a card", so what you get depends on your

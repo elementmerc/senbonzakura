@@ -8,7 +8,10 @@ senbonzakura setup
 ```
 
 The first brings everything: torch, transformers, accelerate, optuna, and the rest. It is 68
-packages and a few gigabytes, and there is nothing else to choose. Nothing is behind an extra.
+packages and 5.8 GB on disk, measured on a clean Python 3.12 environment on
+2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton
+wheels, which is where almost all of it goes. (`pip list` will say 69: it counts pip itself.)
+Nothing is behind an extra.
 
 The second exists because **pip picks by platform, not by hardware**. PEP 508 environment
 markers describe the interpreter, the operating system and the architecture, and there is no
@@ -114,6 +117,12 @@ without a source checkout.
 Those binaries are built against OpenMP, and a Python wheel has no way to ask your system for a
 system library. On most desktop Linux installs it is already there. On a slim container image, a
 minimal server, or a fresh CI runner it often is not, and the binaries cannot start.
+
+**It is a property of the image, not of the wheel**, and the same wheel goes both ways. Measured
+on 2026-09-11: inside `python:3.13-slim` the quantiser will not start; on Ubuntu under WSL, from
+the identical wheel, `doctor` reports "llama-quantize vendored, runs", because Ubuntu carries
+`libgomp1` already. So a report of this from one machine says nothing about another, and
+re-vendoring fixes neither.
 
 `senbonzakura doctor` tells you which library is missing and what to install:
 

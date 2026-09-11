@@ -1,6 +1,6 @@
 # Quickstart
 
-Two commands and about an hour. The install is a few gigabytes; after that there is nothing to
+Two commands and about an hour. The install is 5.8 GB and takes about two minutes; after that there is nothing to
 download but the model.
 
 You need a GPU with 6 GB or more, and Python 3.10 or newer. No GPU? Skip to
@@ -14,7 +14,8 @@ senbonzakura setup
 ```
 
 The first command brings everything: torch, transformers, accelerate, optuna. It is 68 packages
-and a few gigabytes, and there is nothing else to choose.
+and 5.8 GB on disk, measured 2026-09-11, and there is nothing else to choose. (`pip list` will
+say 69, because it counts pip itself.)
 
 The second command exists because **pip picks by platform, not by hardware**. There is no way for
 a package to say "install the CUDA build if there is a card", so what you get depends on which

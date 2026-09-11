@@ -8,7 +8,7 @@ out from the appendix.
 
 ::: warning The short version
 **We tested it, and on the one model we can measure properly the claim is false.** Two
-directions did about twice the collateral damage of one at the same refusal rate, across five
+directions cost roughly 1.5 to 1.9 times the collateral damage of one at the same refusal rate, across five
 seeds a side. The feature had also never worked at all until it was rewritten on 2026-08-03,
 which is why the question could not be asked before then.
 :::

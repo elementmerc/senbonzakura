@@ -38,8 +38,9 @@ centroid subtracted. Large reported gains:
 
 ## So why does this project measure the opposite?
 
-Our own head-to-head found two directions costing roughly **twice** the coherence damage of one
-at matched refusal, and buying nothing. Both papers above report multi-direction winning. Three
+Our own comparison found two directions costing roughly **1.5 to 1.9 times** the coherence damage
+of one at matched refusal, and buying nothing. The range is there because one outlying seed carries
+much of the gap; the direction of the result is sturdier than its size. Both papers above report multi-direction winning. Three
 honest readings, and we cannot yet separate them:
 
 1. **They measure a different thing.** Both report *attack success rate* and **neither reports KL

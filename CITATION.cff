@@ -4,8 +4,9 @@ cff-version: 1.2.0
 message: >-
   If you use Senbonzakura in your work, please cite it. If you cite a number produced by it,
   please also read the limitations page: several published figures have been withdrawn and the
-  multi-direction claim is not yet supported by this project's own evidence.
-title: "Senbonzakura: multi-direction refusal abliteration, and the instruments to measure it"
+  multi-direction idea this project began with is not supported by its own evidence; see
+  the documentation's "what is and is not established".
+title: "Senbonzakura: measured refusal abliteration for transformer language models"
 abstract: >-
   Senbonzakura removes refusal behaviour from open-weight transformer language models by
   identifying directions in activation space that mediate refusal and orthogonalising them out of

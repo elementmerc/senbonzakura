@@ -52,59 +52,43 @@ this project exists.
 
 Senbonzakura is Byakuya Kuchiki's zanpakutō in *Bleach*. It scatters into a thousand blades.
 
-The name is the entire thesis. The original method uses one blade. The last stubborn few percent
-of refusals are supposed to live in a small handful of *nearby* directions that a single blade
-never touches. Account for a refusal **subspace** instead of one arrow and, in theory, the rest of
-the refusals fall too, without the model forgetting how to finish a sentence.
+The name came from an idea this project started with: that the last stubborn few percent of
+refusals live in a small bundle of *nearby* directions a single blade never touches, so cutting in
+several at once would take the rest without damaging the model further.
 
-::: tip New word: subspace
-A flat slice of a bigger space. A line is a subspace of a sheet of paper. A sheet of paper is a
-subspace of a room. Here: a small bundle of directions taken together instead of one.
-:::
+We built that, and then we measured it, and it did not hold. Cutting in more directions cost more
+and bought nothing on the one model we can measure properly. The capability stays in the tool,
+because being able to test an idea is worth more than believing it, and the name stayed too.
+[What is and is not established](/guide/what-we-know) has the measurement, the conditions on it,
+and the honest limits of the negative result.
 
-## Now the part where I tell you it isn't proven
+That is the short version of why this project is the way it is. An idea that survives its own
+measurement is worth something; one that does not is worth saying so about.
 
-Most projects put this bit at the bottom in grey.
+## So what is it for?
 
-The multi-direction feature **had never worked**. Not once, from the first release until
-2026-08-03. The check that decided whether a candidate direction carried refusal was incapable of
-accepting any direction, on any model, at any setting, for a reason in the arithmetic rather than
-in the data. Every run this project ever made applied exactly one direction, however many it was
-asked for.
+**The best-measured abliteration we can manage.** That is the aim, and everything else here is in
+service of it.
 
-So for several months the tool named after a sword that splits into a thousand blades was, in
-fact, using one blade. 🥲
+Removing refusals is the part that has worked since the beginning: the single-direction method of
+Arditi et al., plus an automated search for how hard to cut and where, building on Heretic's. It
+is solid and it is not novel.
 
-That's been rewritten. It now finds up to eight directions per layer where it used to find one.
+What is meant to be worth your attention is that every number this prints can be checked. The
+evaluation split is three-way, so the rows a configuration is chosen on are never the rows it is
+reported on. Every figure carries an interval. Every figure arrives beside a control that would
+expose it if it were measuring something else, the sharpest being a ruler that reads nothing but
+sentence length.
 
-**And then we tested whether the extra blades help, and they didn't.** One direction against two,
-five seeds each, everything else held still, both models scored afterwards on prompts neither was
-fitted on. Both removed the model's refusals. Two directions did about **twice** the collateral
-damage to everything else for no gain.
+The instruments that do that are features rather than the point:
 
-So the name is the thesis and the thesis lost, on the one model we can measure properly. It's one
-model, Qwen3-1.7B, so it isn't the last word for every architecture, and the capability stays in
-the tool because being able to *test* an idea is worth more than believing it. But the headline
-claim, the one on the tin, is **unsupported by this project's own evidence**, and I'd rather you
-heard it from me than worked it out yourself. 🥲
-
-[What is and is not established](/guide/what-we-know) has the full account: what was measured,
-what was withdrawn, and why.
-
-## So what's it actually good for today?
-
-Two things, and I'll be straight about which is which:
-
-**Removing refusals.** This part works, and has since the beginning. It's the single-direction
-method plus an automated search for how hard to cut and where. It's solid, it's just not novel.
-
-**Telling you whether the abliteration wrecked the model.** This is the half I think is more
-interesting, and as far as I can tell nobody else ships it. If you remove a model's ability to
-refuse, did you also remove its ability to *recognise* that something is dangerous? Those are
-different things, and one of them is much worse to lose.
-
-That's [the compass](/guide/compass), and it's the reason most of these docs are about
-measurement rather than about cutting.
+- [the compass](/guide/compass), which asks whether the edited model still *recognises* harm as
+  opposed to still refusing it, because those are different things and one is much worse to lose;
+- `capability`, for what the edit cost on tasks with a right answer, which refusal rates and KL
+  cannot see;
+- `drift`, one coherence ruler that can be pointed at a model edited by any tool, including
+  somebody else's;
+- `validate`, which asks whether a direction set carries refusal or carries topic.
 
 ## What you are actually making
 

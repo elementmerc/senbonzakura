@@ -1,7 +1,7 @@
 # Architecture
 
 A high-level map of how Senbonzakura works and where each piece lives. For the
-why behind multi-direction abliteration, see the README; this doc is for someone
+why behind the method, see the README; this doc is for someone
 who wants to read or extend the code.
 
 ## What abliteration is here

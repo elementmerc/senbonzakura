@@ -24,13 +24,13 @@ hero:
       link: /contributing
 
 features:
-  - title: Tested its own headline idea, and published the loss
+  - title: Publishes the runs that went against it
     details: >
-      The tool can cut in several directions at once. Asked whether that beats cutting in one,
-      five seeds a side, the answer was no: two directions cost roughly 1.5 to 1.9 times the
-      collateral damage for no gain. The capability stays, the claim does not.
+      Ideas this project was built on have been tested and dropped when the measurement said so,
+      and the withdrawals are written up rather than quietly deleted. Every figure carries the
+      conditions it was measured under.
     link: /guide/what-we-know
-    linkText: What the run found
+    linkText: What is and is not established
   - title: Ships its own instruments
     details: >
       A compass that asks whether the model still recognises harm, held-out arms, seeded

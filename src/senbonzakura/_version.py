@@ -8,4 +8,8 @@ it before it knows which command is being run, and `doctor` needs to be able to 
 machine where torch is exactly what is missing.
 """
 
-__version__ = "0.4.0.dev0"
+# `.dev1` and not `.dev0` because a wheel was cut from it: the first cut handed to a machine this
+# one cannot reach, for the end-to-end production test. Two different wheels sharing a version is
+# how a bug gets reported against a build nobody can identify, and pip's cache reuses the older
+# one without saying so. Bump this on every dev cut. See RELEASING.md, "A dev-only cut".
+__version__ = "0.4.0.dev1"

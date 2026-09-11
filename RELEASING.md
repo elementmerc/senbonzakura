@@ -111,16 +111,24 @@ The second line is not ceremony. `package-data` in `pyproject.toml` is what puts
 wheel, and a packaging change that drops it produces a wheel that installs, imports, runs
 everything except `--track default`, and fails only for users.
 
-## The README banner resolves against `main`, not against your branch
+## The README banner is pinned to a commit, and must stay pinned
 
 `readme = "README.md"` in `pyproject.toml`, so the README is what PyPI renders, and PyPI cannot
 resolve a relative image path. The banner is therefore an absolute
-`raw.githubusercontent.com/.../main/assets/brand/...` URL, exactly as the previous hero image was.
+`raw.githubusercontent.com/...` URL.
 
-**That means the banner shows as a broken image on any branch until `main` carries the file.**
-It is not broken; it is pointing at a commit `main` does not have yet. Promote `main` BEFORE
-publishing to PyPI and it renders correctly in both places. Publish to PyPI first and the
-package page ships with a broken image that cannot be fixed without a new release.
+**It is pinned to a commit SHA, not to a branch, and that is not a style preference.** This
+section used to say "promote `main` before the PyPI step or the banner ships broken", which
+treated a permanent fault as a release-ordering problem. `origin/main` carries no `assets/`
+directory at all and is hundreds of commits behind `dev`, so the branch-pinned URL was 404ing
+continuously, on GitHub and on the PyPI project page, for as long as the assets existed.
+
+A branch name in an asset URL is a promise that a branch will always carry that file. A commit
+SHA names content that cannot move. `tests/test_readme_images_resolve.py` refuses a branch-pinned
+URL, a SHA no commit has, and a commit whose tree lacks the file, so this cannot regress quietly.
+
+If the artwork changes, move the pin to the commit that carries the new file and let the test
+check it. Do not point it back at a branch.
 
 ## The codename
 
@@ -222,14 +230,80 @@ after a failure, use the workflow's manual trigger with the tag and `testpypi`.
 4. Build BOTH wheels and the sdist, per the section above; confirm the blob is inside each
    wheel, and that `check_wheel.py` passes on the universal wheel with `--release` and on the
    sdist.
-4a. Fast-forward `main` **before** the PyPI step. Two things depend on it and only one was
-   written down: the README banner image, and every documentation link in the README. The docs
-   site deploys from `main` alone, so uploading to PyPI first publishes a project page whose
-   links 404 until `main` moves. The deploy workflow now fetches four of those URLs from the
-   published site and fails if any is not a 200, so a wrong order is caught rather than met by
-   a reader.
+4a. Fast-forward `main` **before** the PyPI step, for the documentation links. The docs site
+   deploys from `main` alone, so uploading to PyPI first publishes a project page whose links
+   404 until `main` moves. The deploy workflow now fetches four of those URLs from the published
+   site and fails if any is not a 200, so a wrong order is caught rather than met by a reader.
+   The banner no longer depends on this step: it is pinned to a commit, per the section above.
 5. CHANGELOG entry, with the codename in the header.
 6. Panel artefact covering the range.
 7. Annotated tag with the `Codename:` line.
 8. Push, then a GitHub Release with the CHANGELOG entry as its body and the built artefacts
    attached. Publishing it runs the upload workflow; approve the `pypi` environment.
+
+---
+
+## A dev-only cut, which is not a release
+
+Sometimes the thing needed is not a release but an artefact: a wheel someone can install on a
+machine this one cannot reach, so the tool gets exercised as an installed package rather than as
+a checkout. Every real end-to-end finding this project has had came from that, and the CI smoke
+cannot supply it, because it runs from a source tree.
+
+**It is not a release, and the difference is the whole point.** No tag, no codename, no CHANGELOG
+entry, no GitHub Release, no PyPI, no TestPyPI. Section 22's codename rule and the panel gate
+both attach to a `v*` tag and to the promotion of `main`; a dev cut touches neither, which is
+exactly why it must not acquire a tag out of convenience.
+
+**It does not go on any public host, and that is a security decision rather than tidiness.** The
+wheel carries the packed evaluation track and six research corpora, roughly 6,500 harmful
+prompts. The README discloses that for the published release and the operator has weighed it
+there. A dev artefact has had no such weighing, so it moves point to point, over ssh, to a
+machine that is going to use it, and nowhere else.
+
+### Cutting one
+
+```sh
+# 1. Give it a version nobody can confuse with another cut.
+#    PEP 440 dev releases sort below the release: 0.4.0.dev1 < 0.4.0. Bump the number every
+#    time. Two different wheels sharing a version is how a tester ends up reporting a bug
+#    against a build nobody can identify, and pip's cache will happily reuse the older one.
+$EDITOR src/senbonzakura/_version.py
+
+# 2. The blobs must be present, or --track default fails for the tester and for nobody here.
+python tools/pack_track.py --track <your held-out track>   # if src/senbonzakura/data/ is empty
+python tools/build_corpora.py
+
+# 3. The gate that turns "skipped for want of a blob" into a failure.
+SENBON_REQUIRE_BUNDLED=1 python -m pytest
+ruff check src/ tests/ tools/
+
+# 4. The PLATFORM wheel, with the vendored binaries in it. A dev cut wants this one and not the
+#    universal one: `convert` and `quantise` need llama.cpp, and PyPI's tag restriction is the
+#    only reason the universal wheel exists.
+rm -rf build
+python -m build --wheel
+python tools/check_wheel.py dist/senbonzakura-*.whl
+
+# 5. Hand it over.
+scp dist/senbonzakura-<version>-*.whl <host>:
+```
+
+`check_wheel.py` turns its release checks on by itself for a wheel naming this project at a
+**release** version, and a `.devN` version is not one, so the release checks stay off. Run it
+anyway: the tag-versus-contents check is what catches a wheel claiming `py3-none-any` while
+carrying Linux binaries, and that is independent of whether anyone is publishing.
+
+### What to record, and where
+
+A dev cut leaves no tag, so the only record of what someone installed is the one you write. Put
+the version, the commit SHA it was built from, the `sha256` of the wheel, and who it went to in
+the session handoff and in `private/decisions.md` if anything was decided by it. A bug report
+against an unidentifiable build costs more than the cut saved.
+
+### Vendored pins on a dev cut
+
+`check_vendor_pins.py` reporting `DUE` does not block a dev cut, and refreshing for one is a
+judgement call rather than a rule. Refreshing means the tester exercises what will ship; not
+refreshing means the tester exercises one variable fewer. Decide it out loud and write down which
+way you went, because "the production test passed" means different things under the two.

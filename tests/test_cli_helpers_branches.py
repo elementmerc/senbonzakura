@@ -425,3 +425,106 @@ def test_an_unused_direction_slot_stays_zero_after_folding():
     got = cli.fold_norm_gain(R, torch.tensor([1.0, 2.0, 3.0, 4.0]))
     assert float(got[2].abs().sum()) == 0.0, "the unused slot came back carrying a direction"
     assert float(got[0].norm()) == pytest.approx(1.0, abs=1e-5)
+
+
+# ── free_before_save: the three placements, and why they differ ──────────────────────────────
+
+class _SaveStub:
+    """Only what `free_before_save` reads: a model, a device, a log, and the two snapshots."""
+
+    def __init__(self, model, dev, log=None, pristine=None):
+        self.model, self.dev = model, dev
+        self.log = log or (lambda *_a: None)
+        self._pristine = dict(pristine or {})
+        self._dirty = {}
+
+    free_before_save = cli.Abliterator.free_before_save
+
+
+class _Model:
+    def __init__(self, dispatched=False):
+        if dispatched:
+            self.hf_device_map = {"": 0}
+        self.moved_to = None
+
+    def to(self, where):
+        self.moved_to = where
+        return self
+
+
+def test_a_dispatched_model_is_left_where_accelerate_put_it(monkeypatch):
+    """A model accelerate spread across devices CANNOT be moved with `.to()`.
+
+    Calling it anyway is not a no-op, it is an error partway through a run that has already paid
+    for the search. So the branch exists and had never been taken.
+    """
+    said = []
+    m = _Model(dispatched=True)
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+    _SaveStub(m, "cuda:0", log=said.append).free_before_save()
+    assert m.moved_to is None, "a dispatched model must not be moved"
+    assert any("leaving its placement alone" in s for s in said)
+
+
+def test_a_resident_cuda_model_is_moved_to_host_ram_before_the_write(monkeypatch):
+    """Moving it sidesteps both the save-time VRAM spike and the fused-expert revert path."""
+    said = []
+    m = _Model()
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+    _SaveStub(m, "cuda:0", log=said.append).free_before_save()
+    assert m.moved_to == "cpu"
+    assert any("host RAM" in s for s in said)
+
+
+def test_a_cpu_run_moves_nothing(monkeypatch):
+    """Nothing to free, so nothing is said and nothing is moved."""
+    said = []
+    m = _Model()
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+    _SaveStub(m, "cpu", log=said.append).free_before_save()
+    assert m.moved_to is None
+    assert said == []
+
+
+def test_the_allocator_cache_is_returned_when_there_is_a_card(monkeypatch):
+    """`empty_cache` is the half that actually hands the VRAM back, and it is conditional on
+    both the device being cuda AND a card being present, so a cuda-named device on a machine
+    without one must not reach it.
+    """
+    emptied = []
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cli.torch.cuda, "empty_cache", lambda: emptied.append(True))
+    _SaveStub(_Model(), "cuda:0").free_before_save()
+    assert emptied, "the caching allocator was never asked to release"
+
+    emptied.clear()
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+    _SaveStub(_Model(), "cpu").free_before_save()
+    assert not emptied, "a cpu run must not touch the cuda allocator"
+
+
+def test_the_pristine_snapshot_is_released_and_reported(monkeypatch):
+    """The snapshot holds a host-RAM copy of every residual-writing weight, and by this point it
+    has done its job: the search is over and the winner is baked.
+
+    Dropping it means `restore_weights()` no longer works, which is why this runs after the
+    post-bake measurement and immediately before the write. The count is logged because a reader
+    watching a machine run out of RAM needs to know what was handed back and when.
+    """
+    said = []
+    stub = _SaveStub(_Model(), "cpu", log=said.append,
+                     pristine={"a": 1, "b": 2, "c": 3})
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+    stub.free_before_save()
+    assert stub._pristine == {} and stub._dirty == {}
+    assert any("released the pristine snapshot (3 tensors)" in s for s in said)
+
+
+def test_nothing_is_said_about_a_snapshot_that_was_already_empty(monkeypatch):
+    """`if held:` guards the message. A run that never took a snapshot must not claim to have
+    released one, which would read as a memory saving that did not happen.
+    """
+    said = []
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+    _SaveStub(_Model(), "cpu", log=said.append).free_before_save()
+    assert not any("pristine snapshot" in s for s in said)

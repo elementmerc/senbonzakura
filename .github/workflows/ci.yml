@@ -14,28 +14,33 @@ permissions:
   contents: read
 
 env:
-  # THE COVERAGE FLOOR FOR A RUNNER, WHICH IS NOT THE FLOOR FOR A DEVELOPER, and the difference is
-  # not slack: it is the code that cannot be reached without artefacts this repository
-  # deliberately does not carry.
+  # THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
+  # live here is gone. Keeping the history because the reason it existed was sound and the reason
+  # it stopped is the interesting part.
   #
-  # `pyproject.toml` sets fail_under = 95 and that is the number a developer meets, because a
-  # developer has the packed track, the packed corpora and the vendored binaries. A runner has
-  # none of them, so the tests that exercise that code skip, and skipped tests cover nothing.
-  # Measured on this tree, same commit, three configurations:
+  # It read 92.5, against pyproject's fail_under = 95, because a developer has the packed track,
+  # the packed corpora and the vendored binaries and a runner has none of them, so the tests that
+  # exercise that code skipped, and skipped tests cover nothing. Measured then:
   #
   #     everything present                   95.08%   <- developers and the release build
   #     corpora and binaries, no track       94.58%
-  #     nothing, which is what a runner has  92.98%
+  #     nothing, which is what a runner had  92.98%
   #
-  # Building the corpora here would recover 1.6 of those points and would put a network fetch in
-  # front of every test job on every platform. This project's whole design is that it runs without
-  # a network, and trading that for coverage points on a number we can simply state correctly is
-  # the wrong way round.
+  # Two things closed that gap on 2026-09-11. The coverage row now fetches the corpora and the
+  # vendored binaries itself, which un-skips 61 tests that had never run on a runner at all; and
+  # roughly two hundred branches that executed only one way got their other side tested. Measured
+  # again, same tree, coverage.py's own blended figure:
   #
-  # So the runner floor is measured rather than chosen, and the 95 gate is still enforced where
-  # the artefacts exist: locally, and in the release build, which runs the suite with
-  # SENBON_REQUIRE_BUNDLED=1 after packing. Raise this when the measured figure rises.
-  COVERAGE_FLOOR_WITHOUT_ARTEFACTS: "92.5"
+  #     coverage row, corpora and binaries   96.25%
+  #     every other row, no artefacts        95.73%   <- the weakest configuration
+  #
+  # The weakest runner now clears 95 with room, so the divergence has nothing left to describe.
+  # One number, in one place, and CI meets the gate a developer meets rather than a softer one
+  # that has to be kept honest by hand.
+  #
+  # If this has to come back, put the measurement beside it as above. A floor is the number the
+  # WEAKEST configuration must clear, and it is only worth having when that number is genuinely
+  # lower for a reason nobody can fix.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -133,14 +138,11 @@ jobs:
           python tools/build_corpora.py
 
       - name: Test, with the coverage gate
-        # fail_under lives in pyproject and ratchets upward; CI does not carry its
-        # own threshold, so the gate cannot drift between local and CI.
-        #
-        # The floor is the same on every row even though the row above gives one of them more
-        # artefacts than the others. A floor is the number the WEAKEST configuration must
-        # clear, and raising it for the richer row would only mean the gate stopped describing
-        # what the other four actually do.
-        run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS --cov-report=xml
+        # No threshold here. `fail_under = 95` lives in pyproject and applies to every run of
+        # `pytest` anywhere, so the gate cannot drift between local and CI, and there is no
+        # second number to keep honest by hand. See the env block above for why a softer runner
+        # floor existed until 2026-09-11 and why it stopped being true.
+        run: pytest --cov-report=xml
 
       - name: Publish coverage to Codecov
         # ONE matrix row uploads, not five. Five uploads of the same suite measured on five
@@ -148,22 +150,19 @@ jobs:
         # Windows branch" and "Windows skipped the Linux branch" reports coverage nobody has.
         # This row is the one whose figure the badge quotes.
         #
-        # The badge this feeds shows CI's number, which is LOWER than the local one, because a
-        # runner has none of the release artefacts (see COVERAGE_FLOOR_WITHOUT_ARTEFACTS above).
-        # That is the point: it is the figure a stranger cloning the repository can reproduce.
+        # The badge this feeds shows what CI measured, which is the figure a stranger cloning
+        # the repository can reproduce. That is the point of wiring it at all.
         #
-        # THREE NUMBERS, AND THEY ARE NOT IN CONFLICT. Read them before concluding one is wrong:
+        # TWO MEASURES, AND THEY ARE NOT IN CONFLICT. Read this before concluding one is wrong:
         #
-        #     95.05  pyproject's gate, and what a developer sees. Everything present, and
-        #            coverage.py's total with branch=true, so branches are in the denominator:
+        #     96.25  coverage.py on this row, which is what the `pytest` step gates on.
+        #            branch = true, so branches are in the denominator:
         #            (statements hit + branches taken) / (statements + branches).
-        #     92.98  the same measure on a runner, which is what COVERAGE_FLOOR_WITHOUT_ARTEFACTS
-        #            is set just under.
-        #     91.63  what Codecov shows, and therefore what the badge says. Codecov reads the
+        #     95.09  what Codecov shows, and therefore what the badge says. Codecov reads the
         #            Cobertura XML and reports LINE coverage, counting partially-taken branches
         #            as a separate `partials` bucket rather than blending them in.
         #
-        # So the badge sits a point or so below the runner figure for a reason that has nothing
+        # So the badge sits about a point below the gate for a reason that has nothing
         # to do with this repository: the two tools answer slightly different questions. Do not
         # "fix" the gap by changing the gate.
         #
@@ -226,7 +225,7 @@ jobs:
       - name: Lint
         run: ruff check src/ tests/ tools/
       - name: Test, with the coverage gate
-        run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS
+        run: pytest
 
   dependency-floor:
     # Installs the *lowest* version each declared dependency permits. Without this
@@ -260,7 +259,7 @@ jobs:
           python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"
           senbonzakura --help > /dev/null
       - name: Test
-        run: pytest --cov-fail-under=$COVERAGE_FLOOR_WITHOUT_ARTEFACTS
+        run: pytest
 
   docs:
     # The documentation site, built and link-checked on every change.

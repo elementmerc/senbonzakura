@@ -13,34 +13,38 @@ on:
 permissions:
   contents: read
 
-env:
-  # THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
-  # live here is gone. Keeping the history because the reason it existed was sound and the reason
-  # it stopped is the interesting part.
-  #
-  # It read 92.5, against pyproject's fail_under = 95, because a developer has the packed track,
-  # the packed corpora and the vendored binaries and a runner has none of them, so the tests that
-  # exercise that code skipped, and skipped tests cover nothing. Measured then:
-  #
-  #     everything present                   95.08%   <- developers and the release build
-  #     corpora and binaries, no track       94.58%
-  #     nothing, which is what a runner had  92.98%
-  #
-  # Two things closed that gap on 2026-09-11. The coverage row now fetches the corpora and the
-  # vendored binaries itself, which un-skips 61 tests that had never run on a runner at all; and
-  # roughly two hundred branches that executed only one way got their other side tested. Measured
-  # again, same tree, coverage.py's own blended figure:
-  #
-  #     coverage row, corpora and binaries   96.25%
-  #     every other row, no artefacts        95.73%   <- the weakest configuration
-  #
-  # The weakest runner now clears 95 with room, so the divergence has nothing left to describe.
-  # One number, in one place, and CI meets the gate a developer meets rather than a softer one
-  # that has to be kept honest by hand.
-  #
-  # If this has to come back, put the measurement beside it as above. A floor is the number the
-  # WEAKEST configuration must clear, and it is only worth having when that number is genuinely
-  # lower for a reason nobody can fix.
+# THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
+# live here is gone, along with the `env:` block that held it. A workflow with an `env:` key and
+# nothing under it is not an empty mapping, it is null, and GitHub rejects the whole file: the
+# run completes as a failure with ZERO jobs, which looks nothing like a normal red build. PyYAML
+# parses it happily, so a local `yaml.safe_load` is not enough to catch it and did not.
+#
+# Keeping the history because the reason the floor existed was sound and the reason it stopped
+# is the interesting part.
+#
+# It read 92.5, against pyproject's fail_under = 95, because a developer has the packed track,
+# the packed corpora and the vendored binaries and a runner has none of them, so the tests that
+# exercise that code skipped, and skipped tests cover nothing. Measured then:
+#
+#     everything present                   95.08%   <- developers and the release build
+#     corpora and binaries, no track       94.58%
+#     nothing, which is what a runner had  92.98%
+#
+# Two things closed that gap on 2026-09-11. The coverage row now fetches the corpora and the
+# vendored binaries itself, which un-skips 61 tests that had never run on a runner at all; and
+# roughly two hundred branches that executed only one way got their other side tested. Measured
+# again, same tree, coverage.py's own blended figure:
+#
+#     coverage row, corpora and binaries   96.25%
+#     every other row, no artefacts        95.73%   <- the weakest configuration
+#
+# The weakest runner now clears 95 with room, so the divergence has nothing left to describe.
+# One number, in one place, and CI meets the gate a developer meets rather than a softer one
+# that has to be kept honest by hand.
+#
+# If this has to come back, put the measurement beside it as above. A floor is the number the
+# WEAKEST configuration must clear, and it is only worth having when that number is genuinely
+# lower for a reason nobody can fix.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -140,8 +144,8 @@ jobs:
       - name: Test, with the coverage gate
         # No threshold here. `fail_under = 95` lives in pyproject and applies to every run of
         # `pytest` anywhere, so the gate cannot drift between local and CI, and there is no
-        # second number to keep honest by hand. See the env block above for why a softer runner
-        # floor existed until 2026-09-11 and why it stopped being true.
+        # second number to keep honest by hand. The comment block at the top of this file records
+        # why a softer runner floor existed until 2026-09-11 and why it stopped being true.
         run: pytest --cov-report=xml
 
       - name: Publish coverage to Codecov

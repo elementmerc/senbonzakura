@@ -99,3 +99,94 @@ def test_the_coverage_badge_is_measured_rather_than_typed():
         "the README coverage badge no longer reads from Codecov")
     assert not re.search(r"badge/coverage-\d+", readme), (
         "the README carries a hardcoded coverage badge again; nothing verifies that number")
+
+
+# ── a workflow that GitHub will actually accept ──────────────────────────────────────────────
+
+def _workflow_files():
+    return sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+
+
+#: Keys whose value GitHub requires to be a real mapping. A null here is refused outright.
+#:
+#: This is a deny-list rather than "nothing may be null", and the first version of this test got
+#: that wrong. `on: workflow_dispatch:` with nothing under it is legal and ordinary, and so are
+#: the other trigger keys: they mean "this event, with no filters". Asserting on every key at
+#: once flagged `docs.yml` for something GitHub accepts happily, which would have been a gate
+#: that cries wolf, and a gate that cries wolf gets deleted.
+MUST_NOT_BE_NULL = ("env", "with", "jobs", "steps", "strategy", "matrix", "defaults", "outputs")
+
+
+@pytest.mark.parametrize("wf", [p.name for p in _workflow_files()])
+def test_no_mapping_key_that_needs_a_value_is_left_empty(wf):
+    """A key with nothing under it is null, not an empty mapping, and GitHub REJECTS the file.
+
+    THE INCIDENT, 2026-09-11. Deleting the last variable out of `ci.yml` left `env:` followed by
+    a comment block and nothing else. `yaml.safe_load` parsed it happily and returned
+    `{"env": None}`, so the local check passed. GitHub refused the whole workflow: the run
+    completed as a FAILURE with zero jobs, no annotations, and `gh run view` printing nothing
+    under the job list. That looks nothing like a normal red build, and the first instinct is to
+    go hunting for a broken test.
+
+    The lesson is narrow and worth keeping: parsing is not validation. PyYAML answers "is this
+    YAML", and the question that mattered was "will GitHub take it".
+    """
+    import yaml
+
+    doc = yaml.safe_load((WORKFLOWS / wf).read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), f"{wf} does not parse to a mapping at all"
+
+    def _check(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in MUST_NOT_BE_NULL:
+                    assert v, (
+                        f"{wf}: `{path}{k}:` has nothing under it, so it parses as null and "
+                        f"GitHub refuses the whole workflow, failing the run with zero jobs. "
+                        f"Delete the key, or give it a value.")
+                _check(v, f"{path}{k}.")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _check(v, f"{path}[{i}].")
+
+    _check(doc, "")
+
+
+def test_the_empty_key_gate_would_actually_fire():
+    """The negative control. A gate only ever seen agreeing has not been shown to work.
+
+    This project's own discipline, arrived at after a dead-flag audit passed a tree with the bug
+    reinstated: build the broken thing and require the check to refuse it.
+    """
+    import yaml
+
+    broken = yaml.safe_load("name: x\non:\n  push:\njobs:\n  a:\n    env:\n    steps:\n      - run: x\n")
+    assert broken["jobs"]["a"]["env"] is None, "the fixture is not the shape being guarded against"
+
+    found = []
+
+    def _check(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in MUST_NOT_BE_NULL and not v:
+                    found.append(f"{path}{k}")
+                _check(v, f"{path}{k}.")
+
+    _check(broken, "")
+    assert "jobs.a.env" in found, "the empty `env:` that broke CI would not be caught"
+
+
+@pytest.mark.parametrize("wf", [p.name for p in _workflow_files()])
+def test_every_job_has_steps_to_run(wf):
+    """A job with no steps is accepted and does nothing, which is a green tick for no work.
+
+    Cheaper to assert than to notice. This project has twice shipped a check that passed because
+    nothing happened rather than because everything did.
+    """
+    import yaml
+
+    doc = yaml.safe_load((WORKFLOWS / wf).read_text(encoding="utf-8"))
+    for name, job in (doc.get("jobs") or {}).items():
+        if "uses" in job:
+            continue                      # a reusable workflow call carries no steps of its own
+        assert job.get("steps"), f"{wf}: job `{name}` has no steps"

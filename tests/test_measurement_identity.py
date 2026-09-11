@@ -12,9 +12,8 @@ let a writer do. A vocabulary that accepts anything is a free-text field with ex
 import json
 
 import pytest
-
-from senbonzakura import measurement
-from senbonzakura.measurement import (
+from senbonzakura_check import measurement
+from senbonzakura_check.measurement import (
     METRICS,
     METRICS_KEY,
     MeasurementError,

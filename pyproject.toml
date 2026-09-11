@@ -123,6 +123,15 @@ dependencies = [
   # run end to end without it and does not need it. Upstream's constraint is also `<5.0.0` while
   # PyPI is at 7.x, so adopting it would have meant carrying a pin nobody had shown was necessary.
   "sentencepiece>=0.1.98,<0.3.0",
+  # THE CHECKER, AS ITS OWN DISTRIBUTION (decision Q-29). It has no dependencies of its own, so
+  # this adds a few kilobytes and nothing transitive, and it is what makes `senbonzakura check`
+  # work from a full install as well as from `pip install senbonzakura-check`.
+  #
+  # The dependency runs big-to-small and only that way. `senbonzakura_check` may never import
+  # `senbonzakura`: an upward import would put torch back into the torch-free distribution and
+  # would only show up on somebody else's machine. `tests/test_second_distribution.py` walks the
+  # import graph on every commit.
+  "senbonzakura-check",
 ]
 
 [project.optional-dependencies]
@@ -218,14 +227,7 @@ senbonzakura = ["data/*.bin", "data/templates/*.jinja", "vendor/*.json", "vendor
                 # code beside it did not, which is the one omission an auditor can check
                 # in ten seconds. `vendor/bin/*/*` already sweeps this directory; it is
                 # named here so a reader can see the obligation being met on purpose.
-                "vendor/bin/*/LICENSE",
-                # The check registry. These are DATA THE ENGINE READS AT RUNTIME, not examples:
-                # `check/registry.py` globs this directory and a wheel without them installs a
-                # checker that loads zero checks and reports every artefact clean. That is the
-                # same shape as the 0.3.0 wheel shipping without its corpus, which installed,
-                # imported and answered `--help` perfectly while failing every user, so it is
-                # gated by a test rather than trusted to this glob.
-                "check/checks/*.json"]
+                "vendor/bin/*/LICENSE"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

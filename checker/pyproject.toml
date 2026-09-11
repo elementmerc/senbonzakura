@@ -1,0 +1,91 @@
+# The checker, as its own distribution.
+#
+# DECISION Q-29 (2026-09-11). `roadmap.md` scores this project against the six properties shared
+# by tools that took a domain in under two years, and calls "adoption cost near zero" the
+# largest single gap: installing senbonzakura means torch and a GPU, where every fast comparator
+# installs in seconds and touches nothing.
+#
+# WHY A SECOND DISTRIBUTION RATHER THAN AN EXTRA
+#
+# Q-27 settled that `pip install senbonzakura` should give the complete editor, because somebody
+# typing that wants to abliterate a model and a skeleton that then asks which extra they needed
+# is a worse first five minutes than a large download. An extras split contradicts that decision
+# directly. It also does not move the Kali and Debian route, where `kali-packaging.md` records
+# the dependency wall as the blocker: `datasets` is not in Debian at all and `python3-torch` is
+# built without CUDA. A torch-free distribution has neither dependency.
+#
+# WHY THE CODE LIVES HERE AND NOT UNDER `senbonzakura/`
+#
+# Two distributions installing files into one import package is a conflict: pip permits it,
+# uninstalling either breaks the other, and neither owns the directory. So the checker owns its
+# own top-level package, `senbonzakura_check`, and the big distribution DEPENDS on this one.
+# Dependency flows one way, small to large, and the direction is gated: nothing here may import
+# `senbonzakura`, asserted by a test that walks the import graph.
+#
+# THE DEPENDENCY LIST BELOW IS EMPTY, AND THAT IS THE PRODUCT
+#
+# Not "small". Empty. The checker reads JSON and does arithmetic, and it is measured rather than
+# asserted: `tests/test_torch_free.py` runs the command in a subprocess with torch, transformers,
+# accelerate, optuna, datasets, numpy and pyarrow made unimportable at the import-machinery
+# level, and requires the right finding and the right exit code rather than a traceback.
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senbonzakura-check"
+dynamic = ["version"]
+description = "Read an evaluation result file and report how the number could be wrong."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Iwugo", email = "ops@themalwarefiles.com" }]
+keywords = ["evaluation", "llm", "benchmark", "reproducibility", "linter"]
+
+# INTENTIONALLY EMPTY. Adding anything here is a decision, not a convenience, and it costs the
+# one property this distribution exists to hold. If a check genuinely cannot be written without
+# a dependency, the check does not ship (v0.8 plan, loophole 1).
+dependencies = []
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/elementmerc/senbonzakura"
+Documentation = "https://elementmerc.github.io/senbonzakura"
+Source = "https://github.com/elementmerc/senbonzakura"
+
+[project.scripts]
+# `senbonzakura-check`, hyphenated, so it cannot collide with the `senbonzakura` script the big
+# distribution installs. With both installed, `senbonzakura check` and `senbonzakura-check` are
+# the same command reached two ways.
+senbonzakura-check = "senbonzakura_check.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+# READ FROM THE SAME FILE THE BIG DISTRIBUTION USES, by a copy kept in step by a test rather
+# than by anybody remembering. Two distributions out of the same commit reporting different
+# versions is how a bug report becomes untraceable.
+version = { attr = "senbonzakura_check._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# THE CHECKS ARE DATA THE ENGINE READS AT RUNTIME, not examples beside it. A wheel without them
+# installs a checker that loads zero checks and reports every artefact clean, which is the same
+# shape as the 0.3.0 wheel that shipped without its corpus: it installed, imported and answered
+# `--help` perfectly while failing every user.
+senbonzakura_check = ["checks/*.json"]

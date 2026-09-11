@@ -19,9 +19,8 @@ reinstated: **a check nobody has watched fail is a check nobody has tested.**
 import json
 
 import pytest
-
-from senbonzakura.check import registry
-from senbonzakura.check.registry import (
+from senbonzakura_check import registry
+from senbonzakura_check.registry import (
     MISSING,
     Check,
     CheckError,
@@ -341,23 +340,23 @@ def test_the_checker_never_writes_to_what_it_reads(tmp_path):
 def test_the_check_files_are_declared_as_package_data():
     """A WHEEL WITHOUT THEM LOADS ZERO CHECKS AND REPORTS EVERY ARTEFACT CLEAN.
 
-    The engine globs `check/checks/*.json` at runtime, so these are data the code reads and not
+    The engine globs `checks/*.json` at runtime, so these are data the code reads and not
     examples sitting beside it. That is exactly the shape of the 0.3.0 defect: a wheel that
     installed, imported and answered `--help` perfectly while `--track default` failed for every
     user, because a generated artefact was missing and nothing checked the glob.
 
-    Checked against pyproject rather than against a built wheel so it runs everywhere; the wheel
-    itself is checked by `tools/check_wheel.py`.
+    Declared in the CHECKER's own pyproject since decision Q-29 moved it to its own
+    distribution, so this reads that file rather than the abliterator's.
     """
     from pathlib import Path
 
     from tomlread import tomllib
 
     root = Path(__file__).resolve().parents[1]
-    with (root / "pyproject.toml").open("rb") as f:
+    with (root / "checker" / "pyproject.toml").open("rb") as f:
         cfg = tomllib.load(f)
-    globs = cfg["tool"]["setuptools"]["package-data"]["senbonzakura"]
-    assert "check/checks/*.json" in globs, (
+    globs = cfg["tool"]["setuptools"]["package-data"]["senbonzakura_check"]
+    assert "checks/*.json" in globs, (
         "the check registry is not declared as package data, so a built wheel would carry no "
         "checks and would report every artefact clean")
 
@@ -417,7 +416,7 @@ def test_the_checker_finds_nothing_wrong_with_our_own_published_arms(path):
     the check did not know. That was the check being incomplete rather than the artefacts being
     wrong, and it is why `instrument` is now one of the places it looks.
     """
-    from senbonzakura.check import UnknownArtefactError, check_document
+    from senbonzakura_check import UnknownArtefactError, check_document
 
     doc = json.loads(path.read_text(encoding="utf-8"))
     try:

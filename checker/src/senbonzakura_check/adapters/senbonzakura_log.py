@@ -29,7 +29,7 @@ two values under one metric name is the same rule seen from the other side.
 """
 from __future__ import annotations
 
-from senbonzakura.measurement import METRICS_KEY
+from senbonzakura_check.measurement import METRICS_KEY
 
 #: A metric key we publish. Used for detection only, so a foreign file carrying one of these
 #: names alone is not claimed: it has to look like ours in shape as well.

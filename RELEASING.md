@@ -243,6 +243,45 @@ after a failure, use the workflow's manual trigger with the tag and `testpypi`.
 
 ---
 
+## Two distributions, not one
+
+Since decision Q-29 this repository publishes **two** packages, and a release means both.
+
+| Distribution | What it is | Dependencies |
+|---|---|---|
+| `senbonzakura` | the abliterator and its instruments | torch, transformers, accelerate, optuna and the rest; most of a gigabyte |
+| `senbonzakura-check` | `senbonzakura check`, the result-file checker | **none at all** |
+
+The small one is built from `checker/`, owns the `senbonzakura_check` import package, and is a
+DEPENDENCY of the big one. That direction is the whole arrangement: `senbonzakura check` works
+from a full install because the big distribution depends on the small one, and
+`pip install senbonzakura-check` costs seconds because the small one depends on nothing.
+
+```sh
+python -m build --wheel --outdir dist-checker checker/
+python -m build --sdist --outdir dist-checker checker/
+```
+
+**Three things that have to hold, and all three are gated rather than remembered.**
+
+The two versions must agree. They are separate `_version.py` files, because reading one from the
+other would be an upward import for the sake of a string, so `tests/test_second_distribution.py`
+asserts the agreement instead. Bump both.
+
+Nothing under `senbonzakura_check/` may import `senbonzakura`. An upward import works perfectly
+here, where both are installed, and breaks only for the person who installed the checker alone,
+which is the one person this distribution exists for and the one who never appears in our CI.
+
+The checker's dependency list stays empty. The `checker` CI job builds the wheel, installs it
+into an empty environment WITHOUT `--no-deps`, and reads back what pip resolved. Measured
+2026-09-11: `['pip', 'senbonzakura-check']`, a 13 MB virtualenv.
+
+**Order.** Publish `senbonzakura-check` FIRST. The big distribution depends on it by name, so
+uploading them the other way round leaves a window in which `pip install senbonzakura` cannot
+resolve, and a version number on PyPI can never be replayed.
+
+---
+
 ## A dev-only cut, which is not a release
 
 Sometimes the thing needed is not a release but an artefact: a wheel someone can install on a

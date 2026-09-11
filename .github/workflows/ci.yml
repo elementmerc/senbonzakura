@@ -308,6 +308,64 @@ jobs:
         # one nearest to hand.
         run: pytest --cov-fail-under=94.5
 
+  checker:
+    # THE TORCH-FREE DISTRIBUTION, RESOLVED FOR REAL (decision Q-29).
+    #
+    # The suite asserts the property two ways already: a test walks `senbonzakura_check`'s import
+    # graph and fails on anything heavy, and `test_torch_free.py` runs the command with the stack
+    # made unimportable. Neither of those is an INSTALL. A dependency can be declared in
+    # `checker/pyproject.toml` and reach a user without any import in our tree changing, and that
+    # user is the one person who never appears in the rest of this file: somebody who typed
+    # `pip install senbonzakura-check` and nothing else.
+    #
+    # So this job builds the wheel, installs it into an environment with nothing in it, and reads
+    # back what pip actually resolved. It is the only check here that would catch a dependency
+    # arriving through packaging rather than through code.
+    name: the checker installs with nothing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.10"          # the declared floor, not a convenient version
+      - name: Build the checker wheel
+        run: |
+          pip install --quiet build
+          python -m build --wheel --outdir dist-checker checker/
+      - name: Install it, and nothing else
+        # Deliberately NOT --no-deps. The point is to let pip resolve whatever the metadata asks
+        # for, so a dependency that crept into `checker/pyproject.toml` actually arrives here.
+        run: pip install --quiet dist-checker/*.whl
+      - name: Nothing heavy came with it
+        run: |
+          set -euo pipefail
+          python - <<'PYCHECK'
+          import importlib.metadata as md
+          heavy = {"torch", "transformers", "accelerate", "optuna", "datasets",
+                   "bitsandbytes", "sentencepiece", "gguf", "numpy", "pyarrow",
+                   "senbonzakura"}
+          installed = {d.metadata["Name"].lower().replace("_", "-")
+                       for d in md.distributions() if d.metadata["Name"]}
+          found = sorted(h for h in heavy if h in installed)
+          assert not found, f"the torch-free distribution pulled in: {found}"
+          print(f"resolved to {len(installed)} distribution(s), none of them heavy")
+          PYCHECK
+      - name: And it works
+        # An install that resolves to nothing and then cannot run is not the property wanted.
+        # The exit code is 1 on purpose: a metric with no estimator is a finding, so a 0 here
+        # would mean the checks did not load, which is the failure a wheel without its data has.
+        run: |
+          set -euo pipefail
+          cat > /tmp/arm.json <<'JSON'
+          {"version": 2, "status": "success", "eval": {"task": "t", "model": "m"},
+           "results": {"total_samples": 4, "completed_samples": 4,
+                       "scores": [{"name": "s", "scorer": null, "scored_samples": 4,
+                                   "metrics": {"accuracy": {"name": "accuracy", "value": 0.5}}}]}}
+          JSON
+          senbonzakura-check /tmp/arm.json && { echo "expected a finding, got a clean run"; exit 1; }
+          test $? -eq 1
+          senbonzakura-check /tmp/arm.json | grep -q "metric-reported-without-its-estimator"
+
   docs:
     # The documentation site, built and link-checked on every change.
     #

@@ -15,8 +15,7 @@ import io
 import json
 
 import pytest
-
-from senbonzakura.check import cli
+from senbonzakura_check import cli
 
 GOOD = {"version": 2, "status": "success",
         "eval": {"task": "t", "model": "m"},
@@ -195,7 +194,7 @@ def test_an_empty_directory_is_not_an_error(tmp_path):
 def test_check_is_a_delegated_command():
     from senbonzakura import entry
 
-    assert entry.DELEGATED["check"] == ("check.cli", "main")
+    assert entry.DELEGATED["check"] == ("check", "main")
     assert entry.dispatch("check") is cli.main
 
 

@@ -26,9 +26,8 @@ saying so.
 import json
 
 import pytest
-
-from senbonzakura.check import adapters
-from senbonzakura.check.adapters import UnknownArtefactError, detect, normalise
+from senbonzakura_check import adapters
+from senbonzakura_check.adapters import UnknownArtefactError, detect, normalise
 
 # ── fixtures, each traceable to the source that defines it ───────────────────────────────────
 
@@ -307,7 +306,7 @@ def test_our_older_artefacts_are_readable_through_the_prose_instrument():
 
 
 def test_a_stamped_artefact_is_read_from_the_canonical_block():
-    from senbonzakura.measurement import stamp
+    from senbonzakura_check.measurement import stamp
 
     doc = stamp({}, "kl", 0.02, "first-token-full-distribution", n=150)
     got = normalise(doc)
@@ -437,7 +436,7 @@ def test_the_same_checks_run_over_an_lm_eval_artefact():
     the adapter carries across as the estimator. So a well-formed lm-eval file passes the
     provenance check without anybody writing an lm-eval-specific check.
     """
-    from senbonzakura.check import check_document
+    from senbonzakura_check import check_document
 
     findings, skipped = check_document(LM_EVAL)
     assert [f.check_id for f in findings] == []
@@ -450,7 +449,7 @@ def test_an_lm_eval_artefact_with_an_unfiltered_metric_is_caught():
     """The negative control for the above. A metric key with no comma has no filter recorded,
     so there is nothing saying how the number was extracted.
     """
-    from senbonzakura.check import check_document
+    from senbonzakura_check import check_document
 
     doc = json.loads(json.dumps(LM_EVAL))
     doc["results"]["gsm8k"] = {"alias": "gsm8k", "exact_match": 0.41}
@@ -462,7 +461,7 @@ def test_the_same_checks_run_over_an_inspect_log():
     """Inspect records `scorer` beside every metric, which is the provenance the 2026-08-05
     withdrawal was about. A well-formed log passes without a bespoke check.
     """
-    from senbonzakura.check import check_document
+    from senbonzakura_check import check_document
 
     findings, _ = check_document(INSPECT)
     assert [f.check_id for f in findings] == []
@@ -472,7 +471,7 @@ def test_an_inspect_log_with_no_scorer_is_caught():
     """`scorer` is required by the model, but a hand-edited or truncated log can lack it, and
     that is exactly the artefact whose number cannot be compared with anybody's.
     """
-    from senbonzakura.check import check_document
+    from senbonzakura_check import check_document
 
     doc = json.loads(json.dumps(INSPECT))
     doc["results"]["scores"][0]["scorer"] = None
@@ -484,7 +483,7 @@ def test_a_finding_from_a_foreign_artefact_still_carries_its_caveat():
     """The `false_positive` sentence travels into the finding regardless of which harness wrote
     the file, because the person judging it is reading the report and not the source.
     """
-    from senbonzakura.check import check_document
+    from senbonzakura_check import check_document
 
     doc = json.loads(json.dumps(INSPECT))
     doc["results"]["scores"][0]["scorer"] = None
@@ -497,7 +496,7 @@ def test_an_unknown_file_raises_rather_than_reporting_clean():
     """`check_document` inherits the adapter's refusal, which is the behaviour that matters:
     a clean report on a document nobody parsed is worse than no report.
     """
-    from senbonzakura.check import UnknownArtefactError, check_document
+    from senbonzakura_check import UnknownArtefactError, check_document
 
     with pytest.raises(UnknownArtefactError):
         check_document({"unrelated": "json"})

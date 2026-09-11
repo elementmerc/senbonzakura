@@ -45,7 +45,11 @@ import shutil
 
 import torch
 
-from . import measurement
+# THE METRIC VOCABULARY LIVES IN THE TORCH-FREE DISTRIBUTION (decision Q-29), because both sides
+# need it and only one of them has torch. The dependency runs big-to-small, which is the only
+# direction allowed: `senbonzakura_check` may never import `senbonzakura`.
+from senbonzakura_check import measurement
+
 from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write
 

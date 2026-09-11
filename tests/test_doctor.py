@@ -438,6 +438,7 @@ def test_the_default_run_probes_cheaply_and_deep_probes_further(monkeypatch):
 # missing torch. Found on 2026-09-10 by running doctor against a --no-deps wheel.
 # ─────────────────────────────────────────────────────────────────────────────────────
 
+@needs_converter
 def test_a_converter_that_could_not_start_is_not_called_incomplete_vendoring(monkeypatch):
     """The script imports torch at module level, so on an install without it the process dies.
 
@@ -459,6 +460,7 @@ def test_a_converter_that_could_not_start_is_not_called_incomplete_vendoring(mon
     assert "vendor_llama.py" not in said
 
 
+@needs_converter
 def test_a_converter_that_ran_and_listed_nothing_is_still_a_vendoring_problem(monkeypatch):
     """The distinction is the point: it ran, so the registry really is empty."""
     import senbonzakura.convert as c

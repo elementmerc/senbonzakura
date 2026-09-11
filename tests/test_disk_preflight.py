@@ -264,3 +264,50 @@ def test_an_unknown_tool_is_left_to_the_check_that_owns_it(tmp_path, model):
     n = headtohead.arms_to_run(tools=["senbon", "nonsense"], seeds=[42],
                                model=str(model), out=tmp_path / "nothing", trials=200)
     assert n == 1
+
+
+def test_a_model_directory_with_no_weight_files_is_reported_as_unsizeable(tmp_path):
+    """A directory that exists and holds no weights answers nothing about how big a copy is."""
+    d = tmp_path / "empty-model"
+    d.mkdir()
+    (d / "config.json").write_text("{}", encoding="utf-8")
+    got = headtohead.disk_warnings(model=str(d), arms=4)
+    assert got and "no weight files were found" in got[0]
+    assert headtohead.disk_complaints(out=tmp_path, model=str(d), arms=4,
+                                      free=0, host_free=0) == [], "a warning, not a refusal"
+
+
+def test_a_hub_id_is_resolved_through_the_cache_when_one_exists(monkeypatch, tmp_path):
+    """`_cached_model_dir` is what turns the documented `--model <hub-id>` into a size."""
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "model.safetensors").write_bytes(b"\0" * 2048)
+    monkeypatch.setattr(headtohead, "snapshot_download", lambda *a, **k: str(snap), raising=False)
+    import sys
+    import types
+    fake = types.ModuleType("huggingface_hub")
+    fake.snapshot_download = lambda *a, **k: str(snap)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+    assert headtohead._cached_model_dir("Qwen/Qwen3-1.7B") == snap
+
+
+def test_a_hub_id_that_is_not_cached_resolves_to_nothing(monkeypatch):
+    import sys
+    import types
+    fake = types.ModuleType("huggingface_hub")
+
+    def _missing(*a, **k):
+        raise OSError("not in the cache")
+
+    fake.snapshot_download = _missing
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+    assert headtohead._cached_model_dir("Qwen/Qwen3-1.7B") is None
+
+
+def test_a_local_path_is_never_sent_to_the_hub(tmp_path):
+    """`_cached_model_dir` is for Hub ids alone; a path with no slash, or a real directory, is not
+    a repo name and asking the Hub about it would be a network call for nothing.
+    """
+    assert headtohead._cached_model_dir(str(tmp_path)) is None
+    assert headtohead._cached_model_dir("not-a-hub-id") is None
+    assert headtohead._cached_model_dir("too/many/slashes") is None

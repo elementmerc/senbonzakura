@@ -682,3 +682,76 @@ def test_the_slim_command_names_the_packages_pip_will_leave_behind(capsys, monke
 def test_cuda_orphans_finds_the_packages_that_are_actually_the_gigabytes():
     got = envsetup.cuda_orphans(["requests", "nvidia-cublas-cu12", "triton", "torch", "NVIDIA-cudnn-cu12"])
     assert got == ["NVIDIA-cudnn-cu12", "nvidia-cublas-cu12", "triton"]
+
+
+# ── branches added 2026-09-10 that the coverage gate caught as unreached ─────────────
+
+def test_windows_with_a_card_too_old_for_any_channel_is_blocked_on_the_card():
+    """The driver is fine and the CARD is not, which is a different sentence from a stale driver."""
+    got = envsetup.plan(system="Windows", machine="AMD64", gpus=["GPU 0: K80"], driver=(13, 0),
+                        compute=(3, 0), torch_version="2.14.0", variant=None)
+    assert got[0] == "blocked"
+    assert "compute capability 3.0" in got[1]
+    assert "driver is new enough" in got[1]
+    assert got[2] is None
+
+
+def test_linux_on_a_cuda_build_with_a_card_too_old_says_why_runs_will_fail():
+    """Nothing to fix here, because the install is already the CUDA one; the card is the problem."""
+    got = envsetup.plan(system="Linux", machine="x86_64", gpus=["GPU 0: K80"], driver=(13, 0),
+                        compute=(3, 0), torch_version="2.14.0", variant=None)
+    assert got[0] == "unknown"
+    assert "no kernel image is available" in got[1]
+    assert got[2] is None
+
+
+def test_the_compute_capability_is_printed_when_it_could_be_read(capsys):
+    said = []
+    envsetup._describe("Linux", "x86_64", ["GPU 0: RTX 3060"], (13, 0), "2.14.0", None,
+                       said.append, compute=(8, 6))
+    assert any("compute capability 8.6" in line for line in said)
+
+
+def test_an_unknown_cuda_channel_reaches_the_shell_as_a_note_rather_than_a_refusal(
+        capsys, monkeypatch):
+    """A ROCm channel is legitimately outside the table: unverified, not wrong."""
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    assert envsetup.main(["--cuda", "rocm6.4"]) == 0
+    out = capsys.readouterr().out
+    assert "NOTE:" in out and "unverified" in out
+    assert "whl/rocm6.4" in out
+
+
+def test_a_card_too_old_for_the_channel_asked_for_is_warned_about(capsys, monkeypatch):
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: GTX 1080"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: (13, 0))
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: (6, 1))
+    assert envsetup.main(["--cuda", "cu132"]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING:" in out
+    assert "no kernel image is available" in out
+
+
+def test_a_pip_install_that_hangs_is_stopped_and_said_so(capsys, monkeypatch):
+    """Every other subprocess in this module was bounded and this one was not."""
+    import subprocess as sp
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    # A state that actually PRODUCES a command: no card, a default (CUDA) build, so the plan is
+    # `slim` and there is a pip line to run. With the CPU build already installed the verdict is
+    # `ok`, main returns before pip, and the test proves nothing.
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+
+    def _hang(*a, **k):
+        raise sp.TimeoutExpired(cmd="pip", timeout=envsetup.PIP_TIMEOUT)
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _hang)
+    assert envsetup.main(["--apply"]) == 2
+    assert "did not finish within" in capsys.readouterr().err

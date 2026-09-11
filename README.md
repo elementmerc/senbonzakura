@@ -9,19 +9,12 @@
 **Precision abliteration, with receipts.**
 
 <p>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/pypi/v/senbonzakura?labelColor=2b3038&color=3d4d6b" alt="PyPI" /></a>
-  <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3d4d6b?labelColor=2b3038" alt="Python 3.10 to 3.14" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura"><img src="https://img.shields.io/badge/tested%20on-Linux%20%7C%20macOS%20%7C%20Windows-3d4d6b?labelColor=2b3038" alt="Tested on Linux, macOS and Windows" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-c77b5a?labelColor=2b3038" alt="AGPL-3.0-or-later" /></a>
-</p>
-<p>
-  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/compass%20%26%20capability-every%20figure%20has%20an%20interval-3d4d6b?labelColor=2b3038" alt="Every compass and capability figure carries a confidence interval" /></a>
-  <a href="https://elementmerc.github.io/senbonzakura/guide/compass"><img src="https://img.shields.io/badge/comparison-KL%20at%20matched%20refusal-c77b5a?labelColor=2b3038" alt="Compared at matched refusal removal" /></a>
-  <a href="https://elementmerc.github.io/senbonzakura/guide/the-track"><img src="https://img.shields.io/badge/evaluation-held%20out%2C%20three--way%20split-3d4d6b?labelColor=2b3038" alt="Held-out evaluation, three-way split" /></a>
-  <a href="https://elementmerc.github.io/senbonzakura/guide/contamination"><img src="https://img.shields.io/badge/benchmarks-contamination%20checked-3d4d6b?labelColor=2b3038" alt="Contamination checked against public benchmarks" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-2600%2B-3d4d6b?labelColor=2b3038" alt="over 2600 tests" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95%25-3d4d6b?labelColor=2b3038" alt="95% branch coverage, gated in CI" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=dev&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI" /></a>
+  <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3776AB?logo=python&amp;logoColor=white&amp;labelColor=24292f" alt="Python 3.10 to 3.14" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-4C566A?labelColor=24292f" alt="Platform: Linux, macOS and Windows" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-A42E2B?logo=gnu&amp;logoColor=white&amp;labelColor=24292f" alt="Licence: AGPL-3.0-or-later" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-3166-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="3166 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-95%25-2EA043?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="95% coverage, gated in CI" /></a>
 </p>
 
 <a href="https://elementmerc.github.io/senbonzakura"><strong>Documentation</strong></a>

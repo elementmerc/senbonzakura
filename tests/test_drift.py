@@ -392,3 +392,67 @@ def test_the_base_cache_is_read_without_arbitrary_code_execution(tmp_path):
     src = inspect.getsource(drift.load_base_logprobs)
     assert "weights_only=True" in src
     assert "weights_only=False" not in src
+
+
+def test_the_base_cache_is_not_written_when_it_would_fill_the_volume(tmp_path, monkeypatch):
+    """An [N, V] float32 tensor is 311 MB at 512 prompts, and this path had no disk check.
+
+    Every other write path in this project has one. A full volume turned a finished measurement
+    into a truncated file and a traceback, and the measurement itself is unaffected by skipping
+    the cache, so the run continues and says what it did not do.
+    """
+    cache = tmp_path / "base.pt"
+    said = []
+
+    class _Usage:
+        # Smaller than the tensor being written, which here is 2 prompts over a 2-token
+        # vocabulary: 16 bytes. A "tiny" figure that is still bigger than the payload lets the
+        # write through and the test passes for the wrong reason.
+        free = 4
+
+    monkeypatch.setattr(drift.shutil, "disk_usage", lambda _p: _Usage())
+    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+                        lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "first_token_logprobs",
+                        lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
+    out = drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
+                                   ["a", "b"], "fp-1", log=said.append)
+    assert out.shape == (2, 2), "the measurement still happened"
+    assert not cache.exists(), "and nothing was written into a volume that cannot hold it"
+    assert any("NOT caching" in s for s in said)
+    assert any("measurement below is unaffected" in s for s in said)
+
+
+def test_the_base_cache_is_written_when_there_is_room(tmp_path, monkeypatch):
+    cache = tmp_path / "base.pt"
+    said = []
+
+    class _Usage:
+        free = 50 * 1024 ** 3
+
+    monkeypatch.setattr(drift.shutil, "disk_usage", lambda _p: _Usage())
+    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+                        lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "first_token_logprobs",
+                        lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
+    drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
+                             ["a", "b"], "fp-1", log=said.append)
+    assert cache.exists()
+    assert any("cached the base distributions" in s for s in said)
+
+
+def test_an_unreadable_volume_does_not_stop_the_cache_being_written(tmp_path, monkeypatch):
+    """Not knowing the free space is not a reason to refuse; it is a reason not to claim."""
+    cache = tmp_path / "base.pt"
+
+    def _boom(_p):
+        raise OSError("cannot stat")
+
+    monkeypatch.setattr(drift.shutil, "disk_usage", _boom)
+    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+                        lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "first_token_logprobs",
+                        lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
+    drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
+                             ["a", "b"], "fp-1", log=lambda _m: None)
+    assert cache.exists()

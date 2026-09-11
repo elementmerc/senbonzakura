@@ -628,3 +628,62 @@ def test_a_real_error_is_not_mistaken_for_an_out_of_memory():
          mock.patch.object(firsttoken, "last_token_logits", _logits), \
          _pytest.raises(RuntimeError, match="shape mismatch"):
         firsttoken.first_token_logprobs(_Model(), _Tok(), ["a", "b"], batch=2)
+
+
+def test_a_tokenizer_that_refuses_left_padding_falls_back_to_one_at_a_time():
+    """Cannot set it, so cannot rely on it. One prompt needs no padding, which is slower and right.
+
+    Guessing would be faster and silently wrong, and silently wrong is what produced a KL that
+    looked small and plausible for a month.
+    """
+    from unittest import mock
+
+    import torch
+
+    from senbonzakura import firsttoken
+
+    class _Enc:
+        def to(self, _device):
+            return self
+
+    class _Stubborn:
+        """Refuses the assignment, the way a wrapper with a read-only property would."""
+
+        @property
+        def padding_side(self):
+            return "right"
+
+        def __call__(self, chunk, **kw):
+            self.n = len(chunk)
+            return _Enc()
+
+    class _Model:
+        device = torch.device("cpu")
+
+    tok, widths, said = _Stubborn(), [], []
+
+    def _logits(_m, _e, _l):
+        widths.append(tok.n)
+        return torch.zeros(tok.n, 4)
+
+    with mock.patch.object(firsttoken, "render_chat", lambda _t, p: p), \
+         mock.patch.object(firsttoken, "last_token_logits", _logits):
+        out = firsttoken.first_token_logprobs(_Model(), tok, list("abcd"), batch=4,
+                                              log=said.append)
+
+    assert out.shape == (4, 4)
+    assert widths == [1, 1, 1, 1], f"it kept batching against a tokenizer it cannot trust: {widths}"
+    assert any("will not accept padding_side" in m for m in said)
+
+
+def test_a_torch_out_of_memory_error_is_recognised_by_type_not_only_by_message():
+    """The message check is the fallback for old torch; the dedicated class is the real one."""
+    import torch
+
+    from senbonzakura import firsttoken
+
+    assert firsttoken._is_out_of_memory(RuntimeError("CUDA out of memory. Tried to allocate"))
+    assert not firsttoken._is_out_of_memory(RuntimeError("shape mismatch"))
+    assert not firsttoken._is_out_of_memory(ValueError("out of memory"))
+    if hasattr(torch.cuda, "OutOfMemoryError"):
+        assert firsttoken._is_out_of_memory(torch.cuda.OutOfMemoryError("anything at all"))

@@ -14,7 +14,7 @@ generalisation test. "On the Failure of Topic-Matched Contrast Baselines in Mult
 Refusal Abliteration" (arXiv:2603.22061) argues that topic-matched contrasts cannot separate the
 two, and recommends precisely the two controls missing above.
 
-This runs three experiments:
+This runs six experiments, and `--experiment all` runs them in this order:
 
   E1  leave-one-cluster-out. Fit directions with one cluster excluded, then measure whether they
       still separate that cluster's prompts from harmless ones. A topic direction cannot separate
@@ -29,12 +29,31 @@ This runs three experiments:
       the harmless arm, KL and coherence. Varying only K is the point: the withdrawn five-seed
       comparison failed because its two arms ran different searches.
 
+  E4  the K sweep with headroom: every K at several ablation strengths, then compared AT MATCHED
+      refusal removal rather than at matched settings. E3 varies K at one strength, so a K that
+      simply cuts harder looks better; E4 is the version that can tell those apart. It measures
+      an unablated anchor first, so "percent removed" means what it says.
+
+  transfer  the same directions ablated two ways, by forward hook and by the weight bake, and the
+      refusal gap between them. These are supposed to be the same operation. If they disagree,
+      then anything optimised against the hook was optimised against something the shipped edit
+      does not do, and the search is tuning the wrong thing.
+
+  reach  does the weight edit actually arrive in the residual stream, per layer type. This is the
+      architecture check: the bake missing Gemma entirely is the failure it was written for, and
+      it reports per-layer so an edit that lands unevenly is visible rather than averaged away.
+
 E1 answers whether the directions mean anything. E2 says whether the extras beat noise. E3 says
 whether more of them is better. Run in that order; E1 is cheap and can invalidate the other two.
+`reach` is worth running first on any architecture nobody has tried before, because if the edit
+does not land there, every other number on that model is measuring nothing.
 
 Usage:
-  python tools/direction_validation.py --model <hf-id> --track <dir> --experiment e1|e2|e3|all \\
+  senbonzakura validate --model <hf-id> --track <dir> --experiment e1|e2|e3|e4|transfer|reach|all \\
       --out results.json [--device cuda] [--max-directions 8] [--seed 42]
+
+The track comes from `senbonzakura track`, which builds the fit / search / measure split these
+experiments rely on; pointing this at a bare directory of prompts will not do.
 """
 import argparse
 import contextlib
@@ -47,18 +66,37 @@ from . import cli
 
 
 def build_args(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
+    # `prog` is set because argparse otherwise reads it off sys.argv[0], which is `python -m
+    # senbonzakura` on the delegated path: the usage line then printed a command that does not
+    # include the word `validate`, so copying it ran the abliterator.
+    ap = argparse.ArgumentParser(prog="senbonzakura validate", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--track", default="track")
+    ap.add_argument("--model", required=True,
+                    help="HF model id or local path. The BASE model, not an abliterated one: "
+                         "these experiments extract directions and ablate them themselves, so a "
+                         "model that has already had refusal removed has nothing left to measure")
+    ap.add_argument("--track", default="track",
+                    help="an evaluation track directory, as built by `senbonzakura track`. It "
+                         "must hold the fit / search / measure split; a plain directory of "
+                         "prompts will not do, because every control here depends on measuring "
+                         "on rows the directions were not fitted on")
     ap.add_argument("--experiment", default="all",
-                    choices=["e1", "e2", "e3", "e4", "transfer", "reach", "all"])
+                    choices=["e1", "e2", "e3", "e4", "transfer", "reach", "all"],
+                    help="which experiment to run (default: all). e1 leave-one-cluster-out, e2 "
+                         "random-direction control, e3 K sweep at one strength, e4 K sweep "
+                         "compared at matched refusal removal, transfer hook-versus-bake "
+                         "agreement, reach whether the edit lands per layer type. Start with "
+                         "reach on an unfamiliar architecture and e1 otherwise; both are cheap "
+                         "and either can invalidate the rest")
     ap.add_argument("--strengths", default="0.3,0.5,0.7,0.85,1.0",
                     help="ablation strengths for the E4 grid. The weakest must leave refusal "
                          "partly standing or the grid has no room for K to show an effect, "
                          "which is how the first run of this sweep measured nothing.")
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--out", required=True,
+                    help="where to write the results json. One file holds every experiment that "
+                         "ran, keyed by name, so a later `--experiment` on the same path replaces "
+                         "the file rather than merging into it")
+    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
     ap.add_argument("--chat-template", dest="chat_template", default="",
                     help="a Jinja chat template for a model that ships none: a path, or the name "
                          "of one this tool bundles ('plain'). Every experiment here loads a model "
@@ -68,12 +106,29 @@ def build_args(argv=None):
                          "'unrecognized arguments' until this flag existed here")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="some architectures ship their modelling code with the weights")
-    ap.add_argument("--max-directions", type=int, default=8)
-    ap.add_argument("--direction-clusters", type=int, default=8)
-    ap.add_argument("--dir-prompts", type=int, default=128)
-    ap.add_argument("--eval-refusal", type=int, default=64)
-    ap.add_argument("--eval-kl", type=int, default=64)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--max-directions", type=int, default=8,
+                    help="the largest K the sweeps go up to (default: 8). A CEILING, not a pin: "
+                         "E3 and E4 measure every K from 1 up to it, which is the whole point of "
+                         "a sweep. Setting it to 2 does not run a K=2 arm, it runs K=1 and K=2")
+    ap.add_argument("--direction-clusters", type=int, default=8,
+                    help="how many clusters the extractor splits the harmful prompts into before "
+                         "taking a direction from each (default: 8). This is the supply of "
+                         "candidate directions; --max-directions is how many of them get used")
+    ap.add_argument("--dir-prompts", type=int, default=128,
+                    help="contrast prompts per side used to extract the directions (default: 128)")
+    ap.add_argument("--eval-refusal", type=int, default=64,
+                    help="how many held-out harmful prompts each arm is scored for refusal on "
+                         "(default: 64). Small numbers make arms look different when they are not: "
+                         "at 64, two arms have to differ by about 17 percentage points before the "
+                         "gap clears sampling noise at 95%%, so raise this before trusting a close "
+                         "call between direction counts")
+    ap.add_argument("--eval-kl", type=int, default=64,
+                    help="how many harmless prompts each arm's KL divergence is measured on "
+                         "(default: 64)")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="seed for the random-direction controls and the prompt sampling "
+                         "(default: 42). One seed is one draw: a single run cannot separate a "
+                         "real gap from a lucky one, so vary this before believing a close result")
     ap.add_argument("--directions-from", default=None,
                     help="load a [NL+1, K, H] direction set (as written by tools/rdo.py) instead "
                          "of extracting cluster directions. The rest of the harness is unchanged, "

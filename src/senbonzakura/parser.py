@@ -186,12 +186,29 @@ def build_parser():
     ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")
     ap.add_argument("--eval-refusal", type=int, default=64, help="bad-eval prompts for the refusal score")
     ap.add_argument("--eval-kl", type=int, default=64, help="harmless prompts for the KL score")
-    ap.add_argument("--trials", type=int, default=60)
+    ap.add_argument("--trials", type=int, default=60,
+                    help="how many search trials to run (default: 60). The search is NSGA-II over "
+                         "refusal against quality, so more trials buy a better-explored frontier "
+                         "rather than a better single answer; see --patience to stop early when "
+                         "it has stopped improving")
     ap.add_argument("--kl-scale", type=float, default=4.0, help="weight on KL in the objective (higher = "
                                                                 "protect quality more)")
     ap.add_argument("--layer-lo", type=float, default=0.3, help="search layers from this fraction of depth")
-    ap.add_argument("--layer-hi", type=float, default=0.8)
-    ap.add_argument("--gen-tokens", type=int, default=48)
+    ap.add_argument("--layer-hi", type=float, default=0.8,
+                    help="search layers up to this fraction of depth (default: 0.8). The window is "
+                         "a fraction rather than a layer number so the same setting means the same "
+                         "thing on models of different depths")
+    ap.add_argument("--gen-tokens", type=int, default=48,
+                    help="how many tokens each scored reply may run to (default: 48). THIS IS THE "
+                         "SETTING MOST LIKELY TO MAKE A REFUSAL RATE READ LOW. A refusal is only "
+                         "counted if the model gets far enough to say it, and on a model with an "
+                         "extended-refusal style the median refusal marker was measured at "
+                         "character 306, roughly token 77, so at 48 the marker is never generated "
+                         "rather than missed. Raising it costs generation time and breaks "
+                         "comparability with any run made at another budget, so do not guess: "
+                         "measure the model with `senbonzakura score --length-sweep`, which "
+                         "generates once and reads the rate back at every shorter budget, and "
+                         "reports NOT CONVERGED if the rate is still climbing at the top")
     ap.add_argument("--gen-batch", type=int, default=16, dest="gen_batch",
                     help="max prompts per generation batch (the ceiling the adaptive VRAM throttle "
                          "ramps up to; it shrinks below this automatically when the card is busy).")

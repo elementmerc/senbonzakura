@@ -8,10 +8,17 @@ it before it knows which command is being run, and `doctor` needs to be able to 
 machine where torch is exactly what is missing.
 """
 
-# The `.devN` counts wheels handed to another machine, not commits. `.dev1` went out for the
-# end-to-end production test; `.dev2` is the first cut carrying the checker as its own
-# distribution. Two different wheels sharing a version is how a bug gets reported against a build
-# nobody can identify, and pip's cache reuses the older one without saying so. Bump this, and
-# `checker/src/senbonzakura_check/_version.py` with it, on every dev cut. See RELEASING.md,
-# "A dev-only cut".
-__version__ = "0.4.0.dev2"
+# The `.devN` counts wheels BUILT FOR another machine, not commits.
+#
+#   .dev1  the end-to-end production test
+#   .dev2  the first two-wheel cut. Built and verified, then superseded the same hour by the
+#          Q-33 field rename, and never handed to anyone.
+#   .dev3  the two-wheel cut carrying Q-32's NOTICE and Q-33's `token_text`.
+#
+# Two different wheels sharing a version is how a bug gets reported against a build nobody can
+# identify, and pip's cache reuses the older one without saying so. Bump this, and
+# `checker/src/senbonzakura_check/_version.py` with it, on every dev cut. Note that .dev2 was
+# bumped past rather than reused even though it never left this machine: a version that was
+# built is spent, because a wheel with that name existed and could have been copied.
+# See RELEASING.md, "A dev-only cut".
+__version__ = "0.4.0.dev3"

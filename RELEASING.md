@@ -303,11 +303,13 @@ machine that is going to use it, and nowhere else.
 ### Cutting one
 
 ```sh
-# 1. Give it a version nobody can confuse with another cut.
+# 1. Give it a version nobody can confuse with another cut. BOTH files, and the suite fails if
+#    they disagree.
 #    PEP 440 dev releases sort below the release: 0.4.0.dev1 < 0.4.0. Bump the number every
 #    time. Two different wheels sharing a version is how a tester ends up reporting a bug
 #    against a build nobody can identify, and pip's cache will happily reuse the older one.
 $EDITOR src/senbonzakura/_version.py
+$EDITOR checker/src/senbonzakura_check/_version.py
 
 # 2. The blobs must be present, or --track default fails for the tester and for nobody here.
 python tools/pack_track.py --track <your held-out track>   # if src/senbonzakura/data/ is empty
@@ -324,8 +326,18 @@ rm -rf build
 python -m build --wheel
 python tools/check_wheel.py dist/senbonzakura-*.whl
 
-# 5. Hand it over.
-scp dist/senbonzakura-<version>-*.whl <host>:
+# 5. THE CHECKER'S WHEEL, which is not optional on a dev cut. `senbonzakura` declares a
+#    dependency on `senbonzakura-check`, and that name is not on PyPI, so a tester handed only
+#    the big wheel gets "No matching distribution found" and cannot install anything at all.
+#    Both wheels travel together until the name is published.
+python -m build --wheel --outdir dist-checker checker/
+
+# 6. Hand BOTH over, and install the small one first: pip resolves the dependency at install
+#    time and will go to the index for it if it is not already present.
+scp dist/senbonzakura-<version>-*.whl dist-checker/senbonzakura_check-<version>-*.whl <host>:
+#    On the far machine:
+#      pip install --no-deps senbonzakura_check-<version>-py3-none-any.whl
+#      pip install senbonzakura-<version>-*.whl
 ```
 
 `check_wheel.py` turns its release checks on by itself for a wheel naming this project at a

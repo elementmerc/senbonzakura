@@ -117,19 +117,60 @@ def problems(info):
 #: and was absent from the only place the section asks for it. That was fixed in `pyproject.toml`
 #: and nothing checked it, so the same finding could escape the same way again. MIT's "all copies
 #: or substantial portions" is the same shape for the vendored corpora notices.
+#:
+#: KEYED BY DISTRIBUTION SINCE Q-29, because this repository now builds two and they owe
+#: different things. What a distribution owes follows from what it SHIPS, and the checker ships
+#: no corpora, no evaluation track and no third-party code: it names Heretic's keyword metric in
+#: a vocabulary, which is a reference and not a copy. Applying the abliterator's table to it
+#: produced six PROBLEMs for files it must never carry, measured 2026-09-12. That is a check
+#: being confidently wrong, which is how a gate gets switched off.
 RELEASE_LICENCES = {
-    "LICENSE": "AGPL-3.0-or-later, the licence of the work",
-    "THIRD-PARTY-NOTICES.md": "the AGPL section 5(a) statement of modification",
-    "THIRD-PARTY-CORPORA.md": "attribution for the bundled corpora, which MIT and CC-BY require",
-    "APACHE-2.0.txt": ("the Apache-2.0 text, which section 4(a) requires to travel with the "
-                       "bundled evaluation track's Apache-2.0 component"),
+    "senbonzakura": {
+        "LICENSE": "AGPL-3.0-or-later, the licence of the work",
+        "THIRD-PARTY-NOTICES.md": "the AGPL section 5(a) statement of modification",
+        "THIRD-PARTY-CORPORA.md": ("attribution for the bundled corpora, which MIT and CC-BY "
+                                   "require"),
+        "APACHE-2.0.txt": ("the Apache-2.0 text, which section 4(a) requires to travel with the "
+                           "bundled evaluation track's Apache-2.0 component"),
+    },
+    # The AGPL text itself and nothing else. Whether section 5(a) also reaches a distribution
+    # that carries none of the derived code is a LICENCE READING and nobody has made it; it is
+    # in DEFERRED.md for the Licence Reader persona at the 0.4.0 gate rather than being settled
+    # here by whoever was editing a build script.
+    "senbonzakura-check": {
+        "LICENSE": "AGPL-3.0-or-later, the licence of the work",
+    },
 }
 
 RELEASE_DATA = {
-    "senbonzakura/data/corpora.bin": "python tools/build_corpora.py",
-    "senbonzakura/data/default-track.bin": "python tools/pack_track.py",
-    "senbonzakura/data/templates/plain.jinja": "it is committed; check the ignore rules",
+    "senbonzakura": {
+        "senbonzakura/data/corpora.bin": "python tools/build_corpora.py",
+        "senbonzakura/data/default-track.bin": "python tools/pack_track.py",
+        "senbonzakura/data/templates/plain.jinja": "it is committed; check the ignore rules",
+    },
+    # Deliberately empty, and the emptiness is the property the distribution exists to hold.
+    "senbonzakura-check": {},
 }
+
+
+def distribution_of(wheel: Path) -> str:
+    """The distribution a wheel belongs to, normalised the way PyPI normalises a name.
+
+    A wheel filename is `name-version-...`, and the name half spells underscores where the
+    distribution spells hyphens, so `senbonzakura_check-0.4.0...` is `senbonzakura-check`.
+    """
+    return wheel.name.partition("-")[0].replace("_", "-").lower()
+
+
+def _requirements(table: dict, wheel: Path) -> dict:
+    """The requirements for this wheel's distribution.
+
+    An unrecognised name gets the ABLITERATOR'S table, which is the strict one. The tool is
+    pointed at synthetic and deliberately mislabelled wheels by CI and by the tests, and a
+    default that relaxed for anything it did not recognise would let a real wheel through by
+    misspelling its own name.
+    """
+    return table.get(distribution_of(wheel), table["senbonzakura"])
 
 
 def missing_licences(wheel: Path) -> list[str]:
@@ -142,7 +183,7 @@ def missing_licences(wheel: Path) -> list[str]:
         names = [n for n in z.namelist() if "dist-info/licenses/" in n]
     return [f"the wheel does not carry {want}, which is {why}. Add it to `license-files` in "
             f"pyproject.toml"
-            for want, why in RELEASE_LICENCES.items()
+            for want, why in _requirements(RELEASE_LICENCES, wheel).items()
             if not any(n.endswith("/" + want) for n in names)]
 
 
@@ -162,7 +203,7 @@ def missing_release_data(wheel: Path) -> list[str]:
     with zipfile.ZipFile(wheel) as z:
         names = z.namelist()
     return [f"a release wheel must carry {want}, and this one does not. Build it with: {how}"
-            for want, how in RELEASE_DATA.items()
+            for want, how in _requirements(RELEASE_DATA, wheel).items()
             if not any(n.endswith(want) for n in names)]
 
 
@@ -242,10 +283,13 @@ def unacceptable_to_pypi(info):
     return bad
 
 
-#: This project's distribution name, normalised. The auto-detection below is deliberately narrow:
-#: it fires on OUR release artefact and on nothing else, because the tool is also pointed at
-#: synthetic wheels that are supposed to carry no corpora and no licences.
+#: This project's distribution names, normalised. The auto-detection below is deliberately
+#: narrow: it fires on OUR release artefacts and on nothing else, because the tool is also
+#: pointed at synthetic wheels that are supposed to carry no corpora and no licences.
+#: Both are listed since Q-29; each is then checked against its OWN table above, so the checker
+#: is held to what it ships rather than to what the abliterator ships.
 PROJECT = "senbonzakura"
+PROJECTS = frozenset(RELEASE_LICENCES)
 
 #: A plain dotted number and nothing else. `0.4.0` is a release; `0.4.0.dev0`, `0.4.0rc1` and
 #: anything with a local segment are not, and a wheel that is not a release is allowed to be thin.
@@ -265,9 +309,9 @@ def is_release_artefact(wheel: Path) -> bool:
     A flag can be forgotten. A version cannot: the artefact says what it is, so it is asked rather
     than the operator.
     """
-    name, _, rest = wheel.name.partition("-")
+    _, _, rest = wheel.name.partition("-")
     version = rest.split("-", 1)[0] if rest else ""
-    if name.replace("_", "-").lower() != PROJECT:
+    if distribution_of(wheel) not in PROJECTS:
         return False
     return bool(_RELEASE_VERSION.match(version))
 

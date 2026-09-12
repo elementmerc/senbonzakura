@@ -82,6 +82,61 @@ def test_somebody_else_s_wheel_is_left_alone(name):
     assert not cw.is_release_artefact(Path(name))
 
 
+# ── two distributions owe different things (Q-29) ────────────────────────────────────
+
+def _licensed(tmp_path, name, licences=("LICENSE",), entries=()):
+    """A wheel carrying licence files where `license-files` actually puts them."""
+    stem = name.split("-py3")[0]
+    return _wheel(tmp_path, name,
+                  entries=tuple(f"{stem}.dist-info/licenses/{n}" for n in licences) + tuple(entries))
+
+
+def test_the_checkers_wheel_at_a_release_version_is_also_a_release_artefact():
+    """Both distributions are ours, so neither depends on somebody remembering the flag."""
+    assert cw.is_release_artefact(Path("senbonzakura_check-0.4.0-py3-none-any.whl"))
+
+
+def test_the_checker_is_not_asked_for_corpora_it_must_never_carry(tmp_path):
+    """THE DEFECT, measured 2026-09-12 before this fix: `publish.yml` runs `--release` over
+    every wheel it is handed, and the checker's wheel came back with SIX problems demanding a
+    packed track, two corpora blobs and three licence files for third-party material it does
+    not ship. The release path could not publish a two-distribution release at all.
+    """
+    w = _licensed(tmp_path, "senbonzakura_check-0.4.0-py3-none-any.whl")
+    assert cw.main([str(w), "--release"]) == 0
+
+
+def test_the_checker_still_owes_the_licence_of_the_work(tmp_path, capsys):
+    """The narrow table is narrow, not absent. A distribution that ships no AGPL text is
+    refused exactly as the big one is, or relaxing the table would have removed the gate
+    rather than corrected it.
+    """
+    w = _wheel(tmp_path, "senbonzakura_check-0.4.0-py3-none-any.whl")
+    assert cw.main([str(w), "--release"]) == 1
+    assert "does not carry LICENSE" in capsys.readouterr().out
+
+
+def test_the_abliterator_still_owes_every_one_of_its_four_licences(tmp_path, capsys):
+    """The other half of the same change: splitting the table must not have thinned this one."""
+    w = _licensed(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl")
+    assert cw.main([str(w), "--release"]) == 1
+    out = capsys.readouterr().out
+    for owed in ("THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md", "APACHE-2.0.txt"):
+        assert owed in out, f"{owed} stopped being required"
+    assert "corpora.bin" in out and "default-track.bin" in out
+
+
+def test_an_unrecognised_wheel_under_release_gets_the_strict_table(tmp_path, capsys):
+    """A wheel whose name we do not know is held to the abliterator's requirements.
+
+    The conservative direction on purpose. If an unknown name fell through to the narrow
+    table, a real release wheel could escape every data and attribution check by misspelling
+    its own distribution name.
+    """
+    assert cw.main([str(_wheel(tmp_path, "mystery-1.0-py3-none-any.whl")), "--release"]) == 1
+    assert "corpora.bin" in capsys.readouterr().out
+
+
 def test_a_hollow_release_wheel_is_refused_with_no_flag_at_all(tmp_path, capsys):
     """THE DEFECT. This is the shape of the wheel that reached PyPI as 0.3.0."""
     w = _wheel(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl")

@@ -56,6 +56,19 @@ def _git(*args):
                           capture_output=True, text=True, check=False)
 
 
+def _require_checkout():
+    """Skip rather than fail when this tree is not a git checkout.
+
+    `git ls-files` outside a repository exits non-zero with EMPTY stdout, and a test that
+    reads that as "the file is not tracked" is reporting on its environment rather than on
+    the code. Found 2026-09-12 by running the suite from a `git archive` extract on atlas,
+    which is the same configuration that caught four of these before and which nothing runs
+    automatically. Matches the guard `test_shipped_files.py` already uses.
+    """
+    if _git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        pytest.skip("not a git checkout, so what is tracked cannot be asked here")
+
+
 def test_the_readme_actually_references_some_images():
     """Zero matches would make every assertion below vacuously true."""
     assert _refs(), "no raw.githubusercontent URLs found; has the banner moved?"
@@ -102,6 +115,7 @@ def test_the_pinned_files_are_still_tracked_on_this_branch():
     If the assets leave the working tree, the README keeps rendering from history and nobody
     notices they are gone until the pin needs moving and there is nothing to move it to.
     """
+    _require_checkout()
     tracked = set(_git("ls-files", "assets/brand").stdout.split())
     for m in _refs():
         path = m.group("path")

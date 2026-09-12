@@ -325,6 +325,45 @@ jobs:
         # one nearest to hand.
         run: pytest --cov-fail-under=94.5
 
+  archive:
+    # THE SUITE FROM A TREE THAT IS NOT A GIT CHECKOUT.
+    #
+    # Every other job here runs in a clone, so anything that shells out to git gets an answer.
+    # An sdist, a vendored copy and a distribution package are none of them a checkout, and a
+    # test that reads `git ls-files` there gets EMPTY OUTPUT and a non-zero status, which is
+    # indistinguishable from "the file is not tracked" unless somebody thought about it.
+    #
+    # Four tests have already been fixed for reporting on their environment this way, and
+    # nothing stopped the next one: on 2026-09-12 a fifth was found by hand on atlas, because
+    # this configuration had no job. It does now.
+    name: the suite runs outside a git checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Export the tree without its history
+        # `git archive` gives exactly what a consumer of a tarball gets: tracked files, no .git.
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/archive
+          git archive HEAD | tar -x -C /tmp/archive
+          test ! -e /tmp/archive/.git
+          echo "exported $(find /tmp/archive -type f | wc -l) file(s), and there is no .git"
+      - name: Install torch (CPU build)
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install from the archive
+        working-directory: /tmp/archive
+        run: |
+          pip install -e ./checker --no-deps
+          pip install -e ".[dev]"
+      - name: Run the suite there
+        working-directory: /tmp/archive
+        # No coverage gate: this job is about WHERE the tree is, and the gate is measured by the
+        # matrix rows that run in a checkout.
+        run: python -m pytest -q --no-cov
+
   checker:
     # THE TORCH-FREE DISTRIBUTION, RESOLVED FOR REAL (decision Q-29).
     #

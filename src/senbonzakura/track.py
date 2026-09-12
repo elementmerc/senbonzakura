@@ -553,7 +553,7 @@ def write_track(out: Path, harmful: dict[str, list[str]], harmless: dict[str, li
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="senbonzakura.track",
+        prog="senbonzakura track",
         description="Build an evaluation track with a fit / search / measure split that is "
                     "checked before it is written.")
     # Not required, because --audit reads an existing track and has no use for them; making

@@ -53,11 +53,11 @@ def build_parser():
     # No --chat-template, deliberately: this measures the perplexity of a fixed passage and
     # never renders a chat prompt, so there is no prompt format for one to specify.
     ap = argparse.ArgumentParser(
-        prog="senbonzakura.coherence",
+        prog="senbonzakura coherence",
         description="Measure a model's coherence as neutral-passage perplexity.",
         parents=[loader_parser(chat_template=False)])
     ap.add_argument("--out", required=True, help="results json path")
-    ap.add_argument("--label", default="")
+    ap.add_argument("--label", default="", help="a name for this run, copied into the results json. Nothing reads it: it is how you tell two result files apart later, so give it the thing that varied")
     return ap
 
 

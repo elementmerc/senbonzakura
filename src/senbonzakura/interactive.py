@@ -649,8 +649,35 @@ def _argv_for(plan):
     return argv
 
 
+#: What `senbonzakura interactive --help` prints. This command takes no flags, so there is no
+#: argparse parser here to generate it from, and for a long time that meant it answered `--help`
+#: by starting the interview instead: the one command written for somebody who has not read the
+#: flag list was the only one that would not say what it was. In a pipe it was worse, refusing
+#: with the not-a-terminal message, so `senbonzakura interactive --help | less` told a reader
+#: nothing at all.
+HELP = """usage: senbonzakura interactive
+
+A guided walk through the few choices that decide whether a run means anything.
+
+`senbonzakura kageyoshi` has dozens of flags. Most have sensible defaults; a handful decide
+whether the numbers answer the question you meant to ask, and `--help` cannot tell you which.
+This asks those, in order, with a default on every one.
+
+It never runs anything without first printing the exact command it is equivalent to, so the
+run is reproducible and the second time you can type that command instead.
+
+This command takes no options. It needs a terminal, because it reads answers; a script wants
+the flags rather than the menu, and `senbonzakura --help` lists them."""
+
+
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     """Entry point for `senbonzakura interactive`."""
+    # Before the terminal check on purpose. Asking what a command does is the one question that
+    # must be answerable without the conditions for running it, and a reader piping into `less`
+    # has no terminal on stdin.
+    if argv and ("-h" in argv or "--help" in argv):
+        log(HELP)
+        return 0
     if not is_tty(stdin or sys.stdin):
         log("senbonzakura: guided mode needs a terminal, and this input is not one.")
         log("  A script wants the flags rather than the menu. `senbonzakura --help` lists them,")

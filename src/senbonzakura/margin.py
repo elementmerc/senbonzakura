@@ -136,7 +136,7 @@ def resolve_skips(track, skip_harmful, skip_harmless, log=None):
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="senbonzakura.margin",
+        prog="senbonzakura compass",
         description="Criterion-free harm discrimination via the HARMFUL/BENIGN logit margin.",
         parents=[loader_parser()])
     ap.add_argument("--harmful", required=True, help="dataset of harmful prompts (column 'text')")
@@ -151,7 +151,7 @@ def build_parser():
                          "the ignored results/ tree, not in committed evidence.")
     ap.add_argument("--no-margins", dest="margins", action="store_const", const="",
                     help="do not retain the per-prompt margins")
-    ap.add_argument("--label", default="")
+    ap.add_argument("--label", default="", help="a name for this run, copied into the results json. Nothing reads it: it is how you tell two result files apart later, so give it the thing that varied")
     ap.add_argument("--n", type=int, default=None,
                     help="prompts to score per arm. The default is EVERY held-out prompt, taking "
                          "the smaller of the two arms so they stay balanced, because a fixed "
@@ -173,7 +173,8 @@ def build_parser():
                          f"its winning trial from. Read from --track when given; otherwise "
                          f"defaults to {LEGACY_SKIP_HARMFUL} "
                          f"(0 to score the selection set too, which is not a held-out number)")
-    ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--batch", type=int, default=16,
+                    help="prompts per forward pass (default: 16). Lower it if the card runs out of memory")
     ap.add_argument("--seed", type=int, default=42,
                     help="seed for the bootstrap resampling, recorded in the result")
     ap.add_argument("--bootstrap", type=int, default=2000,

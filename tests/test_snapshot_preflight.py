@@ -191,3 +191,102 @@ def test_no_hub_at_all_is_reported_rather_than_raised(monkeypatch):
     monkeypatch.setattr(cli, "_hub_metadata_fns", lambda: (None, None, "huggingface_hub is not installed (x)"))
     got, why = cli.estimate_snapshot_bytes("some/model")
     assert got is None and "not installed" in why
+
+
+# ── the real body, not the patched-away one ──────────────────────────────────────────────────
+#
+# The tests above monkeypatch `estimate_snapshot_bytes` to drive the caller's branches, which
+# left the function itself unexecuted: the macOS CI row, which runs fewest tests, fell to 94.45%
+# against a 95 floor and named exactly these lines. Patching a function away to test its caller
+# is fine; doing only that and calling the feature tested is not.
+
+class _FakeTensor:
+    def __init__(self, dtype, shape):
+        self.dtype, self.shape = dtype, shape
+
+
+class _FakeFile:
+    def __init__(self, tensors):
+        self.tensors = tensors
+
+
+class _FakeMeta:
+    def __init__(self, tensors):
+        self.files_metadata = {"model.safetensors": _FakeFile(tensors)}
+
+
+def _fns(monkeypatch, remote=None, local=None, error=None):
+    monkeypatch.setattr(cli, "_hub_metadata_fns", lambda: (remote, local, error))
+
+
+def test_the_real_body_sums_a_hub_repo(monkeypatch):
+    tensors = {
+        "model.layers.0.self_attn.o_proj.weight": _FakeTensor("BF16", [128, 128]),
+        "model.layers.0.mlp.down_proj.weight": _FakeTensor("BF16", [128, 256]),
+        "model.layers.0.mlp.up_proj.weight": _FakeTensor("BF16", [256, 128]),   # not a writer
+    }
+    _fns(monkeypatch, remote=lambda model, token=None: _FakeMeta(tensors))
+    got, how = cli.estimate_snapshot_bytes("some/repo")
+    assert got == (128 * 128 + 128 * 256) * 2
+    assert how == "the Hub's safetensors metadata"
+
+
+def test_the_real_body_reads_a_local_directory(monkeypatch, tmp_path):
+    """A path that exists on disk takes the local function, and says so, because a reader of the
+    log needs to know whether the number came off this machine or off the Hub.
+    """
+    tensors = {"model.layers.0.self_attn.o_proj.weight": _FakeTensor("F32", [64, 64])}
+    _fns(monkeypatch, remote=None, local=lambda model: _FakeMeta(tensors))
+    got, how = cli.estimate_snapshot_bytes(str(tmp_path))
+    assert got == 64 * 64 * 4
+    assert how == "the local checkpoint's headers"
+
+
+def test_a_repository_with_no_safetensors_is_reported(monkeypatch):
+    _fns(monkeypatch, remote=lambda model, token=None: _FakeMeta({}))
+    got, why = cli.estimate_snapshot_bytes("some/repo")
+    assert got is None and "no safetensors metadata" in why
+
+
+def test_an_unknown_dtype_reaches_the_caller_as_a_reason(monkeypatch):
+    tensors = {"model.layers.0.self_attn.o_proj.weight": _FakeTensor("E3M2_X", [8, 8])}
+    _fns(monkeypatch, remote=lambda model, token=None: _FakeMeta(tensors))
+    got, why = cli.estimate_snapshot_bytes("some/repo")
+    assert got is None and "does not know the width of" in why
+
+
+def test_a_raising_hub_becomes_a_reason_not_a_traceback(monkeypatch):
+    """Auth, network, a repo with no safetensors at all. A pre-flight is not allowed to be the
+    thing that ends a run it was added to protect.
+    """
+    def boom(model, token=None):
+        raise OSError("401 Client Error: gated repo")
+
+    _fns(monkeypatch, remote=boom)
+    got, why = cli.estimate_snapshot_bytes("some/gated")
+    assert got is None
+    assert why.startswith("OSError:") and "gated" in why
+
+
+def test_the_token_is_passed_through(monkeypatch):
+    """A gated repo needs it to read even metadata, so a run that has one must use it."""
+    seen = {}
+
+    def remote(model, token=None):
+        seen["token"] = token
+        return _FakeMeta({"model.layers.0.self_attn.o_proj.weight": _FakeTensor("BF16", [8, 8])})
+
+    _fns(monkeypatch, remote=remote)
+    sentinel = "not-a-real-token"
+    cli.estimate_snapshot_bytes("some/repo", token=sentinel)
+    assert seen["token"] == sentinel
+
+
+def test_the_hub_functions_resolve_on_this_machine():
+    """`_hub_metadata_fns` itself, run for real. It is the seam every test above replaces, so
+    nothing else would execute it.
+    """
+    remote, local, error = cli._hub_metadata_fns()
+    assert error is None, error
+    assert callable(remote)
+    assert local is None or callable(local)

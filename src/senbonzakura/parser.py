@@ -316,7 +316,8 @@ def build_parser():
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "
                          "edits every row as before; e.g. 0.3 leaves the quietest 30%% of rows pristine "
                          "for less collateral. A/B against 0.0 per model to see if coherence improves "
-                         "at equal refusal removal.")
+                         "at equal refusal removal. Composes with --ablation-rounds: the rounds "
+                         "honour the same mask, so the rows left out stay pristine.")
     ap.add_argument("--warm-start", action=argparse.BooleanOptionalAction, default=True,
                     help="seed the search with one sane diff-of-means config (mid-late window, full "
                          "projection, single direction) so NSGA-II/TPE begin from a known-decent point "

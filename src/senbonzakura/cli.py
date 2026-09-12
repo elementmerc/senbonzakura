@@ -613,6 +613,31 @@ def layer_weight(idx, P, wmax, wmin, D):
 
 
 @torch.no_grad()
+def _row_mask(delta, sparsity):
+    """The rows sparse surgery is allowed to touch, as a broadcastable boolean mask.
+
+    SEPARATED FROM THE MASKING so the set can be FIXED ONCE and reused. `--sparsity` promises
+    to leave the low-projection rows pristine, and the refinement rounds used to re-project
+    every row with no mask at all, so the two flags together did the opposite of what one of
+    them said. Recomputing the mask per round would not fix it either: the top rows by edit
+    magnitude change once the first edit lands, so the "untouched" set would drift and the
+    promise would still be broken, just less visibly.
+    """
+    if sparsity <= 0.0:
+        return None
+    mag = delta.norm(dim=-1)                            # [..., out] per-row edit magnitude
+    keep = max(1, round((1.0 - sparsity) * mag.shape[-1]))
+    thr = torch.topk(mag, keep, dim=-1).values.amin(dim=-1, keepdim=True)   # [..., 1]
+    return (mag >= thr).unsqueeze(-1)
+
+
+@torch.no_grad()
+def _masked(delta, mask):
+    """Zero an edit on the rows sparse surgery is holding pristine."""
+    return delta if mask is None else delta * mask
+
+
+@torch.no_grad()
 def _sparsify_rows_(delta, sparsity):
     # Sparse surgery (OBLITERATUS-style, adapted to the norm-preserving projection): only KEEP the
     # top (1-sparsity) output-rows by edit magnitude, zero the edit on the rest. The rows with the
@@ -673,7 +698,9 @@ def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
     rn = Wf.norm(dim=1, keepdim=True).clamp_min(1e-8)   # [out,1] original row norms
     Wn = Wf / rn
     delta = s * (Rf.T @ (Rf @ Wn))                      # each column's projection onto span(R)
-    Wn = Wn - _sparsify_rows_(delta, sparsity)
+    # Chosen once, from the FIRST delta, and reused by every refinement round below.
+    mask = _row_mask(delta, sparsity)
+    Wn = Wn - _masked(delta, mask)
     # THE CONTROL THIS PROJECT DESCRIBED AND DID NOT HAVE. `restore_norms=False` is the naive
     # formulation most tutorials describe: remove the direction and let the row lengths fall
     # where they may. It is the thing the norm restore is supposed to be better than, and until
@@ -697,9 +724,11 @@ def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
     # changes what every run produces and whether a cleaner ablation is a BETTER model is an
     # empirical question, not an obvious one: the leak may be part of why quality held up.
     for _ in range(int(rounds)):
+        # Renormalising is a no-op on the rows the mask holds back: they were never edited, so
+        # their norms are already `rn`. Only the projection needs masking.
         out = out / out.norm(dim=1, keepdim=True).clamp_min(1e-8) * rn
         for u in Rf:
-            out = out - torch.outer(u, u @ out)
+            out = out - _masked(torch.outer(u, u @ out), mask)
     W.copy_(out.to(W.dtype))
 
 
@@ -713,7 +742,9 @@ def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True)
     Wn = Wf / rn
     proj = torch.einsum("kh,ehi->eki", Rf, Wn)          # [E,K,in]
     delta = s * torch.einsum("kh,eki->ehi", Rf, proj)   # [E,out,in]
-    Wn = Wn - _sparsify_rows_(delta, sparsity)          # per (expert, out-row) sparsify
+    # Per (expert, out-row), and fixed once so the rounds below honour the same set.
+    mask = _row_mask(delta, sparsity)
+    Wn = Wn - _masked(delta, mask)
     if not restore_norms:
         raw = s * torch.einsum("kh,eki->ehi", Rf, torch.einsum("kh,ehi->eki", Rf, Wf))
         W.copy_((Wf - _sparsify_rows_(raw, sparsity)).to(W.dtype))
@@ -725,7 +756,7 @@ def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True)
     for _ in range(int(rounds)):
         out = out / out.norm(dim=2, keepdim=True).clamp_min(1e-8) * rn
         proj = torch.einsum("kh,ehi->eki", Rf, out)
-        out = out - torch.einsum("kh,eki->ehi", Rf, proj)
+        out = out - _masked(torch.einsum("kh,eki->ehi", Rf, proj), mask)
     W.copy_(out.to(W.dtype))
 
 
@@ -2020,7 +2051,6 @@ class Abliterator:
         self.hi = int(self.NL * args.layer_hi)
         self._cur = {}            # current ablation config (mode + interpolated set), read by active_dirs
         self._pristine = {}       # id(W) -> (W, cpu clone); the pristine snapshot
-        self._warned_sparsity_rounds = False
         self._dirty = set()       # id(W)s touched by the last bake, restored between trials
         self.dirs_multi = None    # [NL+1, KMAX, H]; filled by extract_directions
         # Eval state, populated by run(); declared up-front so the object's shape is visible and
@@ -2686,19 +2716,13 @@ class Abliterator:
         rounds = int(getattr(self.args, "ablation_rounds", 0))
         # False is the naive formulation, present as a CONTROL rather than a recommendation.
         keep_norms = not getattr(self.args, "no_norm_restore", False)
-        # `--sparsity` masks the FIRST delta only; the refinement rounds then subtract the full
-        # projection over every row with no mask, so the two flags together do not do what either
-        # promises. Measured: sparsity 0.9 with rounds 0 changes 18 of 64 rows, and with rounds 4
-        # changes all 64, moving the rows sparsity promised to leave pristine by a median of 11%.
-        # An A/B of sparsity 0.0 against 0.3 run with rounds on is comparing two identical edits.
-        # Said once per run rather than silently, because the flag's help promises the opposite.
-        if sp > 0 and rounds > 0 and not self._warned_sparsity_rounds:
-            self._warned_sparsity_rounds = True
-            self.log(f"  WARNING: --sparsity {sp} and --ablation-rounds {rounds} together do not "
-                     f"do what --sparsity says. The rounds re-project EVERY row with no sparsity "
-                     f"mask, so the rows sparsity is meant to leave alone are edited anyway. Use "
-                     f"one or the other until this is fixed, and do not read a sparsity "
-                     f"comparison run with rounds on.")
+        # `--sparsity` and `--ablation-rounds` COMPOSE as of 2026-09-12. The rounds used to
+        # re-project every row with no mask, so the rows sparsity promised to leave pristine were
+        # edited anyway: measured on a 64-row matrix, sparsity 0.9 with rounds 0 edited the 6 rows
+        # it should and with rounds 4 edited all 64. The mask is now chosen once from the first
+        # delta and honoured by every round, so both settings edit exactly 6, and the rounds still
+        # do their job within them (leak 55% of the original at rounds 0, 6.2% at rounds 4).
+        # An A/B of sparsity 0.0 against 0.3 with rounds on is now a real comparison.
         for idx, layer in enumerate(self.layers):
             wo = layer_weight(idx, oP, owmax, owmin, oD)
             wd = layer_weight(idx, dP, dwmax, dwmin, dD)

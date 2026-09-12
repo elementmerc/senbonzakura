@@ -255,19 +255,56 @@ def _axis_separation(bad, good, v, stat=None):
     return stat.fn(pb, pg)
 
 
-def _halves(n, seed):
+def _request_keys(rows):
+    """One request key per row, in row order, for grouping a held-out split.
+
+    Templates are discovered from the rows given, so this says nothing about a corpus it was
+    not shown. A corpus with no shared template structure yields one group per distinct
+    prompt, which makes the grouped split identical to a row split: the right answer there,
+    and the reason this is safe to apply unconditionally.
+    """
+    from . import track
+    templates = track.discover_templates(rows)
+    return [track.request_key(r, templates) for r in rows]
+
+
+def _halves(n, seed, keys=None):
     """Split n row indices into two disjoint halves, the same way every time for a given seed.
 
     Seeded through an explicit generator rather than the global RNG, because the caller runs
     inside a search whose own draws would otherwise decide which rows a direction was fitted on,
     making a rerun of the same trial a different measurement.
+
+    WITH `keys`, WHOLE REQUESTS MOVE TOGETHER, and that is the difference between a held-out
+    half and a held-out-looking one. This corpus crosses seven templates with every seed, so
+    "Explain in detail how to X" and "Write a step by step guide to X" are two rows and one
+    request. Permuting raw row indices puts variants of one request on both sides, and the
+    direction is then scored on a rephrasing of what it was fitted on. That is the exact leak
+    `track.py` exists to prevent, one layer down, and `abliteration.json` was recording
+    `separation_held_out: true` over it.
+
+    `keys` is one request key per row, in row order. Groups are dealt to whichever side is
+    smaller so the halves stay close in size despite groups differing in width.
     """
     g = torch.Generator().manual_seed(int(seed) & 0x7FFFFFFF)
-    perm = torch.randperm(int(n), generator=g)
-    return perm[: int(n) // 2], perm[int(n) // 2:]
+    if keys is None:
+        perm = torch.randperm(int(n), generator=g)
+        return perm[: int(n) // 2], perm[int(n) // 2:]
+
+    by_request = {}
+    for row, key in enumerate(keys):
+        by_request.setdefault(key, []).append(row)
+    # Sorted so the group ORDER does not depend on dictionary insertion, then permuted, so the
+    # split is a function of the seed and the corpus and of nothing else.
+    groups = [by_request[k] for k in sorted(by_request)]
+    fit, score = [], []
+    for gi in torch.randperm(len(groups), generator=g).tolist():
+        (fit if len(fit) <= len(score) else score).extend(groups[gi])
+    return (torch.tensor(sorted(fit), dtype=torch.long),
+            torch.tensor(sorted(score), dtype=torch.long))
 
 
-def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None):
+def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None, keys=None):
     """How well the direction these rows propose separates rows it was NOT fitted on.
 
     THE DEFECT THIS REPLACES, because it is the whole reason the filter was worthless.
@@ -286,7 +323,7 @@ def _held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None)
     candidate rather than reading a Cohen's d computed over three rows.
     """
     n = int(bad_rows.shape[0])
-    fit_idx, score_idx = _halves(n, seed)
+    fit_idx, score_idx = _halves(n, seed, keys)
     if len(fit_idx) < MIN_HELD_OUT_ROWS or len(score_idx) < MIN_HELD_OUT_ROWS:
         return None
     v = _orth_to(bad_rows[fit_idx].mean(0) - good_fit.mean(0), basis)
@@ -453,7 +490,8 @@ def match_closeness(cluster_rows, good_rows, basis, k, seed=0):
     return float(chosen.mean()) / scale
 
 
-def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None):
+def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, stat=None,
+                                 keys=None):
     """`_held_out_separation` against matched controls rather than the harmless set at large.
 
     The controls are chosen using the FIT half of the cluster only, so the rows a candidate is
@@ -466,7 +504,7 @@ def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, st
     the imbalance that limits Candidate A, rather than merely tolerating it.
     """
     n = int(bad_rows.shape[0])
-    fit_idx, score_idx = _halves(n, seed)
+    fit_idx, score_idx = _halves(n, seed, keys)
     if len(fit_idx) < MIN_HELD_OUT_ROWS or len(score_idx) < MIN_HELD_OUT_ROWS:
         return None
     fit_rows = bad_rows[fit_idx]
@@ -484,7 +522,7 @@ def _matched_held_out_separation(bad_rows, good_fit, good_score, basis, seed, st
 
 
 def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_null, stat=None,
-                           matched=False):
+                           matched=False, keys=None):
     """What a direction carrying nothing scores, measured through the identical path.
 
     The threshold above it was picked once and never checked against a measurement, which is the
@@ -519,8 +557,12 @@ def _null_separation_floor(bad_all, good_fit, good_score, basis, size, seed, n_n
     for j in range(n_null):
         g = torch.Generator().manual_seed((int(seed) + 7919 * (j + 1)) & 0x7FFFFFFF)
         idx = torch.randperm(int(bad_all.shape[0]), generator=g)[:size]
+        # The null's rows are split by request too. A floor measured under a different split
+        # rule from the candidates is a floor for a different question, which is the exact
+        # failure Q-23 found in this floor once already.
         s = score(bad_all[idx], good_fit, good_score, basis,
-                  int(seed) + 104729 * (j + 1), stat)
+                  int(seed) + 104729 * (j + 1), stat,
+                  keys=None if keys is None else [keys[i] for i in idx.tolist()])
         if s is not None:
             seps.append(float(s))
     if not seps:
@@ -2069,6 +2111,14 @@ class Abliterator:
                 f"datasets at {bad_dir} and {good_dir_path}. Direction extraction needs both.")
         Rb = self.collect_resid(bad)                         # [NL+1, Nb, H] cpu float32
         Rg = self.collect_resid(good)                        # [NL+1, Ng, H]
+        # WHICH ROWS ARE THE SAME REQUEST. The held-out split below moves whole requests rather
+        # than rows, because this corpus crosses seven templates with every seed: splitting by
+        # row puts a rephrasing of a fitted prompt into the half that is supposed to be unseen,
+        # and the run then records `separation_held_out: true` over it. Templates are discovered
+        # from the rows themselves, so a corpus built without them degrades to one group per
+        # distinct prompt, which is the old behaviour and is the correct answer for that corpus.
+        bad_keys = _request_keys(bad)
+        ctl_source = good
         mb = Rb.mean(1); mg = Rg.mean(1)                     # [NL+1, H]
         # The pool matched scoring draws its controls from. It is `Rg` unless a set written on the
         # harmful side's own subjects was supplied, and the distinction matters because matching
@@ -2097,11 +2147,15 @@ class Abliterator:
                     f"scoring draws its controls from, so an empty one would silently fall back "
                     f"to the ordinary harmless set and report matched figures taken against it.")
             Rc = self.collect_resid(matched_rows)            # [NL+1, Nc, H]
+            ctl_source = matched_rows
             log(f"matched control pool: {len(matched_rows)} prompts from {matched_src}")
             if len(matched_rows) < 2 * MIN_HELD_OUT_ROWS:
                 log(f"  NOTE: {len(matched_rows)} matched prompts cannot be split into two halves "
                     f"of {MIN_HELD_OUT_ROWS}, so candidates fall back to in-sample scoring and "
                     f"the separation filter is not evidence about them.")
+        # The control pool the halves are drawn from, matching `ctl` inside the layer loop.
+        ctl_keys = _request_keys(ctl_source if matched_scoring else good)
+
         # Refinement 3 (Heretic `orthogonalize_direction`): keep only the component ORTHOGONAL to
         # the good direction, so ablation does not tear out good behaviour itself (a major cause of
         # our early high harmless KL). clamp_min guards a degenerate (near-zero) mean from producing
@@ -2239,7 +2293,7 @@ class Abliterator:
                 # on. Splitting `Rg` here while drawing controls from `Rc` would have measured the
                 # floor on one corpus and the candidates on another.
                 ctl = Rc[li] if matched_scoring else Rg[li]
-                gi_fit, gi_score = _halves(int(ctl.shape[0]), args.seed)
+                gi_fit, gi_score = _halves(int(ctl.shape[0]), args.seed, ctl_keys)
                 good_fit, good_score = ctl[gi_fit], ctl[gi_score]
                 held_out_usable = (len(gi_fit) >= MIN_HELD_OUT_ROWS
                                    and len(gi_score) >= MIN_HELD_OUT_ROWS)
@@ -2280,7 +2334,7 @@ class Abliterator:
                         value, _null_samples = _null_separation_floor(
                             Rb[li], good_fit, good_score, basis, cand_size,
                             args.seed + li, NULL_DIRECTIONS_PER_CANDIDATE, sep_stat,
-                            matched=matched_scoring)
+                            matched=matched_scoring, keys=bad_keys)
                         floors_by_size[cand_size] = float(value)
                     null_floor = floors_by_size.get(cand_size, 0.0)
                     threshold = max(sep_stat.threshold, null_floor)
@@ -2310,7 +2364,9 @@ class Abliterator:
                         score_fn = (_matched_held_out_separation if matched_scoring
                                     else _held_out_separation)
                         sep = score_fn(rows, good_fit, good_score, basis,
-                                       args.seed + li + int(c), sep_stat)
+                                       args.seed + li + int(c), sep_stat,
+                                       keys=[bad_keys[i] for i in
+                                             (labels == c).nonzero(as_tuple=True)[0].tolist()])
                         if sep is None:
                             continue
                     else:

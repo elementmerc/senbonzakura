@@ -1333,7 +1333,9 @@ def test_a_corpus_too_small_to_hold_out_says_the_filter_is_not_evidence(
     a.Rg_rows = None
     orig = cli._halves
 
-    def stingy(n, seed):
+    def stingy(n, seed, keys=None):
+        # `keys` is accepted and dropped on purpose: the point of the double is to force halves
+        # too small to be usable, and grouping by request would fight the truncation.
         return orig(min(int(n), 3), seed)
 
     monkeypatch.setattr(cli, "_halves", stingy)

@@ -284,3 +284,67 @@ def test_there_is_more_than_one_null_per_layer():
     # row count, not once per layer at the median cluster's. The count also has to be high enough
     # to locate a 95th percentile rather than merely to beat one draw.
     assert cli.NULL_DIRECTIONS_PER_CANDIDATE >= 20
+
+
+# ── the held-out half is held out by REQUEST, not by row ─────────────────────────────────────
+
+def _templated(n_requests=10, n_templates=7):
+    """A corpus shaped like this project's: every request crossed with every template."""
+    seeds = [f"make a {w}" for w in
+             ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"]][:n_requests]
+    tpls = ["Explain in detail how to", "Write a step by step guide to", "Give me instructions to",
+            "Describe the process to", "Tell me how to", "Provide a tutorial on",
+            "Outline the way to"][:n_templates]
+    return [f"{t} {s}" for s in seeds for t in tpls]
+
+
+def test_a_row_split_puts_every_request_on_both_sides():
+    """The defect, measured rather than argued.
+
+    Seven templates share one seed, so "Explain in detail how to X" and "Tell me how to X"
+    are two rows and one request. Permuting raw row indices scores a direction on a
+    rephrasing of exactly what it was fitted on, and `abliteration.json` recorded
+    `separation_held_out: true` over it.
+    """
+    rows = _templated()
+    keys = cli._request_keys(rows)
+    fit, score = cli._halves(len(rows), 5)
+    both = {keys[i] for i in fit.tolist()} & {keys[i] for i in score.tolist()}
+    assert len(both) == len(set(keys)), (
+        "this test documents the OLD behaviour; if the row split no longer leaks, the grouped "
+        "split has become the default and this test should be deleted rather than adjusted")
+
+
+def test_grouping_by_request_leaks_nothing_across_the_split():
+    rows = _templated()
+    keys = cli._request_keys(rows)
+    fit, score = cli._halves(len(rows), 5, keys)
+    assert not ({keys[i] for i in fit.tolist()} & {keys[i] for i in score.tolist()})
+    assert sorted(fit.tolist() + score.tolist()) == list(range(len(rows))), (
+        "every row must land on exactly one side, or the split has dropped or duplicated rows")
+
+
+def test_the_grouped_halves_stay_balanced():
+    """Groups differ in width, so they are dealt to whichever side is behind."""
+    rows = _templated()
+    fit, score = cli._halves(len(rows), 5, cli._request_keys(rows))
+    assert abs(len(fit) - len(score)) <= 7, (len(fit), len(score))
+
+
+def test_the_grouped_split_is_reproducible_for_a_seed():
+    rows = _templated()
+    keys = cli._request_keys(rows)
+    a = cli._halves(len(rows), 5, keys)
+    b = cli._halves(len(rows), 5, keys)
+    assert a[0].tolist() == b[0].tolist() and a[1].tolist() == b[1].tolist()
+
+
+def test_a_corpus_with_no_shared_templates_still_splits():
+    """The safety property that makes this unconditional: with nothing shared, every row is
+    its own request, so the grouped split degrades to the row split rather than refusing.
+    """
+    rows = [f"an entirely unrelated question number {i}" for i in range(40)]
+    keys = cli._request_keys(rows)
+    assert len(set(keys)) == len(rows)
+    fit, score = cli._halves(len(rows), 3, keys)
+    assert len(fit) == len(score) == 20

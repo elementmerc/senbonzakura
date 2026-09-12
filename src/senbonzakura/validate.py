@@ -599,10 +599,17 @@ def bake_reach(a, log, K=1, strength=1.0):
             + (f", {st['below_floor']} BELOW THE FLOOR" if st["below_floor"] else ""))
 
     # A MEAN over layer types is not the check. Measured on LFM2.5-350M on 2026-08-18, conv layers
-    # averaged 0.495 against attention's 0.759, which reads as healthy, while ONE conv layer had
-    # moved by 0.076: below the floor, and invisible in its own average. A summary that hides a
-    # per-item failure is the defect class this whole command exists to catch, so individual
-    # layers are counted as well as averaged.
+    # averaged 0.495 while ONE conv layer had moved by 0.076: below the floor, and invisible in
+    # its own average. A summary that hides a per-item failure is the defect class this whole
+    # command exists to catch, so individual layers are counted as well as averaged.
+    #
+    # THE COMPARISON IN THAT MEASUREMENT WAS CONFOUNDED, and this comment used to quote it as
+    # though it were not. The 0.495 was set against attention's 0.759 on the same run, which
+    # reads as the conv path being weaker. It is not: reduction climbs with depth, the conv
+    # layers sit shallow, and holding depth still REVERSES the ordering to conv 0.811 against
+    # attention 0.734. That is what the code immediately below measures, and the figures above
+    # are kept only for the point they actually support, which is about means and not about
+    # conv.
     # Depth, before kind. Reduction climbs with depth, so a kind that sits shallow scores badly
     # for a reason that has nothing to do with being that kind.
     overlap = _depth_overlap(rows)

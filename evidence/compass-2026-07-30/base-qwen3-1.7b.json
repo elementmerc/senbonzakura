@@ -22,49 +22,49 @@
     "HARMFUL": [
       {
         "id": 39,
-        "text": "H"
+        "token_text": "H"
       },
       {
         "id": 71,
-        "text": "h"
+        "token_text": "h"
       },
       {
         "id": 472,
-        "text": " H"
+        "token_text": " H"
       },
       {
         "id": 27756,
-        "text": " harmful"
+        "token_text": " harmful"
       },
       {
         "id": 90971,
-        "text": " Harm"
+        "token_text": " Harm"
       }
     ],
     "BENIGN": [
       {
         "id": 33,
-        "text": "B"
+        "token_text": "B"
       },
       {
         "id": 7355,
-        "text": " Ben"
+        "token_text": " Ben"
       },
       {
         "id": 7964,
-        "text": "ben"
+        "token_text": "ben"
       },
       {
         "id": 24566,
-        "text": "Ben"
+        "token_text": "Ben"
       },
       {
         "id": 64209,
-        "text": " benign"
+        "token_text": " benign"
       },
       {
         "id": 82834,
-        "text": " BEN"
+        "token_text": " BEN"
       }
     ]
   },
@@ -115,12 +115,12 @@
       "top_tokens": [
         {
           "id": 39,
-          "text": "H",
+          "token_text": "H",
           "count": 4429
         },
         {
           "id": 33,
-          "text": "B",
+          "token_text": "B",
           "count": 75
         }
       ]
@@ -134,12 +134,12 @@
       "top_tokens": [
         {
           "id": 33,
-          "text": "B",
+          "token_text": "B",
           "count": 3671
         },
         {
           "id": 39,
-          "text": "H",
+          "token_text": "H",
           "count": 833
         }
       ]

@@ -697,7 +697,7 @@ def readout(rows, verdict_ids, decode, top=READOUT_TOP_TOKENS):
         "verdict_prob_mass_median": round(mass[n // 2], 6),
         "mean_p_harmful": round(sum(r["p_harmful"] for r in rows) / n, 6),
         "mean_p_benign": round(sum(r["p_benign"] for r in rows) / n, 6),
-        "top_tokens": [{"id": i, "text": decode([i]), "count": c} for i, c in ranked],
+        "top_tokens": [{"id": i, "token_text": decode([i]), "count": c} for i, c in ranked],
         # The verdict this arm's own numbers deserve, stated in the record rather than left for a
         # reader to derive from two decimals they may not know how to read.
         "suspect": bool(mass_mean < READOUT_SUSPECT_MASS or agree == 0.0),
@@ -994,8 +994,12 @@ def main(argv=None):
         # a tokenizer change that moves HARMFUL onto a different first token produces a
         # perfectly plausible number for a different measurement.
         "verdict_tokens": {
-            "HARMFUL": [{"id": i, "text": tok.decode([i])} for i in hid],
-            "BENIGN": [{"id": i, "text": tok.decode([i])} for i in bid],
+            # `token_text` and not `text` (decision Q-33): `text` is the likeliest field name
+            # for a leaked prompt, and the prompt-artefact gate could not ban it while our own
+            # artefacts used it for single decoded tokens. The value here is one token, such as
+            # 'H' or ' Ben', and never prose.
+            "HARMFUL": [{"id": i, "token_text": tok.decode([i])} for i in hid],
+            "BENIGN": [{"id": i, "token_text": tok.decode([i])} for i in bid],
         },
         "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device)),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
@@ -1161,7 +1165,7 @@ def main(argv=None):
             print(f"MARGIN_READOUT {a.label} arm={arm} "
                   f"argmax_is_verdict={ra['argmax_is_verdict']*100:.1f}% "
                   f"verdict_prob_mass={ra['verdict_prob_mass_mean']:.4f} "
-                  f"top={[t['text'] for t in ra['top_tokens'][:3]]}")
+                  f"top={[t['token_text'] for t in ra['top_tokens'][:3]]}")
     r = res["readout"]["harmful"]
     suspect_arms = suspect_readout_arms(res)
     if suspect_arms:

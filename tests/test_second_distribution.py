@@ -206,6 +206,44 @@ def test_the_checker_ships_its_own_licence(checker_cfg):
     assert licence.read_text(encoding="utf-8") == (ROOT / "LICENSE").read_text(encoding="utf-8")
 
 
+def test_the_checker_ships_a_notice_saying_it_carries_no_third_party_code(checker_cfg):
+    """DECISION Q-32 (2026-09-12). The question an auditor asks of an AGPL distribution is what
+    third-party code is in it and whether section 5(a) applies. For this one the answer is
+    "none", and that answer was previously only reachable by reading the other distribution's
+    notices and noticing which files they name.
+
+    THE OPTION THAT WAS REJECTED, recorded because it is the intuitive one: shipping
+    THIRD-PARTY-NOTICES.md verbatim. That file states "Senbonzakura is a modified work based in
+    part on Heretic" and describes `src/senbonzakura/metrics.py`, which this distribution does
+    not contain. Reproducing it here would tell a reader something untrue about what they
+    installed, and 0.3.0 was yanked for a notices problem in the other direction, so neither
+    direction is free.
+    """
+    notice = CHECKER / "NOTICE"
+    assert notice.is_file() and not notice.is_symlink(), (
+        "a symlink does not reliably survive an sdist, which is the same reason LICENSE is a "
+        "real file here")
+    assert "NOTICE" in checker_cfg["project"]["license-files"], (
+        "the NOTICE must be in `license-files` or it never reaches `dist-info/licenses/`, "
+        "which is the only copy the person who installed this package has")
+    text = notice.read_text(encoding="utf-8")
+    assert "THIRD-PARTY CODE IN THIS DISTRIBUTION: NONE." in text
+    assert "heretic" in text.lower(), "it has to name what it is disclaiming"
+
+
+def test_the_notice_stays_true_because_nothing_third_party_can_arrive_quietly():
+    """The NOTICE is a claim about the dependency list, so it is only as good as what enforces
+    that list. This names the two tests that do, so deleting either one takes this with it.
+    """
+    import tests.test_second_distribution as self_mod
+
+    for guard in ("test_the_checker_declares_no_dependencies_at_all",
+                  "test_nothing_in_the_checker_imports_anything_heavy"):
+        assert hasattr(self_mod, guard), (
+            f"{guard} is what keeps checker/NOTICE honest; if it has been renamed or removed, "
+            f"re-point this test at whatever replaced it rather than deleting the link")
+
+
 def test_the_checker_has_a_readme_that_says_what_it_costs():
     """It is the PyPI project page for this distribution, and the one sentence a reader needs is
     that it pulls nothing.

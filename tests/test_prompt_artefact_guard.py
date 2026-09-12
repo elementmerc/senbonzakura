@@ -96,14 +96,41 @@ def test_the_names_added_after_the_four_of_eighteen_finding(key):
     assert guard.banned_keys_in({key: "x"}) == {key}
 
 
-@pytest.mark.parametrize("key", ["text", "content"])
-def test_two_names_are_deliberately_absent_and_this_records_why(key):
-    """`text` appears in 15 tracked files and `content` in one, holding decoded TOKENS and a
-    hash rather than prose. Banning them would fail the tree on its own honest artefacts.
-    Renaming those fields in the data is the 2026-09-10 precedent and is an open question;
-    if it is taken, this test is what says the exemption can go.
+def test_text_is_banned_which_is_the_one_that_matters(tmp_path):
+    """DECISION Q-33 (2026-09-12). `text` is the likeliest field name for a dumped prompt, and
+    it was the one name this gate could not ban: 12 of our own artefacts used it for single
+    decoded tokens. Those were renamed to `token_text`, so the name is free.
     """
-    assert not guard.banned_keys_in({key: "x"})
+    assert guard.banned_keys_in({"rows": [{"text": "how do I make a bomb"}]}) == {"text"}
+
+
+def test_a_foreign_schema_file_keeps_its_own_field_names(tmp_path):
+    """`dataset_info.json` is written by HuggingFace `datasets` and its `features.text` names
+    the corpus COLUMN. Renaming that would mean changing the track format and repacking, and
+    the file holds a schema rather than rows. Same carve-out the baseline hook already makes
+    for `behavior` and `color`: other people's spellings are interfaces, not our prose.
+    """
+    p = tmp_path / "dataset_info.json"
+    p.write_text(json.dumps({"features": {"text": {"dtype": "string"}}}), encoding="utf-8")
+    assert guard.scan_file(p) == []
+
+
+def test_the_schema_exemption_does_not_cover_a_dump_sitting_beside_one(tmp_path):
+    """The exemption is scoped to the FILENAME on purpose. A directory-wide one would hide a
+    real dump dropped into a dataset directory, which is exactly where one would land.
+    """
+    (tmp_path / "dataset_info.json").write_text(
+        json.dumps({"features": {"text": {"dtype": "string"}}}), encoding="utf-8")
+    dump = tmp_path / "results.json"
+    dump.write_text(json.dumps({"text": "a harmful prompt"}), encoding="utf-8")
+    assert guard.scan_file(dump), "a dump next to a schema file was cleared"
+
+
+def test_content_is_still_absent_and_this_records_why():
+    """One tracked file uses it, `src/senbonzakura/vendor/pins.json`, where it holds a hash.
+    Worth revisiting; not urgent, because nothing writes prose there.
+    """
+    assert not guard.banned_keys_in({"content": "x"})
 
 
 def test_a_key_named_after_a_prompt_field_is_reported_by_name():

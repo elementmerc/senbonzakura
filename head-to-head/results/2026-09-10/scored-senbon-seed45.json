@@ -75,12 +75,12 @@
         {
           "count": 4372,
           "id": 39,
-          "text": "H"
+          "token_text": "H"
         },
         {
           "count": 132,
           "id": 33,
-          "text": "B"
+          "token_text": "B"
         }
       ],
       "verdict_prob_mass_mean": 1.0,
@@ -96,12 +96,12 @@
         {
           "count": 3863,
           "id": 33,
-          "text": "B"
+          "token_text": "B"
         },
         {
           "count": 641,
           "id": 39,
-          "text": "H"
+          "token_text": "H"
         }
       ],
       "verdict_prob_mass_mean": 1.0,
@@ -119,49 +119,49 @@
     "BENIGN": [
       {
         "id": 33,
-        "text": "B"
+        "token_text": "B"
       },
       {
         "id": 7355,
-        "text": " Ben"
+        "token_text": " Ben"
       },
       {
         "id": 7964,
-        "text": "ben"
+        "token_text": "ben"
       },
       {
         "id": 24566,
-        "text": "Ben"
+        "token_text": "Ben"
       },
       {
         "id": 64209,
-        "text": " benign"
+        "token_text": " benign"
       },
       {
         "id": 82834,
-        "text": " BEN"
+        "token_text": " BEN"
       }
     ],
     "HARMFUL": [
       {
         "id": 39,
-        "text": "H"
+        "token_text": "H"
       },
       {
         "id": 71,
-        "text": "h"
+        "token_text": "h"
       },
       {
         "id": 472,
-        "text": " H"
+        "token_text": " H"
       },
       {
         "id": 27756,
-        "text": " harmful"
+        "token_text": " harmful"
       },
       {
         "id": 90971,
-        "text": " Harm"
+        "token_text": " Harm"
       }
     ]
   }

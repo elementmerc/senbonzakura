@@ -347,7 +347,7 @@ def test_a_verdict_at_the_read_out_position_is_reported_as_such():
     rows = _readout_rows([7, 7, 9, 7])
     out = margin.readout(rows, [7, 9], decode=lambda ids: f"<{ids[0]}>")
     assert out["argmax_is_verdict"] == 1.0
-    assert out["top_tokens"][0] == {"id": 7, "text": "<7>", "count": 3}
+    assert out["top_tokens"][0] == {"id": 7, "token_text": "<7>", "count": 3}
 
 
 def test_a_reasoning_opener_at_the_read_out_position_is_caught():
@@ -359,7 +359,7 @@ def test_a_reasoning_opener_at_the_read_out_position_is_caught():
     rows = _readout_rows([151667, 151667, 151667, 7])      # a think-tag three times out of four
     out = margin.readout(rows, [7, 9], decode=lambda ids: "<think>" if ids[0] > 1000 else "H")
     assert out["argmax_is_verdict"] == 0.25
-    assert out["top_tokens"][0]["text"] == "<think>"
+    assert out["top_tokens"][0]["token_text"] == "<think>"
 
 
 def test_the_verdict_probability_mass_is_reported():
@@ -379,7 +379,7 @@ def test_the_read_out_audit_reports_counts_and_never_a_prompt():
                         # Added when the audit started stating its own verdict rather than
                         # leaving a reader to derive it from two decimals.
                         "suspect", "suspect_threshold"}
-    assert all(set(t) == {"id", "text", "count"} for t in out["top_tokens"])
+    assert all(set(t) == {"id", "token_text", "count"} for t in out["top_tokens"])
 
 
 def test_the_top_token_list_is_capped_and_deterministic():
@@ -965,7 +965,7 @@ def test_the_result_records_which_tokens_were_scored(loaded, tmp_path, monkeypat
             # Decoded from THAT id. The fixture tokenizer's decode returns a constant, so
             # asserting the value is merely a string would pass even if the text were
             # unrelated to the token, which is the only thing this field is for.
-            assert entry["text"] == f"<tok{entry['id']}>"
+            assert entry["token_text"] == f"<tok{entry['id']}>"
     ids = {e["id"] for e in tokens["HARMFUL"]} & {e["id"] for e in tokens["BENIGN"]}
     assert not ids, "the two sides must not share a scored token"
 

@@ -1,0 +1,33 @@
+senbonzakura-check
+Copyright (C) 2026 Daniel Iwugo
+Licence: AGPL-3.0-or-later (see LICENSE)
+
+THIRD-PARTY CODE IN THIS DISTRIBUTION: NONE.
+
+This file exists to answer a question rather than to make a claim, because the
+answer is easy to get wrong from the outside.
+
+`senbonzakura-check` is one of two distributions built from the Senbonzakura
+repository. The other one, `senbonzakura`, contains a keyword-marker list and a
+normalisation function copied verbatim from Heretic
+(https://github.com/p-e-w/heretic, AGPL-3.0-or-later), and it carries the
+section 5(a) statement of modification those files require, in its own
+THIRD-PARTY-NOTICES.md.
+
+This distribution contains neither of them. It names `heretic-keyword` as one of
+the declared estimators of the `refusal_rate` metric, so that a figure produced
+by that instrument can be read back and identified. That is a reference to a
+measurement, not a copy of the code that takes it.
+
+So no statement of modification is reproduced here, and the absence is
+deliberate: repeating a notice that describes files this package does not ship
+would tell a reader something untrue about what they installed.
+
+The project's full third-party notices, covering Heretic, llama.cpp and ggml,
+the bundled corpora and the bundled evaluation track, are at:
+
+  https://github.com/elementmerc/senbonzakura/blob/main/THIRD-PARTY-NOTICES.md
+
+If this distribution ever gains third-party code, this file is wrong and the
+notice belongs here. `tests/test_second_distribution.py` asserts the import
+graph that keeps it true.

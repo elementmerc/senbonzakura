@@ -55,17 +55,31 @@ from pathlib import Path
 #: added: each of these trips zero existing files, so the widening cannot be a false positive on
 #: anything committed today.
 #:
-#: TWO NAMES ARE DELIBERATELY ABSENT, with the measurement that excluded them. `text` appears in
-#: 15 tracked files and `content` in one, and reading them showed single decoded TOKENS ('H',
-#: ' Ben') in the compass evidence and a hash in `vendor/pins.json`, not prose. Banning them
-#: would fail the tree on its own honest artefacts. The 2026-09-10 precedent says the fix for a
-#: shape collision is to rename the field in the data rather than to teach this check to inspect
-#: values, so renaming those is an open question in DEFERRED.md rather than a silent exemption.
+#: `text` IS BANNED AS OF DECISION Q-33 (2026-09-12), and it is the most valuable name here:
+#: it is the likeliest field a dumped prompt lands under. It could not be banned before because
+#: 12 of our own compass and head-to-head artefacts used it for single decoded TOKENS ('H',
+#: ' Ben'). Those were renamed to `token_text` in the same commit, values proven unchanged,
+#: following the 2026-09-10 precedent that a shape collision is fixed by renaming the field in
+#: the data rather than by teaching this check to inspect values.
+#:
+#: `content` remains absent: one tracked file uses it, `src/senbonzakura/vendor/pins.json`,
+#: where it holds a hash. Worth revisiting, and not urgent, since nothing writes prose there.
 BANNED_KEYS = frozenset({
-    "prompt", "prompts", "generation", "generations",
+    "prompt", "prompts", "generation", "generations", "text",
     "completion", "completions", "response", "responses", "output", "outputs",
     "texts", "messages", "input", "inputs", "instruction", "question", "answer", "request",
 })
+
+#: Files whose SCHEMA is somebody else's, where a banned name is an external interface rather
+#: than our choice. `dataset_info.json` is written by HuggingFace `datasets`, and its
+#: `features.text` names the corpus COLUMN: renaming it would mean changing the track format
+#: and repacking, and the file holds a schema rather than rows. This is the same carve-out the
+#: baseline hook already makes for `behavior` and `color`, which are other people's spellings.
+#:
+#: Scoped to the FILENAME, deliberately. A directory-wide exemption would hide a real dump
+#: dropped alongside one of these; a file named `dataset_info.json` holds a schema or it is
+#: not the file this exemption is about.
+FOREIGN_SCHEMA_FILES = frozenset({"dataset_info.json", "state.json"})
 
 SUFFIXES = frozenset({".json", ".jsonl"})
 
@@ -144,6 +158,11 @@ def scan_file(path: Path) -> list[str]:
     return scan_bytes(path, raw)
 
 
+def _foreign_schema(path: Path) -> bool:
+    """Is this a file whose field names belong to another tool's format?"""
+    return path.name in FOREIGN_SCHEMA_FILES
+
+
 def scan_bytes(path: Path, raw: bytes) -> list[str]:
     """Findings for one artefact's CONTENT, whatever it was read from.
 
@@ -151,6 +170,8 @@ def scan_bytes(path: Path, raw: bytes) -> list[str]:
     blob rather than the working copy, and those two are not the same bytes.
     """
     findings: list[str] = []
+    if _foreign_schema(path):
+        return findings
     if path.suffix == ".jsonl":
         for lineno, line in enumerate(raw.split(b"\n"), 1):
             if not line.strip():

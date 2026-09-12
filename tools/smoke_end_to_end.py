@@ -256,6 +256,59 @@ def check_the_documented_compass_figure(out):
     print(f"  ok, the page promises {want:.4f} and the tool gives {got:.4f}")
 
 
+#: Stamped into every JSON the smoke writes. The toy track is 8 harmful / 4 eval / 8 harmless
+#: rows and its harmful rows are placeholders, so baseline refusal is 0.0 and refusal REMOVAL
+#: cannot be demonstrated on it at all. The run proves the pipeline executes and writes
+#: artefacts; every NUMBER in those artefacts is meaningless.
+#:
+#: Without this the files are shaped exactly like a real run's, carry a real `provenance` block,
+#: and would be quoted by anyone who found one. This project has already published a p-value
+#: taken from its own synthetic fixture; that was caught by a reviewer rather than by anything
+#: in the tree, and this is the thing in the tree.
+SMOKE_NOTICE = (
+    "Produced by tools/smoke_end_to_end.py on examples/toy-track, which holds 8 harmful, "
+    "4 harmful-eval and 8 harmless rows, and whose harmful rows are placeholders. This file "
+    "proves the pipeline ran and wrote an artefact. Every number in it is meaningless and must "
+    "not be quoted, compared, or published."
+)
+
+
+#: OUR result artefacts, by name. NOT a glob over `*.json`, and the difference is not tidiness:
+#: the saved model directory holds `config.json`, `tokenizer.json`, `tokenizer_config.json` and
+#: `generation_config.json`, which belong to transformers and are read by every loader. The first
+#: version of this swept every JSON under the output directory and stamped all four of them,
+#: which is editing a model's configuration to leave a note in it.
+SMOKE_ARTEFACTS = frozenset({
+    "score.json", "compass.json", "compass-doc.json", "drift.json",
+    "abliteration.json", "run.json", "best-config.json", "trials.json",
+})
+
+
+def stamp_smoke_artefacts(out):
+    """Mark the result artefacts the smoke produced. Returns how many it touched.
+
+    A list-shaped artefact (`trials.json`) has nowhere to put a key, so it is wrapped in an
+    object that carries the notice and keeps the rows under `trials`. That changes its shape,
+    which is acceptable HERE and only here: these files exist for about a minute inside a smoke
+    run and nothing reads them afterwards. It would not be acceptable for a real run's output.
+    """
+    stamped = []
+    for path in sorted(out.rglob("*.json")):
+        if path.name not in SMOKE_ARTEFACTS:
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        doc = ({"smoke_artefact": SMOKE_NOTICE, "trials": doc} if isinstance(doc, list)
+               else {**doc, "smoke_artefact": SMOKE_NOTICE} if isinstance(doc, dict) else None)
+        if doc is None:
+            continue
+        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        stamped.append(path.name)
+    return stamped
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()) / "smoke")
@@ -377,6 +430,26 @@ def main(argv=None):
         drive_the_guided_mode()
     else:
         print("\n=== interactive, on a real pty ===\n  skipped: no pty on this platform")
+
+    # AFTER everything, so nothing the smoke writes can leave here looking like a measurement.
+    stamped = stamp_smoke_artefacts(out)
+    # The model's own configuration must come through untouched. A stamp that edits
+    # `config.json` is not a note, it is a change to what the loader reads.
+    for untouchable in ("config.json", "tokenizer.json", "tokenizer_config.json",
+                        "generation_config.json"):
+        for found in out.rglob(untouchable):
+            doc = json.loads(found.read_text(encoding="utf-8"))
+            if isinstance(doc, dict) and "smoke_artefact" in doc:
+                raise SmokeError(
+                    f"{found} carries the smoke notice, and it is a file transformers reads. "
+                    f"The stamp must name our artefacts rather than sweep every JSON.")
+    if not stamped:
+        raise SmokeError(
+            "no JSON artefacts were found to stamp, which means either the run wrote none (so "
+            "the smoke proved less than it claims) or they went somewhere this did not look. "
+            "Either way the notice is not on them.")
+    print(f"\n=== every artefact marked as a smoke artefact ===\n  stamped {len(stamped)}: "
+          f"{', '.join(stamped)}")
 
     print(f"\nSMOKE_OK: abliterated, measured and reported in {time.time() - started:.0f}s")
     return 0

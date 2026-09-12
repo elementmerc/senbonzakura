@@ -336,8 +336,24 @@ def main(argv=None):
         ["senbonzakura", "abliterate", "--model", MODEL, "--track", str(TRACK),
          "--out", str(model_dir), "--device", "cpu", "--trials", "2", "--dir-prompts", "8",
          "--eval-refusal", "4", "--eval-kl", "4", "--eval-refusal-final", "4",
-         "--gen-tokens", "16", "--gen-batch", "4", "--no-persist-study"],
+         "--gen-tokens", "16", "--gen-batch", "4", "--no-persist-study",
+         # Q-37: given the base licence, the run writes a card beside the weights.
+         "--base-licence", "apache-2.0"],
         expect_marker="DONE")
+
+    # The card a human reads, written by the RUN rather than by a second command nobody
+    # remembers. Checked for content and not merely for existence: an empty README beside a set
+    # of weights is worse than none, because it looks like provenance.
+    saved_card = model_dir / "README.md"
+    if not saved_card.is_file():
+        raise SmokeError(
+            f"--base-licence was given and no model card was written to {saved_card}. The weights "
+            f"saved fine, so this is the card path, not the save path.")
+    body = saved_card.read_text(encoding="utf-8")
+    for want in ("license: apache-2.0", "base model's licence"):
+        if want not in body:
+            raise SmokeError(f"the card beside the weights does not contain {want!r}")
+    print(f"  and a model card beside the weights ({len(body)} bytes)")
 
     for want in ("config.json", "abliteration.json", "run.json"):
         if not (model_dir / want).is_file():

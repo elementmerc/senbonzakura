@@ -17,6 +17,7 @@
 transformers==4.56
 accelerate==0.26
 pyarrow==14
+huggingface_hub==0.34.0
 # numpy is not a declared dependency of this project and is pinned here anyway, because the floor
 # combination is otherwise not installable. pyarrow 14's extension modules are compiled against
 # numpy 1 and its metadata says only `numpy>=1.16.6`, so the resolver is free to pair it with
@@ -57,4 +58,3 @@ tomli==2.0.0
 
 # bitsandbytes (the `quant` extra) is absent: it is not installed by `[dev]`,
 # needs CUDA to do anything, and the CI runners have no GPU.
-

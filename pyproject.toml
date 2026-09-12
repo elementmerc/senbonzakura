@@ -60,6 +60,18 @@ dependencies = [
   # every pyarrow this project has ever run against is newer. Nothing here uses an API added
   # since 8, so the floor is about the ecosystem around it rather than about our own calls.
   "pyarrow>=14",
+  # DECLARED DIRECTLY under Q-36 rather than leaned on transitively through transformers, which
+  # is where it already comes from. `preflight_snapshot_ram` reads a checkpoint's safetensors
+  # headers to size the reversible snapshot BEFORE anything is downloaded, and on rented hardware
+  # that is the difference between a free refusal and a paid one. A dependency this tree actually
+  # imports belongs in this list; relying on somebody else's dependency graph is how an import
+  # breaks when they drop it.
+  #
+  # The floor is modest on purpose. `get_local_safetensors_metadata` is newer than
+  # `get_safetensors_metadata`, and the preflight imports both in one statement and treats an
+  # ImportError as "skipped, not passed", so an older hub degrades to no preflight rather than to
+  # a crash. The floor is what has been measured, not the oldest that might work.
+  "huggingface_hub>=0.34",
   # THE EDITOR, in the base install since 2026-09-10 (Q-27). These were the base dependencies until
   # 2026-09-08, moved out to the `abliterate` extra under Q-3 so a checker could install
   # torch-free, and moved back because the split served the wrong reader: somebody who types

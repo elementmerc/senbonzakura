@@ -3976,9 +3976,48 @@ class Abliterator:
                        "provenance": provenance(device=self.dev,
                                                 accelerator=accelerator_name(self.dev))},
                       f, indent=2)
+        self._write_model_card(args, log)
         self.events.emit("done", out=str(args.out))
         self.events.close()
         log("DONE")
+
+    def _write_model_card(self, args, log):
+        """The human-readable card, beside the weights, when the licence is known (Q-37).
+
+        WHY IT IS CONDITIONAL AND NOT DEFAULTED. `modelcard` refuses to infer the base model's
+        licence, because a model's terms are not derivable from its weights and a wrong guess is
+        worse than a blank one. So the card had exactly one caller, and a run that saved weights
+        left `abliteration.json`, a stamped config and stamped safetensors headers, and nothing a
+        person could read.
+
+        The option that was rejected was writing a card marked UNRESOLVED every time. That is the
+        artefact `modelcard` itself describes as "for reading rather than for publishing weights
+        beside", and generating one by default manufactures, at scale, exactly the thing somebody
+        eventually publishes. Asking for the licence instead puts the question where the operator
+        has just answered it for themselves: they have chosen a base model.
+
+        Best-effort, like the provenance stamp beside it and for the same reason. A card is worth
+        having and is not worth killing a save whose GPU work is already spent.
+        """
+        licence = getattr(args, "base_licence", "") or ""
+        if not licence:
+            log("  no model card written: pass --base-licence to get one beside the weights. "
+                "It is not inferred from the model, because a model's terms are not derivable "
+                "from its weights.")
+            return
+        from . import modelcard
+        try:
+            lines = modelcard.build(
+                modelcard.load(f"{args.out}/abliteration.json"), None,
+                command=" ".join(sys.argv),
+                licence=licence, licence_link=getattr(args, "base_licence_link", "") or None)
+            with atomic_write(f"{args.out}/README.md") as f:
+                f.write("\n".join(lines) + "\n")
+            log(f"  model card: {args.out}/README.md")
+        except Exception as e:          # best effort by design: a card is not worth a lost save
+            log(f"  model card NOT written ({type(e).__name__}: {e}). The weights and "
+                f"abliteration.json are unaffected; run `senbonzakura report` to produce one.")
+
 
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
@@ -4055,6 +4094,178 @@ def _preflight_output(args):
           f"  --out <somewhere else>   keep both\n"
           f"  --resume                 continue the run that is already there\n"
           f"  delete {out} yourself    if you meant to start again")
+
+
+#: Terminal projection names that carry a residual write. Every one is read from where the
+#: editor reads it: `layer_attn_writers` tries `o_proj`, `out_proj` and `dense`;
+#: `_block_outproj_param` takes `out_proj` on a mixer; `_mlp_downprojs` takes `down_proj`, `w2`
+#: and `output_linear`, fused or per expert. Kept beside `snapshot_weights` in this file rather
+#: than in a module of its own, because the whole risk here is the two drifting apart.
+WRITER_PROJECTIONS = ("o_proj", "out_proj", "dense", "down_proj", "w2", "output_linear")
+
+#: Bytes per element, by the dtype strings safetensors uses in its header.
+_DTYPE_BYTES = {"F64": 8, "I64": 8, "F32": 4, "I32": 4, "BF16": 2, "F16": 2, "I16": 2,
+                "F8_E4M3": 1, "F8_E5M2": 1, "I8": 1, "U8": 1, "BOOL": 1}
+
+
+def _is_writer_tensor(name, ablate_conv=True):
+    """Does this tensor NAME look like a residual writer the snapshot would hold?
+
+    NAMES, NOT ARCHITECTURE. The tempting way to size the snapshot before a download is to
+    compute it from `config.json`, and it gives the right answer: by hand it reproduces 20.13 GB
+    for Qwen3-30B-A3B. It would also be a second, independent account of which tensors get
+    snapshotted, and this project has already shipped that failure once, when the guard and the
+    editor kept separate architecture name lists and drifted apart. Matching names against the
+    SAME constants the editor walks keeps one list.
+
+    It is an estimate and says so: a name-based match cannot apply the structural conditions the
+    editor applies with the module in hand, such as refusing an `out_proj` on a `mixer` that is
+    really Mamba-2. It is used to refuse a run that obviously cannot fit, not to decide a close
+    one, and the real check still runs with the weights resident.
+    """
+    parts = name.split(".")
+    if parts[-1] != "weight":
+        return False
+    blocks = set(ATTN_BLOCKS) | set(MLP_BLOCKS) | set(MIXER_BLOCKS)
+    if not ablate_conv:
+        # `--skip-conv-ablation` is the control arm: `layer_attn_writers` leaves the convolution
+        # alone, so the snapshot is smaller and an estimate that counted it would refuse a run
+        # that fits. Only blocks that are mixer-ONLY are dropped: `mixer` itself appears in all
+        # three lists, because on NemotronH one child name means four things, and a name alone
+        # cannot say which. Counting those is the safe direction, since over-counting a shared
+        # name risks a spurious refusal only on architectures that use it.
+        blocks -= set(MIXER_BLOCKS) - set(ATTN_BLOCKS) - set(MLP_BLOCKS)
+    return any(p in blocks for p in parts) and any(p in WRITER_PROJECTIONS for p in parts)
+
+
+def snapshot_bytes_from_tensors(tensors, ablate_conv=True):
+    """Host RAM the reversible search would hold, from `{name: (dtype, shape)}`.
+
+    Mirrors `snapshot_weights`: one CPU copy of every residual-writing projection.
+    """
+    total = 0
+    for name, (dtype, shape) in tensors.items():
+        if not _is_writer_tensor(name, ablate_conv):
+            continue
+        width = _DTYPE_BYTES.get(str(dtype).upper())
+        if width is None:
+            return None                      # an unknown dtype makes the sum a guess
+        n = 1
+        for d in shape:
+            n *= int(d)
+        total += n * width
+    return total
+
+
+def _hub_metadata_fns():
+    """`(remote, local_or_None, error_or_None)`, resolved separately on purpose.
+
+    They arrived at different times and only one of them matters for the case this serves.
+    Measured 2026-09-12 across five releases: `get_safetensors_metadata` is present at the
+    declared floor of 0.34, and `get_local_safetensors_metadata` appeared between 1.0 and 1.10.
+    Importing both in one statement made an older hub lose the HUB pre-flight as well, which is
+    the one that avoids the download and therefore the one that saves money; a local checkpoint
+    is already downloaded, so losing its estimate costs nothing.
+
+    A function rather than two inline imports because `huggingface_hub` serves its exports
+    through a module `__getattr__` and they never land in `__dict__`, so a test cannot take one
+    away. This is the seam that makes the older-hub branch reachable.
+    """
+    try:
+        from huggingface_hub import get_safetensors_metadata
+    except ImportError as e:
+        return None, None, f"huggingface_hub is not installed ({e})"
+    try:
+        from huggingface_hub import get_local_safetensors_metadata
+    except ImportError:
+        get_local_safetensors_metadata = None
+    return get_safetensors_metadata, get_local_safetensors_metadata, None
+
+
+def estimate_snapshot_bytes(model, token=None, ablate_conv=True):
+    """`(bytes, how)` when it could be measured, `(None, why)` when it could not.
+
+    Reads the safetensors header only: no weights move. Measured 2026-09-12 against a real Hub
+    repo at about one second.
+    """
+    # IMPORTED SEPARATELY, because they arrived at different times and only one of them matters
+    # for the case this exists to serve. Measured 2026-09-12 across five releases:
+    # `get_safetensors_metadata` is present at the declared floor of 0.34, and
+    # `get_local_safetensors_metadata` appeared between 1.0 and 1.10. Importing both in one
+    # statement made an older hub lose the HUB pre-flight too, which is the one that saves the
+    # download. The first version of this declared a floor of 0.34 and imported both, so the
+    # floor was a claim nothing had tested, which is a failure this project has had before.
+    get_safetensors_metadata, get_local_safetensors_metadata, missing = _hub_metadata_fns()
+    if missing:
+        return None, missing
+    if not model:
+        # Reached when an earlier guard is refusing the run before `--model` has been resolved at
+        # all, which is a legitimate order: a conflicting pair of flags should be refused without
+        # touching the network. Found by `test_the_conflict_is_refused_before_the_model_is_
+        # constructed`, where `Path(None)` raised TypeError rather than the OSError guarded below.
+        return None, "no model was named"
+    try:
+        local = Path(model).is_dir()
+    except (OSError, TypeError, ValueError):
+        local = False
+    if local and get_local_safetensors_metadata is None:
+        return None, ("this huggingface_hub is too old to read a LOCAL checkpoint's headers "
+                      "(needs 1.10 or newer); the Hub path still works")
+    try:
+        meta = (get_local_safetensors_metadata(model) if local
+                else get_safetensors_metadata(model, token=token))
+    except Exception as e:                   # network, auth, a repo with no safetensors
+        return None, f"{type(e).__name__}: {e}"
+    tensors = {}
+    for fmeta in getattr(meta, "files_metadata", {}).values():
+        for name, info in getattr(fmeta, "tensors", {}).items():
+            tensors[name] = (info.dtype, info.shape)
+    if not tensors:
+        return None, "the repository exposes no safetensors metadata"
+    total = snapshot_bytes_from_tensors(tensors, ablate_conv)
+    if total is None:
+        return None, "a tensor uses a dtype this estimate does not know the width of"
+    return total, ("the local checkpoint's headers" if local else "the Hub's safetensors metadata")
+
+
+def preflight_snapshot_ram(args, log=print):
+    """Refuse a run that cannot hold the snapshot, BEFORE the model is downloaded.
+
+    THE COST THIS EXISTS TO AVOID. `snapshot_weights` sizes itself from the loaded layers, so on
+    a rented pod the refusal arrives after a 61 GB download and a full load, and the operator
+    pays for both. Everything needed is readable from the checkpoint's headers in about a second.
+
+    SKIPPED IS NOT PASSED, and every path that cannot measure says which it was. A preflight that
+    hard-failed because the Hub hiccupped would be worse than the problem it solves, so an
+    unreadable repository is reported and the run continues to the real check, which still runs
+    with the weights resident and is the one that actually decides.
+    """
+    need, how = estimate_snapshot_bytes(
+        getattr(args, "model", None),
+        token=getattr(args, "hf_token", None) or None,
+        ablate_conv=not getattr(args, "skip_conv_ablation", False))
+    if need is None:
+        log(f"  snapshot pre-flight SKIPPED, not passed: {how}. The host-RAM check still runs "
+            f"once the model is loaded, which on rented hardware is after you have paid for the "
+            f"download.")
+        return None
+    avail = _available_ram_bytes()
+    if avail is None:
+        log(f"  snapshot: {need / 1e9:.1f} GB of host RAM will be needed (from {how}), and this "
+            f"platform cannot report available memory, so the pre-flight was skipped, not passed")
+        return need
+    if need > 0.9 * avail:
+        raise MemoryError(
+            f"this run needs about {need / 1e9:.1f} GB of host RAM to hold the pristine copy of "
+            f"every residual-writing projection, and {avail / 1e9:.1f} GB is available. Read from "
+            f"{how}, before downloading anything, so nothing has been fetched and nothing has "
+            f"been paid for.\n"
+            f"  Free memory, pick a smaller model, or rent a box with more RAM.\n"
+            f"  This is an ESTIMATE from tensor names; the exact check runs again once the "
+            f"weights are resident.")
+    log(f"  snapshot pre-flight: about {need / 1e9:.1f} GB needed, {avail / 1e9:.1f} GB available "
+        f"(from {how})")
+    return need
 
 
 def _preflight_datasets(args):
@@ -4200,6 +4411,7 @@ def run_parsed(args, bankai, argv):
     # network for a Hub track and is still nothing beside pulling a model.
     _preflight_output(args)
     _preflight_datasets(args)
+    preflight_snapshot_ram(args, log=print)
 
     t0 = time.time()
     def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)

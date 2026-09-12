@@ -2007,3 +2007,53 @@ def test_a_build_change_without_resume_is_not_refused():
     study.set_user_attr("code_version", "old")
     study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
     cli.refuse_resume_across_builds(study, "new", resume=False)
+
+
+# ── the card the run writes, and the one it refuses to write (decision Q-37) ─────────────────
+
+def test_a_run_given_the_base_licence_writes_a_card(base_args, tiny_model, tiny_tok, track):
+    """The artefact a human reads, written by the RUN rather than by a second command nobody
+    remembers. `modelcard` had exactly one caller before this.
+    """
+    base_args.base_licence = "apache-2.0"
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.run()
+    card = os.path.join(base_args.out, "README.md")
+    assert os.path.exists(card), "\n".join(lines[-5:])
+    body = Path(card).read_text(encoding="utf-8")
+    assert "license: apache-2.0" in body
+    assert "base model's licence" in body
+
+
+def test_a_run_without_it_writes_no_card_and_says_why(base_args, tiny_model, tiny_tok, track):
+    """THE OPTION THAT WAS REJECTED was writing a card marked UNRESOLVED every time. That is the
+    artefact `modelcard` itself calls "for reading rather than for publishing weights beside",
+    and generating one by default manufactures at scale exactly the thing somebody publishes.
+
+    Saying nothing would be the other failure: the operator would not learn a card was available.
+    """
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert not os.path.exists(os.path.join(base_args.out, "README.md"))
+    said = "\n".join(lines)
+    assert "--base-licence" in said, "the run must name the flag that would produce one"
+    assert "not derivable from its weights" in said, "and say why it will not guess"
+
+
+def test_the_weights_survive_a_card_that_cannot_be_written(
+        base_args, tiny_model, tiny_tok, track, monkeypatch):
+    """Best-effort by design, like the provenance stamp beside it. A card is worth having and is
+    not worth killing a save whose GPU work is already spent.
+    """
+    base_args.base_licence = "apache-2.0"
+    import senbonzakura.modelcard as mc
+    monkeypatch.setattr(mc, "build", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    lines = []
+    a = cli.Abliterator(base_args, lines.append, model=tiny_model, tok=tiny_tok)
+    a.run()
+    assert os.path.exists(os.path.join(base_args.out, "abliteration.json")), (
+        "a failed card took the run down with it")
+    assert "model card NOT written" in "\n".join(lines)
+    assert "unaffected" in "\n".join(lines)

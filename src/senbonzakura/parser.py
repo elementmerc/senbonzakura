@@ -311,6 +311,20 @@ def build_parser():
                          "corpus it would not use. Whether the matching then worked is reported as "
                          "matching_quality in abliteration.json, and a value near 1.0 means it did "
                          "not.")
+    # DECISION Q-37. Without this the run saves weights and writes no card, because `modelcard`
+    # refuses to infer the base model's licence: a model's terms are not derivable from its
+    # weights and a wrong guess is worse than a blank one. Asking here is asking at the moment
+    # the operator has just chosen a base model. Given it, the run writes a card that could
+    # actually be published; not given it, the run writes none and says why, rather than
+    # manufacturing one marked UNRESOLVED that somebody eventually publishes.
+    ap.add_argument("--base-licence", dest="base_licence", default="",
+                    help="the BASE model's licence (apache-2.0, mit, gemma, llama3.2, other). "
+                         "Given this, the run writes a README.md model card beside the saved "
+                         "weights; without it no card is written, because this cannot be "
+                         "inferred from the model and a wrong guess is worse than a blank.")
+    ap.add_argument("--base-licence-link", dest="base_licence_link", default="",
+                    help="URL for the base model's licence text, where one exists. It travels "
+                         "into the card so a reader can go and read the terms they are bound by.")
     ap.add_argument("--sparsity", type=float, default=0.0,
                     help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
                          "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "

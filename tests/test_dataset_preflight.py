@@ -25,11 +25,14 @@ import types
 import pytest
 from artefacts import needs_track
 
-from senbonzakura import cli
+from senbonzakura import cli, lengthsweep
 
 
 def _args(**over):
     a = dict(track="track", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
+             # Sound by default: these tests are about the ORDER pre-flights run in, so
+             # none should trip the generation-budget gate before reaching its subject.
+             gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False,
              text_column=None, hf_token=None)
     a.update(over)
     return types.SimpleNamespace(**a)

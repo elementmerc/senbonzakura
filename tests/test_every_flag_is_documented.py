@@ -20,8 +20,6 @@ construct.
 import ast
 import pathlib
 
-import pytest
-
 PACKAGE = pathlib.Path(__file__).resolve().parents[1] / "src" / "senbonzakura"
 
 #: `--version` is argparse's own action: it prints the version and exits, and the flag name is the

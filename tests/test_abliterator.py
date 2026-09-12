@@ -495,9 +495,12 @@ def test_loader_passes_trust_remote_and_attn_impl(monkeypatch, tiny_model, tiny_
 def test_main_end_to_end(monkeypatch, tiny_model, tiny_tok, track, tmp_path):
     _patch_hf(monkeypatch, tiny_model, tiny_tok)
     out = str(tmp_path / "mainout")
+    # 3 tokens keeps the test fast and is far below the budget a refusal is visible at, which the
+    # abliterator refuses rather than warns about. Nothing here reads the resulting rate, so this
+    # is the case `--short-budget-ok` exists for.
     cli.main(["--model", "x", "--track", track, "--out", out, "--device", "cpu",
               "--trials", "2", "--dir-prompts", "8", "--eval-refusal", "6", "--eval-kl", "6",
-              "--gen-tokens", "3"])
+              "--gen-tokens", "3", "--short-budget-ok"])
     assert os.path.exists(os.path.join(out, "abliteration.json"))
 
 

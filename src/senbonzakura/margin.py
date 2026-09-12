@@ -151,7 +151,10 @@ def build_parser():
                          "the ignored results/ tree, not in committed evidence.")
     ap.add_argument("--no-margins", dest="margins", action="store_const", const="",
                     help="do not retain the per-prompt margins")
-    ap.add_argument("--label", default="", help="a name for this run, copied into the results json. Nothing reads it: it is how you tell two result files apart later, so give it the thing that varied")
+    ap.add_argument("--label", default="",
+                    help="a name for this run, copied into the results json. Nothing reads it: "
+                         "it is how you tell two result files apart later, so give it the thing "
+                         "that varied")
     ap.add_argument("--n", type=int, default=None,
                     help="prompts to score per arm. The default is EVERY held-out prompt, taking "
                          "the smaller of the two arms so they stay balanced, because a fixed "

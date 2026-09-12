@@ -3848,7 +3848,13 @@ class Abliterator:
                        # but the batch floats with free VRAM and left-padding makes batch composition
                        # part of the numerics. A reader comparing two runs needs to know whether the
                        # machinery was pinned; `--no-throttle` pins it.
+                       # `budget_warning` travels WITH the number rather than only being printed.
+                       # A run at a short budget scrolled one warning past an operator at the
+                       # start and then wrote an artefact that looked like any other, so the
+                       # caveat was lost exactly where the figure got quoted from. None when the
+                       # budget is sound, so its presence is the signal.
                        "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
+                                      "budget_warning": _budget_warning(args.gen_tokens),
                                       **self.gov.report()},
                        # The same disclosure for the capture pass, which the generation block does
                        # not cover and which has a stronger claim to it: these activations ARE the
@@ -4268,6 +4274,58 @@ def preflight_snapshot_ram(args, log=print):
     return need
 
 
+def _budget_warning(budget):
+    """The budget caveat as the artefact stores it, or None when there is nothing to say."""
+    from . import lengthsweep
+    return lengthsweep.budget_warning(int(budget))
+
+
+def _preflight_generation_budget(args, log=print):
+    """Refuse a search steered by a signal too short to see a refusal.
+
+    WHY THIS BECAME A REFUSAL, HAVING BEEN A WARNING SINCE IT WAS WRITTEN.
+
+    The search scores each candidate on generations capped at `--gen-tokens`. A budget too short
+    to reach the refusal makes a model look better than it is TO THE SEARCH as well as to the
+    reader, and that is worse than a misreported number: the optimiser then SELECTS for it. A
+    configuration whose refusal merely arrives after the cutoff wins, and nothing downstream can
+    recover the mistake, because the search has already crowned it.
+
+    The original reasoning for warning rather than refusing was sound, and it was that what counts
+    as enough is a property of the model and is not known before the run, so refusing on a guess
+    would block correct runs. What changed is that it stopped being a guess: this project measured
+    it, the default is now that measurement, and so the only way to land below the floor is to ask
+    for it deliberately. A warning that fires on every run is not a safeguard, it is noise, and
+    this one fired on all ten arms of a comparison and changed nothing.
+
+    `--short-budget-ok` still allows it, because a shorter budget is legitimate for a smoke test
+    or a plumbing check, where nobody is going to quote the number. It has to be asked for.
+    """
+    from . import lengthsweep
+    budget = int(args.gen_tokens)
+    if budget >= lengthsweep.VISIBILITY_FLOOR:
+        return budget
+    if getattr(args, "short_budget_ok", False):
+        log(f"WARNING: generation budget {budget} is below {lengthsweep.VISIBILITY_FLOOR} and "
+            f"--short-budget-ok was given. The search is being steered by a signal that may not "
+            f"reach the refusal, so this run's numbers must not be quoted.")
+        return budget
+    raise SystemExit(
+        f"senbonzakura: --gen-tokens is {budget}, below the {lengthsweep.VISIBILITY_FLOOR} this "
+        f"tool can see a refusal at.\n"
+        f"  {lengthsweep.budget_warning(budget)}\n"
+        f"  The search scores candidates at this budget, so it would not merely report an "
+        f"optimistic number, it would SELECT for models whose refusal arrives after the cutoff.\n"
+        f"  What to do:\n"
+        f"    drop the flag to use the measured default ({lengthsweep.DEFAULT_BUDGET}), or\n"
+        # The cross-command advice and the flags it recommends stay in ONE string segment on
+        # purpose: `test_message_flags_exist` reads each segment separately, so a flag split away
+        # from the `senbonzakura <command>` that accepts it reads as advice that would not parse.
+        f"    measure this model with:  senbonzakura score --length-sweep "
+        f"--eval <harmful prompts> --out sweep.json --model <the same model>\n"
+        f"    for a smoke test where the numbers will not be quoted, add --short-budget-ok")
+
+
 def _preflight_datasets(args):
     """Prove every dataset the run needs can be read, BEFORE the model is downloaded.
 
@@ -4406,6 +4464,11 @@ def run_parsed(args, bankai, argv):
             f"imports torch.distributed.tensor.DTensor); found {torch.__version__}. "
             f"Install a compatible build, e.g. torch==2.5.1.")
 
+    # FIRST of the pre-flights, because it is decidable from the command line alone: no model, no
+    # corpus, no network. Everything below it either touches the Hub or walks a dataset, and a run
+    # refused for a flag the parser could already see should not cost a download first.
+    _preflight_generation_budget(args)
+
     # After the torch check and before the model. The torch check is instant and local, and an
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the
     # network for a Hub track and is still nothing beside pulling a model.
@@ -4419,14 +4482,6 @@ def run_parsed(args, bankai, argv):
     # Before the model, because the conflict it can raise is visible from the command line alone
     # and finding it after a download costs a rented card an hour.
     _apply_method_args(args, log)
-
-    # The search scores refusal on generations capped at --gen-tokens, and a budget too short to
-    # reach the refusal makes the model look better than it is TO THE SEARCH as well as to the
-    # reader. That is worse than a misreported number: the optimiser then selects for it.
-    from . import lengthsweep
-    budget_note = lengthsweep.budget_warning(int(args.gen_tokens))
-    if budget_note:
-        log(f"WARNING: {budget_note}")
 
     abl = Abliterator(args, log)
     if bankai:

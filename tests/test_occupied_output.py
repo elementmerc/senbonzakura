@@ -24,7 +24,7 @@ import types
 
 import pytest
 
-from senbonzakura import cli, interactive
+from senbonzakura import cli, interactive, lengthsweep
 
 
 def _previous_run(d, *names):
@@ -78,7 +78,10 @@ def test_the_report_is_the_files_found_not_a_boolean(tmp_path):
 # ── the command line refuses ─────────────────────────────────────────────────────────
 
 def _args(out, **over):
-    a = dict(out=str(out), resume=False, bake_config=None)
+    a = dict(out=str(out), resume=False, bake_config=None,
+             # Sound by default: these tests are about the ORDER pre-flights run in, so
+             # none should trip the generation-budget gate before reaching its subject.
+             gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False)
     a.update(over)
     return types.SimpleNamespace(**a)
 

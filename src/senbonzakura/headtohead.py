@@ -37,6 +37,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import lengthsweep
 from .metrics import min_achievable_p
 
 # Every arm writes this when it has finished, and the runner checks the file rather than the word.
@@ -1251,8 +1252,12 @@ REFUSAL_EVAL_N = 200
 #:
 #: Both arms share it, so a comparison at 64 is not invalid on its face. It is optimistic in
 #: absolute terms, and it flatters whichever tool's replies run longer, which is exactly the
-#: axis a head-to-head is trying to read. 192 is measured on one model; `--max-new` overrides it.
-REFUSAL_MAX_NEW = 192
+#: axis a head-to-head is trying to read. Measured on one model; `--max-new` overrides it.
+#:
+#: NOW THE SHARED CONSTANT RATHER THAN A SECOND 192. This file reached the right number
+#: independently and the abliterator did not, which is how the search came to optimise at 48 while
+#: its result was published at 192. One name, so they cannot drift apart again.
+REFUSAL_MAX_NEW = lengthsweep.DEFAULT_BUDGET
 
 
 def refusal_argv(*, model: Path, harmful: Path, out: Path, label: str,

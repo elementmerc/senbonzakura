@@ -14,7 +14,7 @@ import json
 
 import torch
 
-from . import metrics
+from . import lengthsweep, metrics
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
@@ -33,15 +33,24 @@ def build_parser():
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--out", required=True, help="results json path")
-    ap.add_argument("--label", default="", help="a name for this run, copied into the results json. Nothing reads it: it is how you tell two result files apart later, so give it the thing that varied")
+    ap.add_argument("--label", default="",
+                    help="a name for this run, copied into the results json. Nothing reads it: "
+                         "it is how you tell two result files apart later, so give it the thing "
+                         "that varied")
     ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
     ap.add_argument("--skip", type=int, default=0,
                     help="drop the first N prompts before taking --n. Needed to score a model on "
                          "prompts its own surgery was NOT fitted on: direction extraction consumes "
                          "the head of the harmless set and the KL check the slice after it, so "
                          "measuring false positives on the head would be measuring the training data.")
-    ap.add_argument("--max-new", type=int, default=64,
-                    help="how many tokens each reply may run to (default: 64). A refusal that the model never gets far enough to state is not counted, so a low budget reports a low refusal rate; use --length-sweep to find out what this model actually needs instead of picking a number")
+    ap.add_argument("--max-new", type=int, default=lengthsweep.DEFAULT_BUDGET,
+                    help=f"how many tokens each reply may run to (default: "
+                         f"{lengthsweep.DEFAULT_BUDGET}). A refusal the model never gets far "
+                         f"enough to state is not counted, so a short budget reports a low "
+                         f"refusal rate. The default is where this project's length sweep "
+                         f"measured the rate settling on Qwen3-1.7B; that is one model, so use "
+                         f"--length-sweep to find out what yours needs rather than assuming it "
+                         f"transfers")
     ap.add_argument("--batch", type=int, default=16,
                     help="prompts per generation batch (default: 16). Lower it if the card runs out of memory")
     ap.add_argument("--save-generations", dest="save_generations", default="",

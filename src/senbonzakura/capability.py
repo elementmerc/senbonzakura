@@ -683,13 +683,17 @@ def build_parser():
                          "a budget that truncates most of them measures the budget rather than "
                          "the model. Truncated items are reported as indeterminate, never wrong")
     ap.add_argument("--batch", type=int, default=8,
-                    help="prompts per generation batch (default: 8). Lower than the other commands because graded answers are longer; lower it further if the card runs out of memory")
+                    help="prompts per generation batch (default: 8). Lower than the other "
+                         "commands because graded answers are longer; lower it further if the "
+                         "card runs out of memory")
     ap.add_argument("--compare-to", dest="compare_to", default="",
                     help="a previous run's output, typically the stock model. Adds the PAIRED "
                          "change with its interval, which is much tighter than comparing two "
                          "separate runs by eye and is the number that says what the edit cost")
     ap.add_argument("--seed", type=int, default=0,
-                    help="seed for the bootstrap resampling behind the reported interval (default: 0). Generation itself is greedy, so this changes the interval, not the answers")
+                    help="seed for the bootstrap resampling behind the reported interval "
+                         "(default: 0). Generation itself is greedy, so this changes the "
+                         "interval, not the answers")
     ap.add_argument("--bootstrap", type=int, default=2000,
                     help="resamples for the interval on the change (0 disables it)")
     ap.add_argument("--save-generations", dest="save_generations", default="",

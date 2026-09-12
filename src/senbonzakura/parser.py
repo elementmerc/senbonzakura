@@ -30,6 +30,8 @@ import argparse
 from . import methods as _methods  # constants only; imports nothing heavy
 from . import separation as _separation  # constants only; imports nothing heavy, see its head
 from ._version import __version__
+from .lengthsweep import DEFAULT_BUDGET as _DEFAULT_BUDGET  # constants only; pulls only .metrics
+from .lengthsweep import VISIBILITY_FLOOR as _VISIBILITY_FLOOR
 from .metrics import KL_CEIL, KL_TARGET
 
 
@@ -198,17 +200,25 @@ def build_parser():
                     help="search layers up to this fraction of depth (default: 0.8). The window is "
                          "a fraction rather than a layer number so the same setting means the same "
                          "thing on models of different depths")
-    ap.add_argument("--gen-tokens", type=int, default=48,
-                    help="how many tokens each scored reply may run to (default: 48). THIS IS THE "
-                         "SETTING MOST LIKELY TO MAKE A REFUSAL RATE READ LOW. A refusal is only "
-                         "counted if the model gets far enough to say it, and on a model with an "
-                         "extended-refusal style the median refusal marker was measured at "
-                         "character 306, roughly token 77, so at 48 the marker is never generated "
-                         "rather than missed. Raising it costs generation time and breaks "
-                         "comparability with any run made at another budget, so do not guess: "
-                         "measure the model with `senbonzakura score --length-sweep`, which "
-                         "generates once and reads the rate back at every shorter budget, and "
-                         "reports NOT CONVERGED if the rate is still climbing at the top")
+    ap.add_argument("--gen-tokens", type=int, default=_DEFAULT_BUDGET,
+                    help=f"how many tokens each reply gets while the search is scoring it "
+                         f"(default: {_DEFAULT_BUDGET}). THIS IS THE SETTING MOST LIKELY TO MAKE A "
+                         f"REFUSAL RATE READ LOW, and lowering it does more damage than "
+                         f"misreporting a number: the search then SELECTS for configurations "
+                         f"whose refusal simply arrives after the cutoff. A refusal is only "
+                         f"counted if the model gets far enough to say it, and this project "
+                         f"measured its own refusal markers at a median of character 306, roughly "
+                         f"token 77. The default is the point its length sweep measured the rate "
+                         f"as settling on Qwen3-1.7B; that is one model, so measure yours with "
+                         f"`senbonzakura score --length-sweep` rather than assuming it transfers. "
+                         f"Below {_VISIBILITY_FLOOR} this command refuses unless you also pass "
+                         f"--short-budget-ok")
+    ap.add_argument("--short-budget-ok", dest="short_budget_ok", action="store_true",
+                    help=f"allow --gen-tokens below {_VISIBILITY_FLOOR}, which is otherwise "
+                         f"refused. For a smoke test or a plumbing check, where the run is not "
+                         f"going to be quoted: a search at that budget selects for models whose "
+                         f"refusal simply arrives after the cutoff, so the resulting numbers are "
+                         f"about the budget and not about the model")
     ap.add_argument("--gen-batch", type=int, default=16, dest="gen_batch",
                     help="max prompts per generation batch (the ceiling the adaptive VRAM throttle "
                          "ramps up to; it shrinks below this automatically when the card is busy).")

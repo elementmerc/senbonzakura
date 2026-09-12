@@ -336,7 +336,12 @@ def main(argv=None):
         ["senbonzakura", "abliterate", "--model", MODEL, "--track", str(TRACK),
          "--out", str(model_dir), "--device", "cpu", "--trials", "2", "--dir-prompts", "8",
          "--eval-refusal", "4", "--eval-kl", "4", "--eval-refusal-final", "4",
-         "--gen-tokens", "16", "--gen-batch", "4", "--no-persist-study",
+         # 16 tokens is far below the budget a refusal is visible at, which the abliterator now
+         # refuses rather than warns about. This is the case the escape hatch exists for: the
+         # smoke proves the plumbing on an 8-prompt toy track whose baseline refusal is 0.0, so
+         # there is no number here for the short budget to distort. `stamp_smoke_artefacts`
+         # marks every artefact this run writes as unquotable for the same reason.
+         "--gen-tokens", "16", "--short-budget-ok", "--gen-batch", "4", "--no-persist-study",
          # Q-37: given the base licence, the run writes a card beside the weights.
          "--base-licence", "apache-2.0"],
         expect_marker="DONE")

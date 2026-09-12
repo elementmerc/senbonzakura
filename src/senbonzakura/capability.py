@@ -643,7 +643,11 @@ PROMPT = ("{}\n\nWork through it, then give the final answer as a number on the 
 def build_parser():
     import argparse
 
-    from .cli import loader_parser
+    # FROM `.parser`, NOT FROM `.cli`, which re-exports it. `.cli` imports torch, optuna and
+    # transformers at module scope, so reaching `loader_parser` through it made BUILDING THE
+    # PARSER need the whole abliteration stack, and `capability --help` raised ImportError on
+    # exactly the install where a person is trying to find out what to install.
+    from .parser import loader_parser
 
     ap = argparse.ArgumentParser(
         prog="senbonzakura capability",
@@ -695,10 +699,15 @@ def build_parser():
 def main(argv=None):
     import json as _json
 
+    # PARSED BEFORE THE HEAVY IMPORTS, and the order is the fix. `.cli` imports torch, optuna and
+    # transformers at module scope, so importing it up here meant `capability --help` raised
+    # ImportError on any install without the abliterate extra: the one command a person runs to
+    # find out what they need told them nothing and traced. `--help` and a usage error both exit
+    # inside `parse_args`, so nothing heavy has to exist for either.
+    a = build_parser().parse_args(argv)
+
     from . import dataset
     from .cli import load_model_and_tokenizer
-
-    a = build_parser().parse_args(argv)
     if a.n is not None and a.n < 1:
         raise SystemExit("--n must be at least 1.")
 

@@ -171,18 +171,37 @@ def test_help_still_prints_without_the_stack(stripped):
     assert "senbonzakura" in proc.stdout.lower()
 
 
-def test_a_command_that_genuinely_needs_the_stack_says_so_rather_than_crashing(stripped):
+@pytest.mark.parametrize("command", ["score", "drift", "validate"])
+def test_a_command_that_genuinely_needs_the_stack_says_so_rather_than_crashing(stripped, command):
     """The other half of the contract: the boundary has to be legible from the outside.
 
     Abliterating really does need torch, and a user who tries it in a stripped install must
     get a sentence naming what to install, not an eleven-frame importlib traceback ending in
     a line number inside one of our files.
+
+    THIS TEST USED TO NAME `capability`, AND THAT WAS THE DEFECT WRITTEN DOWN AS THE CONTRACT.
+    `capability --help` failed because `build_parser` reached `loader_parser` through `.cli`
+    rather than through `.parser`, where it lives; the test asserted the failure and so
+    protected it. Three commands are named here instead of one, because a property asserted
+    on a single example is a property one refactor away from being untested.
     """
-    proc = _run(stripped, "capability", "--help")
+    proc = _run(stripped, command, "--help")
     assert proc.returncode != 0
     said = proc.stderr + proc.stdout
     assert "Traceback" not in proc.stderr, f"a missing dependency reached the user as a crash:\n{said}"
     assert "pip install" in said, "the message must name what to install"
+
+
+def test_capability_can_print_its_help_with_nothing_installed(stripped):
+    """`--help` is what a person types to find out what they need, so it cannot need it.
+
+    `capability` is the command that measures what an edit cost, and until 2026-09-12 asking
+    it for help on an install without the abliterate extra raised `ImportError: optuna`. The
+    parser is pure argparse; only running the measurement needs the stack.
+    """
+    proc = _run(stripped, "capability", "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "--save-generations" in proc.stdout
 
 
 def test_the_abliterate_path_refuses_in_words_rather_than_a_traceback(stripped):

@@ -38,8 +38,10 @@ marker is the failure this module was written for. So `required=True` (used for 
 raises, and a whole model warns loudly and keeps the run, because the alternative is killing a
 save whose GPU work is already spent over an informational field.
 """
+import contextlib
 import json
 import os
+import shutil
 import struct
 
 NAMESPACE = "senbonzakura"
@@ -87,6 +89,23 @@ def fields(*, version, ablate_conv, partial_layers, num_directions=None, dir_mod
 def _rewrite_header(path, fields):
     """Add the marker to one shard's metadata, leaving every tensor byte where it was."""
     tmp = f"{path}.stamping"
+    try:
+        _write_stamped_copy(path, tmp, fields)
+    except BaseException:
+        # NO `.stamping` LEFT BEHIND. Baseline 2.1: a partial-state file is cleaned up on the
+        # way out, not left for the next run to find. The failure this matters for is the disk
+        # filling mid-stamp, where the leftover copy is itself part of what filled it.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    # Rename last, so an interrupted stamp leaves the original shard intact rather than a
+    # half-written one. The whole point of this module is that a checkpoint says what it is, and a
+    # truncated checkpoint that says so is not an improvement.
+    os.replace(tmp, path)
+
+
+def _write_stamped_copy(path, tmp, fields):
+    """The copy itself: header replaced, every tensor byte passed through unchanged."""
     with open(path, "rb") as f:
         (n,) = struct.unpack("<Q", f.read(8))
         header = json.loads(f.read(n))
@@ -103,17 +122,61 @@ def _rewrite_header(path, fields):
                 if not chunk:
                     break
                 out.write(chunk)
-    # Rename last, so an interrupted stamp leaves the original shard intact rather than a
-    # half-written one. The whole point of this module is that a checkpoint says what it is, and a
-    # truncated checkpoint that says so is not an improvement.
-    os.replace(tmp, path)
+
+
+class PartialStampError(Exception):
+    """Some shards in this directory carry the marker and some do not."""
+
+
+def _preflight_room(directory, shards, log):
+    """Refuse before the first shard if there is not room for the largest copy.
+
+    Stamping writes a COMPLETE copy of a shard next to it and renames over the original, one at
+    a time, so the requirement is the largest single shard rather than the whole model. Nothing
+    reserved it: the model save's own pre-flight reserves 5% of the model size, and on a 30B
+    with 5 GB shards that is not one shard. With `--free-base-model` the base is already gone by
+    this point, so recovering from a half-stamped directory means downloading it again.
+
+    A margin on top because the filesystem needs somewhere to put the metadata, and because a
+    stamp that fits with nothing to spare is a stamp that fails on the next run.
+    """
+    if not shards:
+        return
+    largest = max(os.path.getsize(os.path.join(directory, n)) for n in shards)
+    need = largest + (1 << 26)                      # 64 MiB of elbow room
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError as e:
+        log(f"  provenance: cannot measure free space on this filesystem ({e}), so the "
+            f"{need / 1e9:.1f} GB pre-flight was skipped, not passed")
+        return
+    if free < need:
+        raise OSError(
+            f"stamping needs {need / 1e9:.2f} GB free beside the checkpoint (the largest shard "
+            f"is {largest / 1e9:.2f} GB and is copied before being renamed over), and "
+            f"{free / 1e9:.2f} GB is available. Free space and re-run the stamp; the weights "
+            f"themselves are already written and are not affected.")
 
 
 def stamp_safetensors(directory, fields, log=print):
     """Stamp every safetensors shard in a saved model directory. Returns how many it touched."""
     shards = sorted(n for n in os.listdir(directory) if n.endswith(".safetensors"))
-    for name in shards:
-        _rewrite_header(os.path.join(directory, name), fields)
+    _preflight_room(directory, shards, log)
+    # NAME THE PARTIAL STATE. Stopping part way leaves earlier shards stamped and later ones
+    # not, and a directory that disagrees with itself cannot say what was done to it. The
+    # try sits outside the loop, which also means the first failure ends the stamp rather than
+    # the run limping on to leave a wider gap.
+    done = 0
+    try:
+        for name in shards:
+            _rewrite_header(os.path.join(directory, name), fields)
+            done += 1
+    except OSError as e:
+        raise OSError(
+            f"stamping failed on {shards[done]} after {done} of {len(shards)} shard(s) were "
+            f"already stamped, so this directory is now PART marked: {e}. Re-run the stamp "
+            f"once there is room; stamping an already-stamped shard is safe."
+        ) from e
     log(f"  provenance: stamped {len(shards)} safetensors shard(s)")
     return len(shards)
 
@@ -137,6 +200,11 @@ def read(directory):
     a disagreement between the two is worth surfacing rather than resolving silently.
     """
     from safetensors import safe_open  # imported here so the module stays torch-free
+    # EVERY SHARD IS READ, not the first one carrying a marker. Stamping rewrites shards one at
+    # a time, so an interrupted stamp leaves some marked and some not; answering from the first
+    # hit reports such a directory as fully marked, which for a PARTIAL abliteration is exactly
+    # the thing this module exists to prevent.
+    marked, unmarked, first = {}, [], None
     for name in sorted(os.listdir(directory)):
         if not name.endswith(".safetensors"):
             continue
@@ -145,7 +213,18 @@ def read(directory):
         found = {k[len(NAMESPACE) + 1:]: v for k, v in meta.items()
                  if k.startswith(f"{NAMESPACE}.")}
         if found:
-            return found
+            marked[name] = found
+            first = first if first is not None else found
+        else:
+            unmarked.append(name)
+    if marked and unmarked:
+        raise PartialStampError(
+            f"{len(marked)} of {len(marked) + len(unmarked)} shard(s) in {directory} carry a "
+            f"provenance marker and the rest do not, so this checkpoint cannot say what was "
+            f"done to it. That is what an interrupted stamp leaves behind. Unmarked: "
+            f"{', '.join(unmarked[:3])}{' ...' if len(unmarked) > 3 else ''}. Re-run the stamp.")
+    if first is not None:
+        return first
     path = os.path.join(directory, "config.json")
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as f:

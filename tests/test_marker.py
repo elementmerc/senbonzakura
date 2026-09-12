@@ -15,6 +15,7 @@ others, and both were the reason the module was written after a review on 2026-0
 import json
 import os
 import struct
+from pathlib import Path
 
 import pytest
 import torch
@@ -198,3 +199,92 @@ def test_the_config_answers_when_the_shards_are_gone(tmp_path):
     (tmp_path / "config.json").write_text(
         json.dumps({"model_type": "lfm2", "senbonzakura": {"partial": "true"}}), encoding="utf-8")
     assert marker.read(str(tmp_path))["partial"] == "true"
+
+
+# ── the stamp needs room, and a half-stamped directory must say so ───────────────────────────
+
+def _no_room(monkeypatch):
+    import shutil as _shutil
+    monkeypatch.setattr(marker.shutil, "disk_usage",
+                        lambda _p: _shutil._ntuple_diskusage(total=1 << 40, used=1 << 40, free=1))
+
+
+def test_stamping_refuses_before_the_first_shard_when_there_is_no_room(saved, monkeypatch):
+    """THE GAP: `_rewrite_header` writes a COMPLETE copy of a shard before renaming over it,
+    and nothing reserved that space. The model save's own pre-flight reserves 5% of the model
+    size, which on a 30B with 5 GB shards is not one shard. With `--free-base-model` the base
+    is already deleted by then, so recovering means downloading it again.
+    """
+    directory, _ = saved
+    _no_room(monkeypatch)
+    with pytest.raises(OSError) as e:
+        marker.stamp_safetensors(str(directory), {"partial": "true"})
+    said = str(e.value)
+    assert "largest shard" in said
+    assert "already written and are not affected" in said, (
+        "the message must say the weights survived, or a reader assumes the save was lost")
+
+
+def test_nothing_is_stamped_when_the_preflight_refuses(saved, monkeypatch):
+    """A pre-flight that refuses AFTER touching a shard would create the state it prevents."""
+    directory, _ = saved
+    _no_room(monkeypatch)
+    with pytest.raises(OSError):
+        marker.stamp_safetensors(str(directory), {"partial": "true"})
+    assert marker.read(str(directory)) is None, "a refused stamp left a marker behind"
+
+
+def test_a_stamp_that_dies_mid_copy_leaves_no_partial_file(saved, monkeypatch):
+    """Baseline 2.1: no `.part`, `.tmp` or half-written file survives a failure.
+
+    This has to drive the failure INSIDE the copy. Asserting it after a pre-flight refusal
+    proves nothing, because the pre-flight stops before any temp file exists: that version of
+    this assertion passed with the cleanup deleted.
+    """
+    directory, _ = saved
+    def dies_after_creating_the_temp(path, tmp, fields):
+        Path(tmp).write_bytes(b"half a shard")
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(marker, "_write_stamped_copy", dies_after_creating_the_temp)
+    with pytest.raises(OSError):
+        marker.stamp_safetensors(str(directory), {"partial": "true"})
+    assert not list(Path(directory).glob("*.stamping")), (
+        "a failed stamp left its half-written copy behind, which on a full disk is part of "
+        "what filled it")
+
+
+def test_an_unmeasurable_filesystem_says_the_preflight_was_skipped(saved, monkeypatch):
+    """Proceeding is right; proceeding QUIETLY is not, which is the rule the host-RAM
+    pre-flight already follows.
+    """
+    directory, _ = saved
+    lines = []
+    monkeypatch.setattr(marker.shutil, "disk_usage",
+                        lambda _p: (_ for _ in ()).throw(OSError("no statvfs here")))
+    marker.stamp_safetensors(str(directory), {"partial": "true"}, log=lines.append)
+    assert any("skipped, not passed" in line for line in lines)
+
+
+def test_a_half_stamped_directory_refuses_to_report_itself_as_stamped(saved):
+    """THE DEFECT `read` HAD. It returned the first shard carrying a marker, so a directory
+    where stamping died part way reported as fully marked. For a PARTIAL abliteration, a model
+    whose refusal behaviour is only half removed, that is the exact failure this module was
+    written to prevent.
+    """
+    directory, _ = saved
+    shards = sorted(Path(directory).glob("*.safetensors"))
+    assert len(shards) >= 2, "the fixture must have more than one shard for this to be reachable"
+    marker._rewrite_header(str(shards[0]), {"partial": "true"})      # one only
+    with pytest.raises(marker.PartialStampError) as e:
+        marker.read(str(directory))
+    said = str(e.value)
+    assert "cannot say what was done to it" in said
+    assert shards[1].name in said, "the message must name a shard the reader can go and look at"
+
+
+def test_a_fully_stamped_directory_still_reads_back(saved):
+    """The other half: the new check must not refuse the normal case."""
+    directory, _ = saved
+    marker.stamp_safetensors(str(directory), {"partial": "true"})
+    assert marker.read(str(directory))["partial"] == "true"

@@ -64,7 +64,38 @@ WHEEL="$(ls "$ROOT"/dist-cleanroom/*.whl | grep -v senbonzakura_check | head -1)
 [ -n "$WHEEL" ] || die "no wheel was produced"
 echo "clean room: $(basename "$WHEEL") ($(du -h "$WHEEL" | cut -f1))"
 
-WORK="$(mktemp -d)"
+# WHERE THE WORK DIRECTORY LIVES, and it is a pre-flight rather than a hope.
+#
+# A full install is torch and its dependencies, several gigabytes, and `mktemp -d` lands in
+# /tmp, which on this laptop is a 3.5 GB tmpfs: RAM. The run then died with "Disk quota
+# exceeded" partway through, having proved nothing about the wheel, and the message looked like
+# the install failing rather than the harness running out of room. The 2026-09-01 fix moved the
+# venv INSIDE the container off its tmpfs and did not touch the host directory that container
+# mounts, so it was the same defect one layer out.
+#
+# So the space is measured before anything is built, and a directory that cannot hold the
+# install is refused with the numbers rather than discovered halfway through.
+NEED_MB=1024
+[ "$MODE" = full ] && NEED_MB=12288
+
+free_mb() { df -Pm "$1" 2>/dev/null | awk 'NR==2 {print $4}'; }
+
+WORK=""
+for base in ${SENBON_CLEANROOM_TMPDIR:-} "${TMPDIR:-/tmp}" /var/tmp "$ROOT/.cleanroom-work"; do
+  [ -n "$base" ] || continue
+  mkdir -p "$base" 2>/dev/null || continue
+  have="$(free_mb "$base")"
+  [ -n "$have" ] || continue
+  if [ "$have" -ge "$NEED_MB" ]; then
+    WORK="$(mktemp -d "$base/senbon-cleanroom.XXXXXX")" || continue
+    echo "clean room: working in $base (${have} MB free, needs ~${NEED_MB} MB for --${MODE})"
+    break
+  fi
+  echo "clean room: skipping $base, ${have} MB free against ~${NEED_MB} MB needed" >&2
+done
+[ -n "$WORK" ] || die "no directory with ~${NEED_MB} MB free for a --${MODE} run. Point
+  SENBON_CLEANROOM_TMPDIR at one with room. This is the harness running out of space, not the
+  wheel failing: nothing about the wheel has been tested."
 trap 'rm -rf "$WORK"' EXIT
 cp "$WHEEL" "$CHECK_WHEEL" "$ROOT/tools/clean_room_checks.py" "$WORK/"
 

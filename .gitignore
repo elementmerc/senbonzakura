@@ -72,6 +72,10 @@ dist/
 # Every scratch build directory, not each one as it is invented. `dist-adv/` was not
 # listed and a 19 MB wheel reached a commit in a repository with a public remote.
 dist-*/
+# The clean room's last-resort work directory, used only when /tmp and /var/tmp are both too
+# small for a full install. It holds a multi-gigabyte venv, so it is ignored for the same
+# reason `dist-*/` is: a scratch directory inside a repository with a public remote.
+.cleanroom-work/
 .venv/
 venv/
 *.egg-info/

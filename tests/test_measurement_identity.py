@@ -202,3 +202,44 @@ def test_drifts_instrument_sentence_comes_from_the_registry():
     from senbonzakura import drift
 
     assert instrument_sentence("kl", drift.KL_ESTIMATOR).startswith("senbonzakura.kl")
+
+
+# ── two estimators of one metric ─────────────────────────────────────────────────────────────
+
+def test_two_estimators_of_one_metric_are_keyed_by_estimator():
+    """A refusal artefact carries this project's ruler AND Heretic's keyword metric, and a
+    compass artefact carries the real AUC and the length-only control. Those pairs are the
+    comparison, not duplicates, and the senbonzakura adapter has always normalised the older
+    artefacts into `metric.estimator` keys. Stamping writes the same shape.
+    """
+    doc = {}
+    measurement.stamp(doc, "refusal_rate", 0.12, "senbonzakura-ruler", n=200, by_estimator=True)
+    measurement.stamp(doc, "refusal_rate", 0.09, "heretic-keyword", n=200, by_estimator=True)
+    assert sorted(doc[measurement.METRICS_KEY]) == [
+        "refusal_rate.heretic-keyword", "refusal_rate.senbonzakura-ruler"]
+    assert doc[measurement.METRICS_KEY]["refusal_rate.heretic-keyword"]["metric"] == "refusal_rate"
+
+
+def test_the_same_estimator_twice_is_still_refused():
+    """What is relaxed is two INSTRUMENTS, not two values from one."""
+    doc = {}
+    measurement.stamp(doc, "refusal_rate", 0.12, "senbonzakura-ruler", by_estimator=True)
+    with pytest.raises(measurement.MeasurementError):
+        measurement.stamp(doc, "refusal_rate", 0.13, "senbonzakura-ruler", by_estimator=True)
+
+
+def test_mixing_a_bare_stamp_with_a_per_estimator_one_is_refused():
+    """`refusal_rate` beside `refusal_rate.heretic-keyword` leaves a reader unable to say which
+    instrument the bare one came from, which is the ambiguity the module exists to prevent.
+    """
+    doc = {}
+    measurement.stamp(doc, "refusal_rate", 0.12, "senbonzakura-ruler")
+    with pytest.raises(measurement.MeasurementError) as e:
+        measurement.stamp(doc, "refusal_rate", 0.09, "heretic-keyword", by_estimator=True)
+    assert "already stamped bare" in str(e.value)
+
+    other = {}
+    measurement.stamp(other, "refusal_rate", 0.09, "heretic-keyword", by_estimator=True)
+    with pytest.raises(measurement.MeasurementError) as e:
+        measurement.stamp(other, "refusal_rate", 0.12, "senbonzakura-ruler")
+    assert "already stamped per estimator" in str(e.value)

@@ -163,21 +163,45 @@ def identity(metric: str, estimator: str, *, n=None, units=None, **extra) -> dic
     return out
 
 
-def stamp(doc: dict, metric: str, value, estimator: str, *, n=None, units=None, **extra) -> dict:
+def stamp(doc: dict, metric: str, value, estimator: str, *, n=None, units=None,
+          by_estimator: bool = False, **extra) -> dict:
     """Record `value` in `doc` under the canonical metrics block, with its identity.
 
     Additive by design: the caller's existing top-level fields are untouched, so an artefact
     gains provenance without changing shape for anything already reading it. The published
     head-to-head arms are committed to this repository and are recomputed by a test, so a writer
     that renamed a field would break a published number rather than annotate it.
+
+    TWO ESTIMATORS OF ONE METRIC IS A REAL CASE, NOT AN ERROR, and `by_estimator=True` is how it
+    is written. A refusal artefact carries this project's ruler and Heretic's keyword metric side
+    by side; a compass artefact carries the real AUC and the length-only control that exists to
+    expose an instrument measuring sentence length. Those are the comparison, not duplicates to
+    be collapsed. They are keyed `metric.estimator`, which is exactly what the senbonzakura
+    adapter already normalises older artefacts into, so the stamped and unstamped shapes read
+    identically.
+
+    What stays refused is two values under ONE key, which is the ambiguity that made two
+    different `kl` fields indistinguishable in the first place.
     """
     block = doc.setdefault(METRICS_KEY, {})
-    if metric in block:
+    slot = f"{metric}.{estimator}" if by_estimator else metric
+    if slot in block:
         raise MeasurementError(
-            f"{metric!r} is already stamped on this artefact. Two values for one metric in one "
-            f"document is the ambiguity this module exists to prevent; give the second one its "
-            f"own metric name, or its own artefact.")
-    block[metric] = {**identity(metric, estimator, n=n, units=units, **extra), "value": value}
+            f"{slot!r} is already stamped on this artefact. Two values for one metric in one "
+            f"document is the ambiguity this module exists to prevent; pass "
+            f"`by_estimator=True` if these are genuinely two instruments measuring the same "
+            f"quantity, or give the second one its own artefact.")
+    if by_estimator and metric in block:
+        raise MeasurementError(
+            f"{metric!r} is already stamped bare on this artefact, so adding "
+            f"{slot!r} beside it would leave a reader unable to tell which is which. Stamp "
+            f"every estimator of a metric with `by_estimator=True`, or none of them.")
+    if not by_estimator and any(k.startswith(f"{metric}.") for k in block):
+        raise MeasurementError(
+            f"{metric!r} is already stamped per estimator on this artefact, so a bare "
+            f"{metric!r} beside it would be a third number of unclear provenance. Stamp this "
+            f"one with `by_estimator=True` too.")
+    block[slot] = {**identity(metric, estimator, n=n, units=units, **extra), "value": value}
     return doc
 
 

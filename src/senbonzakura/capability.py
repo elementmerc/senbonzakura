@@ -770,6 +770,14 @@ def main(argv=None):
               # this one did not, so a night of arm results came back citable everywhere except
               # the capability figures, which are the ones the whole experiment exists for.
               "provenance": provenance(device=a.device)}
+    # The canonical metrics block, beside the fields this command has always written rather than
+    # instead of them. Withheld deliberately when the accuracy was: a run whose graded subset is
+    # too small to report is a run with no capability number, and stamping `None` under a
+    # declared metric would hand a reader an identity for a measurement that was not taken.
+    if summary.get("accuracy") is not None:
+        from senbonzakura_check import measurement
+        measurement.stamp(result, "capability", summary["accuracy"], "code-graded",
+                          n=summary.get("graded"), interval=summary.get("accuracy_ci"))
     # Atomic, like every other result here. A capability run is a generation pass over hundreds of
     # prompts and a kill partway through the write used to leave a file that exists, is not empty,
     # and is not a result.

@@ -865,6 +865,32 @@ def suspect_readout_arms(res):
             if readout.get(arm) and readout[arm].get("suspect")]
 
 
+def _stamp_compass(res):
+    """Add the canonical metrics block beside the fields this command has always written.
+
+    ADDITIVE: nothing existing moves, because the published compass figures are recomputed from
+    these artefacts by a test.
+
+    BOTH ESTIMATORS, keyed `compass_auc.<estimator>`, and the second one is the point. The
+    length-only control is the ruler that reads nothing but prompt length; when it separates the
+    arms as well as the real instrument does, the real instrument is measuring sentence length.
+    A reader who gets the headline AUC without it has half the measurement, and that pairing is
+    exactly what the senbonzakura adapter already reconstructs from older artefacts.
+    """
+    from senbonzakura_check import measurement
+    if not isinstance(res.get("auc"), (int, float)):
+        return
+    n = None
+    if isinstance(res.get("n_harmful"), int) and isinstance(res.get("n_harmless"), int):
+        n = res["n_harmful"] + res["n_harmless"]
+    measurement.stamp(res, "compass_auc", res["auc"], "margin-past-preamble",
+                      n=n, interval=res.get("auc_ci"), by_estimator=True)
+    control = (res.get("controls") or {}).get("length_only_auc")
+    if isinstance(control, (int, float)):
+        measurement.stamp(res, "compass_auc", control, "length-only-control",
+                          n=n, by_estimator=True)
+
+
 def main(argv=None):
     a = build_parser().parse_args(argv)
     # Before the model loads, deliberately. A contradicted boundary is a mistake about which rows
@@ -1085,6 +1111,7 @@ def main(argv=None):
                                                   seed=a.seed, resamples=a.bootstrap)
         res["compared_to"] = a.compare_to
 
+    _stamp_compass(res)
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
 

@@ -500,3 +500,61 @@ def test_an_unknown_file_raises_rather_than_reporting_clean():
 
     with pytest.raises(UnknownArtefactError):
         check_document({"unrelated": "json"})
+
+
+# ── a stamped artefact and an older one must read the same ───────────────────────────────────
+
+def test_a_stamped_refusal_artefact_normalises_exactly_like_an_unstamped_one():
+    """THE PROPERTY THAT MAKES STAMPING ADDITIVE rather than a format change.
+
+    `score` gained a canonical metrics block on 2026-09-12 and kept every field it has always
+    written. Thirty-one published head-to-head arms carry the OLD shape and a test recomputes
+    their figures, so if the two shapes normalised differently, a check would say one thing
+    about last month's evidence and another about tomorrow's.
+    """
+    from senbonzakura.score import _stamp_refusal
+
+    old = {"label": "arm", "model": "m", "eval": "e", "n": 200,
+           "refusal": 0.12, "soft_refusal": 0.03, "noncompliant": 0.01,
+           "broken": 0.0, "heretic": 0.09, "provenance": {}}
+    stamped = dict(old)
+    _stamp_refusal(stamped)
+
+    a, b = normalise(old)["metrics"], normalise(stamped)["metrics"]
+    assert sorted(a) == sorted(b) == [
+        "refusal_rate.heretic-keyword", "refusal_rate.senbonzakura-ruler"]
+    for key in a:
+        assert a[key]["value"] == b[key]["value"], key
+        assert a[key]["estimator"] == b[key]["estimator"], key
+        assert a[key]["n"] == b[key]["n"], key
+
+
+def test_a_stamped_compass_artefact_normalises_exactly_like_an_unstamped_one():
+    from senbonzakura.margin import _stamp_compass
+
+    old = {"label": "arm", "model": "m", "auc": 0.91, "auc_ci": [0.87, 0.95],
+           "n_harmful": 100, "n_harmless": 100, "mode": "harm_recognition",
+           "controls": {"length_only_auc": 0.52}, "provenance": {}}
+    stamped = dict(old)
+    _stamp_compass(stamped)
+
+    a, b = normalise(old)["metrics"], normalise(stamped)["metrics"]
+    assert sorted(a) == sorted(b) == [
+        "compass_auc.length-only-control", "compass_auc.margin-past-preamble"]
+    for key in a:
+        assert a[key]["value"] == b[key]["value"], key
+        assert a[key]["estimator"] == b[key]["estimator"], key
+        assert a[key]["n"] == b[key]["n"], key
+
+
+def test_the_length_only_control_travels_with_the_headline_auc():
+    """A reader given the compass AUC without the control that exposes a length-reading ruler
+    has half the measurement. Stamping one and not the other would be worse than stamping
+    neither, because the block would look complete.
+    """
+    from senbonzakura.margin import _stamp_compass
+
+    doc = {"auc": 0.91, "n_harmful": 10, "n_harmless": 10,
+           "controls": {"length_only_auc": 0.88}}
+    _stamp_compass(doc)
+    assert "compass_auc.length-only-control" in doc["metrics"]

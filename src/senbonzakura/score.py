@@ -132,6 +132,27 @@ def generate_prefixes(model, tok, prompts, device, batch=16, cuts=None):
     return rows
 
 
+def _stamp_refusal(res):
+    """Add the canonical metrics block beside the fields this command has always written.
+
+    ADDITIVE. Every existing top-level field stays exactly where it is, because the published
+    head-to-head arms are committed to this repository and a test recomputes every figure on
+    them: renaming a field here would break a published number rather than annotate it.
+
+    Both refusal estimators are stamped, keyed `refusal_rate.<estimator>`. That pairing is the
+    comparison rather than a duplicate: Heretic's keyword metric is kept byte-identical so one
+    number is like-for-like with theirs, and everything else is ours. It is also the shape the
+    senbonzakura adapter already normalises the older artefacts into, so a stamped file and an
+    unstamped one read the same way.
+    """
+    from senbonzakura_check import measurement
+    n = res.get("n")
+    measurement.stamp(res, "refusal_rate", res["refusal"], "senbonzakura-ruler",
+                      n=n, by_estimator=True)
+    measurement.stamp(res, "refusal_rate", res["heretic"], "heretic-keyword",
+                      n=n, by_estimator=True)
+
+
 def score(gens, label="", model="", eval_path=""):
     return {
         "label": label, "model": model, "eval": eval_path, "n": len(gens),
@@ -268,6 +289,7 @@ def main(argv=None):
     # Recorded in the artefact and not only printed, so a number read back months later carries
     # the caveat it was produced under rather than relying on somebody having seen a log line.
     res["budget_warning"] = warning
+    _stamp_refusal(res)
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

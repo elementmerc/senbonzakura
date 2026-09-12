@@ -230,8 +230,18 @@ def test_full_run_writes_artefact(base_args, tiny_model, tiny_tok, track):
     # cannot be re-run, and a second run of the same config cannot be told from a
     # different one. Every published number needs this.
     assert d["seed"] == base_args.seed
-    for k in ("search", "trials", "warm_start", "good_orth", "sparsity"):
+    # `ablation_rounds` and `norm_restore` joined this list on 2026-09-12. The record described
+    # the SEARCH thoroughly and the SURGERY partially: it carried `sparsity` alone, so an arm
+    # could not be told apart from one that ran the same sparsity with the refinement rounds on,
+    # and until the same day those were not even the same edit, because the rounds re-projected
+    # every row with no mask. A peer asked which of their recorded arms had set both and no
+    # artefact this project writes could answer it.
+    for k in ("search", "trials", "warm_start", "good_orth",
+              "sparsity", "ablation_rounds", "norm_restore"):
         assert k in d, f"abliteration.json lost its {k} provenance field"
+    assert isinstance(d["norm_restore"], bool), (
+        "recorded as the POSITIVE fact rather than as the flag that disables it: a reader of an "
+        "artefact should not have to know which way a `--no-` flag points to read the record")
     # Beside the run's own artefacts, NOT inside the corpus it was given. Writing it into the
     # track ruled out a read-only corpus, which the benchmark container mounts, and let two runs
     # over one track overwrite each other's table silently.

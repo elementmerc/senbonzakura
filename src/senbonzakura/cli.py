@@ -3801,7 +3801,21 @@ class Abliterator:
                        # know whether the chunking was pinned here too.
                        "direction_capture": {"prompts_per_side": args.dir_prompts,
                                              **self.capture_gov.report()},
+                       # THE THREE FLAGS THAT DESCRIBE THE SURGERY, recorded together because
+                       # they only mean anything together. The record carried `sparsity` alone,
+                       # so an arm could not be told apart from one that ran the same sparsity
+                       # with the refinement rounds on, and before 2026-09-12 those two were not
+                       # the same edit at all: the rounds re-projected every row with no mask,
+                       # so `sparsity 0.9, rounds 4` edited every row of the weight while the
+                       # artefact said 0.9. A peer asked on 2026-09-12 which of their recorded
+                       # arms set both, and nothing written here could answer it.
+                       #
+                       # `norm_restore` is the same class: it is a named arm in `methods.py` and
+                       # the difference between the shipped edit and the naive one, and the
+                       # record said nothing about which had run.
                        "sparsity": float(args.sparsity),
+                       "ablation_rounds": int(getattr(args, "ablation_rounds", 0) or 0),
+                       "norm_restore": not bool(getattr(args, "no_norm_restore", False)),
                        # Provenance: a score without the seed that produced it cannot be
                        # re-run, and cannot be told apart from a re-sample of the same config.
                        # WHAT THIS RESULT IS ABOUT. The record carried the seed, the search, the

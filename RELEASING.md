@@ -58,17 +58,48 @@ and correctly tags it `linux_x86_64` instead, which PyPI does not accept. So:
 
 - the **universal** wheel (`py3-none-any`) goes to PyPI. It is built with the vendored binaries
   moved aside, and `--track default` still resolves from it;
-- the **platform** wheel (`linux_x86_64`) is attached to the GitHub Release, where a platform tag
-  is not a problem;
+- the **platform** wheel goes to PyPI too, AFTER being repaired to a manylinux tag (see below);
 - the **sdist** goes to both, and carries no binaries at all (`MANIFEST.in` prunes them).
+
+### The platform wheel is repaired before it goes anywhere (decision Q-34)
+
+A bare `linux_x86_64` wheel is refused by PyPI, and it is also dishonest in a way that costs a
+user rather than us: the tag says nothing about which glibc the binaries need. Measured on
+2026-09-12, the unrepaired wheel installs perfectly on `python:3.13-slim` and its quantiser then
+cannot start, because llama.cpp's binaries link OpenMP and that image has no `libgomp.so.1`.
+
+```sh
+tools/repair_manylinux.sh dist/senbonzakura-<version>-py3-none-linux_x86_64.whl
+# -> dist-manylinux/senbonzakura-<version>-py3-none-manylinux_2_35_x86_64.whl
+```
+
+The script runs `auditwheel` inside a manylinux image pinned by digest, which is not optional:
+the same wheel reads `manylinux_2_38` when audited on a modern host and `manylinux_2_35` inside
+the image, because auditwheel reads the BUILD MACHINE's system libraries. It bundles what the
+binaries need and the platform does not guarantee (libssl, libcrypto, libgomp), rewrites the
+RPATH of every ELF including the executables, and then starts the quantiser on an image with no
+libgomp to prove the repair worked rather than assuming it.
+
+**What the floor means, measured across seven distributions.** Runs after repair: `python:3.13-slim`,
+Ubuntu 22.04 and 24.04, Debian 12, Fedora 40, Arch. Fails on AlmaLinux 9, which is the RHEL 9
+family: glibc 2.34 and `GLIBCXX_3.4.29`, where the binaries need `GLIBCXX_3.4.30`. That is a
+platform BELOW the tag, so pip there refuses the wheel outright rather than installing a broken
+one, which is the whole point of tagging it honestly.
+
+**The floor is set by libstdc++, not by glibc.** The binaries top out at `GLIBC_2.34` and would
+allow `manylinux_2_34`; they need `GLIBCXX_3.4.30`, which is GCC 12, and that is what forces
+`manylinux_2_35`. Getting below it means building llama.cpp from source rather than vendoring
+upstream's release binaries, which would change the provenance model and has not been decided.
 
 ```sh
 python tools/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
 python tools/pack_track.py             # writes src/senbonzakura/data/default-track.bin
 
-# 1. the PLATFORM wheel, for the GitHub Release
+# 1. the PLATFORM wheel, repaired to a manylinux tag so PyPI will take it
 python -m build --wheel
 python tools/check_wheel.py dist/*.whl                 # tag-versus-contents only
+tools/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
+python tools/check_wheel.py dist-manylinux/*.whl --release
 
 # 2. the UNIVERSAL wheel plus the sdist, for PyPI.
 #    `build/` must go too: a stale staging directory carries the binaries back in even after

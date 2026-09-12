@@ -382,3 +382,40 @@ def test_the_real_shipped_blob_carries_no_build_machine_path():
     for key, value in (doc.get("sources") or {}).items():
         assert not str(value).startswith(("/home/", "/tmp/", "/root/", "/Users/")), (
             f"the shipped track manifest still carries the build machine's path for {key}: {value}")
+
+
+# ── where the binaries INSTALL, not just what the tag says (decision Q-34) ───────────────────
+
+def test_the_distribution_is_impure_exactly_when_binaries_are_vendored(monkeypatch, tmp_path):
+    """The defect auditwheel reported when it was first pointed at a real wheel.
+
+    THE REFUSAL, verbatim:
+
+        RuntimeError: Invalid binary wheel, found the following shared library/libraries
+        in purelib folder: libggml-base.so, libggml.so, libllama.so, ...
+
+    `root_is_pure = False` sets `Root-Is-Purelib: false`, which says the archive ROOT installs
+    into platlib. It does not make setuptools PUT anything there. With no declared extension
+    modules the distribution was pure, so the whole package went to
+    `senbonzakura-<v>.data/purelib/`, binaries and all, and no manylinux tool will process a
+    shared library in purelib. Every tag check we had passed a wheel auditwheel refused to look
+    at, because our checks asked about the tag and not the layout.
+    """
+    mod = load_setup(monkeypatch, tmp_path)
+    dist = mod._BinaryDistribution()
+    assert dist.has_ext_modules() is False, "a tree with no binaries must stay genuinely pure"
+
+    place(tmp_path, "src/senbonzakura/vendor/bin", "linux-x86_64")
+    assert dist.has_ext_modules() is True, (
+        "a tree carrying executables must declare itself impure, or setuptools routes them into "
+        "purelib and the wheel cannot be repaired to a manylinux tag")
+
+
+def test_the_universal_wheel_is_not_dragged_impure(monkeypatch, tmp_path):
+    """The other half, and the one with a user on the end of it. The universal wheel is what
+    PyPI serves to macOS and Windows; if it became platlib it would still install, and the
+    change would be invisible until something depended on where the files landed.
+    """
+    mod = load_setup(monkeypatch, tmp_path)
+    assert mod._BinaryDistribution().has_ext_modules() is False
+    assert mod.vendored_platforms() == []

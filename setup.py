@@ -26,6 +26,7 @@ import pathlib
 
 from setuptools import setup
 from setuptools.command.bdist_wheel import bdist_wheel
+from setuptools.dist import Distribution
 
 #: Where `tools/vendor_llama.py` places what it fetches.
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -97,4 +98,33 @@ class _PlatformAwareWheel(bdist_wheel):
         return "py3", "none", plat
 
 
-setup(cmdclass={"bdist_wheel": _PlatformAwareWheel})
+class _BinaryDistribution(Distribution):
+    """Impure exactly when the binaries are vendored, which decides WHERE they install.
+
+    THE PROBLEM THIS SOLVES, found 2026-09-12 by pointing auditwheel at a real wheel and
+    reading its refusal rather than assuming the layout was fine:
+
+        RuntimeError: Invalid binary wheel, found the following shared library/libraries
+        in purelib folder: libggml-base.so, libggml.so, libllama.so, ...
+
+    `root_is_pure = False` on the wheel command sets `Root-Is-Purelib: false`, which says the
+    archive ROOT installs into platlib. It does not make setuptools put anything there. With no
+    declared extension modules the distribution is pure, so the whole package was routed to
+    `senbonzakura-<v>.data/purelib/`, binaries and all, and a shared library in purelib is a
+    shape auditwheel refuses to process at all. Every tag check we had passed a wheel that no
+    manylinux tool would touch, because our checks asked about the TAG and not the layout.
+
+    `has_ext_modules` returning True is the documented way to say "this distribution has
+    platform-specific content" when the content was not produced by our own compiler. The tag
+    that follows from it is corrected in `_PlatformAwareWheel.get_tag`: there is still no
+    compiled extension here and nothing binds this to one CPython build.
+
+    It returns False when nothing is vendored, so the universal wheel is untouched and stays
+    genuinely pure.
+    """
+
+    def has_ext_modules(self):
+        return bool(vendored_platforms())
+
+
+setup(distclass=_BinaryDistribution, cmdclass={"bdist_wheel": _PlatformAwareWheel})

@@ -55,6 +55,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
 WORKDIR /build
 COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md ./
 COPY src/ ./src/
+# The checker's own tree, because `senbonzakura` depends on `senbonzakura-check` and that name is
+# not on PyPI yet. Without this the pip line below fails to resolve the dependency from the index,
+# which is pip correctly reporting that nobody can install a name that has never been published.
+COPY checker/ ./checker/
 COPY tools/ ./tools/
 COPY man/ ./man/
 
@@ -78,7 +82,11 @@ RUN if ls /wheels/torch-*.whl >/dev/null 2>&1; then \
  && python -c "import torch; assert torch.version.cuda, 'a CPU torch reached a CUDA image'; \
 print('torch', torch.__version__)"
 
-RUN pip install --no-cache-dir --quiet "requests>=2" ".[abliterate]" \
+# The checker is installed FIRST, from this tree, for the same reason the CPU image does it
+# (decision Q-29). `--no-deps` is honest rather than defensive: the distribution declares no
+# dependencies at all, and that emptiness is the property it exists to hold.
+RUN pip install --no-cache-dir --quiet --no-deps ./checker \
+ && pip install --no-cache-dir --quiet "requests>=2" ".[abliterate]" \
  && python tools/vendor_llama.py \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
 

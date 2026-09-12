@@ -34,7 +34,8 @@ if [ -x "$ROOT/.venv/bin/senbonzakura" ]; then
     export PATH
 fi
 command -v senbonzakura >/dev/null 2>&1 || {
-    echo "record-docs: senbonzakura is not on PATH. Install it (pip install -e .) first." >&2
+    echo "record-docs: senbonzakura is not on PATH. Install it first:" >&2
+    echo "  pip install -e ./checker --no-deps && pip install -e ." >&2
     exit 2
 }
 

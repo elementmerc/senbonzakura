@@ -213,3 +213,68 @@ def test_the_checker_has_a_readme_that_says_what_it_costs():
     readme = (CHECKER / "README.md").read_text(encoding="utf-8")
     assert "pip install senbonzakura-check" in readme
     assert "No torch" in readme or "no torch" in readme
+
+
+# ── every install site installs the checker first ────────────────────────────────────────────
+
+#: Files that install this project. Enumerated by glob rather than listed, so a new workflow or a
+#: new image is covered the day it lands rather than the day somebody remembers this file.
+INSTALL_SITE_GLOBS = ("Dockerfile*", ".github/workflows/*.yml", "tools/*.sh")
+
+def _arguments(segment):
+    """The whitespace-separated arguments of a shell segment, with quoting stripped.
+
+    ARGUMENTS, NOT THE WHOLE LINE, and the distinction is the point. The first version of this
+    check asked whether the line mentioned anything that was not this project and skipped it if
+    so; `pip install "requests>=2" ".[abliterate]"` installs both, so the real CUDA bug passed
+    the check written to catch it. A test that reads a line as one thing cannot see a line that
+    does two.
+    """
+    return [argument.strip("\"'") for argument in segment.split()]
+
+
+def _installs_this_project(segment):
+    """True when the segment pip-installs the senbonzakura distribution from this tree."""
+    if "pip install" not in segment:
+        return False
+    return any(argument == "." or argument.startswith(".[") or "$WHEEL" in argument
+               for argument in _arguments(segment))
+
+
+def _installs_the_checker(segment):
+    """True when the segment pip-installs the checker's tree or its built wheel."""
+    if "pip install" not in segment:
+        return False
+    return any(argument.rstrip("/").endswith("checker") or "CHECK_WHEEL" in argument
+               for argument in _arguments(segment))
+
+
+def test_every_site_that_installs_this_project_installs_the_checker_first():
+    """`senbonzakura` declares a dependency on `senbonzakura-check`, and that name is not on
+    PyPI. Until it is, every install has to be handed the checker's tree first or the resolver
+    goes to the index and finds nothing.
+
+    THE FAILURE THIS EXISTS TO PREVENT, which has already happened twice in one day: the
+    dependency was added, ten of twelve CI jobs went red, every `pip install` in the workflow
+    was fixed, and the two Dockerfiles were missed; then one Dockerfile was fixed and its CUDA
+    twin was missed. Each fix was correct and each was applied to the file that happened to be
+    open. A list of the sites is the thing nobody was holding.
+    """
+    missed = []
+    for pattern in INSTALL_SITE_GLOBS:
+        for path in sorted(ROOT.glob(pattern)):
+            checker_seen = False
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                # Split on `&&` because a single RUN line chains several installs, and their
+                # order within the line is exactly what is being asserted.
+                for segment in line.split("&&"):
+                    if _installs_the_checker(segment):
+                        checker_seen = True
+                    elif _installs_this_project(segment) and not checker_seen:
+                        missed.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+    assert not missed, (
+        "these install the abliterator without installing the checker first, so the resolver "
+        "will look for `senbonzakura-check` on an index that does not carry it:\n  "
+        + "\n  ".join(missed)
+        + "\n\nAdd `pip install --no-deps ./checker` (and, in an image, the `COPY checker/`) "
+          "above the line. Delete this test once `senbonzakura-check` is published.")

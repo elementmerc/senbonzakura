@@ -897,6 +897,38 @@ def _orthonormal_rows(M, want, li=None, log=None):
     return out
 
 
+def _assert_basis_orthonormal(dirs_multi, log=None):
+    """Every layer's stored basis is orthonormal to `ORTHONORMAL_TOL`, before anything is baked.
+
+    `_orthonormal_rows` already enforces this, on the gain-fold path, which most runs never
+    take. The basis that ACTUALLY gets baked was checked nowhere, and was being stored in a
+    dtype that could not hold it: see the measurement beside the float32 cast.
+
+    Reported rather than raised, and that is deliberate. A basis slightly over the tolerance
+    still produces a usable edit, and killing a run that has already spent its GPU time over a
+    number in the fifth decimal place would be the wrong trade. What must not happen is the
+    number going unsaid, because the artefact records the direction COUNT and a reader has no
+    other way to learn that the count describes a subspace nobody quite chose.
+    """
+    worst, worst_layer = 0.0, None
+    for li in range(dirs_multi.shape[0]):
+        rows = dirs_multi[li]
+        live = rows[rows.norm(dim=-1) > 1e-6].float()
+        if live.shape[0] < 2:                       # one row has no off-diagonal to drift
+            continue
+        live = live / live.norm(dim=1, keepdim=True).clamp_min(1e-8)
+        gram = live @ live.T
+        off = (gram - torch.diag(torch.diagonal(gram))).abs().max().item()
+        if off > worst:
+            worst, worst_layer = off, li
+    if worst > ORTHONORMAL_TOL and log:
+        log(f"  NOTE: the stored direction basis is not orthonormal to {ORTHONORMAL_TOL:.0e}: "
+            f"worst off-diagonal {worst:.2e} at position {worst_layer}. The ablation removes a "
+            f"subspace slightly different from the one the direction count names. Fewer "
+            f"directions, or a wider corpus, reduces it.")
+    return worst
+
+
 def fold_norm_gain(R, g):
     """Re-express directions so that ablating them BEFORE a norm zeroes them AFTER it.
 
@@ -2457,7 +2489,31 @@ class Abliterator:
                         f"them cleared the constant and lost to a direction carrying nothing")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
-        self.dirs_multi = dirs_multi.to(torch.bfloat16)      # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)
+        # FLOAT32, NOT BFLOAT16, and the cast was costing orthogonality for nothing.
+        #
+        # These rows are an orthonormal basis and the bake's `R^T (R W)` is a projection only
+        # while `R R^T == I`. bfloat16 carries eight mantissa bits, so storing the basis in it
+        # rounded every component and broke orthogonality BETWEEN directions. The bake
+        # renormalises each row (see `bake_pc`), which repairs the Gram diagonal and cannot
+        # repair the off-diagonal.
+        #
+        # Measured 2026-09-12, worst off-diagonal deviation from the identity after the bake's
+        # own renormalisation, against `ORTHONORMAL_TOL` of 1e-4:
+        #
+        #     H=896   K=4   bf16 1.41e-04   f32 1.68e-08
+        #     H=896   K=8   bf16 2.80e-04   f32 2.61e-08
+        #     H=2048  K=8   bf16 1.10e-04   f32 1.77e-08
+        #
+        # So a narrow model with several directions was ablating along a basis the project's own
+        # tolerance would have rejected, and nothing rejected it: `_orthonormal_rows` enforces
+        # that tolerance on the gain-fold path only, which most runs never take. K=1 was never
+        # affected, because one row has no off-diagonal.
+        #
+        # The cast bought nothing either way: `active_dirs` is converted with `.float()` at every
+        # use, so the precision was discarded and then paid for. Float32 storage costs about
+        # 1 MB on a 1.7B and 3 MB on a 30B, next to a model of tens of gigabytes.
+        self.dirs_multi = dirs_multi.float()                 # [NL+1, KMAX, H]; unused rows stay 0 (ablate nothing)
+        _assert_basis_orthonormal(self.dirs_multi, log)
         # How many directions each layer ACTUALLY got. A layer can fall short of KMAX for
         # several legitimate reasons (the separation filter, the rank floor, a degenerate
         # cloud) and the request is not evidence of the result, so record the achieved

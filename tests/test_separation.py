@@ -15,10 +15,14 @@ saw, and gives the threshold a floor measured from directions that carry nothing
 are mostly about the two properties that make that worth having: that the in-sample statistic
 really is degenerate, and that the held-out one really does separate a signal from noise.
 """
+from pathlib import Path
+
 import pytest
 import torch
 
 from senbonzakura import cli
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _blob(n, h, centre, spread=0.35, seed=0):
@@ -348,3 +352,71 @@ def test_a_corpus_with_no_shared_templates_still_splits():
     assert len(set(keys)) == len(rows)
     fit, score = cli._halves(len(rows), 3, keys)
     assert len(fit) == len(score) == 20
+
+
+# ── the stored basis has to be orthonormal, and bf16 could not hold it ───────────────────────
+
+def test_bfloat16_storage_breaks_orthogonality_between_directions():
+    """The measurement behind storing `dirs_multi` in float32 (2026-09-12).
+
+    The bake's `R^T (R W)` is a projection only while `R R^T == I`. bfloat16 carries eight
+    mantissa bits, so it rounded every component of an orthonormal basis. `bake_pc`
+    renormalises each row, which repairs the Gram DIAGONAL and cannot repair the off-diagonal,
+    so what survived into the edit was a basis over the project's own tolerance.
+
+    This documents the reason rather than guarding live code; the guard is the test below.
+    """
+    torch.manual_seed(0)
+    H, K = 896, 8
+    q, _ = torch.linalg.qr(torch.randn(K, H).T)
+    R = q.T[:K].contiguous()
+
+    def off_diagonal(X):
+        X = X.float()
+        X = X / X.norm(dim=1, keepdim=True).clamp_min(1e-8)   # what bake_pc does
+        g = X @ X.T
+        return (g - torch.diag(torch.diagonal(g))).abs().max().item()
+
+    assert off_diagonal(R.to(torch.bfloat16)) > cli.ORTHONORMAL_TOL, (
+        "bfloat16 no longer breaks the tolerance, so either the tolerance moved or torch "
+        "changed; re-derive the storage decision rather than deleting this")
+    assert off_diagonal(R) < cli.ORTHONORMAL_TOL / 100, "float32 must hold it comfortably"
+
+
+def test_the_stored_directions_are_float32():
+    """The property, asserted where a future memory optimisation would meet it.
+
+    Casting back to bfloat16 would save about 1 MB on a 1.7B and cost four orders of magnitude
+    of orthogonality, and `active_dirs` floats the rows at every use anyway, so the precision
+    was discarded and then paid for.
+    """
+    dirs = torch.zeros(4, 8, 64)
+    assert dirs.float().dtype == torch.float32
+    src = (ROOT / "src" / "senbonzakura" / "cli.py").read_text(encoding="utf-8")
+    assert "self.dirs_multi = dirs_multi.float()" in src, (
+        "dirs_multi is no longer stored as float32; see the measurement in the comment beside it")
+
+
+def test_a_basis_that_is_not_orthonormal_is_reported_rather_than_hidden():
+    """Reported, not raised: a slightly-off basis still produces a usable edit, and killing a
+    run that has spent its GPU time over the fifth decimal place is the wrong trade. What must
+    not happen is silence, because the artefact records the direction COUNT and nothing else
+    would tell a reader the count describes a subspace nobody quite chose.
+    """
+    lines = []
+    bad = torch.zeros(2, 3, 16)
+    bad[1, 0] = torch.tensor([1.0] + [0.0] * 15)
+    bad[1, 1] = torch.tensor([0.02, 1.0] + [0.0] * 14)     # visibly not orthogonal
+    worst = cli._assert_basis_orthonormal(bad, lines.append)
+    assert worst > cli.ORTHONORMAL_TOL
+    assert any("not orthonormal" in line for line in lines)
+
+
+def test_an_orthonormal_basis_says_nothing():
+    """A check that speaks on a healthy run is one people learn to ignore."""
+    lines = []
+    good = torch.zeros(2, 3, 16)
+    good[1, 0] = torch.tensor([1.0] + [0.0] * 15)
+    good[1, 1] = torch.tensor([0.0, 1.0] + [0.0] * 14)
+    cli._assert_basis_orthonormal(good, lines.append)
+    assert lines == []

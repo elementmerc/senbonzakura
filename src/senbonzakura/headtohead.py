@@ -488,7 +488,40 @@ def find_run_isolated() -> Path | None:
     return None
 
 
-def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, out) -> list[str]:
+def resolve_senbon_src(override=None) -> Path:
+    """Which senbonzakura source tree the arms actually import, stated rather than inferred.
+
+    WHY THIS IS A FUNCTION AND NOT AN EXPRESSION. It used to be
+    `str(Path(__file__).resolve().parent.parent)`, written inline at the one place that needed it,
+    and nothing anywhere said so. That silently makes WHICH CODE GETS BENCHMARKED a property of
+    where this module happened to be imported from: somebody who pip-installs the wheel and runs a
+    comparison benchmarks site-packages while believing they benchmarked their checkout, and the
+    run looks completely normal from the outside. A benchmark that cannot say what it measured is
+    the same class of defect as a result artefact that cannot say what produced it, except the
+    artefact here is a whole comparison.
+
+    So: an override that can be passed, a default that is still the package's own location, and a
+    caller that PRINTS the answer either way.
+    """
+    return Path(override).resolve() if override else Path(__file__).resolve().parent.parent
+
+
+def senbon_src_provenance(src: Path) -> str:
+    """`<path> (commit abc1234)`, or the path alone when nothing can say which commit it is.
+
+    The commit is the half that makes the path checkable. Two trees at different commits look
+    identical in a log line, and 'which source' is only a useful answer if it pins the code.
+    """
+    from .crashsafe import git_commit
+    found = git_commit(repo_root=src.parent)
+    if not found:
+        return f"{src} (commit unknown)"
+    dirty = " dirty" if found.get("dirty") else ""
+    return f"{src} (commit {found['commit']}{dirty}, via {found['source']})"
+
+
+def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, out,
+                      senbon_src=None) -> list[str]:
     """Run an arm through `headtohead/run-isolated.sh`, which owns the isolation.
 
     THE FLAGS ARE NOT REIMPLEMENTED HERE, and that is the point.
@@ -509,7 +542,7 @@ def isolation_wrapper(script: Path, argv, *, tool, image, model, track, slices, 
     return [str(script), "--tool", tool, "--image", image,
             "--model", str(model), "--corpus", str(track), "--out", str(out),
             *(["--eval", str(slices)] if slices else []),
-            "--senbon-src", str(Path(__file__).resolve().parent.parent),
+            "--senbon-src", str(resolve_senbon_src(senbon_src)),
             "--", *argv]
 
 
@@ -742,11 +775,22 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
         if not slices:
             problems.append(
                 f"{', '.join(needs_slices)}: needs --eval-slices, the prompt files both tools "
-                f"score on. Without them each tool uses its own and the arms are not comparable")
+                f"score on. Without them each tool uses its own and the arms are not comparable. "
+                f"Cut them first, then pass the same directory here:\n"
+                f"    senbonzakura head-to-head stage --track {track} --out SLICES\n"
+                f"    senbonzakura head-to-head run ... --eval-slices SLICES")
         else:
             missing = [f for f in SLICE_FILES if not (Path(slices) / f).is_file()]
             if missing:
-                problems.append(f"--eval-slices {slices} is missing {', '.join(missing)}")
+                # Naming the command matters more here than anywhere else in this function: the
+                # usual way to reach this is an eval-slices directory staged by an OLDER version,
+                # which is complete for the run it was cut for and silently short a file for this
+                # one. "is missing X" reads like a corrupt directory; it is a stale one.
+                problems.append(
+                    f"--eval-slices {slices} is missing {', '.join(missing)}. A slices directory "
+                    f"staged before these files were required is short of them rather than "
+                    f"damaged; re-cut it with\n"
+                    f"    senbonzakura head-to-head stage --track {track} --out {slices}")
             problems.extend(slices_match_track(Path(slices), Path(track)))
     # The scoring inputs are checked here rather than after the arms have run, because
     # discovering them missing costs the whole run's GPU time and nothing else.
@@ -858,7 +902,8 @@ def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
 
 
 def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isolate="none",
-            slices=None, image=None, runner=None, log=print, force=False) -> ArmResult:
+            slices=None, image=None, runner=None, log=print, force=False,
+            senbon_src=None) -> ArmResult:
     """One tool, one seed. Skips itself when an identical arm is already on disk."""
     # Resolved here, not in the signature: a default captured at definition time cannot be
     # substituted, and a test that thought it had replaced the runner started a real subprocess.
@@ -892,7 +937,8 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
         script = find_run_isolated()
         if script is not None:
             argv = isolation_wrapper(script, argv, tool=adapter.name, image=image, model=model,
-                                     track=track, slices=slices, out=arm)
+                                     track=track, slices=slices, out=arm,
+                                     senbon_src=senbon_src)
         else:
             argv = isolate_argv(
                 argv, image=image,
@@ -927,7 +973,8 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
             if script is not None:
                 final_argv = isolation_wrapper(
                     script, final_argv, tool=f"{adapter.name}-best-of-n", image=image,
-                    model=model, track=track, slices=slices, out=arm)
+                    model=model, track=track, slices=slices, out=arm,
+                    senbon_src=senbon_src)
             else:
                 final_argv = isolate_argv(
                     final_argv, image=image,
@@ -970,7 +1017,7 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
 
 
 def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", images=None,
-                 extra=(), slices=None, runner=None, log=print, force=False):
+                 extra=(), slices=None, runner=None, log=print, force=False, senbon_src=None):
     """Every tool, every seed, in order, resuming what is already there.
 
     Sequential on purpose. Two arms sharing one GPU is how a run dies at 90% with an
@@ -978,6 +1025,10 @@ def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", ima
     because the card is the bottleneck.
     """
     images = images or {}
+    # PRINTED BEFORE ANY ARM RUNS, because this is the one line that says which code is being
+    # measured. It used to be visible only inside the run-isolated dispatch line, several lines
+    # deep and only in docker mode, so the answer was there but nobody could find it.
+    log(f"senbonzakura source under test: {senbon_src_provenance(resolve_senbon_src(senbon_src))}")
     results = []
     for tool in tools:
         adapter = ADAPTERS[tool]
@@ -985,7 +1036,7 @@ def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", ima
         for seed in seeds:
             r = run_arm(adapter, seed=seed, model=model, track=track, out=out, trials=trials,
                         extra=extra, isolate=isolate, image=images.get(tool), runner=runner,
-                        slices=slices, log=log, force=force)
+                        slices=slices, log=log, force=force, senbon_src=senbon_src)
             results.append(r)
             if not r.ok:
                 log(f"  {tool} seed {seed}: FAILED, {r.reason}")
@@ -1310,10 +1361,16 @@ def build_parser():
                         "capabilities. Recommended when running a tool you did not write")
     h.add_argument("--image", action="append", default=[], metavar="TOOL=IMAGE",
                    help="container image for a tool, with --isolate docker. Repeatable")
+    # The file list is INTERPOLATED rather than typed out. It was typed out, and it named four of
+    # the six: `final_prompts.txt` and `bestofn_kl_prompts.txt` were added to SLICE_FILES and the
+    # help was not, so a reader who staged exactly what it listed got a refusal naming a file the
+    # documentation had never mentioned. That is the whole `bestofn_kl_prompts.txt` incident.
     h.add_argument("--eval-slices", dest="eval_slices", default="",
-                   help="directory of staged prompt files every tool scores on: good.txt, "
-                        "bad.txt, keyword_prompts.txt, kl_prompts.txt. Required for any tool "
-                        "that would otherwise bring its own evaluation set")
+                   help="AN INPUT, NOT AN OUTPUT: a directory of prompt files you generate first "
+                        "with `senbonzakura head-to-head stage`, not a directory this command "
+                        "fills in. Every tool is scored on these same files, which is what makes "
+                        "the arms comparable; a tool left to bring its own evaluation set is "
+                        "solving a different problem. Must contain: " + ", ".join(SLICE_FILES))
     h.add_argument("--harmful", default="",
                    help="held-out harmful dataset the compass scores every model on. Required "
                         "unless --no-score is given")
@@ -1339,14 +1396,40 @@ def build_parser():
                    help="re-run arms that are already complete instead of skipping them")
     h.add_argument("--arg", action="append", default=[], metavar="ARG",
                    help="extra argument passed through to every arm. Repeatable")
+    h.add_argument("--senbon-src", dest="senbon_src", default="", metavar="DIR",
+                   help="which senbonzakura source tree the arms import, i.e. WHICH CODE THIS "
+                        "COMPARISON ACTUALLY MEASURES. Defaults to the tree this command was run "
+                        "from, which for a pip-installed senbonzakura is site-packages and NOT "
+                        "your checkout. The resolved path and its commit are printed before the "
+                        "first arm either way, so check that line rather than assuming")
 
-    st = sub.add_parser("stage", help="cut the prompt slices every tool is scored on")
+    st = sub.add_parser(
+        "stage", help="cut the prompt slices every tool is scored on. RUN THIS FIRST",
+        description="Cut the prompt slices every tool is scored on. This runs BEFORE `run`: it "
+                    "produces the directory that `run --eval-slices` consumes, and `run` refuses "
+                    "to start without it. Re-cut it whenever the track changes, or after an "
+                    "upgrade that adds a required slice.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     st.add_argument("--track", required=True, help="the track holding bad_ds / good_ds / bad_eval_ds")
-    st.add_argument("--out", required=True, help="directory to write the slices into")
-    st.add_argument("--dir-prompts", type=int, default=256)
-    st.add_argument("--eval-refusal", type=int, default=64)
-    st.add_argument("--eval-refusal-final", type=int, default=128)
-    st.add_argument("--eval-kl", type=int, default=64)
+    st.add_argument("--out", required=True,
+                    help="directory to write the slices into. Pass this same path to "
+                         "`run --eval-slices`")
+    # Each of these sizes one staged file, and every tool in the comparison is then scored on that
+    # file, so they are the budget for the WHOLE comparison rather than settings for one arm.
+    st.add_argument("--dir-prompts", type=int, default=256,
+                    help="how many contrast prompts per side to stage for direction extraction "
+                         "(default: 256)")
+    st.add_argument("--eval-refusal", type=int, default=64,
+                    help="how many held-out harmful prompts to stage for the in-search refusal "
+                         "score (default: 64)")
+    st.add_argument("--eval-refusal-final", type=int, default=128,
+                    help="how many harmful prompts to stage for the larger final re-score that "
+                         "picks the winner (default: 128). Bigger than --eval-refusal on purpose: "
+                         "crowning a winner on the same small set the search optimised against "
+                         "picks whichever arm got luckiest on those rows")
+    st.add_argument("--eval-kl", type=int, default=64,
+                    help="how many harmless prompts to stage for the KL divergence score "
+                         "(default: 64)")
 
     r = sub.add_parser("report", help="read a finished head-to-head and say what it found")
     r.add_argument("run_dir", help="the directory the arms and their scores were written to")
@@ -1441,7 +1524,8 @@ def main(argv=None):
 
     results = head_to_head(tools=tools, seeds=seeds, model=a.model, track=Path(a.track),
                            out=Path(a.out), trials=a.trials, isolate=a.isolate, images=images,
-                           extra=a.arg, slices=slices, force=a.force)
+                           extra=a.arg, slices=slices, force=a.force,
+                           senbon_src=a.senbon_src or None)
     summary = summarise(results)
     print(f"BENCH {summary['ran']} ran, {summary['skipped']} skipped, {summary['failed']} failed")
     for f in summary["failures"]:

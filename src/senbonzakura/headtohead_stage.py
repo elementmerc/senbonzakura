@@ -102,10 +102,18 @@ def main(argv=None):
     # These four default to the values kageyoshi resolves for a model under 5B, which is the size
     # class the first head-to-head runs at (Qwen3-1.7B). They are flags rather than constants
     # because a larger model gets a smaller budget and the slices must follow it.
-    ap.add_argument("--dir-prompts", type=int, default=256)
-    ap.add_argument("--eval-refusal", type=int, default=64)
-    ap.add_argument("--eval-refusal-final", type=int, default=128)
-    ap.add_argument("--eval-kl", type=int, default=64)
+    ap.add_argument("--dir-prompts", type=int, default=256,
+                    help="how many contrast prompts per side to stage for direction extraction "
+                         "(default: 256)")
+    ap.add_argument("--eval-refusal", type=int, default=64,
+                    help="how many held-out harmful prompts to stage for the in-search refusal "
+                         "score (default: 64)")
+    ap.add_argument("--eval-refusal-final", type=int, default=128,
+                    help="how many harmful prompts to stage for the larger final re-score that "
+                         "picks the winner (default: 128). Must be at least --eval-refusal")
+    ap.add_argument("--eval-kl", type=int, default=64,
+                    help="how many harmless prompts to stage for the KL divergence score "
+                         "(default: 64)")
     a = ap.parse_args(argv)
 
     track, out = Path(a.track), Path(a.out)

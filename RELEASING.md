@@ -246,21 +246,38 @@ replayed. Repeat the publisher entry on TestPyPI with environment `testpypi` to 
 
 ### Publishing
 
-Attach the **platform** wheel (`dist/*.whl`) and the sdist to the GitHub Release, and let the
-workflow upload `dist-pypi/` to PyPI. Attaching the platform wheel to the Release and uploading the
-universal one is the whole point of building both; swapping them puts an artefact on PyPI that
-`twine` refuses after the Release is already public and the version number is spent. Publishing the release starts the
-workflow; approving the `pypi` environment lets the upload run. To rehearse first, or to re-run
-after a failure, use the workflow's manual trigger with the tag and `testpypi`.
+**Three artefacts go up, and the bare `linux_x86_64` wheel is not one of them.** Since Q-34 the
+platform wheel is repaired to a manylinux tag and published, so what PyPI receives is:
+
+| Artefact | Who gets it |
+|---|---|
+| `dist-manylinux/*-manylinux_2_35_x86_64.whl` | Linux on glibc 2.35 or newer: the binaries come with it, so `convert` and `quantise` work from a plain `pip install` |
+| `dist-pypi/*-py3-none-any.whl` | everyone else, including macOS, Windows and older Linux: installs and works, without the vendored binaries |
+| `dist-pypi/*.tar.gz` | the sdist, which carries no binaries at all |
+
+pip picks the most specific wheel that matches, so this arrangement means a modern Linux user
+gets the binaries and nobody else gets an artefact they cannot run. An older Linux falls back to
+the universal wheel rather than failing, which is why both are uploaded and not one.
+
+`dist/*.whl`, the bare `linux_x86_64` build, is an INTERMEDIATE. It is the input to
+`repair_manylinux.sh` and it must not be attached or uploaded: PyPI refuses that tag, and it
+refuses it after the Release is public and the version number is spent. `check_wheel.py` catches
+it first, and that is the safety net rather than the plan.
+
+Publishing the release starts the upload workflow; approving the `pypi` environment lets it run.
+To rehearse first, or to re-run after a failure, use the workflow's manual trigger with the tag
+and `testpypi`.
 
 ## Order
 
 1. Pack the track.
 2. `python tools/check_vendor_pins.py`; refresh any pin it reports as `DUE`.
 3. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
-4. Build BOTH wheels and the sdist, per the section above; confirm the blob is inside each
-   wheel, and that `check_wheel.py` passes on the universal wheel with `--release` and on the
-   sdist.
+4. Build the platform wheel, repair it with `tools/repair_manylinux.sh`, then build the
+   universal wheel and the sdist, per the section above. Confirm the blob is inside each wheel,
+   and that `check_wheel.py --release` passes on the REPAIRED wheel and on the universal one,
+   and that it passes on the sdist. The unrepaired `dist/*.whl` is an intermediate and is
+   published nowhere.
 4a. Fast-forward `main` **before** the PyPI step, for the documentation links. The docs site
    deploys from `main` alone, so uploading to PyPI first publishes a project page whose links
    404 until `main` moves. The deploy workflow now fetches four of those URLs from the published

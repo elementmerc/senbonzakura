@@ -111,9 +111,21 @@ paths with a regex rather than a person choosing them. Without that, a config fi
 
 | Command | What it does |
 |---|---|
-| `head-to-head stage` | Cut the prompt slices every tool will be scored on, from one corpus. |
+| `head-to-head stage` | Cut the prompt slices every tool will be scored on, from one corpus. **Run this first.** |
 | `head-to-head run` | Run every tool over every seed, score every model with one instrument, print the verdict. |
 | `head-to-head report` | Read a finished run again, without re-running anything. |
+
+`stage` before `run`, always. `run --eval-slices` takes the directory `stage` writes; it's an
+input you generate, not a directory the run fills in, and `run` refuses to start without it. If
+you upgrade and an old slices directory stops working, re-cut it: a release can add a required
+slice, and a directory staged before that is short of it rather than broken.
+
+::: warning Check which source you benchmarked
+`run` prints the senbonzakura source tree it's about to measure, and its commit, before the first
+arm. It defaults to the tree the command itself was run from, so a pip-installed senbonzakura
+benchmarks site-packages even if you're sitting in your checkout. Pass `--senbon-src DIR` to say
+which one you mean, and read that line rather than assuming.
+:::
 
 See [Benchmarking against another tool](/guide/benchmark) for what makes it a comparison rather
 than two runs that happened near each other.

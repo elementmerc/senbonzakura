@@ -135,8 +135,8 @@ is built around, so a corrected run needs hardware we don't own. That's the actu
 not an oversight, and it's the same 6 GB ceiling behind everything else on this page.
 
 Every cell of it was produced by the shipped tools
-(`python -m senbonzakura.score --load-in-4bit` for the refusal columns,
-`python -m senbonzakura.coherence --load-in-4bit` for perplexity), which is what makes it
+(`senbonzakura score --load-in-4bit` for the refusal columns,
+`senbonzakura coherence --load-in-4bit` for perplexity), which is what makes it
 reproducible. It's comparability with today's code that it lacks, not reproducibility.
 
 ## Where next

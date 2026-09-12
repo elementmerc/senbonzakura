@@ -73,7 +73,7 @@ is the repaired one, verified at zero overlap on both sides. Check any copy you 
 rather than trusting what it is called:
 
 ```sh
-python -m senbonzakura.track --out mytrack --audit
+senbonzakura track --out mytrack --audit
 ```
 :::
 
@@ -82,7 +82,7 @@ python -m senbonzakura.track --out mytrack --audit
 Doing it by hand is how the mistake happens, so there is a builder:
 
 ```sh
-python -m senbonzakura.track \
+senbonzakura track \
     --harmful harmful.txt --harmless harmless.txt \
     --out mytrack --fit 256 --search 128
 ```
@@ -210,7 +210,7 @@ single-versus-multi comparison is two arms rather than three.
 Including one somebody assembled by hand, or one of yours from six months ago:
 
 ```sh
-python -m senbonzakura.track --out mytrack --audit
+senbonzakura track --out mytrack --audit
 ```
 
 ![The track audit running against the committed toy track](/media/track-audit.gif)

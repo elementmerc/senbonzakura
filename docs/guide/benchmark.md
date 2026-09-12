@@ -113,17 +113,17 @@ machine, needs no orchestrator, and produces the arms, the scores and the report
 
 ```sh
 # 1. Cut the prompt slices every tool is scored on, from one corpus.
-python -m senbonzakura.headtohead stage --track mytrack --out slices
+senbonzakura head-to-head stage --track mytrack --out slices
 
 # 2. Run every tool over every seed, score every model, print the verdict.
-python -m senbonzakura.headtohead run \
+senbonzakura head-to-head run \
     --tools senbon,heretic --seeds 42,43,44,45,46 --trials 200 \
     --model Qwen/Qwen3-1.7B --track mytrack --eval-slices slices \
     --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds \
     --out results/h2h
 
 # 3. Read a finished run again later, without re-running anything.
-python -m senbonzakura.headtohead report results/h2h
+senbonzakura head-to-head report results/h2h
 ```
 
 ::: tip New word: arm

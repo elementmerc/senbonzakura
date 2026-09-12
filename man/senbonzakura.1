@@ -151,6 +151,54 @@ senbonzakura \-\-model ./base \-\-track ./ds \-\-out ./att \\
 .B 0
 Success, or a clean early exit from
 .BR \-\-inspect / \-\-bench\-only .
+.SH ENVIRONMENT
+These change what a run does or what it records, and none of them has a flag.
+.TP
+.B HF_TOKEN
+Hugging Face access token, used for gated or private models and datasets.
+.B HUGGING_FACE_HUB_TOKEN
+is read as a fallback, and the Hub's own stored login after that. Prefer either
+variable over the
+.B \-\-hf\-token
+flag: an argument is visible to anyone who can run
+.BR ps (1).
+.TP
+.B SENBONZAKURA_COMMIT
+The commit to record in a run's provenance when
+.BR git (1)
+cannot answer, which is the case on a rented pod or an unpacked tarball rather
+than a checkout. A
+.B CODE_VERSION
+file beside the package or at the tree root is read first and is the better
+option, because a file travels with the tree while a variable has to be
+remembered at launch. Write it with
+.RS
+.nf
+
+git rev\-parse \-\-short HEAD > CODE_VERSION
+
+.fi
+.RE
+With neither, the run records no commit at all, and a result that cannot say
+which code produced it is not reproducible.
+.TP
+.B SENBONZAKURA_TRACK_BACKEND
+Pins the table backend used to read and write evaluation tracks:
+.IR auto " (default), " pyarrow " or " datasets .
+A value that is not one of those is refused rather than ignored.
+.TP
+.B SENBON_RUN_ISOLATED
+Absolute path to
+.IR headtohead/run\-isolated.sh ,
+for a machine where the benchmark runs from an installed wheel rather than a
+checkout. Only affects
+.BR "senbonzakura head\-to\-head" .
+.TP
+.B XDG_CACHE_HOME
+Where the bundled evaluation track is unpacked, as
+.IR $XDG_CACHE_HOME/senbonzakura/bundled\-track .
+Defaults to
+.IR ~/.cache .
 .SH SEE ALSO
 Arditi et al., "Refusal in Language Models Is Mediated by a Single Direction"
 (2024). Heretic (p\-e\-w/heretic).

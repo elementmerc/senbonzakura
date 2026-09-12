@@ -23,7 +23,7 @@ corpus builder takes. It reads your track and writes nothing to it, so there's n
 make things worse by asking.
 
 ```sh
-python -m senbonzakura.track --out mytrack \
+senbonzakura track --out mytrack \
     --contamination advbench.txt --contamination-name AdvBench \
     --contamination-report contamination-advbench.json
 ```

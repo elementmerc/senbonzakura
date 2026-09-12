@@ -159,7 +159,7 @@ None of these is needed for a normal run, and the tool works without all of them
 model that's too big to sit on your card in full precision:
 
 ```sh
-python -m senbonzakura.score --load-in-4bit
+senbonzakura score --load-in-4bit
 ```
 
 Note the word "score". This is a measurement option, not an abliteration one, and you can't

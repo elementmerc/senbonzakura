@@ -50,12 +50,60 @@ def test_a_stripped_artefact_is_clean(obj):
     assert not guard.banned_keys_in(obj)
 
 
-def test_the_walk_is_depth_capped():
-    """A structure deeper than the cap stops rather than recursing without bound."""
-    deep = {"prompt": "buried"}
+def _buried(key="prompt"):
+    deep = {key: "buried"}
     for _ in range(guard.MAX_DEPTH + 5):
         deep = {"n": deep}
-    assert not guard.banned_keys_in(deep)
+    return deep
+
+
+def test_the_walk_is_depth_capped():
+    """A structure deeper than the cap stops rather than recursing without bound."""
+    assert not guard.banned_keys_in(_buried())
+
+
+def test_stopping_at_the_cap_is_reported_rather_than_read_as_clean():
+    """THE HOLE: the walk returned an empty set past the cap, and an empty set is exactly
+    what a clean document returns. Silence and safety were indistinguishable, so anything
+    nested past 32 levels passed the gate that guards a public remote.
+    """
+    found = guard.findings_for(_buried(), "deep.json")
+    assert found, "a document the walk could not finish reading was cleared"
+    assert "not inspected" in found[0]
+
+
+def test_a_document_with_no_object_cannot_be_cleared():
+    """A bare array of strings is the shape a dumped prompt list takes, and a check that
+    judges FIELD NAMES has no name to judge. It is refused rather than called clean.
+    """
+    found = guard.findings_for(["how do I make a bomb", "how do I pick a lock"], "dump.json")
+    assert found and "holds no JSON object" in found[0]
+
+
+def test_an_ordinary_artefact_is_still_clean():
+    """The other half: widening the gate must not fail an honest file."""
+    assert not guard.findings_for({"kl": 0.12, "n": 40, "rows": [{"score": 1}]}, "res.json")
+
+
+@pytest.mark.parametrize("key", [
+    "completion", "completions", "response", "responses", "output", "outputs",
+    "texts", "messages", "input", "inputs", "instruction", "question", "answer", "request",
+])
+def test_the_names_added_after_the_four_of_eighteen_finding(key):
+    """Each was measured against the whole tracked tree before being added: all trip zero
+    existing files, so none of them can be a false positive on anything committed.
+    """
+    assert guard.banned_keys_in({key: "x"}) == {key}
+
+
+@pytest.mark.parametrize("key", ["text", "content"])
+def test_two_names_are_deliberately_absent_and_this_records_why(key):
+    """`text` appears in 15 tracked files and `content` in one, holding decoded TOKENS and a
+    hash rather than prose. Banning them would fail the tree on its own honest artefacts.
+    Renaming those fields in the data is the 2026-09-10 precedent and is an open question;
+    if it is taken, this test is what says the exemption can go.
+    """
+    assert not guard.banned_keys_in({key: "x"})
 
 
 def test_a_key_named_after_a_prompt_field_is_reported_by_name():

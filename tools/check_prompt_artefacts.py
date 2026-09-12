@@ -49,7 +49,23 @@ from pathlib import Path
 #: shape. The resolution was to rename the field in the data (`prompts_file`), not to teach this
 #: check to inspect values. A gate that reasons about what a field contains is a gate with a hole
 #: in it, and this one guards a public remote.
-BANNED_KEYS = frozenset({"prompt", "prompts", "generation", "generations"})
+#:
+#: WIDENED 2026-09-12, after a review pass measured this set catching 4 of 18 shapes it was
+#: believed to cover. Every name below was checked against the whole tracked tree before being
+#: added: each of these trips zero existing files, so the widening cannot be a false positive on
+#: anything committed today.
+#:
+#: TWO NAMES ARE DELIBERATELY ABSENT, with the measurement that excluded them. `text` appears in
+#: 15 tracked files and `content` in one, and reading them showed single decoded TOKENS ('H',
+#: ' Ben') in the compass evidence and a hash in `vendor/pins.json`, not prose. Banning them
+#: would fail the tree on its own honest artefacts. The 2026-09-10 precedent says the fix for a
+#: shape collision is to rename the field in the data rather than to teach this check to inspect
+#: values, so renaming those is an open question in DEFERRED.md rather than a silent exemption.
+BANNED_KEYS = frozenset({
+    "prompt", "prompts", "generation", "generations",
+    "completion", "completions", "response", "responses", "output", "outputs",
+    "texts", "messages", "input", "inputs", "instruction", "question", "answer", "request",
+})
 
 SUFFIXES = frozenset({".json", ".jsonl"})
 
@@ -63,20 +79,60 @@ MAX_LINE_BYTES = 1 << 20
 MAX_DEPTH = 32
 
 
-def banned_keys_in(obj, depth: int = 0) -> set[str]:
-    """Every banned key appearing anywhere in a decoded JSON value."""
+def inspect_value(obj, depth: int = 0):
+    """Banned keys anywhere in a decoded JSON value, and what could not be vouched for.
+
+    Returns `(keys, concerns, saw_a_dict)`.
+
+    THE TWO HOLES THIS CLOSES, both of the same shape: the walk used to return an empty set
+    for anything it could not read, and an empty set is what a clean file returns. Silence
+    and safety were indistinguishable.
+
+    `concerns` carries structure this check cannot speak about. The depth cap used to stop
+    the walk and return nothing, so a document nested past it passed; it is now reported.
+    And a name-based gate has nothing to say about a document containing no object at all,
+    such as a bare array of prompt strings, so that is reported rather than called clean.
+    """
     if depth > MAX_DEPTH:
-        return set()
+        return set(), [f"nesting deeper than {MAX_DEPTH} levels was not inspected"], False
     found: set[str] = set()
+    concerns: list[str] = []
+    saw_a_dict = False
     if isinstance(obj, dict):
+        saw_a_dict = True
         for key, value in obj.items():
             if isinstance(key, str) and key.lower() in BANNED_KEYS:
                 found.add(key.lower())
-            found |= banned_keys_in(value, depth + 1)
+            k, c, d = inspect_value(value, depth + 1)
+            found |= k
+            concerns += c
+            saw_a_dict = saw_a_dict or d
     elif isinstance(obj, list):
         for item in obj:
-            found |= banned_keys_in(item, depth + 1)
-    return found
+            k, c, d = inspect_value(item, depth + 1)
+            found |= k
+            concerns += c
+            saw_a_dict = saw_a_dict or d
+    return found, concerns, saw_a_dict
+
+
+def banned_keys_in(obj, depth: int = 0) -> set[str]:
+    """Every banned key appearing anywhere in a decoded JSON value."""
+    return inspect_value(obj, depth)[0]
+
+
+def findings_for(obj, where: str) -> list[str]:
+    """Everything worth refusing about one decoded document, as human-readable lines."""
+    keys, concerns, saw_a_dict = inspect_value(obj)
+    out = []
+    if keys:
+        out.append(f"{where}: carries {', '.join(sorted(keys))}")
+    if not saw_a_dict:
+        out.append(f"{where}: holds no JSON object, so a check that judges FIELD NAMES has "
+                   f"nothing to read. A bare array of strings is the shape a dumped prompt "
+                   f"list takes, and this check cannot clear it.")
+    out += [f"{where}: {c}" for c in dict.fromkeys(concerns)]
+    return out
 
 
 def scan_file(path: Path) -> list[str]:
@@ -107,9 +163,7 @@ def scan_bytes(path: Path, raw: bytes) -> list[str]:
             except (UnicodeDecodeError, json.JSONDecodeError) as e:
                 findings.append(f"{path}:{lineno}: is not valid JSON ({e}), so it cannot be cleared")
                 continue
-            keys = banned_keys_in(obj)
-            if keys:
-                findings.append(f"{path}:{lineno}: carries {', '.join(sorted(keys))}")
+            findings += findings_for(obj, f"{path}:{lineno}")
     else:
         try:
             obj = json.loads(raw)
@@ -117,9 +171,7 @@ def scan_bytes(path: Path, raw: bytes) -> list[str]:
             # A malformed .json is reported rather than skipped: "unparseable" is
             # not "harmless", and every other .json in the tree parses.
             return [f"{path}: is not valid JSON ({e}), so it cannot be cleared"]
-        keys = banned_keys_in(obj)
-        if keys:
-            findings.append(f"{path}: carries {', '.join(sorted(keys))}")
+        findings += findings_for(obj, str(path))
     return findings
 
 

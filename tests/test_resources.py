@@ -337,3 +337,69 @@ def test_search_progress_without_governor():
     sp.tick()
     assert "1/2" in logs[-1]
     assert "paused" not in logs[-1]
+
+
+# ── an OOM at batch 1 used to retry forever ──────────────────────────────────────────────────
+
+class _AlwaysOOM(Exception):
+    pass
+
+
+def _oom_gov(**kw):
+    """A governor on a card that reports plenty free, which is the wedge's precondition."""
+    kw.setdefault("mem_fn", lambda: (8 << 30, 8 << 30))   # looks empty
+    kw.setdefault("oom_types", (_AlwaysOOM,))
+    kw.setdefault("empty_cache_fn", lambda: None)
+    return _gov(**kw)
+
+
+def test_an_oom_at_batch_one_gives_up_instead_of_retrying_forever():
+    """THE WEDGE. `_shrink` cannot go below 1, so the driver paused and retried with no cap.
+
+    The pause was a no-op as well: `_avail_frac` counts senbon's own reclaimable cache as
+    available and the caller has just emptied it, so the card reads as free microseconds
+    after refusing a single prompt. On the 6 GB card this project is built around, a run
+    that could not fit one prompt spun until morning instead of saying what to lower.
+    """
+    calls = []
+
+    def always_oom(chunk):
+        calls.append(len(chunk))
+        raise _AlwaysOOM("out of memory")
+
+    g = _oom_gov(max_batch=4, max_batch1_ooms=6)
+    with pytest.raises(RuntimeError) as e:
+        g.run(always_oom, list(range(10)))
+
+    assert "cannot hold one prompt" in str(e.value)
+    assert "--max-new-tokens" in str(e.value), "the refusal must name something the user can lower"
+    assert calls, "it must have actually tried"
+    assert len(calls) < 40, f"gave up after {len(calls)} attempts, which is not a cap"
+    assert calls[-1] == 1, "the last attempt should be the smallest one it can make"
+
+
+def test_the_cap_counts_consecutive_failures_and_progress_resets_it():
+    """A transient OOM must not accumulate towards the cap across a long, healthy run."""
+    state = {"n": 0}
+
+    def flaky(chunk):
+        state["n"] += 1
+        if state["n"] % 2:                      # fail, succeed, fail, succeed...
+            raise _AlwaysOOM("out of memory")
+        return list(chunk)
+
+    g = _oom_gov(max_batch=1, max_batch1_ooms=3)
+    assert g.run(flaky, list(range(8))) == list(range(8)), (
+        "a run that keeps making progress must not be failed by a cap on consecutive failures")
+
+
+def test_the_forced_pause_actually_waits():
+    """It slept zero times, because the fraction it checks reads healthy straight after
+    `_empty_cache()`. A retry that does not wait is a spin.
+    """
+    slept = []
+    g = _oom_gov(poll_s=1.5, sleep_fn=slept.append)
+    waited = g._forced_pause()
+    assert slept == [1.5], f"the card had just refused one item and it slept {slept}"
+    assert waited == 1.5
+    assert g.paused_s == 1.5, "time spent waiting must reach the ETA, or progress over-reports"

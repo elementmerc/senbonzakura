@@ -112,7 +112,7 @@ class ResourceGovernor:
     """
 
     def __init__(self, device, log=None, *, min_free_frac=0.06, grow_free_frac=0.20,
-                 poll_s=2.0, max_pause_s=None, max_batch=16, enabled=True,
+                 poll_s=2.0, max_pause_s=None, max_batch=16, enabled=True, max_batch1_ooms=20,
                  background_mode=False, external_pressure_mb=500,
                  mem_fn=None, reclaim_fn=None, own_fn=None, empty_cache_fn=None, sleep_fn=None,
                  clock=None, oom_types=()):
@@ -125,6 +125,12 @@ class ResourceGovernor:
         self.grow_free_frac = grow_free_frac      # grow the batch back only above this availability
         self.poll_s = poll_s
         self.max_pause_s = max_pause_s             # None = wait indefinitely for headroom
+        # HOW MANY TIMES A SINGLE ITEM MAY FAIL BEFORE THE RUN SAYS SO. There was no cap: an OOM
+        # at batch 1 cannot shrink, so the driver paused and retried forever. On the 6 GB card
+        # this project is built around, a run that cannot fit one prompt wedged overnight instead
+        # of naming what to lower. Twenty is generous for a transient (another process closing a
+        # window) and finite for the case that is not transient.
+        self.max_batch1_ooms = max(1, int(max_batch1_ooms))
         self.max_batch = max(1, int(max_batch))
         self.cur_batch = self.max_batch
         # Good-gaming-citizen mode: yield COMPUTE (pause generation), not just react to a VRAM crash.
@@ -299,6 +305,7 @@ class ResourceGovernor:
         out = []
         i = 0
         n = len(items)
+        batch1_ooms = 0
         while i < n:
             self.wait_for_headroom()
             bs = min(self.cur_batch, n - i)
@@ -310,12 +317,25 @@ class ResourceGovernor:
                     raise
                 self._empty_cache()
                 if not self._shrink():
-                    self.log("  VRAM OOM at batch=1: pausing until the card frees up")
+                    batch1_ooms += 1
+                    if batch1_ooms >= self.max_batch1_ooms:
+                        raise RuntimeError(
+                            f"out of VRAM on a single item {batch1_ooms} times in a row on "
+                            f"{self.device}, so the card cannot hold one prompt of this run and "
+                            f"waiting will not change that. Lower --max-new-tokens, lower "
+                            f"--eval-refusal / --eval-kl, use a smaller model, or free the card. "
+                            f"There is nothing left to shrink: the batch is already 1."
+                        ) from exc
+                    self.log(f"  VRAM OOM at batch=1 ({batch1_ooms} of "
+                             f"{self.max_batch1_ooms}): pausing until the card frees up")
                     # Force a pause even if the fraction check would pass: the card just proved it is
                     # too full for one item, so wait for a clear margin before trying again.
                     self._forced_pause()
                 continue
             out.extend(res)
+            # Progress, so the streak of hopeless retries is over. Reset rather than decay: what
+            # the cap is counting is consecutive failures on an item nothing can make smaller.
+            batch1_ooms = 0
             self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
             i += bs
             self._grow_maybe(bs)
@@ -342,7 +362,17 @@ class ResourceGovernor:
 
     def _forced_pause(self):
         # Wait for a comfortable margin (grow-fraction, not just the min) after a batch=1 OOM.
-        waited = 0.0
+        #
+        # THE FIRST SLEEP IS UNCONDITIONAL, and without it this function did nothing at all.
+        # `_avail_frac` counts senbon's OWN reclaimable cache as available, and the caller has
+        # just called `_empty_cache()`, so the fraction it reads is almost always above the
+        # grow threshold and the loop below exits before sleeping once. The card had just
+        # refused a single item, and the "pause" returned in microseconds: that is what turned
+        # a retry into a spin. A card that cannot fit one prompt is not helped by asking it
+        # again immediately.
+        waited = self.poll_s
+        self._sleep(self.poll_s)
+        self.paused_s += self.poll_s
         while self._avail_frac() < self.grow_free_frac:
             self._empty_cache()
             self._sleep(self.poll_s)

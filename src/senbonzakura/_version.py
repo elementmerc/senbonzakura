@@ -17,6 +17,10 @@ machine where torch is exactly what is missing.
 #          hashes sent to the ROG peer, who held rather than running; superseded before use.
 #   .dev4  cut for the ROG pass. Adds the float32 direction basis (which changes the edit
 #          slightly), the snapshot pre-flight, and the model card.
+#   .dev7  three findings from the peer's free ROG pass on dev6: `track --audit` silently
+#          ignored --fit, so the check gating a paid booking could not fail; the bundled
+#          track's path was undiscoverable outside a REPL; and the guided walk's final
+#          confirmation defaulted to yes after four prompts training "Enter is safe".
 #   .dev6  the discoverability pass finished (area 4: a refusal whose cause is a missing earlier
 #          step now names that step), and a provenance fix only atlas could surface: the torch
 #          build suffix was being dropped, so an artefact could not say CPU from CUDA.
@@ -31,4 +35,4 @@ machine where torch is exactly what is missing.
 # bumped past rather than reused even though it never left this machine: a version that was
 # built is spent, because a wheel with that name existed and could have been copied.
 # See RELEASING.md, "A dev-only cut".
-__version__ = "0.4.0.dev6"
+__version__ = "0.4.0.dev7"

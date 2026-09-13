@@ -631,13 +631,19 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if not os.path.isdir(a.run_dir):
-        raise SystemExit(f"headtohead report: no directory at {a.run_dir}")
+        raise SystemExit(
+            f"headtohead report: no directory at {a.run_dir}.\n"
+            f"  This reads a run that has already happened; it does not start one. Run the arms "
+            f"first:\n"
+            f"    senbonzakura head-to-head run --out {a.run_dir} ...")
 
     arms = collect(a.run_dir)
     if not arms:
         raise SystemExit(
             f"headtohead report: no scored arms under {a.run_dir}. Expected files named "
-            f"scored-<tool>-seed<N>.json, which is what the score job writes.")
+            f"scored-<tool>-seed<N>.json, which is what the score job writes.\n"
+            f"  The usual cause is a run made with --no-score, which leaves the arms on disk and "
+            f"the scoring for later. Re-run without it, or score the arms you have.")
 
     text, had_unreadable, n_readable = render(arms)
     print(text)

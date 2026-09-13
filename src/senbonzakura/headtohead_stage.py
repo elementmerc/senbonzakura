@@ -118,7 +118,13 @@ def main(argv=None):
 
     track, out = Path(a.track), Path(a.out)
     if not track.is_dir():
-        raise SystemExit(f"headtohead stage: no track at {track}")
+        raise SystemExit(
+            f"headtohead stage: no track at {track}.\n"
+            f"  A track is a fit / search / measure split, not a directory of prompts. Build one "
+            f"first:\n"
+            f"    senbonzakura track --out {track} --harmful <file> --harmless <file>\n"
+            f"  This command needs a real directory: unlike the abliterator it does not resolve "
+            f"the bundled track by name, so `--track default` will not work here.")
 
     if a.eval_refusal_final < a.eval_refusal:
         raise SystemExit(

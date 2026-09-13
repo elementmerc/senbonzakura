@@ -552,3 +552,31 @@ print(plan["options"]["--out"])
                          check=False, timeout=180)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "OUT"
+
+
+def test_enter_at_the_final_prompt_does_not_start_a_run():
+    """THE ONE PROMPT IN THE WALK THAT MUST NOT DEFAULT TO YES.
+
+    Every question before it is safe to press Enter through, and each prints "press Enter to take
+    the default" underneath, which trains the reflex. The last question spends GPU hours, and on a
+    rented card, money. A hephaestus peer found this by sending bare newlines from a script whose
+    own comments said it would not confirm the run, and starting an abliteration on the ROG.
+
+    Pinned because flipping the default back broke no test at all when it was changed.
+    """
+    asked = []
+
+    def _ask(prompt):
+        asked.append(prompt)
+        return ""          # the bare Enter that used to mean yes
+
+    assert it.confirm("Run it?", default=False, ask_fn=_ask, log=lambda *a: None) is False
+    assert "[y/N]" in asked[0], f"the prompt should show the safe default: {asked[0]}"
+
+
+def test_present_refuses_the_run_on_a_bare_enter(monkeypatch):
+    """The same property through the real call site rather than through `confirm` directly."""
+    plan = {"command": "kageyoshi", "options": {"--model": "m", "--out": "o"},
+            "licence": None, "recipe": None}
+    line = it.present(plan, ask_fn=lambda _p: "", log=lambda *a: None)
+    assert line is None, "a bare Enter at 'Run it?' must not return a command to run"

@@ -557,3 +557,18 @@ def test_the_flag_reaches_report_from_the_command_line(monkeypatch):
     assert seen["advisories_ok"] is False
     doctor.main(["--advisories-ok"])
     assert seen["advisories_ok"] is True
+
+
+def test_the_bundled_track_check_says_where_it_unpacks_to():
+    """Auditing the bundled track is the task that decides a rented-card booking.
+
+    Its location was discoverable only by importing `senbonzakura.bundled` and calling `ensure()`
+    in a REPL: not in the man page, not in `track --help`, and `doctor` printed the size without
+    the path. Reading the source to find a directory is exactly what the discoverability brief
+    says a user must never have to do, and `doctor` is where somebody already is when they ask.
+    """
+    from senbonzakura import bundled
+    from senbonzakura import doctor as doc
+    row = doc.check_track()
+    assert str(bundled.cache_dir()) in row.detail, (
+        f"the bundled-track row should carry its path, got: {row.detail}")

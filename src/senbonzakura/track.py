@@ -563,7 +563,8 @@ def build_parser():
     ap.add_argument("--out", required=True, help="track directory to create")
     ap.add_argument("--fit", type=int, default=256,
                     help="prompts per side the directions are extracted from (default: the "
-                         "auto presets' --dir-prompts)")
+                         "auto presets' --dir-prompts). Applies when BUILDING a track; under "
+                         "--audit the recorded boundaries are what count, so it is refused there")
     ap.add_argument("--search", type=int, default=128,
                     help="prompts per side the search scores trials on (default: the largest "
                          "--eval-refusal-final any auto preset uses)")
@@ -574,7 +575,10 @@ def build_parser():
                          "which spreads a partition across the corpus but cannot guarantee a "
                          "small one contains any particular category")
     ap.add_argument("--audit", action="store_true",
-                    help="run the checks against an existing track and write nothing")
+                    help="run the checks against an existing track and write nothing. It uses "
+                         "the boundaries recorded in that track's track.json, so --fit and "
+                         "--search do not apply and are refused rather than ignored; the refusal "
+                         "prints the partition sizes so a budget can be compared against them")
     ap.add_argument("--contamination", default="",
                     help="text file of an external benchmark's prompts, one per line. Reports "
                          "how many of its requests this track has already fitted or searched "
@@ -707,6 +711,56 @@ def format_contamination(r: dict) -> list[str]:
         f"  publishable today: {r['publishable_requests']} requests from the measure partition, "
         f"plus {r['absent_from_track']} this track has never held.")
     return lines
+
+
+#: Flags that shape a track as it is BUILT and that an audit cannot act on, because an existing
+#: track's boundaries are the ones recorded in its `track.json`.
+_BUILD_ONLY_UNDER_AUDIT = ("--fit", "--search")
+
+
+def _refuse_build_flags_under_audit(argv, track: Path):
+    """Refuse `--audit --fit N`, and answer the question the person was asking anyway.
+
+    THE DEFECT THIS CLOSES, AND WHY IT IS THE DANGEROUS KIND. `--audit` read an existing track's
+    recorded boundaries and never looked at `--fit` or `--search`, so
+
+        track --audit --out <bundled> --fit 385  ->  TRACK_AUDIT_OK
+        track --audit --out <bundled> --fit 400  ->  TRACK_AUDIT_OK
+
+    and 400 is the number this project's own RunPod plan documents as FAILING. The check that
+    gates a paid booking could not fail. Nothing was broken in `audit`; the surface accepted two
+    flags it ignored, and `--fit`'s help says what it does when building without saying it is
+    inert here, so combining them is the obvious reading rather than a misuse.
+
+    Refusing is the safe half. The useful half is that the refusal PRINTS THE COUNTS, because the
+    person who typed this wanted to know whether the track can serve a budget, and a refusal that
+    sends them away to work it out in a REPL has answered nothing. The numbers below are the same
+    ones that produced decision Q-30.
+
+    Deliberately not implemented as a budget check that says yes or no: what `--dir-prompts N`
+    draws from is the abliterator's arithmetic, not this command's, and inventing a second
+    account of it here is exactly the drift that put the compass's read-out on the wrong token.
+    Report the partition sizes and let the caller compare.
+    """
+    used = [f for f in _BUILD_ONLY_UNDER_AUDIT if f in argv]
+    if not used:
+        return
+    harmful, harmless = load_partitions(track)
+    rows = "\n".join(
+        f"    {side:<9}"
+        f"fit {len(p['fit']):>5}   search {len(p['search']):>5}   "
+        f"measure {len(p['measure']):>5}   fit+search {len(p['fit']) + len(p['search']):>5}"
+        for side, p in (("harmful", harmful), ("harmless", harmless)))
+    raise SystemExit(
+        f"senbonzakura track: {' and '.join(used)} shape a track as it is BUILT and do nothing "
+        f"under --audit, which reads the boundaries already recorded in {track}/track.json.\n"
+        f"  Accepting them silently would let a budget check pass without checking anything, so "
+        f"it is refused rather than ignored.\n"
+        f"  What this track actually holds, per side:\n{rows}\n"
+        f"  Compare your budget against those numbers. To build a track with a different split, "
+        f"drop --audit:\n"
+        f"    senbonzakura track --out <new track> --harmful <file> --harmless <file> "
+        f"--fit N --search M")
 
 
 def audit(track: Path, labels=None) -> list[str]:
@@ -871,6 +925,7 @@ def main(argv=None):
         return r
 
     if a.audit:
+        _refuse_build_flags_under_audit(argv, out)
         failures = audit(out, read_labels(a.labels) if a.labels else None)
         if failures:
             print(f"TRACK_AUDIT_FAILED {out}", file=sys.stderr)

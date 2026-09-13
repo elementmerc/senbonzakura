@@ -196,9 +196,14 @@ checkout. Only affects
 .TP
 .B XDG_CACHE_HOME
 Where the bundled evaluation track is unpacked, as
-.IR $XDG_CACHE_HOME/senbonzakura/bundled\-track .
-Defaults to
-.IR ~/.cache .
+.IR $XDG_CACHE_HOME/senbonzakura/bundled\-track ,
+so by default
+.IR ~/.cache/senbonzakura/bundled\-track .
+That directory is the track itself, and it is what to point
+.B senbonzakura track \-\-audit \-\-out
+at in order to check it.
+.B senbonzakura doctor
+prints the resolved path beside the track's size.
 .SH SEE ALSO
 Arditi et al., "Refusal in Language Models Is Mediated by a Single Direction"
 (2024). Heretic (p\-e\-w/heretic).

@@ -248,7 +248,13 @@ def check_track():
         p = Path(bundled.data_path())
         if not p.is_file():
             return _fail("bundled track", "not installed", "reinstall, or rebuild it")
-        return _pass("bundled track", f"{p.stat().st_size / 1024:.0f} KB")
+        # THE PATH, not just the size. Auditing the bundled track is a real task and it is the
+        # one that decides a rented-card booking, and the only way to find where it unpacks to
+        # was to import `senbonzakura.bundled` and call `ensure()` in a REPL. Reading the source
+        # is precisely what a discoverable tool must not require, and `doctor` is where somebody
+        # already is when they ask this.
+        return _pass("bundled track",
+                     f"{p.stat().st_size / 1024:.0f} KB, unpacks to {bundled.cache_dir()}")
     except Exception as e:
         return _fail("bundled track", f"cannot be read ({e})", "reinstall")
 

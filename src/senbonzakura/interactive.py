@@ -578,7 +578,20 @@ def present(plan, *, ask_fn=input, log=print):
         log(f"The prompts are under {plan['licence']}. Attribution is required, and if that")
         log("includes a non-commercial term then commercial use of the corpus is not permitted.")
         log("")
-    if not confirm("Run it?", default=True, ask_fn=ask_fn, log=log):
+    # `[y/N]`, AND IT IS THE ONLY PROMPT IN THE WALK THAT DEFAULTS TO NO.
+    #
+    # Every question before this one is safe to press Enter through, and four of them in a row
+    # train exactly that reflex: "press Enter to take the default" is printed under each. Then the
+    # same keystroke starts an abliteration, which spends GPU hours and, on a rented card, money.
+    # The walk taught a habit and then charged for it. A hephaestus peer found this by writing a
+    # script that said in its own comments it would not confirm the run, sending bare newlines,
+    # and starting a run on the ROG's card.
+    #
+    # `[Y/n]` is right for a command somebody typed deliberately with all its flags. It is wrong
+    # at the end of a menu whose whole design is that Enter is safe. The asymmetry is the same one
+    # the refusals follow: one extra keystroke from a person who has just read the command and
+    # wants it, against an irreversible outcome at the end of a sequence of reversible ones.
+    if not confirm("Run it?", default=False, ask_fn=ask_fn, log=log):
         log("Nothing was run. The commands above still work if you want them later.")
         return None
     return lines[0]

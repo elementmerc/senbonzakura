@@ -997,3 +997,50 @@ def test_the_audit_and_the_contamination_check_read_the_same_boundaries(tmp_path
     fitted = set(load_from_disk(str(out / "bad_ds"))["text"])
     assert set(harmful["fit"]) == fitted
     assert not set(harmful["measure"]) & fitted
+
+
+class TestAuditRefusesBuildFlags:
+    """`--audit --fit N` must not report OK, because that check gates a paid booking.
+
+    THE DEFECT. `--audit` reads the boundaries recorded in a track's `track.json` and never looked
+    at `--fit` or `--search`, so every one of these said TRACK_AUDIT_OK and exited 0:
+
+        track --audit --out <bundled> --fit 385
+        track --audit --out <bundled> --fit 400
+
+    400 is the number this project's own RunPod plan documents as FAILING. A hephaestus peer found
+    it by running 386 and 400 after 385 passed, on the rule that a check which has just said OK has
+    told you nothing until you have seen it say no.
+
+    Nothing in `audit` was wrong. The surface accepted two flags it ignored, and `--fit`'s help
+    described what it does when building without saying it is inert here, so combining them was the
+    obvious reading rather than a misuse.
+    """
+
+    def _track(self, tmp_path):
+        h, g = _sources(tmp_path)
+        out = tmp_path / "t"
+        track.main(["--harmful", str(h), "--harmless", str(g), "--out", str(out),
+                    "--fit", "4", "--search", "4"])
+        return out
+
+    @pytest.mark.parametrize("flag", ["--fit", "--search"])
+    def test_a_build_flag_under_audit_is_refused_not_ignored(self, tmp_path, flag):
+        out = self._track(tmp_path)
+        with pytest.raises(SystemExit) as caught:
+            track.main(["--audit", "--out", str(out), flag, "999"])
+        assert "TRACK_AUDIT_OK" not in str(caught.value)
+        assert flag in str(caught.value)
+
+    def test_the_refusal_reports_the_counts_so_it_answers_the_question(self, tmp_path):
+        """A refusal that sends the reader to a REPL to find the numbers has answered nothing."""
+        out = self._track(tmp_path)
+        with pytest.raises(SystemExit) as caught:
+            track.main(["--audit", "--out", str(out), "--fit", "999"])
+        message = str(caught.value)
+        for word in ("harmful", "harmless", "fit+search"):
+            assert word in message, f"{word!r} missing from:\n{message}"
+
+    def test_a_plain_audit_still_passes(self, tmp_path):
+        out = self._track(tmp_path)
+        assert track.main(["--audit", "--out", str(out)]) == {}

@@ -751,8 +751,9 @@ def _refuse_build_flags_under_audit(argv, track: Path):
         f"fit {len(p['fit']):>5}   search {len(p['search']):>5}   "
         f"measure {len(p['measure']):>5}   fit+search {len(p['fit']) + len(p['search']):>5}"
         for side, p in (("harmful", harmful), ("harmless", harmless)))
+    verb = "shape a track as it is BUILT and do" if len(used) > 1 else "shapes a track as it is BUILT and does"
     raise SystemExit(
-        f"senbonzakura track: {' and '.join(used)} shape a track as it is BUILT and do nothing "
+        f"senbonzakura track: {' and '.join(used)} {verb} nothing "
         f"under --audit, which reads the boundaries already recorded in {track}/track.json.\n"
         f"  Accepting them silently would let a budget check pass without checking anything, so "
         f"it is refused rather than ignored.\n"

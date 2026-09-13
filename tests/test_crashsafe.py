@@ -394,3 +394,43 @@ def test_an_unreadable_backend_setting_does_not_take_down_a_run(monkeypatch):
     monkeypatch.setenv(trackio.BACKEND_ENV, "not-a-backend")
     got = crashsafe.resolved_versions()
     assert got["table_backend"] == "unknown"
+
+
+class TestVersionSuffix:
+    """The build suffix survives, and nothing gets imported to rescue it.
+
+    FOUND ON ATLAS, 2026-09-13, by the suite that only runs there. `importlib.metadata` reported
+    torch as `2.14.0` while `torch.__version__` said `2.14.0+cu130`, so the provenance block
+    recorded a version that cannot distinguish a CPU build from a CUDA one. That distinction is
+    the whole reason torch's version is in the block.
+    """
+
+    def test_a_live_module_that_says_more_than_the_metadata_wins(self, monkeypatch):
+        import sys as _sys
+        import types as _types
+        mod = _types.ModuleType("pretend_pkg")
+        mod.__version__ = "2.14.0+cu130"
+        monkeypatch.setitem(_sys.modules, "pretend_pkg", mod)
+        monkeypatch.setattr(crashsafe, "_installed", crashsafe._installed)
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "2.14.0")
+        assert crashsafe._installed("pretend_pkg") == "2.14.0+cu130"
+
+    def test_a_live_module_that_disagrees_is_ignored(self, monkeypatch):
+        """A module reporting something unrelated to the installed distribution is a different
+        fault, and preferring it here would hide it behind a plausible string.
+        """
+        import sys as _sys
+        import types as _types
+        mod = _types.ModuleType("pretend_pkg2")
+        mod.__version__ = "9.9.9"
+        monkeypatch.setitem(_sys.modules, "pretend_pkg2", mod)
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "2.14.0")
+        assert crashsafe._installed("pretend_pkg2") == "2.14.0"
+
+    def test_nothing_is_imported_to_find_a_suffix(self, monkeypatch):
+        """The no-heavy-imports property is the reason metadata was used in the first place."""
+        import sys as _sys
+        monkeypatch.delitem(_sys.modules, "pretend_pkg3", raising=False)
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "1.2.3")
+        assert crashsafe._installed("pretend_pkg3") == "1.2.3"
+        assert "pretend_pkg3" not in _sys.modules

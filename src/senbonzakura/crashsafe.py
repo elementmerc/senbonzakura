@@ -12,6 +12,7 @@ the download" fixes. They import nothing heavy on purpose, so they are unit-test
 import contextlib
 import os
 import shutil
+import sys
 from pathlib import Path
 
 MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DTensor (torch >= 2.5)
@@ -373,12 +374,34 @@ PROVENANCE_PACKAGES = (
 
 
 def _installed(name):
-    """The installed version of one package, or None. Absent is a fact, not an error."""
+    """The installed version of one package, or None. Absent is a fact, not an error.
+
+    THE METADATA CAN BE LESS SPECIFIC THAN THE PACKAGE ITSELF, and for torch that loses the one
+    part of the string this block exists to record. Measured on atlas, 2026-09-13:
+
+        importlib.metadata.version("torch")  ->  2.14.0
+        torch.__version__                    ->  2.14.0+cu130
+
+    The local suffix is the difference between a CPU build and a CUDA one, which is the difference
+    between two different measurements, so an artefact recording `2.14.0` cannot say which
+    produced it. PyTorch's own index wheels are where this bites and they are exactly what
+    `senbonzakura setup` installs.
+
+    The fix keeps the no-heavy-imports property: a module is consulted only if it is ALREADY in
+    `sys.modules`, so nothing is imported on this account, and a run that never loaded torch still
+    records the metadata answer rather than triggering a load to improve it.
+    """
     from importlib.metadata import PackageNotFoundError, version
     try:
-        return version(name)
+        found = version(name)
     except PackageNotFoundError:
         return None
+    live = getattr(sys.modules.get(name), "__version__", None)
+    # Only when it AGREES and says more: a module reporting something unrelated to the installed
+    # distribution is a different fault and must not be silently preferred here.
+    if isinstance(live, str) and live.startswith(found) and live != found:
+        return live
+    return found
 
 
 def resolved_versions(packages=PROVENANCE_PACKAGES):

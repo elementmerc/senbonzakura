@@ -218,8 +218,15 @@ def test_the_hint_offers_the_bundled_track_only_when_it_is_there(monkeypatch, tm
     with pytest.raises(SystemExit) as e:
         cli._preflight_datasets(args)
     msg = str(e.value)
-    assert "will not help here either" in msg
-    assert "senbonzakura track --help" in msg
+    # THE PROPERTY, not the phrasing. This used to pin the exact sentence, which made it fail on
+    # 2026-09-16 when the message was rewritten even though the behaviour was correct. What must
+    # hold is that a flag this install cannot honour is NOT put in the imperative at the reader,
+    # and that they are still told how to get a track.
+    # Mentioning `--track default` in order to RULE IT OUT is correct prose; recommending it is
+    # the defect. So the property is that it is explicitly negated, not that it is absent.
+    assert "no bundled track" in msg, "the reader should be told why that route is closed"
+    assert "will not help" in msg, "and that the flag is ruled out rather than offered"
+    assert "senbonzakura track" in msg, "and given the route that is open"
 
 
 # ── the extraction's own cleanup paths, which nothing exercised ──────────────────────

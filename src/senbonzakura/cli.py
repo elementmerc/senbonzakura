@@ -4274,6 +4274,49 @@ def preflight_snapshot_ram(args, log=print):
     return need
 
 
+def _preflight_device(args, log=print):
+    """Refuse a device this machine cannot use, before anything is downloaded.
+
+    FOUND BY INSTALLING THE WHEEL AND BEHAVING LIKE A USER, 2026-09-16. `--device` defaults to
+    `cuda`. On a machine with no card, the documented first command downloaded the model, loaded
+    it, began capturing activations, and then died on
+
+        RuntimeError: Found no NVIDIA driver on your system.
+
+    under ten frames of our own internals. That is the failure `entry.py` goes to some trouble to
+    prevent for a missing import, arriving through the one input nobody checked.
+
+    The sharp part is that the tool already knew. `senbonzakura doctor`, on the same machine, one
+    minute earlier, printed `! torch 2.14.0+cu130, no cuda device` as an advisory. A command whose
+    whole purpose is to say what this install cannot do had the answer, and nothing carried it to
+    the run that needed it.
+
+    Cheap, local, and decidable before the first byte is fetched, so it belongs beside the other
+    command-line pre-flights rather than inside the model load.
+    """
+    device = str(getattr(args, "device", "") or "").strip().lower()
+    if not device or device.startswith("cpu"):
+        return device
+    kind = device.split(":", 1)[0]
+    if kind == "cuda" and not torch.cuda.is_available():
+        raise SystemExit(
+            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.\n"
+            "  Checked before the model is downloaded, because finding out afterwards costs the "
+            "download and tells you the same thing.\n"
+            "  What to do:\n"
+            "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
+            "    or fix the install:            senbonzakura setup --apply\n"
+            "  `senbonzakura doctor` reports the same thing as an advisory and runs without a "
+            "card.")
+    if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",
+                                     lambda: False)():
+        raise SystemExit(
+            "senbonzakura: --device is 'mps' and this build of torch reports no MPS device.\n"
+            "  Use --device cpu, or install a torch built with MPS support.\n"
+            "  `senbonzakura doctor` reports what this install can and cannot do.")
+    return device
+
+
 def _budget_warning(budget):
     """The budget caveat as the artefact stores it, or None when there is nothing to say."""
     from . import lengthsweep
@@ -4366,6 +4409,50 @@ def _preflight_datasets(args):
         except _dataset.DatasetError as e:
             return f"  {spec}\n      ({what})\n      {e}"
         return None
+
+    # THE TRACK DIRECTORY IS NOT THERE AT ALL, which is a different fault from three datasets that
+    # cannot be read, and saying the second when the first is true was actively misleading.
+    #
+    # Found by installing the wheel and typing the obvious first command. `--track` defaults to the
+    # relative directory `track`, so the three required specs become `track/bad_ds` and friends,
+    # and `looks_like_hub_id` matches them: they are `owner/name` shaped, relative, and not a table
+    # suffix. So a user who simply had no track was told THREE TIMES to
+    # `pip install 'senbonzakura[hub]'`, which would not have helped, and the one line that would
+    # have (`--track default`) came last, after the wrong advice.
+    #
+    # A message accurate about the symptom and wrong about the remedy is worse than no message: the
+    # reader acts on the wrong half first. So when the directory is absent, say that, and say it on
+    # its own.
+    # NARROW ON PURPOSE, and the first version was not. It fired on any track that was not a
+    # directory on disk, which caught two cases it had no business catching: `--track default`, the
+    # bundled alias this very message recommends, and a Hub-hosted track like `owner/name`. The
+    # first is the worse of the two, because the refusal told the reader to use `default` and then
+    # refused `default`, looping them back into the error they were already reading. That is the
+    # exact defect caught in `headtohead stage` a few days earlier, shipped here by the same hand.
+    # The existing tests caught it; the lesson is that a remedy has to be tried, not reasoned about.
+    _is_plain_missing_dir = (
+        track != _dataset.BUNDLED_ALIAS
+        and not _dataset.looks_like_hub_id(track)
+        and not Path(track).is_dir())
+    if _is_plain_missing_dir:
+        from . import bundled
+        if bundled.is_available():
+            remedy = ("  Quickest fix, no network and no download:\n"
+                      "    --track default   (the evaluation track bundled in this install;\n"
+                      "                       CC BY-NC 4.0, attribution required, non-commercial)\n"
+                      "  Or build your own from prompt files:\n"
+                      "    senbonzakura track --out my-track --harmful <file> --harmless <file>")
+        else:
+            remedy = ("  This install carries no bundled track, so `--track default` will not help.\n"
+                      "  Build one from prompt files you supply:\n"
+                      "    senbonzakura track --out my-track --harmful <file> --harmless <file>")
+        raise SystemExit(
+            f"senbonzakura: there is no track at '{track}', and a run needs one.\n"
+            f"  A track is a directory holding bad_ds / good_ds / bad_eval_ds, split into fit, "
+            f"search and measure partitions. `--track` defaults to '{track}' relative to where you "
+            f"are, so this is what you get when the flag is left off.\n"
+            f"  Checked before the model is downloaded, so finding out costs nothing.\n"
+            f"{remedy}")
 
     checked = required + [(s, w) for s, w in optional if s]
     faults = [f for f in (fault(s, w) for s, w in checked) if f]
@@ -4468,6 +4555,7 @@ def run_parsed(args, bankai, argv):
     # corpus, no network. Everything below it either touches the Hub or walks a dataset, and a run
     # refused for a flag the parser could already see should not cost a download first.
     _preflight_generation_budget(args)
+    _preflight_device(args)
 
     # After the torch check and before the model. The torch check is instant and local, and an
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the

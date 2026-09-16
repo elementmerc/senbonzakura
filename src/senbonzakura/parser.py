@@ -242,7 +242,15 @@ def build_parser():
                          "as a foreground app worth yielding to (default 500 MB).")
     ap.add_argument("--bench-only", action="store_true", help="load, extract, run 1 default-strength "
                                                               "ablation + print refusals, no search")
-    ap.add_argument("--track", default="track", help="dir holding bad_ds / good_ds / bad_eval_ds")
+    # `default` was findable only by omitting --track and reading the refusal, and the refusal
+    # buried it under three paragraphs of Hub-package advice. It is the easiest way to get a first
+    # run working, so it belongs in the one place a user looks first.
+    ap.add_argument("--track", default="track",
+                    help="a directory holding bad_ds / good_ds / bad_eval_ds, as built by "
+                         "`senbonzakura track`. Pass the word 'default' to use the evaluation "
+                         "track bundled in this install, which needs no network and no download "
+                         "and is the quickest way to a first run (CC BY-NC 4.0, attribution "
+                         "required, non-commercial)")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
     # Every dataset argument above accepts a save_to_disk directory, a .txt/.csv/.json/.jsonl/
     # .parquet file, or a Hub id, optionally with `::split[:N]`. These two are the knobs the

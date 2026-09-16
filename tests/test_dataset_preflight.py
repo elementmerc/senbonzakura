@@ -20,6 +20,7 @@ Not that a missing dataset raises: it always did. That it raises EARLY, that it 
 rather than the first, and that it points at the bundled track, which is the fix for the common
 case and needs no network.
 """
+import pathlib
 import types
 
 import pytest
@@ -38,8 +39,21 @@ def _args(**over):
     return types.SimpleNamespace(**a)
 
 
+
+def _empty_track():
+    """A track DIRECTORY that exists and holds none of the three datasets.
+
+    Distinct from a track that is absent: absent is one fault with one remedy, empty is three
+    datasets that cannot be read, and the pre-flight says different things about them.
+    """
+    import tempfile
+    return pathlib.Path(tempfile.mkdtemp(prefix="empty-track-"))
+
+
 def test_a_missing_track_is_refused():
-    with pytest.raises(SystemExit, match="cannot be read"):
+    # The message changed on 2026-09-16: a track directory that is not there is its own fault and
+    # is now said so, rather than being reported as three datasets that cannot be read.
+    with pytest.raises(SystemExit, match="there is no track at"):
         cli._preflight_datasets(_args(track="definitely-not-a-track"))
 
 
@@ -48,19 +62,23 @@ def test_every_fault_is_reported_not_just_the_first():
 
     Stopping at the first fault turns one wasted start into three. All three required datasets are
     missing here and all three must be named.
+
+    The track DIRECTORY exists and is empty, which is the case this property is really about: a
+    track that is absent entirely is one fault, not three, and is reported as one.
     """
+    track = _empty_track()
     with pytest.raises(SystemExit) as e:
-        cli._preflight_datasets(_args(track="definitely-not-a-track"))
+        cli._preflight_datasets(_args(track=str(track)))
     msg = str(e.value)
     for part in ("bad_ds", "good_ds", "bad_eval_ds"):
-        assert f"definitely-not-a-track/{part}" in msg, f"{part} was not named"
+        assert f"{track}/{part}" in msg, f"{part} was not named"
     assert msg.startswith("3 of the datasets")
 
 
 def test_each_fault_says_what_the_dataset_is_for():
     """A path alone does not tell a reader which of their flags was wrong."""
     with pytest.raises(SystemExit) as e:
-        cli._preflight_datasets(_args(track="definitely-not-a-track"))
+        cli._preflight_datasets(_args(track=str(_empty_track())))
     msg = str(e.value)
     assert "directions are extracted from" in msg
     assert "refusal is scored on" in msg
@@ -137,7 +155,7 @@ def test_the_preflight_runs_before_the_model_is_constructed(monkeypatch):
     monkeypatch.setattr(cli, "Abliterator", _never)
     args = _args(track="definitely-not-a-track")
     args.load_in_4bit = False
-    with pytest.raises(SystemExit, match="cannot be read"):
+    with pytest.raises(SystemExit, match="there is no track at"):
         cli.run_parsed(args, None, [])
     assert not built, "the pre-flight did not run before the model"
 
@@ -155,3 +173,72 @@ def test_an_unusable_torch_is_reported_before_a_missing_dataset(monkeypatch):
     args.load_in_4bit = False
     with pytest.raises(SystemExit, match="senbonzakura needs torch"):
         cli.run_parsed(args, None, [])
+
+
+class TestTheUserWhoHasNoTrack:
+    """The naive first command names the real fault, not a package the user does not need.
+
+    FOUND BY INSTALLING THE WHEEL AND BEHAVING LIKE A USER, 2026-09-16, with no access to the
+    source. `--track` defaults to the relative directory `track`, so the three required specs
+    become `track/bad_ds` and friends, which `looks_like_hub_id` matches: owner/name shaped,
+    relative, no table suffix. A user who simply had no track was therefore told THREE TIMES to
+    `pip install 'senbonzakura[hub]'`, which would not have helped, and `--track default` came
+    last, after the wrong advice.
+
+    A message accurate about the symptom and wrong about the remedy is worse than none, because
+    the reader acts on the wrong half first.
+    """
+
+    def test_a_missing_track_directory_is_named_as_the_fault(self, tmp_path):
+        args = _args(track=str(tmp_path / "nope"))
+        args.load_in_4bit = False
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_datasets(args)
+        message = str(caught.value)
+        assert "there is no track at" in message
+        assert "senbonzakura[hub]" not in message, (
+            "installing the hub extra does not create a track; recommending it sends the reader "
+            "to a command that changes nothing")
+
+    def test_the_remedy_is_offered_before_anything_else(self, tmp_path):
+        args = _args(track=str(tmp_path / "nope"))
+        args.load_in_4bit = False
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_datasets(args)
+        message = str(caught.value)
+        assert "--track default" in message or "carries no bundled track" in message
+        assert "senbonzakura track --out" in message, "and the way to build a real one"
+
+
+class TestTheUserWithNoCard:
+    """`--device cuda` on a machine with no card is refused, not discovered in a traceback.
+
+    FOUND BY INSTALLING THE WHEEL AND BEHAVING LIKE A USER, 2026-09-16. `--device` defaults to
+    `cuda`. On a GPU-less machine the documented first command downloaded the model, loaded it,
+    started capturing activations, and died on
+
+        RuntimeError: Found no NVIDIA driver on your system.
+
+    under ten frames of our internals, which is the failure `entry.py` works hard to prevent for a
+    missing import, arriving through the one input nobody checked.
+
+    The sharp part: `senbonzakura doctor` on the same machine, a minute earlier, printed
+    `! torch 2.14.0+cu130, no cuda device`. A command whose whole purpose is to say what this
+    install cannot do had the answer, and nothing carried it to the run.
+    """
+
+    def test_cuda_without_a_card_is_refused_with_a_remedy(self, monkeypatch):
+        monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_device(types.SimpleNamespace(device="cuda"))
+        message = str(caught.value)
+        assert "--device cpu" in message, "the refusal must name the way forward"
+        assert "senbonzakura doctor" in message, "and the command that already knew"
+
+    def test_cpu_is_never_refused(self, monkeypatch):
+        monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: False)
+        assert cli._preflight_device(types.SimpleNamespace(device="cpu")) == "cpu"
+
+    def test_cuda_with_a_card_passes(self, monkeypatch):
+        monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+        assert cli._preflight_device(types.SimpleNamespace(device="cuda:1")) == "cuda:1"

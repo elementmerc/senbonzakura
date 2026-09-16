@@ -4274,6 +4274,78 @@ def preflight_snapshot_ram(args, log=print):
     return need
 
 
+#: (attribute, flag, minimum, maximum, why the bound exists). `None` means unbounded on that side.
+#: Maxima only where a value above them is meaningless rather than merely large, so a deliberate
+#: big number is never refused for being ambitious.
+_NUMERIC_BOUNDS = (
+    ("trials", "--trials", 1, None, "a search needs at least one trial to have anything to bake"),
+    ("max_directions", "--max-directions", 1, None, "ablating zero directions is not an edit"),
+    ("direction_clusters", "--direction-clusters", 1, None,
+     "the extractor needs at least one cluster to take a direction from"),
+    ("dir_prompts", "--dir-prompts", 1, None, "directions are fitted from prompts"),
+    ("eval_refusal", "--eval-refusal", 1, None, "a rate over zero prompts is not a rate"),
+    ("eval_kl", "--eval-kl", 1, None, "a divergence over zero prompts is not a divergence"),
+    ("eval_refusal_final", "--eval-refusal-final", 0, None,
+     "zero means the final re-score is off; negative means nothing"),
+    ("top_rescore", "--top-rescore", 1, None, "there has to be at least one candidate to re-score"),
+    ("gen_batch", "--gen-batch", 1, None, "a batch holds at least one prompt"),
+    ("patience", "--patience", 0, None, "zero disables early stopping; negative means nothing"),
+    ("ablation_rounds", "--ablation-rounds", 0, None, "zero is the single-pass edit"),
+    ("layer_lo", "--layer-lo", 0.0, 1.0, "it is a FRACTION of the model's depth, not a layer index"),
+    ("layer_hi", "--layer-hi", 0.0, 1.0, "it is a FRACTION of the model's depth, not a layer index"),
+    ("kl_scale", "--kl-scale", 0.0, None,
+     ("it weights KL in the objective, so a negative value REWARDS the search for damaging the "
+      "model")),
+    ("sparsity", "--sparsity", 0.0, 1.0, "it is a fraction of rows left untouched"),
+)
+
+
+def _preflight_numbers(args):
+    """Refuse nonsense numbers at the command line, before anything is loaded.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16, from an installed wheel with no source. Every
+    numeric flag accepted every value:
+
+      --max-directions 0   silently clamped to 1, with no warning anywhere. The artefact honestly
+                           recorded 1, so the RECORD was fine and the operator's intent was
+                           overridden without a word.
+      --trials 0           ran, then failed late with a message blaming VRAM, the model, or an
+                           empty eval set, none of which was true. It had printed "searching 0
+                           trials" two lines earlier. Accurate about the symptom, wrong about the
+                           remedy, which is the shape that sends somebody to check their card when
+                           the answer is their own command line.
+      --layer-lo 2.0       a raw optuna ValueError, `low <= high must hold, but got (low=60,
+                           high=24)`, under our internals. The same class as the missing device
+                           check: a traceback where a sentence belongs.
+      --kl-scale -5        ran to completion and reported DONE. This is the dangerous one. A
+                           negative weight on KL inverts that half of the objective, so the search
+                           is REWARDED for divergence and the winner is selected for damage. One
+                           mistyped minus buys a model chosen for incoherence, and nothing says so.
+
+    Cheap, local, and decidable before a byte is fetched, so it sits with the other command-line
+    pre-flights rather than in whatever happens to trip over the value first.
+    """
+    bad = []
+    for attr, flag, low, high, why in _NUMERIC_BOUNDS:
+        value = getattr(args, attr, None)
+        if value is None:
+            continue
+        if low is not None and value < low:
+            bad.append(f"  {flag} is {value:g}, and the lowest meaningful value is {low:g}: {why}")
+        elif high is not None and value > high:
+            bad.append(f"  {flag} is {value:g}, and the highest meaningful value is {high:g}: {why}")
+    lo = getattr(args, "layer_lo", None)
+    hi = getattr(args, "layer_hi", None)
+    if lo is not None and hi is not None and not bad and lo > hi:
+        bad.append(
+            f"  --layer-lo is {lo:g} and --layer-hi is {hi:g}, so the search window is empty. "
+            f"They are fractions of depth and the low one comes first.")
+    if bad:
+        raise SystemExit(
+            "senbonzakura: these values cannot be used, and they are checked before the model is "
+            "loaded so that finding out costs nothing:\n" + "\n".join(bad))
+
+
 def _preflight_device(args, log=print):
     """Refuse a device this machine cannot use, before anything is downloaded.
 
@@ -4554,6 +4626,7 @@ def run_parsed(args, bankai, argv):
     # FIRST of the pre-flights, because it is decidable from the command line alone: no model, no
     # corpus, no network. Everything below it either touches the Hub or walks a dataset, and a run
     # refused for a flag the parser could already see should not cost a download first.
+    _preflight_numbers(args)
     _preflight_generation_budget(args)
     _preflight_device(args)
 

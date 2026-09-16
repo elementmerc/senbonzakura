@@ -580,3 +580,39 @@ def test_present_refuses_the_run_on_a_bare_enter(monkeypatch):
             "licence": None, "recipe": None}
     line = it.present(plan, ask_fn=lambda _p: "", log=lambda *a: None)
     assert line is None, "a bare Enter at 'Run it?' must not return a command to run"
+
+
+class TestTheDeviceMenuKnowsThisMachine:
+    """The guided mode does not propose a device this machine cannot use.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16. `DEVICES` was a static list with cuda first and
+    no detection, so on a GPU-less machine a newcomer taking every default was handed
+    `--device cuda`, which cannot run there. This is the one surface built so newcomers do not
+    have to know things, and it steered them into the failure the device pre-flight now refuses.
+    """
+
+    def test_the_default_is_a_device_that_works(self, monkeypatch):
+        monkeypatch.setattr(it, "device_available", lambda name: name == "cpu")
+        assert it.pick_device(ask_fn=lambda _p: "", log=lambda *a: None) == "cpu"
+
+    def test_cuda_is_still_offered_and_marked(self, monkeypatch):
+        """Hiding it would teach a wrong model of the tool: somebody may be composing a command
+        to run on another machine.
+        """
+        shown = []
+        monkeypatch.setattr(it, "device_available", lambda name: name == "cpu")
+        it.pick_device(ask_fn=lambda _p: "", log=lambda *a: shown.append(" ".join(str(x) for x in a)))
+        text = "\n".join(shown)
+        assert "cuda" in text, "the option must still be listed"
+        assert "not available on this machine" in text, "and marked as unusable here"
+
+    def test_cuda_stays_the_default_when_it_works(self, monkeypatch):
+        monkeypatch.setattr(it, "device_available", lambda _name: True)
+        assert it.pick_device(ask_fn=lambda _p: "", log=lambda *a: None) == "cuda"
+
+    def test_an_unaskable_device_is_not_reported_as_unavailable(self, monkeypatch):
+        """On a base install torch may be absent. "cannot tell" must not read as "no"."""
+        monkeypatch.setattr(it, "device_available", lambda _name: None)
+        shown = []
+        it.pick_device(ask_fn=lambda _p: "", log=lambda *a: shown.append(" ".join(str(x) for x in a)))
+        assert "not available" not in "\n".join(shown)

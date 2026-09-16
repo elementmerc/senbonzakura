@@ -242,3 +242,67 @@ class TestTheUserWithNoCard:
     def test_cuda_with_a_card_passes(self, monkeypatch):
         monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
         assert cli._preflight_device(types.SimpleNamespace(device="cuda:1")) == "cuda:1"
+
+
+def _numeric_args(**over):
+    """A namespace carrying every bounded flag at its parser default, so a test changes one."""
+    from senbonzakura.parser import build_parser
+    defaults = build_parser().parse_args(["--model", "x"])
+    for k, v in over.items():
+        setattr(defaults, k, v)
+    return defaults
+
+
+class TestNonsenseNumbers:
+    """Every numeric flag is bounded at the command line, before anything is loaded.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16, from an installed wheel with no source. Every
+    numeric flag accepted every value, and the four failure shapes were all different:
+
+      --max-directions 0   silently clamped to 1, no warning. The artefact recorded 1 honestly,
+                           so the record was fine and the operator's intent was overridden.
+      --trials 0           ran, failed late, and blamed VRAM / the model / an empty eval set,
+                           having printed "searching 0 trials" two lines earlier.
+      --layer-lo 2.0       a raw optuna ValueError under ten frames of our internals.
+      --kl-scale -5        ran to completion and reported DONE, with the objective inverted so
+                           the search was rewarded for divergence.
+
+    The last is why this is a refusal rather than a warning: it produces a finished model,
+    selected for damage, that nothing marks as suspect.
+    """
+
+    @pytest.mark.parametrize(("flag", "value"), [
+        ("trials", 0), ("trials", -5),
+        ("max_directions", 0), ("max_directions", -3),
+        ("direction_clusters", 0),
+        ("dir_prompts", 0), ("eval_refusal", 0), ("eval_kl", 0),
+        ("gen_batch", 0), ("top_rescore", 0),
+        ("patience", -1), ("ablation_rounds", -1), ("eval_refusal_final", -1),
+        ("kl_scale", -5.0), ("sparsity", -0.1), ("sparsity", 1.5),
+        ("layer_lo", -0.1), ("layer_lo", 2.0), ("layer_hi", -1.0), ("layer_hi", 1.5),
+    ])
+    def test_a_value_outside_its_range_is_refused(self, flag, value):
+        args = _numeric_args(**{flag: value})
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_numbers(args)
+        message = str(caught.value)
+        assert "--" + flag.replace("_", "-") in message, f"the refusal must name the flag: {message}"
+
+    def test_an_inverted_layer_window_is_refused(self):
+        with pytest.raises(SystemExit, match="window is empty"):
+            cli._preflight_numbers(_numeric_args(layer_lo=0.9, layer_hi=0.1))
+
+    def test_the_defaults_and_the_boundaries_all_pass(self):
+        cli._preflight_numbers(_numeric_args())
+        cli._preflight_numbers(_numeric_args(trials=1, max_directions=1, kl_scale=0.0,
+                                             layer_lo=0.0, layer_hi=1.0, sparsity=0.0,
+                                             patience=0, ablation_rounds=0,
+                                             eval_refusal_final=0))
+
+    def test_every_fault_is_named_not_only_the_first(self):
+        """Same reasoning as the dataset pre-flight: one wasted start, not three."""
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_numbers(_numeric_args(trials=0, max_directions=0, kl_scale=-1.0))
+        message = str(caught.value)
+        for flag in ("--trials", "--max-directions", "--kl-scale"):
+            assert flag in message, f"{flag} was not named"

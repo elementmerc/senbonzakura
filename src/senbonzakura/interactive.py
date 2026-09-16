@@ -243,9 +243,51 @@ def pick_side(side, question, ask_fn=input, log=print):
     return entry["spec"], entry["licence"]
 
 
+def device_available(name):
+    """Whether this machine can actually use a device, or None when it cannot be asked.
+
+    None rather than False when torch is absent: the guided mode runs on a base install, and
+    "cannot tell" must not be presented to a newcomer as "no".
+    """
+    try:
+        import torch
+    except ImportError:
+        return None
+    if name == "cuda":
+        return bool(torch.cuda.is_available())
+    if name == "mps":
+        backend = getattr(torch.backends, "mps", None)
+        return bool(getattr(backend, "is_available", lambda: False)())
+    return True
+
+
 def pick_device(ask_fn=input, log=print):
-    index = choose("Where should it run?", [(name, note) for name, note in DEVICES],
-                   default=0, ask_fn=ask_fn, log=log)
+    """Offer every device, but default to one this machine can actually use.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16. `DEVICES` was a static list with cuda first and
+    no detection, so on a machine with no card the guided mode walked a newcomer through every
+    default and handed them
+
+        senbonzakura kageyoshi ... --device cuda
+
+    which cannot run there. This is the one surface built so that newcomers do not have to know
+    things, steering them into the exact failure the device pre-flight now refuses. A sentence is
+    better than the traceback it used to be, but proposing a broken command at all is the defect.
+
+    Unavailable devices are still LISTED, because somebody may be composing a command to run
+    elsewhere, and a menu that hides options teaches a wrong model of the tool. They are marked,
+    and the default moves to the first one that works.
+    """
+    marked, first_usable = [], None
+    for position, (name, note) in enumerate(DEVICES):
+        usable = device_available(name)
+        if usable and first_usable is None:
+            first_usable = position
+        suffix = "" if usable is None else ("" if usable else "  [not available on this machine]")
+        marked.append((name + suffix, note))
+    index = choose("Where should it run?", marked,
+                   default=first_usable if first_usable is not None else 0,
+                   ask_fn=ask_fn, log=log)
     return DEVICES[index][0]
 
 

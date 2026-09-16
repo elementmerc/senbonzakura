@@ -570,5 +570,12 @@ def test_the_bundled_track_check_says_where_it_unpacks_to():
     from senbonzakura import bundled
     from senbonzakura import doctor as doc
     row = doc.check_track()
+    # CI runs rows WITHOUT the packed blob (the artefact-fetch step is skipped there), and a row
+    # that reports "not installed" has no unpack path to name yet. The contract is about the
+    # installed case: when the track is there, say where it goes. Asserting unconditionally is
+    # what turned this green here and red on every CI platform, which is this project's oldest
+    # recurring shape: my machine has an artefact CI does not.
+    if not pathlib.Path(bundled.data_path()).is_file():
+        pytest.skip("the packed track is not installed here, so there is no unpack path to report")
     assert str(bundled.cache_dir()) in row.detail, (
         f"the bundled-track row should carry its path, got: {row.detail}")

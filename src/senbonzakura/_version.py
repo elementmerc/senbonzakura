@@ -17,6 +17,10 @@ machine where torch is exactly what is missing.
 #          hashes sent to the ROG peer, who held rather than running; superseded before use.
 #   .dev4  cut for the ROG pass. Adds the float32 direction basis (which changes the edit
 #          slightly), the snapshot pre-flight, and the model card.
+#   .dev9  three gaps found by installing the wheel and behaving like a user, with no source:
+#          no device pre-flight (a GPU-less box got a ten-frame traceback after the download),
+#          the no-track refusal leading with Hub-package advice that could not help, and
+#          `--track`'s help never naming `default`.
 #   .dev8  dev7 plus a singular/plural fix in the audit refusal. A SEPARATE VERSION rather than
 #          a rebuild: the first dev7 wheel had already been copied to atlas, so that name was
 #          spent even though its hashes were never handed to anyone. Two wheels sharing a
@@ -39,4 +43,4 @@ machine where torch is exactly what is missing.
 # bumped past rather than reused even though it never left this machine: a version that was
 # built is spent, because a wheel with that name existed and could have been copied.
 # See RELEASING.md, "A dev-only cut".
-__version__ = "0.4.0.dev8"
+__version__ = "0.4.0.dev9"

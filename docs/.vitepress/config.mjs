@@ -83,9 +83,14 @@ export default {
       '/guide/': [
         {
           text: 'Start here',
+          // WHAT IT IS COMES FIRST, changed 2026-09-17. It used to sit second, behind
+          // Quickstart, so the page explaining what abliteration destroys was reached after the
+          // page that tells you how to do it. A hostile outside reviewer put it plainly: nobody
+          // is hiding anything, the material is simply downstream of the instructions on every
+          // surface. That is an ordering choice and it was the wrong one.
           items: [
-            { text: 'Quickstart', link: '/guide/quickstart' },
             { text: 'What it is', link: '/guide/what-it-is' },
+            { text: 'Quickstart', link: '/guide/quickstart' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first run', link: '/guide/first-run' },
           ],

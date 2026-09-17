@@ -1,5 +1,17 @@
 # Quickstart
 
+::: danger What you are about to make
+The model that comes out of this will answer requests the original refused, including harmful
+ones. That is the point of the tool rather than a side effect, and it is not reversible by
+loading the model differently: the refusal behaviour is removed from the weights.
+
+**The base model's licence still governs the result**, unchanged, and several model families
+carry a use policy that binds derivatives. **Do not put the result in front of other people
+without saying what it is.**
+
+[What it is](/guide/what-it-is) is the honest version of this page and takes five minutes.
+:::
+
 Two commands and about an hour. The install is 5.8 GB and takes about two minutes; after that there is nothing to
 download but the model.
 
@@ -107,6 +119,8 @@ trust any number this tool prints.
 ## Where next
 
 - [Your first run](/guide/first-run) walks through the same command in detail, and the manual mode.
-- [What it is](/guide/what-it-is) is the background, if you would rather have it before the buttons.
+- [What it is](/guide/what-it-is) is what this does and what it destroys. It now comes before this
+  page rather than after it, and this line used to offer it as the background "if you would rather
+  have it before the buttons", which made reading it the optional path.
 - [Read this before quoting a number](/guide/what-we-know) matters if you plan to publish anything
   you measured with this.

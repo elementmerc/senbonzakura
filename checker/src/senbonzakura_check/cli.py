@@ -61,6 +61,11 @@ def build_parser():
                     help="machine-readable output, one object per file")
     ap.add_argument("--quiet", action="store_true",
                     help="print findings only, no summary and no reassurance")
+    ap.add_argument("--fail-on-empty", action="store_true",
+                    help="exit non-zero when NOTHING was checked. A directory that exists and "
+                         "holds no result artefacts otherwise exits 0, which in CI is a green "
+                         "that means 'I found no files' and is indistinguishable from 'I found "
+                         "files and they were fine'. Worth setting wherever a path could drift")
     ap.add_argument("--skip-unknown", action="store_true",
                     help="treat a named file that is not a result artefact the way a swept one "
                          "is treated: report it and carry on, rather than exiting 2")
@@ -189,6 +194,13 @@ def main(argv=None, out=None):
         tail = f", {n_not_result} not a result" if n_not_result else ""
         print(f"\n{len(results)} file(s), {n_findings} finding(s), "
               f"{n_unchecked} unchecked{tail}, {len(checks)} checks available.", file=out)
+        # SAID IN ITS OWN SENTENCE, because "0 file(s)" sits inside a line that otherwise reads
+        # like a clean report, and a reader skims it as one. Found by pointing the checker at a
+        # directory that existed and held nothing: it exited 0, which in CI is a green that
+        # checked nothing.
+        if not results:
+            print("NOTHING WAS CHECKED: no result artefacts were found at the path(s) given. "
+                  "That is not the same as a clean result.", file=out)
         # LOOPHOLE 7, IN THE OUTPUT RATHER THAN THE README. Somebody will otherwise quote a
         # clean report as a claim of correctness, and it is not one.
         print("This looks for known failure modes. It cannot tell you a number is right.",
@@ -196,7 +208,12 @@ def main(argv=None, out=None):
 
     if n_unchecked:
         return 2
-    return 1 if n_findings else 0
+    if n_findings:
+        return 1
+    # Zero files is only a failure when the caller says so: a sweep over a tree that legitimately
+    # holds no artefacts yet is a normal thing to do, and breaking it would make the default
+    # unusable. The flag is for the case where a path could drift, which is CI.
+    return 1 if (args.fail_on_empty and not results) else 0
 
 
 if __name__ == "__main__":

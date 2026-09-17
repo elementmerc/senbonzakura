@@ -51,6 +51,15 @@ inputs:
       sensible first week on an existing repository.
     required: false
     default: "true"
+  fail-on-empty:
+    description: >-
+      Fail the step when NOTHING was checked. Defaults false, because a repository that does not
+      produce artefacts on every run is a normal thing and breaking it would make adoption worse.
+      Set it true once the path is stable: a directory that exists and holds nothing produces zero
+      findings and zero unchecked, which is arithmetically identical to a clean sweep, so a path
+      that drifts reports green forever.
+    required: false
+    default: "false"
   fail-on-unchecked:
     description: >-
       Fail the step when a file could not be read at all. Left true on purpose: a file the
@@ -64,6 +73,11 @@ inputs:
     default: "3.12"
 
 outputs:
+  checked:
+    description: >-
+      How many files were actually examined. Zero means nothing was checked, which is not the same
+      as a clean result and is what a drifted path looks like.
+    value: ${{ steps.run.outputs.checked }}
   findings:
     description: "How many checks fired."
     value: ${{ steps.run.outputs.findings }}
@@ -101,14 +115,19 @@ runs:
 
         findings=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(len(e['findings']) for e in d))" "$report")
         unchecked=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1 for e in d if e['unchecked']))" "$report")
+        # HOW MANY FILES WERE SEEN AT ALL. Without it a path that drifts produces zero findings
+        # and zero unchecked, which is arithmetically identical to a clean sweep and reports green.
+        # Found by pointing the checker at a directory that existed and held nothing.
+        checked=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(len(d))" "$report")
         echo "findings=$findings" >> "$GITHUB_OUTPUT"
         echo "unchecked=$unchecked" >> "$GITHUB_OUTPUT"
+        echo "checked=$checked" >> "$GITHUB_OUTPUT"
         echo "report=$report" >> "$GITHUB_OUTPUT"
 
         {
           echo "### Senbonzakura check"
           echo
-          echo "$findings finding(s), $unchecked file(s) unchecked."
+          echo "$checked file(s) checked, $findings finding(s), $unchecked file(s) unchecked."
           echo
           echo "This looks for known failure modes. It cannot tell you a number is right."
         } >> "$GITHUB_STEP_SUMMARY"
@@ -117,6 +136,13 @@ runs:
         # failure kinds are gated separately. `2` means a file could not be read, and that is
         # the one worth failing on even when findings are advisory: it is the outcome that makes
         # the rest of the report meaningless.
+        if [ "$checked" -eq 0 ]; then
+          echo "::warning::No result artefacts were found at '${{ inputs.path }}'. Nothing was checked, which is not the same as a clean result."
+          if [ "${{ inputs.fail-on-empty }}" = "true" ]; then
+            echo "::error::Nothing was checked and fail-on-empty is set. Check the path."
+            exit 1
+          fi
+        fi
         if [ "$unchecked" -gt 0 ] && [ "${{ inputs.fail-on-unchecked }}" = "true" ]; then
           echo "::error::$unchecked file(s) could not be read. An unreadable artefact is reported unchecked, never clean."
           exit 1

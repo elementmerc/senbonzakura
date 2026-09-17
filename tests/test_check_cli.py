@@ -396,3 +396,35 @@ def test_the_pre_commit_hook_needs_no_extra_dependencies():
     assert hook["language"] == "python"
     assert not hook.get("additional_dependencies"), (
         "the hook declares extra dependencies, which defeats the point of a torch-free checker")
+
+
+class TestNothingWasChecked:
+    """Zero files is said out loud, and can be made to fail.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16. A directory that EXISTS and holds no result
+    artefacts produced `0 file(s), 0 finding(s), 0 unchecked` and exited 0. Arithmetically that is
+    identical to a clean sweep, so a path that drifts, or artefacts that start landing somewhere
+    else, reports green forever. A non-existent path was already rc=2; it is the existing-but-empty
+    case that is silent.
+
+    This is the checker's own version of the rule this project keeps relearning: silence is only
+    evidence if a signal could have reached you. The whole adoption story for this command is CI,
+    which is exactly where nobody reads a summary line.
+    """
+
+    def test_an_empty_directory_says_nothing_was_checked(self, tmp_path, capsys):
+        (tmp_path / "notes.txt").write_text("not an artefact", encoding="utf-8")
+        rc = cli.main([str(tmp_path)])
+        out = capsys.readouterr().out
+        assert "NOTHING WAS CHECKED" in out, out
+        assert "not the same as a clean result" in out
+        assert rc == 0, "the default must stay usable on a tree with no artefacts yet"
+
+    def test_fail_on_empty_turns_it_into_a_failure(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("not an artefact", encoding="utf-8")
+        assert cli.main([str(tmp_path), "--fail-on-empty"]) == 1
+
+    def test_fail_on_empty_does_not_fire_when_something_was_checked(self, tmp_path):
+        (tmp_path / "r.json").write_text('{"refusal": 0.1}', encoding="utf-8")
+        assert cli.main([str(tmp_path), "--fail-on-empty"]) in (0, 1, 2)
+        assert cli.main([str(tmp_path), "--fail-on-empty"]) == cli.main([str(tmp_path)])

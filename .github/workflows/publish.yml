@@ -80,10 +80,22 @@ jobs:
       # wheel missing its licence files, its corpora or its templates, and one
       # carrying the build machine's bytecode. A release that cannot pass this is
       # not a release. It reads the wheel, so it needs none of the corpus sources.
+      # Scoped to the platform and universal wheels by name. It used to glob `dist/*.whl`, which
+      # was right while there was one distribution and would now drag the checker through a gate
+      # that asks for corpora, templates and licence files it deliberately does not carry.
       - name: Check the wheel describes itself honestly
         run: |
           python -m pip install --upgrade pip
-          python tools/check_wheel.py dist/*.whl --release
+          shopt -s nullglob
+          found=0
+          for f in dist/senbonzakura-*.whl; do
+            python tools/check_wheel.py "$f" --release
+            found=1
+          done
+          # A release that attached no senbonzakura wheel would otherwise pass this step having
+          # checked nothing, which is the same arithmetic that let `senbonzakura check` report a
+          # clean sweep over zero applicable checks.
+          [ "$found" = 1 ] || { echo "::error::no senbonzakura wheel was attached to this release"; exit 1; }
 
       # The sdist is a separate question with a separate answer. `setup.py` refuses to let a
       # WHEEL carrying Linux binaries claim py3-none-any; nothing asked the same of the source
@@ -103,6 +115,21 @@ jobs:
       # The version in the artefacts must be the version the tag names. A wheel
       # built from an uncommitted tree is the failure this catches: it uploads
       # under a version number whose source nobody can find afterwards.
+      # THE CHECKER IS A SECOND DISTRIBUTION AND THIS STEP USED TO REFUSE IT.
+      #
+      # `senbonzakura-check` ships from `checker/` as its own torch-free package, and the platform
+      # wheel declares `Requires-Dist: senbonzakura-check`. It had never been published, and this
+      # is why: the pattern below named one distribution, so any file called
+      # `senbonzakura_check-0.4.0-py3-none-any.whl` failed the check and the release stopped. The
+      # missing piece was never a credential. There was no route.
+      #
+      # Found on 2026-09-17 by a plain `pip install` of the platform wheel, which fails with
+      # "No matching distribution found for senbonzakura-check" on any machine that does not
+      # already have both wheels sitting side by side. That is every machine except ours.
+      #
+      # Both projects must have a trusted publisher configured on PyPI pointing at THIS workflow
+      # in THIS repository. For a name that does not exist yet, that is a PENDING publisher, which
+      # PyPI supports precisely so a first upload need not come from a token on a laptop.
       - name: Check the artefacts match the tag
         env:
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
@@ -111,8 +138,23 @@ jobs:
           for f in dist/*; do
             case "$(basename "$f")" in
               senbonzakura-"$expected"-*|senbonzakura-"$expected".tar.gz) ;;
+              senbonzakura_check-"$expected"-*|senbonzakura_check-"$expected".tar.gz) ;;
               *) echo "::error::$f is not version $expected, which is what $TAG names"; exit 1 ;;
             esac
+          done
+
+      # The platform wheel and the checker are checked by different questions. The release check
+      # asks for the corpora, the templates and the licence files, and the checker carries none of
+      # them by design: its whole pitch is that it installs in seconds with nothing. Running the
+      # release gate over it would either fail honestly or force the gate to be loosened for both,
+      # and loosening it for both is how the 0.3.0 wheel shipped with no corpora.
+      - name: Check the checker declares what the platform wheel depends on
+        run: |
+          shopt -s nullglob
+          for f in dist/senbonzakura_check-*.whl; do
+            python -m pip install --upgrade twine >/dev/null
+            python -m twine check "$f"
+            echo "checked $f"
           done
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

@@ -316,6 +316,58 @@ def is_release_artefact(wheel: Path) -> bool:
     return bool(_RELEASE_VERSION.match(version))
 
 
+#: A specifier that admits a pre-release: `1.2.3.dev4`, `1.2a1`, `1.2rc1`, `1.2.3.post1.dev0`.
+#: PEP 440 says pip considers pre-releases for a requirement only when the requirement mentions
+#: one, which is the property being detected here rather than the exact grammar.
+_PRERELEASE_IN_SPECIFIER = re.compile(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", re.I)
+
+
+def prerelease_dependency_in_a_release(wheel: Path) -> list[str]:
+    """A stable wheel may not depend on a range that admits pre-releases.
+
+    THE TRADE THIS ENFORCES, decided 2026-09-17. `senbonzakura` declares `senbonzakura-check`,
+    which had never been published, so a plain `pip install` of the wheel failed outright for
+    everyone who did not already have both wheels sitting side by side. The fix for the dev cut is
+    a specifier that admits the pre-release, because pip ignores pre-releases unless asked and a
+    dev checker on the index would otherwise leave the install failing for a second reason that
+    reads exactly like the first.
+
+    That specifier is correct for a dev cut and wrong for a release. A stable wheel whose
+    dependency admits pre-releases resolves to whatever is newest for ever after, so a build that
+    looks pinned changes underneath whoever installs it next, which on a rented card is a result
+    nobody can attribute, paid for by the hour.
+
+    The whole plan rests on the loosening being undone at release, and "undo it at release" is a
+    thing a person remembers or does not. So it is asked of the artefact. A wheel at a release
+    version is refused if its own metadata still carries the licence it was given for the dev cut.
+    """
+    try:
+        with zipfile.ZipFile(wheel) as zf:
+            name = next(n for n in zf.namelist()
+                        if n.endswith(".dist-info/METADATA"))
+            meta = zf.read(name).decode("utf-8", "replace")
+    except (OSError, zipfile.BadZipFile, StopIteration) as e:
+        return [f"could not read the wheel's metadata to check its dependencies: {e}"]
+
+    bad = []
+    for line in meta.splitlines():
+        if not line.lower().startswith("requires-dist:"):
+            continue
+        requirement = line.split(":", 1)[1].strip()
+        # An extra is a different question. A release may legitimately offer an extra pinned at a
+        # pre-release of something optional; what may not happen is the REQUIRED graph of a stable
+        # artefact resolving to a pre-release without the installer asking for one.
+        if ";" in requirement and "extra ==" in requirement:
+            continue
+        if _PRERELEASE_IN_SPECIFIER.search(requirement):
+            bad.append(
+                f"this wheel is at a RELEASE version and requires {requirement!r}, whose "
+                f"specifier admits a pre-release. A released artefact that can resolve to a "
+                f"pre-release changes underneath whoever installs it next. Tighten it to a "
+                f"stable floor before tagging.")
+    return bad
+
+
 #: A source distribution has no platform tag by construction, so anything in it that only runs on
 #: one platform is a trap. Measured on 2026-09-10: the sdist carried 33 entries under
 #: `vendor/bin/linux-x86_64/`, about 19 MB of `.so` and `llama-quantize`. `setup.py` hooks
@@ -412,7 +464,8 @@ def main(argv=None):
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
         found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
-                  + unacceptable_to_pypi(info) + leaks_a_build_path(a.wheel))
+                  + unacceptable_to_pypi(info) + leaks_a_build_path(a.wheel)
+                  + prerelease_dependency_in_a_release(a.wheel))
     for line in found:
         print(f"  PROBLEM: {line}")
 

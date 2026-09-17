@@ -328,6 +328,26 @@ into an empty environment WITHOUT `--no-deps`, and reads back what pip resolved.
 uploading them the other way round leaves a window in which `pip install senbonzakura` cannot
 resolve, and a version number on PyPI can never be replayed.
 
+**Both projects need a trusted publisher on PyPI before the first upload, and that is a browser
+step nobody can do from here.** `.github/workflows/publish.yml` uploads with OIDC rather than a
+token, which is the whole reason it exists, so PyPI has to be told in advance which workflow in
+which repository is allowed to publish each name. For a project that does not exist on the index
+yet, that is a **pending publisher**: PyPI supports exactly this case so that a first upload does
+not have to come from an API token on somebody's laptop. Configure it for `senbonzakura-check`
+against this repository, workflow `publish.yml`, environment `pypi` (and `testpypi` for the
+rehearsal), or the first upload fails at the last step with the artefacts already built.
+
+**A dev version does not satisfy the dependency.** `senbonzakura` declares `senbonzakura-check`
+with no version specifier, and pip excludes pre-releases unless the requirement asks for one. So
+uploading `senbonzakura-check 0.4.0.dev9` alone leaves `pip install senbonzakura` failing exactly
+as it does today, for a different reason that reads the same. Closing the hole needs either a
+stable `senbonzakura-check` on the index, or a specifier on the dependency that admits the
+pre-release. Decide which before uploading, because the upload cannot be taken back.
+
+**This was never a missing credential.** Until 2026-09-17 the workflow's tag check named one
+distribution, so a file called `senbonzakura_check-<version>-py3-none-any.whl` failed it and the
+release stopped. The procedure above had been written and the machinery had never been told.
+
 ---
 
 ## A dev-only cut, which is not a release

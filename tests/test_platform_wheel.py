@@ -419,3 +419,93 @@ def test_the_universal_wheel_is_not_dragged_impure(monkeypatch, tmp_path):
     mod = load_setup(monkeypatch, tmp_path)
     assert mod._BinaryDistribution().has_ext_modules() is False
     assert mod.vendored_platforms() == []
+
+
+# ── The specifier that was loosened for a dev cut must not survive into a release ─────────
+#
+# Decided with the operator on 2026-09-17. `senbonzakura` declares `senbonzakura-check`, which had
+# never been published, so a plain `pip install` of the wheel failed outright for everyone who did
+# not already have both wheels sitting side by side. That is every machine except ours, which is
+# how it survived: we only ever installed them together.
+#
+# The fix for the dev cut is a specifier admitting the pre-release, because pip ignores
+# pre-releases unless the requirement asks for one, so a dev checker on the index would leave the
+# install failing for a second reason that reads exactly like the first.
+#
+# That is right for a dev cut and wrong for a release: a stable wheel whose dependency admits
+# pre-releases resolves to whatever is newest for ever after, so a build that looks pinned changes
+# underneath whoever installs it next. On a rented card that is a result nobody can attribute,
+# paid for by the hour.
+#
+# The plan rests on the loosening being undone at release, and "undo it at release" is a thing a
+# person remembers or does not. So the artefact is asked instead, the same way `--release` stopped
+# being skippable: a flag can be forgotten, a version cannot.
+
+
+def _wheel_declaring(tmp_path, version, *requires):
+    import zipfile
+    w = tmp_path / f"senbonzakura-{version}-py3-none-any.whl"
+    lines = "\n".join(f"Requires-Dist: {r}" for r in requires)
+    with zipfile.ZipFile(w, "w") as z:
+        z.writestr(f"senbonzakura-{version}.dist-info/METADATA",
+                   f"Metadata-Version: 2.1\nName: senbonzakura\nVersion: {version}\n{lines}\n")
+    return w
+
+
+def test_a_release_wheel_may_not_admit_a_prerelease_dependency(tmp_path):
+    w = _wheel_declaring(tmp_path, "0.4.0", "senbonzakura-check>=0.4.0.dev0,<0.5")
+    found = _wheel_check().prerelease_dependency_in_a_release(w)
+    assert found, "a stable wheel depending on a pre-release range was accepted"
+    assert "admits a pre-release" in found[0]
+
+
+def test_a_release_wheel_with_a_stable_floor_passes(tmp_path):
+    w = _wheel_declaring(tmp_path, "0.4.0", "senbonzakura-check>=0.4.0,<0.5")
+    assert _wheel_check().prerelease_dependency_in_a_release(w) == []
+
+
+def test_a_dev_wheel_is_not_a_release_artefact_so_the_gate_does_not_apply(tmp_path):
+    """The whole point of the trade: the dev cut ships installable, the release does not ship loose."""
+    w = _wheel_declaring(tmp_path, "0.4.0.dev9", "senbonzakura-check>=0.4.0.dev0,<0.5")
+    assert _wheel_check().is_release_artefact(w) is False
+
+
+def test_an_extra_may_still_pin_a_prerelease(tmp_path):
+    """An optional extra is a different question from the required graph of a stable artefact."""
+    w = _wheel_declaring(tmp_path, "0.4.0", 'something>=1.0.0rc1; extra == "quant"')
+    assert _wheel_check().prerelease_dependency_in_a_release(w) == []
+
+
+def test_an_ordinary_dependency_is_left_alone(tmp_path):
+    w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5", "transformers>=4.56")
+    assert _wheel_check().prerelease_dependency_in_a_release(w) == []
+
+
+def test_the_gate_is_wired_into_the_release_checks(tmp_path, capsys):
+    """The half a unit test cannot see. `main` is what CI runs, and a check `main` does not call
+    is a check that does not exist, which mutation testing caught twice tonight on other gates."""
+    w = _wheel_declaring(tmp_path, "0.4.0", "senbonzakura-check>=0.4.0.dev0,<0.5")
+    rc = _wheel_check().main([str(w)])
+    assert rc != 0, "check_wheel.main accepted a release wheel with a pre-release dependency"
+    assert "admits a pre-release" in capsys.readouterr().out
+
+
+def test_the_shipped_pyproject_is_honest_about_which_state_it_is_in():
+    """Whatever the specifier says, it must match what this tree's version actually is.
+
+    A tree at a release version carrying the dev specifier would build a wheel the gate above
+    refuses, which is correct but late: the build is already done by then.
+    """
+    import re
+
+    from senbonzakura import _version
+
+    raw = getattr(_version, "__version__", None) or _version.version
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    spec = re.search(r'"(senbonzakura-check[^"]*)"', text).group(1)
+    is_dev = bool(re.search(r"(dev|a|b|rc)\d*$", raw))
+    admits_pre = bool(re.search(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", spec, re.I))
+    if not is_dev:
+        assert not admits_pre, (
+            f"this tree is at release version {raw} and still declares {spec!r}, which admits a "
+            f"pre-release. Tighten it to a stable floor before tagging.")

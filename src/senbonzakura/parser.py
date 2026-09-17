@@ -106,9 +106,9 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura",
-        description="Multi-direction refusal abliteration for transformer language models, with a "
-                    "quality-guarded Optuna (NSGA-II) search over windowed, per-component, "
-                    "multi-directional weight ablations.",
+        description="Refusal abliteration for transformer language models, with the instruments "
+                    "to measure what the edit cost. A quality-guarded Optuna (NSGA-II) search "
+                    "over windowed, per-component, multi-directional weight ablations.",
         epilog=(
             "commands:\n"
             "  abliterate   remove refusal directions and save the model (the default: the flags "

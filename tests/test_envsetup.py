@@ -234,7 +234,20 @@ def test_the_command_changes_nothing_without_apply(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "Nothing was changed" in out
     assert "--index-url" in out, "the command it would run has to be printed"
-    assert not ran, "it ran pip without being asked to"
+
+    # THE ASSERTION IS ABOUT PIP, NOT ABOUT SUBPROCESSES. It used to be `assert not ran`, which
+    # on any machine with a card fires on a call to nvidia-smi with --query-gpu=compute_cap,
+    # a read-only hardware probe, which is exactly what this command is SUPPOSED to do without
+    # --apply. The old message then reported it as "it ran pip without being asked to", so the
+    # one machine that could fail this test would have sent the reader hunting for a pip call
+    # that never happened. Accurate that something ran, wrong about what, which is the shape this
+    # project keeps finding in its own refusals and had sitting in a test.
+    #
+    # Found on the ROG, 2026-09-17, the first time the suite ran anywhere with nvidia-smi present.
+    installs = [call for call in ran
+                if any("pip" in str(part) or "install" in str(part)
+                       for part in (call[0] if call else []))]
+    assert not installs, f"it ran pip without being asked to: {installs}"
 
 
 # ── the detection, driven against stubbed nvidia-smi output ─────────────────────────

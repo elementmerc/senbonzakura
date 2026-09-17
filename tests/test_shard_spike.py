@@ -198,9 +198,30 @@ def test_a_missing_tensor_is_infinite_rather_than_ignored():
 
 
 # ── the run refuses rather than dying ───────────────────────────────────────────────
+#: Roughly what one layer of the shape below costs on disk, measured from the tool's own report
+#: (200 layers, hidden 4096, ffn 11008 -> 85583.9 MB, so about 428 MB each).
+_BYTES_PER_LAYER = 428 * 1024 * 1024
+
+
 @needs_posix
 def test_a_run_that_would_not_fit_on_disk_is_refused(tmp_path, capsys):
-    rc = spike.main(["--work", str(tmp_path), "--layers", "200", "--hidden", "4096",
+    """The size is derived from the machine, because otherwise the machine decides the result.
+
+    FOUND ON THE ROG, 2026-09-17. This asked for 200 layers, about 85 GB, and expected the disk
+    guard to refuse. That is an assertion about the RUNNER rather than about the code: atlas has
+    less than 85 GB free so it refused and the test passed, and the ROG has 556 GB free so it did
+    not refuse, proceeded to actually run the pass, and failed somewhere else entirely.
+
+    A test whose precondition is a property of the machine passes or fails on which machine ran
+    it, which is the same defect as the Windows writability test found in the same sweep. So the
+    request is now sized against the free space this particular run actually has, plus a margin,
+    and the guard is asked a question it must answer the same way everywhere.
+    """
+    import shutil
+
+    free = shutil.disk_usage(tmp_path).free
+    layers = int(free // _BYTES_PER_LAYER) + 64
+    rc = spike.main(["--work", str(tmp_path), "--layers", str(layers), "--hidden", "4096",
                      "--ffn", "11008"])
     assert rc == 2
     err = capsys.readouterr().err

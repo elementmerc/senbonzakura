@@ -110,7 +110,12 @@ def test_the_shipped_wheel_never_disagrees_with_itself():
     if not wheels:
         pytest.skip("the wheel would not build in this environment")
     name = pathlib.Path(wheels[-1]).name
-    names = zipfile.ZipFile(wheels[-1]).namelist()
+    # Closed explicitly. An unclosed ZipFile leaks its file handle, and `addopts` turns a
+    # ResourceWarning into an error, so the leak fails whichever test happens to be running when
+    # the collector gets to it rather than this one. That is a wandering failure with no stable
+    # cause, which is the worst kind to diagnose.
+    with zipfile.ZipFile(wheels[-1]) as zf:
+        names = zf.namelist()
     has_binary = any("llama-quantize" in n or "llama-imatrix" in n for n in names)
     universal = name.endswith("-py3-none-any.whl")
     assert not (universal and has_binary), (

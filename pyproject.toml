@@ -399,6 +399,20 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # were noise that any genuinely new warning would have hidden in. It is affordable
 # because, once fixed, this suite emits no warnings of any kind, so the setting costs
 # nothing today and turns the next leak into a failure instead of more noise.
+#
+# WHEN IT FIRES, THE TEST IT NAMES IS THE VICTIM AND NOT THE CAUSE. A ResourceWarning is
+# raised when the garbage collector reaches an unclosed handle, and that moment has nothing
+# to do with where the handle was opened, so the failure lands on whichever test happened to
+# be running and moves between runs. Measured 2026-09-17: one failure in six identical runs
+# of the same tree, and the run that failed named a test unrelated to the leak. Bisecting by
+# the reported name sends you somewhere there is nothing to find.
+#
+# To diagnose, stop re-running and make it an inventory instead:
+#
+#     PYTHONTRACEMALLOC=25 pytest -W always::ResourceWarning
+#
+# `always` downgrades it from an error so every leak in the run is reported rather than the
+# first one stopping the suite, and tracemalloc attaches the line that opened the handle.
 # -rs prints why every skipped test skipped. A skip is a test that did not run, and in a
 # 963-dot stream it looks exactly like a test that did. Twenty-one of these were skipping on
 # the CPU box for months because the route there strips `private/`, and the tests that guard

@@ -46,6 +46,30 @@ from senbonzakura.metrics import MIN_REPORTABLE_N
 from senbonzakura.track import flag_violations, read_manifest
 
 
+def _resolve_track(spec):
+    """`default` means the track packed inside the wheel, here as everywhere else.
+
+    THE DEFECT THIS EXISTS FOR, found by a hostile outside review on 2026-09-17. This was the one
+    command in the tool where `--track default` did not work, and it is the FIRST command in the
+    published reproduction recipe. `CONTRACT.md` opens with "Run it yourself and tell us we are
+    wrong. Everything needed is in this directory", the benchmark page gives a three step recipe,
+    and step one refused the only corpus that ships with the package.
+
+    The old refusal explained the limitation clearly and was still a limitation: a reader who
+    followed the invitation to check our numbers could not take the first step without first
+    building a corpus of harmful prompts they have no way to obtain. An invitation to refute that
+    cannot be accepted is not an invitation.
+
+    `ensure` rather than `cache_dir`, because unlike a digest this genuinely needs the rows on
+    disk, and the corpus licence notice printing here is correct: the caller is about to stage
+    those prompts into a directory two tools will read.
+    """
+    from senbonzakura import bundled, dataset
+    if spec == dataset.BUNDLED_ALIAS:
+        return Path(bundled.ensure())
+    return Path(spec)
+
+
 def load_texts(directory, n, *, text_column=None, token=None):
     """The first n prompts from a dataset, in whatever shape it arrives in."""
     from senbonzakura import dataset
@@ -116,15 +140,14 @@ def main(argv=None):
                          "(default: 64)")
     a = ap.parse_args(argv)
 
-    track, out = Path(a.track), Path(a.out)
+    track, out = _resolve_track(a.track), Path(a.out)
     if not track.is_dir():
         raise SystemExit(
             f"headtohead stage: no track at {track}.\n"
             f"  A track is a fit / search / measure split, not a directory of prompts. Build one "
             f"first:\n"
             f"    senbonzakura track --out {track} --harmful <file> --harmless <file>\n"
-            f"  This command needs a real directory: unlike the abliterator it does not resolve "
-            f"the bundled track by name, so `--track default` will not work here.")
+            f"  Or pass `--track default` for the evaluation track bundled in this install.")
 
     if a.eval_refusal_final < a.eval_refusal:
         raise SystemExit(

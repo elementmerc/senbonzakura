@@ -220,8 +220,38 @@ That directory is the track itself, and it is what to point
 at in order to check it.
 .B senbonzakura doctor
 prints the resolved path beside the track's size.
+.SH ACCEPTABLE USE
+A model that has been through this tool will answer requests the original
+refused, including harmful ones. That is what it does, and everything here
+follows from it.
+.PP
+Do not put an abliterated model in front of other people without saying what it
+is: the people using it cannot see the weights and have no way to know the
+refusals are gone. Do not use it to produce material that is illegal where you
+are; removing a model's refusals does not make its output lawful. Do not use it
+against a model you are not permitted to modify.
+.PP
+Three licences are usually in play and they do not merge. This software is
+AGPL\-3.0\-or\-later. The base model keeps its own licence, because abliteration
+is a modification and not a relicensing, and several model families carry a use
+policy that binds derivatives. The bundled corpora carry their own terms: the
+evaluation track is CC BY\-NC 4.0, attribution required and non\-commercial.
+.PP
+The package carries roughly 6,500 harmful prompts so it can run with no network.
+They are prompts and not answers, they are obfuscated only to keep them out of
+automated scrapes, and one ordinary run unpacks them to your cache directory in
+plain form. On a shared machine, consider whether whoever administers it would
+expect that.
+.PP
+The full text is
+.B ACCEPTABLE\-USE.md ,
+installed beside the package under its dist\-info/licenses/ directory.
 .SH SEE ALSO
 Arditi et al., "Refusal in Language Models Is Mediated by a Single Direction"
 (2024). Heretic (p\-e\-w/heretic).
+.B ACCEPTABLE\-USE.md
+and
+.B THIRD\-PARTY\-CORPORA.md ,
+both installed with the package.
 .SH AUTHOR
 Daniel Iwugo.

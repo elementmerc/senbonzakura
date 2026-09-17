@@ -1935,9 +1935,38 @@ def test_a_corpus_with_no_shared_subjects_says_the_matching_achieved_nothing(
     assert a.matching_quality >= cli.MATCHING_USELESS_RATIO
 
 
-def test_the_default_run_is_unmatched_and_says_so(base_args, tiny_model, tiny_tok, monkeypatch):
-    """Implementing a comparison does not make it the default; Q-14 measures it first."""
+def test_the_default_run_is_matched_now_that_q14_has_reported(base_args, tiny_model, tiny_tok,
+                                                              monkeypatch):
+    """The default flipped on 2026-09-17, and the old version of this test is why it is worth a note.
+
+    It was called `test_the_default_run_is_unmatched_and_says_so` and its docstring read
+    "Implementing a comparison does not make it the default; Q-14 measures it first." That was
+    exactly right when it was written, and it stopped being right when Q-14 reported: under the
+    unmatched comparison no statistic could tell a world containing refusal from one containing
+    none, and the matched comparison separates them by 40 to 60 points. The condition the test
+    named as the reason for the default had been met, and nothing went back to the default.
+
+    So the assertion outlived its own stated precondition. That is the quieter half of the
+    pattern three hostile reviewers found on the same night: the retracted or superseded claim
+    survives in the place that ships, because nothing re-reads a passing test.
+
+    `--no-matched-scoring` restores the old behaviour for reproducing an older run, and the
+    parameterised case below covers it, so the thing this test used to guard is still guarded.
+    """
     base_args.max_directions = 3
+    a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
+    _clusterable(a, monkeypatch, n=48, modes=3)
+    a.extract_directions("bad", "good", None, "good")
+    assert a.matched_scoring is True, (
+        "the default run is no longer matched, and the comparison it falls back to is the one "
+        "Q-14 showed cannot distinguish refusal from subject matter")
+
+
+def test_an_unmatched_run_is_still_available_and_still_says_so(base_args, tiny_model, tiny_tok,
+                                                               monkeypatch):
+    """What the previous test guarded, kept: an unmatched run has no matching to report on."""
+    base_args.max_directions = 3
+    base_args.matched_scoring = False
     a = cli.Abliterator(base_args, lambda m: None, model=tiny_model, tok=tiny_tok)
     _clusterable(a, monkeypatch, n=48, modes=3)
     a.extract_directions("bad", "good", None, "good")

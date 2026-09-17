@@ -277,8 +277,13 @@ def build_parser():
                          "ablation, then exit")
     ap.add_argument("--inspect-n", type=int, default=8, help="prompts per side to print in --inspect")
     ap.add_argument("--max-directions", type=int, default=3,
-                    help="upper bound on refusal directions per layer the search may ablate "
-                         "(1 = single-direction, the original method; >1 enables multi-directional)")
+                    help="CEILING on refusal directions per layer, not a setting for how many to "
+                         "use. Each trial draws its own count between --min-directions and this, "
+                         "so the search decides whether a second direction earns its place and "
+                         "reports what it chose as `num_directions` in the artefact. Left alone "
+                         "it picks one more often than not. Set this and --min-directions to the "
+                         "same number to pin the budget, which is what turns a ceiling into an "
+                         "experiment")
     ap.add_argument("--direction-clusters", type=int, default=8,
                     help="how many refusal modes to look for per layer. The harmful prompts are "
                          "clustered and each cluster proposes one candidate direction; the ones "
@@ -293,15 +298,21 @@ def build_parser():
                          "means a different thing at every cluster size; 'variance-ratio' is the "
                          "ANOVA F, whose null is 1.0 at any size. Under measurement (Q-14): the "
                          "default does not change until that measurement says it should.")
-    ap.add_argument("--matched-scoring", dest="matched_scoring", action="store_true",
+    ap.add_argument("--matched-scoring", dest="matched_scoring", action="store_true", default=True,
                     help="judge each candidate direction against the harmless prompts nearest it "
-                         "in content, instead of against the harmless set at large. A cluster "
-                         "about explosives stands out from harmless prompts in general whether or "
-                         "not the model refuses it, so the unmatched comparison cannot tell "
-                         "refusal from subject matter. Holding the subject still leaves refusal "
-                         "as the only thing that varies. Off by default: it changes what every "
-                         "separation number means, and Q-14 measures it before it becomes the "
-                         "default.")
+                         "in content, instead of against the harmless set at large. ON BY "
+                         "DEFAULT since 2026-09-17. A cluster about explosives stands out from "
+                         "harmless prompts in general whether or not the model refuses it, so the "
+                         "unmatched comparison cannot tell refusal from subject matter; holding "
+                         "the subject still leaves refusal as the only thing that varies. This "
+                         "was off pending Q-14, which has since reported: under the unmatched "
+                         "comparison no statistic could tell a world containing refusal from one "
+                         "containing none, and the matched one separates them by 40 to 60 points")
+    ap.add_argument("--no-matched-scoring", dest="matched_scoring", action="store_false",
+                    help="score candidates against the harmless set at large, as runs before "
+                         "2026-09-17 did. For reproducing an older run, and for nothing else: "
+                         "the comparison it restores is the one Q-14 showed cannot distinguish "
+                         "refusal from subject matter")
     ap.add_argument("--capability-eval", dest="capability_eval", default="",
                     help="a graded benchmark (a question column and an answer column, e.g. "
                          "openai/gsm8k:main::test) used to measure what each finalist config COST in "
@@ -451,10 +462,17 @@ def build_parser():
     ap.add_argument("--patience", type=int, default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
-    ap.add_argument("--eval-refusal-final", type=int, default=0,
-                    help="re-score the top frontier candidates on this many bad-eval prompts before "
-                         "picking the knee, so the choice isn't overfit to the small search eval "
-                         "(0 = skip, use the search-eval numbers).")
+    ap.add_argument("--eval-refusal-final", type=int, default=128,
+                    help="re-score the top frontier candidates on this many bad-eval prompts, "
+                         "held out from the ones the search scored against, before picking the "
+                         "knee. ON BY DEFAULT since 2026-09-17, at 128. Without it the winner is "
+                         "chosen on the same small set every trial was scored on, so it is the "
+                         "best of N draws over those particular prompts rather than a "
+                         "measurement, and the figure the run reports describes the rows it was "
+                         "selected on. The cost is one extra scoring pass over --top-rescore "
+                         "candidates, which is minutes against a search measured in hours. Pass 0 "
+                         "to skip it and use the search-eval numbers, which is what runs before "
+                         "this date did")
     ap.add_argument("--top-rescore", type=int, default=6,
                     help="how many frontier candidates to re-score with --eval-refusal-final.")
     ap.add_argument("--study-db", default=None,

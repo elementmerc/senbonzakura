@@ -93,6 +93,65 @@ def test_no_shipped_surface_leads_with_the_withdrawn_claim():
         "`senbonzakura --help` still opens with the multi-direction claim")
 
 
+class TestTheUsePolicyReachesTheUser:
+    """There was no acceptable-use document anywhere in the distribution.
+
+    FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17. The installed `dist-info/licenses/` held
+    LICENSE, APACHE-2.0.txt and the two third-party notices, and grepping the whole directory for
+    "acceptable use", "must not", "you may not" or "prohibited" hit only the AGPL and Apache texts
+    themselves. The man page, which is the canonical Unix manual and installs to share/man/man1,
+    had no safety section, no licence section and no statement of responsibility: a packager or a
+    sysadmin reading only the manual learned how to remove refusals from a model and learned
+    nothing else.
+
+    The strongest paragraph in the project ("Abliteration removes safety guardrails wholesale.
+    That is both the point and the danger") sat eight sections down a docs page that is not first
+    in the reading order, and nothing carried it into anything pip installs.
+    """
+
+    ROOT = MAN.parent.parent
+    AUP = ROOT / "ACCEPTABLE-USE.md"
+
+    def test_the_document_exists(self):
+        assert self.AUP.is_file(), "no acceptable-use document at the repository root"
+
+    def test_it_is_declared_so_it_reaches_the_wheel(self):
+        """A document that does not ship is a document the user does not have.
+
+        This is exactly how THIRD-PARTY-CORPORA.md failed before: it was written into the
+        repository, was not in `license-files`, and so was absent from the wheel, which meant a
+        user received 520 MIT rows with the attribution present nowhere in what they installed.
+        """
+        declared = (self.ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        block = declared.split("license-files", 1)[1].split("]", 1)[0]
+        assert "ACCEPTABLE-USE.md" in block, (
+            "ACCEPTABLE-USE.md is not in license-files, so it will not be in the wheel")
+
+    @pytest.mark.parametrize("must_say", [
+        "answer requests the original refused",
+        "without saying what it is",
+        "illegal where you are",
+        "not permitted to modify",
+    ])
+    def test_it_states_the_thing_it_exists_to_state(self, must_say):
+        assert must_say in self.AUP.read_text(encoding="utf-8")
+
+    def test_it_does_not_pretend_to_add_licence_terms(self):
+        """An acceptable-use statement that reads like a licence term on AGPL software is worse
+        than none: it invites a reader to think the software is not what its licence says."""
+        text = self.AUP.read_text(encoding="utf-8")
+        assert "does not add terms" in text
+
+    def test_the_manual_carries_it_too(self):
+        """The man page is what a packager reads, and it is what pip installs."""
+        text = _text()
+        assert ".SH ACCEPTABLE USE" in text, "the manual still has no acceptable-use section"
+        assert "ACCEPTABLE\\-USE.md" in text, "the manual does not point at the full text"
+
+    def test_the_manual_names_the_corpus_the_package_carries(self):
+        assert "6,500 harmful prompts" in _text()
+
+
 def test_the_manual_says_the_multi_direction_question_is_open():
     """Silence would leave a reader with the old claim they half remember.
 

@@ -28,7 +28,7 @@ license = "AGPL-3.0-or-later"
 # travel with the work, and the bundled evaluation track carries an Apache-2.0 component.
 # Documenting the obligation in docs/ did not satisfy it: docs/ does not ship.
 license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md",
-                 "APACHE-2.0.txt"]
+                 "APACHE-2.0.txt", "ACCEPTABLE-USE.md"]
 authors = [{ name = "Daniel Iwugo" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [
@@ -143,7 +143,27 @@ dependencies = [
   # `senbonzakura`: an upward import would put torch back into the torch-free distribution and
   # would only show up on somebody else's machine. `tests/test_second_distribution.py` walks the
   # import graph on every commit.
-  "senbonzakura-check",
+  #
+  # THE SPECIFIER IS DELIBERATE AND IT IS TEMPORARY, decided 2026-09-17.
+  #
+  # Bare, this line pointed at a name that 404s on PyPI, so a plain `pip install` of the wheel
+  # failed outright on any machine that did not already have both wheels side by side. That is
+  # every machine except ours, and it is how the defect survived: we only ever installed them
+  # together.
+  #
+  # `>=0.4.0.dev0` rather than `>=0.4.0` because pip excludes pre-releases unless the requirement
+  # asks for one, so a dev checker on the index would not satisfy a bare specifier and the install
+  # would keep failing for a second reason that reads exactly like the first. Admitting the
+  # pre-release is what makes a dev cut installable by a stranger.
+  #
+  # `<0.5` because a floor alone would let a future major checker satisfy a 0.4 wheel, and the
+  # two distributions share a version line on purpose.
+  #
+  # THE PRE-RELEASE HALF MUST NOT SURVIVE INTO A STABLE RELEASE. A stable wheel whose checker
+  # specifier admits pre-releases resolves to whatever is newest for ever after, which is how a
+  # pinned-looking build changes underneath a rented card. `tools/check_wheel.py` refuses exactly
+  # that, and it asks the wheel's own version rather than trusting anyone to remember.
+  "senbonzakura-check>=0.4.0.dev0,<0.5",
 ]
 
 [project.optional-dependencies]

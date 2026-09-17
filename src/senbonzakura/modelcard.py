@@ -107,14 +107,40 @@ def capability_section(cap):
     return lines
 
 
+def _reading(abl, *keys):
+    """The first of these names the artefact actually carries.
+
+    THE DEFECT THIS EXISTS FOR, found by a hostile outside review on 2026-09-17. The abliterate
+    run writes `baseline_refusals` and `post_bake_refusals`; this file read `baseline_refusal`
+    and `post_bake_refusal`. The neighbouring `post_bake_kl` and `post_bake_broken` matched, so
+    the card rendered KL and broken output and silently dropped the refusal delta: the two
+    numbers the card exists to carry, in a tool whose tagline is "with receipts". The corpus
+    section failed the same way, reading `corpus_sha256` against a written `track_digest`, and
+    printed NOT MEASURED, which its own prose defines as "nothing in the supplied artefacts
+    covers this". That was a false statement about an artefact that did cover it.
+
+    Both spellings are accepted rather than one being renamed, because cards are generated from
+    artefacts that already exist on disk and a rename would silently blank the older ones in
+    exactly the way this is fixing.
+    """
+    for key in keys:
+        value = abl.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def refusal_section(abl):
     if not abl:
         return [NOT_MEASURED]
     lines = []
-    for key, label in (("baseline_refusal", "refusal before"), ("post_bake_refusal", "after"),
-                       ("post_bake_kl", "KL drift"), ("post_bake_broken", "broken output")):
-        if abl.get(key) is not None:
-            lines.append(f"- {label}: **{abl[key]}**")
+    for keys, label in ((("baseline_refusals", "baseline_refusal"), "refusal before"),
+                        (("post_bake_refusals", "post_bake_refusal"), "after"),
+                        (("post_bake_kl",), "KL drift"),
+                        (("post_bake_broken",), "broken output")):
+        value = _reading(abl, *keys)
+        if value is not None:
+            lines.append(f"- {label}: **{value}**")
     if not lines:
         return [NOT_MEASURED]
     lines.append("")
@@ -145,10 +171,12 @@ def corpus_section(abl):
     if not abl:
         return [NOT_MEASURED]
     lines = []
-    for key, label in (("track", "corpus"), ("corpus_sha256", "corpus digest"),
-                       ("dir_prompts", "prompts used to find directions")):
-        if abl.get(key):
-            lines.append(f"- {label}: `{abl[key]}`")
+    for keys, label in ((("track",), "corpus"),
+                        (("corpus_sha256", "track_digest"), "corpus digest"),
+                        (("dir_prompts",), "prompts used to find directions")):
+        value = _reading(abl, *keys)
+        if value:
+            lines.append(f"- {label}: `{value}`")
     return lines or [NOT_MEASURED]
 
 

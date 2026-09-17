@@ -69,8 +69,10 @@ loading it differently: the refusal behaviour has been removed from the weights.
 model's licence still governs it**, unchanged, and this tool cannot loosen those terms. If you
 publish it, run `senbonzakura report` to generate the card that should travel beside the weights.
 
-The tool also writes a `margins` file next to your output by default, and those rows contain the
-prompts and what the model said to them. Pass `--no-margins` if you would rather it did not.
+The run itself writes the weights and `abliteration.json`, which records the settings and the
+numbers and contains no prompts and no replies. The command that keeps per-prompt rows, with the
+prompt text and what the model said, is `senbonzakura compass`, and that one takes `--no-margins`
+if you would rather it did not.
 :::
 
 While it runs you will see lines like this:

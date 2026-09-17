@@ -82,12 +82,14 @@ seed, how many trials actually ran, the package versions, the commit.
 That file matters more than it looks. It's the difference between "this model is abliterated" and
 "this model was abliterated on 2026-08-14 with these settings, and here's how to do it again".
 
-**One thing to know about the other files.** The tool keeps the per-prompt scoring rows by
-default, and those rows contain the prompt text and what the model said to it. That is deliberate:
-it is where a scoring bug becomes visible, and a rate with no rows behind it cannot be checked.
-It also means the output directory holds harmful prompts and the replies to them, which is the
-last thing you want to push to a public repository by accident. `--no-margins` turns it off if you
-would rather not have them.
+**One thing to know about the other files.** This run's output directory holds the weights and
+`abliteration.json`, and no prompt text or model replies.
+
+The command that does keep per-prompt rows is `senbonzakura compass`, and it keeps them on
+purpose: it is where a scoring bug becomes visible, and a rate with no rows behind it cannot be
+checked. It also means the directory `compass` writes to holds harmful prompts and the replies to
+them, which is the last thing you want to push to a public repository by accident. That command
+takes `--no-margins` if you would rather not have them.
 
 ## Now check whether you broke it
 

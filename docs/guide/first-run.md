@@ -1,11 +1,9 @@
 # Your first run
 
 ::: danger Before the first command
-What comes out of this answers requests the original model refused, including harmful ones, and
-the change is permanent in the weights. The base model's licence still governs it. Do not put it
-in front of other people without saying what it is.
-
-If you have not read [What it is](/guide/what-it-is), read that first. This page is the mechanics.
+What comes out of this will answer requests the original refused, including harmful ones, and the
+change is permanent in the weights. Read [What it is](/guide/what-it-is) first; this page is the
+mechanics.
 :::
 
 Right. Let's actually edit a model.

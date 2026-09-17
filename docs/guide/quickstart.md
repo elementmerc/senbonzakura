@@ -1,15 +1,9 @@
 # Quickstart
 
 ::: danger What you are about to make
-The model that comes out of this will answer requests the original refused, including harmful
-ones. That is the point of the tool rather than a side effect, and it is not reversible by
-loading the model differently: the refusal behaviour is removed from the weights.
-
-**The base model's licence still governs the result**, unchanged, and several model families
-carry a use policy that binds derivatives. **Do not put the result in front of other people
-without saying what it is.**
-
-[What it is](/guide/what-it-is) is the honest version of this page and takes five minutes.
+A model that will answer requests the original refused, including harmful ones. It is permanent
+in the weights, the base model's licence still governs it, and you should not put one in front of
+other people without saying what it is. [What it is](/guide/what-it-is) has the rest.
 :::
 
 Two commands and about an hour. The install is 5.8 GB and takes about two minutes; after that there is nothing to

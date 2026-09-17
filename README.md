@@ -39,28 +39,13 @@ it were measuring the wrong thing.
 
 Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand blades.
 
-### Before the install command, because it is downstream of this
-
-**A model that has been through this will answer requests the original refused, including harmful
-ones.** That is the point of the tool rather than a side effect, and it is not reversible by
-loading the model differently: the refusal behaviour is removed from the weights. Abliteration
-removes safety guardrails wholesale. That is both the point and the danger.
-
-**The base model's licence still governs the result**, unchanged, and this tool cannot loosen
-those terms. Several model families carry a use policy that binds derivatives, and some of those
-policies speak directly to removing safety behaviour. Read the one your model came with.
-
-**Do not put an abliterated model in front of other people without saying what it is.** They
-cannot see the weights and have no way to know the refusals are gone.
-
-**The package carries roughly 6,500 harmful prompts** so that it runs with no network. They are
-prompts and not answers, and one ordinary run writes them to your cache directory in plain form.
-On a shared machine, consider whether whoever administers it would expect that.
-
-[What this repository does not contain](#what-this-repository-does-not-contain) has the detail,
-and `ACCEPTABLE-USE.md` ships inside the package. This section sits above the install command
-because it used to sit a hundred lines below it, which made it the part a reader met after
-deciding.
+> **What it makes.** A model that will answer requests the original refused, including harmful
+> ones. That is the point, and it is permanent in the weights. The base model's licence still
+> governs the result. Don't put one in front of other people without saying what it is. The
+> package carries roughly 6,500 harmful prompts so it runs offline.
+>
+> [The detail](#what-this-repository-does-not-contain), and `ACCEPTABLE-USE.md` ships in the
+> package.
 
 ## Install
 

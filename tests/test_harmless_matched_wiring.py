@@ -39,19 +39,36 @@ def test_the_flag_exists_on_the_abliterator():
     assert "--harmless-matched" in accepted
 
 
-def test_supplying_a_matched_corpus_without_matched_scoring_is_refused():
+def test_supplying_a_matched_corpus_and_then_switching_matching_off_is_refused():
     """Loaded and never used is the failure this refuses to perform silently.
 
-    The alternative traps are both worse than an error: ignoring the corpus lets a reader believe
-    the matched question was answered, and switching matched scoring on for them changes what
-    every separation number in the artefact means on the strength of an inferred intention.
+    UPDATED 2026-09-17, when matched scoring became the default. The combination this guards is
+    now `--harmless-matched` with an explicit `--no-matched-scoring`, which is the same mistake
+    reached by a different route: a corpus supplied, read, and then not used by the comparison it
+    was supplied for.
+
+    The alternative traps are still both worse than an error. Ignoring the corpus lets a reader
+    believe the matched question was answered, and switching matching back on for them would
+    override an explicit instruction on the strength of an inferred intention.
     """
-    args = build_parser().parse_args(["--model", "m", "--harmless-matched", "/some/set"])
+    args = build_parser().parse_args(
+        ["--model", "m", "--harmless-matched", "/some/set", "--no-matched-scoring"])
     assert args.harmless_matched == "/some/set"
     assert args.matched_scoring is False
     msg = cli._unused_matched_corpus(args.harmless_matched)
     assert "--matched-scoring" in msg, "the error must name the flag that makes the corpus count"
     assert "never used" in msg
+
+
+def test_a_matched_corpus_on_the_default_path_is_simply_used():
+    """The case that used to be the error and is now the ordinary one.
+
+    Worth its own test rather than an absence: before the default flipped, this exact command
+    line was refused, so a reader of the old suite would reasonably expect it still to be.
+    """
+    args = build_parser().parse_args(["--model", "m", "--harmless-matched", "/some/set"])
+    assert args.matched_scoring is True, "matched scoring is the default now"
+    assert args.harmless_matched == "/some/set"
 
 
 def test_the_error_names_the_corpus_the_user_actually_passed():
@@ -67,7 +84,8 @@ def test_the_combination_is_refused_before_the_model_is_downloaded():
     rented card for a mistake that was visible from the command line. This pins it to
     `run_parsed`, beside the torch-version check that is there for the same reason.
     """
-    args = build_parser().parse_args(["--model", "m", "--harmless-matched", "/some/set"])
+    args = build_parser().parse_args(
+        ["--model", "m", "--harmless-matched", "/some/set", "--no-matched-scoring"])
     with pytest.raises(SystemExit, match="--matched-scoring"):
         cli.run_parsed(args, None, [])
 

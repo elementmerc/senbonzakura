@@ -41,6 +41,18 @@ EXEMPT = {
     # Documented in floors.txt: the `quant` extra is not installed by `[dev]`, so the
     # dependency-floor job never has it and a pin here would constrain nothing.
     "bitsandbytes": "the quant extra is not installed by the floors job",
+    # THIS PROJECT'S OWN SIBLING DISTRIBUTION, added 2026-09-17 with the specifier that made
+    # the platform wheel installable at all. The floors job proves a declared floor is real by
+    # installing that exact version FROM THE INDEX, and `senbonzakura-check` is not on the index
+    # yet: pinning it here would make the job fail on a download rather than on a floor. It is
+    # also the one dependency whose floor this repository controls, so an index round trip
+    # measures our own release timing rather than a third party's compatibility.
+    #
+    # THE EXEMPTION ENDS WHEN THE PACKAGE IS PUBLISHED. At that point the floor becomes a real
+    # claim about a real artefact and belongs in floors.txt like any other. `tools/check_wheel.py`
+    # already refuses a release wheel whose specifier admits a pre-release, so the tightening is
+    # gated; this entry is the half that has to be revisited by hand, which is why it says so.
+    "senbonzakura-check": "our own sibling distribution, not yet on the index; revisit at publish",
 }
 
 

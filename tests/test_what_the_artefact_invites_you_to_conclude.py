@@ -148,3 +148,72 @@ class TestEveryCorpusCarriesItsOwnAttribution:
         assert len(headers) == len(corpora.CORPORA)
         for header in headers:
             assert "(" in header and ")" in header, f"no licence named in {header!r}"
+
+
+class TestOurDefaultAdaptsAndYourNumberDoesNot:
+    """`--eval-refusal-final` became a default of 128 on 2026-09-17, and a default can refuse you.
+
+    Without it the winner is chosen on the same rows every trial was scored against, so the
+    reported figure describes its own selection. The bundled track carries 132 rows in the harmful
+    selection partition, so 128 fits, barely.
+
+    A smaller custom track does not, and the boundary guard would then refuse the run. That guard
+    is right and its message is good, but refusing somebody over a number THIS PROJECT chose is
+    the wrong half of fail-loud: they typed `senbonzakura --track my-track` and got a refusal
+    about a flag they have never heard of.
+
+    An explicitly typed value is a different thing, because an equal-budget comparison cannot
+    survive a budget being quietly replaced. That one is still refused rather than adapted. The
+    rule is: honour what was typed, fit what was assumed, and say so either way. Silence is what
+    makes an adjustment dishonest, not the adjustment.
+    """
+
+    def _args(self, **kw):
+        base = dict(eval_refusal=64, eval_refusal_final=128,
+                    eval_refusal_final_explicit=False)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def _manifest(self, search):
+        return {"counts": {"harmful": {"fit": 259, "search": search, "measure": 4504}}}
+
+    def test_a_track_that_fits_is_left_alone_and_says_nothing(self):
+        args, said = self._args(), []
+        cli._fit_final_eval_to_the_track(args, self._manifest(132), said.append)
+        assert args.eval_refusal_final == 128
+        assert not said, "a track that fits should produce no noise"
+
+    def test_a_smaller_track_is_fitted_rather_than_refused(self):
+        args, said = self._args(), []
+        cli._fit_final_eval_to_the_track(args, self._manifest(96), said.append)
+        assert args.eval_refusal_final == 96
+        assert said and "fitted to 96" in said[0]
+
+    def test_the_note_says_whose_number_was_adjusted(self):
+        """An adjustment the user cannot distinguish from their own setting is a silent one."""
+        args, said = self._args(), []
+        cli._fit_final_eval_to_the_track(args, self._manifest(96), said.append)
+        assert "not your setting being overridden" in said[0]
+
+    def test_a_typed_value_is_never_adapted(self):
+        """It goes to the boundary guard and is refused there, which is the point."""
+        args = self._args(eval_refusal_final_explicit=True)
+        said = []
+        cli._fit_final_eval_to_the_track(args, self._manifest(8), said.append)
+        assert args.eval_refusal_final == 128, "an explicit budget was quietly replaced"
+        assert not said
+
+    def test_a_track_with_no_room_at_all_turns_it_off_loudly(self):
+        """Scoring finalists on zero fresh rows silently is the defect, not turning it off."""
+        args, said = self._args(), []
+        cli._fit_final_eval_to_the_track(args, self._manifest(8), said.append)
+        assert args.eval_refusal_final == 0
+        assert said and "OFF for this run" in said[0]
+        assert "chosen on the rows it was scored on" in said[0], (
+            "turning the protection off must say what the run now is, not just that a flag moved")
+
+    def test_a_manifest_without_counts_changes_nothing(self):
+        args, said = self._args(), []
+        cli._fit_final_eval_to_the_track(args, {}, said.append)
+        assert args.eval_refusal_final == 128
+        assert not said

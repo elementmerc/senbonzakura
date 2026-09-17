@@ -3265,6 +3265,7 @@ class Abliterator:
         # the first moment the values being checked are the values that will be used.
         manifest = read_manifest(TR)
         if manifest:
+            _fit_final_eval_to_the_track(args, manifest, log)
             bad_flags = flag_violations(
                 manifest, eval_refusal=args.eval_refusal,
                 eval_refusal_final=args.eval_refusal_final,
@@ -4188,6 +4189,47 @@ def _prove_writable_early(flag, path):
             f"somewhere writable.") from e
 
 
+def _fit_final_eval_to_the_track(args, manifest, log):
+    """Adapt OUR default to the track. Never adapt a number the user typed.
+
+    `--eval-refusal-final` became a default of 128 on 2026-09-17, because without it the winner
+    is chosen on the same rows every trial was scored against and the reported figure describes
+    its own selection. The bundled track carries 132 rows in the harmful selection partition, so
+    128 fits, barely.
+
+    A smaller custom track does not, and the boundary guard would then refuse the run. That guard
+    is right and its message is good, but refusing somebody for a number THIS PROJECT chose is
+    the wrong half of fail-loud: the user typed `senbonzakura --track my-track` and got a refusal
+    about a flag they have never heard of. An explicitly typed value is a different thing
+    entirely, because an equal-budget comparison cannot survive a budget being quietly replaced,
+    and that one is still refused rather than adapted.
+
+    So the rule is: honour what was typed, fit what was assumed, and say so either way. Silence is
+    what makes an adjustment dishonest, not the adjustment.
+    """
+    if getattr(args, "eval_refusal_final_explicit", False):
+        return
+    capacity = ((manifest.get("counts") or {}).get("harmful") or {}).get("search")
+    if not isinstance(capacity, int) or args.eval_refusal_final <= capacity:
+        return
+    asked = args.eval_refusal_final
+    if capacity <= args.eval_refusal:
+        # No room for a held-out slice at all: the selection partition is used up by the
+        # search eval. Turning it off is honest; silently scoring on zero fresh rows is not.
+        args.eval_refusal_final = 0
+        log(f"NOTE: this track holds {capacity} harmful rows for selection and --eval-refusal "
+            f"already takes {args.eval_refusal}, so there are none left to re-score the finalists "
+            f"on. The held-out final scoring is OFF for this run, which means the winner is "
+            f"chosen on the rows it was scored on. Rebuild the track with a larger --search to "
+            f"get it back.")
+        return
+    args.eval_refusal_final = capacity
+    log(f"NOTE: --eval-refusal-final defaults to {asked} and this track holds {capacity} harmful "
+        f"rows for selection, so it has been fitted to {capacity}. That is this project's default "
+        f"adapting to your track, not your setting being overridden; pass the flag explicitly and "
+        f"a value that will not fit is refused rather than adjusted.")
+
+
 def _preflight_dead_knobs(args, log=print):
     """Say when a flag the user set cannot affect this run, rather than letting them measure it.
 
@@ -4814,6 +4856,10 @@ def run_parsed(args, bankai, argv):
     # The mode word is not a flag, so it never reaches `args`, and the run record needs it: a
     # resume of a `kageyoshi` run typed as `abliterate` is a different search.
     args.bankai = bool(bankai)
+    # WHOSE NUMBER IS IT. Recorded here because this is where argv still exists, and read much
+    # later by the boundary check, which cannot refuse a user for a value this project chose.
+    # See `_fit_final_eval_to_the_track`.
+    args.eval_refusal_final_explicit = "eval_refusal_final" in _kageyoshi_explicit(argv)
 
     if args.load_in_4bit:
         # The abliterator rewrites weights in place (the norm-preserving bake), which needs full

@@ -48,18 +48,39 @@ def test_quantise_points_at_convert_rather_than_only_saying_the_file_is_absent(t
     assert "senbonzakura convert" in message, message
 
 
-def test_stage_does_not_recommend_a_track_name_it_cannot_resolve():
-    """THE MISTAKE THIS FILE ALMOST SHIPPED WITH.
+def test_whatever_the_stage_refusal_recommends_actually_works(tmp_path):
+    """THE MISTAKE THIS FILE ALMOST SHIPPED WITH, now checked as a property rather than a case.
 
     The first version of the stage refusal suggested `--track default`, copying the abliterator,
-    where that name resolves to the bundled track. `headtohead_stage` calls no `bundled.ensure()`:
-    it does `Path(a.track).is_dir()`, so `default` lands on this same refusal. Advice that loops
-    the reader back to the error they are already reading is worse than no advice.
+    where that name resolves to the bundled track. `headtohead_stage` resolved nothing: it did
+    `Path(a.track).is_dir()`, so `default` landed straight back on the same refusal. Advice that
+    loops the reader back to the error they are already reading is worse than no advice.
+
+    REWRITTEN 2026-09-17, because the fix went the other way. A hostile outside reviewer pointed
+    out that `--track default` failing here broke the FIRST command of the published
+    reproduction recipe, under a CONTRACT.md that opens "Run it yourself and tell us we are
+    wrong". So rather than keeping the recommendation out of the message, the command learned to
+    resolve the name, and the refusal now offers it.
+
+    The old assertion would have failed either way round, which is the tell that it was pinned to
+    a case and not to the principle. The principle is: a refusal may only recommend something
+    that works. So this drives the recommendation instead of reading it, and would catch both the
+    original mistake and any future regression of the resolver.
     """
     with pytest.raises(SystemExit) as caught:
-        headtohead_stage.main(["--track", "default", "--out", "/tmp/unused-slices"])
+        headtohead_stage.main(["--track", str(tmp_path / "nope"), "--out", str(tmp_path / "s")])
     message = str(caught.value)
-    assert not re.search(r"pass\s+--track default", message), (
-        "the refusal recommends --track default, which this command cannot resolve")
-    assert "does not resolve" in message, (
-        "it should say outright that the bundled name does not work here")
+
+    recommended = re.search(r"--track\s+(\S+)", message)
+    if not recommended:
+        pytest.skip("the refusal recommends no track, so there is nothing to verify")
+    name = recommended.group(1).strip("`'\"")
+    if name in {"<your", "TRACK", "my-track"}:
+        pytest.skip(f"{name!r} is a placeholder rather than a value to type")
+
+    # The recommendation is followed, not read. If it cannot resolve, the reader would land back
+    # on the message they are already looking at.
+    resolved = headtohead_stage._resolve_track(name)
+    assert resolved.is_dir(), (
+        f"the refusal recommends `--track {name}`, and that does not resolve to a directory. "
+        f"Advice that returns the reader to the error they are reading is worse than none.")

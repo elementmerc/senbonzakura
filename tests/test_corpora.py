@@ -303,17 +303,37 @@ def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys):
     assert "cli.github.com" in capsys.readouterr().err
 
 
-def test_the_attribution_notice_prints_once_per_process():
-    """The licence asks for the notice, not for it once per row."""
+def test_the_attribution_notice_prints_once_per_corpus():
+    """The licence asks for the notice once, not once per row, and not once for all six.
+
+    REWRITTEN 2026-09-17, and the previous version is the interesting part. It was called
+    `test_the_attribution_notice_prints_once_per_process` and asserted that loading AdvBench and
+    then XSTest printed ONE block. That is the defect, guarded: the two corpora carry different
+    licences, MIT and CC-BY-4.0, and both require their own notice to travel with the work, so
+    one block for two corpora satisfies one of them. `senbonzakura doctor` loads all six and
+    printed AdvBench's alone.
+
+    Found by a hostile outside review working from an installed wheel. Not deleted, because a
+    test that encoded a wrong belief is worth keeping the record of: the assertion was written to
+    stop the notice repeating per row, which is a real thing to want, and it overshot into
+    suppressing five other licences. The property it should always have checked is once per
+    CORPUS, which still stops the per-row repetition it was written for.
+    """
     from senbonzakura import corpora
 
     corpora._reset_notice_for_tests()
     said = []
     corpora.notice("advbench", log=said.append)
     first = len(said)
-    corpora.notice("xstest-safe", log=said.append)
     assert first > 0
-    assert len(said) == first, "the notice repeated within one process"
+
+    corpora.notice("xstest-safe", log=said.append)
+    assert len(said) > first, (
+        "a second corpus with a different licence printed no attribution of its own")
+
+    both = len(said)
+    corpora.notice("advbench", log=said.append)
+    assert len(said) == both, "the notice repeated for a corpus already announced"
 
 
 def test_a_corrupt_pack_says_which_tool_rebuilds_it(tmp_path, monkeypatch):

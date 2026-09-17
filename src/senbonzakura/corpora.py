@@ -192,8 +192,20 @@ def check_count(corpus, prompts):
     return prompts
 
 
-#: Whether the attribution has been printed in this process. Same shape as `bundled._state`.
-_notified = {"done": False}
+#: Which corpora have had their attribution printed in this process.
+#:
+#: A SET, not a flag, and that is the whole of a licence fix. It was `{"done": False}`, so the
+#: FIRST bundled corpus a process touched printed its attribution and every other one after it
+#: printed nothing. `senbonzakura doctor` loads all six and printed one block, for AdvBench; the
+#: 450 CC-BY-4.0 rows of XSTest were read in the same process with their attribution nowhere.
+#: Found by a hostile outside review on 2026-09-17, which also noted that the install page claims
+#: the tool "prints the attribution and the licence the first time it loads one". It printed it
+#: the first time it loaded ANY one.
+#:
+#: These licences require the notice to travel with the work, so one notice for six corpora
+#: satisfies one of them. The earlier fix delivered a mechanism that had never been wired up; this
+#: is the same obligation failing one layer further in.
+_notified = set()
 
 
 def notice(key, log=print):
@@ -211,9 +223,9 @@ def notice(key, log=print):
     way. The evaluation track got this right (`bundled.notice`) and the corpora did not, which
     is why it went unnoticed: the mechanism existed and one of its two users was wired up.
     """
-    if _notified["done"]:
+    if key in _notified:
         return
-    _notified["done"] = True
+    _notified.add(key)
     c = CORPORA[key]
     log(f"Using the bundled corpus {c.name} ({c.licence}).")
     log(f"  {c.attribution}")
@@ -223,8 +235,8 @@ def notice(key, log=print):
 
 
 def _reset_notice_for_tests():
-    """Let a test see the notice again. The flag is per process, and tests share one."""
-    _notified["done"] = False
+    """Let a test see the notice again. The record is per process, and tests share one."""
+    _notified.clear()
 
 
 def notices():

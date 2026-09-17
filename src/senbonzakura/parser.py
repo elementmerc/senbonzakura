@@ -193,8 +193,16 @@ def build_parser():
                          "refusal against quality, so more trials buy a better-explored frontier "
                          "rather than a better single answer; see --patience to stop early when "
                          "it has stopped improving")
-    ap.add_argument("--kl-scale", type=float, default=4.0, help="weight on KL in the objective (higher = "
-                                                                "protect quality more)")
+    ap.add_argument("--kl-scale", type=float, default=4.0,
+                    help="weight on KL in the SCALAR objective (higher = protect quality more). "
+                         "Two things about it that the old one-line help did not say and a user "
+                         "could not find out by trying. It does nothing under the default "
+                         "`--search pareto`, which carries KL as its own frontier axis and never "
+                         "evaluates the weighted sum, so under pareto this changes only the "
+                         "`obj=` figure printed per trial and never which configuration wins. And "
+                         "even under `--search scalar` the term is gated at a KL ceiling, so it "
+                         "contributes nothing at all while KL stays under that ceiling. A run "
+                         "that sets it and sees no difference is not being ignored by accident")
     ap.add_argument("--layer-lo", type=float, default=0.3, help="search layers from this fraction of depth")
     ap.add_argument("--layer-hi", type=float, default=0.8,
                     help="search layers up to this fraction of depth (default: 0.8). The window is "

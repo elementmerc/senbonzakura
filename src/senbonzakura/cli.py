@@ -3962,6 +3962,15 @@ class Abliterator:
                        "directions_per_layer": getattr(self, "dirs_per_layer", None),
                        "directions_per_position": getattr(self, "dirs_per_position", None),
                        "directions_index_note": (
+                           "THESE ARE THE DIRECTIONS EXTRACTED AND KEPT PER LAYER, NOT THE "
+                           "NUMBER ABLATED. How many the saved model actually had removed is "
+                           "`num_directions`, with `dir_mode`. The two routinely disagree, "
+                           "because the search chooses its budget inside the ceiling "
+                           "`max_directions` sets: a list reading [3, 2, 1, 3, ...] beside "
+                           "num_directions: 1 means three candidates were available at that "
+                           "layer and one was used. Stated first because it is the field a "
+                           "reader is most likely to quote and the one they are most likely to "
+                           "read as the edit. "
                            "directions_per_layer[i] is decoder layer i. "
                            "directions_per_position[i] is the residual-stream position: 0 is the "
                            "embedding output, which is never ablated, and position i+1 is what "
@@ -4177,6 +4186,28 @@ def _prove_writable_early(flag, path):
             f"with the model loaded and the search work already spent.\n"
             f"  Checked before the model is downloaded, so finding out costs nothing. Point it "
             f"somewhere writable.") from e
+
+
+def _preflight_dead_knobs(args, log=print):
+    """Say when a flag the user set cannot affect this run, rather than letting them measure it.
+
+    FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17. The reviewer ran the same seed twice, changing
+    only `--kl-scale`, from 4.0 to -5, and got an identical printed objective and an identical
+    winner. Under the default `--search pareto` the objective returns three separate axes and the
+    weighted scalar is never evaluated, so the flag moves a number in the log and nothing else.
+    Only the man page carried the word "scalar"; `--help`, which is what people read, did not.
+
+    A dead knob that is silent is worse than one that refuses, because the user concludes the
+    setting had no effect on the MODEL rather than no effect on the SEARCH, and that is a
+    different and wrong belief about their result.
+    """
+    default_kl_scale = 4.0
+    if (getattr(args, "search", "pareto") == "pareto"
+            and getattr(args, "kl_scale", default_kl_scale) != default_kl_scale):
+        log(f"NOTE: --kl-scale {args.kl_scale:g} has no effect under --search pareto, which is "
+            f"the default. Pareto carries KL as its own frontier axis and never evaluates the "
+            f"weighted sum, so this changes the `obj=` figure printed per trial and nothing about "
+            f"which configuration is chosen. Pass --search scalar if you want it to weigh.")
 
 
 def _preflight_recovery(args, log=print):
@@ -4822,6 +4853,7 @@ def run_parsed(args, bankai, argv):
     _preflight_generation_budget(args)
     _preflight_device(args)
     _preflight_recovery(args)
+    _preflight_dead_knobs(args)
 
     # After the torch check and before the model. The torch check is instant and local, and an
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the

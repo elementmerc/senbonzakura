@@ -306,3 +306,40 @@ class TestNonsenseNumbers:
         message = str(caught.value)
         for flag in ("--trials", "--max-directions", "--kl-scale"):
             assert flag in message, f"{flag} was not named"
+
+
+class TestAModelThatIsNotThere:
+    """A mistyped model is the most likely user error, and it produced the worst message.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16.
+
+    `--model ./no-such-model` reached transformers, which read it as a Hub id and answered
+    "Repo id must use alphanumeric chars ... './no-such-model'". The user gave a PATH and was told
+    their repo id has bad syntax: not a confusing message about the right problem, a confident
+    message about the wrong one.
+
+    A mistyped Hub id was better served, because transformers' own sentence names the id and says
+    it is neither a local folder nor a listed model. That one arrived under twenty frames.
+    """
+
+    @pytest.mark.parametrize("spec", ["./no-such-model", "/tmp/definitely-not-a-model-dir", "~/nope-model"])
+    def test_a_local_path_that_is_not_there_is_said_so(self, spec):
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_model(types.SimpleNamespace(model=spec))
+        message = str(caught.value)
+        assert "does not exist" in message or "is not a directory" in message
+        assert "Repo id" not in message, "a path must not be reported as a bad repo id"
+        assert "owner/name" in message, "and the Hub form should be shown for the other case"
+
+    def test_a_hub_id_is_left_to_the_loader(self):
+        """Duplicating Hub resolution here would be a second account of what a model reference is."""
+        cli._preflight_model(types.SimpleNamespace(model="Qwen/Qwen3-1.7B"))
+
+    def test_an_existing_directory_passes(self, tmp_path):
+        cli._preflight_model(types.SimpleNamespace(model=str(tmp_path)))
+
+    def test_a_file_where_a_directory_belongs_is_named_as_such(self, tmp_path):
+        f = tmp_path / "weights.bin"
+        f.write_text("x", encoding="utf-8")
+        with pytest.raises(SystemExit, match="is not a directory"):
+            cli._preflight_model(types.SimpleNamespace(model=str(f)))

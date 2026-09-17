@@ -1919,7 +1919,16 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     the last REAL token only under left padding.
     """
     _log = log or (lambda m: None)
-    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    # The tokenizer loads FIRST, so this is where a bad model reference actually surfaces, and
+    # wrapping only the weight load left the traceback exactly as it was. Same treatment, same
+    # reason: transformers' sentence is good, the frames around it are not.
+    try:
+        tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    except OSError as e:
+        raise SystemExit(
+            f"senbonzakura: could not load the model '{model_id}'.\n"
+            f"  {e}\n"
+            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.") from e
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -1959,7 +1968,18 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         kw["device_map"] = "auto"                       # accelerate places / shards; supports big models
     elif device.startswith("cuda:"):
         kw["device_map"] = {"": int(device.split(":", 1)[1])}
-    model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
+    # A MODEL THAT CANNOT BE FETCHED IS A SENTENCE, NOT A TRACEBACK. transformers' own message is
+    # good (it names the id and says it is neither a local folder nor a listed model), so it is
+    # kept verbatim rather than reworded; what is dropped is the twenty frames of our internals
+    # and theirs wrapped around it. Found by typing a model name with a character missing, which
+    # is the most likely user error there is.
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
+    except OSError as e:
+        raise SystemExit(
+            f"senbonzakura: could not load the model '{model_id}'.\n"
+            f"  {e}\n"
+            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.") from e
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
     model.eval()
@@ -4074,6 +4094,43 @@ RUN_ARTEFACTS = runrecord.RUN_ARTEFACTS
 occupied_by = runrecord.occupied_by
 
 
+def _preflight_model(args):
+    """A local model path that is not there is said so, in those words.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16. `--model ./no-such-model` reached transformers,
+    which tried to read it as a Hub id and answered
+
+        OSError: Repo id must use alphanumeric chars, '-', '_' or '.' ... './no-such-model'
+
+    under a traceback. The user gave a PATH and was told their repo id has bad syntax. That is not
+    a confusing message about the right problem, it is a confident message about the wrong one,
+    which is the shape that sends somebody to fix their spelling of a name they never typed.
+
+    Only the local case is handled here. A mistyped Hub id gets transformers' own message, which
+    names the id and says it is not a local folder and not a listed model, and that is a better
+    sentence than anything a second resolver here would produce. Duplicating Hub resolution to
+    improve a traceback would be two accounts of what a model reference means.
+    """
+    model = getattr(args, "model", None)
+    if not model:
+        return
+    from . import dataset as _dataset
+    looks_local = (model.startswith(("./", "../", "/", "~"))
+                   or (os.sep in model and not _dataset.looks_like_hub_id(model)))
+    if not looks_local:
+        return
+    path = Path(model).expanduser()
+    if path.is_dir():
+        return
+    what = "is not a directory" if path.exists() else "does not exist"
+    raise SystemExit(
+        f"senbonzakura: --model {model} {what}.\n"
+        f"  It looks like a local path, so it is checked as one. A model directory holds "
+        f"config.json and the weights, as `senbonzakura abliterate --out` leaves them.\n"
+        f"  If you meant a model on the Hugging Face Hub, write it as owner/name with no leading "
+        f"./ or /, for example Qwen/Qwen3-1.7B.")
+
+
 def _prove_writable_early(flag, path):
     """Can this run actually write there? Asked before anything expensive happens.
 
@@ -4663,6 +4720,7 @@ def run_parsed(args, bankai, argv):
     # corpus, no network. Everything below it either touches the Hub or walks a dataset, and a run
     # refused for a flag the parser could already see should not cost a download first.
     _preflight_numbers(args)
+    _preflight_model(args)
     _preflight_generation_budget(args)
     _preflight_device(args)
 

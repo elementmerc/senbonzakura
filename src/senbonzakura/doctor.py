@@ -289,11 +289,43 @@ def check_table_io():
                      "pip install --force-reinstall senbonzakura")
 
 
+#: Windows refusing to load a DLL because an Application Control policy says so. Smart App
+#: Control is ON by default on a new Windows 11 installation and blocks unsigned binaries, and
+#: torch ships a lot of unsigned DLLs.
+_WINDOWS_APP_CONTROL = 4551
+
+
 def check_torch():
     try:
         import torch
     except ImportError:
         return _fail("torch", "not installed", "install the project's dependencies")
+    except OSError as e:
+        # FOUND ON REAL WINDOWS HARDWARE, 2026-09-17. `except ImportError` alone was not enough:
+        # a DLL that is present and refuses to LOAD raises OSError, which is not an ImportError,
+        # so it went straight past this handler and out through `main` as a thirty line traceback.
+        #
+        # That is the worst place in the tool for it to happen. `doctor` exists to say whether
+        # this install can do the job, the user runs it precisely because something is wrong, and
+        # on a stock Windows 11 box it died instead of answering. `pip install` had reported
+        # success on both distributions and `senbonzakura --version` worked, because the entry
+        # point deliberately parses without importing torch, so every cheap signal said the
+        # install was fine.
+        if getattr(e, "winerror", None) == _WINDOWS_APP_CONTROL:
+            return _fail(
+                "torch",
+                "installed, and Windows will not let it load: an Application Control policy "
+                f"blocked one of its DLLs ({e})",
+                "This is Smart App Control, which is ON by default on a new Windows 11 "
+                "installation and blocks unsigned binaries. torch ships many. Two ways out, and "
+                "they are not equal: run this under WSL2 instead, which is unaffected and is how "
+                "this project is developed; or turn Smart App Control off in Settings, Privacy "
+                "and security, Windows Security, App and browser control. Read the second one "
+                "twice: Smart App Control cannot be turned back ON without reinstalling Windows.")
+        return _fail("torch", f"installed, and it will not load ({e})",
+                     "the package is present and its native libraries cannot be loaded. Reinstall "
+                     "it with `pip install --force-reinstall torch`, and if that does not help, "
+                     "the fault is in the environment rather than in the package.")
     if torch.cuda.is_available():
         try:
             free, _total = torch.cuda.mem_get_info()
@@ -366,10 +398,13 @@ def check_pinned_memory(max_bytes=None):
     """Report the page-locked ceiling, or say plainly why it could not be measured."""
     try:
         import torch
-    except ImportError:
-        return _warn("pinned memory", "not measured, torch is missing",
-                     "install torch; this number only matters for streaming a model larger "
-                     "than the card")
+    # OSError as well as ImportError: a torch that is present and will not LOAD raises OSError,
+    # and on Windows with Smart App Control that is the common case rather than an exotic one.
+    # `check_torch` above reports the cause properly; every check after it only has to survive.
+    except (ImportError, OSError) as e:
+        return _warn("pinned memory", f"not measured, torch is unusable ({type(e).__name__})",
+                     "see the torch line above; this number only matters for streaming a model "
+                     "larger than the card")
     if not torch.cuda.is_available():
         return _warn("pinned memory", "not measured, no cuda device",
                      "page-locked memory is only useful for overlapping host-to-device copies, "
@@ -404,8 +439,10 @@ def deep_check(log=print):
     try:
         import torch
         from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
-    except ImportError as e:
-        return [_warn("deep", f"skipped, {e}", "install torch and transformers to run it")]
+    except (ImportError, OSError) as e:
+        return [_warn("deep", f"skipped, {e}",
+                      "install torch and transformers to run it, and if they are already "
+                      "installed see the torch line above for why they will not load")]
 
     with tempfile.TemporaryDirectory(prefix="senbon-doctor-") as td:
         d = Path(td)

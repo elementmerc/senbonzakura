@@ -30,6 +30,7 @@ import argparse
 import contextlib
 import hashlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -88,6 +89,24 @@ def build_parser():
     return ap
 
 
+#: What the Hub permits in the two halves of a repo id. Deliberately not a full validator: the
+#: Hub is the authority on whether a repo exists, and this only has to separate a reference from
+#: a filesystem path.
+_REPO_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def _looks_like_repo_id(repo):
+    """Is this a Hub repo id rather than a Windows drive letter or a stray path?
+
+    `owner/name` and a bare `name` are both Hub ids. A drive letter is one character, which is
+    the whole of the distinction, so a bare id needs at least two.
+    """
+    parts = repo.split("/")
+    if len(parts) > 2 or not all(_REPO_SEGMENT.match(p) for p in parts):
+        return False
+    return len(parts) == 2 or len(repo) > 1
+
+
 def parse_source(source):
     """`repo:file`, or a URL. Returns ("hub", repo, file) or ("url", url, filename)."""
     if source.startswith("http://") and _is_loopback(source):
@@ -108,18 +127,22 @@ def parse_source(source):
         if not name:
             raise FetchError(f"could not work out a filename from {source}")
         return "url", source, name
-    # A Windows path like C:\x would split on the same colon, so require a slash before it: a Hub
-    # id always has an owner, and no drive letter does.
-    if ":" in source and "/" in source.split(":", 1)[0]:
+    # A Windows path like C:\x splits on the same colon. The discriminator is length, not the
+    # slash: a drive letter is exactly one character, and no Hub repo id is. Requiring an owner
+    # instead was wrong, and rejected `gpt2`, `bert-base-uncased` and `distilgpt2`: the canonical
+    # ids most people reach for first.
+    if ":" in source:
         repo, _, filename = source.partition(":")
-        if not filename:
-            raise FetchError(
-                f"{source} names a repository and no file. Give it as repo_id:filename, e.g. "
-                f"LiquidAI/LFM2.5-8B-A1B-GGUF:LFM2.5-8B-A1B-Q4_K_M.gguf")
-        return "hub", repo, filename
+        if _looks_like_repo_id(repo):
+            if not filename:
+                raise FetchError(
+                    f"{source} names a repository and no file. Give it as repo_id:filename, e.g. "
+                    f"LiquidAI/LFM2.5-8B-A1B-GGUF:LFM2.5-8B-A1B-Q4_K_M.gguf")
+            return "hub", repo, filename
     raise FetchError(
         f"could not read {source!r} as a source. Use repo_id:filename for the Hub (the colon "
-        f"separates them) or a full https URL.")
+        f"separates them, and the owner is optional: both openai-community/gpt2:config.json and "
+        f"gpt2:config.json are read as Hub references) or a full https URL.")
 
 
 def sha256_of(path, *, chunk=CHUNK):
@@ -247,8 +270,38 @@ def download(kind, ref, filename, out_dir, *, revision=None, token=None, log=pri
     return dest
 
 
+_SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
+
+
+def _preflight_expectations(a):
+    """Refuse an unsatisfiable expectation before the download, not after it.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-17. Both of these flags exist to be strict, and
+    neither checked its own argument. `--expect-sha256 zzzznothex` was carried all the way
+    through the transfer and then reported as a mismatch, and `--expect-size -1` likewise. The
+    file these are used on is a model, so a typo in a digest cost the whole model.
+
+    Both are decidable from the command line alone. Nothing downstream can make a ten-character
+    string into a sha256, or a negative count into a byte count.
+    """
+    bad = []
+    if a.expect_sha256 is not None and not _SHA256.match(a.expect_sha256):
+        bad.append(
+            f"  --expect-sha256 is {a.expect_sha256!r}, which is not a sha256. A sha256 is 64 hex "
+            f"characters; this is {len(a.expect_sha256)}. Nothing downloaded could ever match it.")
+    if a.expect_size is not None and a.expect_size < 0:
+        bad.append(
+            f"  --expect-size is {a.expect_size}, and a file cannot have a negative length. "
+            f"No download could satisfy it.")
+    if bad:
+        raise SystemExit(
+            "senbonzakura fetch: these expectations cannot be met by any file, and they are "
+            "checked before the download so that finding out costs nothing:\n" + "\n".join(bad))
+
+
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
+    _preflight_expectations(a)
     try:
         kind, ref, filename = parse_source(a.source)
     except FetchError as e:

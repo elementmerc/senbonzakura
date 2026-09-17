@@ -34,6 +34,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -246,6 +247,82 @@ def parse_tensor_type(spec):
     return name.strip(), kind
 
 
+#: No machine has this many cores, and llama-quantize does not treat the number as a request it
+#: can decline. Measured 2026-09-17 on a 270 MB model: the default finished in 1s, `--threads
+#: 99999` was still on tensor 84 of 272 after 200s with 1.69 GB resident, in ONE thread. It
+#: serialises and allocates rather than refusing, so the ceiling has to be ours.
+_MAX_THREADS = 1024
+
+
+def _preflight_arguments(a, log=print):
+    """Refuse or flag an argument that is wrong on its face, before the header line is printed.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-17, from an installed wheel with no source:
+
+      --threads -5      quantised, verified, and reported DONE. The vendored binary clamps, so
+                        the output was fine and the operator's number was discarded silently.
+      --threads 99999   turned a one-second job into an open-ended hang with no heartbeat.
+      --imatrix FILE    a missing file was refused only after the header, the binary lookup and
+                        the quantiser identity read had all been done and announced.
+      --tensor-type X   a malformed pair was refused after the run had announced itself, so the
+                        tool said what it was about to do and then declined to do it.
+
+    All four are decidable from the command line, so they belong ahead of the announcement.
+    """
+    if a.threads < 0:
+        raise SystemExit(
+            f"--threads is {a.threads}, and a worker count cannot be negative. Pass 0 to let "
+            f"llama-quantize choose, or a positive count to pin it.")
+    if a.threads > _MAX_THREADS:
+        raise SystemExit(
+            f"--threads is {a.threads}, which is past the {_MAX_THREADS} ceiling this refuses at. "
+            f"llama-quantize does not decline a number it cannot use: it serialises and allocates "
+            f"instead, so a mistyped count reads as a hang rather than as an error. Pass 0 to let "
+            f"it choose.")
+    cores = os.cpu_count()
+    if cores and a.threads > cores:
+        log(f"  WARNING: --threads {a.threads} is above the {cores} cores this machine reports. "
+            f"Past the core count the extra workers cost memory and contention rather than speed.")
+    if a.imatrix and not Path(a.imatrix).is_file():
+        raise SystemExit(
+            f"no importance matrix at {a.imatrix}. Build one with `senbonzakura imatrix`.")
+    for s in a.tensor_type:
+        parse_tensor_type(s)
+
+
+#: llama-quantize's own count of tensors the recipe could not be applied to. It reports this once,
+#: in the middle of several hundred per-tensor lines, and then exits 0.
+_FALLBACK = re.compile(r"WARNING:\s*(\d+)\s+of\s+(\d+)\s+tensor\(s\)\s+required fallback")
+
+
+def _run_quantiser(argv_q):
+    """Run llama-quantize, pass its output through, and keep the one line that matters.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-17. The binary printed
+
+        WARNING: 180 of 272 tensor(s) required fallback quantization
+
+    and this tool's own summary, four lines later, printed `verified: Q4_K_M` and nothing else.
+    Two thirds of the tensors were not at the requested precision and the line written to be read
+    said the opposite. The warning was never lost, only buried: the subprocess wrote straight to
+    the terminal, so nothing here ever saw it and nothing could carry it into the summary.
+
+    The output is streamed rather than captured because a large quantisation is long and its
+    per-tensor progress is the only sign of life it gives.
+    """
+    hit = None
+    proc = subprocess.Popen(argv_q, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace", bufsize=1)
+    with proc:
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            found = _FALLBACK.search(line)
+            if found:
+                hit = (int(found.group(1)), int(found.group(2)))
+        sys.stdout.flush()
+    return proc, hit
+
+
 def _preflight_overrides(src, a, log):
     """Refuse an override that cannot possibly land, before the hours rather than after them.
 
@@ -377,6 +454,7 @@ def preflight(source, out, quant, *, allow_requantize, force):
 
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
+    _preflight_arguments(a, log=log)
     out = Path(a.out) if a.out else default_output(a.source, a.type)
 
     head = preflight(a.source, out, a.type, allow_requantize=a.allow_requantize, force=a.force)
@@ -433,7 +511,7 @@ def run(argv=None, log=print):
     # No timeout: quantising a large model is genuinely long and a ceiling here would kill a job
     # with its work nearly done, which is the failure that cost a completed head-to-head on
     # 2026-08-06. Interrupting it is the operator's call, and the partial output is cleaned below.
-    r = subprocess.run(argv_q, check=False)
+    r, fallback = _run_quantiser(argv_q)
     took = time.monotonic() - started
 
     if r.returncode != 0:
@@ -468,6 +546,14 @@ def run(argv=None, log=print):
     log(f"  wrote {out.name}: {out_size / 1e9:.2f} GB from {src_size / 1e9:.2f} GB "
         f"({out_size / src_size * 100:.0f}%), {got['tensor_count']} tensors, {took:.0f}s")
     log(f"  verified: {got['file_type']}, architecture {got['architecture']}")
+    if fallback:
+        fell, total = fallback
+        log(f"  NOTE: {fell} of {total} tensors ({fell / total * 100:.0f}%) could not take the "
+            f"{a.type} recipe and fell back to another type. The file is still a valid {a.type} "
+            f"and its name is honest, but 'verified: {got['file_type']}' is a statement about what "
+            f"the file declares, not about every tensor in it. The usual cause is tensor "
+            f"dimensions the recipe's block size does not divide, which is benign and common in "
+            f"small models; a high proportion on a large model is worth looking into.")
 
     sidecar = Path(str(out) + SIDECAR_SUFFIX)
     record = {
@@ -479,6 +565,10 @@ def run(argv=None, log=print):
         # What was asked for AND what the finished file actually holds. A recipe name is a
         # statement about intent; the census is a statement about the file.
         "tensor_overrides": overrides,
+        # None when the quantiser said nothing, which is not the same as zero. A reader comparing
+        # two files has to be able to tell "no tensor fell back" from "we were not watching".
+        "fallback_tensors": None if fallback is None else {"fell_back": fallback[0],
+                                                           "of": fallback[1]},
         "allow_requantize": bool(a.allow_requantize),
         "source": {"name": Path(a.source).name, "bytes": src_size,
                    "file_type": head["file_type"], "architecture": head["architecture"]},

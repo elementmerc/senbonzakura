@@ -210,12 +210,12 @@ def test_a_quantisation_that_writes_the_wrong_type_is_caught(tmp_path, monkeypat
     src = _tiny_gguf(tmp_path / "tiny-f32.gguf")
     out = tmp_path / "tiny-Q4_K_M.gguf"
 
-    def liar(argv, **kw):
+    def liar(argv):
         import types
         _tiny_gguf(out, ftype=7)                # a valid GGUF of the WRONG quantisation
-        return types.SimpleNamespace(returncode=0)
+        return types.SimpleNamespace(returncode=0), None
 
-    monkeypatch.setattr(quantise.subprocess, "run", liar)
+    monkeypatch.setattr(quantise, "_run_quantiser", liar)
     with pytest.raises(SystemExit) as e:
         quantise.run([str(src), "--type", "Q4_K_M"], log=lambda _m: None)
     assert "does not verify" in str(e.value)
@@ -229,12 +229,12 @@ def test_a_failed_quantisation_leaves_no_partial_file(tmp_path, monkeypatch):
     src = _tiny_gguf(tmp_path / "tiny-f32.gguf")
     out = tmp_path / "tiny-Q4_K_M.gguf"
 
-    def fails(argv, **kw):
+    def fails(argv):
         import types
         out.write_bytes(b"GGUF" + b"\x00" * 200)     # a partial, plausible-looking file
-        return types.SimpleNamespace(returncode=1)
+        return types.SimpleNamespace(returncode=1), None
 
-    monkeypatch.setattr(quantise.subprocess, "run", fails)
+    monkeypatch.setattr(quantise, "_run_quantiser", fails)
     monkeypatch.setattr(quantise, "find_binary", lambda *_a, **_k: (tmp_path / "fake", "vendored"))
     with pytest.raises(SystemExit, match="Nothing usable was written"):
         quantise.run([str(src), "--type", "Q4_K_M"], log=lambda _m: None)
@@ -272,12 +272,12 @@ def test_an_imatrix_is_passed_to_the_binary_and_its_calibration_named(tmp_path, 
     monkeypatch.setattr(quantise, "find_binary", lambda _n, **k: ("/x/llama-quantize", "vendored"))
     seen = {}
 
-    def fake_run(argv, **kw):
+    def fake_run(argv):
         seen["argv"] = argv
         Path(argv[-2]).write_bytes(b"GGUF" + b"\0" * 32)
-        return type("R", (), {"returncode": 0})()
+        return type("R", (), {"returncode": 0})(), None
 
-    monkeypatch.setattr(quantise.subprocess, "run", fake_run)
+    monkeypatch.setattr(quantise, "_run_quantiser", fake_run)
     msgs = []
     quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
                   "--imatrix", str(im)], log=msgs.append)
@@ -294,9 +294,9 @@ def test_a_matrix_without_a_sidecar_is_applied_and_flagged_as_unknown(tmp_path, 
                         lambda *a, **k: {"file_type": "BF16", "tensor_count": 5,
                                          "architecture": "qwen3"})
     monkeypatch.setattr(quantise, "find_binary", lambda _n, **k: ("/x/llama-quantize", "vendored"))
-    monkeypatch.setattr(quantise.subprocess, "run",
-                        lambda argv, **kw: (Path(argv[-2]).write_bytes(b"GGUF" + b"\0" * 32),
-                                            type("R", (), {"returncode": 0})())[1])
+    monkeypatch.setattr(quantise, "_run_quantiser",
+                        lambda argv: (Path(argv[-2]).write_bytes(b"GGUF" + b"\0" * 32),
+                                      (type("R", (), {"returncode": 0})(), None))[1])
     msgs = []
     quantise.run([str(src), str(tmp_path / "o.gguf"), "--type", "Q4_K_M",
                   "--imatrix", str(im)], log=msgs.append)

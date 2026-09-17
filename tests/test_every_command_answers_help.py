@@ -45,6 +45,22 @@ def test_the_command_answers_help_into_a_pipe(command):
 
 
 @pytest.mark.parametrize("command", COMMANDS)
+def test_the_help_carries_no_unconsumed_percent_escapes(command):
+    """`%%` in an epilog reaches the reader as `%%`.
+
+    argparse %-formats `help=` strings and does NOT format `description=` or `epilog=`, so the
+    doubling that is required in one place is a typo in the other. The commands block in the
+    top-level epilog carried `agrees 90%% of the time on a 90%% set`, which every user meets on
+    their first `senbonzakura --help` and which `senbonzakura judge --help` renders correctly two
+    lines away. Found by reading the help as a user, 2026-09-17.
+    """
+    text = _help(command).stdout
+    assert "%%" not in text, (
+        f"`senbonzakura {command} --help` prints a literal '%%'. In an epilog or a description "
+        f"argparse does no %-formatting, so the escape is not consumed and the reader sees it.")
+
+
+@pytest.mark.parametrize("command", COMMANDS)
 def test_the_help_describes_the_command_rather_than_only_naming_it(command):
     """A usage line alone is not a description. Every command owes a sentence of prose.
 

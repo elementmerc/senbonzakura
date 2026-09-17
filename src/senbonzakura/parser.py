@@ -139,7 +139,7 @@ def build_parser():
             "the paired change against a stock run with an interval\n"
             "  judge        check a grading model against reference labels BEFORE letting it "
             "grade anything. Reports agreement above chance rather than raw agreement, because a "
-            "judge that answers the common label every time agrees 90%% of the time on a 90%% set "
+            "judge that answers the common label every time agrees 90% of the time on a 90% set "
             "and has learned nothing, and reports how much of each class it caught, because one "
             "blind to the rare class flatters whatever it grades. Exits non-zero when not "
             "certified\n"

@@ -1880,6 +1880,31 @@ def ensure_chat_template(tok, template_path=None, log=None):
         "wrapper silently, and every number measured that way is comparable to nothing.")
 
 
+def _digestible_root(track):
+    """Where this track's splits actually live on disk, resolving the bundled alias.
+
+    THE DEFECT THIS EXISTS FOR, found by a hostile outside review on 2026-09-17. `--track default`
+    is not a path; it is the alias for the track packed inside the wheel. `Path("default").is_dir()`
+    is false, so every run on the bundled track recorded `track_digest: null` and nothing in the
+    artefact fingerprinted the corpus the numbers came from.
+
+    That is the wrong way round. The bundled track is the one corpus that IS byte-identical
+    between two strangers, which is exactly what makes its digest worth recording: it is the only
+    way a reader can confirm two runs scored the same rows. The paths that got a digest were the
+    private local directories nobody else can resolve anyway.
+
+    `cache_dir` rather than `ensure`, because a digest must not unpack anything or reprint the
+    corpus licence notice as a side effect. By the time a run writes its artefact the track has
+    been loaded, so the cache is there; when it is not, this returns None and the caller records
+    no digest, which is the honest answer rather than a fabricated one.
+    """
+    from . import dataset as _dataset
+    if track == _dataset.BUNDLED_ALIAS:
+        from .bundled import cache_dir
+        return cache_dir()
+    return Path(track)
+
+
 def _track_digests(track):
     """A content digest per split, or None when there is no track to digest.
 
@@ -1890,8 +1915,8 @@ def _track_digests(track):
     if not track:
         return None
     from .track import dataset_digest
-    root = Path(track)
-    if not root.is_dir():
+    root = _digestible_root(track)
+    if root is None or not root.is_dir():
         return None
     out = {}
     for split in ("bad_ds", "good_ds", "bad_eval_ds", "good_eval_ds", "good_matched_ds"):

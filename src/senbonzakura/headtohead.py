@@ -1391,10 +1391,11 @@ def build_parser():
                         "measured under different conditions")
     h.add_argument("--max-new", dest="max_new", type=int, default=REFUSAL_MAX_NEW,
                    help=f"tokens each reply gets before it is judged refused or not (default: "
-                        f"{REFUSAL_MAX_NEW}). The scorer's own default is 64, which this "
-                        f"project's length sweep measured as still climbing: below the "
-                        f"convergence point a refusal rate describes the budget rather than the "
-                        f"model, and it flatters whichever tool answers at greater length")
+                        f"{REFUSAL_MAX_NEW}, the same budget `senbonzakura score` uses, because "
+                        f"an arm and the report about it have to be measured on one ruler). This "
+                        f"used to be 64, which the length sweep measured as still climbing: below "
+                        f"the convergence point a refusal rate describes the budget rather than "
+                        f"the model, and it flatters whichever tool answers at greater length")
     h.add_argument("--no-score", dest="score", action="store_false",
                    help="run the arms and stop, leaving scoring and the report for later")
     h.add_argument("--force", action="store_true",

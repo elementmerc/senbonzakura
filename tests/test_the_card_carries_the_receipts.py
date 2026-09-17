@@ -119,6 +119,47 @@ class TestTheTwoEndsOfTheContractStillAgree:
             f"`cli.py` writes {key!r} and `modelcard.py` no longer looks for it.")
 
 
+class TestTheOneCorpusTwoStrangersCanShare:
+    """`--track default` recorded no digest, which is the wrong way round.
+
+    FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17: an artefact from a bundled-track run carried
+    `track_digest: null`. `--track default` is an alias, not a path, so the digest helper asked
+    `Path("default").is_dir()`, got false, and recorded nothing.
+
+    The bundled track is the ONE corpus that is byte-identical between two strangers, so its
+    digest is the only one a reader can use to confirm two runs scored the same rows. The paths
+    that did get a digest were private local directories nobody else can resolve.
+
+    Guarded by availability rather than asserted flat. A source checkout carries no packed track
+    until it is built, and CI skips the artefact-fetch step on some rows, so an unconditional
+    assertion here is green on a developer machine and red on every platform that matters. That
+    exact mistake put CI red for three days in September.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _needs_the_bundled_track(self):
+        from senbonzakura.bundled import cache_dir
+        if not cache_dir().is_dir():
+            pytest.skip("no unpacked bundled track on this machine")
+
+    def test_the_bundled_alias_produces_a_digest(self):
+        from senbonzakura import cli
+        digests = cli._track_digests("default")
+        assert digests, "`--track default` recorded no corpus digest"
+        assert "bad_eval_ds" in digests, f"no digest for the scored split: {sorted(digests)}"
+
+    def test_a_path_that_is_not_there_still_records_nothing(self):
+        """The honest answer stays the honest answer. No fabricated digest."""
+        from senbonzakura import cli
+        assert cli._track_digests("definitely-not-a-track") is None
+
+    def test_the_digest_reaches_the_card(self):
+        from senbonzakura import cli
+        abl = dict(WRITTEN, track="default", track_digest=cli._track_digests("default"))
+        card = "\n".join(modelcard.build(abl=abl, licence="apache-2.0"))
+        assert modelcard.NOT_MEASURED not in _section(card, "Corpus")
+
+
 def test_a_real_artefact_on_disk_renders_every_section(tmp_path):
     """The end to end shape of the reviewer's reproduction, minus the model."""
     artefact = tmp_path / "abliteration.json"

@@ -319,7 +319,7 @@ def is_release_artefact(wheel: Path) -> bool:
 #: A specifier that admits a pre-release: `1.2.3.dev4`, `1.2a1`, `1.2rc1`, `1.2.3.post1.dev0`.
 #: PEP 440 says pip considers pre-releases for a requirement only when the requirement mentions
 #: one, which is the property being detected here rather than the exact grammar.
-_PRERELEASE_IN_SPECIFIER = re.compile(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", re.I)
+_PRERELEASE_IN_SPECIFIER = re.compile(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", re.IGNORECASE)
 
 
 def prerelease_dependency_in_a_release(wheel: Path) -> list[str]:

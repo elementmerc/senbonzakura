@@ -76,11 +76,12 @@ class TestADeadKnobSaysSo:
         cli._preflight_dead_knobs(self._args(search="scalar", kl_scale=9.0), log=said.append)
         assert not said
 
-    def test_the_note_is_actually_WIRED_IN_ahead_of_the_model(self, tmp_path, monkeypatch, capsys):
+    def test_the_note_is_actually_wired_in_ahead_of_the_model(self, tmp_path, monkeypatch, capsys):
         """Every other test here calls the function directly, so all of them stay green if the
         call is deleted from `run_parsed` and it never runs again. Mutation testing caught
         exactly that, on this check and on the recovery pre-flight before it. A check nothing
-        calls is a check that does not exist."""
+        calls is a check that does not exist.
+        """
         from senbonzakura import lengthsweep
 
         class _Reached(Exception):
@@ -104,7 +105,8 @@ class TestADeadKnobSaysSo:
 
     def test_the_help_says_where_it_applies(self):
         """The man page carried the word "scalar" and `--help` did not, which is backwards:
-        `--help` is what people read."""
+        `--help` is what people read.
+        """
         from senbonzakura import parser
         text = parser.build_parser().format_help()
         assert "SCALAR objective" in text

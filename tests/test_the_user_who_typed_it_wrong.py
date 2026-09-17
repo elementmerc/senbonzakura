@@ -75,8 +75,8 @@ class TestAnExpectationNothingCouldSatisfy:
         Any digest that is 64 hex characters is well formed; whether it MATCHES is a question
         about bytes and stays where it was, after the download.
         """
-        fetch._preflight_expectations(_args(expect_sha256="A" * 64, expect_size=None))
-        fetch._preflight_expectations(_args(expect_sha256="0123456789abcdef" * 4, expect_size=None))
+        fetch._preflight_expectations(_Args(expect_sha256="A" * 64, expect_size=None))
+        fetch._preflight_expectations(_Args(expect_sha256="0123456789abcdef" * 4, expect_size=None))
 
     def test_a_negative_byte_count_is_refused(self):
         with pytest.raises(SystemExit) as e:
@@ -85,7 +85,7 @@ class TestAnExpectationNothingCouldSatisfy:
 
     def test_zero_bytes_is_allowed_because_a_zero_byte_file_exists(self):
         """Nothing here decides that an empty file is a mistake; the size check does that."""
-        fetch._preflight_expectations(_args(expect_sha256=None, expect_size=0))
+        fetch._preflight_expectations(_Args(expect_sha256=None, expect_size=0))
 
     def test_the_refusal_says_it_cost_nothing(self):
         with pytest.raises(SystemExit) as e:
@@ -103,7 +103,9 @@ class TestAnExpectationNothingCouldSatisfy:
         assert "--expect-sha256" in str(e.value)
 
 
-class _args:
+class _Args:
+    """A stand-in for parsed argv, so a pre-flight can be called without a parser."""
+
     def __init__(self, **kw):
         self.__dict__.update(kw)
 
@@ -140,13 +142,13 @@ class TestAWorkerCountThatIsNotAWorkerCount:
         assert "serialises" in str(e.value)
 
     def test_zero_is_still_the_documented_way_to_let_it_choose(self):
-        quantise._preflight_arguments(_args(threads=0, imatrix=None, tensor_type=[]), log=lambda *_: None)
+        quantise._preflight_arguments(_Args(threads=0, imatrix=None, tensor_type=[]), log=lambda *_: None)
 
     def test_a_count_above_the_core_count_warns_rather_than_refuses(self, monkeypatch):
         """Oversubscription is a real choice on a shared box. It is a warning, not a refusal."""
         monkeypatch.setattr(quantise.os, "cpu_count", lambda: 4)
         said = []
-        quantise._preflight_arguments(_args(threads=64, imatrix=None, tensor_type=[]), log=said.append)
+        quantise._preflight_arguments(_Args(threads=64, imatrix=None, tensor_type=[]), log=said.append)
         assert any("4 cores" in s for s in said)
 
 
@@ -214,6 +216,7 @@ class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
         """The note must not fire on the case the flag is FOR."""
         import contextlib
         import sqlite3
+
         from senbonzakura import cli
         db = tmp_path / "senbon-study.db"
         # `with sqlite3.connect(...)` commits and does NOT close. Left as it was, the connection
@@ -227,7 +230,7 @@ class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
         cli._preflight_recovery(self._args(tmp_path, resume=True, study_db=str(db)), log=said.append)
         assert not said, f"resuming a real study printed a fresh-search note: {said}"
 
-    def test_the_check_is_actually_WIRED_IN_ahead_of_the_model(self, tmp_path, monkeypatch):
+    def test_the_check_is_actually_wired_in_ahead_of_the_model(self, tmp_path, monkeypatch):
         """The half that unit tests cannot see, and the half that was the whole defect.
 
         Every other test in this class calls `_preflight_recovery` directly, so all of them stay
@@ -258,7 +261,7 @@ class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
             cli.run_parsed(args, None, [])
 
     def test_an_unreadable_database_does_not_refuse_the_run(self, tmp_path):
-        """This decides a SENTENCE, never what runs. It must never block a run that would work."""
+        """The lookup decides a SENTENCE, never what runs, so it must never block a working run."""
         from senbonzakura import cli
         db = tmp_path / "senbon-study.db"
         db.write_bytes(b"not a database at all")
@@ -298,14 +301,16 @@ class TestTheWarningTheSummaryUsedToSwallow:
 
     def test_a_clean_run_reports_nothing_rather_than_zero(self, capsys):
         """None and 0 are different claims. One is "no tensor fell back", the other is "we did
-        not see". A reader comparing two files has to be able to tell them apart."""
+        not see". A reader comparing two files has to be able to tell them apart.
+        """
         proc, fallback = quantise._run_quantiser(self._echo("all good", "done"))
         assert proc.returncode == 0
         assert fallback is None
 
     def test_the_binarys_output_still_reaches_the_terminal(self, capsys):
         """A large quantisation is long and its per-tensor progress is the only sign of life it
-        gives. Capturing it to read one line must not swallow the rest."""
+        gives. Capturing it to read one line must not swallow the rest.
+        """
         quantise._run_quantiser(self._echo("[  1/272] first", "[272/272] last"))
         out = capsys.readouterr().out
         assert "[  1/272] first" in out and "[272/272] last" in out

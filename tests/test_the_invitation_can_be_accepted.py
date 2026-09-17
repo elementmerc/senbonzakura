@@ -61,7 +61,8 @@ def test_a_track_that_is_genuinely_absent_still_refuses(tmp_path):
 
 def test_the_refusal_no_longer_says_the_alias_will_not_work(tmp_path):
     """It said so truthfully for months. Leaving the sentence behind would send the next reader
-    away from the thing that now works."""
+    away from the thing that now works.
+    """
     with pytest.raises(SystemExit) as e:
         headtohead_stage.main(["--track", str(tmp_path / "nope"), "--out", str(tmp_path / "s")])
     message = str(e.value)

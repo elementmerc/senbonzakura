@@ -55,7 +55,7 @@ def test_the_manual_is_stamped_with_the_version_it_documents():
         f"withdrawn claim.")
 
 
-@pytest.mark.parametrize("claim,why", [
+@pytest.mark.parametrize(("claim", "why"), [
     ("without wrecking coherence",
      "the multi-direction benefit claim, measured false at p = 0.016 across five seeds"),
     ("PCA of",
@@ -80,7 +80,7 @@ def test_no_shipped_surface_leads_with_the_withdrawn_claim():
     import subprocess
     import sys
 
-    name = re.search(r"\.SH NAME\n(.*?)\.SH", _text(), re.S)
+    name = re.search(r"\.SH NAME\n(.*?)\.SH", _text(), re.DOTALL)
     assert name, "the man page has no NAME section"
     assert "multi-direction refusal abliteration" not in name.group(1).lower(), (
         "the man page NAME line still leads with the multi-direction claim")
@@ -89,7 +89,7 @@ def test_no_shipped_surface_leads_with_the_withdrawn_claim():
                          capture_output=True, text=True, stdin=subprocess.DEVNULL,
                          check=False, timeout=300).stdout
     first = out.split("positional arguments")[0]
-    assert not re.search(r"^multi-direction refusal abliteration", first.strip(), re.I | re.M), (
+    assert not re.search(r"^multi-direction refusal abliteration", first.strip(), re.IGNORECASE | re.MULTILINE), (
         "`senbonzakura --help` still opens with the multi-direction claim")
 
 
@@ -138,7 +138,8 @@ class TestTheUsePolicyReachesTheUser:
 
     def test_it_does_not_pretend_to_add_licence_terms(self):
         """An acceptable-use statement that reads like a licence term on AGPL software is worse
-        than none: it invites a reader to think the software is not what its licence says."""
+        than none: it invites a reader to think the software is not what its licence says.
+        """
         text = self.AUP.read_text(encoding="utf-8")
         assert "does not add terms" in text
 

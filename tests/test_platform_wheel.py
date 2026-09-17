@@ -483,7 +483,8 @@ def test_an_ordinary_dependency_is_left_alone(tmp_path):
 
 def test_the_gate_is_wired_into_the_release_checks(tmp_path, capsys):
     """The half a unit test cannot see. `main` is what CI runs, and a check `main` does not call
-    is a check that does not exist, which mutation testing caught twice tonight on other gates."""
+    is a check that does not exist, which mutation testing caught twice tonight on other gates.
+    """
     w = _wheel_declaring(tmp_path, "0.4.0", "senbonzakura-check>=0.4.0.dev0,<0.5")
     rc = _wheel_check().main([str(w)])
     assert rc != 0, "check_wheel.main accepted a release wheel with a pre-release dependency"
@@ -504,7 +505,7 @@ def test_the_shipped_pyproject_is_honest_about_which_state_it_is_in():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     spec = re.search(r'"(senbonzakura-check[^"]*)"', text).group(1)
     is_dev = bool(re.search(r"(dev|a|b|rc)\d*$", raw))
-    admits_pre = bool(re.search(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", spec, re.I))
+    admits_pre = bool(re.search(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", spec, re.IGNORECASE))
     if not is_dev:
         assert not admits_pre, (
             f"this tree is at release version {raw} and still declares {spec!r}, which admits a "

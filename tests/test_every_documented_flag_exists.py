@@ -18,6 +18,7 @@ abliterate run writes such a file. So the paragraph raised an alarm about someth
 not happen and then offered an escape hatch that does not exist, in the safety warning box. A
 cautious reader following it gets a failure at exactly the moment they were being careful.
 """
+import functools
 import re
 import subprocess
 import sys
@@ -28,7 +29,7 @@ import pytest
 from senbonzakura.entry import DELEGATED
 
 ROOT = Path(__file__).resolve().parent.parent
-DOCS = sorted((ROOT / "docs" / "guide").glob("*.md")) + [ROOT / "README.md"]
+DOCS = [*sorted((ROOT / "docs" / "guide").glob("*.md")), ROOT / "README.md"]
 
 #: Flags that appear in our prose while belonging to somebody else's tool, or that are shown as
 #: placeholders rather than as something to type. Each one needs a reason, because the whole
@@ -42,18 +43,20 @@ NOT_OURS = {
 FLAG = re.compile(r"`(--[a-z][a-z0-9-]+)")
 
 
+@functools.cache
 def _accepted():
-    """Every flag any command accepts, read off the tool rather than off its source."""
+    """Every flag any command accepts, read off the tool rather than off its source.
+
+    Cached because it shells out once per command and this file parametrises over every flag the
+    guide names, which would otherwise pay for the whole sweep on each one.
+    """
     seen = set()
-    for command in sorted(DELEGATED) + ["abliterate", "kageyoshi", "auto"]:
+    for command in [*sorted(DELEGATED), "abliterate", "kageyoshi", "auto"]:
         out = subprocess.run([sys.executable, "-m", "senbonzakura", command, "--help"],
                              capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              check=False, timeout=300)
         seen |= set(re.findall(r"(--[a-z][a-z0-9-]+)", out.stdout))
     return seen
-
-
-ACCEPTED = None
 
 
 def _documented():
@@ -67,14 +70,11 @@ def _documented():
     return found
 
 
-@pytest.mark.parametrize("flag,page", sorted(_documented().items()))
+@pytest.mark.parametrize(("flag", "page"), sorted(_documented().items()))
 def test_a_flag_the_docs_name_is_a_flag_the_tool_takes(flag, page):
-    global ACCEPTED
     if flag in NOT_OURS:
         pytest.skip(f"{flag} is documented as not ours, see NOT_OURS")
-    if ACCEPTED is None:
-        ACCEPTED = _accepted()
-    assert flag in ACCEPTED, (
+    assert flag in _accepted(), (
         f"{page} tells the reader to pass {flag}, and no command accepts it. Either the flag was "
         f"removed and the page was not, or the page describes a flag that belongs to a different "
         f"command. A reader who follows the documentation gets `unrecognized arguments`.")

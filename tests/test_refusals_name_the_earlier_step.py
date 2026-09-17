@@ -21,6 +21,7 @@ import re
 import pytest
 
 from senbonzakura import headtohead_report, headtohead_stage, quantise
+from senbonzakura.bundled import BundledTrackError
 
 #: (callable, argv, the command the refusal must name). One row per downstream command.
 CASES = [
@@ -80,7 +81,23 @@ def test_whatever_the_stage_refusal_recommends_actually_works(tmp_path):
 
     # The recommendation is followed, not read. If it cannot resolve, the reader would land back
     # on the message they are already looking at.
-    resolved = headtohead_stage._resolve_track(name)
+    #
+    # GUARDED, and the reason is this project's oldest recurring failure. The first version of
+    # this called the resolver flat and went red on every CI platform while passing here, because
+    # a source checkout carries no packed evaluation track: the blob holds harmful prompts and is
+    # kept out of git on purpose, so it exists on a developer's machine and on no runner that has
+    # not fetched it. "My machine has an artefact CI does not" has now cost this project four
+    # separate red builds, and I wrote that sentence into a handoff hours before doing it again.
+    #
+    # An install that cannot resolve the name because it never had the data is not the defect this
+    # test is about. The defect is a refusal recommending a flag value the command REJECTS, and
+    # that distinction is the whole point: BundledTrackError means "I understood you and the data
+    # is missing", which is the tool working.
+    try:
+        resolved = headtohead_stage._resolve_track(name)
+    except BundledTrackError:
+        pytest.skip(f"`--track {name}` is understood here and this install carries no packed "
+                    f"track, so whether it resolves cannot be answered on this machine")
     assert resolved.is_dir(), (
         f"the refusal recommends `--track {name}`, and that does not resolve to a directory. "
         f"Advice that returns the reader to the error they are reading is worse than none.")

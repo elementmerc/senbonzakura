@@ -93,6 +93,14 @@ class SenbonzakuraAdapter:
             # it is a number about bfloat16 rather than about the model.
             "computed_in": doc.get("logits_dtype"),
             "supported_by_precision": doc.get("precision_ok"),
+            # THE ARTEFACT'S OWN WARNING ABOUT ITSELF. The scorer writes this when the generation
+            # budget was below the visibility floor, which is the condition under which a refusal
+            # rate describes the budget rather than the model. It was written into the file and
+            # read by nothing: a hostile reviewer on 2026-09-17 fed this checker an artefact
+            # carrying its own short-budget warning and got "nothing found". A checker that
+            # ignores the one sentence the producer left about why its number might be wrong is
+            # not reading the artefact, it is reading past it.
+            "budget_warning": doc.get("budget_warning"),
             "provenance": doc.get("provenance"),
         }
 

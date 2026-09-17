@@ -191,6 +191,44 @@ def evaluate(rule: dict, doc: Any) -> bool:
         return any(
             not isinstance(v, dict) or not v.get(field) for v in mapping.values())
 
+    if op == "any_outside":
+        # THE SECOND OPERATOR ADDED AFTER THE FACT, and the rule says to name the check that
+        # needed it. Three did: `impossible-proportion-reported`, `rate-reported-on-a-sample-too-
+        # small-to-carry-it`, and the sample-size half of the budget check. All three ask "is any
+        # metric's number outside the range its own units allow", which needs a numeric comparison
+        # (the vocabulary had none) and a quantifier over metric keys that differ per harness, for
+        # the same reason `any_missing` exists.
+        #
+        # FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17: `senbonzakura check` reported
+        # "0 finding(s)" on a refusal rate of MINUS 0.5 and a keyword rate of 1.5. It was not
+        # wrong, it was empty, and zero findings over zero applicable checks is arithmetically
+        # identical to a clean sweep.
+        mapping = dotted(doc, rule.get("path", ""))
+        field = rule.get("field")
+        if not isinstance(field, str):
+            raise CheckError("`any_outside` needs a string `field`")
+        low, high = rule.get("min"), rule.get("max")
+        if low is None and high is None:
+            raise CheckError("`any_outside` needs at least one of `min` or `max`")
+        when = rule.get("when") or {}
+        if not isinstance(mapping, dict):
+            return False
+        for entry in mapping.values():
+            if not isinstance(entry, dict):
+                continue
+            if when and entry.get(when.get("field")) != when.get("equals"):
+                continue
+            value = entry.get(field)
+            # A bool is an int in Python and is never a measurement. Excluded explicitly so a
+            # `higher_is_better: false` can never be read as the number zero.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if low is not None and value < low:
+                return True
+            if high is not None and value > high:
+                return True
+        return False
+
     if op == "intersects":
         paths = rule.get("paths")
         if not isinstance(paths, list) or len(paths) != 2:

@@ -1,0 +1,31 @@
+{
+  "id": "rate-reported-on-a-sample-too-small-to-carry-it",
+  "title": "A rate is printed as a rate on a sample that cannot support one",
+  "detects": "A metric whose units say `proportion` recording fewer than 30 observations. A proportion over a handful of items is a count wearing a percentage sign: on 4 items every possible answer is one of 0%, 25%, 50%, 75% or 100%, the 95% interval on an observed 0 of 4 reaches past 60%, and the figure will read as precise to anyone who meets it without the denominator.",
+  "incident": "Ours, 2026-09-17. A hostile reviewer fed this checker an artefact reporting a rate over n = 4 and it reported `0 finding(s)`, accurately: every check then in the registry applied and none of them looked at a denominator. Separately and earlier, ours, 2026-08-17: a published refusal figure turned out to have been scored on 64 rows of the wrong partition, and the honest upper bound was an order of magnitude away from the number that had travelled. The project already applies a reporting floor when it writes its own cards, printing counts instead of a rate below it; nothing enforced the same floor on an artefact arriving from outside.",
+  "remedy": "Print the counts, not the rate: `0 of 4` says what happened and cannot be misread as precision. If the rate is wanted, carry an interval beside it so the width is visible. If the sample is small because the run was a smoke test, say so in the artefact rather than leaving the reader to infer it from n.",
+  "confidence": "medium",
+  "false_positive": "30 is a convention, not a threshold with a derivation behind it, and a deliberately small diagnostic run will fire this every time and be perfectly correct to have done so. It is medium confidence for that reason: the finding says the number cannot carry the precision its format implies, which stays true even when the small sample was intentional. A harness that does not record `n` per metric escapes the check entirely, which is a coverage gap rather than a pass.",
+
+  "applies_to": {"op": "truthy", "path": "metrics"},
+
+  "rule": {"op": "any_outside", "path": "metrics", "field": "n",
+           "min": 30,
+           "when": {"field": "units", "equals": "proportion"}},
+
+  "control": {
+    "fires_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.0, "units": "proportion", "n": 4}}},
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.25, "units": "proportion", "n": 8}}},
+      {"metrics": {"a": {"value": 0.5, "units": "proportion", "n": 200},
+                   "b": {"value": 0.5, "units": "proportion", "n": 6}}},
+      {"metrics": {"acc": {"value": 1.0, "units": "proportion", "n": 1}}}
+    ],
+    "passes_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.094, "units": "proportion", "n": 200}}},
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.0, "units": "proportion", "n": 30}}},
+      {"metrics": {"kl": {"value": 0.03, "units": "nats", "n": 8}}},
+      {"metrics": {"acc": {"value": 0.5, "units": "proportion", "n": null}}}
+    ]
+  }
+}

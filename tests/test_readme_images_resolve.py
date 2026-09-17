@@ -61,7 +61,7 @@ def _require_checkout():
 
     `git ls-files` outside a repository exits non-zero with EMPTY stdout, and a test that
     reads that as "the file is not tracked" is reporting on its environment rather than on
-    the code. Found 2026-09-12 by running the suite from a `git archive` extract on atlas,
+    the code. Found 2026-09-12 by running the suite from a `git archive` extract elsewhere,
     which is the same configuration that caught four of these before and which nothing runs
     automatically. Matches the guard `test_shipped_files.py` already uses.
     """

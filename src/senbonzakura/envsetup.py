@@ -183,7 +183,7 @@ def driver_cuda_version():
     if out.returncode != 0:
         return None
     # Windows nvidia-smi prints "CUDA UMD Version: 13.3"; Linux prints "CUDA Version: 13.0".
-    # Measured on the ROG 2026-09-10, where the first version of this regex read neither and
+    # Measured on a Windows laptop 2026-09-10, where the first version of this regex read neither and
     # the unread value then became a claim that the driver was too old.
     m = re.search(r"CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)", out.stdout or "")
     return (int(m.group(1)), int(m.group(2))) if m else None
@@ -335,7 +335,7 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
         if not has_gpu:
             return ("ok", "no NVIDIA GPU, and the Windows default wheel is CPU-only already.", None)
         if driver is None:
-            # NOT "your driver is too old". Measured on the ROG: nvidia-smi there prints
+            # NOT "your driver is too old". Measured on a Windows laptop: nvidia-smi there prints
             # "CUDA UMD Version", the regex read nothing, and the command told the operator to
             # update a driver that had run CUDA all night. A refusal for a reason that is not
             # true sends the reader to fix the wrong thing, which is the expensive kind of

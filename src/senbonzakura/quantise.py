@@ -4,7 +4,7 @@
 
 WHAT THIS REPLACES
 
-Four shell scripts that differed by a digit: `gguf2.sh`, `gguf3.sh`, `gguf-atlas.sh` and
+Four shell scripts that differed by a digit: `gguf2.sh`, `gguf3.sh`, one named after a machine and
 `gguf-after-kl.sh`, each a hand-written pipeline with paths for one machine baked into it. The
 house rule that produced this file: the moment a script gets a digit it has earned a subcommand,
 and the superseded copy is deleted in the same change rather than left beside it.

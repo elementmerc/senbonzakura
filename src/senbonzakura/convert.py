@@ -4,7 +4,7 @@
 
 WHAT THIS REPLACES
 
-`gguf2.sh`, `gguf3.sh` and `gguf-atlas.sh`, three files whose header comment is identical word for
+`gguf2.sh`, `gguf3.sh` and a third named after a machine, three files whose header comment is identical word for
 word ("Convert the abliterated releases to GGUF and publish them") and which differed by a digit
 and by which machine's paths were baked into them. The house rule that produced this file: the
 moment a script gets a digit it has earned a subcommand.

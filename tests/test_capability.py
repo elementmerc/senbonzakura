@@ -129,7 +129,7 @@ def test_accuracy_is_over_what_could_be_graded():
 
 
 def test_the_counts_are_reported_not_only_the_rate():
-    """A rate over a handful of observations is what reversed direction on the ROG when the sample
+    """A rate over a handful of observations is what reversed direction on real hardware when the sample
     grew. Counts cannot be quoted as something they are not.
     """
     s = cap.summarise(["correct", "wrong"])

@@ -317,7 +317,7 @@ def test_the_stamp_file_is_the_one_cli_code_version_already_looks_for():
 
 
 def test_a_stamp_file_supplies_the_commit_when_git_cannot(tmp_path):
-    """A night of ROG runs produced artefacts with no commit at all: the source was staged as a
+    """A night of GPU runs produced artefacts with no commit at all: the source was staged as a
     tarball without .git, which is reasonable, and nobody exported the variable. A file travels
     with the tree; a variable has to be remembered at launch.
     """
@@ -399,7 +399,7 @@ def test_an_unreadable_backend_setting_does_not_take_down_a_run(monkeypatch):
 class TestVersionSuffix:
     """The build suffix survives, and nothing gets imported to rescue it.
 
-    FOUND ON ATLAS, 2026-09-13, by the suite that only runs there. `importlib.metadata` reported
+    FOUND ON A SECOND MACHINE, 2026-09-13, by the suite that only runs there. `importlib.metadata` reported
     torch as `2.14.0` while `torch.__version__` said `2.14.0+cu130`, so the provenance block
     recorded a version that cannot distinguish a CPU build from a CUDA one. That distinction is
     the whole reason torch's version is in the block.

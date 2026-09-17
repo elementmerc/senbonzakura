@@ -606,7 +606,7 @@ def layer_weight(idx, P, wmax, wmin, D):
     # A window of zero width still contains its own centre, and the taper has no extent to run
     # over, so the peak value applies. Reached by any fixed profile with D = 0, which used to
     # raise ZeroDivisionError one second into the bake, after twenty minutes of direction
-    # extraction. Found by hephaestus-c9 running E2 on 2026-09-07.
+    # extraction. Found by a peer session running E2 on 2026-09-07.
     if D == 0:
         return wmax
     return wmax + (dist / D) * (wmin - wmax)

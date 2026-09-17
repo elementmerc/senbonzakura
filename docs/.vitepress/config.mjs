@@ -1,6 +1,6 @@
 // Senbonzakura documentation site.
 //
-// Built under hephaestus ADR 75: every project with readers who are not its author ships built
+// Built under a standing rule: every project with readers who are not its author ships built
 // documentation. senbonzakura is public and AGPL, so this deploys to GitHub Pages. npm lives in
 // this directory and nowhere else; nothing here reaches the Python wheel, which is built from
 // `src/` alone.

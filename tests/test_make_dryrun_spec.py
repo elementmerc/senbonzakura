@@ -10,6 +10,7 @@ So these tests are about the guarantee rather than the output: every substitutio
 budget must shrink, and everything that is not the budget must survive unchanged.
 """
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ _SPEC.loader.exec_module(mds)
 # The run specs are the operator's private runner configuration and are not in the public
 # repository (they name machines and home paths, and the operation they used to carry now lives
 # in `senbonzakura head-to-head`). The fixture skips when they are absent, so a clone can run the suite.
-REAL = _ROOT / "private" / "holst" / "head-to-head-heretic.toml"
+REAL = next((_ROOT / "private").glob("*/head-to-head-heretic.toml"), _ROOT / "nowhere.toml")
 
 
 @pytest.fixture
@@ -107,19 +108,26 @@ def test_the_job_graph_is_untouched(real_spec):
 
 
 # ── the on-card variant ───────────────────────────────────────────────────────────────
+#: Every `machine = "..."` line in a spec, whatever the machine is called. The tests below count
+#: these rather than naming a box, so they keep working when the runner configuration is renamed
+#: and they say nothing about it here.
+_MACHINE = re.compile(r'^machine = "([^"]+)"$', re.MULTILINE)
+
+
 def test_the_on_card_variant_runs_every_job_locally(real_spec):
-    """Driven from the card, `rog` would send each job back out over ssh to the machine already
-    running it: an extra hop, an extra credential, and one more thing to drop overnight.
+    """Driven from the card, a remote machine name would send each job back out over ssh to the
+    machine already running it: an extra hop, an extra credential, and one more thing to drop
+    overnight.
     """
     out = mds.transform(real_spec, on_card=True)
-    assert 'machine = "rog"' not in out
-    assert out.count('machine = "local"') == real_spec.count('machine = "rog"')
+    assert set(_MACHINE.findall(out)) == {"local"}
+    assert len(_MACHINE.findall(out)) == len(_MACHINE.findall(real_spec))
 
 
-def test_the_committed_spec_still_says_rog(real_spec):
+def test_the_committed_spec_still_names_a_remote_machine(real_spec):
     """The variant is derived; the committed file stays correct for the ordinary case."""
-    assert 'machine = "rog"' in real_spec
-    assert 'machine = "local"' not in real_spec
+    remote = set(_MACHINE.findall(real_spec))
+    assert remote and "local" not in remote
 
 
 def test_the_full_on_card_variant_keeps_the_real_budget(real_spec):
@@ -130,7 +138,7 @@ def test_the_full_on_card_variant_keeps_the_real_budget(real_spec):
     assert "--seeds 42,43,44,45,46" in out
     assert "--trials 200" in out
     assert "bench-out/h2h-dryrun" not in out
-    assert 'machine = "local"' in out and 'machine = "rog"' not in out
+    assert set(_MACHINE.findall(out)) == {"local"}
 
 
 # ── the needle is the predicate, so it must appear exactly once and never in prose ────
@@ -184,7 +192,7 @@ def test_every_job_demands_more_than_a_string_it_printed(real_spec):
     """A marker is a string, and anything that can print it can pass the job.
 
     A rehearsal came back five jobs done having measured nothing, because two jobs printed their
-    marker unconditionally. holst has carried richer predicates all along and this spec used the
+    marker unconditionally. The job runner has carried richer predicates all along and this spec used the
     weakest one available for every job. So each now also has to exit cleanly, must not have
     printed a failure, and must not have been cut off at its timeout.
     """
@@ -205,7 +213,7 @@ def test_the_failure_word_the_predicate_watches_for_is_the_one_the_jobs_print(re
 
 @pytest.mark.parametrize("on_card", [False, True])
 def test_each_success_marker_is_emitted_exactly_once(real_spec, on_card):
-    """A job succeeds, as far as holst is concerned, when a string appears in its output.
+    """A job succeeds, as far as the job runner is concerned, when a string appears in its output.
 
     So the string is the predicate, and anything that can print it can pass the job. On 2026-08-06
     a careless splice left `echo SCORE_OK on the way out` as a live command in the middle of the

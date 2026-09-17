@@ -28,7 +28,7 @@
 #
 #   tools/clean_room.sh                 # fast: --no-deps, proves the CLI works without torch
 #   tools/clean_room.sh --full          # the real clean-machine install, torch and all. Slow.
-#   tools/clean_room.sh --host atlas    # run it on another machine over ssh
+#   tools/clean_room.sh --host HOST     # run it on another machine over ssh
 #
 set -euo pipefail
 

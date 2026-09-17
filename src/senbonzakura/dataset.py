@@ -78,7 +78,7 @@ def split_hub_config(body):
     the config as its second POSITIONAL argument, which `owner/name::split` had no way to express.
     So the default capability benchmark in this project's own experiment script could not be
     loaded by any invocation of it, and every arm of a seven-arm run failed at grading. Found by
-    hephaestus-c9 running E2 on 2026-09-07, and only by running it.
+    a peer session running E2 on 2026-09-07, and only by running it.
 
     The colon is safe here in a way it is not in the split separator. It is only treated as a
     config when what precedes it is a Hub id, and a Hub id is `owner/name`, so a Windows drive

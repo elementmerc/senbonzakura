@@ -279,7 +279,7 @@ def test_a_failing_doctor_does_not_block_the_run(tmp_path):
 
     `doctor` answers "can this install do everything senbonzakura claims". This experiment needs a
     subset: it takes its corpus from --track and its benchmark from --eval, and uses neither
-    llama-quantize nor the vendored converter nor the bundled corpora. On the ROG doctor fails
+    llama-quantize nor the vendored converter nor the bundled corpora. On a Windows GPU box doctor fails
     nine of fourteen checks for exactly those reasons, and blocking on it stopped two arms from
     starting on a machine that could have run them.
     """

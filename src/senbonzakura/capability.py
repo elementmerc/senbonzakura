@@ -445,7 +445,7 @@ def summarise(verdicts):
         "graded": graded,
         "accuracy": round(acc["rate"], 4) if acc["rate"] is not None else None,
         # The interval, always, and the reason when the rate is withheld. A point estimate over a
-        # handful of items is what reversed direction on the ROG when the sample grew, and the
+        # handful of items is what reversed direction on real hardware when the sample grew, and the
         # interval is what would have said so at the time.
         "accuracy_ci": acc["ci"],
         "accuracy_reportable": acc["reportable"],

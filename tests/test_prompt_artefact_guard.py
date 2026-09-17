@@ -359,7 +359,7 @@ def test_a_rename_into_the_tree_is_still_checked(monkeypatch):
 def test_this_repository_is_clean():
     """The check CI runs, run here too, so a bad commit fails before it is written."""
     root = Path(__file__).resolve().parent.parent
-    assert guard.main([str(root / "evidence"), str(root / "docs"), str(root / "holst")]) == 0
+    assert guard.main([str(root / "evidence"), str(root / "docs")]) == 0
 
 
 # ── what a directory expands to ────────────────────────────────────────────────────

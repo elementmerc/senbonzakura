@@ -334,7 +334,7 @@ jobs:
     # indistinguishable from "the file is not tracked" unless somebody thought about it.
     #
     # Four tests have already been fixed for reporting on their environment this way, and
-    # nothing stopped the next one: on 2026-09-12 a fifth was found by hand on atlas, because
+    # nothing stopped the next one: on 2026-09-12 a fifth was found by hand elsewhere, because
     # this configuration had no job. It does now.
     name: the suite runs outside a git checkout
     runs-on: ubuntu-latest
@@ -443,7 +443,7 @@ jobs:
     # built from src/ and cannot see this tree, so a node_modules cannot reach a wheel. Keeping
     # the boundary visible in the job list is half the point of it.
     #
-    # Per hephaestus ADR 75 this build MUST fail on a broken link. VitePress exits non-zero on a
+    # By policy this build MUST fail on a broken link. VitePress exits non-zero on a
     # dead internal link, so no extra checker is needed; `ignoreDeadLinks` is deliberately unset
     # in the config, and a build that only warns is a build nobody reads the output of.
     name: Docs build and link check

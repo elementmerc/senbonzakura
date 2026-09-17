@@ -14,23 +14,23 @@ machine where torch is exactly what is missing.
 #   .dev2  the first two-wheel cut. Built and verified, then superseded the same hour by the
 #          Q-33 field rename, and never handed to anyone.
 #   .dev3  the two-wheel cut carrying Q-32's NOTICE and Q-33's `token_text`. Built and its
-#          hashes sent to the ROG peer, who held rather than running; superseded before use.
-#   .dev4  cut for the ROG pass. Adds the float32 direction basis (which changes the edit
+#          hashes sent to the peer on the GPU box, who held rather than running; superseded before use.
+#   .dev4  cut for the GPU pass. Adds the float32 direction basis (which changes the edit
 #          slightly), the snapshot pre-flight, and the model card.
 #   .dev9  three gaps found by installing the wheel and behaving like a user, with no source:
 #          no device pre-flight (a GPU-less box got a ten-frame traceback after the download),
 #          the no-track refusal leading with Hub-package advice that could not help, and
 #          `--track`'s help never naming `default`.
 #   .dev8  dev7 plus a singular/plural fix in the audit refusal. A SEPARATE VERSION rather than
-#          a rebuild: the first dev7 wheel had already been copied to atlas, so that name was
+#          a rebuild: the first dev7 wheel had already been copied to a second box, so that name was
 #          spent even though its hashes were never handed to anyone. Two wheels sharing a
 #          version is how a bug gets reported against a build nobody can identify.
-#   .dev7  three findings from the peer's free ROG pass on dev6: `track --audit` silently
+#   .dev7  three findings from the peer's free GPU pass on dev6: `track --audit` silently
 #          ignored --fit, so the check gating a paid booking could not fail; the bundled
 #          track's path was undiscoverable outside a REPL; and the guided walk's final
 #          confirmation defaulted to yes after four prompts training "Enter is safe".
 #   .dev6  the discoverability pass finished (area 4: a refusal whose cause is a missing earlier
-#          step now names that step), and a provenance fix only atlas could surface: the torch
+#          step now names that step), and a provenance fix only a CPU-only box could surface: the torch
 #          build suffix was being dropped, so an artefact could not say CPU from CUDA.
 #   .dev5  cut because dev4's SEARCH is steered by a 48-token budget while its result is
 #          published at 192, so the optimiser selects for refusals that arrive after the cutoff.

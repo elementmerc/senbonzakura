@@ -625,9 +625,9 @@ def present(plan, *, ask_fn=input, log=print):
     # Every question before this one is safe to press Enter through, and four of them in a row
     # train exactly that reflex: "press Enter to take the default" is printed under each. Then the
     # same keystroke starts an abliteration, which spends GPU hours and, on a rented card, money.
-    # The walk taught a habit and then charged for it. A hephaestus peer found this by writing a
+    # The walk taught a habit and then charged for it. A peer session found this by writing a
     # script that said in its own comments it would not confirm the run, sending bare newlines,
-    # and starting a run on the ROG's card.
+    # and starting a run on a real card.
     #
     # `[Y/n]` is right for a command somebody typed deliberately with all its flags. It is wrong
     # at the end of a menu whose whole design is that Enter is safe. The asymmetry is the same one

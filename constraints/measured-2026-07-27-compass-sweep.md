@@ -10,9 +10,9 @@ than a record, because the record was never taken.
 
 | Item | Value | Source |
 |---|---|---|
-| torch | `2.5.1` | pinned in `scripts/runpod/pod-bootstrap.sh` and the `holst/` specs |
+| torch | `2.5.1` | pinned in the bootstrap script and the job specs |
 | Accelerator | rented RTX 3090 (compass sweep), rented 4090 (unabliterated baselines) | session records |
-| Evaluation track | `ops-malware/senbon-track-35axis-clean`, revision unrecorded | `holst/*.toml` |
+| Evaluation track | `ops-malware/senbon-track-35axis-clean`, revision unrecorded | the job specs |
 | senbonzakura commit | unrecorded | — |
 | Everything else | **unknown** | — |
 

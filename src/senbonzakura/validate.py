@@ -446,7 +446,7 @@ MIN_REACH = 0.10
 #: How many layers of each kind must sit inside the depth range the kinds SHARE before their means
 #: may be compared at all.
 #:
-#: Reported by hephaestus-c9 on 2026-09-07 from the LFM2.5-8B-A1B reach run, and it is a defect in
+#: Reported by a peer session on 2026-09-07 from the LFM2.5-8B-A1B reach run, and it is a defect in
 #: this reading rather than in the model. Reduction climbs with depth in both LFM2 models measured,
 #: and past a threshold it stops caring about layer kind entirely. LFM2 puts full attention at
 #: layers 2, 6, 10, 14, 18 and 20, so the conv blocks fill the shallow positions that score badly

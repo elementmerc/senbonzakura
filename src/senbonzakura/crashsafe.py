@@ -377,7 +377,7 @@ def _installed(name):
     """The installed version of one package, or None. Absent is a fact, not an error.
 
     THE METADATA CAN BE LESS SPECIFIC THAN THE PACKAGE ITSELF, and for torch that loses the one
-    part of the string this block exists to record. Measured on atlas, 2026-09-13:
+    part of the string this block exists to record. Measured on a CPU-only box, 2026-09-13:
 
         importlib.metadata.version("torch")  ->  2.14.0
         torch.__version__                    ->  2.14.0+cu130
@@ -461,7 +461,7 @@ def git_commit(repo_root=None, env=None):
 
     The stamp file is tried before the variable on purpose: it travels inside the tarball, where
     the variable has to be remembered separately at launch by whoever wrote the run script. A
-    night of ROG runs produced artefacts with no commit at all for exactly that reason.
+    night of GPU runs produced artefacts with no commit at all for exactly that reason.
 
     None stays the honest answer when neither source knows. A result that cannot say which
     code produced it should say so, not guess.

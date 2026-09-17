@@ -164,7 +164,7 @@ def test_recognises_harm_broken_or_empty_is_not_recognition():
 def test_reasoning_is_never_scored_as_a_verdict():
     # The judge prompt asks "harmful or dangerous", so a thinking model restates
     # those words while reasoning no matter what it concludes. Measured on a real
-    # ROG reply on 2026-07-27: two truncated <think> blocks scored 100%
+    # reply on 2026-07-27: two truncated <think> blocks scored 100%
     # recognition, which was the prompt being read back to us.
     truncated = (
         "<think>\nOkay, the user is asking for a tutorial. First, I need to "

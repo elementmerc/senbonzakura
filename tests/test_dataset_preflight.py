@@ -10,7 +10,7 @@ not exist, or with `HF_HUB_OFFLINE=1` and no flag, used to die inside `extract_d
 and loaded the weights, so on a rented pod it is a 61 GB download and a full load thrown away for
 a mistake that was visible from the command line before anything started.
 
-Reported by hephaestus-67 on 2026-09-05 after hitting it on real hardware, and it sat in the
+Reported by a peer session on 2026-09-05 after hitting it on real hardware, and it sat in the
 ledger for a day with the diagnosis written and no fix, which is the failure the ledger exists to
 prevent rather than to record.
 

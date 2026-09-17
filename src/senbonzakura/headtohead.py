@@ -870,7 +870,7 @@ def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
     """Run one arm to completion, streaming its output. Returns the exit code.
 
     The timeout is not optional and has no "wait forever" setting, because a sweep is a sequence
-    and one hung arm stops every arm behind it. holst-orchestrated runs carry their own
+    and one hung arm stops every arm behind it. Orchestrated runs carry their own
     `timeout_secs` and `stall_secs`, so this covers the case those do not: `senbonzakura head-to-head`
     invoked directly, where nothing else is watching. A `llama-cli` smoke hung for two hours on
     2026-08-16 with no bound on it at all, which is this failure one layer down.

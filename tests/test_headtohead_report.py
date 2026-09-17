@@ -467,7 +467,7 @@ def test_the_drift_axis_now_gets_a_test_and_not_just_two_means(tmp_path):
     siblings of 0.0439 to 0.1075 carries all of it, and a permutation test says so: p = 0.238.
 
     These ten numbers were APPROXIMATED FROM MEMORY when this test was first written, because the
-    arms were still on the ROG and unreachable. The report driven by them printed p = 0.405, and
+    arms were still on the GPU box and unreachable. The report driven by them printed p = 0.405, and
     that figure went onto the public benchmark page as a measurement. It was a property of my
     fixture, not of the run. The arms were fetched the same evening and these are the real values;
     the conclusion was unchanged and the strength of it was overstated. A fixture is a claim about

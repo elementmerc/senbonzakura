@@ -166,7 +166,7 @@ def test_a_platform_that_cannot_report_memory_is_skipped_not_passed(monkeypatch)
 
 def test_no_model_named_is_not_an_error():
     """A conflicting pair of flags should be refused BEFORE `--model` is resolved, and the
-    pre-flight must not be what breaks that order. Found on atlas: `Path(None)` raises TypeError,
+    pre-flight must not be what breaks that order. Found on a second machine: `Path(None)` raises TypeError,
     which the OSError guard did not catch, so a legitimate early refusal became a traceback.
     """
     assert cli.estimate_snapshot_bytes(None) == (None, "no model was named")

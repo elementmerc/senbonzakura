@@ -10,7 +10,7 @@ project has: it does not appear until the arm has already run. `_heretic_finalis
 Heretic's search finishes, so a flag mismatch there costs the entire search before anything says a
 word, and the operator sees a dead arm with no model and a container exit code.
 
-That is not hypothetical. Two senbonzakura containers on the ROG from 2026-09-01 exited non-zero
+That is not hypothetical. Two senbonzakura containers on a GPU box from 2026-09-01 exited non-zero
 after 47 seconds and 5 minutes, on the day a rename left two constants naming a module that has
 never existed on either side of the container boundary. And this exact check, for the other
 experiment driver, is `test_every_flag_it_passes_exists_on_the_real_parser` in `test_e2_arms.py`.

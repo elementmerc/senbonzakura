@@ -1008,7 +1008,7 @@ class TestAuditRefusesBuildFlags:
         track --audit --out <bundled> --fit 385
         track --audit --out <bundled> --fit 400
 
-    400 is the number this project's own RunPod plan documents as FAILING. A hephaestus peer found
+    400 is the number this project's own RunPod plan documents as FAILING. A peer session found
     it by running 386 and 400 after 385 passed, on the rule that a check which has just said OK has
     told you nothing until you have seen it say no.
 

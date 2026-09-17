@@ -559,8 +559,8 @@ def test_enter_at_the_final_prompt_does_not_start_a_run():
 
     Every question before it is safe to press Enter through, and each prints "press Enter to take
     the default" underneath, which trains the reflex. The last question spends GPU hours, and on a
-    rented card, money. A hephaestus peer found this by sending bare newlines from a script whose
-    own comments said it would not confirm the run, and starting an abliteration on the ROG.
+    rented card, money. A peer session found this by sending bare newlines from a script whose
+    own comments said it would not confirm the run, and starting an abliteration on a real card.
 
     Pinned because flipping the default back broke no test at all when it was changed.
     """

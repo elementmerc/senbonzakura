@@ -527,7 +527,7 @@ def report(checks, log=print, *, advisories_ok=False):
             return OK
         # SAY WHAT THE EXIT CODE MEANS, because the line above says "0 failed" and this returns 1.
         #
-        # Reported from the ROG on 2026-09-11 as a possible defect: doctor exited 1 while its own
+        # Reported from a GPU box on 2026-09-11 as a possible defect: doctor exited 1 while its own
         # summary said nothing had failed, on a machine whose only complaint was an absent CUDA
         # device. The convention is deliberate and documented at the top of this module, so an
         # advisory can be told from a failure by a CI job. But a reader has the summary and the

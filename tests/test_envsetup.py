@@ -14,7 +14,7 @@ torch 2.14.0's own metadata: the `nvidia-*` dependencies carry the marker
 `platform_system == "Linux"` and nothing else, and the Windows wheel is 124 MB against Linux's
 554 MB plus fifteen CUDA packages. A Windows machine with a 3060 in it therefore installs a torch
 that cannot see the card, and nothing anywhere says so: the search just runs on CPU and takes a day
-instead of an hour. That is the case this command exists for, and it is the operator's own ROG.
+instead of an hour. That is the case this command exists for, and it is the operator's own laptop.
 
 THE TRAP THESE TESTS PIN
 
@@ -46,7 +46,9 @@ def command(**kw):
 # ── Windows, which is the case that motivated the command ────────────────────────────
 
 def test_a_windows_box_with_a_card_is_told_its_torch_cannot_use_it():
-    """THE ROG. PyPI's Windows wheel is CPU-only, so the card sits idle and nothing says so."""
+    """A WINDOWS LAPTOP WITH A CARD. PyPI's Windows wheel is CPU-only, so the card sits idle and
+    nothing says so.
+    """
     got = envsetup.plan(system="Windows", machine="AMD64", gpus=["GPU 0: RTX 3060"],
                         driver=(13, 0), torch_version="2.14.0", variant=None)
     assert got[0] == "fix"
@@ -464,7 +466,7 @@ def test_the_live_table_is_consistent_with_itself():
     assert all(t.startswith("cu") and t[2:].isdigit() for t in tags)
 
 
-# ── measured on the ROG, 2026-09-10: both of these were wrong on real hardware ───────
+# ── measured on a Windows laptop, 2026-09-10: both were wrong on real hardware ───────
 
 WINDOWS_SMI = """Thu Sep 10 15:04:00 2026
 +-----------------------------------------------------------------------------------------+
@@ -486,7 +488,7 @@ LINUX_SMI = """Thu Sep 10 12:00:00 2026
 def test_both_nvidia_smi_wordings_are_read(monkeypatch, output, want):
     """Windows says "CUDA UMD Version", Linux says "CUDA Version".
 
-    The first regex read only the Linux form. On the ROG it therefore read nothing, and the
+    The first regex read only the Linux form. On Windows it therefore read nothing, and the
     unread value became a claim that the driver was too old.
     """
     monkeypatch.setattr(envsetup.shutil, "which", lambda name: "/usr/bin/nvidia-smi")

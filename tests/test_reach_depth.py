@@ -37,7 +37,7 @@ import pytest
 
 from senbonzakura import validate
 
-#: LFM2.5-8B-A1B, measured on the ROG 2026-09-07. Layer, kind, reduction.
+#: LFM2.5-8B-A1B, measured on a GPU box 2026-09-07. Layer, kind, reduction.
 EIGHT_B = [
     (9, "conv", -0.0246), (10, "attention", 0.2482), (11, "conv", 0.3475),
     (12, "conv", 0.4193), (13, "conv", 0.5704), (14, "attention", 0.7802),

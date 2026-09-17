@@ -161,7 +161,7 @@ def _looks_like_hub_id(value):
     # here. The first copy of this function kept that comment and dropped the list, so
     # `slices/good.txt` passed as a repo id. Latent then (only `--model` reaches this, and the
     # prompt paths take a plain existence check), live the moment it is reused for an argument
-    # that may legitimately be relative. Found by hephaestus-c9 on 2026-09-09, on paper, before
+    # that may legitimately be relative. Found by a peer session on 2026-09-09, on paper, before
     # the card was spent.
     if p.startswith((".", "/", "~")):
         return False

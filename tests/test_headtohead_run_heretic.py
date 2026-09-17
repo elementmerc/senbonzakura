@@ -177,7 +177,7 @@ def test_a_relative_path_to_a_file_is_not_a_repo_id():
 
 
 def test_paths_of_every_other_shape_are_not_repo_ids():
-    assert not rh._looks_like_hub_id("/home/daniel/senbon-seed41")
+    assert not rh._looks_like_hub_id("/home/user/senbon-seed41")
     assert not rh._looks_like_hub_id("./local-model")
     assert not rh._looks_like_hub_id("~/models/thing")
     assert not rh._looks_like_hub_id("a/b/c")

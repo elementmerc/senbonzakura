@@ -12,7 +12,7 @@ re-scored refusals, soft and heretic on a larger eval while leaving brokenness a
 from the small one. So the one step that exists to stop the knee being overfit to the small eval
 was blind to exactly the axis that says whether the model still works.
 
-Found the long way round, 2026-09-06. A peer session's determinism run on the ROG reported every
+Found the long way round, 2026-09-06. A peer session's determinism run on a GPU box reported every
 generation IDENTICAL while measuring nothing: the model spent its whole token budget in
 `reasoning_content` and returned an empty `content` five times, and hashing the empty string five
 times agrees with itself. They caught it only because a transcript column printed blank. The same

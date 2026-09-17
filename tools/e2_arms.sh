@@ -182,7 +182,7 @@ say() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$RUN_LOG" >&2; 
 # `doctor` is RECORDED, never a gate here, and that distinction cost a release morning.
 #
 # It answers "can this install do everything senbonzakura claims", which is a superset of what
-# this experiment needs. On the ROG it fails nine of fourteen checks: no llama-quantize, no
+# this experiment needs. On a Windows GPU box it fails nine of fourteen checks: no llama-quantize, no
 # vendored converter, no bundled track, no bundled corpora. Not one of those is used by an
 # abliterate-then-grade run, which takes its corpus from --track and its benchmark from --eval,
 # and blocking on them stopped two arms from starting on a machine that could have run them

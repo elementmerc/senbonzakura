@@ -501,7 +501,7 @@ def test_advisories_exit_one_by_default():
 
 
 def test_advisories_exit_zero_when_asked(capsys):
-    """Q-31, taken 2026-09-11. Reported from the ROG: a healthy CPU-only install exits 1 while
+    """Q-31, taken 2026-09-11. Reported from a GPU box: a healthy CPU-only install exits 1 while
     its own summary says nothing failed, and a CI step that trusts the exit code fails on it.
 
     The default is unchanged, because the three-way distinction is what the codes exist for. The

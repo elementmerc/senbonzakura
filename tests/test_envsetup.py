@@ -24,6 +24,8 @@ has one. Asking torch would make the command blind to the single fault it was wr
 driver is asked instead, and `plan()` is pure so every machine in the table can be tested here,
 including the ones nobody in this project owns.
 """
+import subprocess
+
 import pytest
 
 from senbonzakura import envsetup
@@ -197,9 +199,33 @@ def test_the_build_variant_is_read_from_the_version_string(version, want):
 
 
 def test_the_command_changes_nothing_without_apply(capsys, monkeypatch):
-    """A tool that rewrites the environment because it believed it knew better is the worst case."""
+    """A tool that rewrites the environment because it believed it knew better is the worst case.
+
+    FOUND ON THE ROG, 2026-09-17, the first time this suite ran on a machine with a card in it.
+
+    The stub below used to be `lambda *a, **k: ran.append(a)`, which returns None. Every real
+    caller of `subprocess.run` here expects a CompletedProcess, so the stub honoured the calling
+    convention and not the return contract. On a machine with no `nvidia-smi`,
+    `compute_capability` returns before it ever calls run, so the lie was unreachable and the
+    test passed everywhere it had ever been executed. On a machine WITH a card it is reached at
+    once:
+
+        AttributeError: 'NoneType' object has no attribute 'returncode'
+
+    This test had therefore never run its own subject on the hardware its subject is about. The
+    command it guards exists because "pip picks by platform, not by hardware", so the case that
+    matters is a box with a GPU, and that is the only case this could not survive.
+
+    The stub now returns what the real thing returns. Recording the call is still the assertion;
+    lying about the return value was never part of it.
+    """
     ran = []
-    monkeypatch.setattr(envsetup.subprocess, "run", lambda *a, **k: ran.append(a))
+
+    def _record(*args, **kwargs):
+        ran.append(args)
+        return subprocess.CompletedProcess(args[0] if args else [], 0, "", "")
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _record)
     monkeypatch.setattr(envsetup, "nvidia_gpus", list)
     monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: None)
     monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))

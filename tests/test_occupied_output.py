@@ -20,6 +20,7 @@ The command line refuses, because a warning printed above an hour of GPU work is
 reads. The guided mode offers the ways out instead, because refusing somebody who is being walked
 through the tool is a dead end.
 """
+import sys
 import types
 
 import pytest
@@ -534,6 +535,16 @@ class TestWritabilityIsCheckedEarly:
     the download.
     """
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=("POSIX mode bits do not restrict writes to a directory on Windows: `chmod 500` "
+                "returns cleanly and the directory stays writable, so this cannot construct its "
+                "own precondition there. Making it unwritable on Windows needs an ACL, which is "
+                "a different mechanism testing a different thing. The pre-flight it guards is "
+                "platform independent and is covered on POSIX; what is NOT covered anywhere is "
+                "whether an ACL-denied directory is refused on Windows, and saying that out loud "
+                "is better than a skip that reads as parity. Found by the first Windows CI run "
+                "this project has looked at, 2026-09-17."))
     def test_an_unwritable_out_is_refused(self, tmp_path):
         locked = tmp_path / "locked"
         locked.mkdir()

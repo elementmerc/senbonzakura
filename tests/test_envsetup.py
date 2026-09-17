@@ -201,7 +201,7 @@ def test_the_build_variant_is_read_from_the_version_string(version, want):
 def test_the_command_changes_nothing_without_apply(capsys, monkeypatch):
     """A tool that rewrites the environment because it believed it knew better is the worst case.
 
-    FOUND ON THE ROG, 2026-09-17, the first time this suite ran on a machine with a card in it.
+    FOUND 2026-09-17, the first time this suite ran on a machine with a card in it.
 
     The stub below used to be `lambda *a, **k: ran.append(a)`, which returns None. Every real
     caller of `subprocess.run` here expects a CompletedProcess, so the stub honoured the calling
@@ -243,7 +243,7 @@ def test_the_command_changes_nothing_without_apply(capsys, monkeypatch):
     # that never happened. Accurate that something ran, wrong about what, which is the shape this
     # project keeps finding in its own refusals and had sitting in a test.
     #
-    # Found on the ROG, 2026-09-17, the first time the suite ran anywhere with nvidia-smi present.
+    # Found 2026-09-17, the first time the suite ran anywhere with nvidia-smi present.
     installs = [call for call in ran
                 if any("pip" in str(part) or "install" in str(part)
                        for part in (call[0] if call else []))]

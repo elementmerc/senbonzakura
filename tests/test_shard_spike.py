@@ -207,10 +207,10 @@ _BYTES_PER_LAYER = 428 * 1024 * 1024
 def test_a_run_that_would_not_fit_on_disk_is_refused(tmp_path, capsys):
     """The size is derived from the machine, because otherwise the machine decides the result.
 
-    FOUND ON THE ROG, 2026-09-17. This asked for 200 layers, about 85 GB, and expected the disk
-    guard to refuse. That is an assertion about the RUNNER rather than about the code: atlas has
-    less than 85 GB free so it refused and the test passed, and the ROG has 556 GB free so it did
-    not refuse, proceeded to actually run the pass, and failed somewhere else entirely.
+    FOUND 2026-09-17. This asked for 200 layers, about 85 GB, and expected the disk guard to
+    refuse. That is an assertion about the MACHINE rather than about the code: a development box
+    with less than 85 GB free refused and the test passed, and one with plenty free did not
+    refuse, proceeded to actually run the pass, and failed somewhere else entirely.
 
     A test whose precondition is a property of the machine passes or fails on which machine ran
     it, which is the same defect as the Windows writability test found in the same sweep. So the

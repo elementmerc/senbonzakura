@@ -150,6 +150,123 @@ class TestAWorkerCountThatIsNotAWorkerCount:
         assert any("4 cores" in s for s in said)
 
 
+class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
+    """`--bake-config` and `--resume` both did 80+ seconds of work before checking a path.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-17. `--bake-config` at a path that does not exist
+    loaded the model, extracted refusal directions and began caching the KL reference before it
+    looked. Its own help says it "recovers a crashed save in minutes instead of re-searching", so
+    a typo in it cost exactly what it exists to avoid. `--resume` against a directory with no
+    study said so correctly at 146 seconds, when the database path was derivable from `--out` at
+    second zero, and the person who resumes an eight hour run has walked away by then.
+    """
+
+    def _args(self, tmp_path, **kw):
+        import types
+        base = dict(bake_config=None, resume=False, study_db=None, no_persist_study=False,
+                    track="default", out=str(tmp_path), search="pareto")
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def test_a_bake_config_that_is_not_there_is_refused(self, tmp_path):
+        from senbonzakura import cli
+        with pytest.raises(SystemExit) as e:
+            cli._preflight_recovery(self._args(tmp_path, bake_config=str(tmp_path / "nope.json")))
+        assert "nothing to bake" in str(e.value)
+
+    def test_the_refusal_says_where_the_file_comes_from(self, tmp_path):
+        """A user who mistyped it needs to know what they were pointing at."""
+        from senbonzakura import cli
+        with pytest.raises(SystemExit) as e:
+            cli._preflight_recovery(self._args(tmp_path, bake_config=str(tmp_path / "nope.json")))
+        assert "best-config.json" in str(e.value)
+        assert "costs nothing" in str(e.value)
+
+    def test_a_bake_config_that_is_not_json_is_refused(self, tmp_path):
+        from senbonzakura import cli
+        bad = tmp_path / "bad.json"
+        bad.write_text("i am not json", encoding="utf-8")
+        with pytest.raises(SystemExit) as e:
+            cli._preflight_recovery(self._args(tmp_path, bake_config=str(bad)))
+        assert "not readable as JSON" in str(e.value)
+
+    def test_a_real_config_passes(self, tmp_path):
+        from senbonzakura import cli
+        good = tmp_path / "best-config.json"
+        good.write_text('{"per_layer": {}}', encoding="utf-8")
+        cli._preflight_recovery(self._args(tmp_path, bake_config=str(good)))
+
+    def test_resume_with_no_study_says_so_before_the_model(self, tmp_path):
+        """A note, not a refusal. A fresh search is a legitimate thing to want."""
+        from senbonzakura import cli
+        said = []
+        cli._preflight_recovery(self._args(tmp_path, resume=True), log=said.append)
+        assert said, "--resume against an empty directory said nothing at the boundary"
+        assert "FRESH" in said[0]
+
+    def test_resume_and_no_persist_contradict_each_other(self, tmp_path):
+        from senbonzakura import cli
+        with pytest.raises(SystemExit) as e:
+            cli._preflight_recovery(self._args(tmp_path, resume=True, no_persist_study=True))
+        assert "nothing to resume from" in str(e.value)
+
+    def test_an_existing_study_is_resumed_quietly(self, tmp_path):
+        """The note must not fire on the case the flag is FOR."""
+        import contextlib
+        import sqlite3
+        from senbonzakura import cli
+        db = tmp_path / "senbon-study.db"
+        # `with sqlite3.connect(...)` commits and does NOT close. Left as it was, the connection
+        # survived to be finalised during a later test's gc and reported there as an unraisable
+        # exception, which is a flake wearing another test's name.
+        with contextlib.closing(sqlite3.connect(db)) as conn:
+            conn.execute("CREATE TABLE studies (study_name TEXT)")
+            conn.execute("INSERT INTO studies VALUES ('senbon-pareto')")
+            conn.commit()
+        said = []
+        cli._preflight_recovery(self._args(tmp_path, resume=True, study_db=str(db)), log=said.append)
+        assert not said, f"resuming a real study printed a fresh-search note: {said}"
+
+    def test_the_check_is_actually_WIRED_IN_ahead_of_the_model(self, tmp_path, monkeypatch):
+        """The half that unit tests cannot see, and the half that was the whole defect.
+
+        Every other test in this class calls `_preflight_recovery` directly, so all of them stay
+        green if somebody deletes the call from `run_parsed` and the function never runs again.
+        Mutation testing caught exactly that: removing the call site left this class passing.
+
+        This asserts the ORDER the same way `test_dataset_preflight.py` does, by making the model
+        constructor explode. If the pre-flight moves back below it, this test sees the explosion
+        instead of the refusal and fails, which is the only thing that distinguishes a check in
+        the right place from a check in the wrong place.
+        """
+        import types
+
+        from senbonzakura import cli, lengthsweep
+
+        def _never(*_a, **_k):
+            raise AssertionError("the model was constructed before --bake-config was checked")
+
+        monkeypatch.setattr(cli, "Abliterator", _never)
+        monkeypatch.setattr(cli, "_preflight_device", lambda _a, log=None: "cpu")
+        args = types.SimpleNamespace(
+            track="default", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
+            gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False, text_column=None,
+            hf_token=None, load_in_4bit=False, model=None, out=str(tmp_path), resume=False,
+            study_db=None, no_persist_study=False, search="pareto",
+            bake_config=str(tmp_path / "definitely-not-here.json"))
+        with pytest.raises(SystemExit, match="nothing to bake"):
+            cli.run_parsed(args, None, [])
+
+    def test_an_unreadable_database_does_not_refuse_the_run(self, tmp_path):
+        """This decides a SENTENCE, never what runs. It must never block a run that would work."""
+        from senbonzakura import cli
+        db = tmp_path / "senbon-study.db"
+        db.write_bytes(b"not a database at all")
+        said = []
+        cli._preflight_recovery(self._args(tmp_path, resume=True, study_db=str(db)), log=said.append)
+        assert not said
+
+
 class TestTheWarningTheSummaryUsedToSwallow:
     """llama-quantize says how many tensors the recipe could not be applied to, once, and exits 0.
 

@@ -4179,6 +4179,79 @@ def _prove_writable_early(flag, path):
             f"somewhere writable.") from e
 
 
+def _preflight_recovery(args, log=print):
+    """The two flags that exist to SAVE time were the two that checked nothing until late.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-17, from an installed wheel with no source access.
+
+    `--bake-config /nonexistent/best-config.json` loaded the model, extracted refusal directions
+    (80 seconds on a 135M model) and began caching the KL reference before it looked at the path.
+    The flag's own help says it "recovers a crashed save in minutes instead of re-searching", so
+    a typo in it cost precisely the thing it was there to avoid. On a 30B on a rented card that
+    is the download plus the extraction, paid for by the hour, to be told a filename is wrong.
+
+    `--resume` against a directory with no study said so, clearly and correctly, at 146 seconds,
+    after the directions and the baseline refusals. The database path is derivable from `--out`
+    at second zero. Somebody resuming what they believe is an eight hour run wants to know it is
+    starting from trial zero BEFORE they walk away from it, not after.
+
+    Neither is a refusal for `--resume`: a fresh search is a legitimate thing to want, and this
+    only moves the sentence to where it is still worth reading. `--bake-config` IS a refusal,
+    because there is nothing to bake.
+    """
+    cfg_path = getattr(args, "bake_config", None)
+    if cfg_path:
+        p = Path(cfg_path)
+        if not p.is_file():
+            raise SystemExit(
+                f"senbonzakura: no config at {cfg_path}, and --bake-config has nothing to bake.\n"
+                f"  This flag skips the search and bakes a config a previous run already chose, "
+                f"so it needs that run's file.\n"
+                f"  A finished run writes one as `best-config.json` beside its output.\n"
+                f"  Checked before the model is loaded, so finding out costs nothing.")
+        try:
+            json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise SystemExit(
+                f"senbonzakura: --bake-config {cfg_path} is not readable as JSON: {e}\n"
+                f"  It should be the `best-config.json` a previous run wrote, unedited.") from e
+
+    if not getattr(args, "resume", False):
+        return
+    db = study_db_path(getattr(args, "study_db", None), getattr(args, "no_persist_study", False),
+                       getattr(args, "track", None), getattr(args, "out", None))
+    if db is None:
+        raise SystemExit(
+            "senbonzakura: --resume and --no-persist-study contradict each other. Nothing was "
+            "persisted, so there is nothing to resume from.")
+    name = f"senbon-{getattr(args, 'search', 'pareto')}"
+    if _study_is_there(db, name):
+        return
+    log(f"NOTE: --resume was given and there is no study named {name!r} in {db}, so this will "
+        f"start a FRESH search from trial zero. Said here, before the model is loaded, because "
+        f"the run that discovers this at the end of direction extraction has already spent the "
+        f"card time you were trying to reuse.")
+
+
+def _study_is_there(db, name):
+    """Is that study already in that database? Missing file, unreadable file: no.
+
+    Deliberately forgiving. This decides what SENTENCE to print, never what to run, so a database
+    this cannot read has to fall through to the ordinary path rather than refuse a run that would
+    have worked. The authoritative check still happens where the study is created.
+    """
+    path = Path(str(db).replace("sqlite:///", ""))
+    if not path.is_file():
+        return False
+    try:
+        import sqlite3
+        with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+            rows = conn.execute("SELECT study_name FROM studies").fetchall()
+        return any(r[0] == name for r in rows)
+    except Exception:
+        return True
+
+
 def _preflight_output(args):
     """Refuse to write into a directory a previous run already used, unless told which to do.
 
@@ -4748,6 +4821,7 @@ def run_parsed(args, bankai, argv):
     _preflight_model(args)
     _preflight_generation_budget(args)
     _preflight_device(args)
+    _preflight_recovery(args)
 
     # After the torch check and before the model. The torch check is instant and local, and an
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the

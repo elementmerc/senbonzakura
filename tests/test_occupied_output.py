@@ -518,3 +518,59 @@ def test_a_clean_exit_does_not_get_a_failure_screen(monkeypatch):
     with pytest.raises(SystemExit):
         interactive.run(ask_fn=lambda _p: "", log=lines.append, stdin=None)
     assert "the run stopped" not in "\n".join(lines)
+
+
+class TestWritabilityIsCheckedEarly:
+    """An unwritable --out is refused before the model, not after the search.
+
+    FOUND BY ADVERSARIAL USER TESTING, 2026-09-16, by pointing --out at a chmod 500 directory.
+    `Abliterator._prove_writable` already existed, and its docstring says it is there so a
+    misplaced write costs "a second at startup rather than an hour of card time". It was not at
+    startup: it ran during the run. On a 135M model the refusal arrived at 20 seconds, after the
+    weights had loaded, the directions had been extracted and the baseline had been scored, and
+    the message said the GPU work would already be spent while it was spending it.
+
+    A check in the right place and a check in the wrong place both refuse. Only one of them saves
+    the download.
+    """
+
+    def test_an_unwritable_out_is_refused(self, tmp_path):
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        locked.chmod(0o500)
+        try:
+            with pytest.raises(SystemExit) as caught:
+                cli._preflight_output(_args(locked / "out"))
+            message = str(caught.value)
+            assert "cannot write to" in message
+            assert "before the model is downloaded" in message, (
+                "the refusal should say the check is cheap, which is the point of moving it")
+        finally:
+            locked.chmod(0o700)
+
+    def test_it_runs_before_the_model_is_constructed(self, monkeypatch, tmp_path):
+        """The ordering IS the fix, so it is asserted rather than assumed."""
+        locked = tmp_path / "locked2"
+        locked.mkdir()
+        locked.chmod(0o500)
+
+        def _never(*_a, **_k):
+            raise AssertionError("the model was constructed before --out was proven writable")
+
+        monkeypatch.setattr(cli, "Abliterator", _never)
+        monkeypatch.setattr(cli, "_preflight_datasets", lambda _a: None)
+        monkeypatch.setattr(cli, "_preflight_device", lambda _a, log=None: "cpu")
+        monkeypatch.setattr(cli, "torch_version_ok", lambda *_a: True)
+        args = _args(locked / "out")
+        for name, value in (("track", "default"), ("good_ds", None), ("hedge_ds", ""),
+                            ("clean_ds", ""), ("harmless_matched", ""), ("text_column", None),
+                            ("hf_token", None), ("load_in_4bit", False), ("method", None)):
+            setattr(args, name, value)
+        try:
+            with pytest.raises(SystemExit, match="cannot write to"):
+                cli.run_parsed(args, None, [])
+        finally:
+            locked.chmod(0o700)
+
+    def test_a_writable_out_passes(self, tmp_path):
+        cli._preflight_output(_args(tmp_path / "fresh"))

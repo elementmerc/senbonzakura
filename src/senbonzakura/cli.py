@@ -4074,6 +4074,29 @@ RUN_ARTEFACTS = runrecord.RUN_ARTEFACTS
 occupied_by = runrecord.occupied_by
 
 
+def _prove_writable_early(flag, path):
+    """Can this run actually write there? Asked before anything expensive happens.
+
+    Deliberately the same probe as `Abliterator._prove_writable`, because two different notions of
+    "writable" is how one of them ends up wrong. The directory is created if missing, which the run
+    would do anyway, and every cheap command-line check runs before this so a refusal never leaves
+    a directory behind for a fault that was visible from the argv alone.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".senbonzakura-write-probe")
+        with open(probe, "w") as f:
+            f.write("")
+        os.unlink(probe)
+    except OSError as e:
+        raise SystemExit(
+            f"{flag} points at {path}, which this run cannot write to: {e}.\n"
+            f"  Every artefact the run produces goes there, so the run would fail partway through "
+            f"with the model loaded and the search work already spent.\n"
+            f"  Checked before the model is downloaded, so finding out costs nothing. Point it "
+            f"somewhere writable.") from e
+
+
 def _preflight_output(args):
     """Refuse to write into a directory a previous run already used, unless told which to do.
 
@@ -4082,9 +4105,22 @@ def _preflight_output(args):
     directory expected rather than a mistake, and `--bake-config` reads a config the previous run
     left, so both pass through.
     """
+    out = getattr(args, "out", None)
+    # WRITABILITY FIRST, and before the model, which is where it was supposed to be all along.
+    #
+    # `Abliterator._prove_writable` already existed and its docstring says it is there so a
+    # misplaced write costs "a second at startup rather than an hour of card time". It was not at
+    # startup: it ran during the run, so a read-only --out was discovered at 20 seconds on a 135M
+    # model, AFTER the weights had loaded, the directions had been extracted and the baseline had
+    # been scored. Its own refusal says the GPU work would already be spent, and by the time it
+    # said so, it was. On a 30B on a rented card that is the download plus the extraction.
+    #
+    # Found by pointing --out at a chmod 500 directory. The check stays where it was as well: this
+    # is the cheap early copy, that one covers a path that becomes unwritable mid-run.
+    if out and not (getattr(args, "resume", False) or getattr(args, "bake_config", None)):
+        _prove_writable_early("--out", out)
     if getattr(args, "resume", False) or getattr(args, "bake_config", None):
         return
-    out = getattr(args, "out", None)
     if not out:
         return
     found = occupied_by(out)

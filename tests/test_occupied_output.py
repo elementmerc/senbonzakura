@@ -535,16 +535,21 @@ class TestWritabilityIsCheckedEarly:
     the download.
     """
 
-    @pytest.mark.skipif(
+    #: Both of these build their precondition with `chmod`, which is a no-op on a Windows
+    #: directory, so neither can construct the state it is asserting about there. The third
+    #: test in this class needs no chmod and keeps running everywhere.
+    _no_chmod_on_windows = pytest.mark.skipif(
         sys.platform == "win32",
         reason=("POSIX mode bits do not restrict writes to a directory on Windows: `chmod 500` "
                 "returns cleanly and the directory stays writable, so this cannot construct its "
-                "own precondition there. Making it unwritable on Windows needs an ACL, which is "
-                "a different mechanism testing a different thing. The pre-flight it guards is "
-                "platform independent and is covered on POSIX; what is NOT covered anywhere is "
-                "whether an ACL-denied directory is refused on Windows, and saying that out loud "
-                "is better than a skip that reads as parity. Found by the first Windows CI run "
-                "this project has looked at, 2026-09-17."))
+                "own precondition there. Making it unwritable needs an ACL, which is a different "
+                "mechanism testing a different thing. The pre-flight it guards is platform "
+                "independent and is covered on POSIX; what is NOT covered anywhere is whether an "
+                "ACL-denied directory is refused on Windows, and saying that out loud is better "
+                "than a skip that reads as parity. Found by the first Windows CI run this project "
+                "has looked at, 2026-09-17."))
+
+    @_no_chmod_on_windows
     def test_an_unwritable_out_is_refused(self, tmp_path):
         locked = tmp_path / "locked"
         locked.mkdir()
@@ -559,6 +564,7 @@ class TestWritabilityIsCheckedEarly:
         finally:
             locked.chmod(0o700)
 
+    @_no_chmod_on_windows
     def test_it_runs_before_the_model_is_constructed(self, monkeypatch, tmp_path):
         """The ordering IS the fix, so it is asserted rather than assumed."""
         locked = tmp_path / "locked2"

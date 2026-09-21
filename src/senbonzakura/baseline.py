@@ -30,6 +30,7 @@ before the intervals existed.
 Torch-free and import-light on purpose: the gate runs on whatever hardware a CI runner has.
 """
 import json
+import sys
 from pathlib import Path
 
 from .crashsafe import atomic_write
@@ -326,3 +327,146 @@ VERDICT_CAVEAT = (
     "A pass means one measured property did not move outside its interval, on one track, under "
     "the conditions the baseline records. It is not a statement that the model is safe, that "
     "other properties held, or that the track represents anything beyond itself.")
+
+
+# ── the producer, without which none of the above has an input ───────────────────────────────
+#
+# WHY THIS EXISTS, and it is the largest thing the 2026-09-21 panel found. Two reviewers noticed
+# independently that `record()` had no call site outside its own test, that `gate` was registered
+# in the dispatch table and documented in the CLI reference while nothing in the repository could
+# produce a file it would accept, and that the module docstring's claim - "a change that moves a
+# measured property outside its interval fails a build" - was therefore not true of any property
+# this tool measures. Read the commit subjects alone and you would believe otherwise.
+#
+# The gap was real rather than cosmetic: every writer stamps its figures through
+# `measurement.stamp`, which puts the identity INSIDE the metrics block, and `comparability` reads
+# the pinned fields from the TOP level. The two halves were built a fortnight apart and never met.
+# This is the adapter between them, and it refuses rather than guesses.
+
+#: Where a pinned field may be found in a stamped artefact, in order of preference.
+#:
+#: `model` lives at the top of every artefact this project writes; everything else lives in the
+#: metric's own block, because it describes that measurement rather than the file. `metric` is
+#: taken from the block too, not from the key, since a key may be `metric.estimator`.
+_TOP_LEVEL = ("model",)
+
+
+def _pinned_from(block, doc, metric_key):
+    """Every pinned field for one metric, or a refusal naming all the ones that are missing.
+
+    NAMES THEM ALL AT ONCE, deliberately. A reader fixing one field per run is a reader who runs
+    this six times, and each run costs a re-measurement rather than a re-read.
+    """
+    found, missing = {}, []
+    for field in PINNED:
+        value = doc.get(field) if field in _TOP_LEVEL else block.get(field)
+        if value is None and field == "metric":
+            value = metric_key.split(".", 1)[0]
+        if value is None:
+            missing.append(field)
+        else:
+            found[field] = value
+    if missing:
+        raise BaselineError(
+            f"{metric_key} cannot become a baseline: it records no "
+            f"{', '.join(repr(m) for m in missing)}.\n"
+            f"  Each of those decides whether a later measurement may be compared with this one, "
+            f"and a baseline with a hole in it is what this module exists to refuse. They are "
+            f"written by `measurement.stamp`, so the fix is in whatever produced the artefact "
+            f"rather than here.\n"
+            f"  What it does carry: {', '.join(sorted(k for k in block if block[k] is not None))}")
+    return found
+
+
+def from_artefact(doc, metric_key, *, seeds):
+    """Build a baseline from a stamped measurement artefact.
+
+    `seeds` is passed rather than read, because a single artefact is one run and a baseline that
+    claims a spread it does not have is worse than no baseline. The caller states which seeds the
+    figure rests on and that claim lands in the file where a reader can check it.
+    """
+    metrics = doc.get("metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        raise BaselineError(
+            "this artefact carries no `metrics` block, so there is no stamped figure to build a "
+            "baseline from. Artefacts written before 2026-09-12 predate the stamp; re-run the "
+            "measurement with a current build rather than hand-writing one.")
+    block = metrics.get(metric_key)
+    if not isinstance(block, dict):
+        raise BaselineError(
+            f"no metric {metric_key!r} in this artefact. It carries: "
+            f"{', '.join(sorted(metrics))}.")
+
+    interval = block.get("interval")
+    if not (isinstance(interval, (list, tuple)) and len(interval) == 2):
+        raise BaselineError(
+            f"{metric_key} has no interval, and this gate fires on intervals rather than on point "
+            f"estimates: a gate that fails on noise is switched off within a fortnight. Measure it "
+            f"with the interval its command reports, or record the baseline by hand and say in "
+            f"the filename what it rests on.")
+    n = block.get("n")
+    if not isinstance(n, int) or n <= 0:
+        raise BaselineError(f"{metric_key} records n={n!r}, which is not a sample size.")
+
+    pinned = _pinned_from(block, doc, metric_key)
+    higher = block.get("higher_is_better")
+    if higher is None:
+        raise BaselineError(
+            f"{metric_key} does not say which direction is better, so a gate reading it could not "
+            f"tell a regression from an improvement.")
+    return record(
+        direction=HIGHER_IS_BETTER if higher else LOWER_IS_BETTER,
+        point=block["value"], interval=tuple(interval), seeds=seeds, n=n,
+        extra={"from_metric_key": metric_key, "units": block.get("units")},
+        **pinned)
+
+
+def build_parser():
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="senbonzakura baseline",
+        description="Record a measurement as the baseline a later run is gated against.")
+    p.add_argument("--measurement", required=True,
+                   help="a result artefact carrying a stamped `metrics` block")
+    p.add_argument("--metric", required=True,
+                   help="which key inside that block to record, e.g. `coherence` or "
+                        "`refusal_rate.senbonzakura-ruler`")
+    p.add_argument("--seeds", required=True,
+                   help="the seeds this figure rests on, comma separated. Stated rather than "
+                        "inferred: one artefact is one run, and a baseline claiming a spread it "
+                        "does not have is worse than none")
+    p.add_argument("--out", required=True,
+                   help="where to write it. Never overwritten: a new baseline is a new file")
+    return p
+
+
+def main(argv=None):
+    a = build_parser().parse_args(argv)
+    try:
+        seeds = [int(s) for s in a.seeds.split(",") if s.strip()]
+    except ValueError:
+        print(f"--seeds must be integers, got {a.seeds!r}", file=sys.stderr)
+        return 2
+    if not seeds:
+        print("--seeds is empty, so nothing says what this figure rests on", file=sys.stderr)
+        return 2
+    try:
+        doc = json.loads(Path(a.measurement).read_text(encoding="utf-8"))
+        written = from_artefact(doc, a.metric, seeds=seeds)
+        write(a.out, written)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"cannot read {a.measurement}: {e}", file=sys.stderr)
+        return 2
+    except BaselineError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f} "
+          f"{written['interval']} on n={written['n']}, seeds {written['seeds']}")
+    print(f"  gate a later run with: senbonzakura gate --baseline {a.out} --measurement <new>")
+    return 0
+
+
+if __name__ == "__main__":
+    # The guard eight modules once lacked, so `python -m senbonzakura.<module>` executed nothing
+    # and exited 0 while the documentation said otherwise.
+    sys.exit(main())

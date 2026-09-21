@@ -66,6 +66,11 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # whole value is that it runs on every change has to be affordable on whatever a CI runner
     # has, so it reads two JSON files and does arithmetic.
     "gate": ("gate", "main"),
+    # THE THIRD, and it is what gives the second an input. `gate` was registered and documented
+    # while nothing in this repository could write a file it would accept, so the regression gate
+    # applied to no property this tool measures. Same weight class as the other two: it reads one
+    # JSON file and writes another.
+    "baseline": ("baseline", "main"),
 }
 
 

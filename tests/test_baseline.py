@@ -239,3 +239,134 @@ class TestTheBaselineArtefact:
         source = inspect.getsource(b)
         for heavy in ("import torch", "import optuna", "import transformers", "import datasets"):
             assert heavy not in source
+
+
+# ── the producer, and the loop it closes ─────────────────────────────────────────────────────
+
+STAMPED = {
+    "metric": "coherence", "measures": "whether the edit left the model able to predict English",
+    "estimator": "neutral-passage-nll", "estimator_description": "the mean per-token NLL",
+    "units": "nats-per-token", "higher_is_better": False, "n": 1, "value": 3.0,
+    "n_tokens": 268, "input_digest": "0123456789abcdef", "prompt_format": "raw",
+    "partition": "fixed-passage", "precision": "bfloat16", "tool_version": "0.4.0",
+    "interval": [2.9, 3.1],
+}
+
+
+def _artefact(**over):
+    block = {**STAMPED, **over}
+    return {"label": "arm", "model": "Qwen/Qwen3-1.7B", "metrics": {"coherence": block}}
+
+
+def test_a_stamped_artefact_becomes_a_baseline():
+    """THE GAP THE PANEL FOUND, closed. `record` had no call site outside this file, `gate` was
+    registered in the dispatch table and documented in the CLI reference, and nothing in the
+    repository could write a file it would accept. The docstring's claim that a change moving a
+    measured property outside its interval fails a build was therefore true of no property this
+    tool measures.
+
+    The two halves were built a fortnight apart and never met: every writer stamps its identity
+    INSIDE the metrics block and `comparability` reads the pinned fields from the TOP level.
+    """
+    made = b.from_artefact(_artefact(), "coherence", seeds=[42, 43, 44, 45, 46])
+    assert made["point"] == 3.0
+    assert made["direction"] == b.LOWER_IS_BETTER
+    assert made["seeds"] == [42, 43, 44, 45, 46]
+    for field in b.PINNED:
+        assert made.get(field), f"the baseline carries no {field}"
+
+
+def test_a_baseline_built_from_an_artefact_is_comparable_with_the_next_one():
+    """The property the whole thing exists for, asserted end to end rather than field by field:
+    two artefacts measured the same way produce baselines `comparability` accepts.
+    """
+    first = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    second = b.from_artefact(_artefact(value=3.05, interval=[2.95, 3.15]), "coherence", seeds=[42])
+    assert b.comparability(first, second) == []
+    ok, headline, _ = b.verdict(first, second["point"], tuple(second["interval"]))
+    assert ok and "within interval" in headline
+
+
+def test_a_ruler_change_between_the_two_is_caught_now_that_the_estimator_is_pinned():
+    """The defect that motivated pinning the estimator, reached through the producer."""
+    ours = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    theirs = b.from_artefact(_artefact(estimator="some-other-nll"), "coherence", seeds=[42])
+    fields = [f for f, *_ in b.comparability(ours, theirs)]
+    assert "estimator" in fields
+
+
+@pytest.mark.parametrize("missing", sorted(set(b.PINNED) - {"model", "metric"}))
+def test_an_artefact_missing_any_pinned_field_is_refused_by_name(missing):
+    """Parametrised over PINNED itself, so a field added to the gate is covered the day it is
+    added rather than the day somebody remembers this test.
+
+    Refused rather than defaulted: a baseline with a hole in it is what this module exists to
+    prevent, and the hole would be invisible at the point it mattered.
+    """
+    with pytest.raises(b.BaselineError, match=missing):
+        b.from_artefact(_artefact(**{missing: None}), "coherence", seeds=[42])
+
+
+def test_every_missing_field_is_named_at_once():
+    """A reader fixing one field per run is a reader who runs this six times, and each run costs
+    a re-measurement rather than a re-read.
+    """
+    stripped = _artefact(precision=None, prompt_format=None)
+    with pytest.raises(b.BaselineError) as caught:
+        b.from_artefact(stripped, "coherence", seeds=[42])
+    assert "precision" in str(caught.value) and "prompt_format" in str(caught.value)
+
+
+def test_a_figure_with_no_interval_cannot_become_a_baseline():
+    """The gate fires on intervals rather than point estimates, so a point estimate alone is not
+    a baseline: it would be a gate that fails on noise, which is a gate switched off.
+    """
+    with pytest.raises(b.BaselineError, match="no interval"):
+        b.from_artefact(_artefact(interval=None), "coherence", seeds=[42])
+
+
+def test_an_unstamped_artefact_says_so_rather_than_failing_obscurely():
+    doc = {"label": "old", "model": "m", "nll": 3.0}
+    with pytest.raises(b.BaselineError, match="no `metrics` block"):
+        b.from_artefact(doc, "coherence", seeds=[42])
+
+
+def test_asking_for_a_metric_the_artefact_does_not_carry_lists_what_it_does():
+    with pytest.raises(b.BaselineError, match="refusal_rate"):
+        b.from_artefact(_artefact(), "refusal_rate", seeds=[42])
+
+
+def test_the_command_is_registered_so_the_gate_has_a_producer():
+    """The wiring test. A correct function nobody can invoke is the shape this project has
+    shipped three times, and it is exactly what the panel found here.
+    """
+    from senbonzakura import entry
+
+    assert "baseline" in entry.DELEGATED
+    assert entry.DELEGATED["baseline"] == ("baseline", "main")
+
+
+def test_the_command_writes_a_file_the_gate_accepts(tmp_path, capsys):
+    """END TO END, through both argv surfaces, because that is the join that was missing."""
+    from senbonzakura import gate
+
+    art = tmp_path / "coh.json"
+    art.write_text(json.dumps(_artefact()), encoding="utf-8")
+    out = tmp_path / "base.json"
+    assert b.main(["--measurement", str(art), "--metric", "coherence",
+                   "--seeds", "42,43", "--out", str(out)]) == 0
+    assert out.is_file()
+
+    later = tmp_path / "later.json"
+    later.write_text(json.dumps(_artefact(value=3.05, interval=[2.95, 3.15])), encoding="utf-8")
+    now = tmp_path / "now.json"
+    b.main(["--measurement", str(later), "--metric", "coherence",
+            "--seeds", "42,43", "--out", str(now)])
+    assert gate.run(["--baseline", str(out), "--measurement", str(now)]) == gate.OK
+
+    worse = tmp_path / "worse.json"
+    worse.write_text(json.dumps(_artefact(value=4.0, interval=[3.9, 4.1])), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    b.main(["--measurement", str(worse), "--metric", "coherence",
+            "--seeds", "42,43", "--out", str(bad)])
+    assert gate.run(["--baseline", str(out), "--measurement", str(bad)]) == gate.REGRESSED

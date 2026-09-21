@@ -1,0 +1,12 @@
+# `blank_issues_enabled` stays TRUE deliberately. A template set that cannot be escaped turns
+# the report nobody anticipated into the report nobody files, and the reports this project most
+# needs are the ones it did not think to ask for.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Reporting a security issue
+    url: https://github.com/elementmerc/senbonzakura/blob/main/CONTRIBUTING.md#reporting-a-security-issue
+    about: Do NOT open a public issue. CONTRIBUTING.md has the address to email.
+  - name: Questions and support
+    url: https://github.com/elementmerc/senbonzakura/discussions
+    about: Ask how to use the tool, or what a number means. Issues are for defects.

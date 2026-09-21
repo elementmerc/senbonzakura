@@ -357,3 +357,32 @@ def test_no_pinned_field_is_missing_from_the_stamp(monkeypatch, tmp_path):
     missing = [f for f in baseline.PINNED
                if block.get(f) is None and doc.get(f) is None]
     assert not missing, f"the coherence stamp records no {', '.join(missing)}"
+
+
+def test_nothing_can_vary_the_passage_which_is_what_lets_the_adapter_name_the_estimator():
+    """The assumption the checker's older-shape reader rests on, pinned where it can be seen.
+
+    A coherence artefact written before the stamp existed carries `nll` and nothing about how it
+    was produced. `_older_shapes` in the senbonzakura adapter names its estimator
+    `neutral-passage-nll` anyway, and that is sound only because this command cannot produce any
+    other kind of coherence figure: there is no flag for the passage and `main` calls
+    `coherence(model, tok)` with no text argument.
+
+    Adding a `--passage` flag would make that inference wrong for every file written afterwards
+    while leaving it right for every file written before, and nothing in the adapter could tell
+    the two apart. So the flag's absence is asserted here, next to the command, rather than left
+    as a sentence in a comment on the other side of a package boundary.
+    """
+    import inspect
+
+    flags = {a.dest for a in coherence.build_parser()._actions}
+    for forbidden in ("passage", "text", "prompt", "corpus"):
+        assert forbidden not in flags, (
+            f"`--{forbidden}` would let this command score something other than the neutral "
+            f"passage, and the checker's adapter names the estimator on the assumption that it "
+            f"cannot. Change `_older_shapes` in senbonzakura_check before adding it.")
+
+    src = inspect.getsource(coherence.main)
+    assert "coherence(model, tok)" in src, (
+        "main() no longer calls coherence() with the default passage, so an artefact it writes "
+        "may not be a neutral-passage NLL and the adapter's estimator is a guess")

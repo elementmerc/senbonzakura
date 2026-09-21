@@ -396,6 +396,15 @@ def _older_shapes(doc) -> dict:
     # an omission. The file does not record which passage was read, so this adapter cannot say, and
     # inventing the constant's digest would assert that the default passage was used on evidence
     # that does not exist. The number becomes checkable; it stays uncomparable, which is true.
+    #
+    # THE ESTIMATOR IS NAMED, THOUGH, AND THE ASYMMETRY IS DELIBERATE. That looks inconsistent
+    # beside the paragraph above, so here is the difference: `senbonzakura coherence` has no flag
+    # that can vary the passage and its `main` calls `coherence(model, tok)` with no text
+    # argument, so every artefact it has ever written is a neutral-passage NLL. Naming the
+    # estimator decodes the format; naming the digest would guess at the content. The moment the
+    # command CAN score another passage that stops being true for new files, so
+    # `test_coherence.py` pins the absence of such a flag to this inference rather than leaving
+    # the two to drift.
     if isinstance(doc.get("nll"), (int, float)):
         out["coherence"] = {
             "metric": "coherence", "value": doc["nll"],

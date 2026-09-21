@@ -61,12 +61,28 @@ def test_the_detectable_gap_scales_with_the_spread():
     assert power.detectable_gap(2.0, 5) == pytest.approx(2 * power.detectable_gap(1.0, 5))
 
 
-def test_a_zero_spread_resolves_any_gap():
-    """The degenerate case, and it is real: three byte-identical re-sampled Optuna points were
-    recovered on 2026-09-21, giving a measured within-arm noise floor of exactly zero.
+def test_a_zero_spread_is_refused_rather_than_read_as_infinite_precision():
+    """REVERSED 2026-09-21, and the reversal is the point.
+
+    This test used to assert the opposite, that a zero spread resolves any gap, on the grounds
+    that a measured noise floor of exactly zero is real: three byte-identical re-sampled Optuna
+    points were recovered that morning. Two panel reviewers reached the same objection
+    independently, and they are right.
+
+    Three identical draws do not establish that the spread is zero. They establish that it is
+    below what three draws can resolve, which is a different claim and a much weaker one.
+    `sd_interval(0, n)` returns `(0, 0)`, an interval asserting perfect knowledge from a sample
+    that cannot supply it, and `report` would print that a gap of nothing is resolvable.
+
+    What made it worth reversing rather than documenting is where the value flows:
+    `panel.judge_verdict` hands `sd` straight to `can_resolve`, so a judge whose scorer returned
+    a constant comes back `resolvable: True` and gets a vote, in the module written precisely so
+    that an underpowered judge cannot break a tie.
     """
-    assert power.detectable_gap(0.0, 5) == 0.0
-    assert power.can_resolve(0.001, 0.0, 5)["resolvable"] is True
+    with pytest.raises(power.PowerError, match="did not vary"):
+        power.detectable_gap(0.0, 5)
+    with pytest.raises(power.PowerError, match="did not vary"):
+        power.can_resolve(0.001, 0.0, 5)
 
 
 # ── the refusals, which are the reason this is a module and not a formula ────────

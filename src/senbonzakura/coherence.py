@@ -66,7 +66,28 @@ def passage_digest(text=NEUTRAL) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def _stamp_coherence(res):
+def model_precision(model, load_in_4bit):
+    """What numerical precision this reading was taken at, as a short string.
+
+    A PINNED FIELD SINCE 2026-09-21, added because a panel reviewer pointed out that the loader
+    offers bfloat16 by default and nf4 double-quantised under `--load-in-4bit`, and that nothing
+    recorded which one produced a number. A baseline taken on a rented card in bf16 and a
+    candidate taken in 4-bit because that is the only way it fits on a 6 GB card are not the same
+    measurement: the nf4 round-trip alone moves per-token likelihood by an amount comparable to
+    what an ablation costs, and a gate that cannot see the difference attributes all of it to the
+    edit.
+
+    `getattr` rather than attribute access because a fake or a wrapped model may not carry a
+    dtype, and an absent dtype should read as unknown rather than crash a measurement that has
+    already been paid for.
+    """
+    if load_in_4bit:
+        return "nf4"
+    dtype = getattr(model, "dtype", None)
+    return str(dtype).removeprefix("torch.") if dtype is not None else "unknown"
+
+
+def _stamp_coherence(res, precision="unknown"):
     """Add the canonical metrics block beside the fields this command has always written.
 
     ADDITIVE, exactly as in `score` and `margin`: `nll`, `ppl`, `n_tokens`, `label` and `model`
@@ -124,6 +145,9 @@ def _stamp_coherence(res):
         # corpus, and the answer is to say that rather than to make the field optional: an
         # optional partition is one that can be forgotten on a figure that really does have one.
         partition=baseline.FIXED_PASSAGE,
+        # Which precision the number was computed at. See `model_precision`: a 4-bit reading and
+        # a bfloat16 one of the same model are different measurements, and the gate pins this.
+        precision=precision,
         tool_version=__version__)
 
 
@@ -162,7 +186,7 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, needs_chat_template=False)
     res = {"label": a.label, "model": a.model, **coherence(model, tok)}
-    _stamp_coherence(res)
+    _stamp_coherence(res, model_precision(model, a.load_in_4bit))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"COHERENCE_DONE {a.label} ppl={res['ppl']:.2f} nll={res['nll']:.4f} n_tokens={res['n_tokens']}")

@@ -142,6 +142,22 @@ def detectable_gap(sd, n_per_arm, *, normal=False):
             f"recommendation.")
     if sd < 0:
         raise PowerError(f"a standard deviation cannot be negative, got {sd}.")
+    if sd == 0:
+        # REFUSED RATHER THAN TREATED AS PERFECT PRECISION. A zero spread makes every gap
+        # resolvable, including a gap of zero, and `report` would print "a gap of 0 is resolvable
+        # at 5 seeds per arm". In this project's own experience a standard deviation of exactly
+        # zero across seeds is the signature of a scorer that returned a constant, not of an
+        # instrument with no noise: three byte-identical re-sampled Optuna points were recovered
+        # on 2026-09-21 and that was a property of the resampling, not of the measurement.
+        #
+        # It matters here more than it looks, because `panel.judge_verdict` passes `sd` straight
+        # in: a degenerate judge would come back `resolvable: True` and get a vote, in the module
+        # written so that an underpowered judge cannot break a tie.
+        raise PowerError(
+            "a standard deviation of exactly zero is not infinite precision, it is a measurement "
+            "that did not vary. Every gap, including a gap of nothing, would be reportable as "
+            "resolvable. Check whether the scorer returned a constant before treating this as a "
+            "result.")
     spread = math.sqrt(2.0 / n_per_arm)
     if normal:
         return NORMAL_CONSTANT * sd * spread

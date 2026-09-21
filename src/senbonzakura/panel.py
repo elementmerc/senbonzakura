@@ -47,6 +47,20 @@ A, B, TIE, NO_WINNER = "a", "b", "tie", "no-winner"
 #: requirement and a suggestion.
 MIN_JUDGES = 3
 
+#: How many judges must actually REACH a verdict before the panel reports a winner.
+#:
+#: THE HOLE THIS CLOSES, found by two reviewers independently on 2026-09-21. A judge that returns
+#: TIE drops out of the `decided` set, including a judge forced to TIE because the gap was below
+#: what it could resolve. So one decisive judge and two ties satisfied "nobody disagreed" and the
+#: panel reported that judge's verdict with `agreed: True`, over a report line that read "all 3
+#: judges that reached a verdict agree".
+#:
+#: That is the single-ruler headline `MIN_JUDGES` exists to prevent, arrived at through the back
+#: door: unanimity among one is not unanimity. Two is the floor rather than a majority of the
+#: roster, because the claim being made is "more than one instrument saw this", which is the
+#: weakest claim that is worth more than one judge's word.
+MIN_DECIDING = 2
+
 
 class PanelError(ValueError):
     """The panel cannot return a verdict, as opposed to returning an inconclusive one."""
@@ -101,29 +115,43 @@ def panel_verdict(judges):
             f"are different instruments, and a duplicate is either a mistake or the same ruler "
             f"counted twice.")
 
-    decided = {j["verdict"] for j in judges if j["verdict"] in (A, B)}
+    deciders = [j for j in judges if j["verdict"] in (A, B)]
+    decided = {j["verdict"] for j in deciders}
     ties = [j["judge"] for j in judges if j["verdict"] == TIE]
 
     if len(decided) > 1:
-        verdict = NO_WINNER
+        verdict, why = NO_WINNER, "disagree"
     elif not decided:
-        verdict = TIE
+        verdict, why = TIE, None
+    elif len(deciders) < MIN_DECIDING:
+        # NOT a win. One judge saw a difference and the rest could not, which is a weaker claim
+        # than one judge alone would make, because the others looked and failed to find it.
+        verdict, why = NO_WINNER, "under-supported"
     else:
-        verdict = decided.pop()
+        verdict, why = decided.pop(), None
 
-    gaps = [j["gap"] for j in judges]
+    # THE SPREAD IS OVER THE JUDGES THAT DECIDED, not over all of them. A tie-voter's gap is the
+    # number this module has just ruled to be noise, and folding it into "the size of the win"
+    # reports a range whose lower end the panel itself does not believe. With no deciders there
+    # is no win to size, and the fields are None rather than a range over noise.
+    gaps = [j["gap"] for j in deciders]
     unknown = [j["judge"] for j in judges if j.get("resolvable") is None]
     return {
         "verdict": verdict,
         "judges": list(judges),
         "n_judges": len(judges),
+        # How many reached a verdict, as opposed to how many were asked. `report` said "all
+        # {n_judges} judges that reached a verdict agree" using the roster size, which is a false
+        # sentence on any panel where somebody tied.
+        "n_decided": len(deciders),
         "agreed": verdict in (A, B),
+        "no_winner_because": why,
         "tie_votes": ties,
         # The between-judge spread, reported rather than averaged away. A panel that agrees on a
         # winner and disagrees wildly on the size of the win has still found something.
-        "gap_min": min(gaps),
-        "gap_max": max(gaps),
-        "gap_spread": max(gaps) - min(gaps),
+        "gap_min": min(gaps) if gaps else None,
+        "gap_max": max(gaps) if gaps else None,
+        "gap_spread": (max(gaps) - min(gaps)) if gaps else None,
         # Judges whose own resolving power is unknown. Not counted as agreement: see `report`.
         "resolving_power_unknown": unknown,
     }
@@ -133,7 +161,17 @@ def report(p):
     """The panel's answer as lines a person reads, including what it did not establish."""
     lines = []
     v = p["verdict"]
-    if v == NO_WINNER:
+    if v == NO_WINNER and p.get("no_winner_because") == "under-supported":
+        decider = next(j["judge"] for j in p["judges"] if j["verdict"] in (A, B))
+        lines.append(
+            f"NO WINNER: only {p['n_decided']} of {p['n_judges']} judges reached a verdict "
+            f"({decider}), and {MIN_DECIDING} are required. The others did not disagree; they "
+            f"could not see a difference at all.")
+        lines.append(
+            "  One instrument finding a gap that the others looked for and did not find is "
+            "weaker evidence than that instrument on its own, not stronger. Reporting it as a "
+            "win is the single-ruler headline this panel exists to prevent.")
+    elif v == NO_WINNER:
         split = {}
         for j in p["judges"]:
             split.setdefault(j["verdict"], []).append(j["judge"])
@@ -151,11 +189,14 @@ def report(p):
             f"{', '.join(sorted(p['tie_votes']))}.")
     else:
         lines.append(
-            f"{v.upper()} wins, and all {p['n_judges']} judges that reached a verdict agree.")
+            f"{v.upper()} wins: {p['n_decided']} of {p['n_judges']} judges reached a verdict and "
+            f"they agree."
+            + (f" {len(p['tie_votes'])} could not resolve a difference: "
+               f"{', '.join(sorted(p['tie_votes']))}." if p["tie_votes"] else ""))
         lines.append(
-            f"  The size of the win is NOT agreed: the gap runs {p['gap_min']:.4g} to "
-            f"{p['gap_max']:.4g} across judges, a spread of {p['gap_spread']:.4g}. Quote the "
-            f"range rather than one judge's figure.")
+            f"  The size of the win is NOT agreed: across the judges that decided, the gap runs "
+            f"{p['gap_min']:.4g} to {p['gap_max']:.4g}, a spread of {p['gap_spread']:.4g}. Quote "
+            f"the range rather than one judge's figure, and only where those judges share units.")
     if p["resolving_power_unknown"]:
         lines.append(
             f"  NOT CHECKED: {', '.join(sorted(p['resolving_power_unknown']))} reported no "

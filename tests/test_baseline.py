@@ -24,6 +24,8 @@ BASE = {
     "partition": "measure",
     "prompt_format": "renderer:v3",
     "tool_version": "0.4.0",
+    "estimator": "senbonzakura-ruler",
+    "precision": "bfloat16",
     "seeds": [42, 43, 44],
     "n": 200,
 }

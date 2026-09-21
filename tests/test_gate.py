@@ -11,6 +11,8 @@ each of the three is pinned separately, and the distinctness of 1 from 2 is pinn
 because collapsing "it regressed" into "I could not compare these" is the failure that teaches a
 reader to ignore both.
 """
+import json
+
 import pytest
 
 from senbonzakura import baseline as b
@@ -24,6 +26,8 @@ COMMON = {
     "partition": "measure",
     "prompt_format": "renderer:v3",
     "tool_version": "0.4.0",
+    "estimator": "senbonzakura-ruler",
+    "precision": "bfloat16",
     "seeds": [42],
     "n": 200,
 }
@@ -160,3 +164,65 @@ class TestItIsActuallyReachable:
         source = inspect.getsource(gate)
         for heavy in ("import torch", "import optuna", "import transformers", "import datasets"):
             assert heavy not in source
+
+
+# ── the two holes a panel reviewer drove a bus through, 2026-09-21 ───────────────────────────
+
+def _pair(tmp_path, base, now):
+    """A baseline and a measurement on disk, each overriding COMMON."""
+    paths = {}
+    for name, over in (("base", base), ("now", now)):
+        path = tmp_path / f"{name}.json"
+        b.write(path, b.record(**{**COMMON, **over}))
+        paths[name] = path
+    return paths
+
+
+def test_a_blunter_measurement_is_refused_rather_than_passed(tmp_path, capsys):
+    """THE FINDING, reproduced as it was reported.
+
+    The gate fires on intervals rather than point estimates, which is what keeps it switched on.
+    But an interval's WIDTH is under the measurer's control and nothing constrained it, so a
+    refusal rate that moved from 9.4% to 55% passed, because `n` had dropped from 200 to 4 and
+    the wide interval overlapped the narrow one. The artefact's own sentence was "there is no
+    evidence the property moved", which is true and reads as reassurance.
+
+    REFUSED, not FAILED: "it regressed" and "this run could not have seen it regress" are
+    different findings, and exit 2 exists to keep them apart.
+    """
+    made = _pair(tmp_path,
+                 {"point": 0.094, "interval": (0.06, 0.13), "n": 200},
+                 {"point": 0.55, "interval": (0.05, 0.95), "n": 4})
+    rc = gate.run(["--baseline", str(made["base"]), "--measurement", str(made["now"])])
+    assert rc == gate.REFUSED, "a measurement too blunt to see the move was accepted"
+    out = capsys.readouterr().out
+    assert "wider" in out and "could not have seen it move" in out, out
+
+
+def test_a_measurement_at_the_baselines_precision_still_compares(tmp_path):
+    """The other half. A rule that refuses ordinary seed-to-seed variation gets switched off
+    within a fortnight, which is the failure this whole module is shaped around.
+    """
+    made = _pair(tmp_path,
+                 {"point": 0.094, "interval": (0.06, 0.13), "n": 200},
+                 {"point": 0.098, "interval": (0.06, 0.14), "n": 200})
+    assert gate.run(["--baseline", str(made["base"]),
+                     "--measurement", str(made["now"])]) == gate.OK
+
+
+def test_a_malformed_measurement_is_refused_rather_than_called_a_regression(tmp_path, capsys):
+    """`baseline.read` validates the schema string and nothing else, so a file with the right
+    schema and no `point` raised KeyError out of `run` and exited 1, which is this command's
+    code for REGRESSED. A CI gate reading exit 1 reports a regression that was never measured.
+    """
+    made = _pair(tmp_path,
+                 {"point": 0.10, "interval": (0.05, 0.18)},
+                 {"point": 0.11, "interval": (0.06, 0.19)})
+    doc = json.loads(made["now"].read_text(encoding="utf-8"))
+    del doc["point"]
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps(doc), encoding="utf-8")
+
+    rc = gate.run(["--baseline", str(made["base"]), "--measurement", str(broken)])
+    assert rc == gate.REFUSED, "a measurement with no point estimate was called a regression"
+    assert "not a measurement this gate can read" in capsys.readouterr().out

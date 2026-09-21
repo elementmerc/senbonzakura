@@ -179,3 +179,86 @@ def test_the_report_says_which_judges_resolving_power_was_never_checked():
 def test_the_gate_floor_is_three():
     """Pinned so that lowering it becomes a visible decision rather than an edit."""
     assert panel.MIN_JUDGES == 3
+
+
+# ── the minority verdict, found by two panel reviewers independently ─────────────────────────
+
+def _reading(name, verdict, gap, resolvable=True):
+    """A judge reading, built directly rather than through judge_verdict.
+
+    Built by hand on purpose: the defect is in how `panel_verdict` COMBINES readings, and
+    routing through `judge_verdict` would make the test depend on the power arithmetic as well.
+    """
+    return {"judge": name, "score_a": 0.0, "score_b": 0.0, "gap": gap,
+            "higher_is_better": True, "verdict": verdict, "resolvable": resolvable}
+
+
+def test_one_decisive_judge_and_two_ties_is_not_a_win():
+    """THE DEFECT TWO REVIEWERS REACHED SEPARATELY ON 2026-09-21.
+
+    Judges that tie drop out of the `decided` set, so one decisive judge satisfied "nobody
+    disagreed" and the panel reported that judge's verdict with `agreed: True`. Unanimity among
+    one is not unanimity, and the other two did not abstain: they looked and could not find a
+    difference, which makes the claim weaker than that judge alone, not stronger.
+    """
+    p = panel.panel_verdict([
+        _reading("keyword", panel.B, 0.20),
+        _reading("compass", panel.TIE, 0.01, resolvable=False),
+        _reading("llm", panel.TIE, 0.01, resolvable=False),
+    ])
+    assert p["verdict"] == panel.NO_WINNER
+    assert p["agreed"] is False
+    assert p["no_winner_because"] == "under-supported"
+    assert p["n_decided"] == 1
+
+
+def test_the_report_never_claims_more_judges_agreed_than_reached_a_verdict():
+    """The sentence a reader actually sees. It said "all 3 judges that reached a verdict agree"
+    using the ROSTER size, which is false on any panel where somebody tied.
+    """
+    p = panel.panel_verdict([
+        _reading("keyword", panel.B, 0.20),
+        _reading("compass", panel.B, 0.15),
+        _reading("llm", panel.TIE, 0.01, resolvable=False),
+    ])
+    assert p["verdict"] == panel.B and p["n_decided"] == 2
+    text = "\n".join(panel.report(p))
+    assert "2 of 3 judges" in text, text
+    assert "all 3" not in text, text
+    assert "llm" in text, "the judge that could not resolve it is not named"
+
+
+def test_the_size_of_the_win_is_measured_over_the_judges_that_decided():
+    """A tie-voter's gap is the number this module just ruled to be noise. Including it in the
+    range reports a lower bound the panel itself does not believe.
+    """
+    p = panel.panel_verdict([
+        _reading("keyword", panel.B, 0.20),
+        _reading("compass", panel.B, 0.15),
+        _reading("llm", panel.TIE, 0.001, resolvable=False),
+    ])
+    assert p["gap_min"] == 0.15 and p["gap_max"] == 0.20
+    assert p["gap_spread"] == pytest.approx(0.05)
+    assert "0.001" not in "\n".join(panel.report(p))
+
+
+def test_an_all_tie_panel_sizes_no_win_at_all():
+    """With nobody deciding there is no win to size, so the fields are absent rather than a
+    range computed over noise.
+    """
+    p = panel.panel_verdict([_reading(n, panel.TIE, 0.01, resolvable=False)
+                             for n in ("keyword", "compass", "llm")])
+    assert p["verdict"] == panel.TIE
+    assert p["gap_min"] is None and p["gap_max"] is None and p["gap_spread"] is None
+
+
+def test_genuine_disagreement_still_reads_as_disagreement_not_as_thin_support():
+    """The two NO WINNER reasons are different findings and must not print the same sentence."""
+    p = panel.panel_verdict([
+        _reading("keyword", panel.A, 0.20),
+        _reading("compass", panel.B, 0.15),
+        _reading("llm", panel.A, 0.10),
+    ])
+    assert p["verdict"] == panel.NO_WINNER
+    assert p["no_winner_because"] == "disagree"
+    assert "disagree" in "\n".join(panel.report(p))

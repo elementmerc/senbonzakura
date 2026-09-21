@@ -216,6 +216,7 @@ def test_a_coherence_stamp_and_a_baseline_agree_on_every_pinned_field_they_share
         point=block["value"], interval=(block["value"] - 0.1, block["value"] + 0.1),
         input_digest=block["input_digest"], partition=block["partition"],
         prompt_format=block["prompt_format"], tool_version=block["tool_version"],
+        estimator=block["estimator"], precision=block["precision"],
         seeds=[0], n=1)
     shared = {f for f in baseline.PINNED if f in block}
     assert shared >= {"input_digest", "prompt_format", "tool_version", "metric", "partition"}

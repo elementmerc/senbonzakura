@@ -67,6 +67,11 @@ def run(argv=None, log=print):
 
     try:
         baseline.refuse_if_incomparable(recorded, current)
+        # AND SEPARATELY, whether this run was precise enough for an overlap to mean anything.
+        # Comparability asks "were these measured under the same conditions"; this asks "could
+        # this measurement have seen the thing move at all". A run that could not is refused
+        # rather than passed, because a pass here is the reassurance a reader takes away.
+        baseline.refuse_if_too_blunt(recorded, tuple(current["interval"]))
     except baseline.BaselineError as e:
         # NOT `--quiet`-able. The one thing a reader must never have to go looking for is the
         # reason a gate declined to answer, because the alternative reading of a silent refusal
@@ -74,8 +79,19 @@ def run(argv=None, log=print):
         log(f"gate REFUSED: {e}")
         return REFUSED
 
-    ok, headline, detail = baseline.verdict(
-        recorded, current["point"], tuple(current["interval"]))
+    # A MALFORMED MEASUREMENT IS A REFUSAL, NOT A REGRESSION. `baseline.read` validates the
+    # schema string and nothing else, so a file with the right schema and no `point` used to raise
+    # KeyError out of here and exit 1, which is this command's code for "it regressed". A CI gate
+    # reading exit 1 would report a regression that was never measured, and the docstring above
+    # argues that conflating those two teaches its reader to ignore the difference. `verdict`
+    # itself can also raise on an inverted interval, which was outside both try blocks.
+    try:
+        ok, headline, detail = baseline.verdict(
+            recorded, current["point"], tuple(current["interval"]))
+    except (KeyError, TypeError, ValueError, IndexError) as e:
+        log(f"gate REFUSED: {a.measurement} is not a measurement this gate can read: "
+            f"{type(e).__name__}: {e}")
+        return REFUSED
     log(f"gate {'OK' if ok else 'FAIL'}: {headline}")
     if not a.quiet or not ok:
         log(f"  {detail}")

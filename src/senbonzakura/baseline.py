@@ -72,6 +72,26 @@ PINNED = {
     "prompt_format": "how the prompt was rendered. Three copies of the renderer drifted once and "
                      "a table was published across the gap",
     "tool_version": "the code that produced it, because the edit and the scorer both live here",
+    # ADDED 2026-09-21, by two panel reviewers who reached the same hole from opposite sides.
+    #
+    # THE ESTIMATOR. `measurement.py` opens by arguing that a metric is not its name, it is its
+    # name plus the procedure that produced it, and that two procedures under one name is what
+    # withdrew four claims on 2026-08-05. This module was written beside it and pinned the name
+    # alone. `refusal_rate` has two declared estimators, one ours and one Heretic's; `kl` has two,
+    # one of which the registry says is NOT a KL divergence. Without this field a baseline taken
+    # with one ruler and a run taken with the other compare clean and the gate reports a
+    # regression that is entirely a change of instrument. `tool_version` is not a substitute:
+    # both estimators ship in the same build.
+    "estimator": "the procedure that produced the number, not just what it is called. Two "
+                 "estimators of one metric are two different numbers",
+    # THE PRECISION. The loader is bfloat16 by default and nf4 double-quantised under
+    # `--load-in-4bit`, and `device_map='auto'` will split a model across VRAM, host RAM and disk
+    # on a small card. A baseline taken on a rented card in bf16 and a candidate taken in 4-bit
+    # because that is the only way it fits are not the same measurement, and the nf4 round-trip
+    # alone moves per-token likelihood by an amount comparable to what an ablation costs. The
+    # abliteration record already captures the device; the gate simply never consulted it.
+    "precision": "the numerical precision the measurement was computed at, because a 4-bit "
+                 "reading and a bfloat16 one of the same model are different measurements",
 }
 
 #: A metric where a LARGER number is better (capability accuracy), against one where a SMALLER
@@ -88,7 +108,7 @@ class BaselineError(Exception):
 
 
 def record(*, model, metric, direction, point, interval, input_digest, partition,
-           prompt_format, tool_version, seeds, n, extra=None):
+           prompt_format, tool_version, estimator, precision, seeds, n, extra=None):
     """Build a baseline artefact. Every field is required except `extra`, deliberately.
 
     A baseline with a hole in it is the thing this module exists to refuse, so there is no way to
@@ -122,6 +142,8 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
         "partition": str(partition),
         "prompt_format": str(prompt_format),
         "tool_version": str(tool_version),
+        "estimator": str(estimator),
+        "precision": str(precision),
         # Sorted at the boundary so two runs that chose the same seeds in a different order
         # produce byte-identical baselines.
         "seeds": sorted(int(s) for s in seeds),
@@ -188,6 +210,46 @@ def comparability(baseline, now):
         elif str(was) != str(current):
             out.append((field, was, current, why))
     return out
+
+
+#: How much wider this run's interval may be than the baseline's before the comparison is refused.
+#:
+#: THE HOLE THIS CLOSES. The gate fires on intervals rather than point estimates, which is what
+#: keeps it switched on: a gate that fails on noise is disabled within a fortnight. But the width
+#: of an interval is under the measurer's control and nothing constrained it, so measuring badly
+#: always passed. A baseline of 0.094 [0.06, 0.13] on n=200 against a run of 0.55 [0.05, 0.95] on
+#: n=4 overlapped, and the gate printed "there is no evidence the property moved" over a refusal
+#: rate that had gone from 9.4% to 55%. That sentence is true and reads as reassurance.
+#:
+#: A REFUSAL RATHER THAN A FAILURE, which is the whole reason it lives here and not in `verdict`.
+#: "The property regressed" and "this run could not have seen it regress" are different findings,
+#: and the module argues at length that conflating them teaches a reader to ignore the difference.
+#: Exit 2, not exit 1.
+#:
+#: Two is a convention and is named as one. It is loose on purpose: an interval twice as wide is
+#: unmistakably a blunter instrument, while a rule tight enough to catch a 20% widening would fire
+#: on ordinary seed-to-seed variation and be switched off, which is the failure this whole module
+#: is shaped around.
+MAX_WIDTH_RATIO = 2.0
+
+
+def refuse_if_too_blunt(baseline, now_interval):
+    """Stop a comparison whose current measurement is too imprecise to have seen anything.
+
+    Raises BaselineError, which the gate reports as REFUSED rather than as a regression.
+    """
+    lo, hi = float(now_interval[0]), float(now_interval[1])
+    base_lo, base_hi = float(baseline["interval"][0]), float(baseline["interval"][1])
+    base_width, width = base_hi - base_lo, hi - lo
+    if base_width <= 0 or width <= base_width * MAX_WIDTH_RATIO:
+        return
+    raise BaselineError(
+        f"this run's interval [{lo:.4f}, {hi:.4f}] is {width / base_width:.1f} times wider than "
+        f"the baseline's [{base_lo:.4f}, {base_hi:.4f}], so an overlap between them is not "
+        f"evidence that the property held: it is evidence that this run could not have seen it "
+        f"move. Measure at the precision the baseline was measured at, or record a new baseline "
+        f"at this precision and say in its filename what changed.\n"
+        f"  The baseline was taken on n={baseline.get('n')} with seeds {baseline.get('seeds')}.")
 
 
 def refuse_if_incomparable(baseline, now):

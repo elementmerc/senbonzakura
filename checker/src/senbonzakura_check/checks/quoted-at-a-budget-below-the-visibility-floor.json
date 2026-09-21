@@ -6,10 +6,20 @@
   "remedy": "Re-score at or above the visibility floor and compare the two rates. If the rate moves, the original number was about the budget. If it does not, you have a measurement and a reason to believe it. Until then do not quote the figure comparatively: a short budget flatters whichever model answers at greater length, so it tilts a comparison rather than adding noise to it.",
   "confidence": "high",
   "severity": "withdraws",
-  "false_positive": "A length sweep sets short budgets on purpose and every point of it will fire this check. That is correct rather than wrong: the finding is that the number cannot be read as a refusal rate, which is exactly true of a sweep point, and a sweep is quoted as a curve. A run that measures something other than refusal, harm recognition for instance, is not damaged by a short budget and this check cannot tell that apart from a refusal run, so it will fire on one and be wrong to. The floor of 96 is this project's, measured against this project's markers, and a harness whose refusal markers appear earlier would have a lower one. Finally, the check reads fields only our own abliteration record writes, so an artefact from another harness with the identical problem does not fire it, which is a coverage gap and not a clean bill of health.",
+  "false_positive": "A length sweep sets short budgets on purpose and every point of it will fire this check. That is correct rather than wrong: the finding is that the number cannot be read as a refusal rate, which is exactly true of a sweep point, and a sweep is quoted as a curve. A run that measures something other than refusal, harm recognition for instance, is not damaged by a short budget and this check cannot tell that apart from a refusal run, so it will fire on one and be wrong to. The floor of 96 is this project's, measured against this project's markers, and a harness whose refusal markers appear earlier would have a lower one. Finally, the check reads fields only our own abliteration record writes, so an artefact from another harness with the identical problem does not fire it, which is a coverage gap and not a clean bill of health. An artefact that records no budget at all is SKIPPED rather than passed, because the adapter writes the normalised field whether or not the producer recorded anything under it, and a check that counted those as examined would report every budget-less artefact in this project as clean on a question it never asked.",
   "applies_to": {
-    "op": "present",
-    "path": "generation_budget"
+    "op": "all_of",
+    "rules": [
+      {
+        "op": "present",
+        "path": "generation_budget"
+      },
+      {
+        "op": "not_equals",
+        "path": "generation_budget",
+        "value": null
+      }
+    ]
   },
   "rule": {
     "op": "less_than",

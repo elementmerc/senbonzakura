@@ -564,14 +564,14 @@ def test_the_length_only_control_travels_with_the_headline_auc():
 
 #: The record a bake writes, in its real shape, built in Python rather than as a fixture file.
 #:
-#: NOT A FIXTURE ON PURPOSE. This repository's pre-commit leak gate refuses any committed JSON
-#: carrying a key named `generation` at any depth, because that name is what a retained model
-#: output is called, and `build_abliteration_record` nests the budget under exactly that name. So
-#: the real shape cannot be committed as a `.json` at all, and the seeded incident corpus carries
-#: a renamed version that says so in its own provenance. This is where the real nesting is
-#: exercised. The collision between the leak gate and this project's own primary artefact is
-#: worth an operator's attention rather than working around quietly: the same gate would refuse a
-#: committed `abliteration.json`.
+#: NOT A FIXTURE ON PURPOSE, and the reason is now history rather than a live collision. This
+#: repository's pre-commit leak gate refuses any committed JSON carrying a key named `generation`
+#: at any depth, because that name is what a retained model output is called, and
+#: `build_abliteration_record` nested the budget under exactly that name until 2026-09-21. The
+#: gate was therefore refusing this project's own primary artefact. The gate was not weakened;
+#: the field moved to `generation_settings`, which is what the default below writes. The old
+#: spelling is still exercised, in `test_the_budget_is_read_from_the_pre_rename_spelling_too`,
+#: because every record already on disk carries it and reading those is what an adapter is for.
 def _abliteration_record(**over):
     doc = {
         "model": "Qwen/Qwen3-1.7B",
@@ -586,7 +586,8 @@ def _abliteration_record(**over):
         "post_bake_broken": 0.0,
         "post_bake_kl": 0.041,
         "refusal_eval": "track selection partition, rows 0-131",
-        "generation": {"greedy": True, "max_new_tokens": 48, "budget_warning": None},
+        "generation_settings": {"greedy": True, "max_new_tokens": 48,
+                                "budget_warning": None},
         "seed": 42,
     }
     doc.update(over)
@@ -667,10 +668,66 @@ def test_the_generation_budget_and_its_warning_are_both_lifted_out_of_the_nestin
     assert got["budget_warning"] is None
 
     warned = normalise(_abliteration_record(
-        generation={"greedy": True, "max_new_tokens": 48,
-                    "budget_warning": "gen-tokens 48 is below the 96 visibility floor"}))
+        generation_settings={"greedy": True, "max_new_tokens": 48,
+                             "budget_warning": "gen-tokens 48 is below the 96 visibility floor"}))
     assert warned["generation_budget"] == 48
     assert "visibility floor" in warned["budget_warning"]
+
+
+def test_the_budget_is_read_from_the_post_rename_spelling():
+    """`generation_settings` is where `build_abliteration_record` has nested the budget since
+    2026-09-21, so this is the spelling every record written from now on carries.
+
+    Deliberately a separate test from the one below rather than one test over a document
+    carrying both names, which would pass if either path worked and prove nothing about which.
+    """
+    doc = {"num_directions": 1, "dir_mode": "per_layer",
+           "generation_settings": {"greedy": True, "max_new_tokens": 48,
+                                   "budget_warning": "below the 96 visibility floor"}}
+    got = normalise(doc)
+    assert got["generation_budget"] == 48
+    assert "visibility floor" in got["budget_warning"]
+
+
+def test_the_budget_is_read_from_the_pre_rename_spelling_too():
+    """THE FALLBACK IS LOAD-BEARING, and this is the half that would rot silently.
+
+    Every `abliteration.json` written before 2026-09-21 nests the budget under `generation`,
+    which is most of the ones that exist. An adapter that read only the new name would stop
+    finding the budget on every one of them, so
+    `quoted-at-a-budget-below-the-visibility-floor` would pass all four of its own controls and
+    never fire on a real file again. That is exactly the failure this project keeps meeting: a
+    check that works against documents somebody wrote for it and not against the ones a
+    producer writes.
+    """
+    doc = {"num_directions": 1, "dir_mode": "per_layer",
+           "generation": {"greedy": True, "max_new_tokens": 48,
+                          "budget_warning": "below the 96 visibility floor"}}
+    got = normalise(doc)
+    assert got["generation_budget"] == 48
+    assert "visibility floor" in got["budget_warning"]
+
+
+def test_an_artefact_that_records_no_budget_is_skipped_rather_than_passed():
+    """SKIPPED IS NOT PASSED, and the adapter is what makes that hard to get right here.
+
+    The normalised document always carries a `generation_budget` key, because a dictionary
+    literal writes every key whether or not the producer recorded anything under it. So a check
+    whose `applies_to` asked only whether the key was PRESENT examined every artefact this
+    project has ever written and reported each one as clean on a question it had not asked.
+    Measured on 2026-09-21 against the real records in the 2026-09-21 salvage directory, which
+    carry no budget block at all: the check applied to both and found nothing.
+    """
+    from senbonzakura_check import check_document
+    from senbonzakura_check.registry import load_checks
+
+    doc = {"num_directions": 1, "dir_mode": "per_layer", "post_bake_refusals": 0.0}
+    assert normalise(doc)["generation_budget"] is None
+    findings, skipped = check_document(doc, load_checks())
+    assert "quoted-at-a-budget-below-the-visibility-floor" in skipped, (
+        "an artefact recording no budget was examined by the budget check and passed, which "
+        "reads in the report exactly like a budget that was checked and found sound")
+    assert "quoted-at-a-budget-below-the-visibility-floor" not in {f.check_id for f in findings}
 
 
 def test_a_short_budget_in_the_real_nesting_reaches_the_check_that_looks_for_it():
@@ -689,7 +746,7 @@ def test_a_short_budget_in_the_real_nesting_reaches_the_check_that_looks_for_it(
     assert "quoted-at-a-budget-below-the-visibility-floor" in {f.check_id for f in findings}
 
     at_the_floor = _abliteration_record(
-        generation={"greedy": True, "max_new_tokens": 96, "budget_warning": None})
+        generation_settings={"greedy": True, "max_new_tokens": 96, "budget_warning": None})
     findings, _ = check_document(at_the_floor, checks)
     assert "quoted-at-a-budget-below-the-visibility-floor" not in {f.check_id for f in findings}, (
         "a check that fires at the floor as well as below it is measuring nothing")

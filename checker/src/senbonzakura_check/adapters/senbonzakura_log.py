@@ -19,8 +19,10 @@ FOUR ARTEFACT SHAPES, NOT ONE, and the first version of this file knew about one
     refusal-*   `refusal` AND `heretic`, `soft_refusal`, `noncompliant`, `n`, `eval`
     scored-*    `auc`, `auc_ci`, `controls.length_only_auc`, `mode`, `n_harmful`, `n_harmless`
     summary     the assembled head-to-head
-    abliteration.json  `num_directions`, `dir_mode`, `post_bake_refusals`, `generation`,
-                `refusal_eval`, `directions_per_layer`, `max_directions`
+    abliteration.json  `num_directions`, `dir_mode`, `post_bake_refusals`, `refusal_eval`,
+                `directions_per_layer`, `max_directions`, and the settings block, which is
+                `generation_settings` since 2026-09-21 and `generation` in every record
+                written before it
 
 FIVE, AND THE FIFTH WAS MISSING UNTIL 2026-09-21, which is the uncomfortable one. `abliteration.json`
 is this project's PRIMARY artefact: it is what the model card, the head-to-head report, every
@@ -97,7 +99,17 @@ class SenbonzakuraAdapter:
         # `refusal_eval` rather than `eval`, and its own warning about its own generation budget
         # is nested one level down rather than sitting at the top. Lifted here, into the names the
         # checks already read, rather than teaching five checks a second vocabulary.
-        generation = doc.get("generation")
+        # TWO NAMES FOR ONE BLOCK, NEWEST FIRST, and the fallback is load-bearing rather than
+        # polite. `build_abliteration_record` wrote these settings under `generation` until
+        # 2026-09-21 and writes `generation_settings` after it, so every record already on disk
+        # carries the old name. This adapter's whole job is reading artefacts somebody else
+        # produced, and most of those were produced before today: an adapter that read only the
+        # new name would stop finding the budget on every existing file, which would leave
+        # `quoted-at-a-budget-below-the-visibility-floor` unable to fire on anything real while
+        # passing all of its own controls.
+        generation = doc.get("generation_settings")
+        if not isinstance(generation, dict):
+            generation = doc.get("generation")
         generation = generation if isinstance(generation, dict) else {}
         return {
             "model": doc.get("model"),
@@ -124,12 +136,12 @@ class SenbonzakuraAdapter:
             "budget_warning": doc.get("budget_warning") or generation.get("budget_warning"),
             # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
             # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
-            # which is the whole point of an adapter. And this repository's pre-commit leak gate
-            # refuses any committed JSON carrying a key named `generation` at any depth, because
-            # that is what a retained model output is called; a check file is committed JSON, so a
-            # rule written against the nested path could not ship. The collision is real and is
-            # worth an operator's attention: the same gate would refuse a committed
-            # `abliteration.json`, which is this project's own primary artefact.
+            # which is the whole point of an adapter. And the record nests it: under
+            # `generation_settings` since 2026-09-21, and under `generation` before that, because
+            # this repository's pre-commit leak gate refuses any committed JSON carrying a key
+            # named `generation` at any depth and was therefore refusing this project's own
+            # primary artefact. The gate was not weakened; the field moved. The fallback above is
+            # what keeps every record written before the move readable.
             "generation_budget": generation.get("max_new_tokens"),
             "provenance": doc.get("provenance"),
         }

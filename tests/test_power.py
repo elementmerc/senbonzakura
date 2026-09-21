@@ -194,3 +194,41 @@ def test_the_module_needs_nothing_heavier_than_the_standard_library():
     for heavy in ("import scipy", "import numpy", "import torch"):
         assert heavy not in src, heavy
     assert math  # the one dependency, and it is in the standard library
+
+
+# ── the refusals, which had never been executed on any runner ────────────────────
+
+def test_one_seed_is_refused_because_there_is_no_spread_to_bound():
+    """A standard deviation from a single observation is not small, it does not exist. Returning
+    an interval anyway would hand a reader a width computed from nothing, and a width is exactly
+    what this function is consulted for.
+    """
+    with pytest.raises(power.PowerError, match="no spread"):
+        power.sd_interval(1.0, 1)
+
+
+def test_an_untabulated_seed_count_is_refused_rather_than_interpolated():
+    """The chi-square quantiles are a table, and a count the table does not hold is a question
+    this module cannot answer. Interpolating between tabulated rows would produce a plausible
+    interval with no distribution behind it, which is the failure mode the whole module exists
+    to argue against: the plan's own 1.8s figure was the normal approximation wearing a t label.
+    """
+    untabulated = next(n for n in range(2, 400) if n - 1 not in power._CHI2)
+    with pytest.raises(power.PowerError, match="no tabulated chi-square quantiles"):
+        power.sd_interval(1.0, untabulated)
+
+
+def test_a_gap_of_zero_needs_no_seeds_because_it_is_not_a_gap():
+    """Asked how many seeds resolve a difference of nothing, the honest answer is that no number
+    of seeds resolves it. Falling through the table would return the smallest tabulated count,
+    which reads as "five seeds will do" for a comparison that has nothing to detect.
+    """
+    assert power.seeds_for(0, 1.0) is None
+
+
+def test_a_gap_beyond_the_table_is_out_of_reach_rather_than_rounded_to_the_largest_count():
+    """The other end of the same honesty. A gap far below what the largest tabulated seed count
+    resolves gets None, which the report renders as "a better instrument, not a longer night".
+    """
+    tiny = power.detectable_gap(1.0, max(power.TABULATED_SEEDS)) / 100
+    assert power.seeds_for(tiny, 1.0) is None

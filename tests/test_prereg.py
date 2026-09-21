@@ -242,7 +242,19 @@ def test_there_are_pre_registrations_to_check():
         "would then run zero cases and report green.")
 
 
-@pytest.mark.parametrize("path", _written_by_hand(), ids=lambda p: p.stem)
+# `ids` MUST SURVIVE AN EMPTY PARAMETER SET, and that is not a style point. `private/` is
+# git-excluded, so on any clean checkout `_written_by_hand()` is empty; pytest then generates one
+# placeholder case holding its `NOTSET` sentinel and calls this function on it. `NOTSET.stem`
+# raises, and the raise happens at COLLECTION, which does not skip the test, it kills the whole
+# session: 4,578 selected tests never ran and the job reported an error. The sibling test above
+# handles the same emptiness by skipping, which is why nothing here looked wrong locally, where
+# `private/plans` exists and this path is never taken. One spelling of the condition was covered
+# and the other took down the run.
+def _prereg_id(path):
+    return getattr(path, "stem", "none")
+
+
+@pytest.mark.parametrize("path", _written_by_hand(), ids=_prereg_id)
 def test_a_pre_registration_written_before_the_format_existed_still_validates(path):
     """THE DESIGN UNDER TEST, not the documents.
 
@@ -256,3 +268,81 @@ def test_a_pre_registration_written_before_the_format_existed_still_validates(pa
     assert not refused, (
         f"{path.name} cannot be expressed in this format: {refused}. Per the v0.9 rung, that "
         f"means the FORMAT is wrong, not the pre-registration.")
+
+
+def test_the_case_id_survives_the_empty_parameter_set_a_clean_checkout_produces():
+    """The regression that took a whole CI job down, asserted directly.
+
+    `private/` is git-excluded, so on a clean checkout the parameter list above is empty. pytest
+    then builds one placeholder case holding `NOTSET` and passes it to the id function. A
+    `p.stem` there raises during COLLECTION, which is not a skipped test: it ends the session, so
+    4,578 selected tests never ran and the job reported an error rather than a failure.
+
+    Asserted against pytest's own sentinel rather than against `None`, because the defect was
+    specifically that the sentinel is not path-shaped and not falsy in the way a hand-written
+    stand-in would be.
+    """
+    from _pytest.mark.structures import NOTSET
+
+    assert _prereg_id(NOTSET) == "none"
+    assert _prereg_id(PREREG_DIR / "pre-registration-example.md") == "pre-registration-example"
+
+
+# ── the paths CI had never executed ──────────────────────────────────────────────
+#
+# WHY THESE ARE GROUPED AND NAMED THAT WAY. Everything below was uncovered on every runner, and
+# for two different reasons that look the same in a coverage report. `load` was exercised only by
+# the parametrised acceptance test above, which reads `private/plans`; `private/` is git-excluded,
+# so on a runner those cases SKIP and the loader this format depends on had never once been
+# called outside this developer's machine. The rest are refusal paths for malformed documents,
+# which nothing had ever handed it. A validator whose error branches are untested is a validator
+# that has only ever been shown documents that were already fine.
+
+def test_a_pre_registration_is_read_from_a_path(tmp_path):
+    """The loader, on a file, with no dependency on a git-excluded directory existing."""
+    path = tmp_path / "pre-registration-example.md"
+    path.write_text(_markdown(_clean()), encoding="utf-8")
+    doc = prereg.load(path)
+    assert doc["title"] == _clean()["title"]
+    assert prereg.validate(doc) == []
+
+
+def test_a_primary_that_is_not_an_object_is_refused_rather_than_read_field_by_field():
+    findings = prereg.validate(_clean(primary="refusal goes down"))
+    assert any(s == prereg.REFUSED and "has to be an object" in m for s, m in findings), findings
+
+
+def test_threats_written_as_prose_rather_than_a_list_is_reported():
+    """A single string is the natural mistake and it silently satisfies "carries threats" for
+    anything doing a truthiness check, which is why it is called out rather than accepted.
+    """
+    findings = prereg.validate(_clean(threats="the budget could be too low"))
+    assert any(s == prereg.FINDING and "`threats`" in m for s, m in findings), findings
+
+
+def test_one_short_threat_is_noted_because_the_section_is_the_useful_one():
+    findings = prereg.validate(_clean(threats=["seeds"]))
+    assert any(s == prereg.NOTE and "`threats`" in m for s, m in findings), findings
+
+
+def test_amendments_written_as_something_other_than_a_list_is_reported():
+    findings = prereg.validate(_clean(amendments={"date": "2026-08-15"}))
+    assert any(s == prereg.FINDING and "list of objects" in m for s, m in findings), findings
+
+
+def test_an_amendment_that_is_not_an_object_is_reported_and_the_rest_still_checked():
+    """The `continue` matters: one malformed entry must not stop the entries after it being
+    read, or a bad first amendment hides every later one.
+    """
+    doc = _clean(amendments=["added an arm",
+                             {"date": "2026-08-15", "what": "dropped an arm"}])
+    findings = prereg.validate(doc)
+    assert any("has to be an object" in m for _, m in findings), findings
+    assert any("before_any_result" in m for _, m in findings), (
+        "the amendment after the malformed one was never examined")
+
+
+def test_an_amendment_that_does_not_say_what_changed_is_reported():
+    doc = _clean(amendments=[{"date": "2026-08-15", "before_any_result": True}])
+    findings = prereg.validate(doc)
+    assert any("does not say what changed" in m for _, m in findings), findings

@@ -87,6 +87,12 @@ def _stamp_coherence(res):
     `prompt_format`, `tool_version` and `passage_digest` use the baseline module's vocabulary on
     purpose: they are the fields that decide whether a later coherence figure may be compared
     with this one at all, which is the same question `baseline.PINNED` answers for a gate.
+
+    THE DIGEST COMES OUT OF THE MEASUREMENT, not out of the module constant. `coherence()` takes
+    the passage as an argument, so a digest computed here from `NEUTRAL` would be a provenance
+    field describing a passage other than the one scored the moment anybody passed a different
+    one. A field that can disagree with the number beside it is the defect this stamp exists to
+    prevent, wearing the stamp's own clothes.
     """
     from senbonzakura_check import measurement
 
@@ -95,7 +101,7 @@ def _stamp_coherence(res):
         res, "coherence", res["nll"], "neutral-passage-nll",
         n=1,
         n_tokens=res["n_tokens"],
-        passage_digest=passage_digest(),
+        passage_digest=res["passage_digest"],
         # Said out loud rather than left to be inferred from the absent flag. This probe renders
         # no chat template at all, by design, so its figure is not comparable with one taken on
         # a model answering in its own instruction format.
@@ -122,7 +128,9 @@ def coherence(model, tok, text=NEUTRAL):
     ids = tok(text, return_tensors="pt").input_ids.to(model.device)
     with torch.no_grad():
         nll = model(ids, labels=ids).loss.item()
-    return {"nll": nll, "ppl": math.exp(nll), "n_tokens": int(ids.shape[1])}
+    # The digest is taken here, beside the number, so the two cannot describe different passages.
+    return {"nll": nll, "ppl": math.exp(nll), "n_tokens": int(ids.shape[1]),
+            "passage_digest": passage_digest(text)}
 
 
 def main(argv=None):

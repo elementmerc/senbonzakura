@@ -145,6 +145,33 @@ def test_the_identity_names_the_passage_the_number_was_taken_on(monkeypatch, tmp
         "a digest that does not move when the passage moves records nothing")
 
 
+def test_the_digest_describes_the_passage_that_was_actually_scored(monkeypatch, tmp_path):
+    """The provenance is computed beside the number, not read back off the module constant.
+
+    `coherence()` takes the passage as an argument, so a digest taken from `NEUTRAL` at stamping
+    time describes a passage other than the one measured the first time anybody passes a
+    different one. A field that can disagree with the number beside it is the very defect the
+    stamp exists to prevent, wearing the stamp's own clothes.
+    """
+    other = coherence.NEUTRAL + " One more sentence."
+    r = coherence.coherence(_FakeLM(), _FakeTok(), text=other)
+    assert r["passage_digest"] == coherence.passage_digest(other)
+    assert r["passage_digest"] != coherence.passage_digest(), (
+        "a digest that does not move when the passage moves records nothing")
+
+    # THE STAMP CARRIES THE MEASUREMENT'S OWN DIGEST, and the only way to watch that fail is to
+    # stamp a result taken on a passage that is not the module constant. Through main() the two
+    # are always equal, so a stamp that reached for `NEUTRAL` instead would look identical there:
+    # a test that cannot tell them apart is not evidence about which one is being read.
+    stamped = {"label": "", "model": "m", **r}
+    coherence._stamp_coherence(stamped)
+    assert stamped["metrics"]["coherence"]["passage_digest"] == coherence.passage_digest(other)
+
+    res, out = _run_main(monkeypatch, tmp_path)
+    block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
+    assert block["passage_digest"] == res["passage_digest"]
+
+
 def test_the_identity_says_no_chat_template_was_applied(monkeypatch, tmp_path):
     """Stated, not inferred from an absent flag. A raw-format figure and a templated one are
     not the same measurement, and the probe deliberately renders no template at all.

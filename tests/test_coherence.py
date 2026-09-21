@@ -140,8 +140,8 @@ def test_the_identity_names_the_passage_the_number_was_taken_on(monkeypatch, tmp
     """`NEUTRAL` is a constant in a source file: edit one word and every later figure moves."""
     _, out = _run_main(monkeypatch, tmp_path)
     block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
-    assert block["passage_digest"] == coherence.passage_digest()
-    assert block["passage_digest"] != coherence.passage_digest(coherence.NEUTRAL + " One more."), (
+    assert block["input_digest"] == coherence.passage_digest()
+    assert block["input_digest"] != coherence.passage_digest(coherence.NEUTRAL + " One more."), (
         "a digest that does not move when the passage moves records nothing")
 
 
@@ -155,8 +155,8 @@ def test_the_digest_describes_the_passage_that_was_actually_scored(monkeypatch, 
     """
     other = coherence.NEUTRAL + " One more sentence."
     r = coherence.coherence(_FakeLM(), _FakeTok(), text=other)
-    assert r["passage_digest"] == coherence.passage_digest(other)
-    assert r["passage_digest"] != coherence.passage_digest(), (
+    assert r["input_digest"] == coherence.passage_digest(other)
+    assert r["input_digest"] != coherence.passage_digest(), (
         "a digest that does not move when the passage moves records nothing")
 
     # THE STAMP CARRIES THE MEASUREMENT'S OWN DIGEST, and the only way to watch that fail is to
@@ -165,11 +165,63 @@ def test_the_digest_describes_the_passage_that_was_actually_scored(monkeypatch, 
     # a test that cannot tell them apart is not evidence about which one is being read.
     stamped = {"label": "", "model": "m", **r}
     coherence._stamp_coherence(stamped)
-    assert stamped["metrics"]["coherence"]["passage_digest"] == coherence.passage_digest(other)
+    assert stamped["metrics"]["coherence"]["input_digest"] == coherence.passage_digest(other)
 
     res, out = _run_main(monkeypatch, tmp_path)
     block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
-    assert block["passage_digest"] == res["passage_digest"]
+    assert block["input_digest"] == res["input_digest"]
+
+
+def test_the_identity_uses_the_baselines_own_name_for_the_input_it_was_taken_on(
+        monkeypatch, tmp_path):
+    """THE GUARD FOR A RENAME THAT HAPPENED ONCE AND WOULD HAPPEN AGAIN.
+
+    Before 2026-09-21 this stamp wrote `passage_digest` while `baseline.PINNED` asked for
+    `track_digest`: one slot, two names, invented independently because neither module had a
+    reason to look at the other. The cost is invisible from either side. `baseline.comparability`
+    treats a pinned field that EITHER side lacks as a mismatch, so a coherence figure was
+    incomparable with every baseline ever recorded and the refusal named a field the coherence
+    artefact had never heard of.
+
+    Asserted against `PINNED` rather than against the string, so the next rename has to move both
+    or fail here.
+    """
+    from senbonzakura import baseline
+
+    _, out = _run_main(monkeypatch, tmp_path)
+    block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
+    assert "input_digest" in baseline.PINNED, (
+        "the baseline no longer pins an input digest under this name; the coherence stamp has "
+        "to follow it or the two stop being comparable again")
+    assert block["input_digest"], "the stamp carries no input digest at all"
+    assert "passage_digest" not in block, (
+        "the old private name is back in the stamp, which is the drift this test exists for")
+
+
+def test_a_coherence_stamp_and_a_baseline_agree_on_every_pinned_field_they_share(
+        monkeypatch, tmp_path):
+    """The end the rename was for: the two artefacts can actually be compared.
+
+    Not a claim that a coherence figure is gate-ready, which it is not (it carries no partition
+    and no seeds). The claim is narrower and is the one that was false: of the pinned fields the
+    probe does record, none is missing purely because the two modules spelled it differently.
+    """
+    from senbonzakura import baseline
+
+    _, out = _run_main(monkeypatch, tmp_path)
+    block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
+    recorded = baseline.record(
+        model="m", metric="coherence", direction=baseline.LOWER_IS_BETTER,
+        point=block["value"], interval=(block["value"] - 0.1, block["value"] + 0.1),
+        input_digest=block["input_digest"], partition="n/a",
+        prompt_format=block["prompt_format"], tool_version=block["tool_version"],
+        seeds=[0], n=1)
+    shared = {f for f in baseline.PINNED if f in block}
+    assert shared >= {"input_digest", "prompt_format", "tool_version", "metric"}
+    disagreements = [m for m in baseline.comparability(recorded, block) if m[0] in shared]
+    assert not disagreements, (
+        "a coherence stamp and a baseline built from it disagree on fields they both carry: "
+        + "; ".join(f"{f}: {was!r} vs {now!r}" for f, was, now, _ in disagreements))
 
 
 def test_the_identity_says_no_chat_template_was_applied(monkeypatch, tmp_path):

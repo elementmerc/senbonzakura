@@ -44,7 +44,15 @@ SCHEMA = "senbonzakura-baseline/1"
 PINNED = {
     "model": "the weights the measurement was taken on",
     "metric": "which property was measured, by identity rather than by display name",
-    "track_digest": "the corpus the measurement was scored on",
+    # NAMED FOR THE SLOT AND NOT FOR THE CORPUS, since 2026-09-21. It was `track_digest`, which
+    # reads as "the digest of a track" and so only fits a measurement scored on a track.
+    # `coherence.py` measures a fixed passage, invented `passage_digest` for the same slot, and
+    # the two never met: `comparability` reports a pinned field absent on BOTH sides as a
+    # mismatch, so a coherence figure and a baseline could never be compared and nothing said
+    # why. One neutral name for "which input this number was taken on" is what makes them
+    # comparable at all.
+    "input_digest": "which input the measurement was taken on: the corpus for a scored run, the "
+                    "passage for a probe. Neutral because the slot is the same question",
     "partition": "which rows of that corpus, so a measure-partition figure is never compared "
                  "against a search-partition one",
     "prompt_format": "how the prompt was rendered. Three copies of the renderer drifted once and "
@@ -65,7 +73,7 @@ class BaselineError(Exception):
     """A baseline that cannot be read, or one that cannot be compared against."""
 
 
-def record(*, model, metric, direction, point, interval, track_digest, partition,
+def record(*, model, metric, direction, point, interval, input_digest, partition,
            prompt_format, tool_version, seeds, n, extra=None):
     """Build a baseline artefact. Every field is required except `extra`, deliberately.
 
@@ -96,7 +104,7 @@ def record(*, model, metric, direction, point, interval, track_digest, partition
         "point": float(point),
         "interval": [float(lo), float(hi)],
         "n": int(n),
-        "track_digest": str(track_digest),
+        "input_digest": str(input_digest),
         "partition": str(partition),
         "prompt_format": str(prompt_format),
         "tool_version": str(tool_version),

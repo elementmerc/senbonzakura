@@ -84,9 +84,16 @@ def _stamp_coherence(res):
     the words of a sentence. The token count is carried beside it under its own name, where it
     describes the passage rather than pretending to be a sample.
 
-    `prompt_format`, `tool_version` and `passage_digest` use the baseline module's vocabulary on
+    `prompt_format`, `tool_version` and `input_digest` use the baseline module's vocabulary on
     purpose: they are the fields that decide whether a later coherence figure may be compared
     with this one at all, which is the same question `baseline.PINNED` answers for a gate.
+
+    THE DIGEST FIELD IS `input_digest`, NOT `passage_digest`, SINCE 2026-09-21, and it is the
+    vocabulary point rather than a spelling preference. This module invented `passage_digest`
+    while `baseline.PINNED` already had `track_digest` for the identical slot, "which input was
+    this number taken on". `comparability` reports a pinned field that either side is missing as a
+    MISMATCH, so a coherence figure and a baseline agreed on the field being absent and were
+    reported as incomparable with no indication of why. Both moved to one neutral name.
 
     THE DIGEST COMES OUT OF THE MEASUREMENT, not out of the module constant. `coherence()` takes
     the passage as an argument, so a digest computed here from `NEUTRAL` would be a provenance
@@ -101,7 +108,7 @@ def _stamp_coherence(res):
         res, "coherence", res["nll"], "neutral-passage-nll",
         n=1,
         n_tokens=res["n_tokens"],
-        passage_digest=res["passage_digest"],
+        input_digest=res["input_digest"],
         # Said out loud rather than left to be inferred from the absent flag. This probe renders
         # no chat template at all, by design, so its figure is not comparable with one taken on
         # a model answering in its own instruction format.
@@ -129,8 +136,13 @@ def coherence(model, tok, text=NEUTRAL):
     with torch.no_grad():
         nll = model(ids, labels=ids).loss.item()
     # The digest is taken here, beside the number, so the two cannot describe different passages.
+    # `input_digest` rather than `passage_digest`: the artefact and the stamp name the slot the
+    # same way, and `baseline.PINNED` names it the same way again. The FUNCTION keeps its own
+    # name, because it computes the digest of a passage and that is what it does; the field is
+    # named for the question it answers, which is the one every measurement in this project has
+    # to answer before it can be compared with another.
     return {"nll": nll, "ppl": math.exp(nll), "n_tokens": int(ids.shape[1]),
-            "passage_digest": passage_digest(text)}
+            "input_digest": passage_digest(text)}
 
 
 def main(argv=None):

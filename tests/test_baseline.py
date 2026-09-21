@@ -20,7 +20,7 @@ BASE = {
     "direction": b.LOWER_IS_BETTER,
     "point": 0.10,
     "interval": (0.05, 0.18),
-    "track_digest": "sha256:aaa",
+    "input_digest": "sha256:aaa",
     "partition": "measure",
     "prompt_format": "renderer:v3",
     "tool_version": "0.4.0",

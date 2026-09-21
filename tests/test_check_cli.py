@@ -13,6 +13,7 @@ has to be able to branch on, and both of those are where a checker quietly becom
 """
 import io
 import json
+from typing import ClassVar
 
 import pytest
 from senbonzakura_check import cli
@@ -516,6 +517,114 @@ class TestNothingWasChecked:
         assert cli.main([str(tmp_path), "--fail-on-empty"]) == 1
 
     def test_fail_on_empty_does_not_fire_when_something_was_checked(self, tmp_path):
-        (tmp_path / "r.json").write_text('{"refusal": 0.1}', encoding="utf-8")
+        # THE FIXTURE WAS THE BUG IN THIS TEST, corrected 2026-09-21 rather than the assertion.
+        # `{"refusal": 0.1}` is not recognised by any adapter: a bare `refusal` needs an
+        # `instrument`, a `provenance` or a `label` and `model` pair beside it before the
+        # senbonzakura adapter will claim it. So this file was swept, reported as not a result,
+        # and never checked, and the test asserting that `--fail-on-empty` did not fire on it was
+        # asserting the defect. It is a recognised artefact now, which is what the test says it is.
+        _write(tmp_path, "r.json", GOOD)
         assert cli.main([str(tmp_path), "--fail-on-empty"]) in (0, 1, 2)
         assert cli.main([str(tmp_path), "--fail-on-empty"]) == cli.main([str(tmp_path)])
+
+
+class TestTheExitCodeTable:
+    """EVERY OUTCOME AGAINST EVERY COMBINATION OF THE TWO FLAGS, asserted rather than reasoned
+    about, because a CI pipeline branches on these numbers and a change to one of them is a
+    change to somebody's build.
+
+    THE DEFECT THIS TABLE WAS BUILT AROUND, found 2026-09-21: `--fail-on-empty --skip-unknown`
+    exited 0 on a named non-result file. `--skip-unknown` stops it counting as unchecked, the
+    file is still LISTED, and `--fail-on-empty` read the listing rather than what was examined.
+    So the flag whose entire job is to catch "nothing happened" returned success having checked
+    nothing, while its own help text promised the opposite.
+
+    The rule the table encodes: a file is CHECKED when it was read, recognised, and at least one
+    check applied to it. Listed is not checked.
+    """
+
+    def _outcome(self, tmp_path, kind):
+        """One path, plus what it is, for every outcome this command can reach."""
+        if kind == "findings":
+            return str(_write(tmp_path, "bad.json", BAD))
+        if kind == "clean":
+            return str(_write(tmp_path, "ok.json", GOOD))
+        if kind == "unrecognised":
+            p = tmp_path / "manifest.json"
+            p.write_text(json.dumps({"ran": ["a"]}), encoding="utf-8")
+            return str(p)
+        if kind == "missing":
+            return str(tmp_path / "absent.json")
+        if kind == "empty-directory":
+            (tmp_path / "notes.txt").write_text("not an artefact", encoding="utf-8")
+            return str(tmp_path)
+        if kind == "directory-of-non-results":
+            (tmp_path / "manifest.json").write_text(json.dumps({"ran": []}), encoding="utf-8")
+            return str(tmp_path)
+        raise AssertionError(kind)
+
+    #: (outcome, flags) -> exit code. Read `--skip-unknown` as "these paths came from a pattern,
+    #: not from a person", and `--fail-on-empty` as "a path that drifts must not report green".
+    TABLE: ClassVar[dict] = {
+        ("findings", ()): 1,
+        ("findings", ("--fail-on-empty",)): 1,
+        ("findings", ("--skip-unknown",)): 1,
+        ("findings", ("--fail-on-empty", "--skip-unknown")): 1,
+
+        ("clean", ()): 0,
+        ("clean", ("--fail-on-empty",)): 0,
+        ("clean", ("--skip-unknown",)): 0,
+        ("clean", ("--fail-on-empty", "--skip-unknown")): 0,
+
+        # Named and unreadable is 2 whatever else is set: it is the outcome that makes the rest
+        # of the report meaningless. `--skip-unknown` downgrades it to "not a result", and
+        # `--fail-on-empty` then catches that nothing was checked. That last cell is the one
+        # that changed: it was 0.
+        ("unrecognised", ()): 2,
+        ("unrecognised", ("--fail-on-empty",)): 2,
+        ("unrecognised", ("--skip-unknown",)): 0,
+        ("unrecognised", ("--fail-on-empty", "--skip-unknown")): 1,
+
+        ("missing", ()): 2,
+        ("missing", ("--fail-on-empty",)): 2,
+        ("missing", ("--skip-unknown",)): 0,
+        ("missing", ("--fail-on-empty", "--skip-unknown")): 1,
+
+        ("empty-directory", ()): 0,
+        ("empty-directory", ("--fail-on-empty",)): 1,
+        ("empty-directory", ("--skip-unknown",)): 0,
+        ("empty-directory", ("--fail-on-empty", "--skip-unknown")): 1,
+
+        # A directory holding only files that are not results. Swept, so nothing is UNCHECKED,
+        # and nothing was checked either. Both `--fail-on-empty` cells changed from 0.
+        ("directory-of-non-results", ()): 0,
+        ("directory-of-non-results", ("--fail-on-empty",)): 1,
+        ("directory-of-non-results", ("--skip-unknown",)): 0,
+        ("directory-of-non-results", ("--fail-on-empty", "--skip-unknown")): 1,
+    }
+
+    @pytest.mark.parametrize(("case", "expected"), sorted(TABLE.items()),
+                             ids=[f"{k}{'+'.join(f.lstrip('-') for f in fl) or '-'}"
+                                  for k, fl in sorted(TABLE)])
+    def test_the_exit_code(self, case, expected, tmp_path):
+        kind, flags = case
+        path = self._outcome(tmp_path, kind)
+        out = io.StringIO()
+        assert cli.main([*flags, path], out=out) == expected, out.getvalue()
+
+    def test_nothing_was_checked_is_said_out_loud_whenever_it_is_true(self, tmp_path):
+        """The sentence and the exit code have to agree, or a reader who sees one and a pipeline
+        that branches on the other are reading two different reports.
+        """
+        for kind in ("unrecognised", "missing", "empty-directory",
+                     "directory-of-non-results"):
+            here = tmp_path / kind
+            here.mkdir()
+            out = io.StringIO()
+            cli.main(["--skip-unknown", self._outcome(here, kind)], out=out)
+            assert "NOTHING WAS CHECKED" in out.getvalue(), kind
+
+    def test_a_recognised_file_with_findings_is_never_reported_as_unchecked(self, tmp_path):
+        out = io.StringIO()
+        cli.main([self._outcome(tmp_path, "findings")], out=out)
+        assert "NOTHING WAS CHECKED" not in out.getvalue()

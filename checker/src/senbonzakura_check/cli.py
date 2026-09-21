@@ -216,12 +216,14 @@ def main(argv=None, out=None):
     claimed = not args.skip_unknown
 
     files = _files(args.paths)
+    n_pair_checks = sum(1 for c in checks if c.arity == "pair")
 
     results = []
     for path, was_named in files:
         named = was_named and claimed
         findings, skipped, problem = inspect_file(path, checks)
-        results.append((path, findings, skipped, problem, named))
+        results.append((path, findings, skipped, problem, named,
+                        0 if problem else len(checks) - len(skipped)))
 
     # THE PAIR RUNS AFTER THE SINGLES, OVER THE SAME TWO FILES. Each arm is still checked on its
     # own, because a defect that is visible in one artefact is visible whether or not it is being
@@ -237,7 +239,8 @@ def main(argv=None, out=None):
         pair_findings, pair_skipped, pair_problem = inspect_pair(
             files[0][0], files[1][0], checks)
         results.append((f"{files[0][0]} vs {files[1][0]}",
-                        pair_findings, pair_skipped, pair_problem, True))
+                        pair_findings, pair_skipped, pair_problem, True,
+                        0 if pair_problem else n_pair_checks - len(pair_skipped)))
 
     if args.json:
         json.dump([
@@ -253,18 +256,26 @@ def main(argv=None, out=None):
                     "false_positive": f.false_positive,
                 } for f in fs],
             }
-            for p, fs, sk, problem, named in results
+            for p, fs, sk, problem, named, applied in results
         ], out, indent=2)
         print(file=out)
     else:
-        for path, findings, skipped, problem, named in results:
+        for path, findings, skipped, problem, named, _applied in results:
             if args.quiet and not findings and not (problem and named):
                 continue
             _render(path, findings, skipped, problem, out, named=named)
 
-    n_findings = sum(len(fs) for _, fs, _, _, _ in results)
-    n_unchecked = sum(1 for _, _, _, problem, named in results if problem and named)
-    n_not_result = sum(1 for _, _, _, problem, named in results if problem and not named)
+    n_findings = sum(len(fs) for _, fs, _, _, _, _ in results)
+    n_unchecked = sum(1 for _, _, _, problem, named, _ in results if problem and named)
+    n_not_result = sum(1 for _, _, _, problem, named, _ in results if problem and not named)
+    # WHAT WAS ACTUALLY EXAMINED, which is not the same as what was listed, and the difference
+    # is the whole of this number. An entry is checked when it was read, recognised, and at least
+    # one check applied to it. A file that was unreadable, unrecognised, or that every check
+    # skipped has been listed and not checked, and `--fail-on-empty` used to read the listing:
+    # with `--skip-unknown` beside it, a named non-result file made `results` non-empty and the
+    # flag whose entire job is to catch "nothing happened" returned success having checked
+    # nothing. That is the defect this command exists to find in other people's pipelines.
+    n_checked = sum(1 for _, _, _, problem, _, applied in results if not problem and applied)
 
     if not args.json and not args.quiet:
         tail = f", {n_not_result} not a result" if n_not_result else ""
@@ -278,7 +289,7 @@ def main(argv=None, out=None):
         # like a clean report, and a reader skims it as one. Found by pointing the checker at a
         # directory that existed and held nothing: it exited 0, which in CI is a green that
         # checked nothing.
-        if not results:
+        if not n_checked:
             print("NOTHING WAS CHECKED: no result artefacts were found at the path(s) given. "
                   "That is not the same as a clean result.", file=out)
         # LOOPHOLE 7, IN THE OUTPUT RATHER THAN THE README. Somebody will otherwise quote a
@@ -290,10 +301,16 @@ def main(argv=None, out=None):
         return 2
     if n_findings:
         return 1
-    # Zero files is only a failure when the caller says so: a sweep over a tree that legitimately
-    # holds no artefacts yet is a normal thing to do, and breaking it would make the default
-    # unusable. The flag is for the case where a path could drift, which is CI.
-    return 1 if (args.fail_on_empty and not results) else 0
+    # Nothing checked is only a failure when the caller says so: a sweep over a tree that
+    # legitimately holds no artefacts yet is a normal thing to do, and breaking it would make the
+    # default unusable. The flag is for the case where a path could drift, which is CI.
+    #
+    # IT READS `n_checked` AND NOT `results`, and that changed on 2026-09-21. Reading the listing
+    # meant `--fail-on-empty --skip-unknown` exited 0 on a named non-result file: the file was
+    # listed, so the flag never fired, while the help text promised to exit non-zero when nothing
+    # was checked. A flag whose entire job is to catch "nothing happened" going green when
+    # nothing happened is the defect class this project keeps finding in its own gates.
+    return 1 if (args.fail_on_empty and not n_checked) else 0
 
 
 if __name__ == "__main__":

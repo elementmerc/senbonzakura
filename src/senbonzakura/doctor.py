@@ -80,13 +80,13 @@ def _warn(name, detail, fix=""):
 def _vendor_remedy():
     """The right advice for this install, which is not the same advice everywhere.
 
-    `tools/vendor_llama.py` exists in a checkout and in no wheel, so telling an installed user to
+    `tools/packaging/vendor_llama.py` exists in a checkout and in no wheel, so telling an installed user to
     run it sends them looking for a file they do not have. Same shape as the `--track default`
     fault that `bundled.running_from_a_checkout()` was written for.
     """
     from . import bundled
     if bundled.running_from_a_checkout():
-        return "re-run `python tools/vendor_llama.py`"
+        return "re-run `python tools/packaging/vendor_llama.py`"
     return (f"this install's vendored converter is incomplete, which is a packaging fault rather "
             f"than something you can fix locally. Please report it at {bundled.ISSUES}")
 
@@ -128,7 +128,7 @@ def check_quantize():
         r = subprocess.run([str(exe), "--help"], capture_output=True, timeout=60, check=False)
     except (OSError, subprocess.SubprocessError) as e:
         return _fail("llama-quantize", f"present at {exe} and will not run ({e})",
-                     "re-run `python tools/vendor_llama.py`")
+                     "re-run `python tools/packaging/vendor_llama.py`")
     out = (r.stdout + r.stderr).decode("utf-8", errors="replace").lower()
     # A MISSING SHARED LIBRARY IS NOT A WRONG BINARY, and saying so sends the reader to re-vendor
     # a file that is already correct. llama.cpp links against OpenMP, and a slim image or a
@@ -144,7 +144,7 @@ def check_quantize():
                      "binary is correct and the system is missing a dependency of it")
     if "usage" not in out:
         return _fail("llama-quantize", "ran and printed no usage; the binary is not what we think",
-                     "re-run `python tools/vendor_llama.py`")
+                     "re-run `python tools/packaging/vendor_llama.py`")
     return _pass("llama-quantize", f"{source}, runs")
 
 
@@ -185,7 +185,7 @@ def check_converter(timeout=300):
         out.append(_fail(
             "architecture modules", f"{len(broken)} failed to import: {', '.join(broken[:6])}",
             "these architectures are ADVERTISED AND ABSENT. Usually a `gguf` package mismatch; "
-            "re-run `python tools/vendor_llama.py` so gguf-py comes from the pinned tag"))
+            "re-run `python tools/packaging/vendor_llama.py` so gguf-py comes from the pinned tag"))
     else:
         out.append(_pass("architecture modules", f"all import, {len(names)} architectures"))
 
@@ -219,7 +219,7 @@ def _corpus_fix():
     instruction was ours. Checked here because this is where the recommendation is made.
     """
     import shutil
-    base = "run `python tools/build_corpora.py` in a source checkout"
+    base = "run `python tools/packaging/build_corpora.py` in a source checkout"
     if shutil.which("gh") is None:
         return base + " (it needs the GitHub CLI, which is not installed: https://cli.github.com)"
     return base

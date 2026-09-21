@@ -235,7 +235,7 @@ def test_a_checkout_with_no_packed_track_is_told_to_build_one(monkeypatch, tmp_p
     with pytest.raises(bundled.BundledTrackError) as e:
         bundled.ensure(log=lambda *_a, **_k: None)
     msg = str(e.value)
-    assert "tools/pack_track.py" in msg
+    assert "tools/packaging/pack_track.py" in msg
     assert "kept out of git on purpose" in msg
 
 
@@ -259,7 +259,7 @@ def test_an_install_with_no_packed_track_is_told_it_is_a_packaging_fault(monkeyp
     msg = str(e.value)
     assert "fault in the package rather than anything you did" in msg
     assert bundled.ISSUES in msg
-    assert "tools/pack_track.py" not in msg, (
+    assert "tools/packaging/pack_track.py" not in msg, (
         "an installed user cannot run a tool their install does not carry; that is the exact "
         "advice this message exists to stop giving")
 

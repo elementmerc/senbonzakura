@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for tools/artefact_ok.py, the resume guard that checks WHICH configuration made a file.
+"""Tests for tools/ci/artefact_ok.py, the resume guard that checks WHICH configuration made a file.
 
 The defect this replaces cost a day: every guard tested whether a result file parsed, so a run
 that existed to measure three code changes reused the previous night's outputs and reported
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
-    "artefact_ok", Path(__file__).resolve().parent.parent / "tools" / "artefact_ok.py")
+    "artefact_ok", Path(__file__).resolve().parent.parent / "tools" / "ci" / "artefact_ok.py")
 ao = importlib.util.module_from_spec(_SPEC)
 sys.modules["artefact_ok"] = ao
 _SPEC.loader.exec_module(ao)

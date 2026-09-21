@@ -64,7 +64,7 @@ jobs:
       - name: Every documentation link in the README resolves to a built page
         # The build checks links from inside the site. This checks the ones pointing INTO it,
         # which is the direction that was broken, and the direction a reader arrives from.
-        run: python3 tools/readme_links_resolve.py docs/.vitepress/dist
+        run: python3 tools/ci/readme_links_resolve.py docs/.vitepress/dist
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: docs/.vitepress/dist
@@ -85,7 +85,7 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1
 
-      # NOTHING MEASURED THE DEPLOYMENT until 2026-09-10. `tools/readme_links_resolve.py` checks
+      # NOTHING MEASURED THE DEPLOYMENT until 2026-09-10. `tools/ci/readme_links_resolve.py` checks
       # the README's links against `docs/.vitepress/dist` on the runner, so it stays green whether
       # or not anything is actually served, and the eleven dead links it was written for stayed
       # dead behind it. A build whose output reaches no consequence is this project's recurring

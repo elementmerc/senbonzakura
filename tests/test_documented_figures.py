@@ -103,12 +103,12 @@ def test_the_figures_say_which_environment_produced_them():
 def test_the_smoke_checks_this_page_against_the_tool():
     """The prose-versus-numbers checks in this file cannot catch the numbers going stale.
 
-    They compare the page to itself. What closes the loop is `tools/smoke_end_to_end.py`, which
+    They compare the page to itself. What closes the loop is `tools/ci/smoke_end_to_end.py`, which
     runs the command the page prints and compares the AUC it gets to the AUC the page promises.
     This asserts that check still points at this page, so removing it is a deliberate act rather
     than something that quietly stops happening.
     """
-    smoke = (Path(__file__).resolve().parent.parent / "tools" / "smoke_end_to_end.py"
+    smoke = (Path(__file__).resolve().parent.parent / "tools" / "ci" / "smoke_end_to_end.py"
              ).read_text(encoding="utf-8")
     assert "documented_compass_auc" in smoke
     assert "compass.md" in smoke, "the smoke must still be reading this page's figure"

@@ -23,7 +23,7 @@ import torch
 needs_posix = pytest.mark.skipif(sys.platform == "win32", reason="peak RSS needs POSIX `resource`")
 
 _spec = importlib.util.spec_from_file_location(
-    "shard_spike", Path(__file__).resolve().parent.parent / "tools" / "shard_spike.py")
+    "shard_spike", Path(__file__).resolve().parent.parent / "tools" / "research" / "shard_spike.py")
 spike = importlib.util.module_from_spec(_spec)
 sys.modules["shard_spike"] = spike
 _spec.loader.exec_module(spike)

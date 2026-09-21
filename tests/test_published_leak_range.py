@@ -4,7 +4,7 @@
 
 WHY THIS IS A TEST AND NOT A CAREFUL EDIT
 
-`tools/leak_sweep.py` exists because these numbers were once quoted from a handoff and lived
+`tools/ci/leak_sweep.py` exists because these numbers were once quoted from a handoff and lived
 nowhere a machine could reproduce them; its own docstring says a figure drawn from prose is a
 picture of somebody's memory. The script was then written, and the page went on quoting figures
 that the script does not produce.
@@ -33,7 +33,7 @@ def medians_at(spread, rows):
 
 def test_the_published_range_is_what_the_script_measures():
     import importlib.util
-    spec = importlib.util.spec_from_file_location("leak_sweep", ROOT / "tools" / "leak_sweep.py")
+    spec = importlib.util.spec_from_file_location("leak_sweep", ROOT / "tools" / "ci" / "leak_sweep.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     rows = mod.sweep()
@@ -63,5 +63,5 @@ def test_the_published_range_is_what_the_script_measures():
 
 def test_the_page_says_where_its_numbers_came_from():
     """A figure with no route back to the thing that produced it is the defect being fixed."""
-    assert "tools/leak_sweep.py" in PAGE
+    assert "tools/ci/leak_sweep.py" in PAGE
     assert "a test compares this page against it" in PAGE

@@ -149,6 +149,6 @@ That is not hypothetical: it is what happened to the first version of this file.
 ## What is missing, deliberately
 
 The per-prompt margins are **not** committed. They pair harmful prompts with what a model
-did, so they live in the ignored `results/` tree; `tools/check_prompt_artefacts.py` refuses
+did, so they live in the ignored `results/` tree; `tools/ci/check_prompt_artefacts.py` refuses
 any staged file carrying a `prompt` or `generation` field, and it is wired into the commit
 path rather than only into CI.

@@ -144,7 +144,7 @@ def test_the_failure_names_the_checkout_route_and_the_wheel_route(monkeypatch, t
     with pytest.raises(VendorError) as e:
         vendored.find_binary("llama-quantize", key="linux-x86_64")
     msg = str(e.value)
-    assert "tools/vendor_llama.py" in msg          # the checkout fix
+    assert "tools/packaging/vendor_llama.py" in msg          # the checkout fix
     assert "on PATH" in msg                        # the wheel fix
     assert "k-quant" in msg                        # why it is needed at all
 
@@ -163,7 +163,7 @@ def test_the_failure_works_even_on_an_unrecognised_platform(monkeypatch, tmp_pat
         vendored.find_binary("llama-quantize")
     msg = str(e.value)
     assert "riscv64" in msg
-    assert "tools/vendor_llama.py" in msg
+    assert "tools/packaging/vendor_llama.py" in msg
 
 
 def test_path_search_can_be_switched_off(monkeypatch, tmp_path):

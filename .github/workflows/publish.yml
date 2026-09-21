@@ -20,7 +20,7 @@ name: Publish
 # The wheel ships an evaluation track. The repository does not, deliberately:
 # `.gitignore` excludes it because a corpus of harmful prompts committed to a
 # public repository is in its history permanently and no later commit takes it
-# back out. `tools/pack_track.py` builds the blob from a track the operator holds
+# back out. `tools/packaging/pack_track.py` builds the blob from a track the operator holds
 # on their own machine. So a runner that has only this repository CANNOT produce
 # a release wheel, and making it able to would mean putting those prompts into
 # GitHub, which is the decision the exclusion exists to prevent.
@@ -89,7 +89,7 @@ jobs:
           shopt -s nullglob
           found=0
           for f in dist/senbonzakura-*.whl; do
-            python tools/check_wheel.py "$f" --release
+            python tools/ci/check_wheel.py "$f" --release
             found=1
           done
           # A release that attached no senbonzakura wheel would otherwise pass this step having
@@ -105,7 +105,7 @@ jobs:
       - name: Check the source distribution carries nothing platform-specific
         run: |
           shopt -s nullglob
-          for f in dist/*.tar.gz; do python tools/check_wheel.py "$f"; done
+          for f in dist/*.tar.gz; do python tools/ci/check_wheel.py "$f"; done
 
       - name: Check the metadata renders
         run: |

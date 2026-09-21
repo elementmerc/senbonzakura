@@ -24,10 +24,10 @@ one. If you already have a CUDA torch installed, skip it; the tests don't care.
 Wire the local gates once per clone:
 
 ```sh
-bash tools/install-local-hooks.sh
+bash tools/hooks/install-local-hooks.sh
 ```
 
-That hooks `tools/check_prompt_artefacts.py` into your pre-commit path, and it exists
+That hooks `tools/ci/check_prompt_artefacts.py` into your pre-commit path, and it exists
 because of a specific hazard rather than as general tidiness.
 
 ::: warning What the gate is actually stopping

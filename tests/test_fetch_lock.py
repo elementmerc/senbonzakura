@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for the fetch lock (tools/fetch_model.py).
+"""Tests for the fetch lock (tools/dev/fetch_model.py).
 
 A sister project lost a day to a 987 MB fragment of a 5.16 GB checkpoint that passed an "exists
 and is non-empty" check, and the cause was two fetchers writing one path. Hashing catches that
@@ -20,7 +20,7 @@ needs_posix = pytest.mark.skipif(sys.platform.startswith("win"),
                                  reason="POSIX execute bit / advisory locking; Windows has neither")
 
 _SPEC = importlib.util.spec_from_file_location(
-    "fetch_model", Path(__file__).resolve().parent.parent / "tools" / "fetch_model.py")
+    "fetch_model", Path(__file__).resolve().parent.parent / "tools" / "dev" / "fetch_model.py")
 fm = importlib.util.module_from_spec(_SPEC)
 sys.modules["fetch_model"] = fm
 _SPEC.loader.exec_module(fm)
@@ -44,7 +44,7 @@ def test_the_lock_creates_the_destination(tmp_path):
 
 def _hold(path, ready, done):
     spec = importlib.util.spec_from_file_location(
-        "fetch_model", Path(__file__).resolve().parent.parent / "tools" / "fetch_model.py")
+        "fetch_model", Path(__file__).resolve().parent.parent / "tools" / "dev" / "fetch_model.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     with mod.exclusive(path, log=lambda *a: None):

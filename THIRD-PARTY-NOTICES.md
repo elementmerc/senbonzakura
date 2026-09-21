@@ -113,7 +113,7 @@ bundled corpus is loaded in a process.
 
 **A seventh thing ships in the wheel and was attributed nowhere inside it.**
 `src/senbonzakura/data/default-track.bin` is the corpus behind `--track default`,
-and `tools/check_wheel.py` requires every release wheel to carry it. Its licence
+and `tools/ci/check_wheel.py` requires every release wheel to carry it. Its licence
 chain was documented only in `docs/evaluation-track-card.md`, and `docs/` is in
 neither `package-data` nor `license-files`, so it does not ship. The runtime
 notice printed an attribution and then pointed the reader at a file their install

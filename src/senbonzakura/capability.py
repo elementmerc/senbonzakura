@@ -798,7 +798,7 @@ def main(argv=None):
     # Non-zero when nothing could be graded, because a run that measured nothing must not look
     # like a run that measured a zero.
     # Non-zero when the budget ate too much of the sample, so a pipeline cannot collect the
-    # number and carry on. `tools/e2_arms.sh` did exactly that: three arms of capability figures
+    # number and carry on. `tools/research/e2_arms.sh` did exactly that: three arms of capability figures
     # at 20.5% indeterminate, on every arm including the unedited reference.
     return 0 if summary["graded"] and not summary.get("budget_suspect") else 1
 

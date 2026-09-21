@@ -5,7 +5,7 @@
 # on the page as part of it rather than as a screenshot of somebody else's terminal.
 #
 # EVERYTHING HERE IS AT TWICE THE SIZE IT IS PUBLISHED AT. Each tape renders at 2x and
-# tools/record-docs.sh scales the result down with lanczos, which is what supersampling is: the
+# tools/dev/record-docs.sh scales the result down with lanczos, which is what supersampling is: the
 # downscale averages several rendered pixels into each published one, so glyph edges come out
 # smooth instead of stair-stepped. Measured on the track-audit clip, 2026-08-11: the supersampled
 # GIF is both visibly crisper AND smaller, 89 KB against 103 KB, because smooth edges compress

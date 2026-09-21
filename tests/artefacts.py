@@ -92,10 +92,10 @@ def _guard(present, what, how):
                f"Set SENBON_REQUIRE_BUNDLED=1 to make this a failure.")
 
 
-needs_track = _guard(_have_track(), "the packed evaluation track", "tools/pack_track.py")
-needs_corpora = _guard(_have_corpora(), "the packed corpora", "tools/build_corpora.py")
-needs_binary = _guard(_have_binary(), "the vendored llama-quantize", "tools/vendor_llama.py")
-needs_converter = _guard(_have_converter(), "the vendored converter", "tools/vendor_llama.py")
+needs_track = _guard(_have_track(), "the packed evaluation track", "tools/packaging/pack_track.py")
+needs_corpora = _guard(_have_corpora(), "the packed corpora", "tools/packaging/build_corpora.py")
+needs_binary = _guard(_have_binary(), "the vendored llama-quantize", "tools/packaging/vendor_llama.py")
+needs_converter = _guard(_have_converter(), "the vendored converter", "tools/packaging/vendor_llama.py")
 
 
 # ── architectures the installed transformers may not carry ───────────────────────────

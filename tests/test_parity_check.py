@@ -20,7 +20,7 @@ import pytest
 import torch
 
 _spec = importlib.util.spec_from_file_location(
-    "parity_check", Path(__file__).resolve().parent.parent / "tools" / "parity_check.py")
+    "parity_check", Path(__file__).resolve().parent.parent / "tools" / "research" / "parity_check.py")
 parity = importlib.util.module_from_spec(_spec)
 sys.modules["parity_check"] = parity
 _spec.loader.exec_module(parity)

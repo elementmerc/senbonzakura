@@ -130,7 +130,7 @@ def build_args(argv=None):
                          "(default: 42). One seed is one draw: a single run cannot separate a "
                          "real gap from a lucky one, so vary this before believing a close result")
     ap.add_argument("--directions-from", default=None,
-                    help="load a [NL+1, K, H] direction set (as written by tools/rdo.py) instead "
+                    help="load a [NL+1, K, H] direction set (as written by tools/research/rdo.py) instead "
                          "of extracting cluster directions. The rest of the harness is unchanged, "
                          "so two direction sources are scored with one measuring stick.")
     own = ap.parse_args(argv)
@@ -1083,7 +1083,7 @@ def degenerate_reason(rows):
 
 
 def _directions_meta(directions_from):
-    """The sidecar `tools/rdo.py` writes beside a direction file, or None.
+    """The sidecar `tools/research/rdo.py` writes beside a direction file, or None.
 
     `directions_from` is only a path, and two arms of the same ladder differ by what is INSIDE
     that file (the score form, the induction weight, the initialisation) rather than by its name.

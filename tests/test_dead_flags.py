@@ -29,7 +29,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE = str(ROOT / "src" / "senbonzakura")
 
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "research"))
 import audit_flags  # noqa: E402
 
 

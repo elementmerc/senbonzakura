@@ -61,7 +61,7 @@ src/senbonzakura/data/*
 # evidence/ is the one committed home, and it needs an explicit negation: the rule
 # above would otherwise force `git add -f`, which defeats the ignore it bypasses.
 # Files landing here must already have their prompt and generation fields stripped,
-# which tools/check_prompt_artefacts.py enforces rather than trusts.
+# which tools/ci/check_prompt_artefacts.py enforces rather than trusts.
 !evidence/
 !evidence/**/*.jsonl
 # python
@@ -113,7 +113,7 @@ docs/tapes/captured/
 #     survive contact with the actual number. A 158-file diff on every pin bump is the appearance
 #     of reviewability rather than the fact of it.
 #
-# `python tools/vendor_llama.py --all` repopulates both, verifies every hash against pins.json,
+# `python tools/packaging/vendor_llama.py --all` repopulates both, verifies every hash against pins.json,
 # and runs the binary to prove the extraction produced something that starts.
 src/senbonzakura/vendor/bin/
 src/senbonzakura/vendor/src/
@@ -121,5 +121,5 @@ src/senbonzakura/vendor/src/
 # Fetched corpus sources. `src/senbonzakura/vendor/corpora-pins.json` IS committed and records the
 # upstream, the pinned commit, the byte count and the sha256 of every file, so what the wheel
 # carries is reviewable in a diff of one small file. The CSVs themselves are other people's data
-# at a pinned commit; re-fetch with `python tools/build_corpora.py`.
+# at a pinned commit; re-fetch with `python tools/packaging/build_corpora.py`.
 build/corpora/

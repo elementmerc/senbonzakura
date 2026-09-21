@@ -22,7 +22,7 @@ from senbonzakura import corpora
 from senbonzakura.corpora import CorpusError
 
 _spec = importlib.util.spec_from_file_location(
-    "image_is_honest", Path(__file__).resolve().parent.parent / "tools" / "image_is_honest.py")
+    "image_is_honest", Path(__file__).resolve().parent.parent / "tools" / "ci" / "image_is_honest.py")
 honest = importlib.util.module_from_spec(_spec)
 sys.modules["image_is_honest"] = honest
 _spec.loader.exec_module(honest)
@@ -60,7 +60,7 @@ def test_an_image_carrying_the_wrong_number_of_rows_fails(loads, capsys):
 def test_an_image_without_corpora_passes_when_it_names_the_builder(loads, capsys):
     # THE BRANCH A RUNNER TAKES. An image built from a clean clone has no corpora, and the
     # property that must hold is that the absence is legible rather than silent.
-    loads(CorpusError("the bundled corpora are not installed; run tools/build_corpora.py"))
+    loads(CorpusError("the bundled corpora are not installed; run tools/packaging/build_corpora.py"))
     assert honest.main() == 0
     assert "names the builder" in capsys.readouterr().out
 

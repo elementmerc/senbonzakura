@@ -87,7 +87,7 @@ print('torch', torch.__version__)"
 # dependencies at all, and that emptiness is the property it exists to hold.
 RUN pip install --no-cache-dir --quiet --no-deps ./checker \
  && pip install --no-cache-dir --quiet "requests>=2" ".[abliterate]" \
- && python tools/vendor_llama.py \
+ && python tools/packaging/vendor_llama.py \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
 
 # ── runtime ─────────────────────────────────────────────────────────────────────

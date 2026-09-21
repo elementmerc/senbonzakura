@@ -229,7 +229,7 @@ def warn_if_unbundled(log=print):
     log("")
     log("  NOTE: no bundled track is installed in this checkout. It is packed at release")
     log("        time, so a wheel has one and a source clone does not. Run")
-    log("        `python tools/pack_track.py --track <dir>`, or choose another option.")
+    log("        `python tools/packaging/pack_track.py --track <dir>`, or choose another option.")
 
 
 def pick_side(side, question, ask_fn=input, log=print):

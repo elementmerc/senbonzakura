@@ -138,7 +138,7 @@ def test_a_licence_header_does_not_push_an_encoding_declaration_off_line_two(tmp
     live, and a latent corruption in a tool that rewrites every file in the tree is worth closing.
     """
     import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
+    _sys.path.insert(0, str(ROOT / "tools" / "packaging"))
     import add_license_headers as alh
 
     f = tmp_path / "legacy.py"
@@ -152,7 +152,7 @@ def test_a_licence_header_does_not_push_an_encoding_declaration_off_line_two(tmp
 
 def test_a_file_with_only_an_encoding_declaration_keeps_it_first(tmp_path):
     import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
+    _sys.path.insert(0, str(ROOT / "tools" / "packaging"))
     import add_license_headers as alh
 
     f = tmp_path / "enc.py"
@@ -165,7 +165,7 @@ def test_a_file_with_only_an_encoding_declaration_keeps_it_first(tmp_path):
 def _wheel_check():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "check_wheel", ROOT / "tools" / "check_wheel.py")
+        "check_wheel", ROOT / "tools" / "ci" / "check_wheel.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -263,7 +263,7 @@ def test_a_name_that_is_not_a_wheel_is_refused(tmp_path):
 
 # ── the tag PyPI refuses, caught before the release rather than after it (S7) ─────────
 #
-# This tree builds `py3-none-linux_x86_64` once tools/vendor_llama.py has run, which is the
+# This tree builds `py3-none-linux_x86_64` once tools/packaging/vendor_llama.py has run, which is the
 # correct tag for the contents and is NOT one PyPI accepts. `check_wheel` asked only whether the
 # tag matched the contents, and `twine check` validates metadata renderability and says nothing
 # about platform tags, so both gates passed it.
@@ -274,7 +274,7 @@ def test_a_name_that_is_not_a_wheel_is_refused(tmp_path):
 # take that version again even once the wheel is fixed.
 
 _spec = importlib.util.spec_from_file_location(
-    "check_wheel", ROOT / "tools" / "check_wheel.py")
+    "check_wheel", ROOT / "tools" / "ci" / "check_wheel.py")
 check_wheel = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_wheel)
 

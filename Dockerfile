@@ -77,7 +77,7 @@ RUN python -m pip install --no-cache-dir --quiet \
 # `pip install` (package-data excludes `vendor/bin/**` on purpose, because a `py3-none-any` wheel
 # has no business holding a platform executable), so the runtime stage copies it explicitly.
 RUN python -m pip install --no-cache-dir --quiet "requests>=2" \
- && python tools/vendor_llama.py \
+ && python tools/packaging/vendor_llama.py \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-imatrix
 

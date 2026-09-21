@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for the axis probe (tools/axis_probe.py).
+"""Tests for the axis probe (tools/research/axis_probe.py).
 
 The probe exists to answer one question: when a layer keeps a single refusal direction, is that
 because the model has one, or because a constant was set above the second one? Its verdict is the
@@ -18,7 +18,7 @@ import pytest
 from senbonzakura import cli
 
 _SPEC = importlib.util.spec_from_file_location(
-    "axis_probe", Path(__file__).resolve().parent.parent / "tools" / "axis_probe.py")
+    "axis_probe", Path(__file__).resolve().parent.parent / "tools" / "research" / "axis_probe.py")
 probe = importlib.util.module_from_spec(_SPEC)
 sys.modules["axis_probe"] = probe
 _SPEC.loader.exec_module(probe)

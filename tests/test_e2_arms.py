@@ -4,7 +4,7 @@
 
 WHY THESE ARE THE CHECKS
 
-`tools/e2_arms.sh` is the shape an experiment takes in this project: a shipped file rather than a
+`tools/research/e2_arms.sh` is the shape an experiment takes in this project: a shipped file rather than a
 command in a message, because a pasted heredoc once ate its own quoting and left a GPU idle for
 hours. A file can also drift from the code it drives, and silently: a renamed flag turns a five
 hour run into five hours of a script failing on its first arm.
@@ -33,7 +33,7 @@ import pytest
 
 from senbonzakura import methods
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "e2_arms.sh"
+SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "research" / "e2_arms.sh"
 
 #: The script runs every step under GNU `timeout`, which macOS does not ship. Without it the
 #: script now refuses in its pre-flight rather than reporting each arm as failing with an exit
@@ -55,7 +55,7 @@ pytestmark = [
     # is about Windows.
     pytest.mark.skipif(
         sys.platform.startswith("win"),
-        reason="tools/e2_arms.sh is a POSIX shell script and Windows cannot execute it"),
+        reason="tools/research/e2_arms.sh is a POSIX shell script and Windows cannot execute it"),
     pytest.mark.skipif(
         shutil.which("senbonzakura") is None,
         reason="the script drives the installed console script, which this environment lacks"),

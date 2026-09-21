@@ -4,7 +4,7 @@
 # expect: TRACK_AUDIT_OK
 #
 # Every line here executes. Nothing is echoed to look like it ran. The transcript this leaves in
-# $SENBON_LIVE_LOG is what tools/record-live.sh checks the `# expect:` line against, so a demo
+# $SENBON_LIVE_LOG is what tools/dev/record-live.sh checks the `# expect:` line against, so a demo
 # whose command broke fails the recording instead of shipping as a picture of success.
 #
 # The handshake with the recorder, in order:

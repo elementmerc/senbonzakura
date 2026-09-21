@@ -16,7 +16,7 @@ from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
     "readme_links_resolve",
-    Path(__file__).resolve().parent.parent / "tools" / "readme_links_resolve.py")
+    Path(__file__).resolve().parent.parent / "tools" / "ci" / "readme_links_resolve.py")
 links = importlib.util.module_from_spec(_spec)
 sys.modules["readme_links_resolve"] = links
 _spec.loader.exec_module(links)

@@ -417,7 +417,7 @@ def test_the_installed_torch_is_read_and_its_variant_parsed(monkeypatch):
 # ── the channel table's own freshness, which is the half that rots ──────────────────
 #
 # `CUDA_CHANNELS` is a hardcoded snapshot of somebody else's release schedule. The network half
-# lives in `tools/check_cuda_channels.py` and runs once per release; the arithmetic is here, for
+# lives in `tools/ci/check_cuda_channels.py` and runs once per release; the arithmetic is here, for
 # the same reason `vendoring.py` holds the pin arithmetic and `check_vendor_pins.py` the fetch.
 
 from datetime import date  # noqa: E402
@@ -646,7 +646,7 @@ def test_linux_with_no_driver_says_the_driver_is_what_is_missing():
 def test_a_mistyped_channel_is_refused_rather_than_turned_into_a_url_that_404s():
     """`--cuda cu13O` (capital O) printed a confident install command against a dead channel.
 
-    That is precisely what tools/check_cuda_channels.py exists to prevent, reached through the one
+    That is precisely what tools/ci/check_cuda_channels.py exists to prevent, reached through the one
     path that never consulted the table.
     """
     accepted, complaint = envsetup.check_channel("cu13O")

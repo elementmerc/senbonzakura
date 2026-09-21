@@ -22,7 +22,7 @@ ship inside the package as `--track default`, so `pip install senbonzakura` puts
 harmful prompts in your site-packages with no gate and no terms accepted. They are obfuscated
 rather than protected: the key ships beside them, and anyone who wants them can have them in an
 afternoon. The gate on the HuggingFace copy does not apply to them. Saying only the paragraph
-above would leave the impression that a `pip install` is prompt-free, and it is not. `tools/build_track.py` rebuilds a pool of
+above would leave the impression that a `pip install` is prompt-free, and it is not. `tools/packaging/build_track.py` rebuilds a pool of
 the same shape from the same upstreams for anyone who would rather fetch the sources themselves.
 
 ## What it is
@@ -104,7 +104,7 @@ attracts thin or no copyright in many jurisdictions, so a good deal of it may ca
 restriction whatsoever. That argument is not relied on here. Attributing everything and shipping
 under the strictest term costs nothing and settles the question without needing it.
 
-For anyone who would rather fetch the sources themselves, `tools/build_track.py` assembles a pool
+For anyone who would rather fetch the sources themselves, `tools/packaging/build_track.py` assembles a pool
 of the same shape from the same upstreams at pinned revisions.
 
 ### Attribution
@@ -134,7 +134,7 @@ These are recorded because a measuring instrument with undisclosed limits is wor
   is fully described: `track.json` records where every boundary fell, and the split can be
   rebuilt from the pool exactly. What was never written down is how the pool was assembled from
   its upstreams, specifically the harmless "top-ups" added after the first build: not their
-  source, not their count, not the revision they came from. So `tools/build_track.py` reconstructs
+  source, not their count, not the revision they came from. So `tools/packaging/build_track.py` reconstructs
   a pool of the same shape from the same named upstreams rather than the identical one, and the
   difference is unquantified. Anything built from here on carries a manifest, so this cannot
   recur.

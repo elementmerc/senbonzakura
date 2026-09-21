@@ -67,11 +67,11 @@ How much depends on how uneven the row lengths are, and the honest answer is a r
 than a number. On synthetic matrices, median survival runs from about **6%** where rows are
 unusually even (a 0.2x spread) to **34 to 36%** at 4x and **41 to 44%** at 10x, the inner ranges
 being the spread across one, two and four ablated directions. Real checkpoints sit inside that
-range; the tool measures a model's row-length spread (`tools/leak_sweep.py --model`) so you can
+range; the tool measures a model's row-length spread (`tools/ci/leak_sweep.py --model`) so you can
 place your own weights on the curve, and it does not turn that into a single figure, because the
 instrument cannot produce one.
 
-Every figure in that sentence comes from `tools/leak_sweep.py`, which runs in four seconds and is
+Every figure in that sentence comes from `tools/ci/leak_sweep.py`, which runs in four seconds and is
 deterministic, and a test compares this page against it on every CI run. It has to, because the
 sentence used to read "about 5% ... 32% at 4x and 46% at 10x", and those three were not one
 measurement: 32% was near the BOTTOM of the range at 4x and 46% was near the TOP at 10x, which

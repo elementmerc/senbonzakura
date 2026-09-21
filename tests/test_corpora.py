@@ -245,14 +245,14 @@ def test_the_ambiguous_name_is_refused_through_resolve_too():
 
 # ── the prerequisite is named before the first download ──────────────────────────
 #
-# `doctor` sends a stranger to `tools/build_corpora.py` by name when the corpora are missing, so
+# `doctor` sends a stranger to `tools/packaging/build_corpora.py` by name when the corpora are missing, so
 # it gets run on machines that were never set up for it. On one without the GitHub CLI it died on
 # a raw `FileNotFoundError: 'gh'` out of subprocess, which names the missing program and nothing
 # a person can act on. Found by running it on the CPU box.
 def _build_corpora_module():
     import importlib.util
     import pathlib
-    path = pathlib.Path(__file__).resolve().parent.parent / "tools" / "build_corpora.py"
+    path = pathlib.Path(__file__).resolve().parent.parent / "tools" / "packaging" / "build_corpora.py"
     spec = importlib.util.spec_from_file_location("_build_corpora_under_test", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

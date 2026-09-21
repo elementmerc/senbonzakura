@@ -15,7 +15,7 @@ explicitly. The negation is deliberate: without it, committing anything here wou
 need `git add -f`, and a habit of `git add -f` defeats the ignore rule it bypasses.
 So the safe path is the easy path, and the unsafe one needs a flag.
 
-`tools/check_prompt_artefacts.py` enforces the stripping rather than trusting it. It
+`tools/ci/check_prompt_artefacts.py` enforces the stripping rather than trusting it. It
 refuses any staged `.json` or `.jsonl` carrying a `prompt`, `prompts`, `generation`
 or `generations` key at any depth, and CI runs it over the whole tree. A finding is
 either an unstripped artefact or a file that was never meant to be committed.

@@ -12,7 +12,7 @@ purpose:
     That is the whole value of vendoring a script rather than fetching one.
   * The **binaries are not committed.** Six platform archives is roughly eighty megabytes of
     opaque blob per pin bump, in a public repository, reviewable by nobody. They are downloaded at
-    wheel-build time by `tools/vendor_llama.py` and travel inside the wheel instead.
+    wheel-build time by `tools/packaging/vendor_llama.py` and travel inside the wheel instead.
 
 So a git checkout has the script and no binaries, and an installed wheel has both. That asymmetry
 is the reason this module exists rather than a hardcoded path: the same code has to work in a
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from .vendoring import VendorError, load_manifest
 
-#: Where `tools/vendor_llama.py` places what it extracts, and where the wheel carries it.
+#: Where `tools/packaging/vendor_llama.py` places what it extracts, and where the wheel carries it.
 VENDOR_BIN = Path(__file__).resolve().parent / "vendor" / "bin"
 
 #: Where the vendored pure-Python scripts live. These ARE committed.
@@ -119,7 +119,7 @@ def find_binary(name, *, key=None, search_path=True, log=None):
         f"{name} is not available. This install has no vendored copy at {where} and there is "
         f"none on PATH.\n"
         f"  * On a git checkout this is expected: the binaries are not committed. Run "
-        f"`python tools/vendor_llama.py` to fetch the pinned build.\n"
+        f"`python tools/packaging/vendor_llama.py` to fetch the pinned build.\n"
         f"  * On an installed wheel it means no binary was built for "
         f"{k or platform.machine() + '/' + sys.platform}. Install llama.cpp so {name} is on PATH.\n"
         f"  * {name} is needed because k-quant quantisation exists only in llama.cpp's C++; the "
@@ -139,7 +139,7 @@ def find_script(name):
         return p
     raise VendorError(
         f"the vendored script {name} is missing from {VENDOR_SRC}. It is fetched at build time "
-        f"rather than committed, so in a source checkout run `python tools/vendor_llama.py` to "
+        f"rather than committed, so in a source checkout run `python tools/packaging/vendor_llama.py` to "
         f"fetch it; in an installed wheel its absence is a packaging fault and should be reported.")
 
 

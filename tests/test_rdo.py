@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for tools/rdo.py, the gradient-optimised direction finder.
+"""Tests for tools/research/rdo.py, the gradient-optimised direction finder.
 
 The optimiser is the first thing in this project that chooses directions by what removing them
 DOES rather than by what the activations look like. So the tests check the two things that would
@@ -16,7 +16,7 @@ import pytest
 import torch
 
 _SPEC = importlib.util.spec_from_file_location(
-    "rdo", Path(__file__).resolve().parent.parent / "tools" / "rdo.py")
+    "rdo", Path(__file__).resolve().parent.parent / "tools" / "research" / "rdo.py")
 rdo = importlib.util.module_from_spec(_SPEC)
 sys.modules["rdo"] = rdo
 _SPEC.loader.exec_module(rdo)

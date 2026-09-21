@@ -9,8 +9,8 @@ deliberately: a corpus committed to a public repository is in its history perman
 later commit takes it back out. So the blob is built at release time from a track you hold.
 
 ```sh
-python tools/pack_track.py --track ~/track-heldout
-python tools/pack_track.py --manifest-only        # what the packed blob says it is
+python tools/packaging/pack_track.py --track ~/track-heldout
+python tools/packaging/pack_track.py --manifest-only        # what the packed blob says it is
 ```
 
 The packer refuses a directory that is not a track (missing partitions, or no `track.json`), and
@@ -24,7 +24,7 @@ Compare the manifest's `sha256_of_tar` instead, which is taken over the corpus a
 wrapping.
 
 ```sh
-python tools/pack_track.py --manifest-only | grep sha256_of_tar
+python tools/packaging/pack_track.py --manifest-only | grep sha256_of_tar
 ```
 
 The current track is the repaired three-way split: 259 / 4,636 / 4,982. A test asserts those
@@ -69,7 +69,7 @@ user rather than us: the tag says nothing about which glibc the binaries need. M
 cannot start, because llama.cpp's binaries link OpenMP and that image has no `libgomp.so.1`.
 
 ```sh
-tools/repair_manylinux.sh dist/senbonzakura-<version>-py3-none-linux_x86_64.whl
+tools/packaging/repair_manylinux.sh dist/senbonzakura-<version>-py3-none-linux_x86_64.whl
 # -> dist-manylinux/senbonzakura-<version>-py3-none-manylinux_2_35_x86_64.whl
 ```
 
@@ -92,14 +92,14 @@ allow `manylinux_2_34`; they need `GLIBCXX_3.4.30`, which is GCC 12, and that is
 upstream's release binaries, which would change the provenance model and has not been decided.
 
 ```sh
-python tools/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
-python tools/pack_track.py             # writes src/senbonzakura/data/default-track.bin
+python tools/packaging/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
+python tools/packaging/pack_track.py             # writes src/senbonzakura/data/default-track.bin
 
 # 1. the PLATFORM wheel, repaired to a manylinux tag so PyPI will take it
 python -m build --wheel
-python tools/check_wheel.py dist/*.whl                 # tag-versus-contents only
-tools/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
-python tools/check_wheel.py dist-manylinux/*.whl --release
+python tools/ci/check_wheel.py dist/*.whl                 # tag-versus-contents only
+tools/packaging/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
+python tools/ci/check_wheel.py dist-manylinux/*.whl --release
 
 # 2. the UNIVERSAL wheel plus the sdist, for PyPI.
 #    `build/` must go too: a stale staging directory carries the binaries back in even after
@@ -109,9 +109,9 @@ rm -rf build
 python -m build --outdir dist-pypi
 mv /tmp/senbon-vendor-bin src/senbonzakura/vendor/bin
 
-python tools/check_wheel.py dist-pypi/*.whl --release  # the artefact strangers get
-python tools/check_wheel.py dist-pypi/*.tar.gz         # nothing platform-specific in the sdist
-python tools/check_cuda_channels.py     # the channels `senbonzakura setup` recommends still exist
+python tools/ci/check_wheel.py dist-pypi/*.whl --release  # the artefact strangers get
+python tools/ci/check_wheel.py dist-pypi/*.tar.gz         # nothing platform-specific in the sdist
+python tools/ci/check_cuda_channels.py     # the channels `senbonzakura setup` recommends still exist
 ```
 
 `--release` is no longer the part that is easy to skip, because it is no longer skippable:
@@ -172,7 +172,7 @@ It goes in three places: the annotated tag message, the GitHub Release title
 ## Refresh the vendored pins. Every release, not when someone remembers.
 
 ```sh
-python tools/check_vendor_pins.py
+python tools/ci/check_vendor_pins.py
 ```
 
 The wheel ships third-party artefacts, and every one of them is pinned. Pinning is what makes a
@@ -271,9 +271,9 @@ and `testpypi`.
 ## Order
 
 1. Pack the track.
-2. `python tools/check_vendor_pins.py`; refresh any pin it reports as `DUE`.
+2. `python tools/ci/check_vendor_pins.py`; refresh any pin it reports as `DUE`.
 3. `SENBON_REQUIRE_BUNDLED=1 python -m pytest`, plus lint.
-4. Build the platform wheel, repair it with `tools/repair_manylinux.sh`, then build the
+4. Build the platform wheel, repair it with `tools/packaging/repair_manylinux.sh`, then build the
    universal wheel and the sdist, per the section above. Confirm the blob is inside each wheel,
    and that `check_wheel.py --release` passes on the REPAIRED wheel and on the universal one,
    and that it passes on the sdist. The unrepaired `dist/*.whl` is an intermediate and is
@@ -380,8 +380,8 @@ $EDITOR src/senbonzakura/_version.py
 $EDITOR checker/src/senbonzakura_check/_version.py
 
 # 2. The blobs must be present, or --track default fails for the tester and for nobody here.
-python tools/pack_track.py --track <your held-out track>   # if src/senbonzakura/data/ is empty
-python tools/build_corpora.py
+python tools/packaging/pack_track.py --track <your held-out track>   # if src/senbonzakura/data/ is empty
+python tools/packaging/build_corpora.py
 
 # 3. The gate that turns "skipped for want of a blob" into a failure.
 SENBON_REQUIRE_BUNDLED=1 python -m pytest
@@ -392,7 +392,7 @@ ruff check src/ tests/ tools/
 #    only reason the universal wheel exists.
 rm -rf build
 python -m build --wheel
-python tools/check_wheel.py dist/senbonzakura-*.whl
+python tools/ci/check_wheel.py dist/senbonzakura-*.whl
 
 # 5. THE CHECKER'S WHEEL, which is not optional on a dev cut. `senbonzakura` declares a
 #    dependency on `senbonzakura-check`, and that name is not on PyPI, so a tester handed only

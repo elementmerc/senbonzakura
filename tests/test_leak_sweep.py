@@ -4,7 +4,7 @@
 
 WHY THIS FILE EXISTS
 
-`tools/leak_sweep.py` produces the numbers for a chart that goes out in public. A chart drawn from
+`tools/ci/leak_sweep.py` produces the numbers for a chart that goes out in public. A chart drawn from
 a handoff paragraph is a picture of somebody's memory; this is what makes it a rendering of a
 measurement instead. That only helps if the measurement itself is pinned, so these assert the
 shape of the curve AND the value at the point the published range is quoted from.
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "ci"))
 
 import leak_sweep
 

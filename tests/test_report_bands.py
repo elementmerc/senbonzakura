@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for tools/report_bands.py, the thing that actually prints a verdict.
+"""Tests for tools/research/report_bands.py, the thing that actually prints a verdict.
 
 Every guard in `matched_refusal_table` was bypassed for weeks because the reports were Python
 heredocs inside run specs that recomputed `min(kls)` themselves. These tests are written around
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
-    "report_bands", Path(__file__).resolve().parent.parent / "tools" / "report_bands.py")
+    "report_bands", Path(__file__).resolve().parent.parent / "tools" / "research" / "report_bands.py")
 rb = importlib.util.module_from_spec(_SPEC)
 sys.modules["report_bands"] = rb
 _SPEC.loader.exec_module(rb)

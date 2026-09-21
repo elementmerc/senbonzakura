@@ -282,14 +282,14 @@ def load(key, *, root=None, log=print):
     if not path.is_file():
         raise CorpusError(
             f"the bundled corpora are not installed at {path}. A source checkout does not carry "
-            f"them until `python tools/build_corpora.py` has been run; a wheel should. Point "
+            f"them until `python tools/packaging/build_corpora.py` has been run; a wheel should. Point "
             f"--track at your own corpus, or build one with `senbonzakura track`.")
     try:
         doc = _json.loads(bundled.unpack(path.read_bytes()).decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as e:
         raise CorpusError(
             f"the bundled corpora at {path} could not be read ({e}). Re-run "
-            f"`python tools/build_corpora.py`.") from e
+            f"`python tools/packaging/build_corpora.py`.") from e
 
     prompts = (doc.get("corpora") or {}).get(key)
     if prompts is None:

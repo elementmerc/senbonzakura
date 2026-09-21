@@ -93,7 +93,7 @@ def running_from_a_checkout():
     """Is this package being imported out of a source tree, rather than out of an install?
 
     The two need different advice and used to get one sentence covering both. A source checkout has
-    no packed track until `tools/pack_track.py` is run, which is normal and fixable in one command.
+    no packed track until `tools/packaging/pack_track.py` is run, which is normal and fixable in one command.
     An installed wheel that has no packed track is DEFECTIVE, the user cannot build one without a
     corpus of harmful prompts they do not have, and telling them to run a tool that is not in their
     install sends them looking for a file that was never shipped.
@@ -103,7 +103,7 @@ def running_from_a_checkout():
     decides the advice is whether the command in the message exists to be run.
     """
     root = Path(__file__).resolve().parent.parent.parent
-    return (root / "tools" / "pack_track.py").is_file()
+    return (root / "tools" / "packaging" / "pack_track.py").is_file()
 
 
 def _derive(salt):
@@ -207,7 +207,7 @@ def _read():
     if not path.is_file():
         raise ValueError(
             f"no bundled evaluation track is installed at {path}. A source checkout does not "
-            f"carry one until `python tools/pack_track.py` has been run; a wheel should. Pass "
+            f"carry one until `python tools/packaging/pack_track.py` has been run; a wheel should. Pass "
             f"--track with your own corpus, or build one with `senbonzakura track`.")
     return path.read_bytes()
 
@@ -309,10 +309,10 @@ def ensure(log=print):
                 f"no bundled evaluation track is installed at {data_path()}. A source checkout "
                 f"does not carry one until it is built, because the blob holds harmful prompts and "
                 f"is kept out of git on purpose:\n"
-                f"  python tools/pack_track.py --track <your track>\n"
+                f"  python tools/packaging/pack_track.py --track <your track>\n"
                 f"Or pass --track with your own corpus.")
         # An INSTALL with no packed track is a packaging fault, not something the user did. Telling
-        # them to run `tools/pack_track.py` sends them looking for a file their install never had,
+        # them to run `tools/packaging/pack_track.py` sends them looking for a file their install never had,
         # and telling them to build their own track asks for a corpus of harmful prompts they have
         # no way to obtain. Both were in the single sentence this replaced.
         raise BundledTrackError(

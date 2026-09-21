@@ -76,7 +76,7 @@ CHANNEL_ARCH_FLOOR: dict[str, tuple[int, int]] = {
 #: A channel name we are willing to build an index URL from without having seen it in the table.
 #: ROCm and nightly channels are real and legitimately outside `CUDA_CHANNELS`, so they warn; a
 #: `cu`-shaped name that is not one we know is almost always a typo and is refused, because the
-#: whole argument for `tools/check_cuda_channels.py` is that a URL which 404s is worse than no
+#: whole argument for `tools/ci/check_cuda_channels.py` is that a URL which 404s is worse than no
 #: advice, and `--cuda` walked straight past it.
 _CHANNEL_SHAPE = re.compile(r"^(?:cpu|cu\d{3,4}|rocm[0-9.]+|nightly(?:/[a-z0-9.]+)?)$")
 
@@ -86,7 +86,7 @@ PIP_TIMEOUT = 3600
 
 #: When the table above was last checked against the index, and how long that is good for. The
 #: same shape as `vendor/pins.json`: a hardcoded list of somebody else's versions rots, and a list
-#: that rots silently is worse than one that says how old it is. `tools/check_cuda_channels.py`
+#: that rots silently is worse than one that says how old it is. `tools/ci/check_cuda_channels.py`
 #: does the network half at release time; the arithmetic here is pure so it can be tested.
 CHANNELS_CHECKED = "2026-09-10"
 CHANNELS_STALE_AFTER_DAYS = 90
@@ -126,7 +126,7 @@ def check_channel(channel, table=None):
 
     `--cuda` used to be interpolated into the index URL untouched, so `--cuda cu13O` (capital O)
     printed a confident install command against a channel that does not exist. That is the exact
-    outcome `tools/check_cuda_channels.py` was written to prevent, reached through the one path
+    outcome `tools/ci/check_cuda_channels.py` was written to prevent, reached through the one path
     that never consulted the table.
     """
     known = {tag for _, tag in (table or CUDA_CHANNELS)} | {"cpu"}

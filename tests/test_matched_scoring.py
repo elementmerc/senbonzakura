@@ -402,7 +402,7 @@ def test_the_harness_reports_the_closeness_so_a_corpus_can_be_measured_without_n
     that keeps producing harnesses that measure nothing.
     """
     import pathlib
-    src = pathlib.Path(__file__).resolve().parents[1] / "tools" / "measure_separation.py"
+    src = pathlib.Path(__file__).resolve().parents[1] / "tools" / "research" / "measure_separation.py"
     text = src.read_text(encoding="utf-8")
     assert '"match_closeness"' in text
     assert "--good-ds" in text

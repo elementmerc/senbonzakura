@@ -200,7 +200,7 @@ def supported_architectures(script, *, timeout=SUPPORTED_TIMEOUT_S):
     # THE EXIT STATUS, which was read and discarded. The script imports torch at module level, so
     # on an install without it the process dies with a traceback and this returned an empty set,
     # which `doctor` then reported as "the vendored package is incomplete; re-run the vendoring
-    # tool". Every clause of that was untrue, and the remedy it named is `tools/vendor_llama.py`,
+    # tool". Every clause of that was untrue, and the remedy it named is `tools/packaging/vendor_llama.py`,
     # which no wheel contains. Same class as telling the operator to update a driver that had run
     # CUDA all night: a refusal for a reason that is not true sends the reader to the wrong thing.
     died = None
@@ -251,7 +251,7 @@ def preflight(model_dir, out, *, force, skip_arch_check, log=print):
                 f"the vendored converter could not import {len(broken)} of its architecture "
                 f"modules ({', '.join(broken[:5])}), so the architectures they provide are "
                 f"advertised and absent. This is a broken vendoring rather than anything about "
-                f"your model: re-run `python tools/vendor_llama.py`.")
+                f"your model: re-run `python tools/packaging/vendor_llama.py`.")
         if names and arch not in names:
             raise ConvertError(
                 f"the pinned converter does not support {arch}. It supports {len(names)} "

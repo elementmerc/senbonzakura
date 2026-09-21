@@ -260,7 +260,7 @@ def test_a_quantiser_that_is_not_vendored_is_reported_as_unavailable(monkeypatch
     from senbonzakura.vendored import VendorError
 
     def _boom(*_a, **_k):
-        raise VendorError("not vendored in an installed wheel. Build it with tools/vendor_llama.py")
+        raise VendorError("not vendored in an installed wheel. Build it with tools/packaging/vendor_llama.py")
 
     monkeypatch.setattr(doctor, "find_binary", _boom, raising=False)
     monkeypatch.setattr("senbonzakura.vendored.find_binary", _boom)

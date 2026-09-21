@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for tools/direction_validation.py, the experiment that judges the directions.
+"""Tests for tools/research/direction_validation.py, the experiment that judges the directions.
 
 This is the instrument that decides whether the multi-direction claim survives, so the tests
 plant data whose answer is known and demand that the experiment reach it. An experiment that

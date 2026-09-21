@@ -17,7 +17,7 @@
 # OUTPUT never fires even though the same text is provably on screen, while one matching the
 # typed command fires instantly and waits for nothing at all. The second failure is the
 # dangerous one, so the wait is not what guarantees this recording caught anything. The
-# `# expect:` line above is: tools/record-docs.sh reads it and fails the recording if the text
+# `# expect:` line above is: tools/dev/record-docs.sh reads it and fails the recording if the text
 # is absent from the captured terminal.
 
 Source docs/tapes/common.tape

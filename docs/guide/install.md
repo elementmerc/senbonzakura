@@ -69,7 +69,7 @@ many words. Every one of them is a public research dataset. The tool prints the 
 and the licence the first time it loads one, because several of them require it.
 
 If you'd rather not have them, build the wheel yourself without running
-`tools/build_corpora.py` and `tools/pack_track.py`; everything except the bundled defaults
+`tools/packaging/build_corpora.py` and `tools/packaging/pack_track.py`; everything except the bundled defaults
 still works, and the tool tells you what to run if you ask for one.
 
 A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your

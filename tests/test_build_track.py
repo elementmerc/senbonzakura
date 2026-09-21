@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for the corpus builder (tools/build_track.py).
+"""Tests for the corpus builder (tools/packaging/build_track.py).
 
 The builder exists because two of the three upstream datasets declare no licence, so the rows
 cannot be redistributed and only the recipe can. That makes the licence check the load-bearing
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
-    "build_track", Path(__file__).resolve().parent.parent / "tools" / "build_track.py")
+    "build_track", Path(__file__).resolve().parent.parent / "tools" / "packaging" / "build_track.py")
 bt = importlib.util.module_from_spec(_SPEC)
 sys.modules["build_track"] = bt
 _SPEC.loader.exec_module(bt)

@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+"""Does this wheel's tag match what is inside it?
+
+THE ONE COMBINATION THAT BREAKS FOR A STRANGER AND NOT FOR US
+
+`py3-none-any` says "this runs on any machine". A wheel carrying a compiled `llama-quantize` does
+not. Ship both together and pip installs happily on a Mac, a Windows box and an ARM server, and the
+binary refuses to start on all three. Nothing in the build says a word about it, because from
+inside the checkout the binary is right there and works.
+
+The other direction is a quieter waste: a platform tag on a wheel with no platform payload refuses
+installation everywhere except one architecture, for nothing.
+
+A wheel also states its tag twice, in the filename and in the `WHEEL` metadata, and those can
+disagree. Renaming a file is the easiest way to produce a wheel that lies, so both are read and
+compared with each other as well as with the contents.
+
+WHY A SCRIPT AND NOT ONLY A TEST
+
+`tests/test_platform_wheel.py` asserts this about the wheel THIS checkout builds. CI needs to point
+the same check at a wheel it constructed to be wrong, and see it refuse: a gate that has only ever
+been shown passing has not been shown to work. `--expect-failure` is that mode.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+#: Files that make a wheel platform-specific. Anything here means the wheel cannot honestly claim
+#: to run anywhere, whatever its tag says.
+PLATFORM_PAYLOAD = ("llama-quantize", "llama-imatrix", ".so", ".dylib", ".dll", ".pyd")
+
+UNIVERSAL_TAG = "py3-none-any"
+
+
+def _filename_tag(path):
+    """The last three dash-separated fields of a wheel name are its tag."""
+    stem = Path(path).name[: -len(".whl")]
+    parts = stem.split("-")
+    if len(parts) < 5:
+        raise ValueError(f"{Path(path).name} is not a wheel filename (too few fields)")
+    return "-".join(parts[-3:])
+
+
+def _metadata_tag(zf):
+    """The Tag: line from the wheel's own WHEEL file, which is the authority pip reads."""
+    names = [n for n in zf.namelist() if re.fullmatch(r"[^/]+\.dist-info/WHEEL", n)]
+    if not names:
+        return None
+    lines = zf.read(names[0]).decode("utf-8", errors="replace").splitlines()
+    tags = [ln.split(":", 1)[1].strip() for ln in lines if ln.startswith("Tag:")]
+    return tags or None
+
+
+def inspect(path):
+    """Everything the verdict rests on, so a failure can show its working."""
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        meta_tags = _metadata_tag(zf)
+    payload = sorted({n for n in names if any(p in n for p in PLATFORM_PAYLOAD)})
+    return {
+        "filename_tag": _filename_tag(path),
+        "metadata_tags": meta_tags,
+        "platform_payload": payload,
+        "pycache": sorted(n for n in names if "__pycache__" in n or n.endswith(".pyc")),
+    }
+
+
+def problems(info):
+    """Every disagreement found, as sentences. Empty means the wheel is honest."""
+    found = []
+    ftag, mtags, payload = info["filename_tag"], info["metadata_tags"], info["platform_payload"]
+    universal = ftag == UNIVERSAL_TAG
+
+    if mtags is None:
+        found.append("the wheel carries no WHEEL metadata, so pip cannot tell what it is")
+    elif ftag not in mtags:
+        found.append(f"the filename says {ftag} and the WHEEL metadata says {', '.join(mtags)}. "
+                     f"One of them is wrong, and pip believes the metadata")
+
+    if universal and payload:
+        found.append(f"the tag says it runs anywhere and it carries {len(payload)} "
+                     f"platform file(s): {', '.join(payload[:3])}. It will install on machines it "
+                     f"cannot run on")
+    if not universal and not payload:
+        found.append(f"the tag {ftag} restricts it to one platform and there is no platform "
+                     f"payload to justify that, so it refuses to install everywhere else for "
+                     f"nothing")
+
+    # COMPILED BYTECODE FROM THE BUILD MACHINE. The vendored converter is a set of real Python
+    # packages, so importing or running it leaves `__pycache__` directories in the source tree,
+    # and setuptools sweeps them into the wheel. The published platform wheel carried 93 of them:
+    # 2 MB of stale bytecode compiled against one developer's Python 3.14, shipped to strangers
+    # on other versions, and enough to make two builds of identical source produce different
+    # bytes. Deleting them is not the fix, because running the converter once puts them back.
+    cached = info["pycache"]
+    if cached:
+        found.append(
+            f"the wheel carries {len(cached)} compiled bytecode file(s) from the build machine "
+            f"({cached[0]}). They are stale the moment anyone on another Python version installs "
+            f"it, and they make two builds of the same source differ. Remove them with: "
+            f"find src -name __pycache__ -type d -exec rm -rf {{}} +")
+    return found
+
+
+#: What a wheel a user installs has to contain beyond the code. Each is generated by a tool
+#: rather than committed, so a build from a clean checkout silently omits all of them.
+#: Licence text that must be INSIDE the artefact, not merely in the repository.
+#:
+#: AGPL section 5(a) asks for the statement of modification to reach the thing people install,
+#: and the 0.3.0 release on PyPI shipped LICENSE alone: the statement existed in the repository
+#: and was absent from the only place the section asks for it. That was fixed in `pyproject.toml`
+#: and nothing checked it, so the same finding could escape the same way again. MIT's "all copies
+#: or substantial portions" is the same shape for the vendored corpora notices.
+#:
+#: KEYED BY DISTRIBUTION SINCE Q-29, because this repository now builds two and they owe
+#: different things. What a distribution owes follows from what it SHIPS, and the checker ships
+#: no corpora, no evaluation track and no third-party code: it names Heretic's keyword metric in
+#: a vocabulary, which is a reference and not a copy. Applying the abliterator's table to it
+#: produced six PROBLEMs for files it must never carry, measured 2026-09-12. That is a check
+#: being confidently wrong, which is how a gate gets switched off.
+RELEASE_LICENCES = {
+    "senbonzakura": {
+        "LICENSE": "AGPL-3.0-or-later, the licence of the work",
+        "THIRD-PARTY-NOTICES.md": "the AGPL section 5(a) statement of modification",
+        "THIRD-PARTY-CORPORA.md": ("attribution for the bundled corpora, which MIT and CC-BY "
+                                   "require"),
+        "APACHE-2.0.txt": ("the Apache-2.0 text, which section 4(a) requires to travel with the "
+                           "bundled evaluation track's Apache-2.0 component"),
+    },
+    # The AGPL text itself and nothing else. Whether section 5(a) also reaches a distribution
+    # that carries none of the derived code is a LICENCE READING and nobody has made it; it is
+    # in DEFERRED.md for the Licence Reader persona at the 0.4.0 gate rather than being settled
+    # here by whoever was editing a build script.
+    "senbonzakura-check": {
+        "LICENSE": "AGPL-3.0-or-later, the licence of the work",
+    },
+}
+
+RELEASE_DATA = {
+    "senbonzakura": {
+        "senbonzakura/data/corpora.bin": "python tools/packaging/build_corpora.py",
+        "senbonzakura/data/default-track.bin": "python tools/packaging/pack_track.py",
+        "senbonzakura/data/templates/plain.jinja": "it is committed; check the ignore rules",
+    },
+    # Deliberately empty, and the emptiness is the property the distribution exists to hold.
+    "senbonzakura-check": {},
+}
+
+
+def distribution_of(wheel: Path) -> str:
+    """The distribution a wheel belongs to, normalised the way PyPI normalises a name.
+
+    A wheel filename is `name-version-...`, and the name half spells underscores where the
+    distribution spells hyphens, so `senbonzakura_check-0.4.0...` is `senbonzakura-check`.
+    """
+    return wheel.name.partition("-")[0].replace("_", "-").lower()
+
+
+def _requirements(table: dict, wheel: Path) -> dict:
+    """The requirements for this wheel's distribution.
+
+    An unrecognised name gets the ABLITERATOR'S table, which is the strict one. The tool is
+    pointed at synthetic and deliberately mislabelled wheels by CI and by the tests, and a
+    default that relaxed for anything it did not recognise would let a real wheel through by
+    misspelling its own name.
+    """
+    return table.get(distribution_of(wheel), table["senbonzakura"])
+
+
+def missing_licences(wheel: Path) -> list[str]:
+    """Licence files that are not in the wheel, and what each one discharges.
+
+    Matched under `dist-info/licenses/`, which is where `license-files` puts them, rather than
+    anywhere in the archive: a copy sitting somewhere else does not satisfy anything.
+    """
+    with zipfile.ZipFile(wheel) as z:
+        names = [n for n in z.namelist() if "dist-info/licenses/" in n]
+    return [f"the wheel does not carry {want}, which is {why}. Add it to `license-files` in "
+            f"pyproject.toml"
+            for want, why in _requirements(RELEASE_LICENCES, wheel).items()
+            if not any(n.endswith("/" + want) for n in names)]
+
+
+def missing_release_data(wheel: Path) -> list[str]:
+    """Which of the bundled data files this wheel does not carry, and what builds each.
+
+    THE GAP THIS CLOSES. A wheel built from a plain clone contains no corpora, no bundled
+    track and, until 2026-09-08, no chat templates, and it installs, imports and answers
+    `--help` without complaint. `--track default` then fails for every user of it. The
+    clean-room check that was supposed to catch this asked whether doctor PRINTED the words
+    "corpus advbench", which it does on both outcomes.
+
+    Names are matched by suffix because the platform-wheel build puts them under a
+    `.data/purelib/` prefix, and a check that only knew one of the two layouts would pass the
+    other by accident.
+    """
+    with zipfile.ZipFile(wheel) as z:
+        names = z.namelist()
+    return [f"a release wheel must carry {want}, and this one does not. Build it with: {how}"
+            for want, how in _requirements(RELEASE_DATA, wheel).items()
+            if not any(n.endswith(want) for n in names)]
+
+
+#: A path that belongs to whoever built the wheel rather than to whoever installs it. Baseline 13:
+#: no private paths in shipped artefacts. Found in the published blob on 2026-09-10, where
+#: `track.json` carried `/home/heph-agent/track2-enriched-backup/...` and unpacked it into every
+#: user's cache. `74e571f` fixed the same class one level up; the blob predated it and was never
+#: repacked, which is exactly why this is a gate and not a memory.
+_BUILD_MACHINE_PATH = re.compile(rb"""["'](/home/[^"']+|/Users/[^"']+|[A-Za-z]:\\Users\\[^"']+"""
+                                 rb"""|/tmp/[^"']+|/root/[^"']+)["']""")
+
+
+def leaks_a_build_path(wheel: Path) -> list[str]:
+    """Build-machine paths inside the shipped data blobs.
+
+    Only the data files are read: source files legitimately mention `/tmp` in docstrings and
+    comments, and a check that flagged those would be turned off within a week.
+    """
+    out = []
+    with zipfile.ZipFile(wheel) as z:
+        for name in z.namelist():
+            if not name.endswith((".bin", ".json")) or "dist-info" in name:
+                continue
+            try:
+                blob = z.read(name)
+            except (KeyError, OSError):
+                continue
+            for m in _BUILD_MACHINE_PATH.finditer(blob):
+                out.append(
+                    f"{name} carries a path from the machine that built it "
+                    f"({m.group(1).decode('utf-8', 'replace')[:80]}). That ships to every user "
+                    f"and unpacks into their cache. Re-pack it with tools/packaging/pack_track.py, which "
+                    f"reduces each source to its basename.")
+                break
+    return out
+
+
+#: Platform tags the Python Package Index will accept on upload. Anything else is refused there,
+#: whatever the wheel says about itself and whatever the local gates think of it.
+#:
+#: Bare `linux_*` is the one that catches projects out, and it caught this one. A Linux wheel has
+#: to declare the glibc or musl floor it was built against (`manylinux_2_28_x86_64`,
+#: `musllinux_1_2_x86_64`), because "linux" alone tells an installer nothing about whether the
+#: binary inside will run. macOS and Windows carry their compatibility in the tag already.
+UPLOADABLE_PREFIXES = ("any", "manylinux", "musllinux", "macosx", "win")
+
+
+def unacceptable_to_pypi(info):
+    """Tags PyPI will reject at upload, which is AFTER the release has been published.
+
+    THE ORDER OF EVENTS IS THE WHOLE PROBLEM. `publish.yml` downloads the artefacts from a GitHub
+    Release that already exists, checks them here, runs `twine check`, and uploads. `twine check`
+    validates the metadata's renderability and says nothing about platform tags, and this file
+    used to ask only whether the tag matched the contents. Both passed a
+    `py3-none-linux_x86_64` wheel, which is exactly what this tree builds once
+    `tools/packaging/vendor_llama.py` has run, and PyPI refuses it with "unsupported platform tag".
+
+    By then the Release is public, the tag is pushed, and the version is burned: PyPI will not
+    accept that version number again even once the wheel is fixed. Catching it here costs nothing
+    and catches it before any of that.
+
+    A bare `linux_x86_64` wheel is not wrong, and nothing here says it is. It is the right thing
+    to attach to a GitHub Release for people who want the binaries. It simply cannot go to PyPI,
+    and the two destinations need different artefacts.
+    """
+    tags = set(filter(None, [info["filename_tag"], *(info["metadata_tags"] or [])]))
+    bad = []
+    for tag in sorted(tags):
+        plat = tag.rsplit("-", 1)[-1]
+        if not plat.startswith(UPLOADABLE_PREFIXES):
+            bad.append(
+                f"the platform tag `{plat}` is not one PyPI accepts, so `twine upload` will "
+                f"refuse this wheel after the GitHub Release is already published and the "
+                f"version number is spent. PyPI takes {', '.join(UPLOADABLE_PREFIXES)}. Either "
+                f"publish the universal wheel to PyPI and attach this one to the Release, or "
+                f"repair it to a manylinux tag with auditwheel.")
+    return bad
+
+
+#: This project's distribution names, normalised. The auto-detection below is deliberately
+#: narrow: it fires on OUR release artefacts and on nothing else, because the tool is also
+#: pointed at synthetic wheels that are supposed to carry no corpora and no licences.
+#: Both are listed since Q-29; each is then checked against its OWN table above, so the checker
+#: is held to what it ships rather than to what the abliterator ships.
+PROJECT = "senbonzakura"
+PROJECTS = frozenset(RELEASE_LICENCES)
+
+#: A plain dotted number and nothing else. `0.4.0` is a release; `0.4.0.dev0`, `0.4.0rc1` and
+#: anything with a local segment are not, and a wheel that is not a release is allowed to be thin.
+_RELEASE_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def is_release_artefact(wheel: Path) -> bool:
+    """Is this our own package at a release version, whatever flags were typed?
+
+    THE HOLE THIS CLOSES, in RELEASING.md's own words: "`--release` is the part that is easy to
+    skip and expensive to skip." The two generated `.bin` files are kept out of git on purpose, so
+    a wheel built from a plain clone installs, imports and answers `--help` perfectly happily, then
+    fails `--track default` for every person who installs it. Nothing about it looks wrong from the
+    outside, and the only thing standing between that wheel and PyPI was somebody remembering a
+    flag. The wheel published as 0.3.0 carries neither file.
+
+    A flag can be forgotten. A version cannot: the artefact says what it is, so it is asked rather
+    than the operator.
+    """
+    _, _, rest = wheel.name.partition("-")
+    version = rest.split("-", 1)[0] if rest else ""
+    if distribution_of(wheel) not in PROJECTS:
+        return False
+    return bool(_RELEASE_VERSION.match(version))
+
+
+#: A specifier that admits a pre-release: `1.2.3.dev4`, `1.2a1`, `1.2rc1`, `1.2.3.post1.dev0`.
+#: PEP 440 says pip considers pre-releases for a requirement only when the requirement mentions
+#: one, which is the property being detected here rather than the exact grammar.
+_PRERELEASE_IN_SPECIFIER = re.compile(r"\d(?:\.\d+)*\s*(?:\.dev|[abc]|rc)\d*", re.IGNORECASE)
+
+
+def prerelease_dependency_in_a_release(wheel: Path) -> list[str]:
+    """A stable wheel may not depend on a range that admits pre-releases.
+
+    THE TRADE THIS ENFORCES, decided 2026-09-17. `senbonzakura` declares `senbonzakura-check`,
+    which had never been published, so a plain `pip install` of the wheel failed outright for
+    everyone who did not already have both wheels sitting side by side. The fix for the dev cut is
+    a specifier that admits the pre-release, because pip ignores pre-releases unless asked and a
+    dev checker on the index would otherwise leave the install failing for a second reason that
+    reads exactly like the first.
+
+    That specifier is correct for a dev cut and wrong for a release. A stable wheel whose
+    dependency admits pre-releases resolves to whatever is newest for ever after, so a build that
+    looks pinned changes underneath whoever installs it next, which on a rented card is a result
+    nobody can attribute, paid for by the hour.
+
+    The whole plan rests on the loosening being undone at release, and "undo it at release" is a
+    thing a person remembers or does not. So it is asked of the artefact. A wheel at a release
+    version is refused if its own metadata still carries the licence it was given for the dev cut.
+    """
+    try:
+        with zipfile.ZipFile(wheel) as zf:
+            name = next(n for n in zf.namelist()
+                        if n.endswith(".dist-info/METADATA"))
+            meta = zf.read(name).decode("utf-8", "replace")
+    except (OSError, zipfile.BadZipFile, StopIteration) as e:
+        return [f"could not read the wheel's metadata to check its dependencies: {e}"]
+
+    bad = []
+    for line in meta.splitlines():
+        if not line.lower().startswith("requires-dist:"):
+            continue
+        requirement = line.split(":", 1)[1].strip()
+        # An extra is a different question. A release may legitimately offer an extra pinned at a
+        # pre-release of something optional; what may not happen is the REQUIRED graph of a stable
+        # artefact resolving to a pre-release without the installer asking for one.
+        if ";" in requirement and "extra ==" in requirement:
+            continue
+        if _PRERELEASE_IN_SPECIFIER.search(requirement):
+            bad.append(
+                f"this wheel is at a RELEASE version and requires {requirement!r}, whose "
+                f"specifier admits a pre-release. A released artefact that can resolve to a "
+                f"pre-release changes underneath whoever installs it next. Tighten it to a "
+                f"stable floor before tagging.")
+    return bad
+
+
+#: A source distribution has no platform tag by construction, so anything in it that only runs on
+#: one platform is a trap. Measured on 2026-09-10: the sdist carried 33 entries under
+#: `vendor/bin/linux-x86_64/`, about 19 MB of `.so` and `llama-quantize`. `setup.py` hooks
+#: `bdist_wheel` and refuses to let a wheel carrying those claim `py3-none-any`; nothing asked the
+#: same question of the sdist, and `publish.yml` uploads `dist/*` after checking `dist/*.whl`.
+_PLATFORM_SUFFIXES = (".so", ".dylib", ".dll", ".pyd", ".a", ".lib")
+
+
+def sdist_problems(path: Path) -> list[str]:
+    """Platform-specific binaries inside a source distribution."""
+    import tarfile
+    bad = []
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            # Files only. A directory entry has no extension either, and flagging
+            # `vendor/bin/linux-x86_64` as an executable is the kind of confidently wrong
+            # complaint that gets a gate switched off.
+            names = [m.name for m in tar.getmembers() if m.isfile()]
+    except (OSError, tarfile.TarError) as e:
+        return [f"{path} could not be read as a source distribution: {e}"]
+    for name in names:
+        base = name.rsplit("/", 1)[-1]
+        if any(base.endswith(suf) or f"{suf}." in base for suf in _PLATFORM_SUFFIXES):
+            bad.append(name)
+        elif "/vendor/bin/" in name and base not in ("", "LICENSE") and "." not in base:
+            bad.append(name)                      # an extensionless executable
+    if not bad:
+        return []
+    return [(f"the source distribution carries {len(bad)} platform-specific file(s), and an sdist "
+             f"has no platform tag: anyone on another operating system, or using --no-binary, "
+             f"builds from this and installs a binary that cannot run. First few: "
+             f"{', '.join(bad[:3])}. Prune them in MANIFEST.in.")]
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("wheel", type=Path)
+    p.add_argument("--release", action="store_true",
+                   help="also require the bundled data a RELEASE wheel must carry: the packed "
+                        "corpora, the packed track and the chat templates. A wheel built from a "
+                        "plain clone has none of them, because they are generated artefacts kept "
+                        "out of git on purpose, and it installs and imports perfectly happily. "
+                        "That wheel is fine for CI and must never reach PyPI.")
+    p.add_argument("--expect-failure", action="store_true",
+                   help="invert the verdict: the wheel MUST be found dishonest. CI builds a "
+                        "deliberately mislabelled wheel and runs this, because a gate only ever "
+                        "seen passing has not been shown to work.")
+    a = p.parse_args(argv)
+
+    if not a.wheel.is_file():
+        print(f"check_wheel: no such file: {a.wheel}", file=sys.stderr)
+        return 2
+
+    if str(a.wheel).endswith((".tar.gz", ".tgz")):
+        # Same tool, same argument, different artefact: the sdist question is "does this contain
+        # anything that only runs here", and nothing asked it until 2026-09-10.
+        found = sdist_problems(a.wheel)
+        print(f"  sdist          {a.wheel.name}")
+        for line in found:
+            print(f"  PROBLEM: {line}")
+        if a.expect_failure:
+            if found:
+                print("\nOK: the deliberately wrong sdist was rejected, so this check has teeth.")
+                return 0
+            print("\nFAILED: an sdist built to be wrong passed.")
+            return 1
+        if found:
+            print(f"\nFAILED: {a.wheel.name} would install a binary that cannot run.")
+            return 1
+        print(f"\nOK: {a.wheel.name} carries nothing platform-specific.")
+        return 0
+
+    try:
+        info = inspect(a.wheel)
+    except (ValueError, zipfile.BadZipFile) as e:
+        print(f"check_wheel: {a.wheel.name} could not be read as a wheel: {e}", file=sys.stderr)
+        return 2
+
+    print(f"  wheel          {a.wheel.name}")
+    print(f"  filename tag   {info['filename_tag']}")
+    print(f"  metadata tag   {', '.join(info['metadata_tags'] or ['(none)'])}")
+    print(f"  bytecode files {len(info['pycache'])}")
+    print(f"  platform files {len(info['platform_payload'])}"
+          + (f": {', '.join(info['platform_payload'][:3])}" if info["platform_payload"] else ""))
+
+    found = problems(info)
+    release_mode = a.release
+    if not release_mode and is_release_artefact(a.wheel):
+        release_mode = True
+        print("  release checks  ON, because this wheel names this project at a release version")
+    if release_mode:
+        # Behind --release with the data check, because both ask the same question: is this the
+        # artefact we are about to hand to strangers? The tool is also pointed at synthetic
+        # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
+        # which carry no licence and are not supposed to.
+        found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
+                  + unacceptable_to_pypi(info) + leaks_a_build_path(a.wheel)
+                  + prerelease_dependency_in_a_release(a.wheel))
+    for line in found:
+        print(f"  PROBLEM: {line}")
+
+    if a.expect_failure:
+        if found:
+            print("\nOK: the deliberately mislabelled wheel was rejected, so this check has teeth.")
+            return 0
+        print("\nFAILED: a wheel built to be wrong passed. This check cannot say no, so its "
+              "approvals mean nothing.")
+        return 1
+    if found:
+        print(f"\nFAILED: {a.wheel.name} does not describe itself honestly.")
+        return 1
+    print("\nOK: the tag and the contents agree.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -613,7 +613,7 @@ def test_the_retained_rows_would_be_refused_by_the_commit_guard(loaded, tmp_path
     """
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "cpa", Path(__file__).resolve().parent.parent / "tools" / "check_prompt_artefacts.py")
+        "cpa", Path(__file__).resolve().parent.parent / "tools" / "ci" / "check_prompt_artefacts.py")
     cpa = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cpa)
 

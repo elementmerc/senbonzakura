@@ -150,7 +150,7 @@ def test_the_notice_prints_once_per_process():
 @needs_track
 def test_a_track_ships_with_the_package():
     assert bundled.is_available(), (
-        "no bundled track is installed; run `python tools/pack_track.py --track <dir>`")
+        "no bundled track is installed; run `python tools/packaging/pack_track.py --track <dir>`")
 
 
 @needs_track

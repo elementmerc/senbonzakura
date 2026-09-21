@@ -145,7 +145,7 @@ install rather than only in a source checkout.
   many rows could still be reported cleanly. Add `--fail-on-contamination` to gate on it.
 - The evaluation track's card now records that AdvBench is inside the track, that how much of
   it reached the fitting side is unmeasured, and how to check before quoting such a figure.
-- `tools/build_track.py` fetches the public corpora this project measures on, at pinned
+- `tools/packaging/build_track.py` fetches the public corpora this project measures on, at pinned
   revisions, and writes the two prompt files the track builder splits. No prompt rows ship in
   this repository: two of the three upstream datasets declare no licence at all and the
   probable root of the harmless side is non-commercial, so the recipe is what can honestly be

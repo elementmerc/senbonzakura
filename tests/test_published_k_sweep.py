@@ -11,7 +11,7 @@ nothing in the published repository let anyone reach the figure. A reviewer on 2
 reproduced it by recovering those numbers from a working note, which is not a route a reader has.
 
 Two neighbouring pages were corrected for exactly this in the same cycle (`docs/comparison.md` now
-says every figure comes from `tools/leak_sweep.py`, with a test comparing the two, and
+says every figure comes from `tools/ci/leak_sweep.py`, with a test comparing the two, and
 `docs/guide/benchmark.md` now admits no record of its run is kept). The page carrying the
 project's most-quoted claim made no such admission.
 

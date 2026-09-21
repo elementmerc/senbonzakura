@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for the retention guard (tools/check_prompt_artefacts.py).
+"""Tests for the retention guard (tools/ci/check_prompt_artefacts.py).
 
 The guard is the layer that does not trust `.gitignore`. An ignore rule stops an
 accidental `git add .` and nothing else: not `git add -f`, not a path that matches
@@ -18,7 +18,7 @@ import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "check_prompt_artefacts",
-    Path(__file__).resolve().parent.parent / "tools" / "check_prompt_artefacts.py")
+    Path(__file__).resolve().parent.parent / "tools" / "ci" / "check_prompt_artefacts.py")
 guard = importlib.util.module_from_spec(_SPEC)
 sys.modules["check_prompt_artefacts"] = guard
 _SPEC.loader.exec_module(guard)

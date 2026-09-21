@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 """Nothing the CI smoke writes can leave it looking like a measurement.
 
-THE SHAPE OF THE PROBLEM. `tools/smoke_end_to_end.py` runs a genuine search on
+THE SHAPE OF THE PROBLEM. `tools/ci/smoke_end_to_end.py` runs a genuine search on
 `examples/toy-track`, which holds 8 harmful, 4 harmful-eval and 8 harmless rows, and whose
 harmful rows are placeholders. Baseline refusal on it is 0.0, so refusal REMOVAL cannot be
 demonstrated there at all. The artefacts it writes are shaped exactly like a real run's, carry a
@@ -21,7 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 _SPEC = importlib.util.spec_from_file_location(
-    "_smoke_under_test", ROOT / "tools" / "smoke_end_to_end.py")
+    "_smoke_under_test", ROOT / "tools" / "ci" / "smoke_end_to_end.py")
 smoke = importlib.util.module_from_spec(_SPEC)
 sys.modules["_smoke_under_test"] = smoke
 _SPEC.loader.exec_module(smoke)

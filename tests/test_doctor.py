@@ -444,7 +444,7 @@ def test_a_converter_that_could_not_start_is_not_called_incomplete_vendoring(mon
 
     `supported_architectures` ran it with check=False and discarded the return code, so a
     traceback became an empty name set, which read as an incomplete vendoring. The reason was
-    untrue and the remedy it named (`tools/vendor_llama.py`) is in no wheel. Same class as
+    untrue and the remedy it named (`tools/packaging/vendor_llama.py`) is in no wheel. Same class as
     telling the operator to update a driver that had run CUDA all night.
     """
     import senbonzakura.convert as c
@@ -471,7 +471,7 @@ def test_a_converter_that_ran_and_listed_nothing_is_still_a_vendoring_problem(mo
 
 
 def test_an_installed_copy_is_not_told_to_run_a_tool_it_does_not_have(monkeypatch):
-    """`tools/vendor_llama.py` exists in a checkout and in no wheel."""
+    """`tools/packaging/vendor_llama.py` exists in a checkout and in no wheel."""
     from senbonzakura import bundled
     monkeypatch.setattr(bundled, "running_from_a_checkout", lambda: False)
     remedy = doctor._vendor_remedy()

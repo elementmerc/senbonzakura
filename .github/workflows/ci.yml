@@ -108,7 +108,7 @@ jobs:
           cache: pip
 
       - name: GNU coreutils, on macOS only
-        # `tools/e2_arms.sh` runs every step under `timeout`, which is GNU coreutils and is not on
+        # `tools/research/e2_arms.sh` runs every step under `timeout`, which is GNU coreutils and is not on
         # a macOS runner. Installed rather than skipped, because the two tests it gates assert
         # that a failed arm does not exit 0 and that a failing doctor does not block the run, and
         # those are exactly the properties this project keeps finding broken.
@@ -166,8 +166,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python tools/vendor_llama.py
-          python tools/build_corpora.py
+          python tools/packaging/vendor_llama.py
+          python tools/packaging/build_corpora.py
 
       - name: Test, with the coverage gate
         # The floor comes from this row's matrix entry, where the measurement that justifies it
@@ -217,7 +217,7 @@ jobs:
         # by hand and was 35 short by the time anyone looked. One matrix row, because the count
         # is the same on all of them: a skipped test is still a collected test.
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
-        run: python tools/check_tests_badge.py
+        run: python tools/ci/check_tests_badge.py
 
       - name: The checker, run on this project's own published evidence
         # DOGFOODING THE ACTION'S OWN COMMAND, on the row that already has the artefacts.
@@ -238,7 +238,7 @@ jobs:
         # about `git add -f`, a path that matches no pattern, or a file moved into a
         # tracked directory. This reads what is actually in the tree, and it runs on
         # every matrix row because it costs milliseconds.
-        run: python tools/check_prompt_artefacts.py .
+        run: python tools/ci/check_prompt_artefacts.py .
 
   pinned:
     # The counterpart to `test`. That job floats every version, which is how an
@@ -471,7 +471,7 @@ jobs:
         #
         # It runs on `dev` as well as on the publish path so a page rename is caught where it
         # lands rather than on the release that publishes it.
-        run: python3 tools/readme_links_resolve.py docs/.vitepress/dist
+        run: python3 tools/ci/readme_links_resolve.py docs/.vitepress/dist
       - name: Nothing from the docs tree reached the package
         # A guard rather than a comment. If npm ever installs into the repository root, or a
         # docs dependency finds its way under src/, the wheel would carry it.
@@ -504,11 +504,11 @@ jobs:
           pip install build
           python -m build --wheel --outdir dist-ci
       - name: The tag and the contents agree
-        run: python tools/check_wheel.py dist-ci/*.whl
+        run: python tools/ci/check_wheel.py dist-ci/*.whl
       - name: The source distribution carries nothing platform-specific
         run: |
           python -m build --sdist --outdir dist-ci
-          python tools/check_wheel.py dist-ci/*.tar.gz
+          python tools/ci/check_wheel.py dist-ci/*.tar.gz
 
       - name: A deliberately wrong sdist is refused
         # The same argument as the mislabelled wheel below: a gate only ever seen passing has
@@ -519,7 +519,7 @@ jobs:
           mkdir -p "$work/pkg/src/senbonzakura/vendor/bin/linux-x86_64"
           echo x > "$work/pkg/src/senbonzakura/vendor/bin/linux-x86_64/libggml-base.so"
           tar czf "$work/bad.tar.gz" -C "$work" pkg
-          python tools/check_wheel.py "$work/bad.tar.gz" --expect-failure
+          python tools/ci/check_wheel.py "$work/bad.tar.gz" --expect-failure
 
       - name: A deliberately mislabelled wheel is refused
         # Renaming a platform wheel to the universal tag produces the one combination
@@ -537,13 +537,13 @@ jobs:
               bad="dist-ci/mislabelled-0.0.0-py3-none-any.whl" ;;
           esac
           cp "$orig" "$bad"
-          python tools/check_wheel.py "$bad" --expect-failure
+          python tools/ci/check_wheel.py "$bad" --expect-failure
       - name: The wheel installs and runs where nothing else exists
         # It builds its own wheel into dist-cleanroom/ rather than taking a path, and
         # runs two containers: one with a network to install, one with `--network none`
         # to check. A single container with the network left on would prove nothing
         # about whether the corpora are really bundled.
-        run: bash tools/clean_room.sh
+        run: bash tools/ci/clean_room.sh
 
   images:
     # Both published images, built and then asked what they can do. `doctor` is the
@@ -653,7 +653,7 @@ jobs:
         # The script asserts on the markers each command prints when it has done the
         # work, not on exit codes. Five benchmark jobs once reported success having
         # measured nothing, because success was printed unconditionally.
-        run: python tools/smoke_end_to_end.py
+        run: python tools/ci/smoke_end_to_end.py
 
       - name: The artefacts it produced are readable
         # A separate step so a failure here is distinguishable from a failure in the

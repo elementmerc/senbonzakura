@@ -41,7 +41,7 @@ from pathlib import Path
 import pytest
 from artefacts import needs_track
 
-import tools.check_wheel as cw
+import tools.ci.check_wheel as cw
 from senbonzakura import bundled
 
 
@@ -161,14 +161,14 @@ def test_a_checkout_is_told_to_build_the_blob(monkeypatch, tmp_path):
     monkeypatch.setattr(bundled, "cache_dir", lambda: tmp_path / "cache")
     with pytest.raises(bundled.BundledTrackError) as e:
         bundled.ensure(log=lambda *a, **k: None)
-    assert "tools/pack_track.py" in str(e.value)
+    assert "tools/packaging/pack_track.py" in str(e.value)
     assert "report" not in str(e.value).lower(), "a checkout is not a bug report"
 
 
 def test_an_install_is_told_it_is_a_packaging_fault_and_where_to_say_so(monkeypatch, tmp_path):
     """THE ONE THAT MATTERED. The old sentence sent a wheel user to a file they never had.
 
-    They cannot run `tools/pack_track.py`, because it is not in their install, and they cannot
+    They cannot run `tools/packaging/pack_track.py`, because it is not in their install, and they cannot
     build their own track, because that needs a corpus of harmful prompts they have no way to get.
     Being told to do either is worse than being told nothing: it reads as their mistake.
     """
@@ -179,7 +179,7 @@ def test_an_install_is_told_it_is_a_packaging_fault_and_where_to_say_so(monkeypa
     with pytest.raises(bundled.BundledTrackError) as e:
         bundled.ensure(log=lambda *a, **k: None)
     msg = str(e.value)
-    assert "tools/pack_track.py" not in msg, "that file is not in their install"
+    assert "tools/packaging/pack_track.py" not in msg, "that file is not in their install"
     assert "fault in the package rather than anything you did" in msg
     assert bundled.ISSUES in msg, "told it is a bug and given nowhere to report it is still stuck"
     assert bundled._installed_version() in msg, "a report without a version cannot be acted on"

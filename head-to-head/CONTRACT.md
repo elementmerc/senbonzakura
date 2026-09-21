@@ -78,7 +78,7 @@ borrowing the nearest arm.
 **NOT YET DELIVERED, and stated here rather than discovered by a reader.** The first
 head-to-head produces, for every arm of both tools, a harm-recognition score from one instrument
 applied afterwards, plus each tool's own self-reported refusal and KL. That supports a comparison
-on harm recognition, which `tools/report_head_to_head.py` makes with the tie rule above. It does
+on harm recognition, which `senbonzakura head-to-head report` makes with the tie rule above. It does
 **not** yet support the matched-refusal band comparison this section describes, because reading
 two tools at the same refusal level needs each tool's frontier materialised and re-measured with
 one KL estimator, and the arms as run give one configuration per seed rather than a sweep.

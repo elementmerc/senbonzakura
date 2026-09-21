@@ -49,7 +49,7 @@ EXEMPT = {
     # measures our own release timing rather than a third party's compatibility.
     #
     # THE EXEMPTION ENDS WHEN THE PACKAGE IS PUBLISHED. At that point the floor becomes a real
-    # claim about a real artefact and belongs in floors.txt like any other. `tools/check_wheel.py`
+    # claim about a real artefact and belongs in floors.txt like any other. `tools/ci/check_wheel.py`
     # already refuses a release wheel whose specifier admits a pre-release, so the tightening is
     # gated; this entry is the half that has to be revisited by hand, which is why it says so.
     "senbonzakura-check": "our own sibling distribution, not yet on the index; revisit at publish",

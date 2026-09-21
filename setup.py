@@ -20,7 +20,7 @@ for this platform; do not, and it stays universal and honest about what it canno
 state needs anyone to remember anything, and the dangerous combination cannot be built.
 
     python -m build                              # no binaries vendored -> py3-none-any
-    python tools/vendor_llama.py && python -m build   # -> linux_x86_64, with the binaries
+    python tools/packaging/vendor_llama.py && python -m build   # -> linux_x86_64, with the binaries
 """
 import pathlib
 
@@ -28,7 +28,7 @@ from setuptools import setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.dist import Distribution
 
-#: Where `tools/vendor_llama.py` places what it fetches.
+#: Where `tools/packaging/vendor_llama.py` places what it fetches.
 ROOT = pathlib.Path(__file__).resolve().parent
 VENDOR_BIN = ROOT / "src" / "senbonzakura" / "vendor" / "bin"
 #: setuptools stages the package here and REUSES what it finds. A previous platform build leaves
@@ -80,7 +80,7 @@ class _PlatformAwareWheel(bdist_wheel):
             raise SystemExit(
                 f"binaries for {len(found)} platforms are vendored ({', '.join(found)}), and a "
                 f"wheel can carry one. Build each platform's wheel on (or for) that platform: "
-                f"`python tools/vendor_llama.py --platform <key>` then `python -m build`.")
+                f"`python tools/packaging/vendor_llama.py --platform <key>` then `python -m build`.")
         # Not pure: setuptools then tags the wheel for the running interpreter's platform, and
         # pip on any other platform refuses it instead of installing a binary it cannot run.
         self.root_is_pure = False

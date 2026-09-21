@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
-"""Tests for tools/make_dryrun_spec.py, which derives the rehearsal from the real spec.
+"""Tests for tools/packaging/make_dryrun_spec.py, which derives the rehearsal from the real spec.
 
 The whole value of a rehearsal is that it runs the same spec the real thing will. Written by hand
 the two files diverge the first time either is edited, and the rehearsal then proves something
@@ -18,7 +18,7 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
-    "make_dryrun_spec", _ROOT / "tools" / "make_dryrun_spec.py")
+    "make_dryrun_spec", _ROOT / "tools" / "packaging" / "make_dryrun_spec.py")
 mds = importlib.util.module_from_spec(_SPEC)
 sys.modules["make_dryrun_spec"] = mds
 _SPEC.loader.exec_module(mds)

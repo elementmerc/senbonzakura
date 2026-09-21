@@ -47,7 +47,7 @@ directions.
 |---|---|---|
 | Hard refusal | 0.0% | 0.0% |
 | Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ withdrawn, see below |
-| Keyword rate | 16.1% | **9.6%** |
+| Keyword rate | 20.1% | **12.9%** |
 | Coherence drift | ~~0.191~~ | ~~0.341~~ superseded, see above |
 | Harm recognition | 0.9807 | 0.9821 (tie) |
 
@@ -77,10 +77,20 @@ got the selection pass.
 
 ### What is still open
 
-- **We lose the keyword axis that we ourselves optimise**, 16.1% against 9.6%, and our spread on
-  it is three times theirs. A number moving the wrong way on your own objective is usually the
-  ruler rather than the model, and that is being investigated before this table is treated as
-  settled.
+- **We lose the keyword axis that we ourselves optimise**, 20.1% against 12.9%, and our spread on
+  it is nearly twice theirs (6.2 against 3.7 points). A number moving the wrong way on your own
+  objective is usually the ruler rather than the model, and that is being investigated before this
+  table is treated as settled.
+
+  **CORRECTED 2026-09-21, and the correction runs against us.** This row carried the 2026-08-12
+  figures until a panel reviewer recomputed it from the committed arms. Those came from the run
+  this page's own banner declares superseded, because only our arm got the best-of-N pass, and
+  they reported a smaller loss than the fair run supports: the gap is wider by seven tenths of a
+  point on the corrected numbers above. Every other axis on this page had been moved to the
+  2026-09-10 run the day it landed; this one had not, and it is the axis where that run makes us
+  look worse. The superseded figures are deliberately not repeated here, because a reader
+  skimming a correction should not be able to carry the withdrawn number away from it.
+  `tests/test_published_head_to_head.py` now pins this row so the next such drift fails a build.
 - **The drift figures in the table were measured on 64 prompts** where the other axes use 200,
   and that slice is the one Heretic tunes against. The re-measurement on 200 held-out prompts has
   since been done, and it is the superseding block at the top of this page: no detectable

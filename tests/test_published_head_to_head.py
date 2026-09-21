@@ -164,3 +164,69 @@ def test_nothing_but_aggregate_json_and_prose_is_committed_here():
     unexpected = [f.name for f in ARMS.iterdir()
                   if f.is_file() and f.suffix not in (".json", ".md")]
     assert not unexpected, f"unexpected file types in the published run: {unexpected}"
+
+
+# ── the keyword axis, which was published from a superseded run ──────────────────────────────
+
+@pytest.fixture(scope="module")
+def keyword():
+    """Heretic's own keyword metric, both arms, from the 2026-09-10 run.
+
+    THE AXIS NOTHING PINNED, and it is the one that drifted. This file already recomputed drift,
+    hard refusal and the outlier arithmetic, so those moved to the 2026-09-10 run the day it
+    landed. The keyword rate was left quoting 2026-08-12, the run this page's own banner declares
+    superseded because only our arm got the best-of-N pass, and it stayed there for eleven days
+    reporting a smaller loss than the fair run supports. It took a panel reviewer recomputing it
+    by hand to notice.
+    """
+    return _series("senbon", "refusal", "heretic"), _series("heretic", "refusal", "heretic")
+
+
+def test_the_published_keyword_rates_recompute(keyword):
+    ours, theirs = keyword
+    assert statistics.mean(ours) == pytest.approx(0.201, abs=0.0005)
+    assert statistics.mean(theirs) == pytest.approx(0.129, abs=0.0005)
+
+
+def test_the_page_quotes_the_keyword_rates_from_the_run_it_publishes(keyword):
+    """The guard that would have caught the drift: the page's number has to be THIS run's number.
+
+    Asserted against the recomputed value rather than against a literal, so the page and the
+    artefacts cannot disagree without failing here, whichever of the two moves.
+    """
+    ours, theirs = keyword
+    rows = [ln for ln in PAGE.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("| Keyword rate")]
+    assert rows, "the keyword row has gone from the table entirely"
+    # THE TABLE ROW, not the page. Checking the whole page passes on a number that appears only
+    # in the prose recording the correction, which is exactly the state this test is meant to
+    # detect: the figure a reader takes away comes from the row.
+    for label, series in (("ours", ours), ("theirs", theirs)):
+        quoted = f"{statistics.mean(series) * 100:.1f}%"
+        assert any(quoted in row for row in rows), (
+            f"the keyword row does not quote the {label} rate of {quoted} that the committed "
+            f"2026-09-10 arms produce; the row reads {rows}")
+
+
+def test_the_superseded_keyword_figures_are_gone_from_the_live_row():
+    """16.1% and 9.6% are the 2026-08-12 numbers. They may survive as a named correction, and
+    must not survive as the figures a reader takes away.
+    """
+    text = PAGE.read_text(encoding="utf-8")
+    live = [ln for ln in text.splitlines()
+            if ln.startswith("| Keyword rate")]
+    assert live, "the keyword row has gone from the table entirely"
+    for row in live:
+        assert "16.1%" not in row and "9.6%" not in row, row
+
+
+def test_we_still_lose_this_axis_and_by_more_than_was_published(keyword):
+    """The direction of the correction, pinned. It would be an easy mistake to 'fix' this row
+    later in the flattering direction, and the whole reason it was wrong was that nobody checked
+    the number that made us look better.
+    """
+    ours, theirs = keyword
+    assert statistics.mean(ours) > statistics.mean(theirs), "we do not lose this axis any more"
+    gap = statistics.mean(ours) - statistics.mean(theirs)
+    assert gap == pytest.approx(0.072, abs=0.001), gap
+    assert gap > 0.065, "the loss is smaller than the superseded run reported, which needs saying"

@@ -64,6 +64,46 @@ def _m(name, measures, units, estimators, higher_is_better=False):
     return _Metric(name, measures, units, estimators, higher_is_better)
 
 
+#: The separation statistics the abliterator can actually compute, one entry per member of
+#: `senbonzakura.separation.STATISTICS`.
+#:
+#: WHY THIS IS A COPY AND NOT AN IMPORT, which is the decision worth recording. One source of
+#: truth is the right instinct and the import that would give it cannot exist: this distribution
+#: declares `dependencies = []`, does not depend on `senbonzakura`, and `test_check_registry.py`
+#: walks the import graph and refuses anything from that side. The dependency runs the other way,
+#: small to large. `separation.py` itself is torch-free at runtime (its `torch` import is under
+#: `TYPE_CHECKING`), so torch is not what forbids the import; the package boundary is, and it is
+#: the stronger reason because it holds whether or not a future edit adds a tensor call.
+#:
+#: So the single source of truth is enforced rather than expressed: `test_measurement_identity.py`
+#: fails if this dict's keys and `separation.STATISTICS`'s keys ever disagree, in the one place
+#: both packages are importable. Two hand-maintained name lists drifting is a failure this
+#: codebase has already had, on 2026-09-07, when the guard and the editor kept separate
+#: architecture lists.
+#:
+#: WHAT WAS HERE BEFORE, 2026-09-21. The declared estimators were `variance-ratio` and
+#: `difference-of-means`. The second cannot be computed by this project at all, and the four that
+#: can were absent, including `cohens-d`, which is `separation.DEFAULT_STATISTIC`. Nothing has
+#: ever stamped `separation`, which is why the registry could be wrong about every one of its
+#: estimators without a single test noticing.
+SEPARATION_ESTIMATORS = {
+    "cohens-d":
+        "the standardised mean difference between the harmful and harmless projections, with "
+        "unweighted pooling. The incumbent, and the default; its null is 0 and its threshold a "
+        "conventional 0.5, so it is a different test at every cluster size",
+    "variance-ratio":
+        "the one-way ANOVA F statistic on the projections, between-group mean square over "
+        "within-group mean square, so a non-separating axis scores about 1.0 whatever the group "
+        "sizes",
+    "welch-ratio":
+        "the squared Welch t statistic: the same ratio with each group given its own variance "
+        "over its own count rather than a pooled one, which drops the shared-variance assumption",
+    "auc":
+        "the Mann-Whitney U as an area under the curve, the probability that a harmful "
+        "projection outranks a harmless one, with 0.5 as chance and no threshold fitted",
+}
+
+
 #: Every metric this project publishes, and every estimator allowed to produce it.
 #:
 #: ADDING AN ESTIMATOR IS A DECISION, not a convenience. Two estimators under one metric name is
@@ -115,10 +155,7 @@ METRICS = {
            }),
         _m("separation", "whether a direction set carries refusal or carries topic",
            "statistic",
-           {
-               "variance-ratio": "the variance-ratio separation statistic",
-               "difference-of-means": "a difference of class means along the candidate axis",
-           },
+           SEPARATION_ESTIMATORS,
            higher_is_better=True),
     )
 }

@@ -204,6 +204,135 @@ def test_drifts_instrument_sentence_comes_from_the_registry():
     assert instrument_sentence("kl", drift.KL_ESTIMATOR).startswith("senbonzakura.kl")
 
 
+# ── the registry and the abliterator cannot drift apart ──────────────────────────────────────
+
+def test_the_declared_separation_estimators_are_the_ones_that_exist():
+    """THE ONE PLACE BOTH PACKAGES ARE IMPORTABLE, which is why this guard lives here.
+
+    `measurement.py` ships inside `senbonzakura_check`, a distribution with no dependencies that
+    is forbidden from importing `senbonzakura` at all, so it cannot read `separation.STATISTICS`
+    and has to carry its own copy of the names. A copy with nothing watching it is the failure
+    this project had on 2026-09-07, when the guard and the editor kept separate architecture
+    name lists and drifted apart unnoticed.
+
+    THIS IS NOT HYPOTHETICAL EITHER. Until 2026-09-21 the registry declared `separation` with the
+    estimators `variance-ratio` and `difference-of-means`. The second is not something this tool
+    can compute, and the four it can compute were missing, `cohens-d` among them, which is
+    `separation.DEFAULT_STATISTIC`. Every one of those errors survived because nothing has ever
+    stamped a `separation` metric, so no call site ever had to pass the registry a real name.
+    """
+    from senbonzakura import separation
+
+    declared, computable = set(measurement.SEPARATION_ESTIMATORS), set(separation.STATISTICS)
+    assert declared == computable, (
+        "the separation estimators declared in the checker's registry and the statistics the "
+        "abliterator can actually compute have drifted:\n"
+        f"  declared and not computable: {sorted(declared - computable)}\n"
+        f"  computable and not declared: {sorted(computable - declared)}\n"
+        "Change `SEPARATION_ESTIMATORS` in checker/src/senbonzakura_check/measurement.py in the "
+        "same commit as the statistic, and give the new one a description a reader can tell from "
+        "its siblings.")
+
+
+def test_the_default_separation_statistic_is_a_declared_estimator():
+    """The default is the name most likely to reach an artefact, and it was the one missing."""
+    from senbonzakura import separation
+
+    assert estimator_description("separation", separation.DEFAULT_STATISTIC)
+
+
+#: Metrics declared in the registry that NOTHING stamps, each with the reason it is declared
+#: anyway. An entry here is a decision on the record rather than a way to quieten the test: the
+#: point of the gate below is that a declared metric with no call site is a vocabulary entry
+#: nobody has ever exercised, which is how `separation` came to declare an estimator this project
+#: cannot compute and to omit all four that it can.
+UNSTAMPED = {
+    # The abliteration record carries `separation_statistic`, `separation_null`,
+    # `axis_separation_threshold` and `axis_separations` as bare top-level fields, written before
+    # `measurement.stamp` existed and never migrated. So the metric is real, is published, and
+    # reaches no stamp. Moving it belongs with a change to `build_abliteration_record`, which is
+    # not this commit's territory; what this commit fixes is the registry being wrong about it.
+    "separation": "published by the abliteration record as bare fields, never through `stamp`",
+}
+
+
+def _stamped_metric_names():
+    """Every metric name passed to `measurement.stamp` anywhere in the abliterator, by reading
+    the source rather than by importing it.
+
+    Reading the source is the point: importing every module to find the call sites needs torch,
+    and a gate on the vocabulary has to run wherever the vocabulary does. Only literal names are
+    collected, and a computed one would be invisible here; that is a real limit and it is the
+    reason `test_every_declared_metric_has_something_that_stamps_it` reports what it found rather
+    than only what it missed.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "senbonzakura"
+    found = set()
+    for py in sorted(root.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name != "stamp" or len(node.args) < 2:
+                continue
+            metric = node.args[1]
+            if isinstance(metric, ast.Constant) and isinstance(metric.value, str):
+                found.add(metric.value)
+    return found
+
+
+def test_every_declared_metric_has_something_that_stamps_it():
+    """A METRIC NOBODY EMITS IS A VOCABULARY ENTRY NOBODY HAS EVER EXERCISED.
+
+    That is not a tidiness complaint. `separation` sat in the registry for weeks declaring an
+    estimator this project cannot compute, `difference-of-means`, while omitting every one of the
+    four it can, including the default. Nothing caught it because nothing stamps `separation`, so
+    no call site ever handed the registry a name to reject. The registry's whole safety argument
+    is that a wrong estimator is refused at the point of writing, and that argument is void for
+    any metric no writer passes through.
+
+    An intentional case goes in `UNSTAMPED` above with its reason, so the decision is written
+    where the next reader meets it.
+    """
+    stamped = _stamped_metric_names()
+    assert stamped, (
+        "no `stamp` call sites were found at all, so this gate is measuring nothing. The scan "
+        "reads the source for literal metric names; if the call sites moved or started computing "
+        "the name, teach it rather than deleting it.")
+    orphans = sorted(set(METRICS) - stamped - set(UNSTAMPED))
+    assert not orphans, (
+        f"{orphans} are declared in the measurement registry and nothing anywhere stamps them, "
+        f"so their declared estimators have never been checked against a real call. Either add "
+        f"the writer, or add an entry to UNSTAMPED in this file with the reason. Found stamping: "
+        f"{sorted(stamped)}.")
+
+
+@pytest.mark.parametrize("name", sorted(UNSTAMPED))
+def test_each_unstamped_allowance_still_names_a_declared_metric(name):
+    """An allowance for something the registry no longer declares is dead text that hides the
+    next one. The companion half of the gate above, in the shape `test_declared_floors.py` uses
+    for `EXEMPT` and `TRANSITIVE_PINS`.
+    """
+    assert name in METRICS, (
+        f"{name} is listed in UNSTAMPED with the reason '{UNSTAMPED[name]}' and is no longer a "
+        f"declared metric. Remove the allowance.")
+
+
+@pytest.mark.parametrize("name", sorted(UNSTAMPED))
+def test_each_unstamped_allowance_is_still_unstamped(name):
+    """The other half: an allowance kept after the writer was added reads as a known gap that is
+    no longer one, and the next reader trusts it.
+    """
+    assert name not in _stamped_metric_names(), (
+        f"{name} is listed in UNSTAMPED with the reason '{UNSTAMPED[name]}' and something now "
+        f"stamps it. Remove the allowance.")
+
+
 # ── two estimators of one metric ─────────────────────────────────────────────────────────────
 
 def test_two_estimators_of_one_metric_are_keyed_by_estimator():

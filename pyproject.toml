@@ -49,6 +49,33 @@ classifiers = [
   "Operating System :: MacOS :: MacOS X",
   "Operating System :: Microsoft :: Windows",
 ]
+# ── THE PINNING POLICY, decided 2026-09-21 ──────────────────────────────────────────
+#
+# NO SPECULATIVE CEILINGS. Nothing here is capped because a future release MIGHT break
+# it. The evidence is against that reflex: this project declares a floor of
+# `transformers>=4.56` and CI currently resolves 5.14.1, `datasets` 5.0.1 and torch
+# 2.13.0, green, two major boundaries above the floor. A cap written a year ago on
+# suspicion would have blocked exactly that, and would have needed a release of its own
+# to lift.
+#
+# AN EXCLUSION IS A MEMORY, NOT A GUESS. A `!=` goes in when a version has been MEASURED
+# broken here, and it carries the symptom in a comment beside it so the next reader can
+# tell whether it still applies. There are none today, and writing some by imitation
+# would be borrowing another project's scars without having the wounds.
+#
+# A floor is the right shape when everything below a line is bad, and one is already used
+# that way: `optuna>=4.0` exists because 3.x trips a SQLAlchemy assertion. An exclusion is
+# for an island of badness ABOVE the floor, which is the case we have not met yet.
+#
+# WHAT ACTUALLY GIVES REPRODUCIBILITY HERE is not the range, and it already exists:
+# `constraints.txt` is the environment the published numbers were measured in, ships in
+# the sdist, and is documented for readers in `docs/guide/install.md` under "If you're
+# checking our numbers rather than using the tool". `constraints/floors.txt` pins the
+# declared floor so the floors job tests the floor rather than the ceiling, and
+# `constraints/ci.txt` is the full freeze CI resolved. Three files, three questions: what
+# a number was measured with, what the declared minimum actually is, and what CI ran.
+#
+# ────────────────────────────────────────────────────────────────────────────────────
 dependencies = [
   # `datasets` USED TO BE HERE and is now the `hub` extra below. It is the heaviest thing in
   # this tree, Debian does not package it in stable, testing or unstable, and it was carrying

@@ -9,7 +9,8 @@
   "false_positive": "A harness that records the split somewhere this checker does not look reads as bare here, and then the fault is ours rather than the artefact's: the fix is to teach the adapter. A single-partition evaluation where there is genuinely only one set of rows still fires, and is still worth saying out loud, because the reader does not know that from the file. The check looks at a fixed list of field names and cannot see a partition named any other way, so its silence on a foreign artefact carries no information at all.",
 
   "applies_to": {"op": "any_of", "rules": [
-    {"op": "truthy", "path": "metrics"},
+    {"op": "any_entry", "path": "metrics",
+     "all": [{"field": "units", "equals": "proportion"}]},
     {"op": "present", "path": "raw.post_bake_refusals"}
   ]},
 

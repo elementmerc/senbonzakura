@@ -6,9 +6,10 @@
   "remedy": "Print the counts, not the rate: `0 of 4` says what happened and cannot be misread as precision. If the rate is wanted, carry an interval beside it so the width is visible. If the sample is small because the run was a smoke test, say so in the artefact rather than leaving the reader to infer it from n.",
   "confidence": "medium",
   "severity": "qualifies",
-  "false_positive": "30 is a convention, not a threshold with a derivation behind it, and a deliberately small diagnostic run will fire this every time and be perfectly correct to have done so. It is medium confidence for that reason: the finding says the number cannot carry the precision its format implies, which stays true even when the small sample was intentional. A harness that does not record `n` per metric escapes the check entirely, which is a coverage gap rather than a pass.",
+  "false_positive": "30 is a convention, not a threshold with a derivation behind it, and a deliberately small diagnostic run will fire this every time and be perfectly correct to have done so. It is medium confidence for that reason: the finding says the number cannot carry the precision its format implies, which stays true even when the small sample was intentional. A harness that does not record `n` per metric escapes the check entirely, which is a coverage gap rather than a pass. The same applies to a metric that is not a rate at all: a coherence figure in nats-per-token has an `n` of 1 by construction, because one passage is one observation, and a sample-size rule has nothing to say about it. Such an artefact is SKIPPED rather than passed, since 2026-09-21.",
 
-  "applies_to": {"op": "truthy", "path": "metrics"},
+  "applies_to": {"op": "any_entry", "path": "metrics",
+                 "all": [{"field": "units", "equals": "proportion"}]},
 
   "rule": {"op": "any_outside", "path": "metrics", "field": "n",
            "min": 30,

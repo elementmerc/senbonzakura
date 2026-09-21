@@ -6,24 +6,24 @@
   "remedy": "Report on rows nothing was fitted or selected on. A three-way split (fit, select, report) is the cheap version, and the selection half is the one people leave out. If the run cannot be repeated, the figure's honest description is the training-set score, and it should be labelled as one rather than withdrawn silently.",
   "confidence": "high",
   "severity": "withdraws",
-  "false_positive": "A deliberately in-sample number, published as one, is not this defect: reporting a fit-set figure and saying so is legitimate and sometimes the point. This check cannot tell that apart from the mistake, so a run that means it should record `in_sample: true` and expect the finding anyway. It also cannot see overlap that is not stated: two disjoint-looking split names over the same underlying rows read as clean here, which is exactly how an evaluation set sat published as clean for six weeks. Neither lm-evaluation-harness nor Inspect records row identity at all, so on those artefacts this check is close to inert and its silence carries no information.",
+  "false_positive": "A deliberately in-sample number, published as one, is not this defect: reporting a fit-set figure and saying so is legitimate and sometimes the point. This check cannot tell that apart from the mistake, so a run that means it should record `in_sample: true` and expect the finding anyway. It also cannot see overlap that is not stated: two disjoint-looking split names over the same underlying rows read as clean here, which is exactly how an evaluation set sat published as clean for six weeks. Neither lm-evaluation-harness nor Inspect records row identity at all, so on those artefacts this check is close to inert and its silence carries no information. Applicability tests those four paths for a VALUE rather than for presence, since 2026-09-21: the senbonzakura adapter writes `eval_split` on every record it normalises, as null when the artefact names no split, and `present` is true of a key written as null. So this check claimed every senbonzakura artefact ever produced and then had no row identity to compare, which is examined-and-clean on a question it never asked.",
   "applies_to": {
     "op": "any_of",
     "rules": [
       {
-        "op": "present",
+        "op": "truthy",
         "path": "eval_split"
       },
       {
-        "op": "present",
+        "op": "truthy",
         "path": "raw.eval_rows"
       },
       {
-        "op": "present",
+        "op": "truthy",
         "path": "raw.in_sample"
       },
       {
-        "op": "present",
+        "op": "truthy",
         "path": "limit"
       }
     ]

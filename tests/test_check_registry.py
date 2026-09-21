@@ -711,3 +711,103 @@ def test_the_dogfooding_above_is_not_vacuous():
     findings, _ = run_checks({"metrics": {"kl": {"value": 0.1}}}, CHECKS)
     assert [f.check_id for f in findings] == ["metric-reported-without-its-estimator"], (
         "a bare metric with no provenance anywhere must still be caught")
+
+
+# ── applicability: a check that examines a document must be able to speak about it ───────────
+#
+# THE CLASS THIS GUARDS, and it has now been found in four separate spellings. A check reports
+# one of three outcomes: it fires, it passes, or it skips. `skipped` and `passed` are the whole
+# point of the design, because a check that examined an artefact and stayed quiet is evidence and
+# a check that could never have spoken is not. When `applies_to` claims a document the rule cannot
+# possibly speak about, the report says PASSED and a reader counting examined checks is being told
+# a question was asked. Three checks were fixed for it on the morning of 2026-09-21 and four more
+# were found that afternoon, by running the checker over three real coherence artefacts recovered
+# from the ROG: six checks examined them and only two could have fired.
+#
+# WHAT THESE TWO DO NOT CATCH, said here rather than discovered as a fifth spelling. They cover
+# the two shapes actually found and no more. A rule gated by an `all_of` over a field, rather
+# than by the `when` key, is invisible to the second test. A check whose rule simply reads a path
+# no artefact in the wild carries is invisible to both, because nothing declares that intent. And
+# `absent` on an always-written key is the mirror defect, a check that can never apply at all
+# rather than one that always does, which neither test looks for. The general property, "being
+# examined implies the check could have fired", is not mechanically decidable from the rule
+# alone; the honest move is a corpus of real artefacts and a look at which checks spoke, which is
+# how both of these were found in the first place.
+
+def _always_written_keys():
+    """The top-level keys the senbonzakura adapter writes on EVERY record, whatever the input.
+
+    Computed from the adapter rather than listed here, so a key added to `normalise` is covered
+    the day it is added rather than the day somebody remembers this test exists.
+    """
+    from senbonzakura_check.adapters import normalise
+    return set(normalise({"label": "a", "model": "m", "nll": 1.0}))
+
+
+def _nodes(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _nodes(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _nodes(value)
+
+
+def _paired_with_a_value_test(applies_to):
+    """Paths whose `present` sits in an `all_of` beside a test of the value itself.
+
+    `present` is true of a key written as null, so on its own it is not a test of anything for a
+    key the adapter always writes. Paired with `not_equals null` or `truthy` it is exactly right,
+    and that pairing is the convention the checks fixed earlier already use.
+    """
+    out = set()
+    for node in _nodes(applies_to):
+        if node.get("op") != "all_of":
+            continue
+        rules = [r for r in (node.get("rules") or []) if isinstance(r, dict)]
+        present = {r.get("path") for r in rules if r.get("op") == "present"}
+        valued = {r.get("path") for r in rules
+                  if r.get("op") in ("truthy", "falsy", "not_equals", "equals")}
+        out |= present & valued
+    return out
+
+
+@pytest.mark.parametrize("check", CHECKS, ids=[c.id for c in CHECKS])
+def test_applicability_never_rests_on_a_key_the_adapter_always_writes(check):
+    """`present` on such a key is true of every senbonzakura artefact ever produced."""
+    always = _always_written_keys()
+    guarded = _paired_with_a_value_test(check.applies_to)
+    unguarded = sorted({node.get("path") for node in _nodes(check.applies_to)
+                        if node.get("op") == "present"
+                        and node.get("path") in always
+                        and node.get("path") not in guarded})
+    assert not unguarded, (
+        f"{check.id}: `applies_to` tests {unguarded} with `present`, and the senbonzakura "
+        f"adapter writes those keys on every record, as null when the artefact says nothing. So "
+        f"this check claims every artefact this project has ever produced and then has nothing "
+        f"to read, which the report prints as PASSED. Pair it with `not_equals` null, or test "
+        f"the value with `truthy`.")
+
+
+@pytest.mark.parametrize("check", CHECKS, ids=[c.id for c in CHECKS])
+def test_a_rule_gated_on_a_condition_is_only_applied_where_that_condition_can_hold(check):
+    """A `when` gate inside the rule has to be mirrored in `applies_to`.
+
+    `impossible-proportion-reported` scores values against 0 and 1 `when` a metric's units say
+    `proportion`, and applied to any document carrying a metrics block at all. Handed a coherence
+    figure in nats-per-token it examined it, could not fire by construction, and reported clean.
+    Its own `false_positive` sentence said the rule could not fire on such an artefact; the
+    applicability did not agree, and the applicability is what the report counts.
+    """
+    gates = [node["when"] for node in _nodes(check.rule)
+             if isinstance(node.get("when"), dict)]
+    if not gates:
+        return
+    applies = list(_nodes(check.applies_to))
+    for gate in gates:
+        mirrored = any(gate == sub for node in applies for sub in (node.get("all") or []))
+        assert mirrored, (
+            f"{check.id}: the rule only speaks when {gate}, but `applies_to` does not require "
+            f"it, so every artefact where that condition is false is examined and reported "
+            f"clean on a question this check cannot ask. Mirror the gate in `applies_to`.")

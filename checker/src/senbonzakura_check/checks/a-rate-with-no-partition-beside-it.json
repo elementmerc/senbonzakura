@@ -1,0 +1,62 @@
+{
+  "id": "a-rate-with-no-partition-beside-it",
+  "title": "A rate is reported and nothing in the artefact says which rows it was scored on",
+  "detects": "A refusal or compliance rate with no field naming the split, partition or row set it was computed over. A rate is a count over a set, so without the set the number is not underspecified, it is unreadable: the same model scores one figure on the rows a search was run against and a different one on rows nothing was fitted on, and those two numbers are quoted in the same sentence.",
+  "incident": "Ours, 2026-08-16. A run's 0.0% travelled as a measured refusal rate. It had been scored on the SELECTION partition, the rows the search ran 200 trials against, which is the one set a winner can never be quoted from, because the winner is the best of N draws over exactly those prompts. The model was sound and the number was unmeasured, and its honest upper bound turned out to be an order of magnitude away from the figure that had travelled. Nothing in the artefact said which rows it was, so nobody reading the file could have caught it.",
+  "remedy": "Record the partition beside the rate, in the artefact rather than in the filename. Our abliteration record does this under `refusal_eval`; whatever the field is called, it has to name the rows, and it has to be written by the code that scored them rather than added afterwards by whoever is quoting the number.",
+  "confidence": "high",
+  "false_positive": "A harness that records the split somewhere this checker does not look reads as bare here, and then the fault is ours rather than the artefact's: the fix is to teach the adapter. A single-partition evaluation where there is genuinely only one set of rows still fires, and is still worth saying out loud, because the reader does not know that from the file. The check looks at a fixed list of field names and cannot see a partition named any other way, so its silence on a foreign artefact carries no information at all.",
+
+  "applies_to": {"op": "any_of", "rules": [
+    {"op": "truthy", "path": "metrics"},
+    {"op": "present", "path": "raw.post_bake_refusals"}
+  ]},
+
+  "rule": {"op": "any_of", "rules": [
+    {"op": "all_of", "rules": [
+      {"op": "any_entry", "path": "metrics",
+       "all": [{"field": "units", "equals": "proportion"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "eval_split"},
+                                 {"op": "falsy", "path": "eval_split"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "partition"},
+                                 {"op": "falsy", "path": "partition"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "raw.eval"},
+                                 {"op": "falsy", "path": "raw.eval"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "raw.eval_split"},
+                                 {"op": "falsy", "path": "raw.eval_split"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "raw.partition"},
+                                 {"op": "falsy", "path": "raw.partition"}]},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "raw.refusal_eval"},
+                                 {"op": "falsy", "path": "raw.refusal_eval"}]}
+    ]},
+    {"op": "all_of", "rules": [
+      {"op": "present", "path": "raw.post_bake_refusals"},
+      {"op": "any_of", "rules": [{"op": "absent", "path": "raw.refusal_eval"},
+                                 {"op": "falsy", "path": "raw.refusal_eval"}]}
+    ]}
+  ]},
+
+  "control": {
+    "fires_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler":
+                   {"value": 0.0, "units": "proportion", "n": 132}}},
+      {"metrics": {"refusal_rate.senbonzakura-ruler":
+                   {"value": 0.0, "units": "proportion", "n": 132}},
+       "eval_split": null},
+      {"raw": {"post_bake_refusals": 0.0}},
+      {"raw": {"post_bake_refusals": 0.0, "refusal_eval": null}}
+    ],
+    "passes_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler":
+                   {"value": 0.0, "units": "proportion", "n": 132}},
+       "eval_split": "bad_eval_ds"},
+      {"metrics": {"refusal_rate.senbonzakura-ruler":
+                   {"value": 0.0, "units": "proportion", "n": 132}},
+       "raw": {"refusal_eval": "track selection partition, rows 0-131"}},
+      {"raw": {"post_bake_refusals": 0.0,
+               "refusal_eval": "track selection partition, rows 0-131"}},
+      {"metrics": {"kl": {"value": 0.031, "units": "nats", "n": 200}}},
+      {"metrics": {"compass_auc.margin-past-preamble": {"value": 0.76, "units": "auc"}}}
+    ]
+  }
+}

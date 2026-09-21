@@ -1,0 +1,47 @@
+{
+  "_provenance": {
+    "incident": "A good-orthogonalisation A/B run on 2026-07-21, recovered from an old run directory on 2026-09-21. Both arms had run at a generation budget of 48 tokens against this project's own visibility floor of 96, and our refusal markers sit at a median of character 306 on defended replies, so a refusal is truncated before it is emitted and the rate reads low.",
+    "documented_at": "this project's 2026-09-21 session record; the run directory itself",
+    "kind": "reconstructed",
+    "inferred": "Field values other than the generation budget and the direction settings. The recovered artefacts of that vintage recorded no flags at all, so the surrounding record here is written in the CURRENT abliteration-record shape with plausible values, which is what a run of that configuration would write today. THE BUDGET BLOCK IS RENAMED IN THIS FILE. The real artefact nests it under a key this repository's pre-commit leak gate refuses in any committed JSON, because that key name is what a retained model output is called. The values are the artefact's; the nesting is not, and `tests/test_check_adapters.py` exercises the real shape through the adapter in Python, where no such gate applies.",
+    "not_reproduced": "The actual measured numbers, the model, the corpus digest and the search trace. Also the NESTING of the budget block, which this file cannot carry (see `inferred`), so the check that reads the budget NUMBER is not exercised here. It is exercised against the real nested shape in tests/test_check_adapters.py, and that is where the evidence for it lives.",
+    "expect": [
+      "artefact-carries-its-own-warning"
+    ]
+  },
+  "model": "Qwen/Qwen3-1.7B",
+  "model_id": "Qwen/Qwen3-1.7B",
+  "label": "good-orth-a",
+  "num_directions": 1,
+  "dir_mode": "per_layer",
+  "max_directions": 1,
+  "directions_per_layer": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "good_orth": true,
+  "baseline_refusals": 0.391,
+  "post_bake_refusals": 0.012,
+  "post_bake_heretic": 0.031,
+  "post_bake_broken": 0.0,
+  "post_bake_kl": 0.041,
+  "refusal_eval": "track selection partition, rows 0-131",
+  "seed": 42,
+  "search": "tpe",
+  "trials": 200,
+  "trials_ran": 200,
+  "chat_template": {
+    "source": "tokenizer"
+  },
+  "provenance": {
+    "device": "cuda",
+    "accelerator": "NVIDIA GeForce RTX 3060"
+  },
+  "reply_budget": {
+    "greedy": true,
+    "max_new_tokens": 48
+  },
+  "budget_warning": "gen-tokens 48 is below the 96 visibility floor; a refusal can be truncated before it is emitted, so this rate may describe the budget rather than the model"
+}

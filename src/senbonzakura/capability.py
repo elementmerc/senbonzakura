@@ -31,6 +31,7 @@ model's verdict was read at the position it emits `<think>`.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -583,13 +584,49 @@ def load_reference(path):
     random argument this module is built around, one level up, in the function that produces the
     number the module exists to produce.
 
-    Returns `(verdicts, summary)`; both are None when no reference was asked for.
+    Returns `(verdicts, summary, items_digest)`; all are None when no reference was asked for.
+    `items_digest` is None for an artefact written before the field existed, which is a different
+    answer from "the items differ" and is reported differently. See `items_digest()`.
     """
     if not path:
-        return None, None
+        return None, None, None
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
-    return doc.get("verdicts"), doc.get("summary")
+    return doc.get("verdicts"), doc.get("summary"), doc.get("items_digest")
+
+
+def items_digest(questions):
+    """A fingerprint of the exam, so a paired comparison can check WHICH items it paired.
+
+    WHY A COUNT IS NOT ENOUGH, and this is the defect it closes.
+
+    `paired_change` pairs the reference run's verdicts with this run's by POSITION: item i against
+    item i. The only thing that guarded it was `len(reference) != len(questions)`, and a length is
+    not an identity. Two runs with the same number of items and a different selection, a different
+    `--skip`, a different `--eval` file, or a dataset whose order moved between downloads, pair
+    item i against a different item i and produce a number that looks paired and is not.
+
+    Nothing downstream would notice. The lengths match, the verdicts are valid strings, McNemar's
+    counts compute, the bootstrap returns an interval. There is no signal anywhere, and it would
+    surface much later as a capability change nobody can account for.
+
+    Raised by the stegcore session on 2026-09-21, which had just found the same shape in its own
+    builder: a JPEG cover pool indexed positionally, where deleting one file shifted every cover
+    after it down a place and paired each stego half against a clean half it never came from. Its
+    generalisation is the one worth keeping: **an index that is positional rather than keyed is a
+    silent mispairing waiting for its first gap.** A key that names the thing survives a deletion;
+    a position does not.
+
+    Sixteen hex characters, matching the width of the other digests this project's artefacts
+    carry, so a reader meets one kind of thing rather than three.
+    """
+    h = hashlib.sha256()
+    for q in questions:
+        # Length-prefixed, so ["ab", "c"] and ["a", "bc"] cannot collide. Two different exams
+        # hashing alike would put the check back where it started.
+        raw = str(q).encode("utf-8")
+        h.update(str(len(raw)).encode("ascii") + b"\0" + raw)
+    return h.hexdigest()[:16]
 
 
 def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
@@ -731,7 +768,7 @@ def main(argv=None):
         raise SystemExit(f"--n {a.n} exceeds the {len(questions)} items available after --skip.")
     questions, answers = questions[:a.n], answers[:a.n]
 
-    reference, reference_summary = load_reference(a.compare_to)
+    reference, reference_summary, reference_digest = load_reference(a.compare_to)
     if reference is not None and len(reference) != len(questions):
         # Refused rather than truncated to fit. Two arms compared on different item sets is not a
         # paired comparison, and silently aligning them by position would produce a number that
@@ -740,6 +777,20 @@ def main(argv=None):
             f"--compare-to {a.compare_to} holds {len(reference)} items and this run has "
             f"{len(questions)}. A paired comparison needs the same items in the same order; "
             f"re-run with matching --n and --skip.")
+
+    # THE OTHER HALF OF THAT REFUSAL, and until 2026-09-21 it did not exist. The check above
+    # compares COUNTS, and the message beside it promises "the same items in the same order"
+    # while verifying only the first word of it. Two runs of the same size over different items
+    # pair item i against a different item i, and nothing downstream can tell: the verdicts are
+    # valid, McNemar's counts compute, an interval comes back.
+    mine = items_digest(questions)
+    if reference is not None and reference_digest and reference_digest != mine:
+        raise SystemExit(
+            f"--compare-to {a.compare_to} was measured on a DIFFERENT set of {len(reference)} "
+            f"items (exam {reference_digest}, this run {mine}). The counts match and the items do "
+            f"not, so pairing them by position would compare item 1 against somebody else's item "
+            f"1 and report it as a change in capability. Re-run both arms with the same --eval, "
+            f"--task, --n and --skip.")
 
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
@@ -760,6 +811,19 @@ def main(argv=None):
         if change is not None:
             change["reference_indeterminate_rate"] = (
                 (reference_summary or {}).get("indeterminate_rate"))
+            # WHETHER THE PAIRING WAS VERIFIED, carried with the number rather than assumed.
+            # An artefact written before `items_digest` existed cannot say which items it
+            # measured, so the comparison rests on position and a matching count alone. That is
+            # not the same as a checked pairing and it must not read like one: absent has to be
+            # reported as unknown, because treating it as fine is how a silent mispairing gets a
+            # clean bill of health. Re-run the reference arm to get a checked comparison.
+            change["items_verified"] = bool(reference_digest)
+            if not reference_digest:
+                print(f"  NOTE: {a.compare_to} predates the exam fingerprint, so this "
+                      f"comparison paired the two arms BY POSITION and could only check that "
+                      f"the counts match. If the two runs used different items, the change "
+                      f"figure is not a paired comparison. Re-run the reference arm to have "
+                      f"this checked rather than assumed.")
 
     print(f"capability: {a.label or a.model} on {a.eval}")
     print(f"  task {task.name}: {task.grades}")
@@ -770,6 +834,11 @@ def main(argv=None):
 
     result = {"label": a.label, "model": a.model, "eval": a.eval, "task": a.task,
               "n": len(questions),
+              # WHICH items, not just how many. A later run comparing against this artefact
+              # checks this before it pairs anything: a count is not an identity, and two runs
+              # of equal size over different exams pair item i against a different item i and
+              # report the difference as a change in capability.
+              "items_digest": items_digest(questions),
               "max_new": a.max_new, "seed": a.seed, "summary": summary,
               "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change,
               # Which build produced this. Every other artefact in this project carries it and

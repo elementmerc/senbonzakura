@@ -1,0 +1,20 @@
+{
+  "_provenance": {
+    "incident": "On 2026-08-16 a run's 0.0% travelled as a measured refusal rate. It had been scored on the SELECTION partition, the rows the search ran 200 trials against, which is the one set a winner cannot be quoted from. The model was sound; the number was unmeasured, and its honest upper bound was roughly 4.7%.",
+    "documented_at": "this project's 2026-08-17 session record",
+    "kind": "reconstructed",
+    "inferred": "The artefact of that vintage carried no field naming the partition at all, which is the defect. This file reproduces that absence rather than recording the partition and marking it wrong, because the absence IS what the checker has to notice.",
+    "not_reproduced": "The model identity and the corpus. The figure of 0.0 is the one from the record.",
+    "expect": ["a-rate-with-no-partition-beside-it"]
+  },
+  "label": "lfm2-bake",
+  "model": "LiquidAI/LFM2-1.2B",
+  "refusal": 0.0,
+  "soft_refusal": 0.0,
+  "noncompliant": 0.0,
+  "broken": 0.0,
+  "heretic": 0.0,
+  "n": 64,
+  "budget_warning": null,
+  "provenance": {"device": "cuda", "accelerator": "NVIDIA GeForce RTX 3060"}
+}

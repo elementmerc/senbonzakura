@@ -558,3 +558,138 @@ def test_the_length_only_control_travels_with_the_headline_auc():
            "controls": {"length_only_auc": 0.88}}
     _stamp_compass(doc)
     assert "compass_auc.length-only-control" in doc["metrics"]
+
+
+# ── abliteration.json, the primary artefact the checker could not read ───────────────────────
+
+#: The record a bake writes, in its real shape, built in Python rather than as a fixture file.
+#:
+#: NOT A FIXTURE ON PURPOSE. This repository's pre-commit leak gate refuses any committed JSON
+#: carrying a key named `generation` at any depth, because that name is what a retained model
+#: output is called, and `build_abliteration_record` nests the budget under exactly that name. So
+#: the real shape cannot be committed as a `.json` at all, and the seeded incident corpus carries
+#: a renamed version that says so in its own provenance. This is where the real nesting is
+#: exercised. The collision between the leak gate and this project's own primary artefact is
+#: worth an operator's attention rather than working around quietly: the same gate would refuse a
+#: committed `abliteration.json`.
+def _abliteration_record(**over):
+    doc = {
+        "model": "Qwen/Qwen3-1.7B",
+        "label": "arm-a",
+        "num_directions": 1,
+        "dir_mode": "per_layer",
+        "max_directions": 1,
+        "directions_per_layer": [1, 1, 1, 1],
+        "baseline_refusals": 0.391,
+        "post_bake_refusals": 0.012,
+        "post_bake_heretic": 0.031,
+        "post_bake_broken": 0.0,
+        "post_bake_kl": 0.041,
+        "refusal_eval": "track selection partition, rows 0-131",
+        "generation": {"greedy": True, "max_new_tokens": 48, "budget_warning": None},
+        "seed": 42,
+    }
+    doc.update(over)
+    return doc
+
+
+def test_an_abliteration_record_is_recognised_at_all():
+    """IT WAS NOT, UNTIL 2026-09-21, and that is the uncomfortable finding behind this block.
+
+    `abliteration.json` is what every run writes and what the model card, the head-to-head
+    report, every resume guard and this checker are supposed to read. It names none of its
+    figures `refusal`, `kl` or `auc`: they are `post_bake_refusals`, `post_bake_kl` and
+    `post_bake_heretic`. So the detector answered false, and `senbonzakura check
+    abliteration.json` reported the file UNCHECKED.
+
+    Not clean, which is the one thing worth saying for the design: the refusal was loud and it
+    was correct. It was still the case that the tool could not read the file its own runs write.
+    """
+    from senbonzakura_check.adapters import detect
+
+    adapter = detect(_abliteration_record())
+    assert adapter is not None, "the abliteration record is not recognised by any adapter"
+    assert adapter.name == "senbonzakura"
+
+
+def test_the_post_bake_figures_arrive_with_their_estimators():
+    got = normalise(_abliteration_record())["metrics"]
+    assert sorted(got) == ["kl.continuation-nll-difference",
+                           "refusal_rate.heretic-keyword",
+                           "refusal_rate.senbonzakura-ruler"]
+    assert got["refusal_rate.senbonzakura-ruler"]["value"] == 0.012
+    assert got["refusal_rate.heretic-keyword"]["value"] == 0.031
+
+
+def test_the_post_bake_kl_is_not_called_the_real_one():
+    """The registry declares a KL estimator that is NOT a KL divergence, and this is it.
+
+    The bake's post-bake KL is not `drift`'s first-token full-distribution figure. Labelling it
+    as though it were would be this project doing to itself the exact thing the measurement
+    registry exists to prevent: a number acquiring a plausible label rather than a true one. The
+    declared description of the estimator it does get carries the warning with it.
+    """
+    from senbonzakura_check.measurement import estimator_description
+
+    got = normalise(_abliteration_record())["metrics"]["kl.continuation-nll-difference"]
+    assert got["estimator"] == "continuation-nll-difference"
+    assert "NOT a KL" in estimator_description("kl", got["estimator"])
+
+
+def test_no_sample_size_is_invented_for_a_record_that_records_none():
+    """The abliteration record carries no denominator for its post-bake figures, so the
+    normalised document carries none either. Filling the gap with a plausible default would
+    manufacture the exact field whose absence is what the sample-size check is looking for.
+    """
+    got = normalise(_abliteration_record())["metrics"]
+    assert all(block["n"] is None for block in got.values())
+
+
+def test_the_rows_the_figures_were_scored_on_arrive_under_the_name_the_checks_read():
+    """`refusal_eval` is the abliteration record's name for what every other artefact calls
+    `eval`. Lifted by the adapter rather than taught to five checks as a second vocabulary.
+    """
+    got = normalise(_abliteration_record())
+    assert got["eval_split"] == "track selection partition, rows 0-131"
+    assert normalise(_abliteration_record(refusal_eval=None))["eval_split"] is None
+
+
+def test_the_generation_budget_and_its_warning_are_both_lifted_out_of_the_nesting():
+    """THE FIELD THAT MADE THE CHECK POSSIBLE, and the one the seeded corpus cannot carry.
+
+    The budget and the tool's warning about it are nested one level down in the real record. The
+    2026-09-17 finding was that a warning written into an artefact and not carried into the
+    normalised document is a warning no check can read however many exist, and the budget is the
+    same field one step earlier.
+    """
+    got = normalise(_abliteration_record())
+    assert got["generation_budget"] == 48
+    assert got["budget_warning"] is None
+
+    warned = normalise(_abliteration_record(
+        generation={"greedy": True, "max_new_tokens": 48,
+                    "budget_warning": "gen-tokens 48 is below the 96 visibility floor"}))
+    assert warned["generation_budget"] == 48
+    assert "visibility floor" in warned["budget_warning"]
+
+
+def test_a_short_budget_in_the_real_nesting_reaches_the_check_that_looks_for_it():
+    """End to end on the real shape: the artefact a bake writes, through detection and
+    normalisation, into the check registry, and out as a named finding.
+
+    This is the evidence for `quoted-at-a-budget-below-the-visibility-floor` that the seeded
+    incident corpus cannot hold, because the real nesting uses a key the leak gate refuses in
+    committed JSON.
+    """
+    from senbonzakura_check import check_document
+    from senbonzakura_check.registry import load_checks
+
+    checks = load_checks()
+    findings, _ = check_document(_abliteration_record(), checks)
+    assert "quoted-at-a-budget-below-the-visibility-floor" in {f.check_id for f in findings}
+
+    at_the_floor = _abliteration_record(
+        generation={"greedy": True, "max_new_tokens": 96, "budget_warning": None})
+    findings, _ = check_document(at_the_floor, checks)
+    assert "quoted-at-a-budget-below-the-visibility-floor" not in {f.check_id for f in findings}, (
+        "a check that fires at the floor as well as below it is measuring nothing")

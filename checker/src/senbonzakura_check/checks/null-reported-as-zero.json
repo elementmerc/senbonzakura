@@ -1,0 +1,30 @@
+{
+  "id": "null-reported-as-zero",
+  "title": "A figure reads as zero and has no denominator, so it may never have been measured",
+  "detects": "A metric carrying the value zero with no sample size beside it. Zero and absent are opposite claims. Zero says the quantity was measured and came out at nothing, which is the strongest result a refusal rate can have; absent says nobody looked. A renderer that prints a missing field as 0, or a pipeline that initialises a counter and never fills it, converts the second claim into the first, and the reader meets a headline number where there was no measurement.",
+  "incident": "Ours, 2026-08-16, is the reason zero in particular is worth suspecting: a run's 0.0% travelled as a measured refusal rate, and a figure of exactly zero is the one number nobody interrogates because it looks like a clean result. The mechanism this check looks for is the narrower one behind it, a zero with no denominator, which is what a never-measured figure looks like on disk when something has rendered it rather than recorded it. The project already applies a reporting floor when it writes its own cards for the same reason: a bare rate hides how many observations are under it.",
+  "remedy": "Find out whether the measurement ran. If it did, record `n` beside the value, which settles it permanently and is the fix regardless. If it did not, leave the field absent rather than zero, and make the renderer print an absence as an absence: a dash, or the word `unmeasured`, never a number.",
+  "confidence": "medium",
+  "false_positive": "A genuine zero from a harness that simply does not record per-metric sample sizes fires this check and is a correct measurement. That is the common case and it is why this is medium confidence: the finding is that the artefact cannot distinguish a measured zero from an unmeasured one, which is true of the artefact whichever of the two it is. A count metric whose true value is zero, rather than a rate, fires equally and is equally unharmed. The check cannot fire at all on a metric with any non-zero value, so a never-measured figure rendered as some other default, minus one for instance, escapes it entirely.",
+
+  "applies_to": {"op": "truthy", "path": "metrics"},
+
+  "rule": {"op": "any_entry", "path": "metrics",
+           "all": [{"field": "value", "is": "zero"}, {"field": "n", "is": "falsy"}]},
+
+  "control": {
+    "fires_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0, "units": "proportion"}}},
+      {"metrics": {"capability": {"value": 0.0, "units": "proportion", "n": null}}},
+      {"metrics": {"kl": {"value": 0.03, "n": 200}, "capability": {"value": 0, "n": 0}}}
+    ],
+    "passes_on": [
+      {"metrics": {"refusal_rate.senbonzakura-ruler":
+                   {"value": 0.0, "units": "proportion", "n": 132}}},
+      {"metrics": {"kl": {"value": 0.031, "units": "nats", "n": 200}}},
+      {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.094, "units": "proportion"}}},
+      {"metrics": {"flag": {"value": false, "n": null}}},
+      {"metrics": {"acc": {"value": null, "n": null}}}
+    ]
+  }
+}

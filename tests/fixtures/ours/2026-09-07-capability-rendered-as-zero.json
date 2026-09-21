@@ -1,0 +1,23 @@
+{
+  "_provenance": {
+    "incident": "Before 2026-09-07 nothing in this pipeline measured capability at all, so a report that had a slot for it had nothing to put there. A figure that was never taken, rendered as 0 rather than left absent, claims the strongest possible result: measured, and it came out at nothing.",
+    "documented_at": "this project's 2026-09-07 session record, 'The measurement layer'",
+    "kind": "invented",
+    "inferred": "EVERYTHING. No artefact of this shape was recovered. This file is a construction of what an unmeasured-rendered-as-zero figure looks like on disk, built to exercise the rule, and it is marked `invented` rather than `reconstructed` for exactly that reason.",
+    "not_reproduced": "n/a; nothing was reproduced.",
+    "expect": ["null-reported-as-zero"]
+  },
+  "label": "post-bake-report",
+  "model": "Qwen/Qwen3-1.7B",
+  "instrument": "senbonzakura.capability, graded by code with no model in the loop",
+  "metrics": {
+    "capability": {
+      "metric": "capability",
+      "value": 0,
+      "estimator": "code-graded",
+      "estimator_description": "graded by code, with no model in the loop",
+      "units": "proportion",
+      "higher_is_better": true
+    }
+  }
+}

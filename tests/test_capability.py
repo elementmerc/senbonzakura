@@ -460,9 +460,12 @@ def test_a_reference_file_is_read_back_as_verdicts(tmp_path):
 
     p = tmp_path / "r.json"
     p.write_text(json.dumps({"verdicts": ["correct", "wrong"]}), encoding="utf-8")
-    verdicts, _summary = capability.load_reference(p)
+    verdicts, _summary, digest = capability.load_reference(p)
     assert verdicts == ["correct", "wrong"]
-    assert capability.load_reference("") == (None, None)
+    # None rather than absent: an artefact written before the fingerprint existed cannot say
+    # which items it measured, and the comparison reports that as unknown rather than as fine.
+    assert digest is None
+    assert capability.load_reference("") == (None, None, None)
 
 
 def test_the_command_runs_end_to_end_and_reports_nothing_gradeable(tmp_path, monkeypatch,
@@ -841,3 +844,51 @@ def test_a_reference_that_recorded_no_rate_is_not_treated_as_zero():
                "budget_suspect": False, "budget_threshold": capability.MAX_INDETERMINATE}
     # It does not claim a problem it cannot see, and it does not crash on the missing field.
     assert "NOT QUOTABLE" not in "\n".join(capability.report(summary, change))
+
+
+# ── the exam fingerprint: pairing by position was guarded only by a count ────────
+class TestThePairedComparisonKnowsWhichItemsItPaired:
+    """`--compare-to` pairs item i against item i, and a length is not an identity.
+
+    Until 2026-09-21 the only guard was `len(reference) != len(questions)`, while the message
+    beside it promised "the same items in the same order" and verified only the first word. Two
+    runs of equal size over different exams pair item 1 against somebody else's item 1, and
+    nothing downstream can tell: the verdicts are valid strings, McNemar's counts compute, and
+    the bootstrap returns an interval.
+
+    Raised by the stegcore session, which had just found the same shape in its own builder: a
+    cover pool indexed positionally, where deleting one file shifted every cover after it down a
+    place. Its generalisation is the keeper: an index that is positional rather than keyed is a
+    silent mispairing waiting for its first gap.
+    """
+
+    def test_the_same_exam_fingerprints_the_same(self):
+        from senbonzakura import capability
+        assert capability.items_digest(["a", "b"]) == capability.items_digest(["a", "b"])
+
+    def test_a_different_exam_of_the_same_length_fingerprints_differently(self):
+        """THE CASE THE COUNT CHECK CANNOT SEE, which is the whole reason this exists."""
+        from senbonzakura import capability
+        assert capability.items_digest(["a", "b"]) != capability.items_digest(["a", "c"])
+
+    def test_reordering_the_same_items_changes_the_fingerprint(self):
+        """Order is part of the identity, because the pairing is positional. Two runs holding the
+        same questions in a different order would pair every item wrongly while a set comparison
+        called them equal.
+        """
+        from senbonzakura import capability
+        assert capability.items_digest(["a", "b"]) != capability.items_digest(["b", "a"])
+
+    def test_the_boundary_between_items_cannot_be_moved_without_changing_it(self):
+        """Length-prefixed, so ["ab", "c"] and ["a", "bc"] do not collide. A naive concatenation
+        hashes both to the same thing, which would put the check back where it started.
+        """
+        from senbonzakura import capability
+        assert capability.items_digest(["ab", "c"]) != capability.items_digest(["a", "bc"])
+
+    def test_an_empty_exam_still_has_a_fingerprint(self):
+        """Defensive: a digest that raised on an empty list would turn a zero-item run into a
+        traceback at the point it writes its artefact.
+        """
+        from senbonzakura import capability
+        assert capability.items_digest([])

@@ -145,6 +145,43 @@ def _as_set(value):
     return set()
 
 
+#: The per-entry predicates `any_entry` understands. Total, like every rule operator: each
+#: answers true or false for any value, and none raises on a shape it did not expect.
+_ENTRY_PREDICATES = {
+    "present": lambda v: v is not MISSING,
+    "absent": lambda v: v is MISSING,
+    "truthy": lambda v: v is not MISSING and bool(v),
+    "falsy": lambda v: v is MISSING or not v,
+    # ZERO IS NOT FALSY HERE, and the distinction is the entire point of the check that needed
+    # this. `null` and `0` are both falsy in Python and they are opposite claims about a
+    # measurement: one says it was never taken, the other says it was taken and came out zero.
+    # A bool is excluded because a bool is an int in Python and is never a measurement.
+    "zero": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0,
+}
+
+
+def _entry_matches(entry, conditions) -> bool:
+    """Whether one mapping entry satisfies every condition in `conditions`."""
+    if not isinstance(entry, dict):
+        return False
+    for cond in conditions:
+        if not isinstance(cond, dict) or not isinstance(cond.get("field"), str):
+            raise CheckError(f"an `any_entry` condition needs a string `field`, got {cond!r}")
+        value = entry.get(cond["field"], MISSING)
+        if "equals" in cond:
+            if value is MISSING or value != cond["equals"]:
+                return False
+            continue
+        predicate = _ENTRY_PREDICATES.get(cond.get("is"))
+        if predicate is None:
+            raise CheckError(
+                f"an `any_entry` condition needs `equals` or an `is` from "
+                f"{', '.join(sorted(_ENTRY_PREDICATES))}, got {cond!r}")
+        if not predicate(value):
+            return False
+    return True
+
+
 def evaluate(rule: dict, doc: Any) -> bool:
     """Whether `rule` holds for `doc`.
 
@@ -228,6 +265,71 @@ def evaluate(rule: dict, doc: Any) -> bool:
             if high is not None and value > high:
                 return True
         return False
+
+    if op == "any_entry":
+        # THE THIRD OPERATOR ADDED AFTER THE FACT, and the rule says to name the checks that
+        # needed it. Two did: `null-reported-as-zero` and `a-rate-with-no-partition-beside-it`.
+        #
+        # Both ask a question about ONE metric entry satisfying SEVERAL conditions at once, which
+        # `any_missing` and `any_outside` cannot express: each of those quantifies one predicate
+        # over the mapping, so writing "a metric whose value is zero AND which has no denominator"
+        # as a conjunction of two of them asks instead for "some metric has a zero value, and some
+        # metric, possibly a different one, has no denominator". On a document with two metrics
+        # those are different questions and the second one fires wrongly.
+        #
+        # The predicate vocabulary is deliberately the same five words the fixed-path operators
+        # use, plus `equals`, so a reader of a check file does not meet a second grammar.
+        mapping = dotted(doc, rule.get("path", ""))
+        conditions = rule.get("all")
+        if not isinstance(conditions, list) or not conditions:
+            raise CheckError("`any_entry` needs a non-empty `all` list of per-entry conditions")
+        if not isinstance(mapping, dict):
+            return False
+        return any(_entry_matches(entry, conditions) for entry in mapping.values())
+
+    if op == "less_than":
+        # THE FOURTH, needed by `quoted-at-a-budget-below-the-visibility-floor`: the generation
+        # budget lives at a FIXED path (`raw.generation.max_new_tokens`) rather than inside the
+        # per-harness metrics mapping, so `any_outside` cannot reach it, and the vocabulary had no
+        # numeric comparison outside that mapping at all.
+        #
+        # A non-number is NOT less than anything here. A missing budget is a different finding
+        # from a short one, and silently reading absence as zero would make this check fire on
+        # every artefact that does not record a budget, which is most of them.
+        limit = rule.get("value")
+        if not isinstance(rule.get("path"), str):
+            raise CheckError("`less_than` needs a string `path`")
+        if not isinstance(limit, (int, float)) or isinstance(limit, bool):
+            raise CheckError("`less_than` needs a numeric `value`")
+        value = dotted(doc, rule["path"])
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return value < limit
+
+    if op == "disagrees":
+        # THE FIFTH, needed by `an-arm-labelled-by-a-setting-it-did-not-apply` and by
+        # `a-count-that-is-not-the-count-that-was-applied`. Both ask whether two fields of one
+        # artefact that are supposed to describe the same quantity actually do.
+        #
+        # A LIST ON ONE SIDE IS COMPARED ELEMENTWISE, which is not a convenience: the second check
+        # compares `directions_per_layer`, a per-layer list, against `num_directions`, a scalar,
+        # and the finding is that any layer disagrees. Collapsing the list first would need a
+        # choice of summary, and every summary of that list has already been the wrong one at
+        # least once here.
+        #
+        # Missing on either side is FALSE. "These two fields disagree" is a claim about two
+        # recorded values, and an artefact that records only one has not made it.
+        paths = rule.get("paths")
+        if not isinstance(paths, list) or len(paths) != 2:
+            raise CheckError("`disagrees` needs exactly two `paths`")
+        a, b = (dotted(doc, p) for p in paths)
+        if a is MISSING or b is MISSING or a is None or b is None:
+            return False
+        if isinstance(a, (list, tuple)) and not isinstance(b, (list, tuple)):
+            return any(item != b for item in a)
+        if isinstance(b, (list, tuple)) and not isinstance(a, (list, tuple)):
+            return any(item != a for item in b)
+        return a != b
 
     if op == "intersects":
         paths = rule.get("paths")

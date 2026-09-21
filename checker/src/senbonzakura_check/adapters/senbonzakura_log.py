@@ -19,6 +19,19 @@ FOUR ARTEFACT SHAPES, NOT ONE, and the first version of this file knew about one
     refusal-*   `refusal` AND `heretic`, `soft_refusal`, `noncompliant`, `n`, `eval`
     scored-*    `auc`, `auc_ci`, `controls.length_only_auc`, `mode`, `n_harmful`, `n_harmless`
     summary     the assembled head-to-head
+    abliteration.json  `num_directions`, `dir_mode`, `post_bake_refusals`, `generation`,
+                `refusal_eval`, `directions_per_layer`, `max_directions`
+
+FIVE, AND THE FIFTH WAS MISSING UNTIL 2026-09-21, which is the uncomfortable one. `abliteration.json`
+is this project's PRIMARY artefact: it is what the model card, the head-to-head report, every
+resume guard and this checker are supposed to read, and it names none of its figures `refusal`,
+`kl` or `auc`. They are `post_bake_refusals`, `post_bake_kl` and `post_bake_heretic`, so the
+detector above answered false and `senbonzakura check abliteration.json` reported it UNCHECKED.
+Not clean, which is the one thing worth saying for the design: the refusal was loud and correct,
+and it was still the case that the tool could not read the file its own runs write. Found by
+building the seeded incident corpus and pointing the checker at it, which is the whole reason
+that corpus exists: a check can pass every one of its own controls and never fire in the field
+because the adapter never carried the field it reads.
 
 TWO OF THEM CARRY TWO ESTIMATORS OF ONE METRIC, WHICH IS THE INTERESTING PART. A refusal artefact
 holds our ruler's figure and Heretic's keyword figure side by side; a scored artefact holds the
@@ -49,6 +62,8 @@ class SenbonzakuraAdapter:
         """
         if isinstance(doc.get(METRICS_KEY), dict) and doc[METRICS_KEY]:
             return True
+        if _is_abliteration_record(doc):
+            return True
         has_metric = any(isinstance(doc.get(k), (int, float)) for k in _OUR_METRICS)
         if not has_metric:
             return False
@@ -78,12 +93,18 @@ class SenbonzakuraAdapter:
             metrics.update(_older_shapes(doc))
 
         template = doc.get("chat_template")
+        # The abliteration record names the same question differently at every turn: the rows are
+        # `refusal_eval` rather than `eval`, and its own warning about its own generation budget
+        # is nested one level down rather than sitting at the top. Lifted here, into the names the
+        # checks already read, rather than teaching five checks a second vocabulary.
+        generation = doc.get("generation")
+        generation = generation if isinstance(generation, dict) else {}
         return {
             "model": doc.get("model"),
             "tasks": [doc["label"]] if doc.get("label") else [],
             "metrics": metrics,
             "base": doc.get("base"),
-            "eval_split": doc.get("eval"),
+            "eval_split": doc.get("eval") or doc.get("refusal_eval"),
             # A dict here means a template WAS resolved and applied, and it records where from.
             # Lifted so the chat-template check can read it without knowing this format.
             "chat_template": (template or {}).get("source") if isinstance(template, dict)
@@ -100,14 +121,75 @@ class SenbonzakuraAdapter:
             # carrying its own short-budget warning and got "nothing found". A checker that
             # ignores the one sentence the producer left about why its number might be wrong is
             # not reading the artefact, it is reading past it.
-            "budget_warning": doc.get("budget_warning"),
+            "budget_warning": doc.get("budget_warning") or generation.get("budget_warning"),
+            # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
+            # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
+            # which is the whole point of an adapter. And this repository's pre-commit leak gate
+            # refuses any committed JSON carrying a key named `generation` at any depth, because
+            # that is what a retained model output is called; a check file is committed JSON, so a
+            # rule written against the nested path could not ship. The collision is real and is
+            # worth an operator's attention: the same gate would refuse a committed
+            # `abliteration.json`, which is this project's own primary artefact.
+            "generation_budget": generation.get("max_new_tokens"),
             "provenance": doc.get("provenance"),
         }
 
 
+#: The fields that identify an abliteration record and nothing else this project writes. Two are
+#: required together rather than one alone, because `model` and `label` are on every artefact
+#: here and a single edit field could plausibly appear in somebody else's log.
+_ABLITERATION_MARKERS = ("num_directions", "dir_mode", "max_directions",
+                         "directions_per_layer", "post_bake_refusals", "refusal_eval")
+
+
+def _is_abliteration_record(doc) -> bool:
+    """Is this `abliteration.json`, the record a bake writes?
+
+    Deliberately not "does it have `num_directions`". A foreign artefact with one field in common
+    must not be claimed, and ours is the LAST adapter tried precisely so that a near miss goes to
+    whoever is more specific. Two of the markers together is a shape nothing else writes.
+    """
+    return sum(1 for k in _ABLITERATION_MARKERS if doc.get(k) is not None) >= 2
+
+
+#: The abliteration record's post-bake figures, as (its field, metric, estimator, units).
+#:
+#: NO SAMPLE SIZE IS INVENTED FOR ANY OF THEM, and that is deliberate rather than an omission.
+#: The record does not carry one, so `n` stays absent, and the checks that read a denominator
+#: skip these rather than being handed a number nobody measured. An adapter that filled the gap
+#: with a plausible default would be manufacturing the exact field whose absence is the finding.
+_POST_BAKE = (
+    ("post_bake_refusals", "refusal_rate", "senbonzakura-ruler", "proportion"),
+    ("post_bake_heretic", "refusal_rate", "heretic-keyword", "proportion"),
+    ("post_bake_kl", "kl", "continuation-nll-difference", "nats"),
+)
+
+
+def _abliteration_metrics(doc) -> dict:
+    """The figures an `abliteration.json` reports, in the canonical vocabulary.
+
+    THE KL ESTIMATOR IS THE WEAK ONE, NAMED AS THE WEAK ONE. The post-bake KL here is not the
+    first-token full-distribution figure `drift` computes; it is whatever the bake measured on its
+    way past, and calling it `first-token-full-distribution` would be this project doing to itself
+    the precise thing the registry exists to prevent, which is a number acquiring a plausible
+    label rather than a true one. Recorded as the continuation-NLL estimator, which the registry
+    declares and describes as NOT a KL divergence, so a reader meets the caveat with the number.
+    """
+    out = {}
+    for field, metric, estimator, units in _POST_BAKE:
+        value = doc.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        out[f"{metric}.{estimator}"] = {
+            "metric": metric, "value": value, "estimator": estimator, "units": units,
+            "n": None, "higher_is_better": False, "interval": None,
+        }
+    return out
+
+
 def _older_shapes(doc) -> dict:
     """The per-command artefacts written before `measurement.stamp` existed."""
-    out = {}
+    out = _abliteration_metrics(doc)
 
     if isinstance(doc.get("kl"), (int, float)):
         out["kl"] = {

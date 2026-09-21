@@ -750,3 +750,136 @@ def test_a_short_budget_in_the_real_nesting_reaches_the_check_that_looks_for_it(
     findings, _ = check_document(at_the_floor, checks)
     assert "quoted-at-a-budget-below-the-visibility-floor" not in {f.check_id for f in findings}, (
         "a check that fires at the floor as well as below it is measuring nothing")
+
+
+# ── the stamped identity fields, and the check that could never see one ──────────────────────
+
+def test_every_field_a_writer_stamps_survives_normalisation():
+    """The stamps were write-only until 2026-09-21, and that made two commits' work decorative.
+
+    `normalise` carried a FIXED list of seven fields out of each metrics block, so
+    `input_digest`, `prompt_format`, `partition` and `n_tokens` were written by the producers,
+    read by nothing, and reported by nothing as missing. The failure mode is the one this
+    project keeps meeting from the other side: not a wrong answer, an unasked question.
+
+    Asserted as "nothing the writer recorded is dropped" rather than as a list of four names,
+    because a test naming the four would pass unchanged on the day a fifth is added and lost.
+    """
+    doc = {"label": "arm", "model": "m", "metrics": {"coherence": {
+        "metric": "coherence", "value": 3.01, "estimator": "neutral-passage-nll",
+        "units": "nats-per-token", "n": 1, "higher_is_better": False,
+        "input_digest": "0123456789abcdef", "prompt_format": "raw",
+        "partition": "fixed-passage", "tool_version": "0.9.0", "n_tokens": 268}}}
+
+    block = normalise(doc)["metrics"]["coherence"]
+    for field, value in doc["metrics"]["coherence"].items():
+        assert block.get(field) == value, f"{field} was dropped by the adapter"
+
+
+def test_a_canonical_field_is_never_redefined_by_an_extra():
+    """Carrying the extras must not let a writer overwrite the number or its identity.
+
+    The whole point of the canonical seven is that they mean one thing. A stamp that happened to
+    carry its own `value` or `estimator` would, under a naive dict merge, silently replace the
+    ones the adapter resolved.
+    """
+    doc = {"label": "arm", "model": "m", "metrics": {"coherence": {
+        "metric": "coherence", "value": 3.01, "estimator": "neutral-passage-nll",
+        "units": "nats-per-token", "n": 1, "higher_is_better": False}}}
+    block = normalise(doc)["metrics"]["coherence"]
+    assert block["value"] == 3.01
+    assert block["estimator"] == "neutral-passage-nll"
+
+
+def test_the_prompt_format_reaches_the_top_level_where_the_check_reads_it():
+    """`chat-template-never-applied` reads `prompt_format` at the record's TOP level, and every
+    writer here stamps it inside a metrics block. So the clause that catches "a template was
+    named and the prompts went raw anyway" could not see the field that says so, on any artefact
+    this project produces. No behaviour changed until a template was also named, which is why it
+    sat there unnoticed.
+    """
+    from senbonzakura_check import check_document
+    from senbonzakura_check.registry import load_checks
+
+    doc = {"label": "arm", "model": "m", "chat_template": {"source": "tokenizer"},
+           "metrics": {"refusal_rate": {
+               "metric": "refusal_rate", "value": 0.1, "estimator": "senbonzakura-ruler",
+               "units": "proportion", "n": 200, "higher_is_better": False,
+               "prompt_format": "raw"}}}
+    assert normalise(doc)["prompt_format"] == "raw"
+
+    findings, _ = check_document(doc, load_checks())
+    assert "chat-template-never-applied" in {f.check_id for f in findings}, (
+        "a template was named, the prompts went raw, and the check that exists for exactly that "
+        "disagreement did not fire")
+
+
+def test_two_metrics_rendered_differently_leave_the_record_unable_to_answer():
+    """Disagreement is not a tie to break.
+
+    Picking either value would hand the check a fact about half the file wearing the clothes of
+    a fact about the file. None makes the check SKIP, which is the honest outcome and the one
+    this project has repeatedly had to retrofit.
+    """
+    doc = {"label": "arm", "model": "m", "metrics": {
+        "a": {"metric": "refusal_rate", "value": 0.1, "estimator": "senbonzakura-ruler",
+              "units": "proportion", "n": 10, "higher_is_better": False,
+              "prompt_format": "raw"},
+        "b": {"metric": "coherence", "value": 3.0, "estimator": "neutral-passage-nll",
+              "units": "nats-per-token", "n": 1, "higher_is_better": False,
+              "prompt_format": "chatml"}}}
+    assert normalise(doc)["prompt_format"] is None
+
+
+# ── the coherence probe, written before the stamp existed ────────────────────────────────────
+
+#: The 2026-07-14 head-to-head coherence arms, byte-for-byte in shape. Three of these sit on the
+#: ROG at `track2/bench-h2h/` and are the only coherence evidence this project has produced.
+OLD_COHERENCE = {
+    "label": "base",
+    "model": "/models/Qwen3-1.7B",
+    "nll": 3.015669345855713,
+    "ppl": 20.40274286249101,
+    "n_tokens": 268,
+}
+
+
+def test_the_coherence_arms_written_before_the_stamp_are_recognised_at_all():
+    assert detect(OLD_COHERENCE) is not None
+    block = normalise(OLD_COHERENCE)["metrics"]["coherence"]
+    assert block["value"] == OLD_COHERENCE["nll"]
+    assert block["estimator"] == "neutral-passage-nll"
+    assert block["units"] == "nats-per-token"
+
+
+def test_the_token_count_is_not_used_as_a_sample_size():
+    """268 tokens of one paragraph are not 268 independent observations, and a denominator that
+    says otherwise hands the sample-size check a number it will believe.
+    """
+    block = normalise(OLD_COHERENCE)["metrics"]["coherence"]
+    assert block["n"] == 1
+    assert block["n_tokens"] == 268
+
+
+def test_an_old_coherence_arm_stays_uncomparable_because_it_records_nothing_to_compare_on():
+    """Readable is not the same as comparable, and the adapter must not close that gap by
+    inventing what the file does not say. These arms record no passage digest, no partition and
+    no prompt format, so the fields that decide comparability stay absent, which is true.
+    """
+    block = normalise(OLD_COHERENCE)["metrics"]["coherence"]
+    for field in ("input_digest", "partition", "prompt_format", "tool_version"):
+        assert block.get(field) is None, f"{field} was invented for a file that does not record it"
+
+
+def test_a_stamped_coherence_artefact_normalises_like_an_older_one():
+    from senbonzakura.coherence import _stamp_coherence
+
+    old = dict(OLD_COHERENCE)
+    stamped = dict(old, input_digest="0123456789abcdef")
+    _stamp_coherence(stamped)
+
+    a, b = normalise(old)["metrics"], normalise(stamped)["metrics"]
+    assert sorted(a) == sorted(b) == ["coherence"]
+    assert a["coherence"]["value"] == b["coherence"]["value"]
+    assert a["coherence"]["estimator"] == b["coherence"]["estimator"]
+    assert a["coherence"]["n"] == b["coherence"]["n"] == 1

@@ -48,7 +48,17 @@ from senbonzakura_check.measurement import METRICS_KEY
 
 #: A metric key we publish. Used for detection only, so a foreign file carrying one of these
 #: names alone is not claimed: it has to look like ours in shape as well.
-_OUR_METRICS = ("kl", "refusal", "auc", "capability")
+#: The top-level numeric fields that mark a document as one of ours, for the artefacts written
+#: before `measurement.stamp` existed.
+#:
+#: `nll` was added on 2026-09-21 and is the weakest of the five, which is why it is worth a note:
+#: `kl`, `auc` and `capability` are specific enough to be near-conclusive on their own, while a
+#: field called `nll` appears in plenty of other people's files. It is safe here only because
+#: `detects` requires the `instrument`, `provenance` or `label`-plus-`model` pairing alongside it.
+#: A coherence artefact carries `label` and `model`; a stray perplexity dump from another tool
+#: almost never carries both, and if one did, the checks it would then meet are the ones that
+#: report SKIPPED rather than passed when a record cannot answer them.
+_OUR_METRICS = ("kl", "refusal", "auc", "capability", "nll")
 
 
 class SenbonzakuraAdapter:
@@ -83,7 +93,7 @@ class SenbonzakuraAdapter:
 
         for name, block in (doc.get(METRICS_KEY) or {}).items():
             if isinstance(block, dict):
-                metrics[name] = {
+                normalised = {
                     "metric": block.get("metric", name),
                     "value": block.get("value"),
                     "estimator": block.get("estimator"),
@@ -99,6 +109,18 @@ class SenbonzakuraAdapter:
                     # field nothing downstream can tell those two cases apart.
                     "tool_version": block.get("tool_version"),
                 }
+                # EVERYTHING ELSE THE STAMP WROTE, carried rather than dropped. The fixed list
+                # above was the whole contract until 2026-09-21, which made `input_digest`,
+                # `prompt_format`, `partition` and `n_tokens` write-only: the writers stamped
+                # them, this adapter discarded them, and no check could ever read one. Two
+                # commits' worth of identity work was decorative. The list is not extended field
+                # by field, because the next field added to a stamp would be dropped in exactly
+                # the same silence; anything a writer chose to record is carried, and the
+                # canonical names above win so an extra can never redefine the number itself.
+                for key, value in block.items():
+                    if key not in normalised:
+                        normalised[key] = value
+                metrics[name] = normalised
 
         if not metrics:
             metrics.update(_older_shapes(doc))
@@ -131,6 +153,15 @@ class SenbonzakuraAdapter:
             "chat_template": (template or {}).get("source") if isinstance(template, dict)
             else template,
             "chat_template_applied": bool(template) or None,
+            # HOW THE PROMPTS WERE ACTUALLY RENDERED, lifted to where the check looks for it.
+            # `chat-template-never-applied` reads `prompt_format` at the top level of the
+            # normalised record, and every writer here stamps it INSIDE a metrics block. So the
+            # one clause that catches "a template was named and the prompts went raw anyway"
+            # could not see the field that says so, on any artefact this project produces. Lifted
+            # here rather than written twice by every writer, because the adapter is the layer
+            # whose job is putting a producer's fields into the canonical vocabulary, and a
+            # second copy in the artefact is the duplication that drifts.
+            "prompt_format": doc.get("prompt_format") or _agreed(metrics, "prompt_format"),
             # Ours alone, and worth keeping: a KL below the floor of the arithmetic that produced
             # it is a number about bfloat16 rather than about the model.
             "computed_in": doc.get("logits_dtype"),
@@ -318,6 +349,22 @@ def _abliteration_metrics(doc) -> dict:
     return out
 
 
+def _agreed(metrics, field):
+    """One value of `field` across every stamped metric, or None if they do not all agree.
+
+    DISAGREEMENT IS NOT A TIE TO BREAK. A document whose two metrics were rendered in different
+    prompt formats has no single prompt format, and picking either one would hand a check a fact
+    about half the file while looking like a fact about the file. None means "this record does not
+    answer that question", which is what makes a check SKIP rather than pass, and skipping is the
+    honest outcome: a check that examined it and said nothing would report it clean on a question
+    it never asked. That is the failure shape this project keeps finding, so it is refused here
+    rather than rediscovered downstream.
+    """
+    seen = {block.get(field) for block in metrics.values()
+            if isinstance(block, dict) and block.get(field) is not None}
+    return seen.pop() if len(seen) == 1 else None
+
+
 def _older_shapes(doc) -> dict:
     """The per-command artefacts written before `measurement.stamp` existed."""
     out = _abliteration_metrics(doc)
@@ -333,6 +380,28 @@ def _older_shapes(doc) -> dict:
             "n": doc.get("n_prompts"),
             "higher_is_better": False,
             "interval": doc.get("kl_ci"),
+        }
+
+    # THE COHERENCE PROBE, WRITTEN BEFORE THE STAMP EXISTED. Three of these are the only coherence
+    # evidence this project has ever produced: the base, Heretic and senbonzakura arms of the
+    # 2026-07-14 head-to-head, sitting on the ROG with `nll`, `ppl`, `n_tokens`, `label` and
+    # `model` and nothing else. Without this the checker declines them outright, which is honest
+    # but leaves a published comparison permanently unreadable by the tool whose job is reading it.
+    #
+    # `n` IS ONE, matching what `coherence._stamp_coherence` writes and for the same reason: the
+    # probe reads one passage, and `n_tokens` in the denominator would hand the sample-size check
+    # 268 independent observations that are really the words of one paragraph.
+    #
+    # NO `input_digest`, NO `partition`, NO `prompt_format` HERE, and that is the point rather than
+    # an omission. The file does not record which passage was read, so this adapter cannot say, and
+    # inventing the constant's digest would assert that the default passage was used on evidence
+    # that does not exist. The number becomes checkable; it stays uncomparable, which is true.
+    if isinstance(doc.get("nll"), (int, float)):
+        out["coherence"] = {
+            "metric": "coherence", "value": doc["nll"],
+            "estimator": "neutral-passage-nll", "units": "nats-per-token",
+            "n": 1, "higher_is_better": False, "interval": None,
+            "n_tokens": doc.get("n_tokens"),
         }
 
     n = doc.get("n")

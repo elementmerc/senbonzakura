@@ -1,0 +1,60 @@
+{
+  "_provenance": {
+    "incident": "lm-evaluation-harness ships two answer extractors for GSM8K. `strict-match` requires the model to emit the answer in the prompted `#### <number>` form; `flexible-extract` takes the LAST number appearing anywhere in the generation. The flexible filter scores a model correct whenever the right number happens to be the final number in its working, including when the model never committed to an answer, and it is systematically the higher of the two. Users have repeatedly reported and argued about the gap between the two figures on the same run, and about `flexible-extract` numbers being quoted as GSM8K accuracy with no note of which extractor produced them. The two are not two measurements of one quantity; they are two definitions of what counts as answering.",
+    "documented_at": "lm-evaluation-harness, `lm_eval/tasks/gsm8k/gsm8k.yaml`, which defines both filters, and the project's own issue tracker where the strict/flexible gap is a recurring report.",
+    "kind": "reconstructed",
+    "inferred": "The numbers. The shape is built from the schema this checker's lm-eval adapter was written against, which was read out of `lm_eval/evaluator_utils.py` and `lm_eval/evaluator.py` on 2026-09-11. The values are a plausible gap of the size users report, not a captured run: no genuine log was available to copy.",
+    "not_reproduced": "A real run. This is the schema's shape with invented numbers in it, which is a weaker basis than a captured artefact and is said so here rather than glossed.",
+    "why_this_one": "Chosen on 2026-09-21 AFTER the five new checks were committed and frozen at 979f6a1. It is a harness's own documented behaviour rather than anything this project has shipped, and none of the five was written with an answer extractor in mind.",
+    "result": "MISSED, run 2026-09-21 against the eleven checks frozen at 979f6a1. The artefact was recognised and read, so this is a real miss rather than an adapter shrugging: six checks applied, none fired, five were skipped as not applicable, and the command exited 0. The closest check is `metric-reported-without-its-estimator`, which stays quiet because both figures DO name their extractor, and naming it is exactly what the harness does right. Nothing in the set asks whether two estimators of one metric in one document disagree by more than noise, which is the whole defect. NO CHECK WAS WRITTEN OR WIDENED TO COVER THIS. A check set fitted to its own held-out incident measures nothing, and the miss is the result."
+  },
+  "results": {
+    "gsm8k": {
+      "alias": "gsm8k",
+      "exact_match,strict-match": 0.4155,
+      "exact_match_stderr,strict-match": 0.0136,
+      "exact_match,flexible-extract": 0.5497,
+      "exact_match_stderr,flexible-extract": 0.0137
+    }
+  },
+  "group_subtasks": {},
+  "configs": {
+    "gsm8k": {
+      "task": "gsm8k",
+      "dataset_path": "gsm8k",
+      "dataset_name": "main",
+      "output_type": "generate_until",
+      "num_fewshot": 5
+    }
+  },
+  "versions": {
+    "gsm8k": 3.0
+  },
+  "n-shot": {
+    "gsm8k": 5
+  },
+  "higher_is_better": {
+    "gsm8k": {
+      "exact_match": true
+    }
+  },
+  "n-samples": {
+    "gsm8k": {
+      "original": 1319,
+      "effective": 1319
+    }
+  },
+  "config": {
+    "model": "hf",
+    "model_args": "pretrained=meta-llama/Llama-3.1-8B-Instruct,dtype=bfloat16",
+    "batch_size": 8,
+    "device": "cuda:0",
+    "use_cache": null,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "random_seed": 0,
+    "fewshot_seed": 1234
+  },
+  "git_hash": "4f8195f",
+  "date": "2026-09-21"
+}

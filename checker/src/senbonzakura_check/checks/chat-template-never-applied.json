@@ -6,25 +6,37 @@
   "remedy": "Re-run with the template actually applied, and compare. If the figures move, the previous ones describe a different experiment. Check the field your harness writes to record the rendered prompt, not the field that records the requested setting: the defect is exactly that the two disagree.",
   "confidence": "high",
   "severity": "withdraws",
-  "false_positive": "A base model with no chat template is supposed to take raw prompts, and a run that deliberately measures the raw format is a legitimate arm rather than a mistake. This check fires on the DISAGREEMENT between naming a template and recording that none was applied, so it stays quiet when nothing named one. It will still fire wrongly on a harness that records `chat_template_applied: false` to mean \"the model supplies its own\", which is a spelling no adapter here knows about. It is also silent on lm-evaluation-harness, which records the request inside `model_args` rather than as a field, so absence of a finding there means nothing.",
+  "false_positive": "A base model with no chat template is supposed to take raw prompts, and a run that deliberately measures the raw format is a legitimate arm rather than a mistake. This check fires on the DISAGREEMENT between naming a template and recording that none was applied, so it stays quiet when nothing named one. It will still fire wrongly on a harness that records `chat_template_applied: false` to mean \"the model supplies its own\", which is a spelling no adapter here knows about. It is also silent on lm-evaluation-harness, which records the request inside `model_args` rather than as a field, so absence of a finding there means nothing. An artefact that records nothing about a template under any of the four names is SKIPPED rather than passed, because the adapter writes two of those names whether or not the producer said anything, and a check that counted those as examined would report a whole corpus clean on a question it never asked.",
   "applies_to": {
     "op": "any_of",
     "rules": [
       {
-        "op": "present",
-        "path": "chat_template"
+        "op": "all_of",
+        "rules": [
+          {"op": "present", "path": "chat_template"},
+          {"op": "not_equals", "path": "chat_template", "value": null}
+        ]
       },
       {
-        "op": "present",
-        "path": "chat_template_applied"
+        "op": "all_of",
+        "rules": [
+          {"op": "present", "path": "chat_template_applied"},
+          {"op": "not_equals", "path": "chat_template_applied", "value": null}
+        ]
       },
       {
-        "op": "present",
-        "path": "raw.config.chat_template"
+        "op": "all_of",
+        "rules": [
+          {"op": "present", "path": "raw.config.chat_template"},
+          {"op": "not_equals", "path": "raw.config.chat_template", "value": null}
+        ]
       },
       {
-        "op": "present",
-        "path": "raw.config.apply_chat_template"
+        "op": "all_of",
+        "rules": [
+          {"op": "present", "path": "raw.config.apply_chat_template"},
+          {"op": "not_equals", "path": "raw.config.apply_chat_template", "value": null}
+        ]
       }
     ]
   },

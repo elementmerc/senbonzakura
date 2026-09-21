@@ -6,9 +6,15 @@
   "remedy": "Re-score at or above the visibility floor and compare. If the rate moves, the original figure was about the budget. If it does not, you have a measurement and a reason to believe it. Do not quote the figure comparatively until then: a short budget flatters whichever model answers at greater length, so it tilts a comparison rather than adding noise to it.",
   "confidence": "high",
   "severity": "withdraws",
-  "false_positive": "A length sweep sets short budgets deliberately, and every one of its points will carry this warning and fire this check. That is correct rather than a false positive: the finding is that the number cannot be read as a refusal rate, which is exactly true of a sweep point, and a sweep is quoted as a curve rather than as a rate. The check reads a field only this project's scorer writes, so an artefact from another harness that had the same problem would not fire it. That is a coverage gap, not a clean bill of health.",
+  "false_positive": "A length sweep sets short budgets deliberately, and every one of its points will carry this warning and fire this check. That is correct rather than a false positive: the finding is that the number cannot be read as a refusal rate, which is exactly true of a sweep point, and a sweep is quoted as a curve rather than as a rate. The check reads a field only this project's scorer writes, so an artefact from another harness that had the same problem would not fire it. That is a coverage gap, not a clean bill of health. An artefact that records nothing under this field is SKIPPED rather than passed, because the adapter writes the normalised field whether or not the producer put anything in it, and a check that counted those as examined would report every artefact in this project clean on a question it never asked.",
 
-  "applies_to": {"op": "present", "path": "budget_warning"},
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "present", "path": "budget_warning"},
+      {"op": "not_equals", "path": "budget_warning", "value": null}
+    ]
+  },
 
   "rule": {"op": "truthy", "path": "budget_warning"},
 

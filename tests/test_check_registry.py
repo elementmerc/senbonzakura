@@ -117,6 +117,108 @@ def test_every_check_has_a_kebab_case_id_matching_its_filename(check):
     assert " " not in check.id and "_" not in check.id
 
 
+# ── the `applies_to` defect class, and the guard that stops it coming back ───────────────────
+
+#: An artefact that records a measurement and nothing else. Every normalised field that comes out
+#: of this as None is one the ADAPTER wrote rather than the producer, which is the whole trap: a
+#: check testing `present` on one of them examines every artefact in existence and reports each
+#: one clean on a question it never asked.
+_RECORDS_NOTHING_ELSE = {"model": "m", "label": "arm", "instrument": "senbonzakura.refusal_rate",
+                         "refusal": 0.31, "n": 200, "eval": "held-out"}
+
+
+def _keys_the_adapter_always_writes():
+    from senbonzakura_check import normalise
+    doc = normalise(json.loads(json.dumps(_RECORDS_NOTHING_ELSE)))
+    return {k for k, v in doc.items() if v is None}
+
+
+def _unguarded_present(rule, guarded=frozenset()):
+    """Every path a `present` test reads without a `not_equals null` beside it.
+
+    `guarded` carries the paths an enclosing `all_of` has already pinned to a non-null value,
+    because `present` AND `not_equals null` together is the correct way to ask this question and
+    the pair has to read as one test rather than as an offence plus an unrelated rule.
+    """
+    if not isinstance(rule, dict):
+        return set()
+    op = rule.get("op")
+    if op == "all_of":
+        subs = rule.get("rules") or []
+        here = guarded | {s.get("path") for s in subs
+                          if isinstance(s, dict) and s.get("op") == "not_equals"
+                          and s.get("value") is None}
+        return set().union(*(_unguarded_present(s, here) for s in subs)) if subs else set()
+    if op in ("any_of", "not"):
+        subs = rule.get("rules") or ([rule["rule"]] if isinstance(rule.get("rule"), dict) else [])
+        return set().union(*(_unguarded_present(s, guarded) for s in subs)) if subs else set()
+    if op == "present" and rule.get("path") not in guarded:
+        return {rule.get("path")}
+    return set()
+
+
+@pytest.mark.parametrize("check", CHECKS, ids=[c.id for c in CHECKS])
+def test_no_check_tests_present_on_a_field_the_adapter_always_writes(check):
+    """THE DEFECT CLASS, GATED SO IT CANNOT COME BACK.
+
+    Found on 2026-09-21 in `quoted-at-a-budget-below-the-visibility-floor`, which asked
+    `present` on `generation_budget`. The adapter writes that key on every artefact it
+    normalises, with None in it when the producer recorded no budget, so the check applied to
+    every artefact in the corpus and reported each one clean on a question it never asked. Two
+    more checks had the identical shape on `budget_warning` and on `chat_template`.
+
+    `present` and `absent` are the right questions to ask of a RAW path, where absence is the
+    producer's own silence. On a normalised path they are answered by the adapter rather than by
+    the artefact, and the honest test is `present` together with `not_equals null`, which is what
+    this allows.
+    """
+    always = _keys_the_adapter_always_writes()
+    offending = sorted(p for p in _unguarded_present(check.applies_to) if p in always)
+    assert not offending, (
+        f"{check.id}: `applies_to` tests `present` on {offending}, which the adapter writes on "
+        f"every artefact whether or not the producer recorded anything. The check would examine "
+        f"every file and report each one clean on a question it never asked. Pair it with "
+        f"`not_equals <path> null`.")
+
+
+def test_that_guard_can_actually_fail():
+    """A guard nobody has watched fail is a guard nobody has tested, which is the same rule the
+    per-check controls exist for. Rebuilt here as the exact shape the three real checks had.
+    """
+    always = _keys_the_adapter_always_writes()
+    assert always, "the adapter writes no unconditional fields, so the guard above tests nothing"
+    victim = min(always)
+    assert _unguarded_present({"op": "present", "path": victim}) == {victim}
+    assert _unguarded_present({"op": "any_of", "rules": [{"op": "present", "path": victim}]})
+    assert not _unguarded_present({"op": "all_of", "rules": [
+        {"op": "present", "path": victim},
+        {"op": "not_equals", "path": victim, "value": None}]})
+
+
+@pytest.mark.parametrize(("check_id", "field"), [
+    ("quoted-at-a-budget-below-the-visibility-floor", "generation_budget"),
+    ("artefact-carries-its-own-warning", "budget_warning"),
+    ("chat-template-never-applied", "chat_template"),
+])
+def test_an_artefact_recording_nothing_for_a_field_skips_the_check_that_reads_it(check_id, field):
+    """The behavioural half of the same property, per check rather than over the rule tree.
+
+    Asserted through `check_document`, so it goes through detection and normalisation the way a
+    real file does: the trap was created by the adapter, and a test that fed the rule evaluator a
+    handwritten document would never have met it.
+    """
+    from senbonzakura_check import check_document, normalise
+
+    doc = json.loads(json.dumps(_RECORDS_NOTHING_ELSE))
+    assert normalise(doc)[field] is None, (
+        f"this fixture was supposed to record nothing under {field}")
+    findings, skipped = check_document(doc, CHECKS)
+    assert check_id not in {f.check_id for f in findings}
+    assert check_id in skipped, (
+        f"{check_id} examined an artefact that records nothing under {field}. Skipped and passed "
+        f"are different outcomes and this one is a skip.")
+
+
 # ── the loader's refusals ────────────────────────────────────────────────────────────────────
 
 def _minimal(**over):

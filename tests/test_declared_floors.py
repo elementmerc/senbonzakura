@@ -230,11 +230,26 @@ def test_no_test_imports_tomllib_directly():
     """
     here = Path(__file__).resolve().parent
     offenders = []
+    unreadable = []
     for f in sorted(here.glob("test_*.py")):
-        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            # A FILE THAT CANNOT BE READ IS NOT A TOMLLIB FINDING, and saying so is the whole
+            # point of catching this. On 2026-09-21 a dangling symlink in this directory made
+            # `read_text` raise, and the suite reported a failure of the tomllib rule: a check
+            # blaming a problem it had not looked for, in a file it had not read. The glob finds
+            # a broken link because the name exists; only the open discovers it does not.
+            unreadable.append(f"{f.name} ({e.__class__.__name__})")
+            continue
+        for n, line in enumerate(lines, 1):
             stripped = line.strip()
             if stripped.startswith(("import tomllib", "from tomllib import")):
                 offenders.append(f"{f.name}:{n}")
+    assert not unreadable, (
+        f"these are in tests/ and cannot be opened, so nothing here has inspected them: "
+        f"{unreadable}. A dangling symlink is the usual cause, and it means the file resolves on "
+        f"the machine that made it and on no other.")
     assert not offenders, (
         f"these import tomllib directly and will fail to collect on Python 3.10, which this "
         f"project claims to support: {offenders}. Use `from tomlread import tomllib`.")

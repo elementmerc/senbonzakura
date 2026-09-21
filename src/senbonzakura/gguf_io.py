@@ -378,11 +378,34 @@ def verify(path, *, expect_quant=None, expect_arch=None, min_tensors=1):
 #: runtime knows about how to talk to the model.
 CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
 
+#: The OTHER two places a GGUF keeps a prompt format, read out of the vendored writer on
+#: 2026-09-21: `gguf/constants.py` declares `tokenizer.chat_template`,
+#: `tokenizer.chat_template.{name}` and `tokenizer.chat_templates`, and `add_chat_template`
+#: writes the named form when a checkpoint's template is a LIST of `{name, template}` objects.
+#: If no entry in that list is called `default` it returns before the bare key is ever written.
+#:
+#: Reading only the bare key therefore reported "this file carries no chat template" about a file
+#: carrying several, and `chat_template_lost` raised a false alarm on a good export. That false
+#: fact was written into the conversion record, where it outlives the terminal and is what the
+#: checker reads, and recorded as `target.carries_chat_template: false`.
+#:
+#: It is the same defect as `source_chat_template`'s, which was taught the three places
+#: transformers keeps a template on the morning of the same day. The source side learned all
+#: three spellings; this side was left reading one.
+CHAT_TEMPLATE_NAMED_PREFIX = "tokenizer.chat_template."
+CHAT_TEMPLATE_LIST_KEY = "tokenizer.chat_templates"
+
 
 def has_chat_template(header):
-    """Does this header carry a prompt format? A fact about the file, not a verdict on it.
+    """Does this header carry a prompt format, under ANY of the three keys GGUF defines?
 
-    A base model legitimately has none, so absence is only interesting next to a source that had
-    one. Callers do that comparison; this just reads.
+    A fact about the file, not a verdict on it. A base model legitimately has none, so absence is
+    only interesting next to a source that had one. Callers do that comparison; this just reads.
     """
-    return bool((header.get("metadata") or {}).get(CHAT_TEMPLATE_KEY))
+    metadata = header.get("metadata") or {}
+    if metadata.get(CHAT_TEMPLATE_KEY):
+        return True
+    if metadata.get(CHAT_TEMPLATE_LIST_KEY):
+        return True
+    return any(key.startswith(CHAT_TEMPLATE_NAMED_PREFIX) and value
+               for key, value in metadata.items())

@@ -216,3 +216,65 @@ def test_a_container_with_no_tensors_is_refused(tmp_path):
     """A valid header with no weights loads and answers nonsense."""
     with pytest.raises(GGUFError, match="fewer than the"):
         gguf_io.verify(_gguf(tmp_path, tensors=0))
+
+
+# ── the three places GGUF keeps a prompt format ──────────────────────────────────────────────
+
+def test_a_named_template_counts_even_with_no_default_entry():
+    """THE FALSE ALARM, 2026-09-21. The vendored writer declares three template keys and
+    `add_chat_template` writes the NAMED form when a checkpoint's template is a list of
+    `{name, template}` objects, returning before the bare key if no entry is called `default`.
+
+    Reading only `tokenizer.chat_template` therefore reported "this file carries no chat
+    template" about a file carrying several, so `chat_template_lost` fired on a good export and
+    wrote that false fact into the conversion record, where the checker reads it.
+
+    A Llama-3.1-style list includes a `default` entry and was always fine; a checkpoint shipping
+    only `tool_use` or `rag` names is the case that fired.
+    """
+    assert gguf_io.has_chat_template(
+        {"metadata": {"tokenizer.chat_template.tool_use": "{{ x }}"}})
+    assert gguf_io.has_chat_template(
+        {"metadata": {"tokenizer.chat_templates": ["tool_use", "rag"]}})
+
+
+def test_the_three_keys_are_the_three_the_vendored_writer_declares():
+    """Asserted against the vendored constants rather than against strings written here, so a
+    spelling that changes upstream fails this test instead of silently reading nothing.
+
+    This is the guard the source side already had and this side did not: `source_chat_template`
+    was taught the three places transformers keeps a template on the morning of the same day,
+    and `has_chat_template` was left reading one of the three GGUF keeps.
+    """
+    import re
+    from pathlib import Path
+
+    # READ AS TEXT, not imported. `gguf-py` has a hyphen so it is not an importable package path,
+    # and the vendored tree is fetched at release time rather than living in a clean checkout.
+    # A skip is honest here; asserting against strings written in this file would not be.
+    root = Path(__file__).resolve().parents[1]
+    constants = root / "src/senbonzakura/vendor/src/gguf-py/gguf/constants.py"
+    if not constants.is_file():
+        pytest.skip("the vendored gguf-py is not in this checkout, so there is nothing to "
+                    "compare the key spellings against")
+
+    text = constants.read_text(encoding="utf-8")
+    declared = set(re.findall(r'CHAT_TEMPLATE[A-Z_]*\s*=\s*"([^"]+)"', text))
+    assert gguf_io.CHAT_TEMPLATE_KEY in declared
+    assert gguf_io.CHAT_TEMPLATE_LIST_KEY in declared
+    named = [d for d in declared if d.startswith(gguf_io.CHAT_TEMPLATE_NAMED_PREFIX)
+             and d != gguf_io.CHAT_TEMPLATE_KEY]
+    assert named, f"no named-template key found among {sorted(declared)}"
+    # Every key the writer declares is one this reader can see.
+    assert declared <= ({gguf_io.CHAT_TEMPLATE_KEY, gguf_io.CHAT_TEMPLATE_LIST_KEY} | set(named)), (
+        f"the vendored writer declares a template key this reader does not know: "
+        f"{sorted(declared)}")
+
+
+def test_an_empty_template_under_any_key_is_still_no_template():
+    """Absence and emptiness are the same answer here, and a key written with an empty string is
+    the shape a partial write leaves behind.
+    """
+    assert not gguf_io.has_chat_template({"metadata": {"tokenizer.chat_template.tool_use": ""}})
+    assert not gguf_io.has_chat_template({"metadata": {"tokenizer.chat_templates": []}})
+    assert not gguf_io.has_chat_template({"metadata": {"general.architecture": "llama"}})

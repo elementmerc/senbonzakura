@@ -63,3 +63,19 @@ Do not open a public issue. Email the address in `pyproject.toml`.
 If a figure this project publishes does not reproduce, that is the most valuable issue you
 can file. Include the command, the version, and what you got. Published numbers have been
 corrected here before and will be again.
+
+## Never paste prompts or generations
+
+**Do not put model generations, or the prompts that produced them, into an issue, a pull request,
+a discussion or a commit.** That includes the per-prompt rows this tool keeps by default, which
+are the most useful debugging artefact here and the last thing anyone wants in a public
+repository. They contain harmful prompts and the replies a model gave to them.
+
+Report the shape of the problem instead: the command, the version, the figure you got, and the
+figure you expected. If a defect genuinely cannot be described without the text, say so in the
+issue and wait to be asked rather than pasting it.
+
+A pre-commit hook (`tools/ci/check_prompt_artefacts.py`) refuses a staged JSON or JSONL file
+carrying a `prompt` or `generation` field, and CI runs the same check over the whole tree.
+**No hook can see a web form**, so on the issue and discussion path this sentence is the only
+control there is. The hook reads only JSON and JSONL, so prose files are not covered by it.

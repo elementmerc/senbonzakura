@@ -113,3 +113,47 @@ def test_blank_issues_stay_enabled():
 def test_contributing_still_covers_what_it_covered(topic):
     """The templates are an addition, not a replacement. JOSS reads CONTRIBUTING.md first."""
     assert topic in CONTRIBUTING.read_text(encoding="utf-8").lower(), topic
+
+
+@pytest.mark.parametrize("path", _templates(), ids=lambda p: p.name)
+def test_a_template_states_the_rule_rather_than_pointing_at_it(path):
+    """THE WEAKNESS IN THE TEST ABOVE, found by a panel reviewer on 2026-09-21.
+
+    That test asserts the words `generation` and `prompt` appear somewhere in the template. A
+    template whose only mention was the sentence "do NOT include model generations or the prompts
+    that produced them; see CONTRIBUTING.md" satisfied it, and root `CONTRIBUTING.md` carried no
+    such rule at all: it lived in the VitePress page of nearly the same name, which is neither the
+    file the template names nor the file a JOSS reviewer opens first.
+
+    So the check covered one spelling of the requirement, the presence of two words, and not the
+    thing the requirement is for: that a person about to paste meets an instruction rather than a
+    redirection. The rule has to be readable without leaving the form.
+    """
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "do not" in lowered or "don't" in lowered or "not include" in lowered, (
+        f"{path.name} mentions generations without telling anybody not to paste them")
+
+    # A pointer is allowed BESIDE the rule and not INSTEAD of it. If the template names another
+    # document, that document has to carry the rule too, or the reader is sent somewhere that
+    # does not answer the question they were about to get wrong.
+    if "contributing.md" in lowered:
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8").lower()
+        assert "generation" in contributing and "prompt" in contributing, (
+            f"{path.name} points the reader at CONTRIBUTING.md, which does not state the rule. "
+            f"A pointer to a document that does not answer the question is worse than no pointer: "
+            f"it reads as though the reader has been told.")
+
+
+def test_the_root_contributing_file_carries_the_rule_itself():
+    """Asserted on the ROOT file specifically, because that is the one the templates name, the one
+    GitHub links from the issue form, and the one a JOSS reviewer opens. `docs/contributing.md` is
+    a different file with a nearly identical name, and the rule living only there is what made the
+    pointer above dangle.
+    """
+    text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8").lower()
+    assert "generation" in text and "prompt" in text
+    assert "do not" in text or "don't" in text
+    assert "no hook can see a web form" in text, (
+        "the root contributing file states the rule without saying why it matters, and the reason "
+        "is the whole argument: on the issue path the sentence is the only control there is")

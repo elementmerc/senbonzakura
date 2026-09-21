@@ -515,3 +515,45 @@ def test_the_shipped_pyproject_is_honest_about_which_state_it_is_in():
         assert not admits_pre, (
             f"this tree is at release version {raw} and still declares {spec!r}, which admits a "
             f"pre-release. Tighten it to a stable floor before tagging.")
+
+
+# ── the licence files, and the artefact that quietly dropped two of them ─────────────────────
+
+def _declared_licence_files():
+    """The set `pyproject.toml` promises ships with this distribution."""
+    from tomlread import tomllib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    return root, list(data["project"]["license-files"])
+
+
+def test_every_declared_licence_file_exists():
+    """A declared-but-missing licence file is omitted in silence by setuptools: no error, no
+    warning, a wheel built without it. So the declaration is only worth what this test makes it
+    worth.
+    """
+    root, want = _declared_licence_files()
+    missing = [n for n in want if not (root / n).is_file()]
+    assert not missing, f"pyproject declares licence files that are not in the tree: {missing}"
+
+
+@pytest.mark.parametrize("dockerfile", ["Dockerfile", "Dockerfile.cuda"])
+def test_both_images_copy_every_declared_licence_file(dockerfile):
+    """THE FINDING, 2026-09-21. `license-files` declared five and both Dockerfiles copied three:
+    APACHE-2.0.txt and ACCEPTABLE-USE.md were absent from the build context, so `pip install .`
+    inside the builder produced a dist-info carrying three, and that is what landed in the image.
+
+    Apache-2.0 section 4(a) requires the licence text to travel with the work, and the bundled
+    evaluation track carries an Apache-2.0 component. `tools/ci/check_wheel.py` enforces this for
+    the WHEEL; nothing enforced it for the image, and the CI step asserted one file of the five.
+
+    Latent rather than live while there is no registry to pull from, and a breach on the first
+    `docker push`. Asserted here rather than only in CI because the image job runs on one row of
+    the matrix and takes minutes, and this reads two files in milliseconds.
+    """
+    root, want = _declared_licence_files()
+    text = (root / dockerfile).read_text(encoding="utf-8")
+    absent = [n for n in want if n not in text]
+    assert not absent, (
+        f"{dockerfile} does not copy {absent} into the build context, so the image ships without "
+        f"licence files this project declares it distributes")

@@ -682,7 +682,28 @@ jobs:
           # could ever have caught: the string lives in a workflow, and the file it names is
           # correct where it sits. `tests/test_tools_layout.py` now reads the workflows too.
           docker run --rm -v "$PWD/tools:/check:ro" --entrypoint python senbonzakura:ci-cpu /check/ci/image_is_honest.py
-          docker run --rm --entrypoint python senbonzakura:ci-cpu -c "import pathlib, senbonzakura; hits = list(pathlib.Path(senbonzakura.__file__).resolve().parents[2].rglob('THIRD-PARTY-CORPORA.md')); assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'; print('attribution present at', hits[0])"
+          # EVERY DECLARED LICENCE FILE, NOT ONE OF THEM, and the list is read from
+          # `pyproject.toml` rather than written here. This asserted THIRD-PARTY-CORPORA.md alone
+          # while both Dockerfiles copied three of the five files `license-files` declares, so
+          # APACHE-2.0.txt and ACCEPTABLE-USE.md were absent from the image. setuptools omits a
+          # declared-but-missing licence file in silence: no error, no warning, a wheel built
+          # without it. `tools/ci/check_wheel.py` already enforces the whole set for the WHEEL,
+          # and this is the same obligation one layer down, in the artefact that would carry the
+          # Apache-2.0 evaluation track to anyone who pulled it.
+          # NOT tomllib: this runs on the runner's python, and `requires-python` is >=3.10 where
+          # tomllib does not exist. The declaration is a flat array of quoted names, so it is read
+          # with a pattern rather than a parser, and the assertion below fails loudly if the
+          # pattern ever reads nothing.
+          WANT=$(python3 -c "import re,pathlib;t=pathlib.Path('pyproject.toml').read_text();m=re.search(r'license-files\s*=\s*\[(.*?)\]',t,re.S);print(' '.join(re.findall(r'\"([^\"]+)\"',m.group(1))))")
+          test -n "$WANT" || { echo "could not read license-files from pyproject.toml"; exit 1; }
+          echo "declared licence files: $WANT"
+          docker run --rm --entrypoint python -e WANT="$WANT" senbonzakura:ci-cpu -c "
+          import os, pathlib, senbonzakura
+          root = pathlib.Path(senbonzakura.__file__).resolve().parents[2]
+          missing = [n for n in os.environ['WANT'].split() if not list(root.rglob(n))]
+          assert not missing, f'the image is missing declared licence file(s): {missing}'
+          print('all declared licence files present:', os.environ['WANT'])
+          "
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .
       - name: The CUDA image carries a CUDA torch

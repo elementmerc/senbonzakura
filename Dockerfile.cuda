@@ -53,7 +53,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PIP_RETRIES=10
 
 WORKDIR /build
-COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md ./
+COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md \
+     APACHE-2.0.txt ACCEPTABLE-USE.md ./
 COPY src/ ./src/
 # The checker's own tree, because `senbonzakura` depends on `senbonzakura-check` and that name is
 # not on PyPI yet. Without this the pip line below fails to resolve the dependency from the index,

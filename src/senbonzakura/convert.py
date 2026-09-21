@@ -64,6 +64,24 @@ HEADER_TYPE = {"bf16": "BF16", "f16": "F16", "f32": "F32", "q8_0": "Q8_0"}
 #: vocabulary and the metadata), so this is a floor for the disk check rather than an estimate.
 SIZE_HEADROOM = 1.20
 
+#: Bytes per parameter, by the name the converter and the checkpoint use for a precision.
+#:
+#: WHY THE DISK CHECK NEEDS THIS. It sized the output as the input plus 20%, and the comment
+#: above says "at the same precision" while `--outtype` offers four that are not the same
+#: precision. Converting a 20 GB bf16 checkpoint with `--outtype f32` writes about 40 GB against
+#: a demand of 24, so the pre-flight passed and the job died on a write two thirds through, which
+#: is the exact cost the pre-flight exists to prevent and is measured in money on a rented card.
+#: The other direction is worse in practice: a q8_0 output is about a quarter of the size, and a
+#: conversion that would have fitted was REFUSED, with no override, because `--force` governs
+#: overwriting rather than the disk estimate. `gguf_io`'s own header says it: failing a correct
+#: file is worse than not checking, because it trains whoever meets it to pass --force.
+#:
+#: q8_0 is 34 bytes per block of 32 weights, which is the block layout llama.cpp writes.
+BYTES_PER_PARAM = {"f32": 4.0, "bf16": 2.0, "f16": 2.0, "q8_0": 34.0 / 32.0}
+
+#: What a checkpoint's own `torch_dtype` means in the same units.
+SOURCE_BYTES_PER_PARAM = {"float32": 4.0, "float64": 8.0, "bfloat16": 2.0, "float16": 2.0}
+
 #: The pre-flight architecture check costs one subprocess and about two seconds, against a
 #: conversion measured in minutes and a rented card measured in money.
 SUPPORTED_TIMEOUT_S = 180
@@ -363,7 +381,34 @@ def supported_architectures(script, *, timeout=SUPPORTED_TIMEOUT_S):
     return names, broken, died
 
 
-def preflight(model_dir, out, *, force, skip_arch_check, log=print):
+def size_ratio(cfg, outtype):
+    """How many output bytes per input byte, and a sentence saying why, for the disk check.
+
+    Returns (ratio, basis). The ratio is 1.0 with a stated fallback whenever either end is
+    unknown, which reproduces the behaviour this had before the precision was consulted at all:
+    unknown must not silently become optimistic in either direction.
+    """
+    out_bpp = BYTES_PER_PARAM.get(str(outtype))
+    src = str(cfg.get("torch_dtype") or cfg.get("dtype") or "").replace("torch.", "")
+    src_bpp = SOURCE_BYTES_PER_PARAM.get(src)
+    if out_bpp is None:
+        # `auto` resolves to whichever 16-bit type suits the weights, so it is the same size as a
+        # 16-bit source and unknowable against any other. Treated as unchanged, and said.
+        return 1.0, (f"--outtype {outtype} writes a precision this check cannot size ahead of "
+                     f"time, so it is assumed to be the checkpoint's own")
+    if src_bpp is None:
+        return 1.0, (f"the checkpoint does not record a dtype this check understands "
+                     f"({src or 'none recorded'}), so --outtype {outtype} is assumed to be the "
+                     f"same size as it")
+    ratio = out_bpp / src_bpp
+    if ratio == 1.0:
+        return ratio, f"--outtype {outtype} matches the checkpoint's {src}"
+    direction = "larger" if ratio > 1 else "smaller"
+    return ratio, (f"--outtype {outtype} is {ratio:.2f}x the size of the checkpoint's {src}, "
+                   f"which makes the output {direction}")
+
+
+def preflight(model_dir, out, *, force, skip_arch_check, outtype="bf16", log=print):
     """Everything checkable before a long job, because none of it is worth finding halfway."""
     cfg = read_config(model_dir)
     d = Path(model_dir)
@@ -413,14 +458,17 @@ def preflight(model_dir, out, *, force, skip_arch_check, log=print):
                 f"architecture genuinely is not supported upstream yet.")
 
     total = sum(p.stat().st_size for p in shards)
-    need = int(total * SIZE_HEADROOM)
+    ratio, basis = size_ratio(cfg, outtype)
+    need = int(total * ratio * SIZE_HEADROOM)
     free = free_bytes_for(out)
     if free is not None and free < need:
         raise ConvertError(
-            f"only {free / 1e9:.1f} GB free where the output goes and the weights are "
-            f"{total / 1e9:.1f} GB. A GGUF at the same precision is slightly larger than the "
-            f"checkpoint, not smaller: free space or choose an output on a larger volume.")
-    return {"architecture": arch, "shards": len(shards), "bytes": total, "script": script}
+            f"only {free / 1e9:.1f} GB free where the output goes, and this conversion needs "
+            f"about {need / 1e9:.1f} GB: the weights are {total / 1e9:.1f} GB and {basis}. "
+            f"Free space, choose an output on a larger volume, or pick an --outtype that writes "
+            f"fewer bytes per weight.")
+    return {"architecture": arch, "shards": len(shards), "bytes": total, "script": script,
+            "outtype": outtype, "estimated_bytes": need}
 
 
 #: The two names for one tensor when a config declares tied embeddings.
@@ -666,7 +714,8 @@ def run(argv=None, log=print):
     out = Path(a.out) if a.out else default_output(a.model, a.outtype)
 
     try:
-        pre = preflight(a.model, out, force=a.force, skip_arch_check=a.skip_arch_check, log=log)
+        pre = preflight(a.model, out, force=a.force, skip_arch_check=a.skip_arch_check,
+                        outtype=a.outtype, log=log)
     except ConvertError as e:
         raise SystemExit(f"cannot convert: {e}") from e
 

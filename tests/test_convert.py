@@ -100,7 +100,10 @@ def test_an_existing_output_needs_force(tmp_path):
 def test_not_enough_disk_is_caught_before_the_job_not_during(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 1)
-    with pytest.raises(ConvertError, match="free space"):
+    # `needs about` rather than `free space`: the message gained the estimate and the reason for
+    # it when the check learned to read `--outtype` on 2026-09-21, and the sentence it used to
+    # match now starts a sentence rather than sitting mid-line.
+    with pytest.raises(ConvertError, match="needs about"):
         convert.preflight(d, tmp_path / "o.gguf", force=False, skip_arch_check=True)
 
 
@@ -668,3 +671,62 @@ class TestTheConversionRecord:
         assert "a-chat-template-lost-in-conversion" not in skipped, (
             "the check was skipped on a record that answers its question, which would make its "
             "silence on a real conversion mean nothing")
+
+
+# ── the disk pre-flight and the precision it never looked at ─────────────────────────────────
+
+def test_the_size_ratio_follows_the_outtype_in_both_directions():
+    """THE DEFECT, 2026-09-21. `preflight` sized the output as the input plus 20% and had no
+    `outtype` parameter at all, so it structurally could not account for precision while
+    `--outtype` offers four that are not the checkpoint's.
+    """
+    bf16 = {"torch_dtype": "bfloat16"}
+    assert convert.size_ratio(bf16, "bf16")[0] == 1.0
+    assert convert.size_ratio(bf16, "f32")[0] == 2.0
+    assert convert.size_ratio(bf16, "q8_0")[0] == pytest.approx(0.53, abs=0.01)
+    assert convert.size_ratio({"torch_dtype": "float32"}, "bf16")[0] == 0.5
+
+
+@pytest.mark.parametrize(("cfg", "outtype"), [
+    ({"torch_dtype": "bfloat16"}, "auto"),
+    ({}, "f32"),
+    ({"torch_dtype": "some-future-8-bit-thing"}, "f32"),
+])
+def test_an_unknown_precision_at_either_end_assumes_no_change_and_says_so(cfg, outtype):
+    """Unknown must not silently become optimistic. A ratio of 1.0 reproduces exactly what this
+    check did before precision was consulted, and the sentence tells the reader it is a fallback
+    rather than a measurement.
+    """
+    ratio, basis = convert.size_ratio(cfg, outtype)
+    assert ratio == 1.0
+    assert "assumed" in basis, basis
+
+
+def test_converting_to_f32_demands_the_space_f32_actually_needs(tmp_path, monkeypatch):
+    """The scenario that cost the wall clock, at fixture scale: free space that clears the old
+    estimate and not the real one. A 20 GB bf16 checkpoint with `--outtype f32` writes about
+    40 GB against an old demand of 24, so the pre-flight passed and the job died on a write two
+    thirds through.
+
+    The shard here is 2048 bytes, so the old estimate was 2457 and the true one is 4915.
+    """
+    model = _checkpoint(tmp_path / "m", extra={"torch_dtype": "bfloat16"})
+    monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 3000)
+    with pytest.raises(ConvertError, match="needs about"):
+        convert.preflight(model, tmp_path / "out.gguf", force=True, skip_arch_check=True,
+                          outtype="f32", log=lambda *_a: None)
+
+
+def test_converting_to_q8_0_is_not_refused_for_space_it_does_not_need(tmp_path, monkeypatch):
+    """The other direction, and the one that bites more often. q8_0 writes about a quarter of a
+    bf16 checkpoint; the old check demanded the checkpoint plus 20% and refused a conversion that
+    fitted, with no override, because `--force` governs overwriting rather than the estimate.
+
+    2000 bytes free clears the true demand of 1305 and not the old one of 2457.
+    """
+    model = _checkpoint(tmp_path / "m", extra={"torch_dtype": "bfloat16"})
+    monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 2000)
+    pre = convert.preflight(model, tmp_path / "out.gguf", force=True, skip_arch_check=True,
+                            outtype="q8_0", log=lambda *_a: None)
+    assert pre["estimated_bytes"] < 2000
+    assert pre["outtype"] == "q8_0"

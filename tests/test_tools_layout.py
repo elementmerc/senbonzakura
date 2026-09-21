@@ -202,8 +202,8 @@ def _referenced_tools_paths():
             except (UnicodeDecodeError, OSError):
                 continue
             for pattern in (_TOOLS_PATH, _MOUNTED_PATH):
-                for match in pattern.finditer(text):
-                    out.append((path.relative_to(ROOT), match.group(1)))
+                out.extend((path.relative_to(ROOT), m.group(1))
+                           for m in pattern.finditer(text))
     return out
 
 
@@ -216,7 +216,7 @@ def test_there_are_references_to_check():
         "true while CI runs them")
 
 
-@pytest.mark.parametrize("where,named", _referenced_tools_paths(),
+@pytest.mark.parametrize(("where", "named"), _referenced_tools_paths(),
                          ids=lambda v: str(v).replace("/", "-"))
 def test_every_tools_script_named_from_outside_still_exists(where, named):
     assert (TOOLS / named).is_file(), (

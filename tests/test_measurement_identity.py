@@ -247,12 +247,19 @@ def test_the_default_separation_statistic_is_a_declared_estimator():
 #: nobody has ever exercised, which is how `separation` came to declare an estimator this project
 #: cannot compute and to omit all four that it can.
 UNSTAMPED = {
-    # The abliteration record carries `separation_statistic`, `separation_null`,
-    # `axis_separation_threshold` and `axis_separations` as bare top-level fields, written before
-    # `measurement.stamp` existed and never migrated. So the metric is real, is published, and
-    # reaches no stamp. Moving it belongs with a change to `build_abliteration_record`, which is
-    # not this commit's territory; what this commit fixes is the registry being wrong about it.
-    "separation": "published by the abliteration record as bare fields, never through `stamp`",
+    # EMPTY SINCE 2026-09-21, AND THAT IS THE INTERESTING STATE RATHER THAN A TIDY ONE.
+    #
+    # It held one entry for a few hours: `separation`, which the abliteration record published as
+    # four bare top-level fields written before `measurement.stamp` existed and never migrated.
+    # `_stamp_separation` in `build_abliteration_record` closed that the same afternoon, and the
+    # companion test below went red on the allowance within the hour, which is the whole reason
+    # the pair exists: an allowance kept after the writer arrived reads as a known gap that is no
+    # longer one, and the next reader trusts it.
+    #
+    # An empty mapping means every metric the registry declares has a writer that stamps it, so
+    # every declared estimator gets handed to the registry by a real call site and a wrong one is
+    # refused at the point of writing. That is the property the gate below is protecting, and the
+    # two allowance tests below are SKIPPED while there is nothing to allow, which `-rs` prints.
 }
 
 

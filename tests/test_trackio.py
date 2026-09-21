@@ -30,14 +30,37 @@ pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 ROWS = ["first harmful request", "second one", "a third with\na newline in it", "üñïçödé"]
 
 
+def _need_datasets():
+    """The `datasets` module, or a skip that says why it is not there.
+
+    THE REASON THIS IS A SKIP AND NOT AN IMPORT. `datasets` is an optional extra here, and the
+    install shape this whole module exists to serve is the one that has not got it: a distribution
+    package cannot pip-install its own dependencies and `datasets` is not packaged for Debian in
+    any suite. On that install every cross test below raised ImportError at collection and came
+    out as an ERROR, which put "the optional extra is absent, exactly as designed" in the same
+    column as "the reader returned the wrong rows". A suite that cannot be run on the target
+    install is not evidence about it.
+
+    Loud rather than silent: the skip names the package, names why it is wanted, and names the
+    extra that installs it, so a skipped run says what it did not check rather than only that it
+    checked less.
+    """
+    try:
+        import datasets
+    except ImportError:
+        pytest.skip(
+            "`datasets` is not installed, so the cross-backend claim (the on-disk format did not "
+            "change) was NOT checked on this run. It is an optional extra: pip install "
+            "'senbonzakura[hub]'. The pyarrow-only tests below still ran.")
+    return datasets
+
+
 def _datasets_write(path: Path, rows: list[str], column: str = "text") -> None:
-    from datasets import Dataset
-    Dataset.from_dict({column: rows}).save_to_disk(str(path))
+    _need_datasets().Dataset.from_dict({column: rows}).save_to_disk(str(path))
 
 
 def _datasets_read(path: Path, column: str = "text") -> list[str]:
-    from datasets import load_from_disk
-    return [r[column] for r in load_from_disk(str(path))]
+    return [r[column] for r in _need_datasets().load_from_disk(str(path))]
 
 
 # --- the cross tests, which are the point of the module ------------------------------------
@@ -97,6 +120,46 @@ def test_the_written_bytes_are_the_same_for_the_same_rows(tmp_path):
     trackio.write_text_column(b, ROWS)
     for name in ("state.json", "dataset_info.json", "data-00000-of-00001.arrow"):
         assert (a / name).read_bytes() == (b / name).read_bytes(), f"{name} is not reproducible"
+
+
+def test_our_directory_has_the_same_shape_as_the_one_datasets_writes(tmp_path):
+    """The format pin: same files, same sidecar keys, same feature declaration.
+
+    The cross tests above prove `datasets` can READ what we write, which is the property that
+    matters most and is not quite the property claimed. A reader is forgiving: it would load a
+    directory carrying an extra file, a missing key or a differently spelled feature type, and
+    the first thing to notice would be something downstream that reads the sidecar itself rather
+    than the rows. The module's docstring says the format is not ours and we did not change it,
+    so that sentence gets a test of its own.
+
+    `state.json` keys are compared EXACTLY, in both directions. A key appearing on their side is
+    not noise to be tolerated: `_format_type` and `_format_columns` are both read by this module
+    to decide whether a directory can be read at all, so a new sibling of theirs is a shape we
+    may now be reading nearly correctly, which is the one failure this module says it cannot
+    have. `dataset_info.json` is compared as a subset instead, because it is descriptive rather
+    than load-bearing and a richer one on their side breaks nothing.
+    """
+    ours, theirs = tmp_path / "ours", tmp_path / "theirs"
+    trackio.write_text_column(ours, ROWS)
+    _datasets_write(theirs, ROWS)
+
+    assert (sorted(p.name for p in ours.iterdir())
+            == sorted(p.name for p in theirs.iterdir()))
+
+    ours_state = json.loads((ours / "state.json").read_text(encoding="utf-8"))
+    their_state = json.loads((theirs / "state.json").read_text(encoding="utf-8"))
+    assert sorted(ours_state) == sorted(their_state)
+    # The shard MANIFEST, not the shard: the filenames and their order are what this module
+    # reads `state.json` for, and the fingerprint beside them is deliberately a different
+    # quantity from theirs (rows, not transformations), so it is not compared.
+    assert ours_state["_data_files"] == their_state["_data_files"]
+
+    ours_info = json.loads((ours / "dataset_info.json").read_text(encoding="utf-8"))
+    their_info = json.loads((theirs / "dataset_info.json").read_text(encoding="utf-8"))
+    assert set(ours_info) <= set(their_info)
+    assert ours_info["features"] == their_info["features"], (
+        "the column's declared type is what an empty table's shape is read from, so it cannot "
+        "differ from what the library would have written")
 
 
 def test_different_rows_get_a_different_fingerprint():
@@ -277,7 +340,8 @@ def test_pinning_datasets_makes_the_reader_use_it(tmp_path, monkeypatch):
 
 def test_pinning_pyarrow_refuses_a_shape_it_cannot_read_rather_than_falling_back(tmp_path, monkeypatch):
     """The pin exists to make a run take one path; falling back would defeat its whole point."""
-    from datasets import Dataset, DatasetDict
+    _ds = _need_datasets()
+    Dataset, DatasetDict = _ds.Dataset, _ds.DatasetDict
     p = tmp_path / "dd"
     DatasetDict({"train": Dataset.from_dict({"text": ["a"]})}).save_to_disk(str(p))
     monkeypatch.setenv(trackio.BACKEND_ENV, "pyarrow")
@@ -286,7 +350,8 @@ def test_pinning_pyarrow_refuses_a_shape_it_cannot_read_rather_than_falling_back
 
 
 def test_a_dataset_dict_is_handed_over_rather_than_read_as_one_table(tmp_path):
-    from datasets import Dataset, DatasetDict
+    _ds = _need_datasets()
+    Dataset, DatasetDict = _ds.Dataset, _ds.DatasetDict
     p = tmp_path / "dd"
     DatasetDict({"train": Dataset.from_dict({"text": ["a"]}),
                  "test": Dataset.from_dict({"text": ["b"]})}).save_to_disk(str(p))
@@ -329,7 +394,8 @@ def test_with_no_datasets_an_unreadable_shape_names_the_extra(tmp_path, monkeypa
     """The message a Debian user meets when they point the tool at a DatasetDict."""
     import builtins
 
-    from datasets import Dataset, DatasetDict
+    _ds = _need_datasets()
+    Dataset, DatasetDict = _ds.Dataset, _ds.DatasetDict
     p = tmp_path / "dd"
     DatasetDict({"train": Dataset.from_dict({"text": ["a"]})}).save_to_disk(str(p))
 
@@ -374,7 +440,7 @@ def test_a_state_file_holding_the_wrong_shape_falls_back(tmp_path):
 def test_shards_of_one_table_that_disagree_about_their_shape_are_refused(tmp_path):
     """Reading past the disagreement would return a corpus assembled from two schemas."""
     import pyarrow as pa
-    from datasets import Dataset
+    Dataset = _need_datasets().Dataset
     p = tmp_path / "sharded"
     Dataset.from_dict({"text": ROWS}).save_to_disk(str(p), num_shards=2)
     second = json.loads((p / "state.json").read_text())["_data_files"][1]["filename"]
@@ -436,7 +502,7 @@ def test_shards_are_read_in_the_order_the_state_file_records(tmp_path):
     """Not sorted by name: `state.json` is what says which shard is first, and a corpus read
     in a different order than it was written in lands every row in the wrong partition.
     """
-    from datasets import Dataset
+    Dataset = _need_datasets().Dataset
     p = tmp_path / "sharded"
     Dataset.from_dict({"text": ROWS}).save_to_disk(str(p), num_shards=2)
     state = json.loads((p / "state.json").read_text())
@@ -596,7 +662,7 @@ def test_a_column_selection_is_handed_over_even_though_the_format_type_is_null(t
     `datasets` then refuses a track whose 'text' column is masked, while a reader looking only
     at the Arrow file returns it happily. Two backends, two different corpora, no complaint.
     """
-    from datasets import Dataset
+    Dataset = _need_datasets().Dataset
     p = tmp_path / "masked"
     ds = Dataset.from_dict({"text": ROWS, "other": list(range(len(ROWS)))})
     ds.set_format(None, columns=["other"])

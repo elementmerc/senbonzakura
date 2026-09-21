@@ -254,3 +254,40 @@ def test_no_field_disappears_from_the_record_without_somebody_noticing():
     assert not got - EXPECTED_KEYS, (
         f"new fields in abliteration.json: {sorted(got - EXPECTED_KEYS)}. Add them to "
         f"EXPECTED_KEYS here, and check the model card and the head-to-head report still parse.")
+
+
+# ── the label that described a run it was not having ─────────────────────────────
+#
+# Separate from the record above, and here rather than in its own file because it is the same
+# defect: a statement about how a run was made that nothing checked against how it was made.
+class TestTheRunLogSaysHowTheDirectionsWereBuilt:
+    """`--no-good-orth` is the toggle that isolates the projection, and the log ignored it.
+
+    Recovered evidence, 2026-09-21: a good-orth A/B run on 2026-07-21 was salvaged from a build
+    box before deletion. Both arms' logs read "good-orthogonalized" and both `abliteration.json`
+    files carried eleven fields with no flags in them at all, so nothing in the run's own output
+    could say which arm was the control. The numbers survived; the experiment did not.
+    """
+
+    def test_the_label_follows_the_flag(self):
+        assert cli.orthogonalisation_label(False) == "good-orthogonalized"
+        assert "no-good-orth" in cli.orthogonalisation_label(True)
+
+    def test_the_two_labels_are_not_the_same_string(self):
+        """THE MUTATION THIS FILE EXISTS TO KILL. The original was a constant, so the arms were
+        indistinguishable in the log. Any change that collapses them back fails here.
+        """
+        assert cli.orthogonalisation_label(True) != cli.orthogonalisation_label(False)
+
+    def test_the_raw_arm_does_not_claim_the_property_it_did_not_have(self):
+        """Not just different: the raw label must not contain the word that names the projection,
+        or a reader grepping the log for it finds both arms again.
+        """
+        assert "good-orthogonaliz" not in cli.orthogonalisation_label(True).replace("no-good-orth", "")
+
+    def test_the_record_still_carries_the_flag_beside_the_log_line(self):
+        """The log is for a human reading a run; the artefact is what survives it. The July
+        records had neither, and one without the other is how this was lost.
+        """
+        assert _build(args=_args(no_good_orth=True))["good_orth"] is False
+        assert _build(args=_args(no_good_orth=False))["good_orth"] is True

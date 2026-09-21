@@ -2714,8 +2714,15 @@ class Abliterator:
                 f"{max(whole)}, not the {KMAX} requested (search window layers "
                 f"{self.lo} to {self.hi}: {min(window)} to {max(window)}); the applied K is "
                 f"recorded per layer in abliteration.json under directions_per_layer.")
+        # THIS LINE DESCRIBED THE RUN IT WAS NOT HAVING. It said "good-orthogonalized"
+        # unconditionally, including in the commit that introduced `--no-good-orth`, so the one
+        # log line naming the property asserted it whether or not it held. A good-orth A/B from
+        # 2026-07-21 was salvaged on 2026-09-21 and BOTH arms' logs read "good-orthogonalized",
+        # which made the only surviving evidence of which arm was which say nothing at all. The
+        # artefact of that vintage recorded no flags either, so the experiment is unattributable
+        # from its own output. A label printed regardless of the thing it labels is not a record.
         log(f"directions ready: {tuple(self.dirs_multi.shape)} (<= {KMAX}/layer, orthonormal, "
-            f"good-orthogonalized, refusal-separation filtered)")
+            f"{orthogonalisation_label(args.no_good_orth)}, refusal-separation filtered)")
 
     def _interp_multi(self, fidx):
         # Refinement 6 (Heretic float `direction_index`): linearly interpolate the K-direction set
@@ -3915,6 +3922,22 @@ class Abliterator:
 
 
 
+
+
+def orthogonalisation_label(no_good_orth):
+    """How the directions were built, as the run log states it.
+
+    A function rather than an inline conditional because the inline version was a CONSTANT. The
+    banner said "good-orthogonalized" whether or not the projection had run, from the commit that
+    added `--no-good-orth` onwards, so the only line in a run log naming the property asserted it
+    unconditionally. The cost landed on 2026-09-21: a good-orth A/B from July was recovered and
+    both arms' logs read "good-orthogonalized", while the artefacts of that vintage recorded no
+    flags, so which arm was the control could not be established from the run's own output.
+
+    A label printed regardless of what it labels is not a record, and the fix is only worth having
+    if something fails when it goes back to being one, which is what the test beside this asserts.
+    """
+    return "raw difference-of-means (--no-good-orth)" if no_good_orth else "good-orthogonalized"
 
 
 def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post):

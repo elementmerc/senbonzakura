@@ -355,3 +355,88 @@ def test_a_missing_vendored_converter_is_a_plain_failure(tmp_path, monkeypatch):
                         lambda _n: (_ for _ in ()).throw(convert.VendorError("not fetched")))
     with pytest.raises(SystemExit, match="not fetched"):
         convert.run([str(d), str(tmp_path / "o.gguf")], log=lambda _m: None)
+
+
+# ── the prompt format, which the tensor receipt cannot see ───────────────────────
+#
+# A GGUF carries the chat template in its own metadata, and llama.cpp, Ollama and vLLM read it
+# from there rather than from the checkpoint. Lose it in conversion and the file still loads,
+# still generates, and generates against a prompt format the model was never trained on, so the
+# failure presents as a bad model rather than a bad export. Every tensor is correct, which is
+# exactly why `gguf_io.verify` cannot catch it: it is a statement about the tensors.
+#
+# Found 2026-09-21 by reading another tool's troubleshooting page, where the same loss is a
+# documented, unfixed cause of "gibberish, endless generations or repeated outputs" after export.
+def _with_tokenizer(d, body):
+    (d / convert.HF_TOKENIZER_CONFIG).write_text(json.dumps(body), encoding="utf-8")
+    return d
+
+
+class TestTheTemplateSurvivedTheExport:
+    def test_a_checkpoint_with_a_template_and_an_output_without_one_is_reported(self, tmp_path):
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        said = convert.chat_template_lost(d, _ok_header(metadata={}))
+        assert said and convert.GGUF_CHAT_TEMPLATE_KEY in said
+
+    def test_a_template_that_came_through_is_silent(self, tmp_path):
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        header = _ok_header(metadata={convert.GGUF_CHAT_TEMPLATE_KEY: "{{ x }}"})
+        assert convert.chat_template_lost(d, header) is None
+
+    def test_a_base_model_with_no_template_is_not_a_finding(self, tmp_path):
+        """The check compares against the source rather than asserting a template must exist.
+
+        A base model legitimately carries none, and refusing one would refuse a correct file.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {})
+        assert convert.chat_template_lost(d, _ok_header(metadata={})) is None
+
+    def test_a_checkpoint_that_cannot_be_read_says_nothing_rather_than_guessing(self, tmp_path):
+        """Three distinct unknowns, all of which must stay quiet: absent, unparseable, not a dict.
+
+        `None` is a third answer next to True and False. A check that treated "cannot tell" as
+        "lost" would fire on every checkpoint whose tokeniser config it failed to read, which is
+        reporting on its own environment rather than on the file.
+        """
+        d = _checkpoint(tmp_path / "m")
+        assert convert.source_chat_template(d) is None
+        (d / convert.HF_TOKENIZER_CONFIG).write_text("{ not json", encoding="utf-8")
+        assert convert.source_chat_template(d) is None
+        _with_tokenizer(d, ["a", "list"])
+        assert convert.source_chat_template(d) is None
+        assert convert.chat_template_lost(d, _ok_header(metadata={})) is None
+
+    def test_a_header_with_no_metadata_at_all_does_not_raise(self, tmp_path):
+        """Defensive: a header shape without the key must not turn a NOTE into a traceback."""
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        assert convert.chat_template_lost(d, {}) is not None
+
+    @needs_converter
+    def test_the_note_actually_reaches_the_log_during_a_conversion(self, tmp_path, monkeypatch):
+        """The wiring, not the function. A correct check with no call site is a green suite.
+
+        That has happened twice here, which is why this drives `run` end to end rather than
+        calling `chat_template_lost` a sixth time.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        out = tmp_path / "o.gguf"
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
+        lines = []
+        convert.run([str(d), str(out)], log=lines.append)
+        assert any(convert.GGUF_CHAT_TEMPLATE_KEY in ln for ln in lines), lines
+
+    @needs_converter
+    def test_no_note_when_the_template_came_through(self, tmp_path, monkeypatch):
+        """The other half, so the wiring test cannot pass by printing the NOTE unconditionally."""
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.gguf_io, "verify",
+                            lambda *a, **k: _ok_header(metadata={convert.GGUF_CHAT_TEMPLATE_KEY: "t"}))
+        lines = []
+        convert.run([str(d), str(tmp_path / "o.gguf")], log=lines.append)
+        assert not any(convert.GGUF_CHAT_TEMPLATE_KEY in ln for ln in lines), lines

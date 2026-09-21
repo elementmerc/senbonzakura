@@ -555,6 +555,16 @@ def run(argv=None, log=print):
             f"dimensions the recipe's block size does not divide, which is benign and common in "
             f"small models; a high proportion on a large model is worth looking into.")
 
+    # Provable, so it is stated: the file that came in had a prompt format and the file going out
+    # does not. Quantisation copies metadata, so this should never fire; if it does, the output is
+    # a model that loads, generates, and generates against a format it was not trained on, and
+    # nothing downstream of here would say so.
+    if gguf_io.has_chat_template(head) and not gguf_io.has_chat_template(got):
+        log(f"  NOTE: the source carries {gguf_io.CHAT_TEMPLATE_KEY} and this output does not. "
+            f"Every conversational result from this file will be measured on a prompt format the "
+            f"model was not trained on, and it will look like a weak model rather than a broken "
+            f"export. Recorded in the sidecar beside it.")
+
     sidecar = Path(str(out) + SIDECAR_SUFFIX)
     record = {
         "schema": "senbonzakura-quantisation/1",
@@ -570,10 +580,18 @@ def run(argv=None, log=print):
         "fallback_tensors": None if fallback is None else {"fell_back": fallback[0],
                                                            "of": fallback[1]},
         "allow_requantize": bool(a.allow_requantize),
+        # THE PROMPT FORMAT, RECORDED AS A FACT ON BOTH SIDES rather than as a verdict.
+        # Nothing this project ships measures a GGUF: `score`, `capability` and `drift` all read
+        # a transformers checkpoint, so the place a lost template turns into a wrong number is
+        # somebody else's llama.cpp, weeks later. The sidecar is the only thing that travels with
+        # the file, so the fact goes here where a downstream reader can act on it, and the
+        # comparison below is made only where it is provable.
         "source": {"name": Path(a.source).name, "bytes": src_size,
-                   "file_type": head["file_type"], "architecture": head["architecture"]},
+                   "file_type": head["file_type"], "architecture": head["architecture"],
+                   "chat_template": gguf_io.has_chat_template(head)},
         "output": {"name": out.name, "bytes": out_size, "file_type": got["file_type"],
-                   "architecture": got["architecture"], "tensor_count": got["tensor_count"]},
+                   "architecture": got["architecture"], "tensor_count": got["tensor_count"],
+                   "chat_template": gguf_io.has_chat_template(got)},
         "seconds": round(took, 1),
     }
     try:

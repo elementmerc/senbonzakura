@@ -371,3 +371,18 @@ def verify(path, *, expect_quant=None, expect_arch=None, min_tensors=1):
             f"which is what makes this worth checking: the wrong quantisation changes every "
             f"speed and memory figure it appears in, and nothing downstream would report it.")
     return head
+
+
+#: Where a GGUF keeps the prompt format. llama.cpp, Ollama and vLLM read it from here rather than
+#: from the checkpoint the file was converted from, so this key is the whole of what a downstream
+#: runtime knows about how to talk to the model.
+CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
+
+
+def has_chat_template(header):
+    """Does this header carry a prompt format? A fact about the file, not a verdict on it.
+
+    A base model legitimately has none, so absence is only interesting next to a source that had
+    one. Callers do that comparison; this just reads.
+    """
+    return bool((header.get("metadata") or {}).get(CHAT_TEMPLATE_KEY))

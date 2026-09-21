@@ -427,3 +427,48 @@ def test_a_sidecar_that_cannot_be_written_degrades_loudly_and_keeps_the_gguf(tmp
     assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=said.append) == 0
     assert out.is_file(), "a provenance failure must not cost the quantisation"
     assert any("provenance is unrecorded" in m for m in said)
+
+
+# ── the prompt format, recorded where it travels ─────────────────────────────────
+#
+# NOTHING THIS PROJECT SHIPS MEASURES A GGUF. `score`, `capability` and `drift` all read a
+# transformers checkpoint, so the place a lost chat template turns into a wrong number is
+# somebody else's llama.cpp, weeks later and out of our reach. The sidecar is the only thing
+# that travels with the file, so the fact is recorded there rather than only printed, and the
+# comparison is made only where both sides are known.
+@needs_binary
+def test_the_sidecar_records_whether_each_side_carries_a_prompt_format(tmp_path):
+    import json
+    src = tmp_path / "m.gguf"
+    _tiny_gguf(src)
+    out = tmp_path / "m-Q4_K_M.gguf"
+    assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=lambda _m: None) == 0
+
+    rec = json.loads(Path(str(out) + quantise.SIDECAR_SUFFIX).read_text(encoding="utf-8"))
+    # The value is whatever the files hold; what is pinned is that the question was ASKED of
+    # both sides and answered with a bool, so a reader can tell "absent" from "not recorded".
+    assert isinstance(rec["source"]["chat_template"], bool)
+    assert isinstance(rec["output"]["chat_template"], bool)
+
+
+class TestTheTemplateSurvivedTheQuantisation:
+    """`has_chat_template` is a fact about a header, and the verdict is a comparison of two."""
+
+    def test_a_header_carrying_one_reads_true(self):
+        from senbonzakura import gguf_io
+        assert gguf_io.has_chat_template({"metadata": {gguf_io.CHAT_TEMPLATE_KEY: "{{ x }}"}})
+
+    def test_absent_empty_and_missing_metadata_all_read_false(self):
+        """An empty string is not a template, and a header with no metadata block is not a crash."""
+        from senbonzakura import gguf_io
+        assert not gguf_io.has_chat_template({"metadata": {}})
+        assert not gguf_io.has_chat_template({"metadata": {gguf_io.CHAT_TEMPLATE_KEY: ""}})
+        assert not gguf_io.has_chat_template({})
+        assert not gguf_io.has_chat_template({"metadata": None})
+
+    def test_convert_and_quantise_read_the_same_key(self):
+        """Two spellings of one metadata field is how a check starts passing on a file it is no
+        longer reading. This pins that there is one.
+        """
+        from senbonzakura import convert, gguf_io
+        assert convert.GGUF_CHAT_TEMPLATE_KEY is gguf_io.CHAT_TEMPLATE_KEY

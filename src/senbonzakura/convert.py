@@ -125,6 +125,55 @@ def read_config(model_dir):
         raise ConvertError(f"{cfg} is not readable JSON ({e}).") from e
 
 
+#: The GGUF side lives in `gguf_io`, because `quantise` needs the same key and two spellings of
+#: one metadata field is how a check starts passing on a file it is no longer reading.
+GGUF_CHAT_TEMPLATE_KEY = gguf_io.CHAT_TEMPLATE_KEY
+HF_TOKENIZER_CONFIG = "tokenizer_config.json"
+
+
+def source_chat_template(model_dir):
+    """Does the checkpoint declare a chat template? True, False, or None for cannot tell.
+
+    None is a real third answer and not a failure: a checkpoint with no `tokenizer_config.json`,
+    or one that will not parse, tells us nothing about what the output should carry, and a check
+    that guesses in that case would fire on models it knows nothing about.
+    """
+    cfg = Path(model_dir) / HF_TOKENIZER_CONFIG
+    if not cfg.is_file():
+        return None
+    try:
+        loaded = json.loads(cfg.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError, OSError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    return bool(loaded.get("chat_template"))
+
+
+def chat_template_lost(model_dir, header):
+    """The prompt format went in and did not come out. Returns a sentence, or None.
+
+    WHY THIS IS CHECKED AT ALL, since the conversion reported success and the tensors verify.
+    A GGUF carries the chat template in its own metadata, and llama.cpp, Ollama and vLLM read it
+    from there rather than from the checkpoint the file came from. If it is lost in conversion the
+    file still loads, still answers, and answers badly: the model is handed raw text where it was
+    trained to expect turn markers, so the failure looks like a bad model rather than a bad export.
+    Nothing about the tensors is wrong, which is exactly why the existing receipt cannot see it.
+
+    Compared against the SOURCE rather than asserted outright, because a base model legitimately
+    has no template and refusing one would be refusing a correct file. The claim here is narrow and
+    provable: this checkpoint had one, this output does not.
+    """
+    if source_chat_template(model_dir) is not True:
+        return None
+    if gguf_io.has_chat_template(header):
+        return None
+    return (f"the checkpoint declares a chat template and the converted file carries no "
+            f"{GGUF_CHAT_TEMPLATE_KEY}. It will load and generate, and every conversational "
+            f"result from it will be measured on a prompt format the model was not trained on. "
+            f"Check the converter's output above for a tokeniser it did not recognise.")
+
+
 def weight_files(model_dir):
     """The weight shards, which are what makes this a checkpoint rather than a directory."""
     d = Path(model_dir)
@@ -532,6 +581,10 @@ def run(argv=None, log=print):
     log(f"  wrote {out.name}: {out.stat().st_size / 1e9:.2f} GB, {got['tensor_count']} tensors, "
         f"{took:.0f}s")
     log(f"  verified: {got['file_type']}, architecture {got['architecture']}")
+
+    lost = chat_template_lost(a.model, got)
+    if lost:
+        log(f"  NOTE: {lost}")
 
     if a.quantise:
         from . import quantise

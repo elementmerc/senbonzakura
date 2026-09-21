@@ -164,6 +164,99 @@ class TestWinningConfigRoundtrip:
             config_to_bake_args({"o_profile": [1], "d_profile": [1], "num_directions": 1, "dir_mode": "x"})
 
 
+class TestABakeConfigThatDoesNotMeanWhatItSays:
+    """A file this loader can read but that does not say what it appears to say.
+
+    Distinct from the malformed case above, and harder. A file that will not parse stops the
+    run; a file that parses into the WRONG configuration bakes a model nobody asked for and
+    says nothing. `--bake-config` is the recovery path, reached after a crash has already cost
+    a search, so it is the worst possible moment to hand back a plausible artefact that is not
+    the winner.
+
+    Both holes below were measured on 2026-09-21, prompted by another tool's regression test
+    for the same bug in its own `--config` loader, where a misspelled key trained on defaults
+    in silence.
+    """
+
+    BPR = (12, 0.8, 0.1, 4, 20, 0.6, 0.05, 3)
+
+    def _single(self):
+        return winning_config(self.BPR, K=1, mode="single", di=3.5)
+
+    def test_a_misspelled_key_is_refused_and_the_message_names_the_real_one(self):
+        """The measured failure: `direction_idx` was accepted and the index became None.
+
+        In single mode that index interpolates the direction set, so the bake produced a
+        different model from the one the file recorded, without a word about it.
+        """
+        import pytest
+        cfg = self._single()
+        cfg["direction_idx"] = cfg.pop("direction_index")
+        with pytest.raises(ValueError, match="direction_index") as excinfo:
+            config_to_bake_args(cfg)
+        assert "direction_idx" in str(excinfo.value)
+
+    def test_an_unknown_key_is_refused_rather_than_dropped(self):
+        """A key this version does not write means the file came from somewhere else.
+
+        Dropping it silently is a guess about what the file means, and the guess is unsupported:
+        a config from a future version could carry a field that changes the edit.
+        """
+        import pytest
+        cfg = self._single()
+        cfg["totally_made_up"] = "x"
+        with pytest.raises(ValueError, match="unrecognised key"):
+            config_to_bake_args(cfg)
+
+    def test_single_mode_without_an_index_is_refused(self):
+        """The same damage by a different route: the key is present and null.
+
+        A misspelling is caught by the unknown-key check, but a hand-edited or truncated file
+        can null the field directly, and that path has to close too.
+        """
+        import pytest
+        cfg = self._single()
+        cfg["direction_index"] = None
+        with pytest.raises(ValueError, match="single"):
+            config_to_bake_args(cfg)
+
+    def test_the_key_set_is_asked_of_the_writer_rather_than_restated(self):
+        """The guard cannot go stale when a field is added, because it has no list of its own.
+
+        A hand-written key list would be a second source of truth about the file format and the
+        first thing to drift. This pins the arrangement rather than the names.
+        """
+        from senbonzakura import crashsafe
+        assert frozenset(self._single()) == crashsafe._BAKE_CONFIG_KEYS
+
+    def test_every_shipped_method_recipe_still_loads(self):
+        """The loader has a SECOND caller, and tightening it could have broken `--method`.
+
+        `_method_profile` hands `config_to_bake_args` a dict built in `methods.py`, not a file.
+        Those recipes carry four of the five keys (no `direction_index`, and every one is
+        `per_layer`), so the new checks do not fire, but that is a property of today's recipes
+        rather than of the design. This fails the day a recipe adds a key the loader refuses.
+        """
+        from senbonzakura import methods
+        for name in methods.METHODS:
+            profile = methods.get(name).settings.get("bake_profile")
+            if profile is None:
+                continue
+            config_to_bake_args(profile)  # must not raise
+
+    def test_what_the_writer_produces_still_loads(self):
+        """The other half of the guard, and the one that catches an over-strict loader.
+
+        Every mode the search can produce has to survive the round trip, or this check would
+        refuse the tool's own output, which is a worse failure than the one it prevents.
+        """
+        for mode, di in (("single", 3.5), ("per_layer", None), ("per_layer", 1.5)):
+            cfg = winning_config(self.BPR, K=2, mode=mode, di=di)
+            back_bpr, K, back_mode, back_di = config_to_bake_args(cfg)
+            assert (back_bpr, K, back_mode) == (self.BPR, 2, mode)
+            assert back_di == di
+
+
 class TestDiskPreflight:
     """The check that was missing when a 57 GB base plus a 61 GB output met a 120 GB volume.
 

@@ -10,6 +10,7 @@ the download" fixes. They import nothing heavy on purpose, so they are unit-test
 """
 
 import contextlib
+import difflib
 import os
 import shutil
 import sys
@@ -344,16 +345,66 @@ def winning_config(bpr, K, mode, di):
     }
 
 
+#: Exactly what `winning_config` writes, ASKED OF IT rather than restated here, so the reader and
+#: the writer cannot drift apart. A literal list would be a second source of truth about the file
+#: format, and the first thing to go stale when a field is added. `winning_config` always writes
+#: all five keys, so anything else in a file came from a hand edit or from a version that does not
+#: agree with this one; either way the file does not mean what this loader would take it to mean.
+_BAKE_CONFIG_KEYS = frozenset(winning_config((0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0), 1, "single", 0.0))
+
+
 def config_to_bake_args(cfg):
     """Unpack a best-config.json dict back into (bpr, K, mode, di) for bake_pc. Raises a clear
     ValueError on a malformed file rather than an obscure KeyError deep in the bake.
+
+    IT REFUSES A FILE THAT DOES NOT MEAN WHAT IT SAYS, which is a stronger claim than refusing a
+    file it cannot read, and the difference is the whole reason this is not a bare `json.load`.
+    Two silent paths were measured here on 2026-09-21:
+
+        `direction_idx` instead of `direction_index`  ->  accepted, index becomes None
+        any unknown key at all                        ->  accepted, dropped without a word
+
+    In `single` mode the index IS the edit: it interpolates the direction set, so losing it bakes
+    a different model from the one the file describes. And `--bake-config` is the RECOVERY path,
+    reached after a crash has already cost a search, which is the worst moment to hand back a
+    plausible artefact that is not the winner. So an unreadable file and a misleading one both
+    stop here.
+
+    Found by reading another tool's regression test for the same bug in its own `--config`
+    loader, where a misspelled key trained on defaults in silence.
     """
+    if not isinstance(cfg, dict):
+        # Lint override, with the reason: TRY004 asks for TypeError on a type check, and this function's
+        # documented contract is that a file it cannot use raises ValueError. A JSON array where
+        # an object belongs is a malformed CONFIG, not a caller passing the wrong Python type.
+        raise ValueError(  # noqa: TRY004
+            f"malformed bake config: expected a JSON object, got {type(cfg).__name__}")
+
+    unknown = sorted(set(cfg) - _BAKE_CONFIG_KEYS)
+    if unknown:
+        hints = []
+        for key in unknown:
+            near = difflib.get_close_matches(key, sorted(_BAKE_CONFIG_KEYS), n=1)
+            hints.append(f"{key!r}" + (f" (did you mean {near[0]!r}?)" if near else ""))
+        raise ValueError(
+            "malformed bake config: unrecognised key(s) " + ", ".join(hints)
+            + ". This file is not what this version writes, so what it means cannot be assumed.")
+
     try:
         o, d = cfg["o_profile"], cfg["d_profile"]
         bpr = (o[0], o[1], o[2], o[3], d[0], d[1], d[2], d[3])
-        return bpr, cfg["num_directions"], cfg["dir_mode"], cfg.get("direction_index")
+        mode = cfg["dir_mode"]
+        di = cfg.get("direction_index")
     except (KeyError, IndexError, TypeError) as e:
         raise ValueError(f"malformed bake config: {e}") from e
+
+    if mode == "single" and di is None:
+        raise ValueError(
+            "malformed bake config: dir_mode is 'single' but direction_index is missing or null. "
+            "In single mode that index selects the interpolated direction set, so baking without "
+            "it would produce a different model from the one this file records.")
+
+    return bpr, cfg["num_directions"], mode, di
 
 
 # ── provenance ─────────────────────────────────────────────────────────────────────

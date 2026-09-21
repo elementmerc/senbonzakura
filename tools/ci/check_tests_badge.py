@@ -45,6 +45,17 @@ README = ROOT / "README.md"
 #: `https://img.shields.io/badge/tests-3166-0A9EDC?...`
 BADGE = re.compile(r"img\.shields\.io/badge/tests-(?P<count>\d+)-")
 
+#: `alt="3166 tests"`, the SECOND place the number lives.
+#:
+#: THE HALF THIS CHECK COULD NOT SEE, found by two panel reviewers independently on 2026-09-21.
+#: The badge markup carries the count twice, once in the shield URL and once in the alt text for
+#: a reader with images off or a screen reader. This checker read the URL only. While it merely
+#: FAILED on a stale badge that was survivable, because a human then fixed the line and saw both
+#: numbers; once CI started correcting the badge automatically the URL was rewritten and the alt
+#: text was not, so every future correction widened the gap silently and the guard was blind to
+#: the half that was wrong. It sat at 4059 against a URL reading 4674.
+ALT = re.compile(r'alt="(?P<count>\d+) tests?"')
+
 #: pytest's final collection line: `3172 tests collected in 4.21s`, or `1 test collected`.
 COLLECTED = re.compile(r"^(?P<count>\d+) tests? collected", re.MULTILINE)
 
@@ -70,6 +81,7 @@ def main(argv=None):
 
     text = README.read_text(encoding="utf-8")
     m = BADGE.search(text)
+    alt = ALT.search(text)
     if m is None:
         # Still a failure under `--write`. A missing badge is not something to invent: it was
         # either removed deliberately, in which case this check goes with it, or renamed, in
@@ -78,22 +90,31 @@ def main(argv=None):
               "check with it; if it was renamed, teach the pattern here.")
         return 1
 
-    claimed, real = int(m.group("count")), collected_count()
-    if claimed == real:
-        print(f"tests badge says {claimed}, suite collects {real}")
+    if alt is None:
+        print("README's tests badge has no `alt=\"NNNN tests\"` text. Every image needs one, and "
+              "it carries the same count, so it is checked here rather than left to rot.")
+        return 1
+
+    claimed, alt_claimed, real = int(m.group("count")), int(alt.group("count")), collected_count()
+    if claimed == real and alt_claimed == real:
+        print(f"tests badge says {claimed} in the URL and the alt text, suite collects {real}")
         return 0
 
     direction = "more" if real > claimed else "fewer"
     if a.write:
-        README.write_text(
-            text[:m.start("count")] + str(real) + text[m.end("count"):], encoding="utf-8")
-        print(f"tests badge corrected from {claimed} to {real}, which is "
-              f"{abs(real - claimed)} {direction}.")
+        # BOTH SPANS, rewritten back to front so the earlier offsets stay valid. Correcting one
+        # and not the other is the defect this function grew.
+        out = text
+        for span in sorted((m.span("count"), alt.span("count")), reverse=True):
+            out = out[:span[0]] + str(real) + out[span[1]:]
+        README.write_text(out, encoding="utf-8")
+        print(f"tests badge corrected from {claimed} (alt text {alt_claimed}) to {real} in both "
+              f"places, which is {abs(real - claimed)} {direction}.")
         return 0
 
-    print(f"the README badge says {claimed} tests and the suite collects {real}, which is "
-          f"{abs(real - claimed)} {direction}.\n"
-          f"Update the badge URL in README.md to `tests-{real}-`, or run this with --write.")
+    print(f"the README badge says {claimed} tests in its URL and {alt_claimed} in its alt text, "
+          f"and the suite collects {real}.\n"
+          f"Update both to {real} in README.md, or run this with --write.")
     return 1
 
 

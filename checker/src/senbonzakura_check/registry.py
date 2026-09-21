@@ -221,7 +221,17 @@ _ENTRY_PREDICATES = {
     "present": lambda v: v is not MISSING,
     "absent": lambda v: v is MISSING,
     "truthy": lambda v: v is not MISSING and bool(v),
-    "falsy": lambda v: v is MISSING or not v,
+    # ONE WORD, ONE MEANING, ALIGNED 2026-09-21. `falsy` used to mean "missing or falsy" here
+    # while the fixed-path operator of the same name meant "present and falsy", so the two
+    # vocabularies disagreed on the only case that matters, and the comment below claimed they
+    # were one. A reader of a check file met a second grammar without being told. The two
+    # meanings are both wanted, so they now have two words rather than one word and a surprise.
+    "falsy": lambda v: v is not MISSING and not v,
+    "unset_or_falsy": lambda v: v is MISSING or not v,
+    # "IT CARRIES A MEASUREMENT". Needed by applicability rather than by any rule: a check whose
+    # rule reads a denominator has nothing to say about an entry that has none, and `any_outside`
+    # steps over such an entry silently, so without this the check applies and reports clean.
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
     # ZERO IS NOT FALSY HERE, and the distinction is the entire point of the check that needed
     # this. `null` and `0` are both falsy in Python and they are opposite claims about a
     # measurement: one says it was never taken, the other says it was taken and came out zero.

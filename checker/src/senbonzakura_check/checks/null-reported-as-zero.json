@@ -11,7 +11,7 @@
   "applies_to": {"op": "truthy", "path": "metrics"},
 
   "rule": {"op": "any_entry", "path": "metrics",
-           "all": [{"field": "value", "is": "zero"}, {"field": "n", "is": "falsy"}]},
+           "all": [{"field": "value", "is": "zero"}, {"field": "n", "is": "unset_or_falsy"}]},
 
   "control": {
     "fires_on": [

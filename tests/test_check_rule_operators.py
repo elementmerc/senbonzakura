@@ -129,7 +129,8 @@ def test_any_entry_needs_every_condition_true_of_one_entry():
     """
     doc = {"metrics": {"measured_zero": {"value": 0, "n": 132},
                        "no_denominator": {"value": 0.094}}}
-    conditions = [{"field": "value", "is": "zero"}, {"field": "n", "is": "falsy"}]
+    conditions = [{"field": "value", "is": "zero"},
+                  {"field": "n", "is": "unset_or_falsy"}]
     assert evaluate(_entry(all=conditions), doc) is False
 
     doc["metrics"]["both_at_once"] = {"value": 0}
@@ -146,10 +147,25 @@ def test_any_entry_needs_every_condition_true_of_one_entry():
     ({"value": 0.094}, {"field": "value", "is": "zero"}, False),
     # A bool is an int in Python. `higher_is_better: false` must never read as the number zero.
     ({"value": False}, {"field": "value", "is": "zero"}, False),
+    # TWO MEANINGS, TWO WORDS, SPLIT 2026-09-21. `falsy` meant "missing or falsy" here while
+    # the fixed-path operator of the same name meant "present and falsy", so the two vocabularies
+    # disagreed on the only case that distinguishes them, and a reader of a check file met a
+    # second grammar without being told. Both meanings are wanted; they no longer share a name.
     ({"n": None}, {"field": "n", "is": "falsy"}, True),
-    ({}, {"field": "n", "is": "falsy"}, True),
+    ({}, {"field": "n", "is": "falsy"}, False),
     ({"n": 0}, {"field": "n", "is": "falsy"}, True),
     ({"n": 132}, {"field": "n", "is": "falsy"}, False),
+    ({"n": None}, {"field": "n", "is": "unset_or_falsy"}, True),
+    ({}, {"field": "n", "is": "unset_or_falsy"}, True),
+    ({"n": 0}, {"field": "n", "is": "unset_or_falsy"}, True),
+    ({"n": 132}, {"field": "n", "is": "unset_or_falsy"}, False),
+    # `number` is what applicability asks when a rule reads a denominator. A null, a missing
+    # field and a bool are all "no measurement here".
+    ({"n": 132}, {"field": "n", "is": "number"}, True),
+    ({"n": 0}, {"field": "n", "is": "number"}, True),
+    ({"n": None}, {"field": "n", "is": "number"}, False),
+    ({}, {"field": "n", "is": "number"}, False),
+    ({"n": True}, {"field": "n", "is": "number"}, False),
     ({"n": 132}, {"field": "n", "is": "truthy"}, True),
     ({"n": None}, {"field": "n", "is": "present"}, True),
     ({}, {"field": "n", "is": "present"}, False),

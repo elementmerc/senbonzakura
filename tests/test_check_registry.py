@@ -767,8 +767,15 @@ def _paired_with_a_value_test(applies_to):
             continue
         rules = [r for r in (node.get("rules") or []) if isinstance(r, dict)]
         present = {r.get("path") for r in rules if r.get("op") == "present"}
+        # `falsy` AND `equals` ARE NOT EVIDENCE OF A GUARD, removed 2026-09-21 after a reviewer
+        # pointed out that this test accepted them. On a key the adapter always writes as null,
+        # `present` is true and fixed-path `falsy` is FALSE, so `present AND falsy` is not the
+        # vacuous pair; but `present AND equals null` is exactly the vacuous claim this test was
+        # written to catch, and it would have been waved through. Only an operator that requires
+        # the key to carry something counts.
         valued = {r.get("path") for r in rules
-                  if r.get("op") in ("truthy", "falsy", "not_equals", "equals")}
+                  if r.get("op") == "truthy"
+                  or (r.get("op") == "not_equals" and r.get("value") is None)}
         out |= present & valued
     return out
 
@@ -811,3 +818,56 @@ def test_a_rule_gated_on_a_condition_is_only_applied_where_that_condition_can_ho
             f"{check.id}: the rule only speaks when {gate}, but `applies_to` does not require "
             f"it, so every artefact where that condition is false is examined and reported "
             f"clean on a question this check cannot ask. Mirror the gate in `applies_to`.")
+
+
+def test_a_rate_with_no_denominator_is_skipped_by_the_sample_size_check():
+    """The fifth spelling of examined-but-unable-to-speak, and the one the earlier sweep missed.
+
+    `any_outside` steps over an entry whose field is not a number, so a proportion carrying
+    `n: null` made the sample-size check APPLY and then come back clean. That is not a corner
+    case: the senbonzakura adapter writes `n: null` for every figure it lifts out of an
+    abliteration record, and the check's own `false_positive` text called it "a coverage gap
+    rather than a pass" while it was a pass.
+
+    Asserted as a skip rather than through `control.passes_on`, because the negative-control test
+    deliberately tolerates a skip, so moving the null-denominator case there would have proved
+    nothing.
+    """
+    from senbonzakura_check import check_document
+
+    check = next(c for c in CHECKS if c.id == "rate-reported-on-a-sample-too-small-to-carry-it")
+    doc = {"label": "arm", "model": "m",
+           "metrics": {"refusal_rate": {"metric": "refusal_rate", "value": 0.5,
+                                        "units": "proportion", "n": None}}}
+    _, skipped = check_document(doc, [check])
+    assert check.id in skipped, (
+        "a proportion with no denominator was examined by the sample-size check and reported "
+        "clean, on a question it has no way to ask")
+
+    with_n = {"label": "arm", "model": "m",
+              "metrics": {"refusal_rate": {"metric": "refusal_rate", "value": 0.5,
+                                           "units": "proportion", "n": 4}}}
+    findings, skipped = check_document(with_n, [check])
+    assert check.id not in skipped and [f.check_id for f in findings] == [check.id], (
+        "narrowing the applicability has stopped the check firing where it should")
+
+
+def test_a_present_paired_with_equals_null_is_not_treated_as_a_guarded_test():
+    """A guard on the guard above.
+
+    `_paired_with_a_value_test` decides which `present` tests are excused, and it accepted any of
+    `truthy`, `falsy`, `equals` and `not_equals` as evidence that the presence test was real. On
+    a key the adapter always writes as null, `present AND equals null` is exactly the vacuous
+    claim the guard exists to catch, and it would have been waved through. Only an operator that
+    requires the key to CARRY something counts.
+    """
+    vacuous = {"op": "all_of", "rules": [
+        {"op": "present", "path": "eval_split"},
+        {"op": "equals", "path": "eval_split", "value": None}]}
+    assert _paired_with_a_value_test(vacuous) == set(), (
+        "`equals null` was accepted as evidence that a `present` test is guarded")
+
+    real = {"op": "all_of", "rules": [
+        {"op": "present", "path": "eval_split"},
+        {"op": "not_equals", "path": "eval_split", "value": None}]}
+    assert _paired_with_a_value_test(real) == {"eval_split"}

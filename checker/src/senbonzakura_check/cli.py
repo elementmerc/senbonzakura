@@ -50,6 +50,15 @@ from pathlib import Path
 from .adapters import UnknownArtefactError, normalise
 from .registry import load_checks, run_checks
 
+#: What each severity means, in the words a reader meets rather than as a bare label. The label
+#: alone ("severity: notes") tells somebody who has not read the documentation nothing, and the
+#: person reading a finding is exactly the person who has not read the documentation.
+_SEVERITY_SENTENCE = {
+    "withdraws": "THE FIGURE CANNOT BE QUOTED AS WHAT IT CLAIMS TO BE",
+    "qualifies": "the figure stands only with a caveat attached",
+    "notes": "two numbers here could be read for each other",
+}
+
 
 def build_parser():
     ap = argparse.ArgumentParser(
@@ -132,7 +141,12 @@ def _render(path, findings, skipped, problem, out, *, named=True):
         return
     for f in findings:
         print(f"\n!  {path}", file=out)
-        print(f"   {f.title}  [{f.check_id}, {f.confidence} confidence]", file=out)
+        print(f"   {f.title}  [{f.check_id}]", file=out)
+        # BOTH AXES, NAMED, because they are routinely read as one. Severity is what this costs
+        # if the finding is right; confidence is how likely it is to be right. A high-confidence
+        # note and a medium-confidence withdrawal are not the same news.
+        print(f"   {_SEVERITY_SENTENCE.get(f.severity, f.severity)}  "
+              f"({f.confidence} confidence this finding is right)", file=out)
         print(f"   what it is:   {f.detects}", file=out)
         print(f"   seen before:  {f.incident}", file=out)
         print(f"   what to do:   {f.remedy}", file=out)
@@ -173,6 +187,7 @@ def main(argv=None, out=None):
                 "skipped": sk,
                 "findings": [{
                     "check": f.check_id, "title": f.title, "confidence": f.confidence,
+                    "severity": f.severity,
                     "detects": f.detects, "incident": f.incident, "remedy": f.remedy,
                     "false_positive": f.false_positive,
                 } for f in fs],

@@ -5,6 +5,7 @@
   "incident": "Ours, 2026-08-05. Four published claims were withdrawn because arms doing different amounts of work were compared as though they were the same measurement, and no field in any artefact said otherwise. The practice was read out of abliterix, which carries name, estimator and units on each measurement and refuses to call a continuation-NLL drift a KL divergence when the true log-probabilities were not available.",
   "remedy": "Record the estimator beside the number: which quantity, over what, with what normalisation. Inspect already does this in `EvalScore.scorer` and lm-evaluation-harness encodes its filter in the metric key after the comma; if your harness records it somewhere else, the adapter should be taught to read it. Until then the figure can be quoted only against other figures from the same tool at the same version.",
   "confidence": "medium",
+  "severity": "qualifies",
   "false_positive": "A harness that records its estimator somewhere the adapter does not read it will look bare here, and the fault is then ours rather than the artefact's: the fix is to teach the adapter, not to ignore the finding. It is medium confidence for that reason. Note also that our own older artefacts satisfy this with a PROSE `instrument` sentence, which is weaker than a named estimator and is accepted anyway: prose satisfies a reader and not a machine, so an artefact carrying only that is a rewording away from being unreadable across tools.",
 
   "applies_to": {"op": "truthy", "path": "metrics"},

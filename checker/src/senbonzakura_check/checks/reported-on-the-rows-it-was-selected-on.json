@@ -5,6 +5,7 @@
   "incident": "Ours, twice. On 2026-08-17 an LFM2 refusal figure turned out to have been scored on the SEARCH partition, so the model was sound and the number was unmeasured. Separately, an evaluation set sat published and labelled clean for six weeks while 94.5% of its rows were inside its own fitting set. The second one is why this check looks at row identity and not only at split names: the names were right and the contents were not.",
   "remedy": "Report on rows nothing was fitted or selected on. A three-way split (fit, select, report) is the cheap version, and the selection half is the one people leave out. If the run cannot be repeated, the figure's honest description is the training-set score, and it should be labelled as one rather than withdrawn silently.",
   "confidence": "high",
+  "severity": "withdraws",
   "false_positive": "A deliberately in-sample number, published as one, is not this defect: reporting a fit-set figure and saying so is legitimate and sometimes the point. This check cannot tell that apart from the mistake, so a run that means it should record `in_sample: true` and expect the finding anyway. It also cannot see overlap that is not stated: two disjoint-looking split names over the same underlying rows read as clean here, which is exactly how an evaluation set sat published as clean for six weeks. Neither lm-evaluation-harness nor Inspect records row identity at all, so on those artefacts this check is close to inert and its silence carries no information.",
   "applies_to": {
     "op": "any_of",

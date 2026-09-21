@@ -29,7 +29,11 @@ WHAT EVERY CHECK MUST CARRY, AND WHY EACH FIELD IS MANDATORY
                   with no citation is an opinion, and a checker that reports opinions gets
                   uninstalled once and never again.
     remedy        what to do about it.
-    confidence    high / medium / low.
+    confidence    high / medium / low: how much to believe the finding.
+    severity      withdraws / qualifies / notes: how far it could move the number if you do.
+                  OPTIONAL with a default, unlike everything else here, because making it
+                  mandatory would refuse every check file written before it existed, and a
+                  contribution format that invalidates existing contributions is not one.
     false_positive  WHAT WOULD MAKE THIS CHECK WRONG. Loophole 5 of the v0.8 plan, and the
                   requirement is absolute: "a check that cannot say what would make it wrong
                   does not ship". It goes in the REPORT, not in the documentation, because the
@@ -68,6 +72,25 @@ REQUIRED_FIELDS = (
 
 CONFIDENCES = ("high", "medium", "low")
 
+#: How far a finding could move the number, worst first. NOT the same axis as `confidence`, and
+#: keeping them apart is the whole reason this exists: confidence is how much to believe the
+#: finding, severity is what it costs if you do. A high-confidence cosmetic note and a
+#: medium-confidence withdrawal are not the same news, and a report that sorts them together
+#: invites a reader to treat them as the same weight.
+#:
+#:     withdraws   the figure cannot be quoted as what it claims to be at all
+#:     qualifies   the figure stands with a caveat attached, and not without one
+#:     notes       two numbers in the artefact could be confused for each other
+#:
+#: OPTIONAL, WITH A DOCUMENTED DEFAULT, and that is a deliberate compromise rather than laziness.
+#: Making it mandatory would refuse every check file written before today, including anybody
+#: else's: the engine's own promise is that a check is a file, and a field that invalidates
+#: existing files is a breaking change to a contribution format that is trying to attract
+#: contributions. `tests/test_check_severity.py` asserts that every check WE ship declares one,
+#: which is where the discipline actually lives.
+SEVERITIES = ("withdraws", "qualifies", "notes")
+DEFAULT_SEVERITY = "qualifies"
+
 #: A sentinel distinct from None, because a JSON document may legitimately hold a null and
 #: "the field is absent" and "the field is present and null" are different claims about it.
 MISSING = object()
@@ -93,6 +116,7 @@ class Check:
     applies_to: dict
     rule: dict
     control: dict
+    severity: str = DEFAULT_SEVERITY
     source: Path | None = None
 
 
@@ -111,6 +135,7 @@ class Finding:
     remedy: str
     confidence: str
     false_positive: str
+    severity: str = DEFAULT_SEVERITY
     artefact: str | None = None
 
 
@@ -383,6 +408,13 @@ def _validate(raw: dict, source: Path | None) -> Check:
             f"with no incident is an opinion, and one that cannot say what would make it wrong "
             f"cannot be judged by the person reading its finding.")
 
+    severity = raw.get("severity", DEFAULT_SEVERITY)
+    if severity not in SEVERITIES:
+        raise CheckError(
+            f"check {raw['id']!r}{where} has severity {severity!r}; expected one of "
+            f"{', '.join(SEVERITIES)}. Severity is how far the finding could move the number and "
+            f"is not the same axis as confidence, which is how much to believe it.")
+
     if raw["confidence"] not in CONFIDENCES:
         raise CheckError(
             f"check {raw['id']!r}{where} has confidence {raw['confidence']!r}; "
@@ -399,7 +431,7 @@ def _validate(raw: dict, source: Path | None) -> Check:
                 f"that makes it fire and one that does not, because a check nobody has watched "
                 f"fail is a check nobody has tested.")
 
-    return Check(**{f: raw[f] for f in REQUIRED_FIELDS}, source=source)
+    return Check(**{f: raw[f] for f in REQUIRED_FIELDS}, severity=severity, source=source)
 
 
 def load_checks(directory: Path | str | None = None) -> list[Check]:
@@ -445,5 +477,22 @@ def run_checks(doc: Any, checks=None, *, artefact: str | None = None):
                 check_id=check.id, title=check.title, detects=check.detects,
                 incident=check.incident, remedy=check.remedy,
                 confidence=check.confidence, false_positive=check.false_positive,
-                artefact=artefact))
-    return findings, skipped
+                severity=check.severity, artefact=artefact))
+    return sorted(findings, key=weight), skipped
+
+
+def weight(finding) -> tuple:
+    """The order a report lists findings in: worst first, then most believable, then by id.
+
+    THE RUNG ASKS FOR FINDINGS RANKED BY HOW BADLY THEY COULD MOVE THE NUMBER, and until this
+    existed the report listed them in whatever order the loader happened to produce, which is
+    alphabetical by check id. Alphabetical is stable and reproducible, which is why nobody
+    noticed it was also meaningless: a reader skimming the first finding was reading the one
+    whose name sorted earliest.
+
+    Ties break on confidence and then on id, so the order stays total and two runs over the same
+    input still produce the same report, per baseline section 2.1.
+    """
+    return (SEVERITIES.index(finding.severity) if finding.severity in SEVERITIES else len(SEVERITIES),
+            CONFIDENCES.index(finding.confidence) if finding.confidence in CONFIDENCES else len(CONFIDENCES),
+            finding.check_id)

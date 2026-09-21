@@ -3964,7 +3964,7 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
     """
     post_ref, post_heretic = post["refusals"], post["heretic"]
     post_brk, post_kl = post["broken"], post["kl"]
-    return {"per_component": args.per_component,
+    record = {"per_component": args.per_component,
             "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
                           "min_weight": bpr[2], "min_weight_distance": bpr[3]},
             "d_profile": {"max_weight_position": bpr[4], "max_weight": bpr[5],
@@ -4134,6 +4134,52 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
             "filter_is_unsatisfiable": getattr(run, "filter_is_unsatisfiable", None),
             "provenance": provenance(device=run.dev,
                                      accelerator=accelerator_name(run.dev))}
+    _stamp_separation(record, run, args)
+    return record
+
+
+def _stamp_separation(record, run, args):
+    """Put the separation figure through the canonical metrics block, beside its own fields.
+
+    WHY IT WAS THE LAST METRIC WITHOUT ONE. `separation` has been published in this record as
+    four bare top-level fields since the statistic was introduced, and nothing ever stamped it.
+    That is how the checker's registry came to declare `difference-of-means`, an estimator this
+    tool cannot compute, while omitting all four it can, including the default: a vocabulary
+    nothing exercised could be wrong about every one of its entries and no test would notice.
+    Stamping it is what makes the declaration load-bearing rather than decorative.
+
+    ADDITIVE, like every other stamp here: `separation_statistic`, `separation_null`,
+    `axis_separation_threshold` and `axis_separations` stay exactly where they are, because
+    things already read them.
+
+    NOT STAMPED WHEN NOTHING WAS MEASURED, which is the interesting case. A run whose search
+    produced no axis score has no separation figure, and stamping a null under a metric name
+    would hand the checker a measurement that does not exist. Absent and zero are different
+    claims, and the whole point of the block is that it says which.
+    """
+    value = record.get("max_axis_separation")
+    if value is None:
+        return
+    from senbonzakura_check import measurement
+
+    from ._version import __version__
+    measurement.stamp(
+        record, "separation", value, record["separation_statistic"],
+        # The number of axes the statistic was computed over, which is the sample this figure
+        # rests on. The checker has a rule about rates on samples too small to carry them.
+        n=record.get("axes_measured_total"),
+        null=record.get("separation_null"),
+        threshold=record.get("axis_separation_threshold"),
+        # Fitted on half the rows and scored on the other half. Recorded because every
+        # separation figure written before this was in-sample and therefore could not come out
+        # small, so an artefact that does not say which it is cannot be read.
+        held_out=record.get("separation_held_out"),
+        # The pinned vocabulary, so this figure can be compared with a later one at all. The
+        # corpus is the input here, which is what `input_digest` names.
+        input_digest=record.get("track_digest"),
+        prompt_format=record.get("chat_template") or "raw",
+        tool_version=__version__)
+
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.

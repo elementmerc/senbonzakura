@@ -242,12 +242,17 @@ EXPECTED_KEYS = {
     "max_axis_separation", "best_rejected_separation", "axes_rejected_total",
     "null_separation_floor", "null_separation_floor_per_layer", "axes_rejected_by_null",
     "separation_held_out", "hedge_applied_layers", "filter_is_unsatisfiable", "provenance",
+    # Added 2026-09-21 when `separation` was finally stamped. Present only when a separation
+    # figure was actually measured, which is why the guard below tolerates it being absent.
+    "metrics",
 }
 
 
 def test_no_field_disappears_from_the_record_without_somebody_noticing():
     got = set(_build())
-    assert not EXPECTED_KEYS - got, (
+    # `metrics` is conditional: a run that measured no separation does not carry it, and that
+    # is the deliberate behaviour asserted above rather than a field going missing.
+    assert not (EXPECTED_KEYS - {"metrics"}) - got, (
         f"these fields have gone from abliteration.json: {sorted(EXPECTED_KEYS - got)}. "
         f"Something downstream reads each of them. Removing one is a decision; make it on "
         f"purpose and update EXPECTED_KEYS in the same commit.")
@@ -291,3 +296,59 @@ class TestTheRunLogSaysHowTheDirectionsWereBuilt:
         """
         assert _build(args=_args(no_good_orth=True))["good_orth"] is False
         assert _build(args=_args(no_good_orth=False))["good_orth"] is True
+
+
+# ── the last metric that had no identity ─────────────────────────────────────────
+class TestTheSeparationFigureCarriesItsIdentity:
+    """`separation` was published as bare fields and never stamped, which is how the checker's
+    registry came to declare an estimator this tool cannot compute and omit all four it can.
+
+    A vocabulary that nothing exercises can be wrong about every entry without a test noticing.
+    """
+
+    def test_the_metrics_block_names_the_statistic_that_produced_the_number(self):
+        from senbonzakura import separation
+        rec = _build()
+        entry = rec["metrics"]["separation"]
+        assert entry["value"] == 2.2
+        assert entry["estimator"] == "cohens-d"
+        assert entry["estimator"] in separation.STATISTICS
+
+    def test_the_null_and_the_threshold_travel_inside_the_block_too(self):
+        """2.2 means nothing without them, and a reader of the block should not have to go back
+        to the top-level fields to find out what nothing scores.
+        """
+        entry = _build()["metrics"]["separation"]
+        assert entry["null"] == 0.0
+        assert entry["threshold"] is not None
+
+    def test_the_bare_fields_are_left_exactly_where_they_were(self):
+        """Additive, because things already read them. A stamp that moved a field would break a
+        reader in exchange for annotating it.
+        """
+        rec = _build()
+        assert rec["separation_statistic"] == "cohens-d"
+        assert rec["separation_null"] == 0.0
+        assert rec["max_axis_separation"] == 2.2
+
+    def test_the_pinned_vocabulary_is_present_so_two_runs_can_be_compared(self):
+        from senbonzakura import baseline
+        entry = _build()["metrics"]["separation"]
+        for field in ("input_digest", "prompt_format", "tool_version"):
+            assert field in entry, f"{field} is in baseline.PINNED and missing from the stamp"
+        assert "input_digest" in baseline.PINNED
+
+    def test_a_run_that_measured_no_separation_is_not_stamped_at_all(self):
+        """THE CASE WORTH GETTING RIGHT. A search that produced no axis score has no separation
+        figure, and stamping a null under a metric name hands the checker a measurement that does
+        not exist. Absent and zero are different claims and the block exists to say which.
+        """
+        rec = _build(run=_run(max_axis_separation=None))
+        assert "separation" not in (rec.get("metrics") or {})
+
+    def test_a_measured_zero_is_still_stamped(self):
+        """The other side of it: zero IS a measurement, and dropping it would be the same defect
+        with the sign reversed.
+        """
+        rec = _build(run=_run(max_axis_separation=0.0))
+        assert rec["metrics"]["separation"]["value"] == 0.0

@@ -62,6 +62,10 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # no model, no corpus, no network. That is the whole point of it (roadmap, property 3), and
     # `tests/test_check_registry.py` walks its import graph to keep it true.
     "check": ("check", "main"),
+    # THE SECOND COMMAND THAT NEEDS NOTHING, and for the same reason as `check`. A gate whose
+    # whole value is that it runs on every change has to be affordable on whatever a CI runner
+    # has, so it reads two JSON files and does arithmetic.
+    "gate": ("gate", "main"),
 }
 
 

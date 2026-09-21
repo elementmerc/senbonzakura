@@ -526,6 +526,61 @@ def test_a_malformed_differs_in_more_than_is_a_loud_refusal(rule):
         evaluate(rule, registry.as_pair({"s": {}}, {"s": {}}))
 
 
+# ── the split: the ordinary ceiling case, and the serious labelling case ─────────────────────
+
+#: One arm of the 2026-08-03 comparison, in the shape the bake writes. Ceiling 3, applied 1,
+#: which is the ORDINARY outcome of a search that was free to use fewer directions.
+_CEILING_ABOVE_APPLIED = {
+    "model": "Qwen/Qwen3-1.7B", "label": "k3", "max_directions": 3, "num_directions": 1,
+    "dir_mode": "per_layer", "post_bake_refusals": 0.04, "refusal_eval": "measure rows 132-331",
+}
+_CEILING_EQUALS_APPLIED = {**_CEILING_ABOVE_APPLIED, "label": "k1",
+                           "max_directions": 1, "num_directions": 1}
+
+
+def test_the_ordinary_ceiling_case_fires_only_the_notes_half():
+    """A search ceiling above the applied count is what a search DOES. Firing a withdrawal on it
+    would shout on every normal run, and a check people learn to ignore is worse than no check.
+    """
+    from senbonzakura_check import check_document
+
+    findings, skipped = check_document(json.loads(json.dumps(_CEILING_ABOVE_APPLIED)), CHECKS)
+    fired = {f.check_id: f.severity for f in findings}
+    assert fired.get("a-search-ceiling-above-the-count-it-applied") == "notes"
+    assert "an-arm-labelled-by-a-setting-it-did-not-apply" not in fired
+    assert "an-arm-labelled-by-a-setting-it-did-not-apply" in skipped
+
+
+def test_the_serious_case_needs_two_arms_and_withdraws_when_it_has_them():
+    """THE WITHDRAWN INCIDENT ITSELF. Two arms named by ceilings of 1 and 3 that both applied
+    one direction: the same edit under two labels, and the significant difference between them
+    came from something nobody had meant to compare.
+    """
+    from senbonzakura_check import check_pair
+
+    findings, _ = check_pair(json.loads(json.dumps(_CEILING_EQUALS_APPLIED)),
+                             json.loads(json.dumps(_CEILING_ABOVE_APPLIED)), CHECKS)
+    fired = {f.check_id: f.severity for f in findings}
+    assert fired.get("an-arm-labelled-by-a-setting-it-did-not-apply") == "withdraws"
+
+
+def test_a_comparison_whose_arms_really_did_differ_is_quiet():
+    """The half that makes the split worth having. If the ordinary case tripped the withdrawal,
+    or an honest comparison did, the split would have bought nothing.
+    """
+    from senbonzakura_check import check_pair
+
+    honest = {**_CEILING_ABOVE_APPLIED, "max_directions": 3, "num_directions": 3}
+    findings, _ = check_pair(json.loads(json.dumps(_CEILING_EQUALS_APPLIED)),
+                             json.loads(json.dumps(honest)), CHECKS)
+    assert "an-arm-labelled-by-a-setting-it-did-not-apply" not in {f.check_id for f in findings}
+
+    same = json.loads(json.dumps(_CEILING_ABOVE_APPLIED))
+    findings, _ = check_pair(same, json.loads(json.dumps(_CEILING_ABOVE_APPLIED)), CHECKS)
+    assert "an-arm-labelled-by-a-setting-it-did-not-apply" not in {f.check_id for f in findings}, (
+        "two copies of the ordinary case tripped the withdrawal, so the split bought nothing")
+
+
 def test_checks_run_in_a_stable_order():
     """Two runs on the same input produce the same output, per baseline section 2.1. The loader
     sorts by id so a report's order does not depend on the filesystem's.

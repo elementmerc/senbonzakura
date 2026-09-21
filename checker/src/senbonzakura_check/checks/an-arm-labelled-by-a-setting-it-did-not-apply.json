@@ -1,31 +1,59 @@
 {
   "id": "an-arm-labelled-by-a-setting-it-did-not-apply",
-  "title": "The direction budget this run was given is not the direction budget it used",
-  "detects": "An artefact whose direction ceiling and applied direction count disagree. `max_directions` is what the search was allowed to use and `num_directions` is what the saved model actually had removed, and the search picks its budget inside the ceiling, so the two come apart routinely. An arm named after its ceiling is named after a setting it did not apply, and two such arms compared as a budget comparison are two searches wearing the labels of an experiment nobody ran.",
-  "incident": "Ours, 2026-08-03. A five-seed comparison of a one-direction arm against a three-direction arm finished with complete separation at p equals 0.004 and was withdrawn in full, because both arms had ablated one direction per layer. It compared two searches rather than two direction budgets, and its finding, that refusal in that model is one direction, was withdrawn with it. Nothing in either arm's artefact was false; the ceiling and the applied count were both recorded, and the comparison was built on the first.",
-  "remedy": "Quote `num_directions` with `dir_mode`, which is what was applied, and treat `max_directions` as what it is: a ceiling on the search. If the arms of a comparison were meant to differ in direction budget, check that their applied counts actually differ before reporting anything; if they do not, the comparison did not run and re-labelling it will not make it a result.",
-  "confidence": "medium",
-  "severity": "notes",
-  "false_positive": "A ceiling above the applied count is the NORMAL outcome of a search that was free to use fewer directions, and on a single artefact quoted on its own it is not a defect at all. Medium confidence for exactly that reason: the finding is that this artefact cannot support a claim about its ceiling, which is only a problem when somebody makes one. It is genuinely noisy on any run with `--max-directions` above one, and the honest reading is that it tells a reader which number to quote rather than that something went wrong. It also reads ONE document, so it cannot see the case it was written for, which is two arms that agree when they were supposed to differ; the engine runs one artefact at a time.",
+  "arity": "pair",
+  "title": "Two arms were distinguished by a ceiling and applied the same edit, so the comparison did not run",
+  "detects": "Two arms of one comparison whose direction ceilings differ and whose applied direction counts do not. The ceiling is what each arm was NAMED by; the applied count is what each arm actually did. When the labels differ and the edits agree, the two models are the same edit under two names, and any difference measured between them came from something else. This is what LABELLED means in artefact terms: the setting the arms were told apart by is not the setting that reached the weights.",
+  "incident": "Ours, 2026-08-03. A five-seed comparison of a one-direction arm against a three-direction arm finished with complete separation at p equals 0.004 and was withdrawn in full, because both arms had ablated one direction per layer. It compared two searches rather than two direction budgets, and its finding, that refusal in that model is carried by a single direction, was withdrawn with it. Nothing in either arm's artefact was false: the ceiling and the applied count were both recorded in both files, and the comparison was built on the first. No check reading one artefact at a time could see it, which is why this one reads two.",
+  "remedy": "Read `num_directions` from both arms before quoting anything. If they agree, the comparison did not vary what its labels say it varied and re-labelling it will not make it a result: re-run with the applied counts pinned rather than the ceilings, which is what `--max-directions` does not do. If they differ, this check stays quiet and the comparison is the one you meant to run.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "A comparison that was never meant to vary the direction budget, two ceilings set differently for an unrelated reason while the real variable is elsewhere, fires this check and is not damaged by it; the finding is then about the labels rather than about the experiment. It reads the ceiling as the label because that is what our own arms were named by, and an experiment that named its arms some other way is invisible to it. It compares only the recorded counts: two arms that agree on `num_directions` may still differ in `dir_mode`, which is a real difference in what was applied and one this check reads as sameness. And a pair where either arm records no ceiling or no applied count is SKIPPED, never passed, so silence here is frequently the question going unasked rather than the answer being good.",
 
-  "applies_to": {"op": "all_of", "rules": [
-    {"op": "present", "path": "raw.max_directions"},
-    {"op": "present", "path": "raw.num_directions"}
-  ]},
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "present", "path": "arm_a.raw.max_directions"},
+      {"op": "present", "path": "arm_b.raw.max_directions"},
+      {"op": "present", "path": "arm_a.raw.num_directions"},
+      {"op": "present", "path": "arm_b.raw.num_directions"},
+      {"op": "not_equals", "path": "arm_a.raw.num_directions", "value": null},
+      {"op": "not_equals", "path": "arm_b.raw.num_directions", "value": null}
+    ]
+  },
 
-  "rule": {"op": "disagrees", "paths": ["raw.max_directions", "raw.num_directions"]},
+  "rule": {
+    "op": "all_of",
+    "rules": [
+      {"op": "disagrees", "paths": ["arm_a.raw.max_directions", "arm_b.raw.max_directions"]},
+      {"op": "not", "rule": {
+        "op": "disagrees", "paths": ["arm_a.raw.num_directions", "arm_b.raw.num_directions"]}}
+    ]
+  },
 
   "control": {
     "fires_on": [
-      {"raw": {"max_directions": 3, "num_directions": 1, "dir_mode": "per_layer"}},
-      {"raw": {"max_directions": 8, "num_directions": 2, "dir_mode": "per_layer"}},
-      {"raw": {"max_directions": 1, "num_directions": 0, "dir_mode": "single"}}
+      [
+        {"raw": {"max_directions": 1, "num_directions": 1, "dir_mode": "per_layer"}},
+        {"raw": {"max_directions": 3, "num_directions": 1, "dir_mode": "per_layer"}}
+      ],
+      [
+        {"raw": {"max_directions": 2, "num_directions": 2, "dir_mode": "per_layer"}},
+        {"raw": {"max_directions": 8, "num_directions": 2, "dir_mode": "per_layer"}}
+      ]
     ],
     "passes_on": [
-      {"raw": {"max_directions": 1, "num_directions": 1, "dir_mode": "per_layer"}},
-      {"raw": {"max_directions": 3, "num_directions": 3, "dir_mode": "per_layer"}},
-      {"raw": {"max_directions": 3, "num_directions": null}},
-      {"raw": {"num_directions": 1}}
+      [
+        {"raw": {"max_directions": 1, "num_directions": 1, "dir_mode": "per_layer"}},
+        {"raw": {"max_directions": 3, "num_directions": 3, "dir_mode": "per_layer"}}
+      ],
+      [
+        {"raw": {"max_directions": 3, "num_directions": 1, "dir_mode": "per_layer"}},
+        {"raw": {"max_directions": 3, "num_directions": 1, "dir_mode": "per_layer"}}
+      ],
+      [
+        {"raw": {"max_directions": 3, "num_directions": 1}},
+        {"raw": {"max_directions": 1, "num_directions": null}}
+      ]
     ]
   }
 }

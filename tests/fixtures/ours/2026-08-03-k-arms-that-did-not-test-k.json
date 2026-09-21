@@ -1,12 +1,12 @@
 {
   "_provenance": {
-    "incident": "On 2026-08-03 a five-seed comparison of a K=1 arm against a K=3 arm finished with complete separation at p=0.004 and was WITHDRAWN in full: both arms had ablated one direction per layer, so it compared two searches rather than two direction budgets. This is the arm labelled K=3.",
+    "incident": "On 2026-08-03 a five-seed comparison of a K=1 arm against a K=3 arm finished with complete separation at p=0.004 and was WITHDRAWN in full: both arms had ablated one direction per layer, so it compared two searches rather than two direction budgets. This is the arm labelled K=3. One arm on its own shows only that its ceiling and its applied count differ, which is the ordinary outcome of a search, so this fixture expects the `notes` half of the split. The withdrawal needed both arms, and the check that sees it reads a pair.",
     "documented_at": "this project's 2026-08-03 session record, 'The K arms did not test K'",
     "kind": "reconstructed",
     "inferred": "The per-layer extraction list. The record establishes the ceiling and the applied count; the list is written here as what a search with that ceiling would plausibly have kept, and it is what makes the second finding visible.",
     "not_reproduced": "The five seeds, the p-value, and the statistics that produced it. The withdrawal is the record; the arithmetic behind it is not reconstructed.",
     "expect": [
-      "an-arm-labelled-by-a-setting-it-did-not-apply",
+      "a-search-ceiling-above-the-count-it-applied",
       "a-count-that-is-not-the-count-that-was-applied"
     ]
   },

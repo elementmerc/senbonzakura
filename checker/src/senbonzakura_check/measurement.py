@@ -104,6 +104,15 @@ METRICS = {
            "proportion",
            {"code-graded": "graded by code, with no model in the loop"},
            higher_is_better=True),
+        _m("coherence", "whether the edit left the model able to predict ordinary English",
+           "nats-per-token",
+           {
+               "neutral-passage-nll":
+                   "the mean per-token negative log-likelihood the model assigns to ONE fixed "
+                   "neutral passage of ordinary English, with no chat template applied. A probe "
+                   "and not a language modelling benchmark: it is a single passage, so it is "
+                   "read against the same model before the edit and never as an absolute score",
+           }),
         _m("separation", "whether a direction set carries refusal or carries topic",
            "statistic",
            {

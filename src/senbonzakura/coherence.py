@@ -17,6 +17,7 @@ failure. Lower perplexity is better; compare a bake against its own stock model,
 not against an absolute threshold.
 """
 import argparse
+import hashlib
 import json
 import math
 
@@ -49,6 +50,59 @@ NEUTRAL = (
 )
 
 
+def passage_digest(text=NEUTRAL) -> str:
+    """Which passage the number was taken on, in sixteen characters.
+
+    WHY THE ARTEFACT HAS TO CARRY THIS. `NEUTRAL` is a constant in a source file, so two
+    coherence figures a year apart are comparable only if nobody edited it in between, and
+    nothing anywhere recorded which version produced which number. A single word changed in
+    the passage moves the perplexity without moving anything a reader can see, which is the
+    same shape as the defect that cost this project four published claims: arms that did
+    different work, compared as one measurement, with no field saying otherwise.
+
+    Sixteen hex characters, matching the track fingerprint's width, so the two digests a
+    reader meets in this project's artefacts look like the same kind of thing.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _stamp_coherence(res):
+    """Add the canonical metrics block beside the fields this command has always written.
+
+    ADDITIVE, exactly as in `score` and `margin`: `nll`, `ppl`, `n_tokens`, `label` and `model`
+    stay where they are, because anything already reading a coherence file keeps working.
+
+    ONE STAMP, NOT TWO, and that is the interesting decision. `ppl` is `exp(nll)`: the same
+    measurement in another unit, not a second measurement, and `stamp` refuses two values under
+    one metric name precisely so that a reader never has to guess which of two numbers is the
+    one being claimed. So the block carries the negative log-likelihood, which is the quantity
+    actually computed, and `ppl` stays in the document as the readable form of it.
+
+    `n` IS ONE, not `n_tokens`. The probe reads one passage. Putting 250 there would hand every
+    downstream reader, including the sample-size check in the checker, a denominator that looks
+    like 250 independent observations and is one text whose tokens are about as independent as
+    the words of a sentence. The token count is carried beside it under its own name, where it
+    describes the passage rather than pretending to be a sample.
+
+    `prompt_format`, `tool_version` and `passage_digest` use the baseline module's vocabulary on
+    purpose: they are the fields that decide whether a later coherence figure may be compared
+    with this one at all, which is the same question `baseline.PINNED` answers for a gate.
+    """
+    from senbonzakura_check import measurement
+
+    from ._version import __version__
+    measurement.stamp(
+        res, "coherence", res["nll"], "neutral-passage-nll",
+        n=1,
+        n_tokens=res["n_tokens"],
+        passage_digest=passage_digest(),
+        # Said out loud rather than left to be inferred from the absent flag. This probe renders
+        # no chat template at all, by design, so its figure is not comparable with one taken on
+        # a model answering in its own instruction format.
+        prompt_format="raw",
+        tool_version=__version__)
+
+
 def build_parser():
     # No --chat-template, deliberately: this measures the perplexity of a fixed passage and
     # never renders a chat prompt, so there is no prompt format for one to specify.
@@ -77,6 +131,7 @@ def main(argv=None):
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, needs_chat_template=False)
     res = {"label": a.label, "model": a.model, **coherence(model, tok)}
+    _stamp_coherence(res)
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"COHERENCE_DONE {a.label} ppl={res['ppl']:.2f} nll={res['nll']:.4f} n_tokens={res['n_tokens']}")

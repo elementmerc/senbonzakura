@@ -14,7 +14,12 @@
 # manager. Fails loudly and names the missing one rather than producing half a set.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# TWO LEVELS, NOT ONE. This script moved from `tools/` into a group beneath it on
+# 2026-09-21, so `dirname "$0"/..` stopped being the repository and became `tools/`.
+# The Python scripts had the identical defect and were all corrected; these four shell
+# scripts were missed because the guard that catches it reads the Python idiom only.
+# CI found it the expensive way, as `cp: cannot stat .../tools/tools/ci/...`.
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TAPES="$ROOT/docs/tapes"
 MEDIA="$ROOT/docs/public/media"
 FAILED=0

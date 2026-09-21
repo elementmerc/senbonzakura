@@ -20,7 +20,12 @@
 # Needs: GNOME Shell, Ptyxis, ffmpeg, and the system python for PyGObject.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# TWO LEVELS, NOT ONE. This script moved from `tools/` into a group beneath it on
+# 2026-09-21, so `dirname "$0"/..` stopped being the repository and became `tools/`.
+# The Python scripts had the identical defect and were all corrected; these four shell
+# scripts were missed because the guard that catches it reads the Python idiom only.
+# CI found it the expensive way, as `cp: cannot stat .../tools/tools/ci/...`.
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 NAME="${1:-}"
 WIDTH="${2:-1240}"
 DEMO="$ROOT/docs/live/$NAME.sh"

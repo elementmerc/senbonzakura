@@ -46,6 +46,17 @@ GROUPS = {
 
 _ROOT_FROM_FILE = re.compile(r"Path\(__file__\)\.resolve\(\)\.parents\[(\d+)\]")
 
+#: THE SHELL IDIOM, and leaving it out cost a red CI run. The Python scripts were all corrected
+#: when `tools/` was grouped; four SHELL scripts computing the same thing the same way were not,
+#: because the pattern above reads Python only and the file list already included `.sh`. So the
+#: guard walked straight past `ROOT="$(cd "$(dirname "$0")/.." && pwd)"` in four files, every one
+#: of which then resolved to `tools/` instead of the repository. CI found it as
+#: `cp: cannot stat .../tools/tools/ci/clean_room_checks.py`.
+#:
+#: The lesson is the one this project keeps relearning: a guard that covers one spelling of a
+#: defect reports clean on the others, and reporting clean is worse than not running.
+_ROOT_FROM_SHELL = re.compile(r'dirname "\$0"\)((?:/\.\.)+)')
+
 
 def _tool_scripts():
     return sorted(p for p in TOOLS.rglob("*")
@@ -107,3 +118,48 @@ def test_the_hook_symlinks_point_at_real_files():
         pytest.skip("no hook symlinks in this checkout")
     broken = [f"{p.relative_to(ROOT)} -> {p.readlink()}" for p in links if not p.exists()]
     assert not broken, f"these hook symlinks do not resolve: {broken}"
+
+
+@pytest.mark.parametrize("script", [p for p in _tool_scripts() if p.suffix == ".sh"],
+                         ids=lambda p: str(p.relative_to(TOOLS)))
+def test_a_shell_script_that_locates_the_repository_finds_this_one(script):
+    """THE SAME INVARIANT AS ABOVE, IN THE OTHER LANGUAGE, and it was missing until CI failed.
+
+    `ROOT="$(cd "$(dirname "$0")/.." && pwd)"` is the shell spelling of `parents[1]`. When these
+    scripts moved one directory deeper it silently became `tools/`, so every `$ROOT/docs`,
+    `$ROOT/.venv` and `$ROOT/dist-cleanroom` pointed at a path that does not exist. Unlike the
+    Python case this one does not fail at import; it fails later, in a `cp` or a `python -m
+    build`, a long way from the cause.
+
+    Counted from the `..` segments rather than matched literally, so a script that walks three
+    levels is checked against three levels rather than being excused for not matching a pattern.
+    """
+    try:
+        text = script.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as e:
+        pytest.skip(f"not readable as text ({e.__class__.__name__})")
+    wrong = []
+    for m in _ROOT_FROM_SHELL.finditer(text):
+        levels = m.group(1).count("..")
+        computed = script.resolve().parents[levels]
+        if not (computed / "pyproject.toml").is_file():
+            wrong.append(f"{levels} level(s) up resolves to {computed}, which is not the repository")
+    assert not wrong, (
+        f"{script.relative_to(ROOT)} computes a root that is not this repository: {wrong}. "
+        f"Unlike the Python case this does not fail loudly at import; it fails later in a `cp` "
+        f"or a build, a long way from its cause.")
+
+
+def test_the_shell_pattern_actually_matches_the_idiom_it_guards():
+    """A guard whose regex has gone stale reports every file clean.
+
+    The Python half of this file has real call sites keeping it honest. The shell half would
+    silently match nothing if the idiom were reformatted, so the pattern is asserted against the
+    exact string that caused the outage.
+    """
+    sample = 'ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    m = _ROOT_FROM_SHELL.search(sample)
+    assert m and m.group(1).count("..") == 1, sample
+    deeper = 'ROOT="$(cd "$(dirname "$0")/../.." && pwd)"'
+    m2 = _ROOT_FROM_SHELL.search(deeper)
+    assert m2 and m2.group(1).count("..") == 2, deeper

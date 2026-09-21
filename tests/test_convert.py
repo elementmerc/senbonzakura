@@ -406,6 +406,62 @@ class TestTheTemplateSurvivedTheExport:
         assert convert.source_chat_template(d) is None
         assert convert.chat_template_lost(d, _ok_header(metadata={})) is None
 
+    def test_the_template_is_found_where_a_modern_checkpoint_actually_keeps_it(self, tmp_path):
+        """THE DEFECT THIS CHECK SHIPPED WITH, found on the ROG against a real checkpoint.
+
+        Transformers used to keep the template under `chat_template` in `tokenizer_config.json`
+        and now writes raw Jinja to `chat_template.jinja` beside it, leaving no key in the
+        config at all. This function read only the old location, so a current checkpoint
+        returned False, which does not mean "cannot tell": it means "definitely none", and
+        `chat_template_lost` only speaks when the source is a definite True. The export
+        verification was therefore a no-op on exactly the checkpoints anybody would convert.
+
+        LFM2.5-350M is the measured case: 5,487 bytes of template in `chat_template.jinja`, and
+        `chat_template` absent from its tokeniser config.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"bos_token": "<s>"})
+        (d / convert.HF_CHAT_TEMPLATE_JINJA).write_text(
+            "{% for m in messages %}{{ m.content }}{% endfor %}", encoding="utf-8")
+        assert convert.source_chat_template(d) is True
+        said = convert.chat_template_lost(d, _ok_header(metadata={}))
+        assert said and convert.GGUF_CHAT_TEMPLATE_KEY in said
+
+    def test_the_intermediate_json_location_is_read_too(self, tmp_path):
+        """`chat_template.json` is the convention between the other two, and processors still
+        ship it. Three locations exist in the wild, so all three are looked at.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"bos_token": "<s>"})
+        (d / convert.HF_CHAT_TEMPLATE_JSON).write_text(
+            json.dumps({"chat_template": "{{ x }}"}), encoding="utf-8")
+        assert convert.source_chat_template(d) is True
+
+    def test_an_empty_template_file_is_not_a_template(self, tmp_path):
+        """A zero-byte or whitespace-only file is a save that went wrong, not a declaration.
+
+        Treating it as True would make the check fire on every conversion of such a checkpoint
+        and blame the exporter for something the checkpoint did.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"bos_token": "<s>"})
+        (d / convert.HF_CHAT_TEMPLATE_JINJA).write_text("   \n", encoding="utf-8")
+        assert convert.source_chat_template(d) is False
+
+    def test_a_template_file_that_cannot_be_parsed_says_cannot_tell(self, tmp_path):
+        """Unreadable is an unknown, and the unknown answer is None rather than False.
+
+        False switches the whole check off silently, which is the failure mode this function
+        was just fixed for, so an unparseable sidecar must not land there.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"bos_token": "<s>"})
+        (d / convert.HF_CHAT_TEMPLATE_JSON).write_text("{ not json", encoding="utf-8")
+        assert convert.source_chat_template(d) is None
+
+    def test_a_checkpoint_with_neither_location_populated_is_still_a_definite_no(self, tmp_path):
+        """The base-model case has to keep working, or the fix trades one silent miss for
+        a check that fires on every correct file.
+        """
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"bos_token": "<s>"})
+        assert convert.source_chat_template(d) is False
+
     def test_a_header_with_no_metadata_at_all_does_not_raise(self, tmp_path):
         """Defensive: a header shape without the key must not turn a NOTE into a traceback."""
         d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})

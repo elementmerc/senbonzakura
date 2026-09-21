@@ -130,16 +130,61 @@ def read_config(model_dir):
 GGUF_CHAT_TEMPLATE_KEY = gguf_io.CHAT_TEMPLATE_KEY
 HF_TOKENIZER_CONFIG = "tokenizer_config.json"
 
+#: The standalone file transformers writes the template to on a modern save, holding raw Jinja
+#: rather than JSON. It is the DEFAULT location now, not an alternative one.
+HF_CHAT_TEMPLATE_JINJA = "chat_template.jinja"
+
+#: The intermediate convention, a JSON object with the template under the same key it used to
+#: occupy in the tokeniser config. Processors and multimodal checkpoints still ship it.
+HF_CHAT_TEMPLATE_JSON = "chat_template.json"
+
 
 def source_chat_template(model_dir):
     """Does the checkpoint declare a chat template? True, False, or None for cannot tell.
 
-    None is a real third answer and not a failure: a checkpoint with no `tokenizer_config.json`,
-    or one that will not parse, tells us nothing about what the output should carry, and a check
-    that guesses in that case would fire on models it knows nothing about.
+    None is a real third answer and not a failure: a checkpoint that says nothing anywhere tells
+    us nothing about what the output should carry, and a check that guesses in that case would
+    fire on models it knows nothing about.
+
+    THREE PLACES, AND THE ONE THIS ORIGINALLY READ IS NO LONGER THE USUAL ONE. Until 2026-09-21
+    this looked only in `tokenizer_config.json`, which is where transformers used to keep the
+    template and is where it keeps it least often now. A modern save writes raw Jinja to
+    `chat_template.jinja` beside the config, and the config then has no `chat_template` key at
+    all.
+
+    That made this function return False, meaning "definitely none", for checkpoints carrying a
+    perfectly good template. False is the answer that switches the whole check off: `chat_template_lost`
+    only fires when the source is a definite True, so the export verification was a no-op on
+    exactly the checkpoints anyone would convert today. Found on the ROG against LFM2.5-350M,
+    whose template is 5,487 bytes in `chat_template.jinja` and absent from the tokeniser config.
+
+    A guard returning a confident negative is worse than one returning None, because None is
+    visible as an unknown and False is indistinguishable from a checked, clean result.
     """
-    cfg = Path(model_dir) / HF_TOKENIZER_CONFIG
+    root = Path(model_dir)
+    for name in (HF_CHAT_TEMPLATE_JINJA, HF_CHAT_TEMPLATE_JSON):
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            return None
+        if name == HF_CHAT_TEMPLATE_JINJA:
+            if raw.strip():
+                return True
+            continue
+        try:
+            loaded = json.loads(raw)
+        except ValueError:
+            return None
+        if isinstance(loaded, dict) and loaded.get("chat_template"):
+            return True
+
+    cfg = root / HF_TOKENIZER_CONFIG
     if not cfg.is_file():
+        # No tokeniser config AND no template file. Nothing here has an opinion, and the
+        # standalone files were already checked above, so this is genuinely unknown.
         return None
     try:
         loaded = json.loads(cfg.read_text(encoding="utf-8"))

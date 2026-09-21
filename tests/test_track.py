@@ -1044,3 +1044,85 @@ class TestAuditRefusesBuildFlags:
     def test_a_plain_audit_still_passes(self, tmp_path):
         out = self._track(tmp_path)
         assert track.main(["--audit", "--out", str(out)]) == {}
+
+
+# ── the two halves went through the same pipeline ────────────────────────────────
+#
+# PROMPTED BY A PEER'S FINDING ON 2026-09-21, in a different project and a different domain.
+# They had a matched pair whose two halves differed in their CONTAINER rather than their
+# contents, so a classifier separated them perfectly without doing any real work, and every
+# existing check passed because each verified something adjacent to the actual requirement.
+#
+# This project is built on exactly that shape. The harmful and harmless sides of a track are a
+# matched pair, and every control we have reads the TEXT: the length-only ruler, the word-length
+# null, the separation statistic. A difference in how the two sides were produced, rather than in
+# what they say, would pass all of them, because none of them looks at that.
+#
+# Today the sides are symmetric by construction: `main` builds them in ONE loop body parameterised
+# by name, so there is no second code path to drift. That is a property of how the function is
+# written rather than a guarantee, and it is one refactor away from being untrue. This pins the
+# property behaviourally instead, without naming the functions that currently provide it.
+class TestBothSidesGoThroughOnePipeline:
+    def _sides_from(self, tmp_path, harmful_rows, harmless_rows):
+        (tmp_path / "bad.txt").write_text("\n".join(harmful_rows) + "\n", encoding="utf-8")
+        (tmp_path / "good.txt").write_text("\n".join(harmless_rows) + "\n", encoding="utf-8")
+        out = {}
+        for name, fn in (("harmful", "bad.txt"), ("harmless", "good.txt")):
+            rows, stats = track.dedupe(track.read_prompts(tmp_path / fn))
+            out[name] = (track.partition(rows, 4, 4, None), stats)
+        return out
+
+    def test_identical_inputs_produce_identical_sides(self, tmp_path):
+        """The invariant a container difference would break, stated so it cannot be argued with.
+
+        If the two sides ever go through different reading, de-duplication or partitioning, then
+        feeding them the SAME rows stops producing the same result. Nothing here inspects which
+        functions are called, so it keeps working through a refactor and fails the day the refactor
+        makes the two sides different.
+        """
+        rows = [f"prompt number {i} with enough words to survive the short filter" for i in range(12)]
+        got = self._sides_from(tmp_path, rows, list(rows))
+        assert got["harmful"][0] == got["harmless"][0], (
+            "the same rows produced different partitions on the two sides, so the halves of every "
+            "matched pair did not go through the same pipeline")
+        assert got["harmful"][1] == got["harmless"][1]
+
+    def test_the_check_is_capable_of_failing(self, tmp_path):
+        """The control on the control. A comparison that cannot fail measures nothing.
+
+        This project has shipped three checks that passed on the exact defect they were written
+        for, so an assertion of sameness is only worth having next to a case that is genuinely
+        different.
+        """
+        rows = [f"prompt number {i} with enough words to survive the short filter" for i in range(12)]
+        other = [*rows[:-1], "a completely different final prompt with plenty of words in it"]
+        got = self._sides_from(tmp_path, rows, other)
+        assert got["harmful"][0] != got["harmless"][0]
+
+    def test_one_writer_produces_every_partition_on_disk(self, tmp_path):
+        """The container half, which is the part the peer's defect actually lived in.
+
+        All three datasets are written by the same function, so a reader cannot tell which side a
+        file came from by its format. Asserted on the files rather than on the call, because what
+        matters is what landed on disk.
+        """
+        rows = [f"prompt number {i} with enough words to survive the short filter" for i in range(12)]
+        harmful = track.partition(track.dedupe(track.read_prompts(
+            _write(tmp_path / "b.txt", rows)))[0], 4, 4, None)
+        harmless = track.partition(track.dedupe(track.read_prompts(
+            _write(tmp_path / "g.txt", rows)))[0], 4, 4, None)
+        out = tmp_path / "trk"
+        track.write_track(out, harmful, harmless, {"labels": None}, log=lambda _m: None)
+        shapes = {}
+        for name in ("bad_ds", "bad_eval_ds", "good_ds"):
+            d = out / name
+            assert d.exists(), f"{name} was not written"
+            shapes[name] = sorted(p.suffix for p in d.rglob("*") if p.is_file())
+        assert len({tuple(v) for v in shapes.values()}) == 1, (
+            f"the three datasets do not share a container layout: {shapes}. A classifier could "
+            f"separate the sides on format alone, without reading a single prompt.")
+
+
+def _write(path, rows):
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path

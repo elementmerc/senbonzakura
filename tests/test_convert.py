@@ -57,6 +57,18 @@ def test_unreadable_config_is_a_plain_failure(tmp_path):
 
 
 # ── the pre-flight ───────────────────────────────────────────────────────────────
+def _stub_vendored_script(monkeypatch, tmp_path):
+    """Stand in for the converter the pre-flight looks up before it sizes the disk.
+
+    It is fetched at build time rather than committed, so a development box that has run the
+    vendoring step has it and a fresh CI checkout does not. A test about the size estimate that
+    depends on which of those it is running on passes on one and fails on the other.
+    """
+    script = tmp_path / "convert_hf_to_gguf.py"
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(convert, "find_script", lambda _n: script)
+
+
 def test_a_config_only_directory_is_refused(tmp_path):
     """Exactly what a Hub cache leaves behind when only metadata was ever fetched, and it is a
     directory that looks complete. Verified on this machine: the cached LFM2.5-8B-A1B entry is one
@@ -711,6 +723,7 @@ def test_converting_to_f32_demands_the_space_f32_actually_needs(tmp_path, monkey
     The shard here is 2048 bytes, so the old estimate was 2457 and the true one is 4915.
     """
     model = _checkpoint(tmp_path / "m", extra={"torch_dtype": "bfloat16"})
+    _stub_vendored_script(monkeypatch, tmp_path)
     monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 3000)
     with pytest.raises(ConvertError, match="needs about"):
         convert.preflight(model, tmp_path / "out.gguf", force=True, skip_arch_check=True,
@@ -725,6 +738,7 @@ def test_converting_to_q8_0_is_not_refused_for_space_it_does_not_need(tmp_path, 
     2000 bytes free clears the true demand of 1305 and not the old one of 2457.
     """
     model = _checkpoint(tmp_path / "m", extra={"torch_dtype": "bfloat16"})
+    _stub_vendored_script(monkeypatch, tmp_path)
     monkeypatch.setattr(convert, "free_bytes_for", lambda _p: 2000)
     pre = convert.preflight(model, tmp_path / "out.gguf", force=True, skip_arch_check=True,
                             outtype="q8_0", log=lambda *_a: None)

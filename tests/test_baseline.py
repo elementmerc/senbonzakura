@@ -370,3 +370,80 @@ def test_the_command_writes_a_file_the_gate_accepts(tmp_path, capsys):
     b.main(["--measurement", str(worse), "--metric", "coherence",
             "--seeds", "42,43", "--out", str(bad)])
     assert gate.run(["--baseline", str(out), "--measurement", str(bad)]) == gate.REGRESSED
+
+
+def test_an_artefact_with_no_sample_size_is_refused():
+    """A point estimate with no n behind it cannot be gated: the interval could be anything, and
+    the failure the gate exists to catch is exactly a number whose sample collapsed underneath it.
+    """
+    with pytest.raises(b.BaselineError, match="not a sample size"):
+        b.from_artefact(_artefact(n=0), "coherence", seeds=[42])
+
+
+def test_an_artefact_that_does_not_say_which_way_is_better_is_refused():
+    """Without a direction the gate cannot tell a regression from an improvement, so it would
+    report one of them as the other rather than declining to answer.
+    """
+    with pytest.raises(b.BaselineError, match="which direction is better"):
+        b.from_artefact(_artefact(higher_is_better=None), "coherence", seeds=[42])
+
+
+def test_a_current_interval_far_wider_than_the_baseline_is_refused():
+    """The blunt-instrument case. An interval wide enough to overlap anything overlaps the
+    baseline too, and reading that overlap as the property holding is reading noise as evidence.
+    """
+    base = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    with pytest.raises(b.BaselineError, match="times wider"):
+        b.refuse_if_too_blunt(base, (1.0, 6.0))
+
+
+class TestTheCommandLine:
+    """`main`'s refusals. Each returns 2, which the gate's vocabulary reads as REFUSED: it says
+    nothing was compared, rather than reporting a comparison that did not happen as a pass.
+    """
+
+    def _args(self, tmp_path, **over):
+        args = {"--measurement": str(tmp_path / "m.json"), "--metric": "coherence",
+                "--seeds": "42", "--out": str(tmp_path / "o.json"), **over}
+        return [part for pair in args.items() for part in pair]
+
+    def test_seeds_that_are_not_numbers_are_refused(self, tmp_path, capsys):
+        assert b.main(self._args(tmp_path, **{"--seeds": "42,nope"})) == 2
+        assert "must be integers" in capsys.readouterr().err
+
+    def test_an_empty_seed_list_is_refused(self, tmp_path, capsys):
+        assert b.main(self._args(tmp_path, **{"--seeds": " , "})) == 2
+        assert "nothing says what this figure rests on" in capsys.readouterr().err
+
+    def test_a_measurement_that_is_not_there_is_refused(self, tmp_path, capsys):
+        assert b.main(self._args(tmp_path)) == 2
+        assert "cannot read" in capsys.readouterr().err
+
+    def test_a_measurement_that_is_not_json_is_refused(self, tmp_path, capsys):
+        (tmp_path / "m.json").write_text("{not json", encoding="utf-8")
+        assert b.main(self._args(tmp_path)) == 2
+        assert "cannot read" in capsys.readouterr().err
+
+    def test_a_refusal_from_the_producer_reaches_the_shell(self, tmp_path, capsys):
+        (tmp_path / "m.json").write_text(json.dumps(_artefact(n=0)), encoding="utf-8")
+        assert b.main(self._args(tmp_path)) == 2
+        assert "refused:" in capsys.readouterr().err
+
+
+def test_a_metric_that_does_not_name_itself_takes_its_name_from_the_key():
+    """Older writers left the name out of the block because the key above it already said so.
+    Reading the key is the migration; refusing would make every artefact written before the field
+    existed ungateable, which is the opposite of what a baseline is for.
+    """
+    block = {k: v for k, v in STAMPED.items() if k != "metric"}
+    doc = {"label": "arm", "model": "Qwen/Qwen3-1.7B", "metrics": {"coherence": block}}
+    assert b.from_artefact(doc, "coherence", seeds=[42])["metric"] == "coherence"
+
+
+def test_an_inverted_current_interval_is_refused_rather_than_compared():
+    """[3.1, 2.9] is not a narrow interval, it is a bug in whatever wrote it, and every containment
+    test against it answers the wrong question silently.
+    """
+    base = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    with pytest.raises(b.BaselineError, match="inverted"):
+        b.verdict(base, 3.0, (3.1, 2.9))

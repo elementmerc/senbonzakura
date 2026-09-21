@@ -3997,7 +3997,21 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
             # start and then wrote an artefact that looked like any other, so the
             # caveat was lost exactly where the figure got quoted from. None when the
             # budget is sound, so its presence is the signal.
-            "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
+            # NAMED `generation_settings` AND NOT `generation`, since 2026-09-21. These are the
+            # settings a reply was generated UNDER, never a reply. The leak gate
+            # (`tools/ci/check_prompt_artefacts.py`) bans a key called `generation` at any depth
+            # in committed JSON, because that is what a retained model output is called
+            # everywhere else in this project, and it was therefore refusing this project's own
+            # primary artefact: a document holding two booleans and an integer was rejected with
+            # a message saying it carried harmful prompts and the replies a model gave to them.
+            #
+            # The gate was not weakened to fix that. It is the one control between a harmful
+            # prompt and a public push, and every narrower rule considered either re-fired on
+            # `budget_warning`, which is legitimately a long string, or opened a hole under a
+            # nested key the ban list does not cover. A gate that cries wolf on a legitimate
+            # file is a gate people learn to bypass, and bypassing it is how the real thing
+            # eventually gets through, so the field moved instead.
+            "generation_settings": {"greedy": True, "max_new_tokens": args.gen_tokens,
                            "budget_warning": _budget_warning(args.gen_tokens),
                            **run.gov.report()},
             # The same disclosure for the capture pass, which the generation block does

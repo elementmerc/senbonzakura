@@ -165,8 +165,8 @@ def test_the_budget_caveat_travels_with_the_number():
     wrote an artefact that looked like any other, so the caveat was lost exactly where the
     figure got quoted from. None when the budget is sound, so its presence is the signal.
     """
-    short = _build(args=_args(gen_tokens=48))["generation"]["budget_warning"]
-    sound = _build(args=_args(gen_tokens=lengthsweep.VISIBILITY_FLOOR))["generation"]["budget_warning"]
+    short = _build(args=_args(gen_tokens=48))["generation_settings"]["budget_warning"]
+    sound = _build(args=_args(gen_tokens=lengthsweep.VISIBILITY_FLOOR))["generation_settings"]["budget_warning"]
     assert short and "48 tokens" in short
     assert sound is None
 
@@ -233,7 +233,7 @@ EXPECTED_KEYS = {
     "per_component", "o_profile", "d_profile", "num_directions", "dir_mode", "direction_index",
     "max_directions", "ablate_conv", "partially_ablated_layers", "baseline_refusals",
     "post_bake_refusals", "post_bake_heretic", "post_bake_broken", "post_bake_kl",
-    "refusal_eval", "generation", "direction_capture", "sparsity", "ablation_rounds",
+    "refusal_eval", "generation_settings", "direction_capture", "sparsity", "ablation_rounds",
     "norm_restore", "model", "model_id", "model_revision", "track_digest", "seed", "search",
     "trials", "trials_ran", "warm_start", "good_orth", "chat_template", "directions_per_layer",
     "directions_per_position", "directions_index_note", "axis_separations",
@@ -352,3 +352,38 @@ class TestTheSeparationFigureCarriesItsIdentity:
         """
         rec = _build(run=_run(max_axis_separation=0.0))
         assert rec["metrics"]["separation"]["value"] == 0.0
+
+
+def test_the_record_carries_no_key_the_leak_gate_bans():
+    """THE COLLISION THIS RENAME EXISTS FOR, asserted against the gate's own ban list rather
+    than against a remembered name.
+
+    `tools/ci/check_prompt_artefacts.py` refuses committed JSON carrying `prompt`, `generation`,
+    `response`, `output` and the rest at ANY depth, because that is what a retained model reply
+    is called everywhere else here. The record nested its generation SETTINGS under `generation`,
+    so the gate refused this project's primary artefact and told the reader it held harmful
+    prompts. Verified on 2026-09-21: a document of `{"generation": {"greedy": true,
+    "max_new_tokens": 48}}`, two booleans and an integer, was rejected.
+
+    Reading the ban list rather than hardcoding it means adding a banned key later fails HERE,
+    where the record can be renamed, rather than at somebody's commit.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "ci"))
+    import check_prompt_artefacts as gate
+
+    def keys(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield k
+                yield from keys(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from keys(v)
+
+    banned = {k.lower() for k in keys(_build())} & gate.BANNED_KEYS
+    assert not banned, (
+        f"abliteration.json carries {sorted(banned)}, which the leak gate refuses at any depth, "
+        f"so this artefact cannot be committed and the refusal will say it holds harmful "
+        f"prompts. Rename the field rather than widening the gate.")

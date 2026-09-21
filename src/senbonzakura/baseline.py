@@ -38,6 +38,19 @@ from .crashsafe import atomic_write
 #: not that: readers use `.get`, and an absent field is reported as unknown rather than as a match.
 SCHEMA = "senbonzakura-baseline/1"
 
+#: What `partition` says for a measurement taken on a fixed input rather than on rows of a corpus.
+#:
+#: A NAMED SENTINEL, AND DELIBERATELY NOT AN EXEMPTION. The obvious alternative was to let
+#: `partition` be absent for probe-shaped metrics, and it is the wrong one: the whole value of
+#: this field is that it is never absent, because absence is what `comparability` has to treat as
+#: unknown and unknown is what the gate refuses on. Making absence legal for one class of metric
+#: makes it legal to forget, and a forgotten partition is how a figure scored on the selection
+#: rows got published as a held-out one.
+#:
+#: So the probe says out loud that it read one fixed passage. The reader meets a value they have
+#: to learn once; what they never meet is a hole.
+FIXED_PASSAGE = "fixed-passage"
+
 #: What must agree for two measurements to be comparable, and what each one decides. This is the
 #: whole safety argument of the module, so each entry says why it is here rather than only what it
 #: is called.
@@ -54,7 +67,8 @@ PINNED = {
     "input_digest": "which input the measurement was taken on: the corpus for a scored run, the "
                     "passage for a probe. Neutral because the slot is the same question",
     "partition": "which rows of that corpus, so a measure-partition figure is never compared "
-                 "against a search-partition one",
+                 f"against a search-partition one. A probe that reads no corpus says "
+                 f"{FIXED_PASSAGE!r} rather than leaving this absent",
     "prompt_format": "how the prompt was rendered. Three copies of the renderer drifted once and "
                      "a table was published across the gap",
     "tool_version": "the code that produced it, because the edit and the scorer both live here",

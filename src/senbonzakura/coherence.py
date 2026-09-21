@@ -84,9 +84,12 @@ def _stamp_coherence(res):
     the words of a sentence. The token count is carried beside it under its own name, where it
     describes the passage rather than pretending to be a sample.
 
-    `prompt_format`, `tool_version` and `input_digest` use the baseline module's vocabulary on
-    purpose: they are the fields that decide whether a later coherence figure may be compared
-    with this one at all, which is the same question `baseline.PINNED` answers for a gate.
+    `prompt_format`, `partition`, `tool_version` and `input_digest` use the baseline module's
+    vocabulary on purpose: they are the fields that decide whether a later coherence figure may be
+    compared with this one at all, which is the same question `baseline.PINNED` answers for a gate.
+    All four are now present, so a coherence figure is gateable; until `partition` was added it was
+    the one pinned field nothing here supplied, and its absence alone made every coherence
+    measurement incomparable with every other one.
 
     THE DIGEST FIELD IS `input_digest`, NOT `passage_digest`, SINCE 2026-09-21, and it is the
     vocabulary point rather than a spelling preference. This module invented `passage_digest`
@@ -103,6 +106,7 @@ def _stamp_coherence(res):
     """
     from senbonzakura_check import measurement
 
+    from . import baseline
     from ._version import __version__
     measurement.stamp(
         res, "coherence", res["nll"], "neutral-passage-nll",
@@ -113,6 +117,13 @@ def _stamp_coherence(res):
         # no chat template at all, by design, so its figure is not comparable with one taken on
         # a model answering in its own instruction format.
         prompt_format="raw",
+        # THE LAST PINNED FIELD, and the one that kept coherence outside the gate entirely.
+        # `baseline.PINNED` requires a partition and `comparability` reports an absent one as a
+        # mismatch, so until now a coherence figure could not be compared with anything, and
+        # nothing said why. A probe that reads one fixed passage genuinely has no partition of a
+        # corpus, and the answer is to say that rather than to make the field optional: an
+        # optional partition is one that can be forgotten on a figure that really does have one.
+        partition=baseline.FIXED_PASSAGE,
         tool_version=__version__)
 
 

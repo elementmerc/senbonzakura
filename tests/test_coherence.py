@@ -202,9 +202,10 @@ def test_a_coherence_stamp_and_a_baseline_agree_on_every_pinned_field_they_share
         monkeypatch, tmp_path):
     """The end the rename was for: the two artefacts can actually be compared.
 
-    Not a claim that a coherence figure is gate-ready, which it is not (it carries no partition
-    and no seeds). The claim is narrower and is the one that was false: of the pinned fields the
-    probe does record, none is missing purely because the two modules spelled it differently.
+    Every pinned field is now present, `partition` included, so this is the whole set rather
+    than the subset it was: until 2026-09-21 the probe recorded no partition, `comparability`
+    reports an absent pinned field as a mismatch, and so a coherence figure could not be compared
+    with anything at all while nothing said why.
     """
     from senbonzakura import baseline
 
@@ -213,11 +214,11 @@ def test_a_coherence_stamp_and_a_baseline_agree_on_every_pinned_field_they_share
     recorded = baseline.record(
         model="m", metric="coherence", direction=baseline.LOWER_IS_BETTER,
         point=block["value"], interval=(block["value"] - 0.1, block["value"] + 0.1),
-        input_digest=block["input_digest"], partition="n/a",
+        input_digest=block["input_digest"], partition=block["partition"],
         prompt_format=block["prompt_format"], tool_version=block["tool_version"],
         seeds=[0], n=1)
     shared = {f for f in baseline.PINNED if f in block}
-    assert shared >= {"input_digest", "prompt_format", "tool_version", "metric"}
+    assert shared >= {"input_digest", "prompt_format", "tool_version", "metric", "partition"}
     disagreements = [m for m in baseline.comparability(recorded, block) if m[0] in shared]
     assert not disagreements, (
         "a coherence stamp and a baseline built from it disagree on fields they both carry: "
@@ -318,3 +319,41 @@ def test_coherence_main_accepts_the_scorers_loader_flags(monkeypatch, tmp_path):
     coherence.main(["--model", "m", "--out", str(tmp_path / "c.json"), "--device", "cpu",
                     "--load-in-4bit", "--trust-remote-code"])
     assert seen == {"load_in_4bit": True, "trust_remote_code": True}
+
+
+def test_the_probe_says_which_partition_it_read_rather_than_leaving_it_absent(
+        monkeypatch, tmp_path):
+    """The last pinned field, and the one that kept coherence outside the gate entirely.
+
+    A probe that reads one fixed passage has no partition of a corpus, and the tempting fix was
+    to let `partition` be absent for probe-shaped metrics. That is the wrong one: the field's
+    whole value is that it is never absent, because `comparability` has to treat absence as
+    unknown and the gate has to refuse on unknown. Making absence legal for one class of metric
+    makes it legal to forget on a figure that really does have a partition, which is how a
+    number scored on the selection rows once got published as a held-out one.
+    """
+    from senbonzakura import baseline
+
+    _, out = _run_main(monkeypatch, tmp_path)
+    block = json.loads(out.read_text(encoding="utf-8"))["metrics"]["coherence"]
+    assert block["partition"] == baseline.FIXED_PASSAGE
+    assert baseline.FIXED_PASSAGE in baseline.PINNED["partition"], (
+        "the sentinel is not named in the field's own description, so the next reader meets a "
+        "value with nothing explaining it")
+
+
+def test_no_pinned_field_is_missing_from_the_stamp(monkeypatch, tmp_path):
+    """Asserted against `baseline.PINNED` itself rather than against a list written here, so
+    adding a pinned field fails this test until the probe records it. A field added to the gate
+    and never stamped is a field that silently makes every coherence figure incomparable again,
+    which is precisely the state this replaced.
+    """
+    from senbonzakura import baseline
+
+    _, out = _run_main(monkeypatch, tmp_path)
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    block = doc["metrics"]["coherence"]
+    # `model` lives at the top of the artefact, where every writer here puts it.
+    missing = [f for f in baseline.PINNED
+               if block.get(f) is None and doc.get(f) is None]
+    assert not missing, f"the coherence stamp records no {', '.join(missing)}"

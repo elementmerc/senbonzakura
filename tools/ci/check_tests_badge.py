@@ -20,10 +20,20 @@ tests and still collects them, so the figure does not depend on what the machine
 have. Parametrised counts are derived from files in the tree, so they are the same everywhere.
 
 EXIT CODES
-  0  the badge matches
+  0  the badge matches, or `--write` corrected it
   1  the badge is wrong, or there is no badge to check
   2  collection itself failed, which is a broken suite rather than a stale badge
+
+`--write` UPDATES THE BADGE INSTEAD OF FAILING, and exists because this check had become
+noise. A number typed by hand goes stale the moment anybody adds a test, so it failed CI twice
+in one day for a reason nobody needed telling, and a red build that everybody knows to ignore
+is the thing that makes the next real red build get ignored too. CI now corrects it and commits
+the correction; a human running this without the flag still gets the old refusal.
+
+It never writes a number it did not measure: `--write` runs the same single collection pass and
+refuses the same way if collection fails.
 """
+import argparse
 import re
 import subprocess
 import sys
@@ -52,10 +62,18 @@ def collected_count():
     return int(m.group("count"))
 
 
-def main():
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Check, or correct, the README's tests badge.")
+    ap.add_argument("--write", action="store_true",
+                    help="rewrite the badge to the measured count instead of failing")
+    a = ap.parse_args(argv)
+
     text = README.read_text(encoding="utf-8")
     m = BADGE.search(text)
     if m is None:
+        # Still a failure under `--write`. A missing badge is not something to invent: it was
+        # either removed deliberately, in which case this check goes with it, or renamed, in
+        # which case the pattern here is what needs teaching.
         print("README has no `tests-NNNN` badge. If it was removed deliberately, remove this "
               "check with it; if it was renamed, teach the pattern here.")
         return 1
@@ -66,9 +84,16 @@ def main():
         return 0
 
     direction = "more" if real > claimed else "fewer"
+    if a.write:
+        README.write_text(
+            text[:m.start("count")] + str(real) + text[m.end("count"):], encoding="utf-8")
+        print(f"tests badge corrected from {claimed} to {real}, which is "
+              f"{abs(real - claimed)} {direction}.")
+        return 0
+
     print(f"the README badge says {claimed} tests and the suite collects {real}, which is "
           f"{abs(real - claimed)} {direction}.\n"
-          f"Update the badge URL in README.md to `tests-{real}-`.")
+          f"Update the badge URL in README.md to `tests-{real}-`, or run this with --write.")
     return 1
 
 

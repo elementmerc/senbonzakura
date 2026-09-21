@@ -212,12 +212,29 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: The tests badge states the real number
+      - name: Measure the tests badge, and correct it rather than failing on it
         # The other half of the same problem Codecov solves for coverage. `tests-3166` was typed
         # by hand and was 35 short by the time anyone looked. One matrix row, because the count
         # is the same on all of them: a skipped test is still a collected test.
+        #
+        # IT CORRECTS RATHER THAN REFUSES, since 2026-09-21. A hand-typed count goes stale the
+        # moment anybody adds a test, so this failed the build twice in one day for something
+        # nobody needed telling, and a red build everybody knows to ignore is what teaches people
+        # to ignore the next real one. The measurement still happens here; only the verdict moved.
+        #
+        # THIS JOB DOES NOT COMMIT IT. This row has just installed torch, transformers and the
+        # rest of the dependency tree, so it is the last place that should hold a token able to
+        # write to the repository. It measures, and hands the result to a job that runs nothing.
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
-        run: python tools/ci/check_tests_badge.py
+        run: python tools/ci/check_tests_badge.py --write
+
+      - name: Hand the corrected badge to the job that can commit it
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: tests-badge-readme
+          path: README.md
+          retention-days: 1
 
       - name: The checker, run on this project's own published evidence
         # DOGFOODING THE ACTION'S OWN COMMAND, on the row that already has the artefacts.
@@ -239,6 +256,71 @@ jobs:
         # tracked directory. This reads what is actually in the tree, and it runs on
         # every matrix row because it costs milliseconds.
         run: python tools/ci/check_prompt_artefacts.py .
+
+  tests-badge:
+    # THE ONLY JOB IN THIS WORKFLOW THAT CAN WRITE TO THE REPOSITORY, and it is deliberately the
+    # one that runs nothing. It installs no dependencies, executes no project code and no
+    # third-party action beyond checkout and download, so the token it holds is never in the same
+    # process as anything a compromised package could reach. Baseline section 5 is the reason:
+    # the defence against a hostile dependency is that when one turns, it reaches nothing worth
+    # having.
+    #
+    # It exists because the badge check used to fail the build over a number nobody had retyped.
+    # The measurement happens in `test`, which has the suite; the commit happens here, which has
+    # the permission. Neither job has both.
+    needs: test
+    runs-on: ubuntu-latest
+    # Only on a push to our own branches. A pull request from a fork must never reach a job with
+    # write access, and `github.event_name` is what separates them.
+    if: github.event_name == 'push' && github.repository == 'elementmerc/senbonzakura'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: tests-badge-readme
+          path: badge
+
+      - name: Commit the corrected badge, or say why it did not
+        run: |
+          set -euo pipefail
+          if cmp -s badge/README.md README.md; then
+            echo "tests badge already correct; nothing to commit"
+            exit 0
+          fi
+          cp badge/README.md README.md
+          # The diff is checked rather than trusted. This job holds a write token, so the one
+          # thing it must never do is commit whatever an earlier job handed it: if anything but
+          # the badge number changed, that is not a badge correction and it stops here.
+          if ! git diff --unified=0 -- README.md | grep -qE '^[-+].*img\.shields\.io/badge/tests-'; then
+            echo "the handed-over README differs somewhere other than the tests badge:"
+            git diff --stat -- README.md
+            git checkout -- README.md
+            exit 1
+          fi
+          if [ "$(git diff --numstat -- README.md | awk '{print $1+$2}')" != "2" ]; then
+            echo "expected exactly one changed line in README.md, got:"
+            git diff --numstat -- README.md
+            git checkout -- README.md
+            exit 1
+          fi
+          git config user.name  "senbonzakura-ci"
+          git config user.email "ops@themalwarefiles.com"
+          # `[skip ci]` because the tree this describes has just been tested by the run that
+          # measured it. Re-running the whole matrix to confirm a four-digit number in a README
+          # would double CI on every test somebody adds, which is the cost this change exists to
+          # remove.
+          git commit -m "chore(readme): the tests badge states the measured count [skip ci]" -- README.md
+          # A race with a human push is expected and is not a failure. The badge is cosmetic and
+          # self-correcting: whatever lands next measures again. Failing the build here would put
+          # back exactly the noise this job was built to remove.
+          if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "badge committed"
+          else
+            echo "could not push the badge update, most likely a race with another push."
+            echo "this is not a failure: the next run measures again and corrects it."
+          fi
 
   pinned:
     # The counterpart to `test`. That job floats every version, which is how an

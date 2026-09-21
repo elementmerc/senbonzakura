@@ -64,7 +64,7 @@ class SenbonzakuraAdapter:
         """
         if isinstance(doc.get(METRICS_KEY), dict) and doc[METRICS_KEY]:
             return True
-        if _is_abliteration_record(doc):
+        if _is_abliteration_record(doc) or _is_conversion_record(doc):
             return True
         has_metric = any(isinstance(doc.get(k), (int, float)) for k in _OUR_METRICS)
         if not has_metric:
@@ -77,6 +77,8 @@ class SenbonzakuraAdapter:
 
     @staticmethod
     def normalise(doc) -> dict:
+        if _is_conversion_record(doc):
+            return _conversion(doc)
         metrics = {}
 
         for name, block in (doc.get(METRICS_KEY) or {}).items():
@@ -216,6 +218,52 @@ def _arm_settings(doc) -> dict:
             out["generation_budget"] = block["max_new_tokens"]
             break
     return out
+
+
+#: What `senbonzakura convert` stamps into its receipt. Matched exactly rather than sniffed at,
+#: because this artefact carries no measurement at all and the usual detectors have nothing to
+#: catch: a file that reports no number cannot be recognised by the numbers it reports.
+_CONVERSION_KIND = "gguf-conversion"
+
+
+def _is_conversion_record(doc) -> bool:
+    return doc.get("record") == _CONVERSION_KIND and isinstance(doc.get("target"), dict)
+
+
+def _conversion(doc) -> dict:
+    """A conversion receipt in the canonical vocabulary.
+
+    NO `metrics` BLOCK, AND THAT IS THE POINT RATHER THAN A GAP. A conversion measures nothing:
+    it reports what went in, what came out, and whether the prompt format survived the trip. The
+    metric checks all skip it on an empty mapping, which is the correct outcome and is visible as
+    a skip rather than as a clean pass.
+
+    The two template fields are kept SEPARATE from `chat_template` and `chat_template_applied`,
+    which the run artefacts use. Those two ask whether the prompts a run scored were rendered in
+    the format the model expects. These two ask whether a file carries the template at all, which
+    is a different question with a different remedy, and collapsing them would give one check
+    two meanings.
+    """
+    source = doc.get("source") if isinstance(doc.get("source"), dict) else {}
+    target = doc.get("target") if isinstance(doc.get("target"), dict) else {}
+    return {
+        "model": source.get("path") or source.get("name"),
+        "tasks": [],
+        "metrics": {},
+        "artefact_kind": "conversion",
+        "architecture": target.get("architecture") or source.get("architecture"),
+        # True, False, or None for "nothing in the checkpoint had an opinion". The three are kept
+        # apart deliberately: a confident False on a checkpoint nobody could read is
+        # indistinguishable from a checked, clean result, which is the failure that made
+        # `source_chat_template` return None in the first place.
+        "source_declares_chat_template": source.get("declares_chat_template"),
+        "target_carries_chat_template": target.get("carries_chat_template"),
+        # The producer's own sentence about what it lost, carried across for the same reason
+        # `budget_warning` is: the one line saying why a file might be wrong is worth more than
+        # anything the checker can infer, and reading past it is how it got lost the first time.
+        "conversion_warning": doc.get("chat_template_warning"),
+        "provenance": doc.get("provenance"),
+    }
 
 
 #: The fields that identify an abliteration record and nothing else this project writes. Two are

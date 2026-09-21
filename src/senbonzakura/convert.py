@@ -46,7 +46,8 @@ import time
 from pathlib import Path
 
 from . import gguf_io
-from .crashsafe import free_bytes_for
+from ._version import __version__
+from .crashsafe import free_bytes_for, provenance
 from .vendored import VendorError, find_script
 
 #: What the vendored converter can be asked to write. Deliberately not every value it accepts:
@@ -217,6 +218,113 @@ def chat_template_lost(model_dir, header):
             f"{GGUF_CHAT_TEMPLATE_KEY}. It will load and generate, and every conversational "
             f"result from it will be measured on a prompt format the model was not trained on. "
             f"Check the converter's output above for a tokeniser it did not recognise.")
+
+
+#: What a conversion record is called, beside the file it describes. One per output, rather than
+#: one per directory, because two conversions of one checkpoint at different precisions live side
+#: by side and a shared name would leave the second silently overwriting the first's receipt.
+RECORD_SUFFIX = ".conversion.json"
+
+#: The marker an adapter detects this shape by. Two fields together rather than one, for the same
+#: reason the abliteration record needs two: a single common field could plausibly appear in
+#: somebody else's log, and an adapter that claims a foreign file reads it in the wrong language.
+RECORD_KIND = "gguf-conversion"
+
+
+def record_path(out):
+    return Path(str(out) + RECORD_SUFFIX)
+
+
+def build_conversion_record(model_dir, out, pre, got, *, outtype, quantise_to, took_s, lost):
+    """Everything this conversion claims, as a value rather than a side effect.
+
+    WHY THIS EXISTS AT ALL, when the conversion already prints what it did.
+
+    `chat_template_lost` produced a log line and nothing else. A GGUF carries its chat template in
+    its own metadata, and llama.cpp, Ollama and vLLM read it from there rather than from the
+    checkpoint: lose it and the file still loads, still answers, and answers badly, because the
+    model is handed raw text where it was trained to expect turn markers. The failure looks like a
+    bad model rather than a bad export, and the one sentence saying otherwise scrolled past an
+    operator once and was gone. That is the same shape as the `budget_warning` this project wrote
+    into three artefacts and read none of: a caveat that lives only in a terminal is lost exactly
+    where the number gets quoted from.
+
+    So it goes in a file, beside the output, in the vocabulary the checker reads.
+
+    WHY NO FIELD HERE IS CALLED `generation`, `prompt`, `output`, `text` OR `response`, and this
+    is not a stylistic choice. `tools/ci/check_prompt_artefacts.py` refuses any committed JSON
+    carrying one of those names at any depth, because that is what a retained model reply is
+    called everywhere else in this project, and it was already refusing this project's own
+    primary artefact until a field moved on 2026-09-21. The gate is the one control between a
+    harmful prompt and a public push; a record that could not be committed would be a record
+    nobody keeps.
+
+    WRITTEN AFTER VERIFICATION AND BEFORE QUANTISATION, which is a real choice. It describes the
+    conversion, from a checkpoint to a GGUF, and that is finished and read back by this point. A
+    quantisation that follows produces a different file with its own properties, so the record
+    names it as requested rather than claiming to describe it.
+    """
+    source = Path(model_dir).resolve()
+    return {
+        "record": RECORD_KIND,
+        "tool_version": __version__,
+        "source": {
+            "path": str(source),
+            "name": source.name,
+            "architecture": pre["architecture"],
+            "shards": pre["shards"],
+            "bytes": pre["bytes"],
+            # True, False, or None for "nothing here has an opinion". None is a real third answer
+            # and the check that reads it stays quiet on it: a confident negative on a checkpoint
+            # nobody could read is indistinguishable from a checked, clean result.
+            "declares_chat_template": source_chat_template(source),
+        },
+        "target": {
+            "path": str(Path(out).resolve()),
+            "name": Path(out).name,
+            "architecture": got.get("architecture"),
+            "file_type": got.get("file_type"),
+            "tensor_count": got.get("tensor_count"),
+            "bytes": Path(out).stat().st_size if Path(out).exists() else None,
+            "carries_chat_template": gguf_io.has_chat_template(got),
+        },
+        "converter": {
+            "script": str(pre["script"]),
+            "outtype": outtype,
+            "seconds": round(took_s, 1),
+        },
+        # The sentence `chat_template_lost` returns, or None when nothing was lost. Its presence
+        # is the signal, exactly as `budget_warning`'s is on the abliteration record.
+        "chat_template_warning": lost,
+        # What was ASKED to follow, not what happened. See the docstring: this record describes
+        # the conversion, and a quantised file is a different file.
+        "quantise_requested": quantise_to,
+        "provenance": provenance(),
+    }
+
+
+def write_conversion_record(out, record, *, log=print):
+    """Write the record beside its output, atomically, and never fail the conversion for it.
+
+    ATOMIC BECAUSE A HALF-WRITTEN RECEIPT IS WORSE THAN NONE: it parses as far as the reader gets
+    and then stops, which is a file that looks like evidence. Baseline section 2.1.
+
+    BEST EFFORT BECAUSE THE GGUF IS THE PRODUCT. A conversion that took forty minutes and
+    verified must not be reported as a failure because a read-only directory refused a receipt.
+    The refusal is loud in the log, which is the honest outcome: the file is good and the
+    paperwork is missing, and the reader is told which.
+    """
+    path = record_path(out)
+    tmp = path.with_suffix(path.suffix + ".part")
+    try:
+        tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        log(f"  NOTE: the GGUF is fine and its conversion record could not be written to {path} "
+            f"({e}). Nothing downstream will be able to check what this file was converted from.")
+        return None
+    return path
 
 
 def weight_files(model_dir):
@@ -630,6 +738,17 @@ def run(argv=None, log=print):
     lost = chat_template_lost(a.model, got)
     if lost:
         log(f"  NOTE: {lost}")
+
+    # THE RECEIPT, which is the half that outlives the terminal. Written whether or not anything
+    # went wrong, because a record that appears only on a bad conversion tells a reader nothing
+    # about a good one: absence would have to be read as either "fine" or "this build is too old
+    # to say", and those are different claims.
+    written = write_conversion_record(
+        out, build_conversion_record(a.model, out, pre, got, outtype=a.outtype,
+                                     quantise_to=a.quantise, took_s=took, lost=lost),
+        log=log)
+    if written:
+        log(f"  conversion record: {written.name}")
 
     if a.quantise:
         from . import quantise

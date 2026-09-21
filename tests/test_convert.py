@@ -14,6 +14,7 @@ architecture whose module raises on import stays on the list. Support claimed, s
 code zero.
 """
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -191,16 +192,30 @@ def test_every_offered_outtype_can_be_verified_afterwards():
 
 # ── run(): the parts that delete files and chain to another command ──────────────
 class _Ran:
-    """A stand-in for the converter subprocess that writes whatever the test wants it to."""
+    """A stand-in for the converter subprocess that writes whatever the test wants it to.
+
+    IT STANDS IN FOR THE CONVERTER AND NOTHING ELSE, which it did not until 2026-09-21.
+    `monkeypatch.setattr(convert.subprocess, "run", ...)` reaches the `subprocess` MODULE, not a
+    copy of it, so every other caller in the process got this object too. That was invisible
+    while `convert.run` made exactly one subprocess call, and it stopped being invisible the
+    moment the conversion record started stamping provenance: `crashsafe.git_commit` ran `git
+    rev-parse` into a fake expecting `--outfile` and seven tests died inside a helper none of
+    them had anything to do with.
+
+    Anything that is not the converter is handed to the real `subprocess.run`, so a test that
+    fakes the converter is faking the converter.
+    """
 
     def __init__(self, rc=0, write=None):
         self.rc, self.write, self.calls = rc, write, []
+        self._real = subprocess.run
 
     def __call__(self, argv, **kw):
+        if "--outfile" not in argv:
+            return self._real(argv, **kw)
         self.calls.append(argv)
         if self.write is not None:
-            out = Path(argv[argv.index("--outfile") + 1])
-            out.write_bytes(self.write)
+            Path(argv[argv.index("--outfile") + 1]).write_bytes(self.write)
         return type("R", (), {"returncode": self.rc})()
 
 
@@ -496,3 +511,160 @@ class TestTheTemplateSurvivedTheExport:
         lines = []
         convert.run([str(d), str(tmp_path / "o.gguf")], log=lines.append)
         assert not any(convert.GGUF_CHAT_TEMPLATE_KEY in ln for ln in lines), lines
+
+
+class TestTheConversionRecord:
+    """THE RECEIPT, and why the log line was not one.
+
+    `chat_template_lost` produced a sentence on stdout and nothing else, so the one statement
+    that a GGUF had lost its prompt format scrolled past an operator and was gone. That is the
+    same shape as the `budget_warning` this project wrote into three artefacts and read in none
+    of them: a caveat that lives only in a terminal is lost exactly where the number gets quoted
+    from. These hold down that a file is written, that it says the true thing in both directions,
+    and that it never costs the conversion.
+    """
+
+    def _converted(self, tmp_path, monkeypatch, *, source_template, target_template, **kw):
+        d = _checkpoint(tmp_path / "m")
+        if source_template:
+            _with_tokenizer(d, {"chat_template": "{{ x }}"})
+        out = tmp_path / "o.gguf"
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF" + b"\0" * 32))
+        meta = {convert.GGUF_CHAT_TEMPLATE_KEY: "t"} if target_template else {}
+        monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata=meta))
+        rc = convert.run([str(d), str(out), *kw.get("argv", [])], log=lambda _m: None)
+        return rc, out
+
+    @needs_converter
+    def test_a_conversion_writes_a_record_beside_its_output(self, tmp_path, monkeypatch):
+        rc, out = self._converted(tmp_path, monkeypatch,
+                                  source_template=True, target_template=True)
+        assert rc == 0
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        assert rec["record"] == convert.RECORD_KIND
+        assert rec["source"]["architecture"] == "Qwen3ForCausalLM"
+        assert rec["source"]["declares_chat_template"] is True
+        assert rec["target"]["carries_chat_template"] is True
+        assert rec["target"]["name"] == "o.gguf"
+        assert rec["chat_template_warning"] is None
+        assert rec["tool_version"] and rec["provenance"]
+
+    @needs_converter
+    def test_the_record_carries_the_warning_the_log_used_to_carry_alone(self, tmp_path,
+                                                                       monkeypatch):
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=True, target_template=False)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        assert rec["source"]["declares_chat_template"] is True
+        assert rec["target"]["carries_chat_template"] is False
+        assert convert.GGUF_CHAT_TEMPLATE_KEY in rec["chat_template_warning"]
+
+    @needs_converter
+    def test_a_record_is_written_even_when_nothing_went_wrong(self, tmp_path, monkeypatch):
+        """A record that appears only on a bad conversion tells a reader nothing about a good
+        one: its absence would have to mean either `fine` or `this build is too old to say`.
+        """
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=False, target_template=False)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        assert rec["chat_template_warning"] is None
+        # NONE, NOT FALSE, and the distinction is the one `source_chat_template` was fixed for on
+        # 2026-09-21. This checkpoint has no tokeniser config and no template file, so nothing in
+        # it has an opinion. A confident False there is indistinguishable from a checked, clean
+        # result, and it is what switched the export guard off for a month.
+        assert rec["source"]["declares_chat_template"] is None
+
+    @needs_converter
+    def test_a_checkpoint_that_says_it_has_no_template_is_recorded_as_saying_so(self, tmp_path,
+                                                                                monkeypatch):
+        d = _checkpoint(tmp_path / "m")
+        _with_tokenizer(d, {"bos_token": "<s>"})
+        out = tmp_path / "o.gguf"
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
+        convert.run([str(d), str(out)], log=lambda _m: None)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        assert rec["source"]["declares_chat_template"] is False
+
+    @needs_converter
+    def test_no_field_at_any_depth_carries_a_name_the_leak_gate_bans(self, tmp_path, monkeypatch):
+        """`tools/ci/check_prompt_artefacts.py` refuses a key called `generation`, `prompt`,
+        `output`, `text` or `response` anywhere in committed JSON, because that is what a
+        retained model reply is called everywhere else here. A record that cannot be committed
+        is a record nobody keeps, and this project has already had that exact standoff with its
+        own primary artefact.
+        """
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "ci"))
+        from check_prompt_artefacts import banned_keys_in
+
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=True, target_template=False)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        assert banned_keys_in(rec) == set()
+
+    @needs_converter
+    def test_a_record_that_cannot_be_written_does_not_fail_the_conversion(self, tmp_path,
+                                                                         monkeypatch, capsys):
+        """The GGUF is the product. A conversion that took forty minutes and verified must not
+        be reported as a failure because a read-only directory refused a receipt.
+        """
+        def _boom(*a, **k):
+            raise OSError("read-only file system")
+        # The RENAME is what is broken, not the write, so the temporary file is created and then
+        # has to be cleaned up: this exercises the cleanup as well as the refusal. Patching
+        # `write_text` instead would break `_checkpoint` too and test nothing about the record.
+        monkeypatch.setattr(Path, "replace", _boom)
+        lines = []
+        d = _checkpoint(tmp_path / "m")
+        out = tmp_path / "o.gguf"
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
+        assert convert.run([str(d), str(out)], log=lines.append) == 0
+        assert any("could not be written" in ln for ln in lines), lines
+        assert not convert.record_path(out).exists()
+
+    @needs_converter
+    def test_no_part_file_is_left_behind(self, tmp_path, monkeypatch):
+        """Baseline section 2.1: never leave a `.part` behind. A half-written receipt parses as
+        far as the reader gets and then stops, which is a file that looks like evidence.
+        """
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=True, target_template=True)
+        assert not list(out.parent.glob("*.part"))
+
+    @needs_converter
+    def test_the_checker_reads_the_record_and_finds_the_lost_template(self, tmp_path,
+                                                                      monkeypatch):
+        """THE WHOLE POINT OF WRITING IT. The check could not be written against a real file
+        before, because `convert` produced no file at all.
+        """
+        from senbonzakura_check import check_document
+        from senbonzakura_check.registry import load_checks
+
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=True, target_template=False)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        findings, _ = check_document(rec, load_checks())
+        fired = {f.check_id: f.severity for f in findings}
+        assert fired.get("a-chat-template-lost-in-conversion") == "withdraws", findings
+
+    @needs_converter
+    def test_the_checker_is_quiet_on_a_conversion_that_kept_it(self, tmp_path, monkeypatch):
+        from senbonzakura_check import check_document
+        from senbonzakura_check.registry import load_checks
+
+        _, out = self._converted(tmp_path, monkeypatch,
+                                 source_template=True, target_template=True)
+        rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
+        findings, skipped = check_document(rec, load_checks())
+        assert "a-chat-template-lost-in-conversion" not in {f.check_id for f in findings}
+        assert "a-chat-template-lost-in-conversion" not in skipped, (
+            "the check was skipped on a record that answers its question, which would make its "
+            "silence on a real conversion mean nothing")

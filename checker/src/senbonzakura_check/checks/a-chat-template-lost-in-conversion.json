@@ -1,0 +1,49 @@
+{
+  "id": "a-chat-template-lost-in-conversion",
+  "title": "The checkpoint had a chat template and the converted file does not",
+  "detects": "A conversion whose source checkpoint declares a chat template and whose output carries none. A GGUF holds its chat template in its own metadata, and llama.cpp, Ollama and vLLM read it from there rather than from the checkpoint the file came from. Lose it and the file still loads, still answers, and answers badly: the model is handed raw text where it was trained to expect turn markers. Nothing about the tensors is wrong, which is exactly why a tensor check cannot see it, and every conversational number measured from that file describes a prompt format the model was never trained on.",
+  "incident": "Ours, 2026-08-18 and 2026-09-21, twice over. The converter's chat-template guard read only `tokenizer_config.json`, which is where transformers keeps the template least often now; a modern save writes raw Jinja to `chat_template.jinja` and leaves the config with no such key. So the guard returned `definitely none` for checkpoints carrying a perfectly good template and switched itself off, and it was found on the ROG against a model whose template is 5,487 bytes in the file the guard never opened. Behind that, the same month, `gguf` from PyPI and `gguf-py` from the llama.cpp tree both declared version 0.19.0 with different contents, which made two targets unconvertible while every surface reported success. When the guard did fire it produced a log line and nothing else, so the one sentence saying the export was damaged scrolled past and was gone.",
+  "remedy": "Re-convert with a converter that recognises the tokeniser, and check the output's `tokenizer.chat_template` before publishing it. If the file has already been served, any conversational evaluation taken from it measured the raw format and has to be re-run rather than re-labelled. Check the converter's own log for a tokeniser it did not recognise: that is usually where the template went.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "A base model with no chat template is supposed to take raw prompts, and this stays quiet on one, because it fires on the disagreement rather than on absence. It reads the source's declaration from the record rather than from the checkpoint, so a record written by a build whose template detection was wrong carries that error forward, which is exactly how this defect hid for a month. A checkpoint whose template lives somewhere neither the producer nor this checker knows about reads as `no opinion`, and the check is SKIPPED rather than passed on it, so silence there means the question was not asked. It says nothing about whether the template that survived is the RIGHT one: a converted file carrying a template that renders differently from the original passes this check cleanly.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "equals", "path": "artefact_kind", "value": "conversion"},
+      {"op": "present", "path": "source_declares_chat_template"},
+      {"op": "not_equals", "path": "source_declares_chat_template", "value": null},
+      {"op": "present", "path": "target_carries_chat_template"},
+      {"op": "not_equals", "path": "target_carries_chat_template", "value": null}
+    ]
+  },
+
+  "rule": {
+    "op": "all_of",
+    "rules": [
+      {"op": "truthy", "path": "source_declares_chat_template"},
+      {"op": "falsy", "path": "target_carries_chat_template"}
+    ]
+  },
+
+  "control": {
+    "fires_on": [
+      {"artefact_kind": "conversion", "source_declares_chat_template": true,
+       "target_carries_chat_template": false},
+      {"artefact_kind": "conversion", "source_declares_chat_template": true,
+       "target_carries_chat_template": false,
+       "conversion_warning": "the checkpoint declares a chat template and the converted file carries no tokenizer.chat_template"}
+    ],
+    "passes_on": [
+      {"artefact_kind": "conversion", "source_declares_chat_template": true,
+       "target_carries_chat_template": true},
+      {"artefact_kind": "conversion", "source_declares_chat_template": false,
+       "target_carries_chat_template": false},
+      {"artefact_kind": "conversion", "source_declares_chat_template": null,
+       "target_carries_chat_template": false},
+      {"artefact_kind": "conversion", "source_declares_chat_template": false,
+       "target_carries_chat_template": true}
+    ]
+  }
+}

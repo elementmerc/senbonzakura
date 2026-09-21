@@ -89,6 +89,13 @@ class SenbonzakuraAdapter:
                     "n": block.get("n"),
                     "higher_is_better": block.get("higher_is_better"),
                     "interval": block.get("interval"),
+                    # WHICH BUILD PRODUCED THIS NUMBER, carried across rather than dropped.
+                    # `measurement.stamp` writes it as an extra, and until a pair check needed it
+                    # this adapter silently discarded it: the seven fields above were a fixed
+                    # list. A figure whose estimator changed between two versions is not
+                    # comparable with the same figure from the other version, and without this
+                    # field nothing downstream can tell those two cases apart.
+                    "tool_version": block.get("tool_version"),
                 }
 
         if not metrics:
@@ -144,7 +151,71 @@ class SenbonzakuraAdapter:
             # what keeps every record written before the move readable.
             "generation_budget": generation.get("max_new_tokens"),
             "provenance": doc.get("provenance"),
+            "settings": _arm_settings(doc),
         }
+
+
+#: The fields of an abliteration record that DEFINE AN ARM, as (the record's name, the canonical
+#: name a check reads). Everything else the record carries is a result, a profile or a provenance
+#: stamp, and a difference in one of those is not a difference in the experiment.
+#:
+#: `seed` IS DELIBERATELY ABSENT, and it is the one worth explaining. Two arms of a five-seed
+#: comparison differ in their seed by construction, and that is the comparison working rather than
+#: a confound: the whole reason to run five is that one is a sample. Counting the seed as a
+#: differing setting would make `arms-that-differ-in-more-than-the-named-variable` fire on every
+#: correctly-run multi-seed experiment, and a check that fires on the right answer is uninstalled
+#: within the week.
+#:
+#: `model` IS PRESENT, because two arms on different checkpoints are not arms of one experiment
+#: however carefully everything else was matched.
+_ARM_SETTINGS = (
+    ("num_directions", "num_directions"),
+    ("dir_mode", "dir_mode"),
+    ("max_directions", "max_directions"),
+    ("direction_index", "direction_index"),
+    ("per_component", "per_component"),
+    ("sparsity", "sparsity"),
+    ("ablation_rounds", "ablation_rounds"),
+    ("norm_restore", "norm_restore"),
+    ("ablate_conv", "ablate_conv"),
+    ("good_orth", "good_orth"),
+    ("warm_start", "warm_start"),
+    ("search", "search"),
+    ("trials", "trials"),
+    ("method", "method"),
+    ("matched_scoring", "matched_scoring"),
+    ("separation_statistic", "separation_statistic"),
+    ("model", "model"),
+    ("model_id", "model_id"),
+    ("model_revision", "model_revision"),
+    ("track_digest", "track_digest"),
+)
+
+
+def _arm_settings(doc) -> dict:
+    """What this run was configured to do, for a check that compares two runs.
+
+    A SETTING THE RECORD DOES NOT CARRY IS ABSENT, not null. `differs_in_more_than` compares only
+    keys present on both sides, so an absent setting drops out of the comparison rather than
+    counting as a difference against an arm that recorded it. That is the honest reading: a field
+    one producer writes and the other does not is a fact about the two producers, and the check
+    that owns that question asks it directly.
+    """
+    out = {}
+    for field, name in _ARM_SETTINGS:
+        value = doc.get(field)
+        if value is not None:
+            out[name] = value
+    template = doc.get("chat_template")
+    if template is not None:
+        out["chat_template"] = (template.get("source") if isinstance(template, dict)
+                                else template)
+    for block_name in ("generation_settings", "generation"):
+        block = doc.get(block_name)
+        if isinstance(block, dict) and block.get("max_new_tokens") is not None:
+            out["generation_budget"] = block["max_new_tokens"]
+            break
+    return out
 
 
 #: The fields that identify an abliteration record and nothing else this project writes. Two are

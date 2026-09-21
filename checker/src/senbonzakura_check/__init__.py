@@ -37,6 +37,7 @@ from .registry import (
     evaluate,
     load_checks,
     run_checks,
+    run_pair_checks,
 )
 
 
@@ -55,7 +56,18 @@ def check_document(doc, checks=None):
     return run_checks(normalise(doc), checks)
 
 
+def check_pair(doc_a, doc_b, checks=None):
+    """Normalise two artefacts and run the checks that compare them.
+
+    Both sides go through the adapters first, for the same reason a single document does: a pair
+    check written against one producer's spelling would be a per-harness check, and the two
+    incidents behind these checks are not this project's alone.
+    """
+    return run_pair_checks(normalise(doc_a), normalise(doc_b), checks)
+
+
 __all__ = [
     "Check", "CheckError", "Finding", "UnknownArtefactError",
-    "check_document", "detect", "evaluate", "load_checks", "normalise", "run_checks",
+    "check_document", "check_pair", "detect", "evaluate", "load_checks", "normalise",
+    "run_checks", "run_pair_checks",
 ]

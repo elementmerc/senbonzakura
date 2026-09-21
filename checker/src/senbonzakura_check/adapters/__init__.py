@@ -90,8 +90,43 @@ def normalise(doc):
               "clean report on something nobody parsed is worse than no report.")
     out = adapter.normalise(doc)
     out.setdefault("harness", adapter.name)
+    out.update(_instrument_identity(out.get("metrics")))
     out["raw"] = doc
     return out
+
+
+def _instrument_identity(metrics) -> dict:
+    """Who measured what, derived once here rather than in each adapter.
+
+    Two fields, and both exist for `a-figure-compared-across-an-instrument-change`, which asks
+    whether two figures were produced by the same instrument and therefore can be subtracted.
+
+    `metric_names` is what the artefact reports at all. `instrument_signature` is what produced
+    each one, as `metric:estimator` pairs in sorted order, so two artefacts can be compared with
+    an ordinary field comparison instead of a new rule operator. Sorted because a signature whose
+    order depends on a dict's insertion order would differ between two artefacts that agree, per
+    baseline section 2.1.
+
+    `tool_version` is the weakest of the three and is read from the measurements rather than
+    invented: `measurement.stamp` records which build wrote each figure, and an artefact whose
+    figures came from different builds is not an artefact anybody should be subtracting. None
+    when nothing recorded one, which is the common case and is why the check that reads it treats
+    absence as unknown rather than as agreement.
+    """
+    blocks = [b for b in (metrics or {}).values() if isinstance(b, dict)]
+    versions = sorted({b["tool_version"] for b in blocks
+                       if isinstance(b.get("tool_version"), str) and b["tool_version"]})
+    return {
+        "metric_names": sorted({b["metric"] for b in blocks if isinstance(b.get("metric"), str)}),
+        "instrument_signature": sorted(
+            f"{b.get('metric')}:{b.get('estimator')}" for b in blocks),
+        # A single version, or None. TWO DIFFERENT VERSIONS INSIDE ONE ARTEFACT ARE NOT COLLAPSED
+        # to the first one: that would hand a comparison a version string that describes half the
+        # file. Reported as the joined pair, so it differs from either arm of a comparison and the
+        # check fires rather than passing on a document it could not summarise.
+        "tool_version": (versions[0] if len(versions) == 1
+                         else ("+".join(versions) if versions else None)),
+    }
 
 
 __all__ = ["ADAPTERS", "UnknownArtefactError", "detect", "normalise"]

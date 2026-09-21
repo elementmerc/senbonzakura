@@ -47,6 +47,37 @@ WHAT EVERY CHECK MUST CARRY, AND WHY EACH FIELD IS MANDATORY
                   that it can fail. Read out of soup on 2026-09-02: a check nobody has watched
                   fail is a check nobody has tested. `tests/` runs all of them.
 
+    arity        `document` (the default) or `pair`. OPTIONAL with a default, for the same
+                  reason severity is: a field that invalidates every check file written before
+                  it existed is a breaking change to a contribution format.
+
+A CHECK THAT NEEDS TWO DOCUMENTS, AND WHY THE ENGINE GREW AN ARITY RATHER THAN A SECOND ENGINE
+
+Two defects this project has actually shipped cannot be seen in one artefact. An arm that differs
+from its counterpart in more than the variable the comparison names is a fact about two arms; a
+figure compared across a change of instrument is a fact about two figures. Both were skipped when
+the checks were first written, purely because `run_checks` read one document.
+
+The design is three decisions, and each one is a refusal to do the convenient thing.
+
+**A pair is a document.** `run_pair_checks` builds `{"arm_a": ..., "arm_b": ...}` and evaluates
+the ordinary rule language against it, so a pair check is written with the same operators, the
+same dotted paths and the same controls as any other. The alternative, a second rule vocabulary
+that takes two documents, would mean every operator existing twice and drifting apart, which is
+the failure this codebase has already had with two hand-maintained architecture lists.
+
+**A pair check is SKIPPED on a single document, never passed.** `run_checks` puts every
+`arity: pair` check into `skipped` without evaluating it. Skipped and passed are the central
+distinction in this whole design: a pair check reported as passing on one file would be claiming
+a comparison was sound when no comparison was examined.
+
+**The caller names the pair; nothing infers it.** `senbonzakura check --pair a.json b.json` takes
+exactly two result files and refuses anything else. Sweeping a directory and pairing everything in
+it was the other candidate and it manufactures comparisons nobody ran: `head-to-head/results/`
+holds thirty arms across several models and tools, and 435 of those pairs are not comparisons at
+all. Which two artefacts are arms of one experiment is a claim only the person who ran them can
+make, and a checker that guesses it reports findings about experiments that never existed.
+
 THE RULE LANGUAGE IS DELIBERATELY SMALL
 
 It is a handful of operators over dotted paths, not an expression language. Two reasons. A rule
@@ -91,6 +122,19 @@ CONFIDENCES = ("high", "medium", "low")
 SEVERITIES = ("withdraws", "qualifies", "notes")
 DEFAULT_SEVERITY = "qualifies"
 
+#: How many documents a check needs to answer its question.
+#:
+#: OPTIONAL WITH A DEFAULT, for the same reason `severity` is: making it mandatory would refuse
+#: every check file written before it existed, including anybody else's, and a contribution
+#: format that invalidates existing contributions is not one.
+ARITIES = ("document", "pair")
+DEFAULT_ARITY = "document"
+
+#: The keys a pair is assembled under. Named here rather than spelled at each call site, because
+#: a check file addresses them by these exact strings and a second spelling of one of them is how
+#: a check starts reading a field nobody writes.
+PAIR_KEYS = ("arm_a", "arm_b")
+
 #: A sentinel distinct from None, because a JSON document may legitimately hold a null and
 #: "the field is absent" and "the field is present and null" are different claims about it.
 MISSING = object()
@@ -117,6 +161,7 @@ class Check:
     rule: dict
     control: dict
     severity: str = DEFAULT_SEVERITY
+    arity: str = DEFAULT_ARITY
     source: Path | None = None
 
 
@@ -356,6 +401,33 @@ def evaluate(rule: dict, doc: Any) -> bool:
             return any(item != a for item in b)
         return a != b
 
+    if op == "differs_in_more_than":
+        # THE SIXTH OPERATOR ADDED AFTER THE FACT, and the rule says to name the check that
+        # needed it. `arms-that-differ-in-more-than-the-named-variable` did, and nothing in the
+        # existing vocabulary can express it: `disagrees` answers "do these two fields differ"
+        # one pair at a time, and an `any_of` over several of those answers "at least one
+        # differs", which is true of every honest comparison ever run. The finding is about the
+        # COUNT, because a comparison that moves one setting attributes its result to that
+        # setting and a comparison that moves three attributes it to nothing.
+        #
+        # ONLY KEYS RECORDED ON BOTH SIDES ARE COMPARED, and that is a deliberate narrowing
+        # rather than an oversight. A key one arm writes and the other does not is a difference
+        # in what was RECORDED, which is usually two versions of a producer rather than two
+        # settings, and counting it would fire on every pair of artefacts written months apart.
+        # That question belongs to `a-figure-compared-across-an-instrument-change`, which asks it
+        # directly instead of inferring it from a field count.
+        paths = rule.get("paths")
+        if not isinstance(paths, list) or len(paths) != 2:
+            raise CheckError("`differs_in_more_than` needs exactly two `paths`")
+        limit = rule.get("value")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+            raise CheckError("`differs_in_more_than` needs a non-negative integer `value`")
+        a, b = (dotted(doc, p) for p in paths)
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return False
+        differing = sum(1 for k in a.keys() & b.keys() if a[k] != b[k])
+        return differing > limit
+
     if op == "intersects":
         paths = rule.get("paths")
         if not isinstance(paths, list) or len(paths) != 2:
@@ -420,6 +492,14 @@ def _validate(raw: dict, source: Path | None) -> Check:
             f"check {raw['id']!r}{where} has confidence {raw['confidence']!r}; "
             f"expected one of {', '.join(CONFIDENCES)}")
 
+    arity = raw.get("arity", DEFAULT_ARITY)
+    if arity not in ARITIES:
+        raise CheckError(
+            f"check {raw['id']!r}{where} has arity {arity!r}; expected one of "
+            f"{', '.join(ARITIES)}. A check reads one artefact or compares two, and the engine "
+            f"has to know which before it can decide whether a single file SKIPS it or passes "
+            f"it.")
+
     control = raw["control"]
     if not isinstance(control, dict):
         raise CheckError(f"check {raw['id']!r}{where}: `control` must be an object")
@@ -430,8 +510,21 @@ def _validate(raw: dict, source: Path | None) -> Check:
                 f"check {raw['id']!r}{where} has no `control.{key}`. Every check ships a document "
                 f"that makes it fire and one that does not, because a check nobody has watched "
                 f"fail is a check nobody has tested.")
+        if arity == "pair":
+            # A PAIR CHECK'S CONTROL IS A PAIR, and it is refused rather than coerced. A control
+            # written as a single document would be evaluated against a pair document whose two
+            # arms are both missing, where every rule here answers false: the check would pass
+            # its negative control for the reason that it examined nothing, which is the exact
+            # thing the controls exist to rule out.
+            for i, entry in enumerate(got):
+                if not isinstance(entry, list) or len(entry) != 2:
+                    raise CheckError(
+                        f"check {raw['id']!r}{where}: `control.{key}[{i}]` must be a two-element "
+                        f"list, because this check compares two artefacts and a control that is "
+                        f"not a pair proves nothing about it.")
 
-    return Check(**{f: raw[f] for f in REQUIRED_FIELDS}, severity=severity, source=source)
+    return Check(**{f: raw[f] for f in REQUIRED_FIELDS},
+                 severity=severity, arity=arity, source=source)
 
 
 def load_checks(directory: Path | str | None = None) -> list[Check]:
@@ -469,10 +562,51 @@ def run_checks(doc: Any, checks=None, *, artefact: str | None = None):
     checks = load_checks() if checks is None else checks
     findings, skipped = [], []
     for check in checks:
+        # A PAIR CHECK IS SKIPPED HERE, NEVER PASSED. It asks a question about two artefacts and
+        # one was supplied, so it did not examine anything; reporting that as a pass would be
+        # this command claiming a comparison is sound when no comparison was read.
+        if check.arity == "pair":
+            skipped.append(check.id)
+            continue
         if not evaluate(check.applies_to, doc):
             skipped.append(check.id)
             continue
         if evaluate(check.rule, doc):
+            findings.append(Finding(
+                check_id=check.id, title=check.title, detects=check.detects,
+                incident=check.incident, remedy=check.remedy,
+                confidence=check.confidence, false_positive=check.false_positive,
+                severity=check.severity, artefact=artefact))
+    return sorted(findings, key=weight), skipped
+
+
+def as_pair(doc_a, doc_b) -> dict:
+    """The one document a pair check is evaluated against.
+
+    The keys are `arm_a` and `arm_b`, and a check file reaches into either side with an ordinary
+    dotted path (`arm_a.metrics`, `arm_b.settings`). That is the whole trick: a pair check needs
+    no new rule vocabulary, only a document with two halves.
+    """
+    return dict(zip(PAIR_KEYS, (doc_a, doc_b), strict=True))
+
+
+def run_pair_checks(doc_a, doc_b, checks=None, *, artefact: str | None = None):
+    """Run the PAIR checks over two artefacts. Returns (findings, skipped_ids).
+
+    Single-document checks are not run here and are not reported as skipped: the caller has
+    already run them over each file on its own, and listing them again would inflate the
+    "did not apply" count with checks that did apply, somewhere else.
+    """
+    checks = load_checks() if checks is None else checks
+    pair = as_pair(doc_a, doc_b)
+    findings, skipped = [], []
+    for check in checks:
+        if check.arity != "pair":
+            continue
+        if not evaluate(check.applies_to, pair):
+            skipped.append(check.id)
+            continue
+        if evaluate(check.rule, pair):
             findings.append(Finding(
                 check_id=check.id, title=check.title, detects=check.detects,
                 incident=check.incident, remedy=check.remedy,

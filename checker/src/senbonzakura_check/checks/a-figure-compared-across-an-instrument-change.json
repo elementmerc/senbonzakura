@@ -1,0 +1,65 @@
+{
+  "id": "a-figure-compared-across-an-instrument-change",
+  "title": "Two figures compared across a change of instrument, so the difference may be the ruler",
+  "arity": "pair",
+  "detects": "Two artefacts reporting a metric in common, whose measurements were produced by different builds of the measuring tool or by different estimators. A metric is not its name, it is its name plus the procedure that produced it, so two numbers called the same thing and produced differently are two quantities. Subtracting them yields a difference that is partly the model and partly the ruler, in unknown proportion.",
+  "incident": "Ours, 2026-09-08. Every noncompliance figure this project had published was withdrawn, because the detector behind them counted statements of fact about legality as hedging: a compliant technical answer scored as a refusal, at weight 1.0 in the rule that chose which model shipped. The estimator changed when that was fixed, and the artefacts written before and after carry the same metric name. Behind it, ours, 2026-08-05: four published claims were withdrawn because arms that had done different amounts of work were compared as one measurement, and no field in any artefact said otherwise. Nothing was mislabelled; there were simply no labels, which is why this reads the recorded identity rather than the number.",
+  "remedy": "Re-measure both arms with one build of the tool and one estimator, and compare those. If only one arm can be re-measured, the other is a historical figure and belongs in the prose rather than in the subtraction. Where the estimator genuinely changed, say so beside the comparison and give the size of the change on a fixed input, which is the only thing that separates a moved model from a moved ruler.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "A patch release of the measuring tool that touched nothing on the path to this metric will fire this check, and the finding will be wrong: the version string is a proxy for the estimator, not the estimator itself, and it moves for reasons that have nothing to do with the number. The reverse is the worse case and this check cannot see it at all: an estimator changed WITHIN one version leaves both artefacts claiming the same identity, so a clean result here is not evidence that the instrument held still. It is also SKIPPED, never passed, on any pair where either side records no tool version. That is most artefacts, including every one this project has published, so the absence of a finding on a real comparison usually means the question could not be asked rather than that the answer was good.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "intersects", "paths": ["arm_a.metric_names", "arm_b.metric_names"]},
+      {"op": "truthy", "path": "arm_a.tool_version"},
+      {"op": "truthy", "path": "arm_b.tool_version"}
+    ]
+  },
+
+  "rule": {
+    "op": "any_of",
+    "rules": [
+      {"op": "disagrees", "paths": ["arm_a.tool_version", "arm_b.tool_version"]},
+      {"op": "disagrees", "paths": ["arm_a.instrument_signature", "arm_b.instrument_signature"]}
+    ]
+  },
+
+  "control": {
+    "fires_on": [
+      [
+        {"metric_names": ["refusal_rate"], "tool_version": "0.6.0",
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]},
+        {"metric_names": ["refusal_rate"], "tool_version": "0.7.1",
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]}
+      ],
+      [
+        {"metric_names": ["kl"], "tool_version": "0.7.1",
+         "instrument_signature": ["kl:first-token-full-distribution"]},
+        {"metric_names": ["kl"], "tool_version": "0.7.1",
+         "instrument_signature": ["kl:continuation-nll-difference"]}
+      ]
+    ],
+    "passes_on": [
+      [
+        {"metric_names": ["refusal_rate"], "tool_version": "0.7.1",
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]},
+        {"metric_names": ["refusal_rate"], "tool_version": "0.7.1",
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]}
+      ],
+      [
+        {"metric_names": ["refusal_rate"], "tool_version": "0.7.1",
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]},
+        {"metric_names": ["capability"], "tool_version": "0.6.0",
+         "instrument_signature": ["capability:code-graded"]}
+      ],
+      [
+        {"metric_names": ["refusal_rate"], "tool_version": null,
+         "instrument_signature": ["refusal_rate:senbonzakura-ruler"]},
+        {"metric_names": ["refusal_rate"], "tool_version": "0.7.1",
+         "instrument_signature": ["refusal_rate:heretic-keyword"]}
+      ]
+    ]
+  }
+}

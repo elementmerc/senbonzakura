@@ -279,6 +279,97 @@ def test_our_own_published_results_directory_passes_cleanly():
     assert "0 unchecked" in text
 
 
+# ── --pair, for the defects that are not visible in one file ─────────────────────────────────
+
+#: Two arms of one comparison, stamped so the instrument check can actually ask its question.
+#: Written in the shape our own scorer writes rather than in the normalised vocabulary, so these
+#: go through detection and adaptation the way a real file does.
+def _arm(version, refusal=0.31):
+    return {
+        "model": "m", "label": "arm", "instrument": "senbonzakura.refusal_rate",
+        # The rows the rate was scored on. Present so these fixtures do not trip the
+        # single-document checks: what is under test here is the pair path, and an arm that fires
+        # `a-rate-with-no-partition-beside-it` would make the exit code say nothing about it.
+        "eval": "held-out",
+        "metrics": {"refusal_rate": {
+            "metric": "refusal_rate", "value": refusal, "estimator": "senbonzakura-ruler",
+            "units": "proportion", "n": 200, "tool_version": version}},
+    }
+
+
+def test_pair_needs_exactly_two_named_files(tmp_path):
+    """Which two artefacts are arms of one comparison is a claim only the caller can make, so
+    the refusal is loud rather than a guess at what was meant.
+    """
+    one = str(_write(tmp_path, "a.json", _arm("0.7.1")))
+    code, text = _run(["--pair", one])
+    assert code == 2
+    assert "exactly two" in text
+
+
+def test_pair_refuses_a_directory_rather_than_pairing_everything_in_it(tmp_path):
+    """`head-to-head/results/` holds thirty arms across several models and tools. Pairing them
+    all would report findings about 435 comparisons, of which nobody ran more than a handful.
+    """
+    _write(tmp_path, "a.json", _arm("0.7.1"))
+    _write(tmp_path, "b.json", _arm("0.6.0"))
+    code, text = _run(["--pair", str(tmp_path)])
+    assert code == 2
+    assert "named on the command line" in text
+
+
+def test_a_pair_check_fires_on_two_arms_measured_by_different_builds(tmp_path):
+    a = str(_write(tmp_path, "a.json", _arm("0.6.0")))
+    b = str(_write(tmp_path, "b.json", _arm("0.7.1")))
+    code, text = _run(["--pair", a, b])
+    assert code == 1
+    assert "a-figure-compared-across-an-instrument-change" in text
+    assert "1 pair" in text
+
+
+def test_the_same_two_arms_are_quiet_when_one_build_measured_both(tmp_path):
+    a = str(_write(tmp_path, "a.json", _arm("0.7.1")))
+    b = str(_write(tmp_path, "b.json", _arm("0.7.1", refusal=0.12)))
+    code, text = _run(["--pair", a, b])
+    assert code == 0, text
+    assert "a-figure-compared-across-an-instrument-change" not in text
+
+
+def test_a_pair_check_is_not_reported_as_passing_on_a_single_file(tmp_path):
+    """THE DISTINCTION THE WHOLE PAIR DESIGN TURNS ON. Without `--pair` the two pair checks did
+    not examine anything, and the summary has to say so rather than folding them into a clean
+    report.
+    """
+    one = str(_write(tmp_path, "a.json", _arm("0.7.1")))
+    code, text = _run([one])
+    assert code == 0
+    assert "checks did not apply" in text
+    entry = json.loads(_run(["--json", one])[1])[0]
+    assert not entry["findings"]
+    assert "a-figure-compared-across-an-instrument-change" in entry["skipped"]
+    assert "arms-that-differ-in-more-than-the-named-variable" in entry["skipped"]
+
+
+def test_a_pair_with_one_unreadable_arm_is_unchecked_rather_than_clean(tmp_path):
+    a = str(_write(tmp_path, "a.json", _arm("0.7.1")))
+    b = tmp_path / "b.json"
+    b.write_text("{not json", encoding="utf-8")
+    code, text = _run(["--pair", a, str(b)])
+    assert code == 2
+    assert "UNCHECKED" in text
+
+
+def test_each_arm_is_still_checked_on_its_own_under_pair(tmp_path):
+    """`--pair` ADDS the questions that need two artefacts; it does not replace the ones that
+    need one. A defect visible in a single file is visible whether or not it is being compared.
+    """
+    a = str(_write(tmp_path, "a.json", BAD))
+    b = str(_write(tmp_path, "b.json", GOOD))
+    code, text = _run(["--pair", a, b])
+    assert code == 1
+    assert "metric-reported-without-its-estimator" in text
+
+
 # ── the published action ─────────────────────────────────────────────────────────────────────
 
 def _action():

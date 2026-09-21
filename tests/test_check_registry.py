@@ -40,8 +40,19 @@ def test_some_checks_actually_ship():
     assert CHECKS, "no checks found; has the directory moved?"
 
 
+def _as_document(check, control):
+    """The document a control is evaluated against, which for a pair check is the pair.
+
+    A pair check's controls are two-element lists, and the registry refuses any other shape. They
+    are assembled here exactly as `run_pair_checks` assembles a real pair, so a control that
+    passes here is a control the engine would evaluate identically.
+    """
+    return registry.as_pair(*control) if check.arity == "pair" else control
+
+
 def _control_cases(kind):
-    return [(c.id, i, doc) for c in CHECKS for i, doc in enumerate(c.control[kind])]
+    return [(c.id, i, _as_document(c, doc))
+            for c in CHECKS for i, doc in enumerate(c.control[kind])]
 
 
 @pytest.mark.parametrize(("check_id", "i", "doc"),
@@ -309,6 +320,108 @@ def test_a_check_that_does_not_apply_is_skipped_and_not_counted_as_a_pass():
 def test_a_check_that_applies_and_does_not_fire_is_neither_a_finding_nor_a_skip():
     findings, skipped = run_checks({}, [_check(rule={"op": "never"})])
     assert findings == [] and skipped == []
+
+
+# ── a check that needs two documents ─────────────────────────────────────────────────────────
+
+def test_a_pair_check_is_skipped_on_a_single_document_and_never_passed():
+    """THE CENTRAL DISTINCTION OF THE PAIR DESIGN, and the reason the engine grew an arity at all.
+
+    A pair check asks a question about two artefacts. Handed one, it examined nothing, and
+    reporting that as a pass would be the checker claiming a comparison is sound when no
+    comparison was read. That is the same defect as a silent pass on an unparsed file, one level
+    up.
+    """
+    check = _check(arity="pair", rule={"op": "always"}, applies_to={"op": "always"})
+    findings, skipped = run_checks({"anything": 1}, [check])
+    assert findings == [], "a pair check fired on a single document"
+    assert skipped == ["c"], "a pair check on one document must be SKIPPED, not passed"
+
+
+def test_a_single_document_check_does_not_run_on_a_pair():
+    """The mirror. `run_pair_checks` runs the pair checks and leaves the rest alone: each arm has
+    already been checked on its own, and listing the single-document checks as skipped here would
+    inflate the "did not apply" count with checks that did apply, somewhere else.
+    """
+    findings, skipped = registry.run_pair_checks({}, {}, [_check(rule={"op": "always"})])
+    assert findings == [] and skipped == []
+
+
+def test_a_pair_check_reads_both_arms_through_ordinary_dotted_paths():
+    check = _check(arity="pair", applies_to={"op": "always"},
+                   rule={"op": "disagrees", "paths": ["arm_a.k", "arm_b.k"]})
+    fired, _ = registry.run_pair_checks({"k": 1}, {"k": 3}, [check], artefact="a vs b")
+    quiet, _ = registry.run_pair_checks({"k": 1}, {"k": 1}, [check])
+    assert [f.check_id for f in fired] == ["c"] and fired[0].artefact == "a vs b"
+    assert quiet == []
+
+
+def test_a_pair_check_whose_applies_to_is_false_is_skipped():
+    check = _check(arity="pair", applies_to={"op": "never"})
+    findings, skipped = registry.run_pair_checks({}, {}, [check])
+    assert findings == [] and skipped == ["c"]
+
+
+def test_an_unknown_arity_is_refused(tmp_path):
+    _write(tmp_path, "x.json", _minimal(arity="triple"))
+    with pytest.raises(CheckError, match="arity"):
+        load_checks(tmp_path)
+
+
+@pytest.mark.parametrize("control", [
+    {"fires_on": [{"k": 1}], "passes_on": [[{}, {}]]},
+    {"fires_on": [[{}, {}]], "passes_on": [[{}]]},
+    {"fires_on": [[{}, {}, {}]], "passes_on": [[{}, {}]]},
+])
+def test_a_pair_check_whose_control_is_not_a_pair_is_refused(control, tmp_path):
+    """A control written as a single document would be evaluated against a pair whose two arms
+    are both missing, where every rule answers false. The check would pass its negative control
+    because it examined nothing, which is exactly what the controls exist to rule out.
+    """
+    _write(tmp_path, "x.json", _minimal(arity="pair", control=control))
+    with pytest.raises(CheckError, match="two-element"):
+        load_checks(tmp_path)
+
+
+def test_differs_in_more_than_counts_only_keys_both_sides_record():
+    """A key one arm writes and the other does not is a difference in what was RECORDED, which is
+    usually two versions of a producer rather than two settings. Counting it would fire on every
+    pair of artefacts written months apart.
+    """
+    rule = {"op": "differs_in_more_than", "paths": ["arm_a.s", "arm_b.s"], "value": 1}
+    two_differ = registry.as_pair({"s": {"k": 1, "search": "tpe"}},
+                                  {"s": {"k": 3, "search": "random"}})
+    one_differs = registry.as_pair({"s": {"k": 1, "search": "tpe"}},
+                                   {"s": {"k": 3, "search": "tpe"}})
+    only_one_side = registry.as_pair({"s": {"k": 1, "search": "tpe", "seed": 7}},
+                                     {"s": {"k": 3}})
+    assert evaluate(rule, two_differ)
+    assert not evaluate(rule, one_differs)
+    assert not evaluate(rule, only_one_side)
+
+
+@pytest.mark.parametrize("doc", [
+    {"arm_a": {"s": "not a mapping"}, "arm_b": {"s": {"k": 1}}},
+    {"arm_a": {}, "arm_b": {}},
+    {},
+])
+def test_differs_in_more_than_is_total_like_every_other_operator(doc):
+    """No operator may raise on a shape it did not expect: an unfamiliar artefact must become
+    "this check does not apply here" rather than a crash.
+    """
+    assert evaluate({"op": "differs_in_more_than", "paths": ["arm_a.s", "arm_b.s"],
+                     "value": 0}, doc) is False
+
+
+@pytest.mark.parametrize("rule", [
+    {"op": "differs_in_more_than", "paths": ["arm_a.s"], "value": 1},
+    {"op": "differs_in_more_than", "paths": ["arm_a.s", "arm_b.s"]},
+    {"op": "differs_in_more_than", "paths": ["arm_a.s", "arm_b.s"], "value": "one"},
+    {"op": "differs_in_more_than", "paths": ["arm_a.s", "arm_b.s"], "value": -1},
+])
+def test_a_malformed_differs_in_more_than_is_a_loud_refusal(rule):
+    with pytest.raises(CheckError):
+        evaluate(rule, registry.as_pair({"s": {}}, {"s": {}}))
 
 
 def test_checks_run_in_a_stable_order():

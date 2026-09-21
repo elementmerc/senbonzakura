@@ -33,6 +33,15 @@ out of a directory is reported as "not a result artefact" and costs nothing, bec
 not. Found by pointing this at our own `head-to-head/results/`, where the run summary is
 correctly not a measurement and made the whole directory exit 2.
 
+SOME DEFECTS ARE NOT VISIBLE IN ONE FILE, AND `--pair` IS FOR THOSE. Whether two arms of a
+comparison differ in more than the variable it names, and whether two figures were produced by
+the same instrument, are facts about two artefacts. Those checks declare `arity: pair` and are
+SKIPPED on a single document rather than passed, because a pair check reported as passing on one
+file would be claiming a comparison is sound when no comparison was read. `--pair` takes exactly
+two files, named: which two artefacts are arms of one experiment is a claim only the caller can
+make, and a directory sweep that paired everything would report findings about comparisons
+nobody ran.
+
 EXIT CODES, and they distinguish the three outcomes on purpose, because a CI gate that treats
 "could not check" the same as "checked, nothing found" is worse than no gate:
 
@@ -48,7 +57,7 @@ import sys
 from pathlib import Path
 
 from .adapters import UnknownArtefactError, normalise
-from .registry import load_checks, run_checks
+from .registry import load_checks, run_checks, run_pair_checks
 
 #: What each severity means, in the words a reader meets rather than as a bare label. The label
 #: alone ("severity: notes") tells somebody who has not read the documentation nothing, and the
@@ -75,6 +84,12 @@ def build_parser():
                          "holds no result artefacts otherwise exits 0, which in CI is a green "
                          "that means 'I found no files' and is indistinguishable from 'I found "
                          "files and they were fine'. Worth setting wherever a path could drift")
+    ap.add_argument("--pair", action="store_true",
+                    help="the paths name two arms of ONE comparison. Runs the checks that read "
+                         "two artefacts, which are skipped otherwise because they cannot be "
+                         "answered from a single file. Exactly two files, named explicitly: "
+                         "which two artefacts are arms of one experiment is a claim only you can "
+                         "make, so nothing here infers it from a directory")
     ap.add_argument("--skip-unknown", action="store_true",
                     help="treat a named file that is not a result artefact the way a swept one "
                          "is treated: report it and carry on, rather than exiting 2")
@@ -107,25 +122,53 @@ def _files(paths):
     return out
 
 
+def read_artefact(path):
+    """One file in the canonical vocabulary, or (None, why not).
+
+    Split out of `inspect_file` because `--pair` needs the same three refusals (unreadable,
+    unparseable, unrecognised) on both arms before it can compare anything, and a second copy of
+    them would be a second set of error sentences to keep in step.
+    """
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        return None, f"could not read it: {e}"
+    except json.JSONDecodeError as e:
+        return None, f"not valid JSON: {e}"
+
+    try:
+        return normalise(doc), None
+    except UnknownArtefactError as e:
+        return None, str(e)
+
+
 def inspect_file(path, checks):
     """Check one file. Returns (findings, skipped, problem).
 
     `problem` is a sentence when the file could not be checked at all, and is the outcome that
     must never be confused with a clean one.
     """
-    try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except OSError as e:
-        return [], [], f"could not read it: {e}"
-    except json.JSONDecodeError as e:
-        return [], [], f"not valid JSON: {e}"
-
-    try:
-        normalised = normalise(doc)
-    except UnknownArtefactError as e:
-        return [], [], str(e)
-
+    normalised, problem = read_artefact(path)
+    if problem is not None:
+        return [], [], problem
     findings, skipped = run_checks(normalised, checks, artefact=str(path))
+    return findings, skipped, None
+
+
+def inspect_pair(path_a, path_b, checks):
+    """Compare two artefacts. Returns (findings, skipped, problem).
+
+    A pair with one unreadable arm is a PROBLEM rather than an empty result, for the same reason
+    a single unreadable file is: half a comparison examined is not a comparison examined, and
+    reporting it as no findings would be indistinguishable from the arms agreeing.
+    """
+    arms = []
+    for path in (path_a, path_b):
+        doc, problem = read_artefact(path)
+        if problem is not None:
+            return [], [], f"{path}: {problem}"
+        arms.append(doc)
+    findings, skipped = run_pair_checks(*arms, checks, artefact=f"{path_a} vs {path_b}")
     return findings, skipped, None
 
 
@@ -172,11 +215,29 @@ def main(argv=None, out=None):
     # hook removed within the week.
     claimed = not args.skip_unknown
 
+    files = _files(args.paths)
+
     results = []
-    for path, was_named in _files(args.paths):
+    for path, was_named in files:
         named = was_named and claimed
         findings, skipped, problem = inspect_file(path, checks)
         results.append((path, findings, skipped, problem, named))
+
+    # THE PAIR RUNS AFTER THE SINGLES, OVER THE SAME TWO FILES. Each arm is still checked on its
+    # own, because a defect that is visible in one artefact is visible whether or not it is being
+    # compared with another, and `--pair` adds the questions that need both rather than replacing
+    # the ones that do not.
+    if args.pair:
+        if len(files) != 2 or not all(named for _, named in files):
+            print("--pair needs exactly two result files, named on the command line. Which two "
+                  "artefacts are arms of one comparison is a claim only you can make: sweeping a "
+                  "directory and pairing everything in it would report findings about "
+                  "comparisons nobody ran.", file=out)
+            return 2
+        pair_findings, pair_skipped, pair_problem = inspect_pair(
+            files[0][0], files[1][0], checks)
+        results.append((f"{files[0][0]} vs {files[1][0]}",
+                        pair_findings, pair_skipped, pair_problem, True))
 
     if args.json:
         json.dump([
@@ -207,7 +268,11 @@ def main(argv=None, out=None):
 
     if not args.json and not args.quiet:
         tail = f", {n_not_result} not a result" if n_not_result else ""
-        print(f"\n{len(results)} file(s), {n_findings} finding(s), "
+        # The pair is an entry in `results` and is NOT a file, so it is counted separately. A
+        # summary reading "3 file(s)" after two were named would be a small lie of exactly the
+        # kind this command exists to catch in other people's output.
+        pair_tail = ", 1 pair" if args.pair else ""
+        print(f"\n{len(files)} file(s){pair_tail}, {n_findings} finding(s), "
               f"{n_unchecked} unchecked{tail}, {len(checks)} checks available.", file=out)
         # SAID IN ITS OWN SENTENCE, because "0 file(s)" sits inside a line that otherwise reads
         # like a clean report, and a reader skims it as one. Found by pointing the checker at a

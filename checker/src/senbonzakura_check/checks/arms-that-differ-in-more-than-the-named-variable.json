@@ -1,0 +1,52 @@
+{
+  "id": "arms-that-differ-in-more-than-the-named-variable",
+  "title": "Two arms of one comparison differ in more than one setting, so the difference cannot be attributed",
+  "arity": "pair",
+  "detects": "Two artefacts presented as arms of one comparison whose recorded settings differ in more than one place. A comparison earns the right to say `this setting caused that difference` by moving that setting and nothing else. When two settings moved, the result is real and belongs to neither of them, and no amount of statistical significance repairs that: a p-value measures whether the difference is noise, never what produced it.",
+  "incident": "Ours, 2026-08-03. A five-seed comparison of one ablated direction per layer against three, with complete separation between the arms at p=0.004, was withdrawn in full. Both arms had in fact ablated one direction per layer, so the two arms differed in their SEARCH rather than in their direction budget: the experiment compared two searches under labels that named a direction count, and the significant result was a real difference between two things nobody had meant to compare. The explanation published alongside it, that refusal in that model is carried by a single direction, went with it.",
+  "remedy": "List every setting the two artefacts record and diff them. Re-run with exactly one of them moved, or relabel the comparison as what it actually varied. If the second setting genuinely cannot be held still, the result is a comparison of two configurations rather than of one variable and has to be quoted that way.",
+  "confidence": "medium",
+  "severity": "withdraws",
+  "false_positive": "A deliberate two-factor design moves two settings on purpose and this check cannot tell one apart from an accident, so a factorial experiment will fire it on most of its pairs. Settings that move together by construction will also trip it: a method change that implies a different search is one decision recorded as two fields, and the check counts fields. It compares only settings BOTH artefacts record, so two arms from producers that write different field sets are compared on their overlap alone, and a difference in a field only one of them carries is invisible here. The seed is excluded outright, because two arms of a multi-seed comparison differ in it by construction. Finally, a pair that agrees on every recorded field may still differ in something neither artefact records: no finding here is evidence that the arms were matched, only that the recorded settings do not say otherwise.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "truthy", "path": "arm_a.settings"},
+      {"op": "truthy", "path": "arm_b.settings"}
+    ]
+  },
+
+  "rule": {
+    "op": "differs_in_more_than",
+    "paths": ["arm_a.settings", "arm_b.settings"],
+    "value": 1
+  },
+
+  "control": {
+    "fires_on": [
+      [
+        {"settings": {"num_directions": 1, "search": "tpe", "sparsity": 0.9}},
+        {"settings": {"num_directions": 3, "search": "random", "sparsity": 0.9}}
+      ],
+      [
+        {"settings": {"num_directions": 1, "method": "searched", "model": "qwen3-1.7b"}},
+        {"settings": {"num_directions": 1, "method": "single-pass", "model": "qwen3-4b"}}
+      ]
+    ],
+    "passes_on": [
+      [
+        {"settings": {"num_directions": 1, "search": "tpe", "sparsity": 0.9}},
+        {"settings": {"num_directions": 3, "search": "tpe", "sparsity": 0.9}}
+      ],
+      [
+        {"settings": {"num_directions": 1, "search": "tpe"}},
+        {"settings": {"num_directions": 1, "search": "tpe"}}
+      ],
+      [
+        {"settings": {"num_directions": 1, "search": "tpe"}},
+        {"settings": {"trials": 200, "method": "searched"}}
+      ]
+    ]
+  }
+}

@@ -44,10 +44,20 @@ def _need_datasets():
     Loud rather than silent: the skip names the package, names why it is wanted, and names the
     extra that installs it, so a skipped run says what it did not check rather than only that it
     checked less.
+
+    ONLY ONE IMPORT FAILURE IS A SKIP, and narrowing it is the whole safety of this helper. A bare
+    `except ImportError` also catches the import failing from INSIDE `datasets`: an incompatible
+    pyarrow, a partly installed wheel, a transitive dependency that moved. Every one of those is
+    a genuine breakage on an install that does have the package, and every one of them would have
+    come out as a skip whose message said the package was not installed, which is a false
+    sentence hiding a real failure. So the skip is taken only when the missing module IS
+    `datasets`; anything else propagates and fails the run.
     """
     try:
         import datasets
-    except ImportError:
+    except ModuleNotFoundError as e:
+        if e.name != "datasets":
+            raise
         pytest.skip(
             "`datasets` is not installed, so the cross-backend claim (the on-disk format did not "
             "change) was NOT checked on this run. It is an optional extra: pip install "
@@ -142,13 +152,18 @@ def test_our_directory_has_the_same_shape_as_the_one_datasets_writes(tmp_path):
     ours, theirs = tmp_path / "ours", tmp_path / "theirs"
     trackio.write_text_column(ours, ROWS)
     _datasets_write(theirs, ROWS)
+    # THE VERSION IS IN EVERY MESSAGE BELOW, because this pin is measured against whatever
+    # `datasets` this machine has and against nothing else. A disagreement is either our writer
+    # drifting or their format moving, and the reader of the failure cannot tell those apart
+    # without knowing which release they were compared with.
+    version = getattr(_need_datasets(), "__version__", "unknown")
 
     assert (sorted(p.name for p in ours.iterdir())
-            == sorted(p.name for p in theirs.iterdir()))
+            == sorted(p.name for p in theirs.iterdir())), f"against datasets {version}"
 
     ours_state = json.loads((ours / "state.json").read_text(encoding="utf-8"))
     their_state = json.loads((theirs / "state.json").read_text(encoding="utf-8"))
-    assert sorted(ours_state) == sorted(their_state)
+    assert sorted(ours_state) == sorted(their_state), f"against datasets {version}"
     # The shard MANIFEST, not the shard: the filenames and their order are what this module
     # reads `state.json` for, and the fingerprint beside them is deliberately a different
     # quantity from theirs (rows, not transformations), so it is not compared.
@@ -158,8 +173,45 @@ def test_our_directory_has_the_same_shape_as_the_one_datasets_writes(tmp_path):
     their_info = json.loads((theirs / "dataset_info.json").read_text(encoding="utf-8"))
     assert set(ours_info) <= set(their_info)
     assert ours_info["features"] == their_info["features"], (
-        "the column's declared type is what an empty table's shape is read from, so it cannot "
-        "differ from what the library would have written")
+        f"the column's declared type is what an empty table's shape is read from, so it cannot "
+        f"differ from what the library would have written (against datasets {version})")
+
+
+def test_a_broken_datasets_install_fails_the_run_rather_than_skipping_it(monkeypatch):
+    """A skip that hides a real failure is worse than the failure it hides.
+
+    `datasets` absent is a skip, and it should be. `datasets` present and unimportable is a
+    defect on an install that HAS the package, and a single `except ImportError` made the two
+    indistinguishable: the run would have come out green-with-a-skip whose message said the
+    package was not installed. Simulated the only way available from inside a suite that has it,
+    by making the import fail the way a moved transitive dependency makes it fail.
+
+    The control is written as an explicit `fail` rather than as `pytest.raises`, because a skip
+    is not an exception a `raises` block catches: the regression would have turned this test
+    itself into a skip, which is the outcome being argued against.
+    """
+    import builtins
+    import sys
+
+    real_import = builtins.__import__
+
+    def _broken(name, *a, **k):
+        if name == "datasets" or name.startswith("datasets."):
+            raise ModuleNotFoundError("No module named 'pyarrow'", name="pyarrow")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _broken)
+    monkeypatch.delitem(sys.modules, "datasets", raising=False)
+    missing = None
+    try:
+        _need_datasets()
+    except ModuleNotFoundError as e:
+        missing = e.name
+    except BaseException as e:
+        pytest.fail(f"a broken `datasets` install was reported as the package being absent: {e!r}")
+    else:
+        pytest.fail("the broken import did not fail the run at all")
+    assert missing == "pyarrow", "the failure has to name what is actually missing"
 
 
 def test_different_rows_get_a_different_fingerprint():

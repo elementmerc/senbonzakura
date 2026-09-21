@@ -3865,178 +3865,12 @@ class Abliterator:
                 seed=args.seed,
                 base_model=getattr(getattr(self.model, "config", None), "_name_or_path", None)),
             required=bool(self.partial_layers), log=log)
+        record = build_abliteration_record(
+            self, args, bpr, b_K, b_mode, b_di, base_ref=base_ref,
+            post={"refusals": post_ref, "heretic": post_heretic,
+                  "broken": post_brk, "kl": post_kl})
         with atomic_write(f"{args.out}/abliteration.json") as f:
-            json.dump({"per_component": args.per_component,
-                       "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
-                                     "min_weight": bpr[2], "min_weight_distance": bpr[3]},
-                       "d_profile": {"max_weight_position": bpr[4], "max_weight": bpr[5],
-                                     "min_weight": bpr[6], "min_weight_distance": bpr[7]},
-                       "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
-                       "max_directions": self.KMAX,
-                       # WHETHER THIS MODEL IS A WHOLE ABLITERATION OR A CONTROL ARM. On a hybrid
-                       # architecture the convolution blocks write the residual stream too, and a
-                       # run told to leave them alone produces a model whose refusal behaviour is
-                       # only partly removed. That is a legitimate arm of one experiment and an
-                       # indefensible thing to publish unlabelled, so the flag and the layers it
-                       # skipped are both recorded rather than inferred from the log.
-                       "ablate_conv": self.ablate_conv,
-                       "partially_ablated_layers": sorted(self.partial_layers),
-                       "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
-                       "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
-                       # WHAT THOSE REFUSAL FIGURES ARE, which the artefact could not previously say.
-                       # They come from `bad_eval_ds`, whose head is the track's SELECTION partition:
-                       # the rows the search scored 200 trials against. That is the correct set to
-                       # search on and the wrong set to publish from, because the winner is the best
-                       # of N draws over exactly these prompts. A run's 0.0% travelled as a measured
-                       # refusal rate on 2026-08-16 because nothing here said otherwise.
-                       "refusal_eval": self.eval_provenance(),
-                       # HOW THEY WERE PRODUCED. Generation is greedy, so there is no sampling noise,
-                       # but the batch floats with free VRAM and left-padding makes batch composition
-                       # part of the numerics. A reader comparing two runs needs to know whether the
-                       # machinery was pinned; `--no-throttle` pins it.
-                       # `budget_warning` travels WITH the number rather than only being printed.
-                       # A run at a short budget scrolled one warning past an operator at the
-                       # start and then wrote an artefact that looked like any other, so the
-                       # caveat was lost exactly where the figure got quoted from. None when the
-                       # budget is sound, so its presence is the signal.
-                       "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
-                                      "budget_warning": _budget_warning(args.gen_tokens),
-                                      **self.gov.report()},
-                       # The same disclosure for the capture pass, which the generation block does
-                       # not cover and which has a stronger claim to it: these activations ARE the
-                       # refusal direction. Batch composition enters their numerics exactly as it
-                       # enters generation's, so a reader comparing two runs' directions needs to
-                       # know whether the chunking was pinned here too.
-                       "direction_capture": {"prompts_per_side": args.dir_prompts,
-                                             **self.capture_gov.report()},
-                       # THE THREE FLAGS THAT DESCRIBE THE SURGERY, recorded together because
-                       # they only mean anything together. The record carried `sparsity` alone,
-                       # so an arm could not be told apart from one that ran the same sparsity
-                       # with the refinement rounds on, and before 2026-09-12 those two were not
-                       # the same edit at all: the rounds re-projected every row with no mask,
-                       # so `sparsity 0.9, rounds 4` edited every row of the weight while the
-                       # artefact said 0.9. A peer asked on 2026-09-12 which of their recorded
-                       # arms set both, and nothing written here could answer it.
-                       #
-                       # `norm_restore` is the same class: it is a named arm in `methods.py` and
-                       # the difference between the shipped edit and the naive one, and the
-                       # record said nothing about which had run.
-                       "sparsity": float(args.sparsity),
-                       "ablation_rounds": int(getattr(args, "ablation_rounds", 0) or 0),
-                       "norm_restore": not bool(getattr(args, "no_norm_restore", False)),
-                       # Provenance: a score without the seed that produced it cannot be
-                       # re-run, and cannot be told apart from a re-sample of the same config.
-                       # WHAT THIS RESULT IS ABOUT. The record carried the seed, the search, the
-                       # trial count and the whole dependency tree, and never once said which
-                       # model it had edited. Every resume guard in the run specs asks
-                       # `model=...` of this file and can only ever get a miss, so the "already
-                       # complete" branch they all carry has never fired. `model` is the path as
-                       # given, which inside a sealed container is a mount point rather than an
-                       # identity; `model_id` is what the checkpoint calls itself, which is the
-                       # part a stranger can look up.
-                       "model": args.model,
-                       "model_id": getattr(getattr(self.model, "config", None), "_name_or_path", None),
-                       # WHICH REVISION, not just which name. A Hub id resolves to whatever the
-                       # Hub serves on the day, so a third party redoing this next year gets a
-                       # different checkpoint under the same string and no artefact says so.
-                       # transformers has already resolved it, so this costs an attribute read.
-                       "model_revision": getattr(getattr(self.model, "config", None),
-                                                 "_commit_hash", None),
-                       # And WHICH corpus. `--track` is recorded as a path, which is a fact about
-                       # somebody else's disk; the digest is the part that can be checked from
-                       # anywhere. The function already exists and stamps track promotion.
-                       "track_digest": _track_digests(getattr(args, "track", None)),
-                       "seed": args.seed, "search": args.search, "trials": args.trials,
-                       # `trials` is what was ASKED for; this is what the study actually holds.
-                       # They came apart on 2026-08-06, when a resumed arm ran its full budget a
-                       # second time and every artefact it wrote still reported the budget. An
-                       # equal-budget claim that cannot be checked against the artefact is not a
-                       # claim, so the count that settles it is recorded beside the request.
-                       "trials_ran": getattr(self, "trials_ran", None),
-                       "warm_start": args.warm_start, "good_orth": not args.no_good_orth,
-                       "chat_template": getattr(self.tok, "senbon_chat_template", None),
-                       # The K actually applied at each layer, which is not always the K asked
-                       # for: the separation filter, the rank floor and a degenerate cloud can
-                       # each reduce it, and num_directions alone cannot show that.
-                       # Both views, because they answer different questions and the reader
-                       # cannot reconstruct one from the other without knowing the convention.
-                       "directions_per_layer": getattr(self, "dirs_per_layer", None),
-                       "directions_per_position": getattr(self, "dirs_per_position", None),
-                       "directions_index_note": (
-                           "THESE ARE THE DIRECTIONS EXTRACTED AND KEPT PER LAYER, NOT THE "
-                           "NUMBER ABLATED. How many the saved model actually had removed is "
-                           "`num_directions`, with `dir_mode`. The two routinely disagree, "
-                           "because the search chooses its budget inside the ceiling "
-                           "`max_directions` sets: a list reading [3, 2, 1, 3, ...] beside "
-                           "num_directions: 1 means three candidates were available at that "
-                           "layer and one was used. Stated first because it is the field a "
-                           "reader is most likely to quote and the one they are most likely to "
-                           "read as the edit. "
-                           "directions_per_layer[i] is decoder layer i. "
-                           "directions_per_position[i] is the residual-stream position: 0 is the "
-                           "embedding output, which is never ablated, and position i+1 is what "
-                           "layer i writes into. A leading 0 in the position list is that choice, "
-                           "not a layer that missed out. `axis_separations` uses the same "
-                           "position indexing, so its entry i pairs with "
-                           "directions_per_position[i]."),
-                       # Why each layer got the count it did. A rejected axis whose separation
-                       # sits just under the threshold means the constant chose the direction
-                       # count; one far under it means the second direction is genuinely absent.
-                       # The count alone cannot tell those apart, which is why it is recorded.
-                       # A bounded sample per layer, plus the two exact totals over every axis
-                       # measured. The sample is the evidence; the totals are the count it came from.
-                       "axis_separations": getattr(self, "axis_separations", None),
-                       # The statistic, its null and its threshold travel together. A threshold
-                       # with no statistic beside it is unreadable the moment there is more than
-                       # one, and a null is what turns the score into evidence rather than a
-                       # number: 2.1 means nothing until something says what nothing scores.
-                       "separation_statistic": getattr(self, "separation_statistic",
-                                                       separation.DEFAULT_STATISTIC),
-                       "separation_null": getattr(self, "separation_null",
-                                                  separation.get(
-                                                      separation.DEFAULT_STATISTIC).null),
-                       "matched_scoring": getattr(self, "matched_scoring", False),
-                       # null when the controls were drawn from the ordinary harmless set.
-                       "matched_source": getattr(self, "matched_source", None),
-                       # Which recipe produced this. Without it two arms of a comparison are two
-                       # runs whose settings a reader has to diff by eye, which is not a
-                       # comparison, and the artefact is the only place that survives the session.
-                       "method": getattr(args, "method", "searched"),
-                       # Whether the matching found anything. Near 1.0 means it did not, and a
-                       # matched_scoring:true run with a quality near 1.0 produced unmatched
-                       # numbers under a matched label.
-                       "matching_quality": getattr(self, "matching_quality", None),
-                       # About 1.0 is as near as the space allows; above about 2.0 the corpus
-                       # holds little on the candidate's subject. The acceptance target for
-                       # corpus work, where matching_quality is only an alarm.
-                       "match_closeness": getattr(self, "match_closeness", None),
-                       "axis_separation_threshold": separation.get(
-                           getattr(self, "separation_statistic",
-                                   separation.DEFAULT_STATISTIC)).threshold,
-                       "axes_measured_total": getattr(self, "axes_measured_total", None),
-                       "max_axis_separation": getattr(self, "max_axis_separation", None),
-                       "best_rejected_separation": getattr(self, "best_rejected_separation", None),
-                       "axes_rejected_total": getattr(self, "axes_rejected_total", None),
-                       # The floor the threshold was measured against, and how much work it did.
-                       # `axis_separation_threshold` alone records a constant that was chosen
-                       # once and never checked; these record what a direction carrying nothing
-                       # scored on the same rows, which is the only thing that makes the constant
-                       # readable. Per layer as well as overall, because a floor that varies by
-                       # layer and a floor that does not are different findings.
-                       "null_separation_floor": getattr(self, "null_separation_floor", None),
-                       "null_separation_floor_per_layer": getattr(self, "layer_null_floors", None),
-                       "axes_rejected_by_null": getattr(self, "axes_rejected_by_null", None),
-                       # Candidate directions are fitted on half the rows and scored on the other
-                       # half. Recorded because every separation figure written before this was
-                       # in-sample and therefore could not come out small.
-                       "separation_held_out": True,
-                       # How many layers actually got the hedging direction. It is gated on a
-                       # free slot, so K=1 gets none of it and a K comparison would be confounded.
-                       "hedge_applied_layers": getattr(self, "hedge_applied_layers", None),
-                       "filter_is_unsatisfiable": getattr(self, "filter_is_unsatisfiable", None),
-                       "provenance": provenance(device=self.dev,
-                                                accelerator=accelerator_name(self.dev))},
-                      f, indent=2)
+            json.dump(record, f, indent=2)
         self._write_model_card(args, log)
         self.events.emit("done", out=str(args.out))
         self.events.close()
@@ -4080,6 +3914,203 @@ class Abliterator:
                 f"abliteration.json are unaffected; run `senbonzakura report` to produce one.")
 
 
+
+
+
+def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post):
+    """Everything `abliteration.json` claims about a run, as a value rather than a side effect.
+
+    WHY THIS IS A FUNCTION AND NOT A `json.dump` CALL, which is what it was until 2026-09-21.
+
+    This record is the only part of a run that outlives the session, and it is what every
+    downstream reader parses: the model card, the head-to-head report, the resume guards, the
+    checker. It was built inline inside `_bake_and_save`, which nothing drives in tests because
+    reaching it needs a GPU, a real checkpoint and a completed search. So the artefact this
+    project treats as its primary output had no test that could see it at all, and every field
+    added to it over the last two months was added on the strength of reading the diff.
+
+    Pulled out here it is a pure function of its arguments: give it a stand-in with the right
+    attributes and it returns the document, so a test can assert what the file says without
+    baking anything. That is the whole point of the extraction; nothing about the contents
+    changed when it was made.
+
+    `run` supplies what the search measured and is read only. `post` carries the four post-bake
+    figures under the names `refusals`, `heretic`, `broken` and `kl`, passed explicitly rather
+    than read off `run` because they are computed moments before the call and stashing them on
+    the object only to read them back would hide that.
+    """
+    post_ref, post_heretic = post["refusals"], post["heretic"]
+    post_brk, post_kl = post["broken"], post["kl"]
+    return {"per_component": args.per_component,
+            "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
+                          "min_weight": bpr[2], "min_weight_distance": bpr[3]},
+            "d_profile": {"max_weight_position": bpr[4], "max_weight": bpr[5],
+                          "min_weight": bpr[6], "min_weight_distance": bpr[7]},
+            "num_directions": b_K, "dir_mode": b_mode, "direction_index": b_di,
+            "max_directions": run.KMAX,
+            # WHETHER THIS MODEL IS A WHOLE ABLITERATION OR A CONTROL ARM. On a hybrid
+            # architecture the convolution blocks write the residual stream too, and a
+            # run told to leave them alone produces a model whose refusal behaviour is
+            # only partly removed. That is a legitimate arm of one experiment and an
+            # indefensible thing to publish unlabelled, so the flag and the layers it
+            # skipped are both recorded rather than inferred from the log.
+            "ablate_conv": run.ablate_conv,
+            "partially_ablated_layers": sorted(run.partial_layers),
+            "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
+            "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+            # WHAT THOSE REFUSAL FIGURES ARE, which the artefact could not previously say.
+            # They come from `bad_eval_ds`, whose head is the track's SELECTION partition:
+            # the rows the search scored 200 trials against. That is the correct set to
+            # search on and the wrong set to publish from, because the winner is the best
+            # of N draws over exactly these prompts. A run's 0.0% travelled as a measured
+            # refusal rate on 2026-08-16 because nothing here said otherwise.
+            "refusal_eval": run.eval_provenance(),
+            # HOW THEY WERE PRODUCED. Generation is greedy, so there is no sampling noise,
+            # but the batch floats with free VRAM and left-padding makes batch composition
+            # part of the numerics. A reader comparing two runs needs to know whether the
+            # machinery was pinned; `--no-throttle` pins it.
+            # `budget_warning` travels WITH the number rather than only being printed.
+            # A run at a short budget scrolled one warning past an operator at the
+            # start and then wrote an artefact that looked like any other, so the
+            # caveat was lost exactly where the figure got quoted from. None when the
+            # budget is sound, so its presence is the signal.
+            "generation": {"greedy": True, "max_new_tokens": args.gen_tokens,
+                           "budget_warning": _budget_warning(args.gen_tokens),
+                           **run.gov.report()},
+            # The same disclosure for the capture pass, which the generation block does
+            # not cover and which has a stronger claim to it: these activations ARE the
+            # refusal direction. Batch composition enters their numerics exactly as it
+            # enters generation's, so a reader comparing two runs' directions needs to
+            # know whether the chunking was pinned here too.
+            "direction_capture": {"prompts_per_side": args.dir_prompts,
+                                  **run.capture_gov.report()},
+            # THE THREE FLAGS THAT DESCRIBE THE SURGERY, recorded together because
+            # they only mean anything together. The record carried `sparsity` alone,
+            # so an arm could not be told apart from one that ran the same sparsity
+            # with the refinement rounds on, and before 2026-09-12 those two were not
+            # the same edit at all: the rounds re-projected every row with no mask,
+            # so `sparsity 0.9, rounds 4` edited every row of the weight while the
+            # artefact said 0.9. A peer asked on 2026-09-12 which of their recorded
+            # arms set both, and nothing written here could answer it.
+            #
+            # `norm_restore` is the same class: it is a named arm in `methods.py` and
+            # the difference between the shipped edit and the naive one, and the
+            # record said nothing about which had run.
+            "sparsity": float(args.sparsity),
+            "ablation_rounds": int(getattr(args, "ablation_rounds", 0) or 0),
+            "norm_restore": not bool(getattr(args, "no_norm_restore", False)),
+            # Provenance: a score without the seed that produced it cannot be
+            # re-run, and cannot be told apart from a re-sample of the same config.
+            # WHAT THIS RESULT IS ABOUT. The record carried the seed, the search, the
+            # trial count and the whole dependency tree, and never once said which
+            # model it had edited. Every resume guard in the run specs asks
+            # `model=...` of this file and can only ever get a miss, so the "already
+            # complete" branch they all carry has never fired. `model` is the path as
+            # given, which inside a sealed container is a mount point rather than an
+            # identity; `model_id` is what the checkpoint calls itself, which is the
+            # part a stranger can look up.
+            "model": args.model,
+            "model_id": getattr(getattr(run.model, "config", None), "_name_or_path", None),
+            # WHICH REVISION, not just which name. A Hub id resolves to whatever the
+            # Hub serves on the day, so a third party redoing this next year gets a
+            # different checkpoint under the same string and no artefact says so.
+            # transformers has already resolved it, so this costs an attribute read.
+            "model_revision": getattr(getattr(run.model, "config", None),
+                                      "_commit_hash", None),
+            # And WHICH corpus. `--track` is recorded as a path, which is a fact about
+            # somebody else's disk; the digest is the part that can be checked from
+            # anywhere. The function already exists and stamps track promotion.
+            "track_digest": _track_digests(getattr(args, "track", None)),
+            "seed": args.seed, "search": args.search, "trials": args.trials,
+            # `trials` is what was ASKED for; this is what the study actually holds.
+            # They came apart on 2026-08-06, when a resumed arm ran its full budget a
+            # second time and every artefact it wrote still reported the budget. An
+            # equal-budget claim that cannot be checked against the artefact is not a
+            # claim, so the count that settles it is recorded beside the request.
+            "trials_ran": getattr(run, "trials_ran", None),
+            "warm_start": args.warm_start, "good_orth": not args.no_good_orth,
+            "chat_template": getattr(run.tok, "senbon_chat_template", None),
+            # The K actually applied at each layer, which is not always the K asked
+            # for: the separation filter, the rank floor and a degenerate cloud can
+            # each reduce it, and num_directions alone cannot show that.
+            # Both views, because they answer different questions and the reader
+            # cannot reconstruct one from the other without knowing the convention.
+            "directions_per_layer": getattr(run, "dirs_per_layer", None),
+            "directions_per_position": getattr(run, "dirs_per_position", None),
+            "directions_index_note": (
+                "THESE ARE THE DIRECTIONS EXTRACTED AND KEPT PER LAYER, NOT THE "
+                "NUMBER ABLATED. How many the saved model actually had removed is "
+                "`num_directions`, with `dir_mode`. The two routinely disagree, "
+                "because the search chooses its budget inside the ceiling "
+                "`max_directions` sets: a list reading [3, 2, 1, 3, ...] beside "
+                "num_directions: 1 means three candidates were available at that "
+                "layer and one was used. Stated first because it is the field a "
+                "reader is most likely to quote and the one they are most likely to "
+                "read as the edit. "
+                "directions_per_layer[i] is decoder layer i. "
+                "directions_per_position[i] is the residual-stream position: 0 is the "
+                "embedding output, which is never ablated, and position i+1 is what "
+                "layer i writes into. A leading 0 in the position list is that choice, "
+                "not a layer that missed out. `axis_separations` uses the same "
+                "position indexing, so its entry i pairs with "
+                "directions_per_position[i]."),
+            # Why each layer got the count it did. A rejected axis whose separation
+            # sits just under the threshold means the constant chose the direction
+            # count; one far under it means the second direction is genuinely absent.
+            # The count alone cannot tell those apart, which is why it is recorded.
+            # A bounded sample per layer, plus the two exact totals over every axis
+            # measured. The sample is the evidence; the totals are the count it came from.
+            "axis_separations": getattr(run, "axis_separations", None),
+            # The statistic, its null and its threshold travel together. A threshold
+            # with no statistic beside it is unreadable the moment there is more than
+            # one, and a null is what turns the score into evidence rather than a
+            # number: 2.1 means nothing until something says what nothing scores.
+            "separation_statistic": getattr(run, "separation_statistic",
+                                            separation.DEFAULT_STATISTIC),
+            "separation_null": getattr(run, "separation_null",
+                                       separation.get(
+                                           separation.DEFAULT_STATISTIC).null),
+            "matched_scoring": getattr(run, "matched_scoring", False),
+            # null when the controls were drawn from the ordinary harmless set.
+            "matched_source": getattr(run, "matched_source", None),
+            # Which recipe produced this. Without it two arms of a comparison are two
+            # runs whose settings a reader has to diff by eye, which is not a
+            # comparison, and the artefact is the only place that survives the session.
+            "method": getattr(args, "method", "searched"),
+            # Whether the matching found anything. Near 1.0 means it did not, and a
+            # matched_scoring:true run with a quality near 1.0 produced unmatched
+            # numbers under a matched label.
+            "matching_quality": getattr(run, "matching_quality", None),
+            # About 1.0 is as near as the space allows; above about 2.0 the corpus
+            # holds little on the candidate's subject. The acceptance target for
+            # corpus work, where matching_quality is only an alarm.
+            "match_closeness": getattr(run, "match_closeness", None),
+            "axis_separation_threshold": separation.get(
+                getattr(run, "separation_statistic",
+                        separation.DEFAULT_STATISTIC)).threshold,
+            "axes_measured_total": getattr(run, "axes_measured_total", None),
+            "max_axis_separation": getattr(run, "max_axis_separation", None),
+            "best_rejected_separation": getattr(run, "best_rejected_separation", None),
+            "axes_rejected_total": getattr(run, "axes_rejected_total", None),
+            # The floor the threshold was measured against, and how much work it did.
+            # `axis_separation_threshold` alone records a constant that was chosen
+            # once and never checked; these record what a direction carrying nothing
+            # scored on the same rows, which is the only thing that makes the constant
+            # readable. Per layer as well as overall, because a floor that varies by
+            # layer and a floor that does not are different findings.
+            "null_separation_floor": getattr(run, "null_separation_floor", None),
+            "null_separation_floor_per_layer": getattr(run, "layer_null_floors", None),
+            "axes_rejected_by_null": getattr(run, "axes_rejected_by_null", None),
+            # Candidate directions are fitted on half the rows and scored on the other
+            # half. Recorded because every separation figure written before this was
+            # in-sample and therefore could not come out small.
+            "separation_held_out": True,
+            # How many layers actually got the hedging direction. It is gated on a
+            # free slot, so K=1 gets none of it and a K comparison would be confounded.
+            "hedge_applied_layers": getattr(run, "hedge_applied_layers", None),
+            "filter_is_unsatisfiable": getattr(run, "filter_is_unsatisfiable", None),
+            "provenance": provenance(device=run.dev,
+                                     accelerator=accelerator_name(run.dev))}
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.

@@ -163,3 +163,63 @@ def test_the_shell_pattern_actually_matches_the_idiom_it_guards():
     deeper = 'ROOT="$(cd "$(dirname "$0")/../.." && pwd)"'
     m2 = _ROOT_FROM_SHELL.search(deeper)
     assert m2 and m2.group(1).count("..") == 2, deeper
+
+
+# ── the spelling on disk is not the only spelling ───────────────────────────────────────────
+
+#: Everything that names a `tools/` script from outside `tools/`. The two guards above read the
+#: scripts themselves, which is the wrong end for this class: a script that moved is correct
+#: where it now sits, and what breaks is somebody ELSE's string pointing at where it used to be.
+#:
+#: THE ONE THAT ESCAPED. `ci.yml` mounts `tools/` into a container as `/check` and ran
+#: `/check/image_is_honest.py`, which became `tools/ci/image_is_honest.py` in the grouping. The
+#: container job had been red since, and the error surfaced as a missing file inside a container
+#: eleven lines below a `doctor` report full of expected failures, which is where nobody looks.
+#: That is the fifth spelling of one move, after ten Python scripts, four shell scripts, the ruff
+#: per-file table and two Dockerfiles.
+_CALLERS = ("Dockerfile", "Dockerfile.cuda", ".github/workflows", "docs", "README.md",
+            "CONTRIBUTING.md", "pyproject.toml", "Makefile")
+
+#: A `tools/...` path written out in full, or the same path relative to a mount of `tools/`.
+#: Both spellings, because the container one is the one that got away: `/check/ci/x.py` carries
+#: no `tools/` prefix at all, so a pattern looking only for `tools/` reads the file, finds
+#: nothing, and reports clean. That is this project's recurring failure and it is not repeated
+#: here just because the fix is a second pattern.
+_TOOLS_PATH = re.compile(r"(?<![\w/.-])tools/([\w./-]+\.(?:py|sh))")
+_MOUNTED_PATH = re.compile(r"/check/([\w./-]+\.(?:py|sh))")
+
+
+def _referenced_tools_paths():
+    """Every `tools/` script named from outside `tools/`, as (where it was written, what it names)."""
+    out = []
+    for name in _CALLERS:
+        target = ROOT / name
+        files = sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir() else (
+            [target] if target.is_file() else [])
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for pattern in (_TOOLS_PATH, _MOUNTED_PATH):
+                for match in pattern.finditer(text):
+                    out.append((path.relative_to(ROOT), match.group(1)))
+    return out
+
+
+def test_there_are_references_to_check():
+    """Without this the parametrised test below silently becomes zero cases, which is the exact
+    way the container path stayed broken: something examined the tree and asked nothing.
+    """
+    assert len(_referenced_tools_paths()) >= 5, (
+        "no tools/ script is referenced from any workflow, Dockerfile or doc, which cannot be "
+        "true while CI runs them")
+
+
+@pytest.mark.parametrize("where,named", _referenced_tools_paths(),
+                         ids=lambda v: str(v).replace("/", "-"))
+def test_every_tools_script_named_from_outside_still_exists(where, named):
+    assert (TOOLS / named).is_file(), (
+        f"{where} names tools/{named}, which does not exist. Moving a script and leaving a "
+        f"caller behind fails where the caller runs, which for a container mount is inside the "
+        f"image and a long way from this repository.")

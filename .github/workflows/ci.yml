@@ -675,7 +675,13 @@ jobs:
           # `docker run <image> python foo.py` hands `python foo.py` to the CLI's argument parser
           # as positional arguments rather than running python at all. That is what happened here:
           # the step printed a `usage:` block and exited 2, and every grep above it had passed.
-          docker run --rm -v "$PWD/tools:/check:ro" --entrypoint python senbonzakura:ci-cpu /check/image_is_honest.py
+          # `/check/ci/`, NOT `/check/`: the mount is `tools/` and the script lives in
+          # `tools/ci/` since the grouping on 2026-09-21. A path inside a container mount is the
+          # fifth spelling of that move this project has had to fix, after ten Python scripts,
+          # four shell scripts and the ruff per-file table, and it is the one no guard on disk
+          # could ever have caught: the string lives in a workflow, and the file it names is
+          # correct where it sits. `tests/test_tools_layout.py` now reads the workflows too.
+          docker run --rm -v "$PWD/tools:/check:ro" --entrypoint python senbonzakura:ci-cpu /check/ci/image_is_honest.py
           docker run --rm --entrypoint python senbonzakura:ci-cpu -c "import pathlib, senbonzakura; hits = list(pathlib.Path(senbonzakura.__file__).resolve().parents[2].rglob('THIRD-PARTY-CORPORA.md')); assert hits, 'the image carries no THIRD-PARTY-CORPORA.md'; print('attribution present at', hits[0])"
       - name: Build the CUDA image
         run: docker build -f Dockerfile.cuda -t senbonzakura:ci-cuda .

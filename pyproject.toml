@@ -35,10 +35,17 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
+  # ONE ROW PER VERSION CI ACTUALLY RUNS, and `tests/test_declared_python_versions.py` enforces
+  # it. 3.11 and 3.13 were claimed here until 2026-09-21 and no job has ever run either: the
+  # Linux sweep is 3.10, 3.12 and 3.14, the ends of the range plus one in the middle.
+  #
+  # This does NOT narrow what installs. `requires-python = ">=3.10"` is what pip enforces, and it
+  # is unchanged, so 3.11 and 3.13 install exactly as before. What changes is that the package
+  # index stops ADVERTISING two versions nobody has ever run a test on, which is a promise made
+  # to strangers and kept by luck. Restoring a claim means adding its matrix row, in the same
+  # commit, and the guard will say so.
   "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   # Declared because CI runs on all three, not because the code looks portable.

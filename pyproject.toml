@@ -479,3 +479,58 @@ exclude_also = [
   "if __name__ == .__main__.:",
   "pragma: no cover",
 ]
+
+[tool.invariant]
+# WHAT THE PRE-PUSH GATE RUNS HERE, and why it is not the default for each leg.
+#
+# FORMATTING. The default is `ruff format --check .`, and this project does not use an
+# autoformatter: it hand-formats and uses ruff as a linter, which is why `COM812` and `ISC001`
+# are ignored above as "trailing-comma rules that fight a formatter". Measured 2026-09-22,
+# `ruff format` would rewrite 247 of 293 files, and much of that is collapsing alignment that is
+# deliberate: `power.py` holds a table of critical values with its per-row comments in a column,
+# and a formatter that reflows it makes a table of numbers harder to read to satisfy a rule
+# nobody here adopted.
+#
+# So this names the layout rules the project DOES enforce, rather than either reformatting the
+# tree or pointing the leg at something that cannot fail. Import order, trailing whitespace, a
+# missing final newline, whitespace on blank lines, the line limit, and tab indentation are all
+# formatting, all mechanical, and all things a patch can get wrong. It is a narrower claim than
+# a formatter makes and it is one this repository can meet on its merits.
+format_command = "ruff check --select I001,W291,W292,W293,E501,E101 ."
+
+# LINTING is the full rule set from `[tool.ruff.lint]` above: select ALL, subtract with a reason.
+lint_command = "ruff check ."
+
+# TESTS stay off here deliberately, and this is the one that would be wrong to turn on. The suite
+# is 4,784 tests behind a 95% coverage gate and takes about five minutes, and it runs on a build
+# box rather than the laptop a push is made from. A five-minute blocking pre-push is a gate that
+# gets bypassed once and then always. CI runs it on every push across five platform rows.
+test = false
+
+# THE ONE ADVISORY THIS REPOSITORY ACCEPTS, and what makes accepting it honest.
+#
+# PYSEC-2026-3804 is a path traversal in accelerate's sharded-checkpoint loading: `weight_map`
+# entries are joined to the checkpoint directory without validation, so a crafted index can name
+# a parent path or an absolute one. There is no fixed release. Waiting for one is not neutral,
+# because it blocks every push including the security fixes.
+#
+# WHAT WE DID INSTEAD, and it is mitigation rather than silence. `senbonzakura.checkpoint`
+# refuses an index that names anything outside the checkpoint, and it runs on both paths into
+# accelerate: a local directory before `device_map` is set, and a Hub id by fetching that
+# repository's index on its own and judging it before any weights are downloaded.
+#
+# WHAT IS STILL TRUE, because an accepted risk described as a solved one is worse than no note.
+# The guard reads the index WE fetch, and transformers fetches its own copy. A repository serving
+# one answer to us and another to transformers, on an unpinned revision, is a window we do not
+# close. It is narrow and it is real.
+#
+# THIS CARVE-OUT EXPIRES BY ITSELF. `tests/test_accepted_advisories.py` fails the moment the
+# pinned accelerate version changes, so whoever bumps it has to re-read this rather than inherit
+# it. An ignore entry nobody is forced to revisit is how a known hole becomes a permanent one.
+audit_ignore = ["PYSEC-2026-3804"]
+
+[tool.senbonzakura.security]
+# The machine-readable half of the note above, so the test can hold it to what it claims.
+accepted_advisories = [
+  { id = "PYSEC-2026-3804", package = "accelerate", assessed_version = "1.14.0", mitigation = "senbonzakura.checkpoint refuses an escaping index on both the local and the Hub path", revisit = "when accelerate ships a fixed release, or when this pin moves" },
+]

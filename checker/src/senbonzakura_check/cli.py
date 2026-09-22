@@ -84,6 +84,13 @@ def build_parser():
                          "holds no result artefacts otherwise exits 0, which in CI is a green "
                          "that means 'I found no files' and is indistinguishable from 'I found "
                          "files and they were fine'. Worth setting wherever a path could drift")
+    ap.add_argument("--min-applied", type=int, default=0, metavar="N",
+                    help="exit non-zero when any artefact had FEWER THAN N checks apply to it. "
+                         "--fail-on-empty catches a run that examined nothing; this catches a "
+                         "run that examined almost nothing, which looks identical in the exit "
+                         "code and is the likelier drift. An artefact counts as checked when a "
+                         "single check applied to it, so a rename that quietly stops fourteen "
+                         "of fifteen checks from recognising a file still exits 0")
     ap.add_argument("--pair", action="store_true",
                     help="the paths name two arms of ONE comparison. Runs the checks that read "
                          "two artefacts, which are skipped otherwise because they cannot be "
@@ -310,6 +317,24 @@ def main(argv=None, out=None):
     # listed, so the flag never fired, while the help text promised to exit non-zero when nothing
     # was checked. A flag whose entire job is to catch "nothing happened" going green when
     # nothing happened is the defect class this project keeps finding in its own gates.
+    # THE OTHER HALF OF --fail-on-empty, and the half the panel found missing. `n_checked`
+    # counts an artefact where ANY check applied, so a change that stops fourteen of fifteen
+    # checks recognising a file leaves this command reporting the same numbers and the same exit
+    # code as a healthy run. The step in our own CI that runs the checker over our own published
+    # evidence could not have failed for that reason, which makes it a gate that proves the
+    # checker still runs rather than that it still checks.
+    if args.min_applied:
+        thin = sorted((path, applied) for path, _, _, problem, _, applied in results
+                      if not problem and applied < args.min_applied)
+        if thin:
+            if not args.json and not args.quiet:
+                print(f"\nFEWER THAN {args.min_applied} CHECKS APPLIED to "
+                      f"{len(thin)} artefact(s):", file=out)
+                for path, applied in thin:
+                    print(f"  {path}: {applied} of {len(checks)} applied", file=out)
+                print("Either these artefacts stopped carrying what the checks read, or the "
+                      "checks stopped recognising them. Both look like a clean run.", file=out)
+            return 1
     return 1 if (args.fail_on_empty and not n_checked) else 0
 
 

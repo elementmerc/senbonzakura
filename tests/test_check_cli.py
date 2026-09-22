@@ -13,6 +13,7 @@ has to be able to branch on, and both of those are where a checker quietly becom
 """
 import io
 import json
+import re
 from typing import ClassVar
 
 import pytest
@@ -526,6 +527,59 @@ class TestNothingWasChecked:
         _write(tmp_path, "r.json", GOOD)
         assert cli.main([str(tmp_path), "--fail-on-empty"]) in (0, 1, 2)
         assert cli.main([str(tmp_path), "--fail-on-empty"]) == cli.main([str(tmp_path)])
+
+
+class TestTheMinimumAppliedFloor:
+    """`--fail-on-empty` catches a run that examined nothing. This catches one that examined
+    almost nothing, which is the likelier drift and looks identical from the outside.
+
+    An artefact counts as checked when a SINGLE check applied to it. So a rename that stopped
+    fourteen of fifteen checks recognising a file left the summary, the exit code and the
+    dogfooding step in our own CI completely unchanged: a gate proving the checker still runs
+    rather than that it still checks.
+    """
+
+    def test_an_artefact_with_too_few_checks_applied_is_a_failure(self, tmp_path, capsys):
+        _write(tmp_path, "r.json", GOOD)
+        rc = cli.main([str(tmp_path), "--min-applied", "99"])
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "FEWER THAN 99 CHECKS APPLIED" in out, out
+        assert "of 15 applied" in out or "applied" in out
+
+    def test_the_floor_names_the_artefact_and_the_count(self, tmp_path, capsys):
+        """A failure saying only that something drifted leaves the reader to find which file.
+
+        Asserted on the SHORTFALL LINE rather than anywhere in the output, because the path is
+        printed by the ordinary sweep too. The first version of this test looked for the name
+        anywhere and passed with the floor disabled, which mutation testing caught: a test for a
+        gate that passes when the gate is off is not a test for the gate.
+        """
+        _write(tmp_path, "r.json", GOOD)
+        cli.main([str(tmp_path), "--min-applied", "99"])
+        out = capsys.readouterr().out
+        shortfall = [ln for ln in out.splitlines() if "applied" in ln and "r.json" in ln]
+        assert shortfall, out
+        assert re.search(r"r\.json: \d+ of \d+ applied", shortfall[0]), shortfall
+
+    def test_it_does_not_fire_when_the_floor_is_met(self, tmp_path):
+        _write(tmp_path, "r.json", GOOD)
+        assert cli.main([str(tmp_path), "--min-applied", "1"]) == cli.main([str(tmp_path)])
+
+    def test_zero_means_off_and_is_the_default(self, tmp_path):
+        """The default must stay usable: a sweep over a tree of mixed files is a normal thing to
+        do, and a floor that fires by default would make the bare command unusable.
+        """
+        _write(tmp_path, "r.json", GOOD)
+        assert cli.main([str(tmp_path), "--min-applied", "0"]) == cli.main([str(tmp_path)])
+
+    def test_a_file_that_is_not_a_result_does_not_trip_the_floor(self, tmp_path):
+        """It was never checked, so it has no applied count to be short of. Counting it would
+        make the floor fire on any directory holding a README, which is every directory.
+        """
+        _write(tmp_path, "r.json", GOOD)
+        (tmp_path / "notes.txt").write_text("not an artefact", encoding="utf-8")
+        assert cli.main([str(tmp_path), "--min-applied", "1"]) == cli.main([str(tmp_path)])
 
 
 class TestTheExitCodeTable:

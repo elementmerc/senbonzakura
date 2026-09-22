@@ -232,7 +232,7 @@ def test_a_figure_that_was_never_measured_is_null_rather_than_a_default(field):
 EXPECTED_KEYS = {
     "per_component", "o_profile", "d_profile", "num_directions", "dir_mode", "direction_index",
     "max_directions", "ablate_conv", "partially_ablated_layers", "baseline_refusals",
-    "post_bake_refusals", "post_bake_heretic", "post_bake_broken", "post_bake_kl",
+    "post_bake_refusals", "post_bake_heretic", "post_bake_broken", "post_bake_kl", "capability",
     "refusal_eval", "generation_settings", "direction_capture", "sparsity", "ablation_rounds",
     "norm_restore", "model", "model_id", "model_revision", "track_digest", "seed", "search",
     "trials", "trials_ran", "warm_start", "good_orth", "chat_template", "directions_per_layer",
@@ -387,3 +387,72 @@ def test_the_record_carries_no_key_the_leak_gate_bans():
         f"abliteration.json carries {sorted(banned)}, which the leak gate refuses at any depth, "
         f"so this artefact cannot be committed and the refusal will say it holds harmful "
         f"prompts. Rename the field rather than widening the gate.")
+
+
+# ── the capability block ─────────────────────────────────────────────────────────────────────
+#
+# THE DEFECT THESE WERE WRITTEN FOR, on 2026-09-22.
+#
+# `--capability-eval` ran only inside the search's selection stage. A method that pins its
+# profile (`single-pass`) returns early and never reaches it, so the flag was accepted, never
+# executed, and the run exited 0 with NO capability field in the record at all. A reader could not
+# distinguish that from a run where nobody asked for a probe, which is the whole difficulty: the
+# artefact looked exactly as healthy as an honest one.
+#
+# So the block is always present and always names which of three states it is in.
+
+def _cap_args(**over):
+    base = dict(capability_eval="openai/gsm8k:main::test", capability_n=4,
+                capability_task="numeric")
+    base.update(over)
+    return _args(**base)
+
+
+def test_a_run_that_asked_for_no_probe_says_so_rather_than_omitting_the_field():
+    """Silence is the state that has to go. An absent key reads as the reader's oversight."""
+    block = _build()["capability"]
+    assert block["state"] == "not_requested"
+    assert block["drop"] is None
+    assert block["items"] == 0
+
+
+def test_a_measured_probe_records_both_ends_and_the_drop():
+    block = _build(args=_cap_args(), capability_baseline=0.75, capability_after=0.50,
+                   capability_items=4)["capability"]
+    assert block["state"] == "measured"
+    assert block["baseline_accuracy"] == 0.75
+    assert block["post_bake_accuracy"] == 0.50
+    assert block["drop"] == pytest.approx(0.25)
+    assert block["benchmark"] == "openai/gsm8k:main::test"
+    assert block["task"] == "numeric"
+
+
+def test_a_probe_that_was_asked_for_and_did_not_run_is_recorded_as_exactly_that():
+    """THE ONE THAT WOULD HAVE CAUGHT IT.
+
+    This is the shape a `single-pass` run produced: the flags were set, nothing ran, and the
+    record said nothing. It must now be a state a reader can see, and it must not be confusable
+    with `not_requested`.
+    """
+    block = _build(args=_cap_args())["capability"]
+    assert block["state"] == "requested_but_not_measured"
+    assert block["benchmark"] == "openai/gsm8k:main::test"
+    assert block["drop"] is None
+
+
+def test_a_probe_that_graded_nothing_after_the_bake_does_not_report_a_zero_drop():
+    """A model that answered nothing gradeable has not scored zero, it has not been measured.
+
+    A zero drop here would be the most flattering possible reading of the worst possible outcome,
+    which is the brokenness defect this project has already shipped once in another costume.
+    """
+    block = _build(args=_cap_args(), capability_baseline=0.75, capability_after=None,
+                   capability_items=4)["capability"]
+    assert block["drop"] is None
+    assert block["post_bake_accuracy"] is None
+
+
+def test_asking_for_a_benchmark_with_no_items_is_not_a_request():
+    """`--capability-eval` without `--capability-n` buys nothing, and must not read as a probe."""
+    block = _build(args=_cap_args(capability_n=0))["capability"]
+    assert block["state"] == "not_requested"

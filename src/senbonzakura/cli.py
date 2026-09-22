@@ -3885,6 +3885,33 @@ class Abliterator:
             json.dump(winning_config(bpr, b_K, b_mode, b_di), f, indent=2)
         log(f"wrote winning config to {args.out}/best-config.json (re-bakeable with --bake-config)")
 
+        # THE CAPABILITY PROBE, ON THE MODEL THAT ACTUALLY SHIPS, AND FOR EVERY METHOD.
+        #
+        # It used to run only inside `_select_knee`, which is the SEARCH's selection stage. A
+        # method that pins its profile (`single-pass`, `single-pass-raw`) returns early from
+        # `run()` and never reaches it, so `--capability-eval` was accepted, never executed, and
+        # the run exited 0 reporting DONE with no capability field in `abliteration.json` at all.
+        # Measured on 2026-09-22: a `single-pass` run with `--capability-eval` and
+        # `--capability-n 4` produced not one line mentioning the probe.
+        #
+        # The guard above catches `--eval-refusal-final 0` and was written for a NEIGHBOURING
+        # instance of this same fault. It covers one spelling of "the probe cannot run" and
+        # reported clean on the other, which is the failure shape this project keeps meeting.
+        #
+        # Here rather than there because this is the single funnel both paths go through, and
+        # because the number a reader wants is what the SHIPPED weights score, not what a finalist
+        # scored before the winner was re-baked. In the search path that costs one extra probe;
+        # `--capability-n` is small by construction and a wrong capability figure is the one this
+        # tool can least afford.
+        #
+        # Taken here, before the bake, because `_capability_baseline` restores the weights and a
+        # drop needs a before. A baseline measured after any bake compares a damaged model to
+        # itself and reports zero.
+        cap_baseline, cap_items = self._capability_baseline()
+        if cap_items:
+            log(f"capability probe: {len(cap_items)} items, baseline accuracy "
+                f"{'not gradeable' if cap_baseline is None else f'{cap_baseline:.3f}'}")
+
         # ── BAKE the winner into the weights + save ──────────────────────────────────
         # The search left the LAST trial's bake applied; restore to pristine, then bake the winner.
         # Because the search scored this exact operation, POST-BAKE should reproduce the best trial's
@@ -3900,6 +3927,17 @@ class Abliterator:
         post_brk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))
         log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% heretic={post_heretic*100:.1f}% "
             f"broken={post_brk*100:.0f}% KL={post_kl:.4f}")
+        # What the edit cost, on the weights being written. `_capability_score` returns None when
+        # nothing graded, and that stays None rather than becoming a zero: a model that answered
+        # nothing gradeable has not scored zero, it has not been measured, and the two must not
+        # read alike in a file whose whole purpose is that somebody else can check it.
+        post_cap = self._capability_score(cap_items) if cap_items else None
+        if cap_items:
+            drop = None if (cap_baseline is None or post_cap is None) else cap_baseline - post_cap
+            log(f"POST-BAKE capability: {'not gradeable' if post_cap is None else f'{post_cap:.3f}'}"
+                f" against a baseline of "
+                f"{'not gradeable' if cap_baseline is None else f'{cap_baseline:.3f}'}"
+                + ("" if drop is None else f", so the edit cost {drop:+.3f}"))
 
         self.free_before_save()
         log(f"saving to {args.out}")
@@ -3920,7 +3958,9 @@ class Abliterator:
         record = build_abliteration_record(
             self, args, bpr, b_K, b_mode, b_di, base_ref=base_ref,
             post={"refusals": post_ref, "heretic": post_heretic,
-                  "broken": post_brk, "kl": post_kl})
+                  "broken": post_brk, "kl": post_kl,
+                  "capability_baseline": cap_baseline, "capability_after": post_cap,
+                  "capability_items": len(cap_items)})
         with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump(record, f, indent=2)
         self._write_model_card(args, log)
@@ -3985,6 +4025,43 @@ def orthogonalisation_label(no_good_orth):
     return "raw difference-of-means (--no-good-orth)" if no_good_orth else "good-orthogonalized"
 
 
+def _capability_block(args, post):
+    """What the capability probe found, or why there is no figure, as a value either way.
+
+    THE THREE STATES ARE KEPT APART AND THAT IS THE ENTIRE POINT.
+
+    `not_requested`  nobody asked for a probe. The honest default, and not a criticism of the run.
+    `requested_but_not_measured`  a probe WAS asked for and no figure came back. Until 2026-09-22
+        this state existed and was invisible: a method that pins its profile skipped the search,
+        the probe lived inside the search's selection stage, and the run exited 0 with no
+        capability field at all. Somebody reading that file could not tell it apart from a run
+        that never asked.
+    `measured`  a before, an after, and the drop between them.
+
+    `drop` is None rather than 0.0 whenever either end is missing. A model that answered nothing
+    gradeable has not scored zero, it has not been measured, and a zero drop is exactly the
+    reading that would let the worst outcome look like the best one.
+    """
+    requested = bool(getattr(args, "capability_eval", "")) and int(
+        getattr(args, "capability_n", 0) or 0) > 0
+    before, after = post.get("capability_baseline"), post.get("capability_after")
+    items = int(post.get("capability_items") or 0)
+    if not requested:
+        return {"state": "not_requested", "benchmark": None, "items": 0,
+                "baseline_accuracy": None, "post_bake_accuracy": None, "drop": None}
+    if not items or (before is None and after is None):
+        return {"state": "requested_but_not_measured",
+                "benchmark": getattr(args, "capability_eval", "") or None, "items": items,
+                "baseline_accuracy": before, "post_bake_accuracy": after, "drop": None}
+    return {"state": "measured",
+            "benchmark": getattr(args, "capability_eval", "") or None,
+            "task": getattr(args, "capability_task", "numeric"),
+            "items": items,
+            "baseline_accuracy": before,
+            "post_bake_accuracy": after,
+            "drop": None if (before is None or after is None) else before - after}
+
+
 def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post):
     """Everything `abliteration.json` claims about a run, as a value rather than a side effect.
 
@@ -4002,10 +4079,12 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
     baking anything. That is the whole point of the extraction; nothing about the contents
     changed when it was made.
 
-    `run` supplies what the search measured and is read only. `post` carries the four post-bake
+    `run` supplies what the search measured and is read only. `post` carries the post-bake
     figures under the names `refusals`, `heretic`, `broken` and `kl`, passed explicitly rather
     than read off `run` because they are computed moments before the call and stashing them on
-    the object only to read them back would hide that.
+    the object only to read them back would hide that. It also carries the capability probe as
+    `capability_baseline`, `capability_after` and `capability_items`, which are optional only so
+    that a caller written before 2026-09-22 still builds a record.
     """
     post_ref, post_heretic = post["refusals"], post["heretic"]
     post_brk, post_kl = post["broken"], post["kl"]
@@ -4026,6 +4105,12 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
             "partially_ablated_layers": sorted(run.partial_layers),
             "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
             "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+            # WHAT THE EDIT COST ON A TASK THE MODEL EITHER GETS RIGHT OR DOES NOT. Always
+            # present, including when it was not measured, because an absent key reads as a
+            # reader's oversight and an explicit "not measured" reads as what it is. Every other
+            # figure in this record is a refusal ruler or a distributional proxy, and none of them
+            # asks the model to reason.
+            "capability": _capability_block(args, post),
             # WHAT THOSE REFUSAL FIGURES ARE, which the artefact could not previously say.
             # They come from `bad_eval_ds`, whose head is the track's SELECTION partition:
             # the rows the search scored 200 trials against. That is the correct set to

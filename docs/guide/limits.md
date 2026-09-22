@@ -75,9 +75,9 @@ are under 2B**. The largest is gemma-2-2b-it at 2.61B, and its numbers are withd
 anyway.
 
 So there is no evidence on this site about how the method behaves at 7B, 30B, or the sizes
-people actually deploy. Not weak evidence. None. The streaming work exists to make those
-sizes reachable on hardware we own, and until it lands, the honest answer to "does this
-work on a 70B model?" is that nobody here knows.
+people actually deploy. Not weak evidence. None. The honest answer to "does this work on a
+70B model?" is that nobody here knows, and the reason is hardware: every number on this site
+was taken on one 6 GB laptop card.
 
 ## Determinism, measured rather than assumed
 

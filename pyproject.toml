@@ -29,7 +29,7 @@ license = "AGPL-3.0-or-later"
 # Documenting the obligation in docs/ did not satisfy it: docs/ does not ship.
 license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md",
                  "APACHE-2.0.txt", "ACCEPTABLE-USE.md"]
-authors = [{ name = "Daniel Iwugo" }]
+authors = [{ name = "Daniel Iwugo", email = "ops@themalwarefiles.com" }]
 keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -476,7 +476,20 @@ omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; mai
 # measured figure, because a gate that is red on a clean checkout gets commented out.
 fail_under = 95
 exclude_also = [
+  # EVERY EXCLUSION CARRIES A REASON, which the v1.0 gate asks for and which these two did not
+  # have until 2026-09-22. An exclusion without one is a line nobody has to justify, and the
+  # coverage figure quietly becomes a statement about a smaller codebase than the one that ships.
+  #
+  # The dispatch line under a __main__ guard. It runs when the module is executed directly, and
+  # `tests/test_exit_status.py` drives every delegated module that way and asserts it prints and
+  # exits non-zero, so the BEHAVIOUR is covered by a subprocess the coverage plugin cannot see.
+  # Counting it as missed would push people to delete the guard, and eight modules once lacked it:
+  # `python -m senbonzakura.<module>` imported, ran nothing, printed nothing and exited 0.
   "if __name__ == .__main__.:",
+  # The opt-out, which is only honoured where the line beside it says why. 21 sites use it today;
+  # the ones that are not a __main__ dispatch name their reason inline, for example a torch
+  # version older than the floor, a machine-dependent probe, or a generated module that is always
+  # present. `tools/ci/` holds no gate for that, so it is reviewed rather than enforced.
   "pragma: no cover",
 ]
 

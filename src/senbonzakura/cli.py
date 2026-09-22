@@ -45,6 +45,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from . import (
+    checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
@@ -1977,6 +1978,13 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
     # the weight bake rewrites tensors in place and needs full precision.
     _log = log or (lambda m: None)
+    # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
+    # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
+    # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
+    # only point we control. It applies to a local directory; a bare model id is fetched and
+    # loaded inside transformers, with no point between the two to stand.
+    if Path(model_id).is_dir():
+        checkpoint.refuse_unsafe_index(model_id)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)

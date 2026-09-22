@@ -45,7 +45,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import gguf_io
+from . import checkpoint, gguf_io
 from ._version import __version__
 from .crashsafe import atomic_write, free_bytes_for, provenance
 from .vendored import VendorError, find_script
@@ -429,6 +429,14 @@ def preflight(model_dir, out, *, force, skip_arch_check, outtype="bf16", log=pri
     arch = (cfg.get("architectures") or [None])[0]
     if not arch:
         raise ConvertError(f"{d}/config.json names no architecture, so nothing can be dispatched.")
+
+    # BEFORE ANYTHING READS THE SHARDS. The converter and the loaders both take shard names out
+    # of the index and open them relative to this directory, and an index is a file a stranger
+    # wrote. Baseline section 2.1: validate at the boundary, where untrusted data enters.
+    try:
+        checkpoint.refuse_unsafe_index(d)
+    except checkpoint.UnsafeCheckpointError as e:
+        raise ConvertError(str(e)) from e
 
     if Path(out).resolve() == d.resolve():
         raise ConvertError(f"the output path is the model directory ({d}). Name a file instead.")

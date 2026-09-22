@@ -137,6 +137,12 @@ of anything.
 [Read this before quoting any number](https://elementmerc.github.io/senbonzakura/guide/what-we-know)
 is the full account, including the results that did not go our way.
 
+**Checking us rather than reading us.** [REPRODUCING.md](REPRODUCING.md) maps every figure above
+to the committed file it came from and the command that produces it, so you can verify the lot
+with no GPU and no corpus. [METHOD.md](METHOD.md) is the part that is not about this tool: how to
+measure a behavioural property of a model so the number survives somebody else reading it
+carefully, with the mistakes that taught us each rule.
+
 ## Documentation
 
 **[elementmerc.github.io/senbonzakura](https://elementmerc.github.io/senbonzakura)**

@@ -76,7 +76,23 @@ Report the shape of the problem instead: the command, the version, the figure yo
 figure you expected. If a defect genuinely cannot be described without the text, say so in the
 issue and wait to be asked rather than pasting it.
 
-A pre-commit hook (`tools/ci/check_prompt_artefacts.py`) refuses a staged JSON or JSONL file
-carrying a `prompt` or `generation` field, and CI runs the same check over the whole tree.
-**No hook can see a web form**, so on the issue and discussion path this sentence is the only
-control there is. The hook reads only JSON and JSONL, so prose files are not covered by it.
+A pre-commit hook refuses a staged artefact carrying a `prompt` or `generation` field, and CI
+runs the same check over the whole tree. Install it in one command:
+
+```sh
+sh tools/hooks/install-local-hooks.sh
+```
+
+It writes a single `pre-commit` hook that runs the tracked gate script,
+refuses to overwrite a hook you already have, and is short enough to read first. Until
+2026-09-22 this paragraph described a hook no contributor could install, because the hooks it
+meant are excluded from the clone.
+
+The check also refuses a fenced block or a blockquote in a results note under
+`head-to-head/results/`, because that is the shape a pasted generation arrives in. It is
+deliberately not a list of words: a guard carrying a denylist of things a generation might say
+would publish those terms in this repository, which is the mistake it exists to prevent.
+
+Two limits worth knowing rather than discovering. **No hook can see a web form**, so on the
+issue and discussion path the sentence above is the only control there is. And the shape rule
+cannot see a generation retyped as ordinary prose.

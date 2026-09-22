@@ -163,3 +163,23 @@ def test_the_reference_documents_every_command_that_does_exist():
     """It calls itself "the map" and omitted eleven of twenty."""
     missing = _real_commands() - _documented_commands()
     assert not missing, f"docs/reference/cli.md is missing: {sorted(missing)}"
+
+
+def test_the_pinned_set_states_the_python_it_needs():
+    """The numpy release pinned in `constraints.txt` needs Python 3.12; the tool itself supports 3.10.
+
+    So the one command offered to somebody checking our numbers fails on two of the three
+    versions this package claims, and pip's message for it names only the package it could not
+    find. A reader on 3.10 has no way to tell an unsupported interpreter from a broken pin.
+
+    Found 2026-09-22 because a dependency scanner installed under 3.11 reported our pinned set as
+    unresolvable, which read as a defect in the pins until the interpreter was checked.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    text = (root / "docs" / "guide" / "install.md").read_text(encoding="utf-8")
+    block = text.split("pip install . -c constraints.txt", 1)
+    assert len(block) == 2, "install.md no longer shows the pinned install command"
+    assert "3.12 or newer" in block[1][:600], (
+        "install.md offers `pip install . -c constraints.txt` without saying it needs Python "
+        "3.12 or newer, so a reader on a supported 3.10 meets an unresolvable pin with no reason")

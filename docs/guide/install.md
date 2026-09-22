@@ -83,6 +83,12 @@ Install against the pinned set instead:
 pip install . -c constraints.txt
 ```
 
+**This one needs Python 3.12 or newer**, even though the tool itself runs on 3.10. The numpy
+release pinned in `constraints.txt` dropped support for 3.11, so on 3.10 or 3.11 the command
+above fails to resolve and pip's message names only the package it could not find, which reads
+like a broken pin rather than the wrong interpreter. Measured 2026-09-22, on a dependency
+scanner that had quietly built itself a 3.11 environment and reported our pins as broken.
+
 `constraints.txt` is the exact version of every dependency the published numbers were measured
 with, read off the machine that produced them rather than resolved fresh. The ordinary install
 above uses version *ranges*, which tell you what a run could have used; this tells you what it

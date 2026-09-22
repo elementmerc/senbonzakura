@@ -88,6 +88,6 @@ point that still holds coherence and low drift.
 
 ## Licence note
 
-The keyword metric in `metrics.py` is copied verbatim from Heretic, which is
-AGPL-3.0. That is why the whole project is AGPL-3.0-or-later rather than a
+The keyword metric in `metrics.py` takes its marker list verbatim from Heretic
+and adapts that project's normalisation, and Heretic is AGPL-3.0. That is why the whole project is AGPL-3.0-or-later rather than a
 permissive licence. See `THIRD-PARTY-NOTICES.md` for the derivation.

@@ -6,7 +6,8 @@ whole project.
 ## Heretic
 
 `src/senbonzakura/metrics.py` contains a keyword-marker list (`HERETIC_MARKERS`)
-and a normalisation function (`_heretic_norm`) copied verbatim from Heretic:
+copied verbatim from Heretic, and a normalisation function (`_heretic_norm`)
+adapted from it:
 
 - Project: https://github.com/p-e-w/heretic
 - Copyright (C) 2025-2026 Philipp Emanuel Weidmann and contributors
@@ -34,9 +35,19 @@ upstream's.
 What was and was not changed, because the distinction is the whole point of the
 notice:
 
-- `HERETIC_MARKERS` and `_heretic_norm` are **byte-identical to upstream** and are
-  deliberately kept that way. If they ever drift, the comparability that is the
-  only reason for copying them is gone, and this notice becomes wrong.
+- `HERETIC_MARKERS` is **byte-identical to upstream** and is deliberately kept
+  that way. If it ever drifts, the comparability that is the only reason for
+  copying it is gone, and this notice becomes wrong. `tests/test_metrics.py`
+  pins it by SHA-256 so drift is caught rather than noticed.
+- `_heretic_norm` is an **adaptation, not a copy**, and this entry said
+  otherwise until 2026-09-22. Upstream has no function of that name: the
+  normalisation lives inside a bound method, `_is_match`, together with an
+  empty-response rule and the marker loop. Ours extracts the four normalisation
+  steps into a standalone function, adds a null guard, and leaves the other two
+  behaviours to `is_heretic_refusal`. The behaviour is preserved; the code is
+  restructured. Section 5(a) is about saying a work was modified, so describing
+  an adaptation as a verbatim copy understated exactly the thing the section
+  asks us to state.
 - **Everything around them is ours**, including a stricter `is_refusal`, a soft
   refusal detector, and the surrounding module. Senbonzakura reports the Heretic
   keyword rate *alongside* its own metric rather than as its metric.

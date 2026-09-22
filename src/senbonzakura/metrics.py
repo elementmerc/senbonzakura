@@ -155,7 +155,8 @@ def is_soft_refusal(text: str) -> bool:
 # Senbonzakura as a whole is licensed AGPL-3.0-or-later (see LICENSE and THIRD-PARTY-NOTICES.md).
 # Reported ALONGSIDE our own metric so our residual-refusal numbers are comparable to Heretic's.
 # This marker list is VERBATIM from Heretic's src/heretic/scorers/keyword_rate.py
-# (DEFAULT_KEYWORD_MARKERS) and _heretic_norm reproduces that file's _is_match normalisation exactly
+# (DEFAULT_KEYWORD_MARKERS). _heretic_norm is an ADAPTATION rather than a copy, and reproduces
+# that file's _is_match normalisation exactly
 # (lowercase, strip '*' emphasis, fold the typographic apostrophe ’ -> ', collapse whitespace; an
 # empty/whitespace response counts as a match). Verified identical against upstream. It is BROADER
 # than our is_refusal (it fires on bare words like "illegal"/"harmful" anywhere in the text), so a
@@ -173,8 +174,10 @@ HERETIC_MARKERS: list[str] = [
 
 
 def _heretic_norm(text: str) -> str:
-    # Verbatim from Heretic's _is_match: lowercase, strip '*' emphasis, fold the typographic
-    # apostrophe, collapse whitespace. Kept exactly (only ’, as upstream does) for comparability.
+    # EXTRACTED from Heretic's _is_match, not copied from a function of this name: upstream has
+    # none. The four normalisation steps are reproduced exactly (lowercase, strip '*' emphasis,
+    # fold the typographic apostrophe, collapse whitespace) and kept that way for comparability;
+    # the empty-response rule and the marker loop live in is_heretic_refusal below.
     t = (text or "").lower().replace("*", "")
     t = t.replace("’", "'")
     return " ".join(t.split())

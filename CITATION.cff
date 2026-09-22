@@ -48,5 +48,6 @@ references:
     license: AGPL-3.0-or-later
     repository-code: "https://github.com/p-e-w/heretic"
     notes: >-
-      The automated, KL-guarded search this work refines. A keyword metric is copied verbatim from
-      it, which is why Senbonzakura is AGPL; see THIRD-PARTY-NOTICES.md.
+      The automated, KL-guarded search this work refines. Its keyword-marker list is copied
+      verbatim and its normalisation is adapted, which is why Senbonzakura is AGPL; see
+      THIRD-PARTY-NOTICES.md.

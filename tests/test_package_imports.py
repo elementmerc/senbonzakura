@@ -199,6 +199,47 @@ def test_the_two_places_the_date_is_written_agree():
         f"an installed copy would carry two different answers to the same question")
 
 
+def test_no_user_facing_document_calls_the_adapted_function_a_verbatim_copy():
+    """Section 5(a) asks a modified work to SAY it was modified, so understating the modification
+    is the one direction of error this notice cannot afford.
+
+    Measured 2026-09-22 against upstream: Heretic has no `_heretic_norm`. Its normalisation lives
+    inside a bound method, `_is_match`, alongside an empty-response rule and the marker loop. Ours
+    extracts the four normalisation steps, adds a null guard, and leaves the rest to
+    `is_heretic_refusal`. The marker LIST is byte-identical; the function is not, and four
+    documents described it as copied verbatim.
+
+    The marker list keeps its own guard: `tests/test_metrics.py` pins it by SHA-256.
+    """
+    from pathlib import Path
+
+    RETIRED = {
+        "THIRD-PARTY-NOTICES.md": [
+            "and `_heretic_norm` are **byte-identical to upstream**",
+            "(`_heretic_norm`) copied verbatim",
+        ],
+        "CITATION.cff": ["A keyword metric is copied verbatim"],
+        "docs/architecture.md": ["keyword metric in `metrics.py` is copied verbatim"],
+        "README.md": ["is shared code and it is kept byte-identical"],
+    }
+    root = Path(__file__).resolve().parent.parent
+    for name, retired in RETIRED.items():
+        # Whitespace collapsed because every one of these documents wraps its prose, so the claim
+        # and the name it is about routinely land on different lines. A line-based version of this
+        # check fired on the corrected wording the first time it ran, which is its own lesson.
+        text = " ".join((root / name).read_text(encoding="utf-8").split())
+        for phrase in retired:
+            assert " ".join(phrase.split()) not in text, (
+                f"{name} is back to describing _heretic_norm as a verbatim copy: {phrase!r}. It "
+                f"is an adaptation of upstream's _is_match, and a 5(a) notice that understates "
+                f"the modification is wrong in the direction the section exists to prevent")
+
+    notices = " ".join((root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8").split())
+    assert "adaptation, not a copy" in notices, (
+        "THIRD-PARTY-NOTICES.md no longer states that _heretic_norm is an adaptation, so the "
+        "notice has stopped saying the one thing section 5(a) asks it to say")
+
+
 def test_every_module_in_the_source_tree_reaches_the_distribution():
     """The compass shipped in no released artefact, and nothing would have said so.
 

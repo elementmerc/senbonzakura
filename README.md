@@ -178,8 +178,9 @@ Note on licences, and there are three separate ones in play:
   Direction*](https://arxiv.org/abs/2406.11717) (2024). The direction method this builds on.
 - [Heretic](https://github.com/p-e-w/heretic) by p-e-w (Philipp Emanuel Weidmann),
   AGPL-3.0. The automated, KL-guarded search this builds on, and the keyword metric
-  reported here for comparison (copied verbatim, which is why this project is
-  AGPL; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
+  reported here for comparison (its marker list copied verbatim and its normalisation
+  adapted, which is why this project is AGPL; see
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 - Maxime Labonne. [*Uncensor any LLM with abliteration*](https://huggingface.co/blog/mlabonne/abliteration).
   The tutorial that popularised the technique.
 
@@ -195,6 +196,7 @@ why, and one line added to [CONTRIBUTORS.md](CONTRIBUTORS.md) agreeing to the
 
 **Senbonzakura is a modified work based in part on Heretic, and it is not Heretic.** Modified by
 Daniel Iwugo; first included 2026-07-14, most recently modified 2026-09-08. Only the keyword rate
-is shared code and it is kept byte-identical, so only that number is a like-for-like comparison
-with Heretic; everything else here is measured by our own instrument. The full statement, and what
+is shared code: its marker list is kept byte-identical and its normalisation is adapted from
+upstream, so only that number is a like-for-like comparison with Heretic; everything else here is
+measured by our own instrument. The full statement, and what
 was and was not changed, is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

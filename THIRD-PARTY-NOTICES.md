@@ -156,3 +156,31 @@ CC BY-NC 4.0; Apache-2.0 is reproduced in full beside this file.
 The full provenance, including the per-source commit hashes and the reasoning
 behind the inferred licence on the harmless side, is in the dataset card at
 <https://elementmerc.github.io/senbonzakura/evaluation-track-card>.
+
+## Licence reach, and why this file stops where it does
+
+Recorded 2026-09-22, because the v1.0 gate asks for it and because "these notices look complete"
+is not an answer anybody can check.
+
+**The test is redistribution, not use.** A notice obligation attaches to code this project
+*ships*. Everything above is shipped: Heretic's marker list inside `metrics.py`, the vendored
+`llama.cpp` and `gguf-py` trees, the bundled corpora, the bundled evaluation track. They travel
+inside the wheel, so their terms travel with them.
+
+**The declared runtime dependencies are not shipped.** `torch`, `transformers`, `accelerate`,
+`optuna`, `pyarrow`, `huggingface_hub`, `gguf`, `sentencepiece` and `datasets` are resolved by pip
+from their own publishers. We distribute a name and a version range; the user receives the package
+from PyPI under its own licence, and nothing of theirs is inside our artefact. So no notice is
+owed and none is given, and that is a decision rather than an oversight.
+
+**Two checks keep it honest.** `tools/ci/check_wheel.py` asserts every file in `license-files`
+reaches `dist-info/licenses/` in the built artefact, and `tests/test_platform_wheel.py` ties that
+list to the one `pyproject.toml` declares, so neither can grow without the other.
+
+**What would change this.** Vendoring any dependency, bundling a model, or shipping a dataset we
+did not build. Each moves a package from the second list to the first, and each needs this file
+extended in the same change.
+
+**What is not settled here.** Whether AGPL section 13, the network clause, reaches somebody
+serving a model this tool produced. See `private/decisions.md` Q-39: the documentation makes no
+claim either way, deliberately.

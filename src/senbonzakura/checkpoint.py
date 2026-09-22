@@ -26,12 +26,20 @@ cache while passing a crafted index whose traversal happens to land back inside,
 worst of both. What the advisory is about is the path the index DECLARES, so that is what this
 reads.
 
-WHAT IT DOES NOT COVER, stated because a guard whose reach is assumed is worse than none
+THE HUB CASE, AND WHY IT IS NOT A WHOLE SNAPSHOT
 
-It needs a directory. When a model id is handed straight to `transformers`, the download and the
-load happen inside somebody else's call and there is no point between them to stand. Closing
-that needs the snapshot to be fetched deliberately and the local path passed on, which is a
-change to how models are fetched rather than a check, and it is recorded in DEFERRED.md.
+A model id handed straight to `transformers` gets downloaded and loaded inside one call, with no
+point between them to stand. The obvious answer, fetching the snapshot ourselves and passing the
+local path on, is the wrong one: `snapshot_download` with no patterns takes everything in the
+repository, and plenty of repositories publish both `.bin` and `.safetensors` copies of the same
+weights, so a guard bolted on that way would double the download of a twenty gigabyte model to
+read one small JSON file.
+
+The index IS that one small JSON file, so it is fetched on its own and judged before any weights
+move. A repository with no index, a network that is not there, a gated repository, a revision
+that does not exist: none of those are this function's business, and all of them leave the load
+to proceed exactly as it would have. The check answers one question, and answers it only when it
+can: does this checkpoint's index ask a loader to open something outside the checkpoint.
 """
 import json
 import posixpath
@@ -74,39 +82,92 @@ def unsafe_entry(name):
     return None
 
 
+def unsafe_entries(index_path):
+    """Every offending `weight_map` entry in this index file, as sentences. Empty means clean.
+
+    Returns rather than raises, so the two callers can name the checkpoint the way their own
+    caller knows it: a directory on disk, or a repository id that has not been downloaded yet.
+    Sharing the judgement is the point. Two copies of a rule about what a path may look like is
+    the shape this project keeps finding in its own guards.
+
+    An index that cannot be read counts as clean here. What a malformed index MEANS belongs to
+    the loader that has to use it, and raising would turn a truncated download into a security
+    refusal, which sends the reader looking for an attacker who is not there.
+    """
+    try:
+        doc = json.loads(Path(index_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    weight_map = doc.get("weight_map") if isinstance(doc, dict) else None
+    if not isinstance(weight_map, dict):
+        return []
+    # EVERY OFFENDING ENTRY, not the first. A crafted index carries more than one, and a refusal
+    # naming one of them invites fixing that one and running it again.
+    out = []
+    for tensor, target in sorted(weight_map.items()):
+        why = unsafe_entry(target)
+        if why:
+            out.append(f"  {tensor!r} -> {target!r}: {why}")
+    return out
+
+
+def _refusal(where, bad):
+    listed = "\n".join(bad[:10])
+    more = f"\n  ... and {len(bad) - 10} more" if len(bad) > 10 else ""
+    return (f"{where} names files outside the checkpoint directory, so loading it would read "
+            f"from somewhere you did not point this at:\n{listed}{more}\n"
+            f"A shard name must be a plain filename beside the index. This is refused rather "
+            f"than sanitised, because a checkpoint that asks for this is not one with a typo "
+            f"in it.")
+
+
 def refuse_unsafe_index(model_dir):
-    """Raise before a loader is pointed at a checkpoint whose index names files outside it.
+    """Raise before a loader is pointed at a checkpoint directory whose index escapes it.
 
     Silent on a checkpoint with no index: a single-file model has no `weight_map` and nothing to
-    validate. Silent, too, on an index that cannot be read here, because deciding what a
-    malformed index means belongs to the loader that has to use it; this refuses the one thing it
-    can judge, which is an entry that is a traversal whatever the rest of the file says.
+    validate.
     """
     d = Path(model_dir)
     for index_name in INDEX_NAMES:
         index = d / index_name
         if not index.is_file():
             continue
-        try:
-            doc = json.loads(index.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        weight_map = doc.get("weight_map") if isinstance(doc, dict) else None
-        if not isinstance(weight_map, dict):
-            continue
-        # EVERY OFFENDING ENTRY, not the first. A crafted index carries more than one, and a
-        # refusal naming one of them invites fixing that one and running it again.
-        bad = []
-        for tensor, target in sorted(weight_map.items()):
-            why = unsafe_entry(target)
-            if why:
-                bad.append(f"  {tensor!r} -> {target!r}: {why}")
+        bad = unsafe_entries(index)
         if bad:
-            listed = "\n".join(bad[:10])
-            more = f"\n  ... and {len(bad) - 10} more" if len(bad) > 10 else ""
-            raise UnsafeCheckpointError(
-                f"{index} names files outside the checkpoint directory, so loading it would read "
-                f"from somewhere you did not point this at:\n{listed}{more}\n"
-                f"A shard name must be a plain filename beside the index. This is refused rather "
-                f"than sanitised, because a checkpoint that asks for this is not one with a typo "
-                f"in it.")
+            raise UnsafeCheckpointError(_refusal(str(index), bad))
+
+
+def _fetch_index(repo_id, index_name, revision, token):
+    """The index file from a Hub repository, or None when it cannot be had.
+
+    Every failure here is a reason to say nothing rather than to refuse: no such file, not
+    authorised, no network, no such revision. None of those is evidence about whether the
+    checkpoint is hostile. The catch is broad because the client's failure modes are broad and
+    this function has no opinion on any of them.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        return hf_hub_download(repo_id=repo_id, filename=index_name,
+                               revision=revision, token=token)
+    except Exception:
+        return None
+
+
+def refuse_unsafe_hub_index(repo_id, *, revision=None, token=None):
+    """The same judgement for a Hub id, made before any weights are downloaded.
+
+    Fetches only the index, a few kilobytes, so the cost of asking is not measured against the
+    size of the model. The obvious alternative, fetching the whole snapshot and checking it on
+    disk, would double the download of a repository that publishes both `.bin` and `.safetensors`
+    copies of its weights, which many do.
+
+    Raises only `UnsafeCheckpointError`, and only when an index was read and names something
+    outside the checkpoint.
+    """
+    for index_name in INDEX_NAMES:
+        got = _fetch_index(repo_id, index_name, revision, token)
+        if got is None:
+            continue
+        bad = unsafe_entries(Path(got))
+        if bad:
+            raise UnsafeCheckpointError(_refusal(f"{repo_id} ({index_name})", bad))

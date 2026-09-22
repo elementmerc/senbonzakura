@@ -201,5 +201,54 @@ def test_a_model_id_that_is_not_a_directory_is_left_alone(monkeypatch):
         raise _Stop
 
     monkeypatch.setattr(cli, "load_tokenizer", _stop)
+    monkeypatch.setattr(checkpoint, "_fetch_index", lambda *a, **k: None)
     with pytest.raises(_Stop):
         cli.load_model_and_tokenizer("Qwen/Qwen3-1.7B", device="cpu")
+
+
+# ── the Hub side, judged before any weights move ─────────────────────────────────────────────
+
+def test_a_hub_repository_with_an_escaping_index_is_refused(monkeypatch, tmp_path):
+    """The index is fetched on its own and judged before transformers downloads any weights.
+
+    The alternative, fetching the whole snapshot and checking it on disk, would double the
+    download of a repository publishing both .bin and .safetensors copies of its weights, which
+    many do. Reading one small JSON file is the whole cost of asking.
+    """
+    index = tmp_path / "model.safetensors.index.json"
+    index.write_text(json.dumps({"weight_map": {"w": "../../../etc/passwd"}}), encoding="utf-8")
+    monkeypatch.setattr(checkpoint, "_fetch_index",
+                        lambda repo, name, rev, tok: str(index) if "safetensors" in name else None)
+    with pytest.raises(checkpoint.UnsafeCheckpointError, match="evil/model"):
+        checkpoint.refuse_unsafe_hub_index("evil/model")
+
+
+def test_a_hub_repository_that_cannot_be_reached_is_not_a_refusal(monkeypatch):
+    """No network, no such file, not authorised, no such revision. None of those is evidence
+    that a checkpoint is hostile, and turning them into a security refusal sends the reader
+    looking for an attacker who is not there. The load proceeds and fails on its own terms.
+    """
+    monkeypatch.setattr(checkpoint, "_fetch_index", lambda *a, **k: None)
+    checkpoint.refuse_unsafe_hub_index("some/model")
+
+
+def test_the_fetch_swallows_every_client_failure(monkeypatch):
+    """The catch is broad on purpose, and this pins that it stays broad: the client raises for
+    gating, for rate limits, for DNS, and a guard that let one of those through would turn a
+    flaky network into a failed run.
+    """
+    import huggingface_hub
+
+    def _boom(**_k):
+        raise RuntimeError("the hub said no")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", _boom)
+    assert checkpoint._fetch_index("a/b", "model.safetensors.index.json", None, None) is None
+
+
+def test_a_clean_hub_index_passes(monkeypatch, tmp_path):
+    index = tmp_path / "model.safetensors.index.json"
+    index.write_text(json.dumps({"weight_map": {"w": "model-00001.safetensors"}}),
+                     encoding="utf-8")
+    monkeypatch.setattr(checkpoint, "_fetch_index", lambda *a, **k: str(index))
+    checkpoint.refuse_unsafe_hub_index("fine/model")

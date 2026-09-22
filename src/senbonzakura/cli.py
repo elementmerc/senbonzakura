@@ -1985,6 +1985,8 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # loaded inside transformers, with no point between the two to stand.
     if Path(model_id).is_dir():
         checkpoint.refuse_unsafe_index(model_id)
+    else:
+        checkpoint.refuse_unsafe_hub_index(model_id)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)

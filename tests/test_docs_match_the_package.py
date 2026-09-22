@@ -216,3 +216,29 @@ def test_the_install_surfaces_say_the_release_is_not_on_pypi_yet():
         # hand somebody a contributor-shaped instruction.
         assert "pip install ./" not in text, (
             f"{name} offers a checkout-only command in the interim install block")
+
+
+def test_the_readme_leads_with_an_example_a_reader_can_actually_run():
+    """PANEL FINDING. The README's only worked example needed `harmful.txt` and `harmless.txt`,
+    and sixty lines below it the same page explains that this repository deliberately ships no
+    harmful prompt set. So the first command a reader met could not be run by that reader, and
+    the runnable one was a link at the bottom of the section.
+
+    The toy track IS committed, so the fix is ordering rather than new machinery: lead with the
+    command that works, and keep the real one after it with its input named as something the
+    reader supplies.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    toy = readme.find("examples/toy-track/")
+    corpus = readme.find("--harmful harmful.txt")
+    assert toy != -1, "the README no longer shows the toy-track command"
+    assert corpus != -1, "the README no longer shows the real workflow"
+    assert toy < corpus, (
+        "the README puts the example needing a corpus the reader does not have before the one "
+        "that runs on committed data")
+
+    for part in ("examples/toy-track/bad_eval_ds", "examples/toy-track/good_ds"):
+        assert (root / part).exists(), f"the README's runnable example names {part}, which is absent"

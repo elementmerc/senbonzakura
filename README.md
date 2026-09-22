@@ -91,7 +91,27 @@ fixes it. It changes nothing unless you add `--apply`.
 
 Editing a model wants a CUDA card with 6 GB on it. The measuring commands run on CPU.
 
-## One worked example
+## Try it in one command
+
+No corpus, no GPU, no model to edit first. The toy track is committed to this repository and any
+small instruct model will do:
+
+```sh
+senbonzakura compass \
+    --model HuggingFaceTB/SmolLM2-135M-Instruct \
+    --harmful examples/toy-track/bad_eval_ds \
+    --harmless examples/toy-track/good_ds \
+    --skip-harmful 0 --skip-harmless 0 --n 12 \
+    --out compass-toy.json --device cpu
+```
+
+That runs the harm-recognition measurement end to end and writes a result file with its
+conditions attached. **Do not quote what it says**: twelve rows measures nothing, and the tool
+makes you pass those three flags rather than pretending otherwise.
+[The compass page](https://elementmerc.github.io/senbonzakura/guide/compass) explains why each
+flag is there.
+
+## The real thing
 
 ```sh
 # Build a corpus with a split that stops you marking your own homework.
@@ -105,9 +125,11 @@ senbonzakura compass --model abliterated \
     --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds --out compass.json
 ```
 
-Nothing to hand? The instruments run on a toy track committed to this repository, with no corpus
-to build and no model to edit first, in
-[one command](https://elementmerc.github.io/senbonzakura/guide/compass).
+`harmful.txt` and `harmless.txt` are yours to supply, and this repository deliberately does not
+ship them: see [what this repository does not contain](#what-this-repository-does-not-contain).
+[The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) covers building an
+equivalent corpus from public sources, and the split is the part that matters more than the
+prompts.
 
 ## What it measures
 

@@ -132,6 +132,11 @@ RELEASE_LICENCES = {
                                    "require"),
         "APACHE-2.0.txt": ("the Apache-2.0 text, which section 4(a) requires to travel with the "
                            "bundled evaluation track's Apache-2.0 component"),
+        "ACCEPTABLE-USE.md": ("the use policy, which states what this tool may not be used for. "
+                              "Declared in `license-files` since 2026-09-17 and asserted here "
+                              "only from 2026-09-22: the table listed four of the five, so the "
+                              "one guard that reads the built artefact could not have noticed "
+                              "setuptools dropping it"),
     },
     # The AGPL text itself and nothing else. Whether section 5(a) also reaches a distribution
     # that carries none of the derived code is a LICENCE READING and nobody has made it; it is

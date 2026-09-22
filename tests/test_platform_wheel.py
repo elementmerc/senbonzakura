@@ -537,6 +537,30 @@ def test_every_declared_licence_file_exists():
     assert not missing, f"pyproject declares licence files that are not in the tree: {missing}"
 
 
+def test_the_wheel_guard_asserts_every_declared_licence_file():
+    """The same finding as the Dockerfile one below, one layer over, and found the day after it.
+
+    That test's docstring says `tools/ci/check_wheel.py` enforces the declared set for the wheel.
+    It enforced four of the five: `ACCEPTABLE-USE.md` was in `license-files` and not in the
+    table, so the one guard that reads the BUILT ARTEFACT could not have noticed setuptools
+    dropping it. Fixing the image while asserting a claim about the wheel guard, without reading
+    that guard, is how a gate ends up covering one spelling.
+
+    This ties the two lists together so neither can grow without the other.
+    """
+    import importlib.util
+    root, want = _declared_licence_files()
+    spec = importlib.util.spec_from_file_location(
+        "_check_wheel", root / "tools" / "ci" / "check_wheel.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    asserted = set(mod.RELEASE_LICENCES["senbonzakura"])
+    unasserted = sorted(set(want) - asserted)
+    assert not unasserted, (
+        f"pyproject declares {unasserted} and check_wheel.py does not assert them, so a wheel "
+        f"built without them would pass the guard that exists to catch exactly that")
+
+
 @pytest.mark.parametrize("dockerfile", ["Dockerfile", "Dockerfile.cuda"])
 def test_both_images_copy_every_declared_licence_file(dockerfile):
     """THE FINDING, 2026-09-21. `license-files` declared five and both Dockerfiles copied three:

@@ -883,3 +883,41 @@ def test_a_stamped_coherence_artefact_normalises_like_an_older_one():
     assert a["coherence"]["value"] == b["coherence"]["value"]
     assert a["coherence"]["estimator"] == b["coherence"]["estimator"]
     assert a["coherence"]["n"] == b["coherence"]["n"] == 1
+
+
+def test_the_arm_settings_budget_survives_the_rename_as_well():
+    """THE SECOND COPY, which is the one that had no test.
+
+    The budget is lifted twice: once to the top level, and once into `settings`, which is what
+    decides whether two arms are the same experiment. Both walked the two spellings, separately,
+    and only the top-level walk was covered. Narrowing the `settings` copy to the new name alone
+    left all 91 adapter tests passing.
+
+    It matters in a way the top-level copy does not. An arm recorded before the rename compared
+    against one recorded after it would drop the budget out of `settings` entirely, so two arms
+    generated at different budgets would compare as the same experiment, and a budget difference
+    is exactly the kind of difference that moves a refusal rate.
+    """
+    before = normalise({"num_directions": 1, "dir_mode": "per_layer",
+                        "generation": {"greedy": True, "max_new_tokens": 48}})
+    after = normalise({"num_directions": 1, "dir_mode": "per_layer",
+                       "generation_settings": {"greedy": True, "max_new_tokens": 512}})
+    assert before["settings"]["generation_budget"] == 48
+    assert after["settings"]["generation_budget"] == 512
+    assert before["settings"] != after["settings"], (
+        "two arms generated at different budgets compared as the same experiment")
+
+
+def test_one_record_does_not_give_two_answers_about_its_budget():
+    """The two copies had drifted, not just duplicated.
+
+    The top-level resolution took the first block that was a dict and read the field from it;
+    the `settings` one took the first block that CARRIED the field. So a record holding an empty
+    `generation_settings` beside a populated `generation` reported a budget in `settings` and
+    None at the top level. Both now read the block that actually carries it.
+    """
+    doc = {"num_directions": 1, "dir_mode": "per_layer",
+           "generation_settings": {"greedy": True},
+           "generation": {"greedy": True, "max_new_tokens": 48}}
+    got = normalise(doc)
+    assert got["generation_budget"] == got["settings"]["generation_budget"] == 48

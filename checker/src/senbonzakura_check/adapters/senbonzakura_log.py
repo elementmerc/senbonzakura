@@ -61,6 +61,36 @@ from senbonzakura_check.measurement import METRICS_KEY
 _OUR_METRICS = ("kl", "refusal", "auc", "capability", "nll")
 
 
+#: The two names one block has worn. `build_abliteration_record` wrote these settings under
+#: `generation` until 2026-09-21 and under `generation_settings` after it, because this
+#: repository's pre-commit leak gate refuses any committed JSON carrying a key named `generation`
+#: at any depth, and was therefore refusing this project's own primary artefact. The gate was not
+#: weakened; the field moved. Newest first.
+_GENERATION_BLOCKS = ("generation_settings", "generation")
+
+
+def _generation_field(doc, field):
+    """One field from whichever spelling of the settings block actually carries it.
+
+    THIS EXISTS BECAUSE THERE WERE TWO COPIES OF IT. The adapter resolved the block once at the
+    top and `_arm_settings` walked the same two names again, and the second copy was untested:
+    narrowing it to one name left all 91 adapter tests passing. It is load-bearing, because
+    without the fallback an arm recorded before the rename compared against one recorded after it
+    silently drops the budget from the comparison, and two arms differing in budget then look
+    like two arms that match.
+
+    The two copies had also drifted. The old top-level resolution took the first block that was a
+    dict and read the field from it; this takes the first block that CARRIES the field. A record
+    holding an empty `generation_settings` beside a populated `generation` reported a budget in
+    the settings and None at the top level, which is one record giving two answers.
+    """
+    for name in _GENERATION_BLOCKS:
+        block = doc.get(name)
+        if isinstance(block, dict) and block.get(field) is not None:
+            return block[field]
+    return None
+
+
 class SenbonzakuraAdapter:
     name = "senbonzakura"
 
@@ -138,10 +168,6 @@ class SenbonzakuraAdapter:
         # new name would stop finding the budget on every existing file, which would leave
         # `quoted-at-a-budget-below-the-visibility-floor` unable to fire on anything real while
         # passing all of its own controls.
-        generation = doc.get("generation_settings")
-        if not isinstance(generation, dict):
-            generation = doc.get("generation")
-        generation = generation if isinstance(generation, dict) else {}
         return {
             "model": doc.get("model"),
             "tasks": [doc["label"]] if doc.get("label") else [],
@@ -173,7 +199,7 @@ class SenbonzakuraAdapter:
             # carrying its own short-budget warning and got "nothing found". A checker that
             # ignores the one sentence the producer left about why its number might be wrong is
             # not reading the artefact, it is reading past it.
-            "budget_warning": doc.get("budget_warning") or generation.get("budget_warning"),
+            "budget_warning": doc.get("budget_warning") or _generation_field(doc, "budget_warning"),
             # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
             # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
             # which is the whole point of an adapter. And the record nests it: under
@@ -182,7 +208,7 @@ class SenbonzakuraAdapter:
             # named `generation` at any depth and was therefore refusing this project's own
             # primary artefact. The gate was not weakened; the field moved. The fallback above is
             # what keeps every record written before the move readable.
-            "generation_budget": generation.get("max_new_tokens"),
+            "generation_budget": _generation_field(doc, "max_new_tokens"),
             "provenance": doc.get("provenance"),
             "settings": _arm_settings(doc),
         }
@@ -243,11 +269,9 @@ def _arm_settings(doc) -> dict:
     if template is not None:
         out["chat_template"] = (template.get("source") if isinstance(template, dict)
                                 else template)
-    for block_name in ("generation_settings", "generation"):
-        block = doc.get(block_name)
-        if isinstance(block, dict) and block.get("max_new_tokens") is not None:
-            out["generation_budget"] = block["max_new_tokens"]
-            break
+    budget = _generation_field(doc, "max_new_tokens")
+    if budget is not None:
+        out["generation_budget"] = budget
     return out
 
 

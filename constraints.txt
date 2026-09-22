@@ -27,6 +27,21 @@
 # `transformers==5.14.1`, `datasets==5.0.1` and `huggingface-hub==1.25.1` against the card's
 # 5.13.1, 5.0.0 and 1.23.0. Every published number comes from the card, so the card's versions are
 # the ones pinned. The suite passes on both, which is the only claim being made about the pair.
+#
+# ONE PIN HAS BEEN MOVED OFF THE CARD'S VERSION, on 2026-09-22, and it is recorded here rather
+# than quietly changed. `datasets` ran at 5.0.0 on the card. That release carries a path
+# traversal in its folder-based builders, where a `file_name` in the metadata is joined to the
+# dataset directory without validation, and this tool reads datasets somebody else published. So
+# the pin is the fixed release, which is the one the development machine was already running and
+# which the suite has therefore always been passing on. The advisory is in the builder rather
+# than in anything that computes a number, so no published figure depends on which of the two
+# was used; if that ever stops being obvious, the honest move is to re-measure rather than to
+# argue about it.
+#
+# THE GENERAL RULE THIS SETS. A file recording what produced a number must not be edited to make
+# a number look better, and that is not what this is: the version moved for a defect that has
+# nothing to do with measurement, and the version it moved from is written above. Anything that
+# would change a figure gets a re-measurement, not a note.
 
 torch==2.13.0
 transformers==5.13.1
@@ -34,7 +49,7 @@ tokenizers==0.22.2
 huggingface-hub==1.23.0
 safetensors==0.8.0
 accelerate==1.14.0
-datasets==5.0.0
+datasets==5.0.1
 # A DIRECT dependency since `trackio.py`, and the library that now hands the prompts to every
 # run. It was present transitively underneath `datasets` in every measurement to date, but the
 # July sweep did not record it and neither did the card, so this is the version the development

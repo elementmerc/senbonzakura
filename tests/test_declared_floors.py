@@ -253,3 +253,34 @@ def test_no_test_imports_tomllib_directly():
     assert not offenders, (
         f"these import tomllib directly and will fail to collect on Python 3.10, which this "
         f"project claims to support: {offenders}. Use `from tomlread import tomllib`.")
+
+
+def test_the_lock_and_the_constraints_name_the_same_versions():
+    """TWO FILES, ONE ANSWER. The risk of adding `requirements.lock` is exactly the risk this
+    project refuses everywhere else: a second source of truth about the same question.
+
+    They exist separately because hashes in a constraints file put pip into --require-hashes
+    mode, which then demands every requirement be pinned and hashed including the project
+    itself, so `pip install . -c constraints.txt` stops working. Measured 2026-09-22. The lock
+    is therefore the tamper-evident record and the constraints file is the installable one, and
+    the only thing that makes that safe is that they cannot disagree about a version.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+
+    def pins(name):
+        text = (root / name).read_text(encoding="utf-8")
+        return dict(re.findall(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)", text, flags=re.MULTILINE))
+
+    constraints, lock = pins("constraints.txt"), pins("requirements.lock")
+    assert lock, "requirements.lock names no pinned versions"
+    # Normalised, because a name is written with either a hyphen or an underscore depending on
+    # which tool wrote the line, and two spellings of one package is how this drifts quietly.
+    norm = {k.replace("_", "-").lower(): v for k, v in constraints.items()}
+    got = {k.replace("_", "-").lower(): v for k, v in lock.items()}
+    assert got == norm, (
+        f"constraints.txt and requirements.lock disagree: "
+        f"{sorted(set(norm.items()) ^ set(got.items()))}. One of them is describing an "
+        f"environment nobody measured.")

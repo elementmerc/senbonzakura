@@ -733,11 +733,46 @@ def orthogonalize_np_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
     W.copy_(out.to(W.dtype))
 
 
+#: How many experts the fused-stack rewrite converts to float32 at once.
+#:
+#: The rewrite is separable per expert and was written as if it were not. Every intermediate it
+#: builds is [E, out, in] float32, and it builds four of them, so a 128-expert stack of
+#: [2048, 768] costs about 3.2 GB of working set to edit a checkpoint that stores 805 MB. On the
+#: laptop card this milestone is aiming at, that is the difference between the bake running and
+#: the bake being the reason the run dies.
+#:
+#: Separable is meant literally, and it is worth saying which parts were checked rather than
+#: assumed. `rn` is a norm over the `in` axis, per (expert, out-row). Both einsums contract over
+#: the hidden axis within a single `e`. `_row_mask` takes its top-k over the out-row axis inside
+#: each expert, so the set of rows `--sparsity` holds pristine is chosen per expert and a block
+#: boundary cannot move it. No step reduces across experts, so a block loop computes the same
+#: arithmetic on a smaller slice at a time.
+#:
+#: 8 rather than 1 because a block of one turns a batched matmul into a Python loop over 128 of
+#: them, and the peak is already down 16x at 8.
+EXPERT_BLOCK = 8
+
+
 @torch.no_grad()
-def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True):
-    # Norm-preserving, fused experts [E, out, in]; row norms per (expert, out-row). R is [K, H].
+def orthogonalize_np_3d_(W, R, s, sparsity=0.0, rounds=0, *, restore_norms=True,
+                         block=EXPERT_BLOCK):
+    """Norm-preserving ablation over a fused expert stack [E, out, in], a block of experts at a
+    time. See `EXPERT_BLOCK` for why the loop is here and why it does not change the result.
+    """
     _assert_writes_on_axis(W, R, 1, "a fused expert stack")
-    Rf = R.to(W.device).float()                         # [K, H]
+    Rf = R.to(W.device).float()                         # [K, H], shared by every block
+    experts = W.shape[0]
+    step = max(1, int(block))
+    for lo in range(0, experts, step):
+        # A basic slice of a tensor is a view, so the in-place copy at the end of the block writes
+        # through into `W` itself. This is the whole reason the rewrite can be chunked in place.
+        _orthogonalize_np_3d_block_(W[lo:lo + step], Rf, s, sparsity, rounds,
+                                    restore_norms=restore_norms)
+
+
+@torch.no_grad()
+def _orthogonalize_np_3d_block_(W, Rf, s, sparsity, rounds, *, restore_norms):
+    # Norm-preserving, fused experts [E, out, in]; row norms per (expert, out-row). R is [K, H].
     Wf = W.float()
     rn = Wf.norm(dim=2, keepdim=True).clamp_min(1e-8)   # [E,out,1]
     Wn = Wf / rn

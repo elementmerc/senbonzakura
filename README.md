@@ -54,42 +54,30 @@ pip install senbonzakura
 senbonzakura setup
 ```
 
-> **What that gets you today, stated plainly rather than left to be discovered.** PyPI currently
-> serves **0.3.0**, from July 2026. The CHANGELOG says not to trust its numbers, and it is not
-> the code described on this page. The current work lives on `dev` and is not released, because
-> the companion package `senbonzakura-check` is not on PyPI yet and this version depends on it
-> by name. Until that is published, install from a clone:
+> **PyPI serves 0.3.0, from July 2026, and you do not want it.** Its numbers are withdrawn, and
+> `senbonzakura-check` is not on PyPI yet, so this version cannot resolve from the index.
+> Until it is published, install from the repository, checker first:
 >
 > ```sh
 > pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
 > pip install "git+https://github.com/elementmerc/senbonzakura"
 > ```
 >
-> Checker first: the big package names the small one as a dependency, so on its own it cannot
-> resolve. Neither command needs a clone.
+> **`--track default` will not work from that install.** The bundled corpora are generated
+> artefacts kept out of git, because they are harmful prompts. Build them from a clone
+> (`tools/packaging/build_corpora.py`, public sources, pinned commits) or bring your own
+> corpus. [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) has both
+> routes.
 
-The first command brings everything needed to edit a model: torch, transformers, accelerate,
-optuna. That is **68 packages and 5.8 GB on disk**, measured on a clean Python 3.12 environment on 2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton wheels, which is where almost all of the size goes. (`pip list` will say 69, because it counts pip itself.)
+That brings torch, transformers, accelerate and optuna: **68 packages, 5.8 GB**, nineteen of them
+CUDA wheels. There is nothing to choose.
 
-The second exists because **pip picks by platform, not by hardware**. There is no way for a
-package to declare "install the CUDA build if there is a card", so what you get depends on your
-operating system rather than on what is in the machine:
+`senbonzakura setup` exists because **pip picks by platform, not by hardware**. On Windows, PyPI's
+torch is CPU-only, so **a card there sits idle** and nothing warns you. It says what it found and
+prints the command that fixes it, changing nothing unless you add `--apply`.
+[Install](https://elementmerc.github.io/senbonzakura/guide/install) has the full table.
 
-| Your machine | What pip alone gives you |
-|---|---|
-| Linux with a GPU | the CUDA build. Correct |
-| Linux with no GPU | the CUDA build anyway, and about 15 CUDA packages you cannot use |
-| macOS on Apple silicon | a build that uses Metal. Correct |
-| Windows with a GPU | **a CPU-only build. Your card will sit idle** |
-
-That last row is the one that costs you a day. PyPI's Windows torch is 124 MB and CPU-only; the
-CUDA build is not on PyPI at all. So a gaming laptop with a 3060 in it installs a torch that
-cannot see the card, nothing warns you, and the search runs on CPU.
-
-`senbonzakura setup` looks at the machine, says what it found, and prints the one command that
-fixes it. It changes nothing unless you add `--apply`.
-
-Editing a model wants a CUDA card with 6 GB on it. The measuring commands run on CPU.
+Editing a model wants a CUDA card with 6 GB. The measuring commands run on CPU.
 
 ## Try it in one command
 
@@ -144,33 +132,25 @@ Each of these is a command, and each reports an interval rather than a bare numb
 | `validate` | Does a direction set carry refusal, or carry topic? |
 | `report` | Assembles the above into the card that should travel beside the weights. |
 
-Two habits run through all of them. **The evaluation split is three-way**, so the rows a
-configuration is selected on are never the rows it is reported on. And **every figure arrives with
-the control that would expose it**: the most useful is a ruler reading nothing but prompt length,
-because if that separates the two arms as well as the real instrument does, the real instrument is
-measuring sentence length.
+Two habits run through all of them. **The split is three-way**, so the rows a configuration is
+selected on are never the rows it is reported on. And **every figure arrives with a control**,
+usually a ruler reading nothing but prompt length: if that separates the arms as well as the real
+instrument does, the real instrument is measuring sentence length.
 
-**The honest ceiling.** Nothing has been measured above 3B parameters, and most of the set is
-under 2B. The instruments also get weaker as the model does: on the two measurements committed
-here, Qwen3-1.7B's compass scores 0.9887 against a length-only ruler's 0.6564, and Qwen3-0.6B
-scores **0.6616 against that same 0.6564**, a gap of five thousandths, which is not a measurement
-of anything.
+**The honest ceiling.** Nothing has been measured above 3B parameters. The instruments also
+weaken as the model does: Qwen3-1.7B's compass scores 0.9887 against a length-only ruler's 0.6564,
+and Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measurement of anything.
 
-[Read this before quoting any number](https://elementmerc.github.io/senbonzakura/guide/what-we-know)
-is the full account, including the results that did not go our way.
-
-**Checking us rather than reading us.** [REPRODUCING.md](REPRODUCING.md) maps every figure above
-to the committed file it came from and the command that produces it, so you can verify the lot
-with no GPU and no corpus. [METHOD.md](METHOD.md) is the part that is not about this tool: how to
-measure a behavioural property of a model so the number survives somebody else reading it
-carefully, with the mistakes that taught us each rule.
+- [What is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know)
+  — the full account, including the results that went against us.
+- [REPRODUCING.md](REPRODUCING.md) — every figure above, mapped to the file it came from and the
+  command that makes it. No GPU or corpus needed to check them.
+- [METHOD.md](METHOD.md) — how to measure a behavioural property of a model defensibly. Not about
+  this tool.
 
 ## Documentation
 
 **[elementmerc.github.io/senbonzakura](https://elementmerc.github.io/senbonzakura)**
-
-The guide covers the method, the corpus and its split, the instruments, benchmarking against
-another tool, and every condition attached to every number this project has published.
 
 ## What this repository does not contain
 
@@ -184,12 +164,9 @@ By design, this is methods and results, not a loaded weapon:
   **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
   CC BY-NC 4.0. It holds prompts only: no completions, no answers.
 
-  **The wheel you install from PyPI is a different matter and you should know it.** It carries
-  the evaluation track and six public research corpora, roughly 6,500 harmful prompts, wrapped so
-  a scraper does not find them in plaintext. That wrapping is a speed bump and not protection: the
-  key ships beside them, and anyone who reads `src/senbonzakura/bundled.py` can recover them in
-  five lines. The gate on the HuggingFace copy does not apply to them. Saying only the first half
-  of this would leave the impression that a `pip install` is prompt-free, and it is not.
+  **The installed wheel is a different matter.** It carries roughly 6,500 harmful prompts,
+  wrapped so a scraper does not find them in plaintext. The wrapping is a speed bump, not
+  protection: the key ships beside them and `bundled.py` says so. An install is not prompt-free.
 - **No harmful outputs.**
 
 Abliteration removes safety guardrails wholesale. That is both the point and the danger. Use it

@@ -183,3 +183,36 @@ def test_the_pinned_set_states_the_python_it_needs():
     assert "3.12 or newer" in block[1][:600], (
         "install.md offers `pip install . -c constraints.txt` without saying it needs Python "
         "3.12 or newer, so a reader on a supported 3.10 meets an unresolvable pin with no reason")
+
+
+def test_the_install_surfaces_say_the_release_is_not_on_pypi_yet():
+    """PANEL FINDING, and it lived in a CI comment until 2026-09-22.
+
+    `senbonzakura` names `senbonzakura-check` as a dependency and that name is not on PyPI
+    (verified 2026-09-22: the JSON endpoint returns 404), so the next release cannot be installed
+    by anybody. Meanwhile `pip install senbonzakura` resolves to 0.3.0, from July, which the
+    CHANGELOG says not to trust. A reader following the front page therefore gets an old version
+    silently, and a reader following it after the next release gets a resolver error.
+
+    Our own CI comment stated the problem verbatim, where no user will ever read it. These two
+    pages are where a user meets it.
+
+    WHEN THE CHECKER IS PUBLISHED this test should be deleted along with the warnings, and that
+    is a deliberate cost: the warnings are wrong the moment the upload succeeds, and a stale
+    warning about installability is worse than none.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for name in ("README.md", "docs/guide/install.md"):
+        text = " ".join((root / name).read_text(encoding="utf-8").split())
+        assert "senbonzakura-check` is not on PyPI yet" in text, (
+            f"{name} offers `pip install senbonzakura` without saying the current version cannot "
+            f"be installed that way")
+        assert "subdirectory=checker" in text, (
+            f"{name} says the install is blocked and does not say what to do instead")
+        # A COMMAND A STRANGER CAN RUN, which is what the sibling test above is about. The first
+        # version of this warning said `pip install ./checker` and that test caught it: a reader
+        # who has not cloned cannot follow it, and "the release is broken" is the worst moment to
+        # hand somebody a contributor-shaped instruction.
+        assert "pip install ./" not in text, (
+            f"{name} offers a checkout-only command in the interim install block")

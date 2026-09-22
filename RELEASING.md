@@ -337,12 +337,25 @@ not have to come from an API token on somebody's laptop. Configure it for `senbo
 against this repository, workflow `publish.yml`, environment `pypi` (and `testpypi` for the
 rehearsal), or the first upload fails at the last step with the artefacts already built.
 
-**A dev version does not satisfy the dependency.** `senbonzakura` declares `senbonzakura-check`
-with no version specifier, and pip excludes pre-releases unless the requirement asks for one. So
-uploading `senbonzakura-check 0.4.0.dev9` alone leaves `pip install senbonzakura` failing exactly
-as it does today, for a different reason that reads the same. Closing the hole needs either a
-stable `senbonzakura-check` on the index, or a specifier on the dependency that admits the
-pre-release. Decide which before uploading, because the upload cannot be taken back.
+**The pre-release trap, and where it stands.** pip excludes pre-releases unless the requirement
+asks for one, so a dependency with no specifier would leave `pip install senbonzakura` failing
+against a `senbonzakura-check 0.4.0.dev9` on the index, for a different reason that reads the
+same. That was the state when this paragraph was first written. It is not the state now:
+`pyproject.toml` declares `senbonzakura-check>=0.4.0.dev0,<0.5`, which names a pre-release and
+therefore admits one.
+
+The other half of that trade is already guarded. A STABLE wheel whose specifier admits
+pre-releases resolves to whatever is newest for ever after, which is how a pinned-looking build
+changes underneath a rented card, so `tools/ci/check_wheel.py` refuses a stable wheel carrying
+that specifier and reads the wheel's own version rather than trusting anyone to remember. So the
+decision this paragraph used to ask for is made: ship the pre-release specifier while the
+versions are pre-releases, and the release gate stops it surviving into a stable one.
+
+**What is still true, and it is the whole blocker.** `senbonzakura-check` is not on PyPI at all.
+Verified 2026-09-22: `https://pypi.org/pypi/senbonzakura-check/json` returns 404. Until it is
+published, the next release of `senbonzakura` cannot be installed by anybody, because the
+dependency resolves to nothing. Publishing it needs the pending publisher configured in a browser
+first, which is the step above that nobody can do from a shell.
 
 **This was never a missing credential.** Until 2026-09-17 the workflow's tag check named one
 distribution, so a file called `senbonzakura_check-<version>-py3-none-any.whl` failed it and the

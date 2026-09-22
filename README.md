@@ -54,6 +54,20 @@ pip install senbonzakura
 senbonzakura setup
 ```
 
+> **What that gets you today, stated plainly rather than left to be discovered.** PyPI currently
+> serves **0.3.0**, from July 2026. The CHANGELOG says not to trust its numbers, and it is not
+> the code described on this page. The current work lives on `dev` and is not released, because
+> the companion package `senbonzakura-check` is not on PyPI yet and this version depends on it
+> by name. Until that is published, install from a clone:
+>
+> ```sh
+> pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
+> pip install "git+https://github.com/elementmerc/senbonzakura"
+> ```
+>
+> Checker first: the big package names the small one as a dependency, so on its own it cannot
+> resolve. Neither command needs a clone.
+
 The first command brings everything needed to edit a model: torch, transformers, accelerate,
 optuna. That is **68 packages and 5.8 GB on disk**, measured on a clean Python 3.12 environment on 2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton wheels, which is where almost all of the size goes. (`pip list` will say 69, because it counts pip itself.)
 

@@ -7,6 +7,23 @@ pip install senbonzakura
 senbonzakura setup
 ```
 
+::: warning What that gets you today
+PyPI currently serves **0.3.0**, from July 2026. The CHANGELOG says not to trust its numbers, and
+it is not the code these pages describe. The current work is on `dev` and is not released,
+because the companion package `senbonzakura-check` is not on PyPI yet and this version depends on
+it by name. Verified 2026-09-22.
+
+Until that is published, install from the repository, checker first:
+
+```sh
+pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
+pip install "git+https://github.com/elementmerc/senbonzakura"
+```
+
+Checker first is not a style preference. `senbonzakura` names `senbonzakura-check` as a
+dependency, so installing the big one alone fails to resolve. Neither command needs a clone.
+:::
+
 The first brings everything: torch, transformers, accelerate, optuna, and the rest. It is 68
 packages and 5.8 GB on disk, measured on a clean Python 3.12 environment on
 2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton

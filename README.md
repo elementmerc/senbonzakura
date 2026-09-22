@@ -195,7 +195,7 @@ why, and one line added to [CONTRIBUTORS.md](CONTRIBUTORS.md) agreeing to the
 **AGPL-3.0-or-later.** See [LICENSE](LICENSE).
 
 **Senbonzakura is a modified work based in part on Heretic, and it is not Heretic.** Modified by
-Daniel Iwugo; first included 2026-07-14, most recently modified 2026-09-08. Only the keyword rate
+Daniel Iwugo; first included 2026-07-14, most recently modified 2026-09-22. Only the keyword rate
 is shared code: its marker list is kept byte-identical and its normalisation is adapted from
 upstream, so only that number is a like-for-like comparison with Heretic; everything else here is
 measured by our own instrument. The full statement, and what

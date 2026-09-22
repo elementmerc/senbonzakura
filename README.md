@@ -184,13 +184,24 @@ Note on licences, and there are three separate ones in play:
 - Maxime Labonne. [*Uncensor any LLM with abliteration*](https://huggingface.co/blog/mlabonne/abliteration).
   The tutorial that popularised the technique.
 
+## Getting help
+
+Ask in [Discussions](https://github.com/elementmerc/senbonzakura/discussions), report a defect in
+[Issues](https://github.com/elementmerc/senbonzakura/issues), and report a security problem by
+email rather than in public: [SECURITY.md](SECURITY.md) has the address and what is in scope.
+[SUPPORT.md](SUPPORT.md) says what makes a question easy to answer, and what not to paste into a
+public thread.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests need a test, a commit message that says
 why, and one line added to [CONTRIBUTORS.md](CONTRIBUTORS.md) agreeing to the
 [CLA](CLA.md). The project is AGPL and stays AGPL; you keep the copyright in what you write.
+Everyone taking part is held to the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Licence
+
+Copyright (C) 2026 Daniel Iwugo.
 
 **AGPL-3.0-or-later.** See [LICENSE](LICENSE).
 

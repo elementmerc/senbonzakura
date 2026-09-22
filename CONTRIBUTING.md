@@ -11,7 +11,7 @@ exists under a different name.
 ## The three things a pull request needs
 
 **1. Tests.** Every new function needs one, and every error path needs one. The suite runs
-with `python -m pytest`, and coverage is gated at 92%, so an untested branch fails CI
+with `python -m pytest`, and coverage is gated at 95%, so an untested branch fails CI
 rather than merging quietly.
 
 **2. A commit message that says why.** What changed is visible in the diff. Why it changed
@@ -56,7 +56,8 @@ is a mistake this project has already made and published.
 
 ## Reporting a security issue
 
-Do not open a public issue. Email the address in `pyproject.toml`.
+Do not open a public issue. Email ops@themalwarefiles.com, and see
+[SECURITY.md](SECURITY.md) for what to include and what to expect.
 
 ## Reporting a wrong number
 

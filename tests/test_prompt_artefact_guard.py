@@ -433,3 +433,87 @@ def test_a_vendored_name_at_any_depth_is_skipped(tmp_path):
     deep.mkdir(parents=True)
     (deep / "a.json").write_text('{"prompt":"x","generation":"y"}', encoding="utf-8")
     assert guard.main([str(tmp_path)]) == 0
+
+
+# ── Markdown, which the guard read as "not JSON, therefore clean" ─────────────────────────────
+
+class TestResultsMarkdown:
+    """THE GAP THE ARMOURER FOUND, closed 2026-09-22.
+
+    Everything above judges a document's KEYS. Markdown has none, so the guard decoded a `.md`,
+    failed, and cleared it. Meanwhile `.gitignore` re-admits `head-to-head/results/**/*.md`
+    deliberately and three such files are committed, so a results note quoting a generation
+    passed the hook and passed CI.
+
+    The fix is deliberately NOT a list of words a generation might contain. This project refused
+    that on 2026-09-17, when the guard enforcing the public-safety sweep carried the complete
+    denylist inline in a repository bound for GitHub, publishing the terms it existed to keep
+    out. A gate whose own source is the leak is not a gate.
+
+    So it reads shape. A pasted generation arrives in a fenced block or a blockquote, because
+    that is how anybody pastes model output into Markdown, and a results note needs neither.
+    """
+
+    def _md(self, tmp_path, body):
+        d = tmp_path / "head-to-head" / "results" / "2026-01-01"
+        d.mkdir(parents=True)
+        p = d / "README.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_a_blockquote_is_refused(self, tmp_path):
+        p = self._md(tmp_path, "# Run\n\n> I cannot help with that request.\n")
+        found = guard.scan_file(p)
+        assert found, "a blockquote in a results note was cleared"
+        assert "blockquote" in found[0]
+
+    def test_a_fenced_block_is_refused(self, tmp_path):
+        p = self._md(tmp_path, "# Run\n\n```\nSure, here is how to\n```\n")
+        found = guard.scan_file(p)
+        assert found, "a fenced block in a results note was cleared"
+        assert "fenced" in found[0]
+
+    def test_an_ordinary_results_note_is_clean(self, tmp_path):
+        """It has to pass the notes we actually write, or it gets switched off. Measured against
+        the committed one: tables, prose, links and inline code, no fences and no blockquotes.
+        """
+        p = self._md(tmp_path, "# Run\n\nThirty artefacts.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+                               "See `drift.json` and [the page](https://example.invalid).\n")
+        assert guard.scan_file(p) == []
+
+    def test_markdown_outside_the_results_tree_is_not_this_check(self, tmp_path):
+        """The re-admission is scoped to one directory, so the check is too. Fencing a command
+        in CONTRIBUTING.md is what fences are for, and a guard that fired on every `.md` in the
+        repository would be turned off inside a day.
+        """
+        p = tmp_path / "CONTRIBUTING.md"
+        p.write_text("# Contributing\n\n```sh\npytest\n```\n", encoding="utf-8")
+        assert not guard.is_results_markdown(p)
+        # Asserted on SELECTION rather than on scan_file, which is how the tool is actually
+        # driven: `collect` decides what gets read, and a .md outside the results tree is never
+        # handed to the scanner at all. Calling scan_file on one directly reports "not valid
+        # JSON", which is the answer to a question nothing asks.
+        assert guard.collect([str(tmp_path)]) == []
+
+    def test_the_committed_results_notes_pass_it_today(self):
+        """The rule was chosen by measuring what we already write. If this fails, either a note
+        gained a verbatim container or the rule is wrong; read the note before changing the rule.
+        """
+        root = Path(__file__).resolve().parent.parent
+        notes = list((root / "head-to-head" / "results").rglob("*.md"))
+        assert notes, "no committed results notes, so this rule is untested against real ones"
+        for note in notes:
+            assert guard.scan_file(note) == [], f"{note} would now be refused"
+
+    def test_it_says_what_it_cannot_see(self, tmp_path):
+        """A generation retyped as ordinary prose passes, and the module docstring says so. This
+        pins the honesty rather than the capability: a guard whose reach is assumed is worse than
+        one whose reach is stated.
+        """
+        source = (Path(__file__).resolve().parent.parent / "tools" / "ci"
+                  / "check_prompt_artefacts.py").read_text(encoding="utf-8")
+        assert "retyped as ordinary prose" in source, (
+            "the shape rule no longer states what it cannot see, and a reader will take it for a "
+            "guarantee it does not give")
+        p = self._md(tmp_path, "# Run\n\nThe model said it could not help with that request.\n")
+        assert guard.scan_file(p) == []

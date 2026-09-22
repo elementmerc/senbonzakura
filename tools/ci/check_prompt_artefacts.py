@@ -83,6 +83,53 @@ FOREIGN_SCHEMA_FILES = frozenset({"dataset_info.json", "state.json"})
 
 SUFFIXES = frozenset({".json", ".jsonl"})
 
+#: Markdown under a results directory, which `.gitignore` re-admits explicitly.
+#:
+#: WHY THIS IS A SECOND KIND OF CHECK. Everything above reads a document's KEYS: it decodes JSON
+#: and refuses a banned name at any depth. Markdown has no keys, so that machinery reports
+#: "not valid JSON" on every `.md` and clears it. The Armourer found the gap on 2026-09-21:
+#: `.gitignore` re-admits `head-to-head/results/**/*.md` deliberately, three such files are
+#: committed, and a results README quoting a generation passes the hook and passes CI.
+#:
+#: WHY IT IS NOT A WORD LIST. The obvious prose check is a denylist of things a generation might
+#: say, and this project refused exactly that on 2026-09-17: the guard enforcing the public-safety
+#: sweep carried the complete denylist inline, in a repository bound for GitHub, which published
+#: the very terms it existed to keep out. A gate whose own source is the leak is not a gate.
+#:
+#: SO IT READS SHAPE INSTEAD. A pasted generation arrives as a fenced block or a blockquote,
+#: because that is how anyone pastes model output into Markdown. A results README needs neither:
+#: measured 2026-09-22 across the committed ones, zero fences and zero blockquote lines between
+#: them. The rule costs nothing we use and removes the container a leak would travel in. It
+#: cannot see a generation retyped as ordinary prose, and says so rather than implying otherwise.
+RESULTS_MARKDOWN = "head-to-head/results"
+MARKDOWN_SUFFIXES = frozenset({".md"})
+
+
+def markdown_findings(path: Path, text: str) -> list[str]:
+    """Verbatim containers in a results Markdown file, as sentences. Empty means clean."""
+    found = []
+    fences = sum(1 for ln in text.splitlines() if ln.lstrip().startswith("```"))
+    if fences:
+        found.append(
+            f"{path}: carries {fences // 2 or 1} fenced block(s). A results note records numbers "
+            f"and what produced them; a fenced block is how model output gets pasted into "
+            f"Markdown, so it is refused here rather than read")
+    quoted = [i + 1 for i, ln in enumerate(text.splitlines()) if ln.lstrip().startswith(">")]
+    if quoted:
+        found.append(
+            f"{path}: carries {len(quoted)} blockquote line(s), first at line {quoted[0]}. Same "
+            f"reason as a fenced block: it is a container for somebody else's words")
+    return found
+
+
+def is_results_markdown(path: Path) -> bool:
+    """Markdown inside the one directory whose Markdown `.gitignore` re-admits."""
+    if path.suffix not in MARKDOWN_SUFFIXES:
+        return False
+    parts = Path(path).as_posix()
+    return RESULTS_MARKDOWN in parts
+
+
 # A line longer than this is not parsed. It is reported instead: a multi-megabyte
 # single line in a result artefact is itself the thing worth looking at, and
 # parsing it to find out costs memory a pre-commit hook should not spend.
@@ -166,9 +213,19 @@ def _foreign_schema(path: Path) -> bool:
 def scan_bytes(path: Path, raw: bytes) -> list[str]:
     """Findings for one artefact's CONTENT, whatever it was read from.
 
+    Markdown under a results directory is judged by SHAPE rather than by keys, and the branch is
+    here rather than at each call site so that both the staged path and the tracked-files path
+    get it. Putting it in one of them is how the leak gate came to read two suffixes in the first
+    place.
+
     Separate from `scan_file` because what a pre-commit check must read is the staged
     blob rather than the working copy, and those two are not the same bytes.
     """
+    if is_results_markdown(path):
+        try:
+            return markdown_findings(path, raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            return [f"{path}: is not readable as UTF-8 text, so it cannot be cleared"]
     findings: list[str] = []
     if _foreign_schema(path):
         return findings
@@ -212,7 +269,8 @@ def staged_paths() -> list[Path]:
         print(f"could not list staged files: {e}", file=sys.stderr)
         raise SystemExit(2) from e
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
-    return [Path(n) for n in names if Path(n).suffix in SUFFIXES]
+    return [Path(n) for n in names
+            if Path(n).suffix in SUFFIXES or is_results_markdown(Path(n))]
 
 
 def scan_staged(path: Path) -> list[str]:
@@ -281,7 +339,8 @@ def tracked_under(directory: Path) -> list[Path] | None:
     except (OSError, subprocess.SubprocessError):
         return None
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
-    return [directory / n for n in names if Path(n).suffix in SUFFIXES]
+    return [directory / n for n in names
+            if Path(n).suffix in SUFFIXES or is_results_markdown(directory / n)]
 
 
 def collect(paths: list[str]) -> list[Path]:

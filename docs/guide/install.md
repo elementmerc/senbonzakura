@@ -22,6 +22,22 @@ pip install "git+https://github.com/elementmerc/senbonzakura"
 
 Checker first is not a style preference. `senbonzakura` names `senbonzakura-check` as a
 dependency, so installing the big one alone fails to resolve. Neither command needs a clone.
+
+**One thing that install does not give you: `--track default`.** The two `.bin` blobs in
+`src/senbonzakura/data/` are generated rather than committed, because they hold harmful prompts,
+so a build from a plain clone carries neither. The tool installs, imports and answers `--help`
+exactly as normal, and then fails on `--track default`. That is not a subtle failure once you
+meet it, but nothing warns you beforehand, which is why it is here.
+
+Build them from a clone before building the wheel:
+
+```sh
+python tools/packaging/build_corpora.py          # public corpora, pinned commits
+python tools/packaging/pack_track.py --track <your-track>
+```
+
+The first needs only the network. The second needs a track, which is either
+[one you built](/guide/the-track) or the gated dataset.
 :::
 
 The first brings everything: torch, transformers, accelerate, optuna, and the rest. It is 68

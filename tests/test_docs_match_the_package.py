@@ -242,3 +242,34 @@ def test_the_readme_leads_with_an_example_a_reader_can_actually_run():
 
     for part in ("examples/toy-track/bad_eval_ds", "examples/toy-track/good_ds"):
         assert (root / part).exists(), f"the README's runnable example names {part}, which is absent"
+
+
+def test_the_interim_install_says_the_bundled_track_is_not_in_it():
+    """SELF-PASS FINDING, 2026-09-22, against an instruction written the same morning.
+
+    The interim install tells a reader to install from the repository URL. The two `.bin` blobs
+    under `src/senbonzakura/data/` are generated rather than committed, because they hold harmful
+    prompts, so a build from a clone carries neither. The tool then installs, imports and answers
+    `--help` exactly as normal and fails on `--track default`, which is the first command the
+    quickstart gives.
+
+    This is the same failure that shipped as 0.3.0 and made `--track default` fail for everyone
+    who installed it. Writing an install instruction that reproduces it, on the page that warns
+    about the release being uninstallable, would have been a poor joke.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for name in ("README.md", "docs/guide/install.md"):
+        text = " ".join((root / name).read_text(encoding="utf-8").split())
+        assert "track default" in text, f"{name} does not mention --track default at all"
+        assert "build_corpora" in text, (
+            f"{name} tells a reader to install from the repository without saying the bundled "
+            f"corpora are not in it, or how to build them")
+
+    # The premise, asserted rather than assumed: if these ever become tracked, this warning is
+    # wrong and should go with them.
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files", "src/senbonzakura/data/"],
+                             capture_output=True, text=True, cwd=root, check=False).stdout
+    assert "corpora.bin" not in tracked, (
+        "corpora.bin is tracked now, so the warning about a clone install lacking it is stale")

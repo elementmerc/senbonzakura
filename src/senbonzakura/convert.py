@@ -47,7 +47,7 @@ from pathlib import Path
 
 from . import gguf_io
 from ._version import __version__
-from .crashsafe import free_bytes_for, provenance
+from .crashsafe import atomic_write, free_bytes_for, provenance
 from .vendored import VendorError, find_script
 
 #: What the vendored converter can be asked to write. Deliberately not every value it accepts:
@@ -325,7 +325,9 @@ def write_conversion_record(out, record, *, log=print):
     """Write the record beside its output, atomically, and never fail the conversion for it.
 
     ATOMIC BECAUSE A HALF-WRITTEN RECEIPT IS WORSE THAN NONE: it parses as far as the reader gets
-    and then stops, which is a file that looks like evidence. Baseline section 2.1.
+    and then stops, which is a file that looks like evidence. Baseline section 2.1. Through the
+    canonical helper rather than a local temp-and-rename, because the hand-rolled version here
+    omitted the fsync and so declared a guarantee it did not give.
 
     BEST EFFORT BECAUSE THE GGUF IS THE PRODUCT. A conversion that took forty minutes and
     verified must not be reported as a failure because a read-only directory refused a receipt.
@@ -333,12 +335,10 @@ def write_conversion_record(out, record, *, log=print):
     paperwork is missing, and the reader is told which.
     """
     path = record_path(out)
-    tmp = path.with_suffix(path.suffix + ".part")
     try:
-        tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        tmp.replace(path)
+        with atomic_write(path) as fh:
+            fh.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
     except OSError as e:
-        tmp.unlink(missing_ok=True)
         log(f"  NOTE: the GGUF is fine and its conversion record could not be written to {path} "
             f"({e}). Nothing downstream will be able to check what this file was converted from.")
         return None

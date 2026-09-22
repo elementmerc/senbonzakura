@@ -631,9 +631,12 @@ class TestTheConversionRecord:
         def _boom(*a, **k):
             raise OSError("read-only file system")
         # The RENAME is what is broken, not the write, so the temporary file is created and then
-        # has to be cleaned up: this exercises the cleanup as well as the refusal. Patching
-        # `write_text` instead would break `_checkpoint` too and test nothing about the record.
-        monkeypatch.setattr(Path, "replace", _boom)
+        # has to be cleaned up: this exercises the cleanup as well as the refusal. Patched inside
+        # `crashsafe`, which is where the rename now happens; patching `Path.replace` stopped
+        # reaching it when this moved to the canonical helper, and the test passed on a failure
+        # it was no longer injecting.
+        from senbonzakura import crashsafe
+        monkeypatch.setattr(crashsafe.os, "replace", _boom)
         lines = []
         d = _checkpoint(tmp_path / "m")
         out = tmp_path / "o.gguf"

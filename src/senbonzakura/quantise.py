@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 
 from . import gguf_io
-from .crashsafe import free_bytes_for
+from .crashsafe import atomic_write, free_bytes_for
 from .vendored import VendorError, find_binary
 
 #: Types this command will produce. Deliberately not "whatever the binary accepts": every entry
@@ -405,6 +405,31 @@ def _verify_overrides(out, a, pairs, log):
             "census": gguf_io.type_census(out)}
 
 
+def source_conversion_record(source):
+    """The conversion receipt beside the input, read as a value so it can outlive the input.
+
+    A two-step run converts a checkpoint to f16 and then quantises it, and `--prune-source`
+    deletes the f16 once the output verifies. That left the receipt describing a file that no
+    longer exists, and left the file the user keeps with no record of the checkpoint it came
+    from: the provenance was broken in both directions at once by a step meant to save disk.
+
+    So the chain is copied forward before anything is deleted. A source this tool did not
+    convert has no receipt, which is reported as None rather than as an empty record, because
+    "no conversion step" and "a conversion that recorded nothing" are different facts.
+    """
+    path = Path(str(source) + convert_record_suffix())
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def convert_record_suffix():
+    """Read from `convert` rather than restated, so the two cannot drift apart."""
+    from .convert import RECORD_SUFFIX
+    return RECORD_SUFFIX
+
+
 def preflight(source, out, quant, *, allow_requantize, force):
     """Everything checkable before a long job starts, because none of it is worth finding halfway.
 
@@ -589,13 +614,17 @@ def run(argv=None, log=print):
         "source": {"name": Path(a.source).name, "bytes": src_size,
                    "file_type": head["file_type"], "architecture": head["architecture"],
                    "chat_template": gguf_io.has_chat_template(head)},
+        # Carried forward so the kept file still names the checkpoint it came from after
+        # --prune-source removes the file this receipt describes.
+        "source_conversion": source_conversion_record(a.source),
         "output": {"name": out.name, "bytes": out_size, "file_type": got["file_type"],
                    "architecture": got["architecture"], "tensor_count": got["tensor_count"],
                    "chat_template": gguf_io.has_chat_template(got)},
         "seconds": round(took, 1),
     }
     try:
-        sidecar.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        with atomic_write(sidecar) as fh:
+            fh.write(json.dumps(record, indent=2) + "\n")
         log(f"  wrote {sidecar.name}: the toolchain that produced this file")
     except OSError as e:
         # The GGUF is good and is the point; losing its provenance is a degradation, not a
@@ -609,6 +638,13 @@ def run(argv=None, log=print):
         # replacement is known good is how one bad run costs both files.
         Path(a.source).unlink()
         log(f"  removed the source {Path(a.source).name} now that the output verifies")
+        # Its receipt goes with it. A record describing a file that is not there reads as
+        # evidence about something a reader cannot inspect, and its content has already been
+        # copied into the sidecar above.
+        orphan = Path(str(a.source) + convert_record_suffix())
+        if orphan.is_file():
+            orphan.unlink()
+            log(f"  removed {orphan.name}; its contents are in {sidecar.name}")
     return 0
 
 

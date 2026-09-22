@@ -416,14 +416,14 @@ def test_a_sidecar_that_cannot_be_written_degrades_loudly_and_keeps_the_gguf(tmp
     src = tmp_path / "m.gguf"
     _tiny_gguf(src)
     out = tmp_path / "m-Q4_K_M.gguf"
-    real_write = Path.write_text
 
-    def _fail_on_sidecar(self, *a, **k):
-        if str(self).endswith(quantise.SIDECAR_SUFFIX):
-            raise OSError("read-only filesystem")
-        return real_write(self, *a, **k)
+    def _boom(*a, **k):
+        raise OSError("read-only filesystem")
 
-    monkeypatch.setattr(Path, "write_text", _fail_on_sidecar)
+    # The sidecar is the only thing here written through the canonical helper, so failing the
+    # helper fails exactly the sidecar. This used to patch `Path.write_text` and select the
+    # sidecar by suffix; that stopped injecting anything once the write moved to `atomic_write`.
+    monkeypatch.setattr(quantise, "atomic_write", _boom)
     assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=said.append) == 0
     assert out.is_file(), "a provenance failure must not cost the quantisation"
     assert any("provenance is unrecorded" in m for m in said)
@@ -472,3 +472,63 @@ class TestTheTemplateSurvivedTheQuantisation:
         """
         from senbonzakura import convert, gguf_io
         assert convert.GGUF_CHAT_TEMPLATE_KEY is gguf_io.CHAT_TEMPLATE_KEY
+
+
+# ── the provenance chain across --prune-source ───────────────────────────────────────
+def test_a_source_this_tool_converted_hands_its_receipt_forward(tmp_path):
+    """The kept file has to name the checkpoint it came from, because the file that named it is
+    the one `--prune-source` deletes.
+    """
+    import json
+    src = tmp_path / "m-f16.gguf"
+    src.write_bytes(b"not a real gguf")
+    record = {"schema": "senbonzakura-conversion/1", "source": {"name": "Qwen3-1.7B"}}
+    Path(str(src) + quantise.convert_record_suffix()).write_text(
+        json.dumps(record), encoding="utf-8")
+    assert quantise.source_conversion_record(src) == record
+
+
+def test_a_source_nobody_converted_reports_nothing_rather_than_an_empty_record(tmp_path):
+    """A GGUF downloaded from the Hub has no conversion step behind it. Saying so is a fact;
+    writing an empty record would claim a conversion happened and recorded nothing.
+    """
+    src = tmp_path / "downloaded.gguf"
+    src.write_bytes(b"not a real gguf")
+    assert quantise.source_conversion_record(src) is None
+
+
+def test_a_receipt_that_is_not_readable_json_is_not_passed_off_as_provenance(tmp_path):
+    """Truncated by a full disk, and the alternative to returning None is putting whatever
+    parsed into the sidecar as though it were the whole record.
+    """
+    src = tmp_path / "m-f16.gguf"
+    src.write_bytes(b"not a real gguf")
+    Path(str(src) + quantise.convert_record_suffix()).write_text("{trunc", encoding="utf-8")
+    assert quantise.source_conversion_record(src) is None
+
+
+def test_the_suffix_is_read_from_convert_rather_than_restated():
+    """Two spellings of one constant is the defect this project keeps finding. If `convert`
+    renames its receipt, this must follow rather than silently stop finding them.
+    """
+    from senbonzakura import convert
+    assert quantise.convert_record_suffix() == convert.RECORD_SUFFIX
+
+
+@needs_binary
+def test_pruning_takes_the_orphaned_receipt_with_it(tmp_path):
+    """A record describing a file that is not there reads as evidence about something the reader
+    cannot inspect. Its contents are in the sidecar by then.
+    """
+    import json
+    src = _tiny_gguf(tmp_path / "tiny-f32.gguf")
+    receipt = Path(str(src) + quantise.convert_record_suffix())
+    receipt.write_text(json.dumps({"schema": "senbonzakura-conversion/1",
+                                   "source": {"name": "Qwen3-1.7B"}}), encoding="utf-8")
+    quantise.run([str(src), "--type", "Q4_K_M", "--prune-source"], log=lambda _m: None)
+
+    assert not src.exists()
+    assert not receipt.exists()
+    out = tmp_path / "tiny-Q4_K_M.gguf"
+    sidecar = json.loads(Path(str(out) + quantise.SIDECAR_SUFFIX).read_text(encoding="utf-8"))
+    assert sidecar["source_conversion"]["source"]["name"] == "Qwen3-1.7B"

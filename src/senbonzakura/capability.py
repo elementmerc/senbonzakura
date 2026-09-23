@@ -774,6 +774,12 @@ def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320, 
 PROMPT = ("{}\n\nWork through it, then give the final answer as a number on the last line.")
 
 
+#: Where the result goes when nobody said. Named after the command rather than after the
+#: model, because a directory of results from one command is what `senbonzakura measure`
+#: and `report` both read.
+DEFAULT_OUT = "capability.json"
+
+
 def build_parser():
     import argparse
 
@@ -787,7 +793,12 @@ def build_parser():
         prog="senbonzakura capability",
         description="Measure what an edit cost, on a task the model either gets right or does "
                     "not. Refusal rates and KL cannot see capability loss; this can.",
-        parents=[loader_parser()])
+        parents=[loader_parser(model_required=False)])
+    # THE MODEL WITHOUT A FLAG, as the default command already takes it. `--model` still works and
+    # is what every run spec on record passes; this is a second spelling of the same argument, and
+    # `resolve_model` refuses rather than picking a winner when the two disagree.
+    ap.add_argument("model_positional", nargs="?", default=None, metavar="MODEL",
+                    help="the model to measure, given without a flag. Equivalent to --model.")
     ap.add_argument("--eval", default="bundled",
                     help="what to measure against. 'bundled' (the default) is the probe that "
                          "ships with the package, so this works offline. Otherwise a graded "
@@ -808,7 +819,11 @@ def build_parser():
                     help="name the question column when it cannot be detected")
     ap.add_argument("--answer-column", dest="answer_column", default=None,
                     help="name the answer column when it cannot be detected")
-    ap.add_argument("--out", required=True, help="where the verdicts and summary are written")
+    ap.add_argument("--out", default=None,
+                    help=f"where the verdicts and summary are written (default: "
+                         f"./{DEFAULT_OUT}). A default that already exists is refused rather "
+                         f"than replaced, because two runs' numbers in one filename are "
+                         f"indistinguishable afterwards")
     ap.add_argument("--label", default="", help="a name for this arm, recorded in the output")
     ap.add_argument("--n", type=int, default=200,
                     help="how many items (default 200). A FIXED subset, taken from the head, so "
@@ -847,6 +862,10 @@ def main(argv=None):
     # find out what they need told them nothing and traced. `--help` and a usage error both exit
     # inside `parse_args`, so nothing heavy has to exist for either.
     a = build_parser().parse_args(argv)
+    from .argresolve import pick_model, refuse_to_overwrite
+    a.model = pick_model(a.model_positional, a.model, command="senbonzakura capability")
+    if a.out is None:
+        a.out = refuse_to_overwrite(DEFAULT_OUT, what="capability result")
 
     from . import dataset
     from .cli import load_model_and_tokenizer

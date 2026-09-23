@@ -170,7 +170,9 @@ def test_the_flag_help_says_what_it_refuses():
     """
     from senbonzakura.parser import build_parser
 
-    action, = [a for a in build_parser()._actions if a.dest == "free_base_model"]
+    # THE FULL HELP. This is not a flag a first run needs, so it sits behind `--help-all` since
+    # the page was split; the sentence still has to be there for whoever goes looking.
+    action, = [a for a in build_parser(full=True)._actions if a.dest == "free_base_model"]
     for word in ("irreversible", "cache", "--out"):
         assert word in action.help
 

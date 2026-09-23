@@ -229,6 +229,12 @@ install rather than only in a source checkout.
   five, each with its own required flags and its own output file. The five still exist and
   still take knobs this does not expose; the numbers are identical, because each row is that
   command run with the arguments you would have typed. It prints figures and never a verdict.
+- **Four commands stopped demanding arguments they could work out.** `capability` takes the
+  model without a flag and defaults its output; `track` defaults its output directory to the
+  one the abliterator already looks for; `baseline` takes the artefact as its first argument,
+  reads the metric from it when the artefact stamped exactly one, and derives the path. A
+  default output that already exists is refused rather than replaced. `baseline --seeds` is
+  still required: a baseline claiming a spread it does not have is worse than none.
 - **`--help` shows the flags a run needs; `--help-all` shows all 69.** The default command's help
   page was 470 lines, which is the research side of this tool standing in the doorway of the
   other side. Both forms accept exactly the same arguments.

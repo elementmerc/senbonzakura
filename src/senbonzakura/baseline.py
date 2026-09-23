@@ -428,22 +428,66 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog="senbonzakura baseline",
         description="Record a measurement as the baseline a later run is gated against.")
-    p.add_argument("--measurement", required=True,
+    # THE ARTEFACT WITHOUT A FLAG. It is the one thing this command cannot work out, so it is the
+    # positional; `--measurement` still works and is what every recorded invocation passes.
+    p.add_argument("measurement_positional", nargs="?", default=None, metavar="MEASUREMENT",
+                   help="a result artefact carrying a stamped `metrics` block, given without a "
+                        "flag. Equivalent to --measurement.")
+    p.add_argument("--measurement", default=None,
                    help="a result artefact carrying a stamped `metrics` block")
-    p.add_argument("--metric", required=True,
+    p.add_argument("--metric", default=None,
                    help="which key inside that block to record, e.g. `coherence` or "
-                        "`refusal_rate.senbonzakura-ruler`")
+                        "`refusal_rate.senbonzakura-ruler`. Left out, it is read from the "
+                        "artefact when the artefact stamped exactly one metric, and refused "
+                        "naming every candidate when it stamped several")
     p.add_argument("--seeds", required=True,
                    help="the seeds this figure rests on, comma separated. Stated rather than "
                         "inferred: one artefact is one run, and a baseline claiming a spread it "
                         "does not have is worse than none")
-    p.add_argument("--out", required=True,
-                   help="where to write it. Never overwritten: a new baseline is a new file")
+    p.add_argument("--out", default=None,
+                   help="where to write it (default: ./baselines/<metric>.json). Never "
+                        "overwritten: a new baseline is a new file")
     return p
+
+
+def only_metric(doc):
+    """The one metric this artefact stamped, or a refusal naming every candidate.
+
+    Inferred rather than demanded ONLY when there is nothing to infer between. A command that
+    guessed among several would pick one silently, and a baseline recording a metric nobody chose
+    gates a later run on a property nobody meant to protect.
+    """
+    metrics = doc.get("metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        raise BaselineError(
+            "this artefact carries no `metrics` block, so there is nothing to record and nothing "
+            "to name with --metric either. Artefacts written before 2026-09-12 predate the stamp; "
+            "re-run the measurement with a current build.")
+    if len(metrics) > 1:
+        raise BaselineError(
+            f"this artefact stamped {len(metrics)} metrics, so --metric has to say which one: "
+            f"{', '.join(sorted(metrics))}. Guessing between them would gate a later run on a "
+            f"property nobody chose.")
+    return next(iter(metrics))
+
+
+def default_out(metric):
+    """Where a baseline goes when nobody said: one directory, one file per metric."""
+    return str(Path("baselines") / f"{metric.replace('/', '_')}.json")
 
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    measurement = a.measurement or a.measurement_positional
+    if a.measurement and a.measurement_positional and a.measurement != a.measurement_positional:
+        print(f"two different artefacts were given: {a.measurement_positional!r} as a positional "
+              f"and {a.measurement!r} with --measurement. Pass one.", file=sys.stderr)
+        return 2
+    if not measurement:
+        print("no measurement given. Pass the artefact as the first argument, or with "
+              "--measurement.", file=sys.stderr)
+        return 2
+    a.measurement = measurement
     try:
         seeds = [int(s) for s in a.seeds.split(",") if s.strip()]
     except ValueError:
@@ -454,7 +498,14 @@ def main(argv=None):
         return 2
     try:
         doc = json.loads(Path(a.measurement).read_text(encoding="utf-8"))
-        written = from_artefact(doc, a.metric, seeds=seeds)
+        metric = a.metric or only_metric(doc)
+        if not a.metric:
+            print(f"--metric was left out and this artefact stamped only {metric!r}, so that is "
+                  f"what is being recorded")
+        if a.out is None:
+            a.out = default_out(metric)
+            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        written = from_artefact(doc, metric, seeds=seeds)
         write(a.out, written)
     except (OSError, json.JSONDecodeError) as e:
         print(f"cannot read {a.measurement}: {e}", file=sys.stderr)

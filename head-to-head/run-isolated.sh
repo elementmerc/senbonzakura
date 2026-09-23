@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 #
 # run-isolated.sh — run somebody else's abliteration tool without handing it anything.
 #

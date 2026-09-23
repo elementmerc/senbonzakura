@@ -54,6 +54,10 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # committed. It lived under `tools/`, which ships in no wheel, so exactly the people who
     # needed it were the people who did not have it.
     "corpora": ("corporabuild", "main"),
+    # Runs the five instruments against one model and prints one table. It measures nothing
+    # itself: each stage is the command that already owns that number, given the command line a
+    # person would have typed, so there is no second implementation to drift.
+    "measure": ("measure", "main"),
     "validate": ("validate", "main"),
     "capability": ("capability", "main"),
     "report": ("modelcard", "main"),

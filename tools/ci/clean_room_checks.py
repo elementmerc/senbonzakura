@@ -185,7 +185,7 @@ def main(argv=None):
             check("a bundled corpus loads offline", False, f"{type(e).__name__}: {e}")
     else:
         note("this wheel carries NO bundled corpora, so it is a code-only build. A RELEASE "
-             "wheel must carry them: run tools/packaging/build_corpora.py and tools/packaging/pack_track.py first.")
+             "wheel must carry them: run `senbonzakura corpora` and tools/packaging/pack_track.py first.")
         # The property that has to hold for a code-only wheel is that the absence is legible.
         try:
             from senbonzakura import corpora
@@ -195,7 +195,7 @@ def main(argv=None):
         except Exception as e:
             said = str(e)
             check("a wheel without corpora refuses in words that name the builder",
-                  "build_corpora.py" in said, said[:200])
+                  "senbonzakura corpora" in said, said[:200])
 
     # ── the refusals are clean, not tracebacks ───────────────────────────────────
     # True of both wheel kinds: a missing INPUT file must be refused with a sentence rather than

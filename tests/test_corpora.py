@@ -196,7 +196,7 @@ def test_an_unpacked_install_says_which_step_was_missed(tmp_path):
     """
     with pytest.raises(CorpusError) as e:
         corpora.load("advbench", root=tmp_path)
-    assert "build_corpora.py" in str(e.value)
+    assert "senbonzakura corpora" in str(e.value)
 
 
 def test_a_pack_that_disagrees_with_the_registry_is_refused(tmp_path, monkeypatch):
@@ -247,18 +247,14 @@ def test_the_ambiguous_name_is_refused_through_resolve_too():
 
 # ── the prerequisite is named before the first download ──────────────────────────
 #
-# `doctor` sends a stranger to `tools/packaging/build_corpora.py` by name when the corpora are missing, so
+# `doctor` sends a stranger to `senbonzakura corpora` by name when the corpora are missing, so
 # it gets run on machines that were never set up for it. On one without the GitHub CLI it died on
 # a raw `FileNotFoundError: 'gh'` out of subprocess, which names the missing program and nothing
 # a person can act on. Found by running it on the CPU box.
 def _build_corpora_module():
-    import importlib.util
-    import pathlib
-    path = pathlib.Path(__file__).resolve().parent.parent / "tools" / "packaging" / "build_corpora.py"
-    spec = importlib.util.spec_from_file_location("_build_corpora_under_test", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    from senbonzakura import corporabuild
+
+    return corporabuild
 
 
 def test_a_missing_github_cli_is_refused_with_something_to_do(monkeypatch):
@@ -347,5 +343,5 @@ def test_a_corrupt_pack_says_which_tool_rebuilds_it(tmp_path, monkeypatch):
     blob = tmp_path / "corpora.bin"
     blob.write_bytes(bundled.pack(b"this is not json"))
     monkeypatch.setattr(bundled, "data_path", lambda: tmp_path / "default-track.bin")
-    with pytest.raises(corpora.CorpusError, match=r"build_corpora\.py"):
+    with pytest.raises(corpora.CorpusError, match=r"senbonzakura corpora"):
         corpora.load("advbench", root=tmp_path)

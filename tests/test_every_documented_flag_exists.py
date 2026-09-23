@@ -40,13 +40,13 @@ NOT_OURS = {
     "--flag",           # a placeholder in prose about flags in general
     "--help",           # argparse's own, present on every command
     "--version",        # likewise
-    # OURS, and not a flag of the installed command: `tools/packaging/build_track.py` is a script
-    # run from a clone, so `_accepted()` cannot see it by asking the CLI for help. The reader is
-    # told to type it after being told to run that script, which is coherent. A third category
-    # from the two above, and named rather than folded into them, because "a flag of a script in
-    # the repository" is exactly the excuse under which a genuinely missing CLI flag would hide.
-    "--no-balance",
 }
+
+#: Commands that carry sub-verbs, whose flags live on the sub-verb rather than on the command.
+#: Sweeping only the top level made `senbonzakura track build --no-balance` invisible to this
+#: guard, which is the shape of defect this whole file exists to catch: a check that covers one
+#: spelling of the surface and reports clean on the rest.
+SUBCOMMANDS = {"track": ("build", "promote", "verify")}
 
 FLAG = re.compile(r"`(--[a-z][a-z0-9-]+)")
 
@@ -58,9 +58,11 @@ def _accepted():
     Cached because it shells out once per command and this file parametrises over every flag the
     guide names, which would otherwise pay for the whole sweep on each one.
     """
+    invocations = [[c] for c in [*sorted(DELEGATED), "abliterate", "kageyoshi", "auto"]]
+    invocations += [[c, sub] for c, subs in sorted(SUBCOMMANDS.items()) for sub in subs]
     seen = set()
-    for command in [*sorted(DELEGATED), "abliterate", "kageyoshi", "auto"]:
-        out = subprocess.run([sys.executable, "-m", "senbonzakura", command, "--help"],
+    for words in invocations:
+        out = subprocess.run([sys.executable, "-m", "senbonzakura", *words, "--help"],
                              capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              check=False, timeout=300)
         seen |= set(re.findall(r"(--[a-z][a-z0-9-]+)", out.stdout))

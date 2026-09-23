@@ -29,11 +29,11 @@ something close to the version this box is warning you about.
 
 **That install has no prompts in it.** The corpora and the bundled track are generated artefacts
 kept out of git, because they are harmful prompts and a public repository is not where those
-belong. So `--track default` will not work from it. Build them from a clone:
+belong. So `--track default` will not work from it. Build them, in the install you just made:
 
 ```sh
-python tools/packaging/build_corpora.py            # the refusal corpora
-python tools/packaging/build_track.py --out corpus # prompts, from public sources
+senbonzakura corpora                   # the refusal corpora
+senbonzakura track build --out corpus  # prompts, from public sources
 senbonzakura track --harmful corpus/harmful.txt \
                    --harmless corpus/harmless.txt --out track
 ```

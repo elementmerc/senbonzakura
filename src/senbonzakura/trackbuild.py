@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
@@ -27,16 +26,25 @@ were added to that corpus by hand and never recorded: not their source, not thei
 their revision. A track built here is the same shape and is not the same rows, and the gap is
 unquantified. See docs/evaluation-track-card.md.
 
+WHY IT LIVES IN THE PACKAGE RATHER THAN IN `tools/`
+
+It used to be `tools/packaging/build_track.py`, and `tools/` ships in no wheel: 0 of the wheel's
+207 files. So the guide told a person who had just run `pip install` to run a script their install
+did not contain, and the only way out was to clone the repository a second time, after installing,
+to get one file. Everything this module does is for the user rather than for a release, so it
+belongs where the user's install can reach it.
+
 Usage:
-    python tools/packaging/build_track.py --out corpus
+    senbonzakura track build --out corpus
     senbonzakura track --harmful corpus/harmful.txt --harmless corpus/harmless.txt --out mytrack
 """
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
 import os
 import random
-import sys
 import urllib.error
 import urllib.request
 
@@ -342,7 +350,7 @@ def build(out, *, skip_licence_check=False, balance_sides=True, log=print):
 
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="build_track.py",
+        prog="senbonzakura track build",
         description="Fetch the upstream corpora this project measures on and write the two "
                     "prompt files `senbonzakura track` splits.")
     ap.add_argument("--out", required=True,
@@ -367,5 +375,7 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+
+    module_entry(main)

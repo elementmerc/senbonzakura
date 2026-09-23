@@ -95,7 +95,7 @@ def _guard(present, what, how):
 
 
 needs_track = _guard(_have_track(), "the packed evaluation track", "tools/packaging/pack_track.py")
-needs_corpora = _guard(_have_corpora(), "the packed corpora", "tools/packaging/build_corpora.py")
+needs_corpora = _guard(_have_corpora(), "the packed corpora", "senbonzakura corpora")
 needs_binary = _guard(_have_binary(), "the vendored llama-quantize", "tools/packaging/vendor_llama.py")
 needs_converter = _guard(_have_converter(), "the vendored converter", "tools/packaging/vendor_llama.py")
 

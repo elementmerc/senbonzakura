@@ -37,7 +37,7 @@ def main():
     try:
         rows = corpora.load("advbench")
     except CorpusError as e:
-        if "build_corpora.py" not in str(e):
+        if "senbonzakura corpora" not in str(e):
             print(f"FAILED: this image has no corpora and its refusal does not name the tool that "
                   f"builds them, so a user cannot act on it. The message was: {e}", file=sys.stderr)
             return 1

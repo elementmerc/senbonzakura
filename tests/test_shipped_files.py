@@ -119,7 +119,7 @@ def test_the_prompt_carrying_blobs_stay_out_of_the_repository(blob):
 
 @pytest.mark.parametrize(("module", "attr", "builder"), [
     ("bundled", "_read", "tools/packaging/pack_track.py"),
-    ("corpora", "load", "tools/packaging/build_corpora.py"),
+    ("corpora", "load", "senbonzakura corpora"),
 ])
 def test_a_missing_blob_is_explained_rather_than_just_failing(module, attr, builder, monkeypatch):
     """Correct absence still has to be legible. A clone genuinely does not have these, so the

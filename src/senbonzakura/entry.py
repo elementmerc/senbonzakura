@@ -49,6 +49,11 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),
+    # Fetches and packs the refusal corpora. A release wheel already carries them, so this is
+    # for an install made straight from the repository, where they are generated rather than
+    # committed. It lived under `tools/`, which ships in no wheel, so exactly the people who
+    # needed it were the people who did not have it.
+    "corpora": ("corporabuild", "main"),
     "validate": ("validate", "main"),
     "capability": ("capability", "main"),
     "report": ("modelcard", "main"),

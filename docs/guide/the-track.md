@@ -39,7 +39,7 @@ If you want the corpus this project measured on, you have to fetch it yourself, 
 tool that does it:
 
 ```sh
-python tools/packaging/build_track.py --out corpus
+senbonzakura track build --out corpus
 ```
 
 It fetches the public datasets at **pinned revisions**, writes `harmful.txt` and `harmless.txt`

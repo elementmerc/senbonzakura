@@ -5339,7 +5339,7 @@ def resolve_track(args, *, log=print):
         "  An install from a clone has none: the bundled track is a generated artefact kept out "
         "of git because it is harmful prompts.\n"
         "  What to do:\n"
-        "    build one from public sources:  python tools/packaging/build_track.py --out corpus\n"
+        "    build one from public sources:  senbonzakura track build --out corpus\n"
         "    then split it:  senbonzakura track --harmful corpus/harmful.txt "
         "--harmless corpus/harmless.txt --out track\n"
         "    or point at one you already have with --track <directory>")

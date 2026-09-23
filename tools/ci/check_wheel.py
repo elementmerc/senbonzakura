@@ -151,7 +151,7 @@ RELEASE_LICENCES = {
 
 RELEASE_DATA = {
     "senbonzakura": {
-        "senbonzakura/data/corpora.bin": "python tools/packaging/build_corpora.py",
+        "senbonzakura/data/corpora.bin": "senbonzakura corpora",
         "senbonzakura/data/default-track.bin": "python tools/packaging/pack_track.py",
         "senbonzakura/data/templates/plain.jinja": "it is committed; check the ignore rules",
         # The capability gate is ON BY DEFAULT as of 2026-09-22, so a wheel without its probe

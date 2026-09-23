@@ -107,6 +107,8 @@ paths with a regex rather than a person choosing them. Without that, a config fi
 
 | Command | What it does |
 |---|---|
+| `corpora` | Fetch and pack the refusal corpora this tool measures with, from public sources at pinned commits. A released wheel already carries them; an install made straight from the repository does not, because they are generated rather than committed. Needs the GitHub CLI. |
+| `track build` | Fetch the harmful and harmless prompt pools, at pinned revisions, and write the two text files the next command splits. It refuses to run if any upstream's declared licence has moved since the recipe was written. |
 | `track` | Build an evaluation split, audit an existing one, or check it against a public benchmark for contamination. |
 
 ## Comparing tools

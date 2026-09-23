@@ -135,7 +135,7 @@ class _HelpAll(argparse.Action):
     def __init__(self, option_strings, dest, **kw):
         super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kw)
 
-    def __call__(self, parser, namespace, values, option_string=None):
+    def __call__(self, parser, _namespace, _values, _option_string=None):
         build_parser(full=True).print_help()
         parser.exit()
 
@@ -591,12 +591,13 @@ def build_parser(full=False):
         # AT THE END, ON WHAT WAS ACTUALLY DECLARED, so a flag added later cannot escape the
         # split by being added somewhere this function does not look.
         hidden = 0
-        for action in ap._actions:
+        for action in ap._actions:   # noqa: SLF001 - argparse exposes no public accessor
             if action.dest not in CORE_FLAGS and action.help is not argparse.SUPPRESS:
                 action.help = argparse.SUPPRESS
                 hidden += 1
+        shown = len(ap._actions) - hidden   # noqa: SLF001 - argparse exposes no public accessor
         ap.epilog += (
-            f"\n\nThis page shows the {len(ap._actions) - hidden} flags a run needs. "
+            f"\n\nThis page shows the {shown} flags a run needs. "
             f"{hidden} more control the search, the scoring and the measurement:\n"
             f"  senbonzakura --help-all\n")
     return ap

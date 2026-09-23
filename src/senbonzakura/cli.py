@@ -57,6 +57,7 @@ from . import (
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
 # it without paying for torch. Re-exported here because everything already asks cli.
 from ._version import __version__
+
 # Torch-free on purpose: the measurement commands take the model as a positional too and must not
 # import THIS module in order to parse a command line.
 from .argresolve import pick_model

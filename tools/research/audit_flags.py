@@ -41,6 +41,15 @@ import sys
 # reads it" is the correct and intended state rather than a defect.
 SELF_HANDLED = {"version", "help"}
 
+# The same thing one step further out: a CUSTOM action class that prints and exits, so
+# nothing reads the dest either. Matched by dest rather than by action, because the action
+# is a class reference in the source and `SELF_HANDLED` above reads a string literal.
+# Each entry needs a reason, because an unexplained name here is how a genuinely dead flag
+# would hide.
+SELF_HANDLED_DESTS = {
+    "help_all",   # parser._HelpAll prints the long help and exits, like --version
+}
+
 # The names an argparse Namespace travels under in this codebase. `own` is the one that matters:
 # several commands separate their own flags from the shared loader's `args`, and a checker that
 # does not know that reports every one of them dead.
@@ -76,7 +85,7 @@ def dest_of(call):
             return None
     for kw in call.keywords:
         if kw.arg == "dest" and isinstance(kw.value, ast.Constant):
-            return kw.value.value
+            return None if kw.value.value in SELF_HANDLED_DESTS else kw.value.value
     opts = [a.value for a in call.args
             if isinstance(a, ast.Constant) and isinstance(a.value, str)]
     if not opts:

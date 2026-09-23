@@ -562,7 +562,11 @@ def build_parser():
     # them mandatory forced anyone checking a track to invent two paths that are never read.
     ap.add_argument("--harmful", default="", help="text file of harmful prompts, one per line")
     ap.add_argument("--harmless", default="", help="text file of harmless prompts, one per line")
-    ap.add_argument("--out", required=True, help="track directory to create")
+    ap.add_argument("--out", default="track",
+                    help="track directory to create (default: ./track, which is the "
+                         "directory the abliterator picks up when --track is left out). "
+                         "An existing track is moved to <out>.pre-build rather than replaced "
+                         "in place, unless a backup from an earlier rebuild is already there")
     ap.add_argument("--fit", type=int, default=256,
                     help="prompts per side the directions are extracted from (default: the "
                          "auto presets' --dir-prompts). Applies when BUILDING a track; under "

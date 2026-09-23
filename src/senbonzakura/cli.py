@@ -57,6 +57,9 @@ from . import (
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
 # it without paying for torch. Re-exported here because everything already asks cli.
 from ._version import __version__
+# Torch-free on purpose: the measurement commands take the model as a positional too and must not
+# import THIS module in order to parse a command line.
+from .argresolve import pick_model
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
     RETRY_SHARD_SIZE,
@@ -5275,27 +5278,15 @@ if __name__ == "__main__":
 # 66 of them as declared by a module that never reads them, which is the audit being right.
 
 def resolve_model(args):
-    """The model, from the positional or the flag, or a refusal naming both ways to give one.
+    """The model, from the positional or the flag, on THIS command's namespace.
 
-    Two spellings of one argument, so the failure modes are: neither given, or both given and
-    disagreeing. Both are refused here rather than resolved by precedence. Silently preferring one
-    when somebody typed two different models is how a run measures a model nobody asked for, and
-    the artefact would record the winner with nothing saying the other was ever mentioned.
+    The decision lives in `argresolve.pick_model`, so every command refuses in the same words;
+    reading the namespace stays here, because this is where the flag is declared and the flag
+    audit pairs the two.
     """
-    positional = getattr(args, "model_positional", None)
-    flag = getattr(args, "model", None)
-    if positional and flag and positional != flag:
-        raise SystemExit(
-            f"senbonzakura: two different models were given: {positional!r} as a positional and "
-            f"{flag!r} with --model. Pass one.")
-    args.model = flag or positional
-    if not args.model:
-        raise SystemExit(
-            "senbonzakura: no model given.\n"
-            "  The short form is the model on its own:\n"
-            "    senbonzakura Qwen/Qwen3-1.7B\n"
-            "  The long form still works and is what a script should use:\n"
-            "    senbonzakura --model Qwen/Qwen3-1.7B --track default --out abliterated")
+    args.model = pick_model(
+        getattr(args, "model_positional", None), getattr(args, "model", None),
+        long_form="senbonzakura --model Qwen/Qwen3-1.7B --track default --out abliterated")
     return args.model
 
 

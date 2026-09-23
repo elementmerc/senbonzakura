@@ -1012,3 +1012,22 @@ def test_the_estimate_matches_the_measurement_it_came_from():
 
     assert capability.cpu_probe_estimate(1, 512) == pytest.approx(73.1, abs=0.1)
     assert capability.cpu_probe_estimate(200, 512) / 3600 == pytest.approx(4.06, abs=0.05)
+
+
+def test_a_probe_that_is_switched_off_costs_nothing_and_is_not_refused():
+    """A GUARD MUST NOT INVENT A COST FOR WORK THAT DOES NOT HAPPEN.
+
+    `_score_items` returns without measuring anything when the spec is empty or `n` is zero. The
+    first version of this refusal read `n` and `max_new` alone, so a run that had turned the probe
+    off with `--capability-eval ""` was still refused for four hours it was never going to spend.
+    The condition here mirrors the one the probe itself uses, rather than approximating it.
+    """
+    from senbonzakura import capability
+
+    capability.refuse_a_slow_probe("cpu", 200, 512, spec="")
+    capability.refuse_a_slow_probe("cpu", 200, 512, spec=None)
+    capability.refuse_a_slow_probe("cpu", 0, 512, spec="bundled")
+
+    # And it still fires when the probe really will run.
+    with pytest.raises(SystemExit):
+        capability.refuse_a_slow_probe("cpu", 200, 512, spec="bundled")

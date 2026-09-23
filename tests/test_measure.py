@@ -123,13 +123,9 @@ def test_a_failed_stage_is_named_in_the_table_rather_than_dropped():
     assert "out of memory" in rows[0][2]
 
 
-def test_a_stage_that_wrote_a_file_without_the_figure_says_so():
-    rows = measure.verdict_rows({"score": {"label": "x"}})
-    assert rows[0][1] == "not reported"
-
-
-def test_the_figure_is_read_from_the_key_the_command_actually_writes():
-    rows = measure.verdict_rows({"score": {"refusal": 0.031}})
+def test_the_figure_is_read_from_the_stamp_the_command_writes():
+    rows = measure.verdict_rows({
+        "score": {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.031}}}})
     assert rows[0][1] == "0.031"
 
 
@@ -137,8 +133,9 @@ def test_the_table_never_prints_a_verdict():
     """Withdrawn numbers are this project's history. A green tick over four instruments is the
     artefact that invites somebody to quote a result they have not read.
     """
-    rendered = " ".join(measure.format_table(
-        measure.verdict_rows({"score": {"refusal": 0.0}, "coherence": {"ppl": 11.2}})))
+    rendered = " ".join(measure.format_table(measure.verdict_rows({
+        "score": {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.0}}},
+        "coherence": {"metrics": {"coherence": {"value": 11.2}}}})))
     for word in ("PASS", "FAIL", "OK", "GOOD", "SAFE", "✓"):
         assert word not in rendered, f"the table renders a verdict ({word}) rather than a figure"
 
@@ -202,28 +199,61 @@ def test_the_dry_run_prints_the_lines_and_loads_nothing(capsys, tmp_path):
 
 # ── the readings name keys the commands actually write ───────────────────────────
 
-def test_every_reading_names_a_key_its_command_writes():
-    """THE MISTAKE THIS CAUGHT, on the day it was written.
+def test_every_reading_names_a_metric_its_command_actually_stamps():
+    """THE GUARD THAT WAS NOT STRONG ENOUGH, twice, and this is the second version.
 
-    `drift` was read for `delta_ppl`, which it has never written: it reports a KL divergence, and
-    the table would have carried a blank row for it forever while every other stage looked fine.
-    Nothing else would have failed, because a missing key reads as "not reported" by design.
+    The first read a plain top-level key and asserted only that the string appeared SOMEWHERE in
+    the module that writes the file. It caught `drift` being read for a `delta_ppl` that module
+    never mentions, and then passed `capability`'s `accuracy`, which that module does write, one
+    level down under `summary`. So a real run on the ROG printed "not reported" for a model that
+    had scored 29 of 39 in the log two lines above.
 
-    Checked against the source rather than against a run, because a run needs a GPU and this
-    class of error is a typo. It is a floor, not a proof: it says the key exists in the module
-    that writes the file, not that it is the right one to quote.
+    This asserts against the stamp instead: `measurement.stamp(result, "<name>", ...)` is the one
+    call that puts a figure in the `metrics` block, and every reading here has to name something
+    a stage stamps. The names with a dot in them are estimator-qualified and are built rather
+    than written literally, so the prefix is what can be checked; that is stated here rather than
+    left as a hole somebody finds later.
     """
     import ast
     import pathlib
 
     pkg = pathlib.Path(measure.__file__).parent
-    for name, (key, _note) in measure.READINGS.items():
+    for name, (metric, _note) in measure.READINGS.items():
         source = (pkg / f"{DELEGATED[name][0]}.py").read_text(encoding="utf-8")
-        written = {n.value for n in ast.walk(ast.parse(source))
-                   if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-        assert key in written, (
-            f"`measure` reads {key!r} out of {name}'s result file and that module never writes "
-            f"the string. The table would carry a blank row and nothing would fail")
+        stamped = set()
+        for node in ast.walk(ast.parse(source)):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "stamp" and len(node.args) >= 2):
+                continue
+            key = node.args[1]
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                stamped.add(key.value)
+        assert stamped, f"{name} stamps nothing, so `measure` can read no figure out of it"
+        assert metric.split(".")[0] in stamped, (
+            f"`measure` reads {metric!r} out of {name}, and that module stamps "
+            f"{sorted(stamped)}. The table would carry a blank row and nothing would fail.")
+
+
+def test_a_reading_that_finds_nothing_says_what_the_file_does_carry():
+    """A row saying only "not reported" beside a stage that printed its number is useless. The
+    first version did exactly that for `capability` and nothing in the output pointed anywhere.
+    """
+    rows = measure.verdict_rows({"score": {"metrics": {"something_else": {"value": 1}}}})
+    assert rows[0][1] == "not reported"
+    assert "something_else" in rows[0][2], (
+        "the row has to name what the file does carry, or the reader is left opening it by hand")
+
+
+def test_a_result_with_no_metrics_block_is_named_as_such():
+    rows = measure.verdict_rows({"score": {"refusal": 0.2}})
+    assert rows[0][1] == "not reported"
+    assert "metrics" in rows[0][2]
+
+
+def test_a_stamped_figure_is_read_from_its_value():
+    rows = measure.verdict_rows({
+        "coherence": {"metrics": {"coherence": {"value": 13.6137, "n": 268}}}})
+    assert rows[0][1] == "13.6137"
 
 
 # ── the table's numbers fit in the table ─────────────────────────────────────────
@@ -233,24 +263,32 @@ def test_a_long_float_is_cut_to_something_a_column_can_hold():
     `13.613728595914115` beside a refusal rate of `0.2083`, which is fifteen decimal places of a
     perplexity nobody can use and a column that no longer lines up.
     """
-    rows = measure.verdict_rows({"coherence": {"ppl": 13.613728595914115}})
+    rows = measure.verdict_rows({
+        "coherence": {"metrics": {"coherence": {"value": 13.613728595914115}}}})
     assert rows[0][1] == "13.6137"
 
 
 def test_a_round_number_does_not_grow_a_tail_of_zeros():
-    assert measure.verdict_rows({"score": {"refusal": 0.0}})[0][1] == "0"
-    assert measure.verdict_rows({"score": {"refusal": 0.5}})[0][1] == "0.5"
+    def _row(v):
+        return measure.verdict_rows(
+            {"score": {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": v}}}})[0][1]
+
+    assert _row(0.0) == "0"
+    assert _row(0.5) == "0.5"
 
 
 def test_a_non_number_is_left_alone():
     """Some stages report a string where a figure would be, and inventing a format for it would
     be this module deciding what another command meant.
     """
-    assert measure.verdict_rows({"score": {"refusal": "withheld"}})[0][1] == "withheld"
+    assert measure.verdict_rows({
+        "score": {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": "withheld"}}}
+    })[0][1] == "withheld"
 
 
 def test_the_column_lines_up_across_mixed_magnitudes():
     lines = measure.format_table(measure.verdict_rows({
-        "score": {"refusal": 0.2083}, "coherence": {"ppl": 13.613728595914115}}))
+        "score": {"metrics": {"refusal_rate.senbonzakura-ruler": {"value": 0.2083}}},
+        "coherence": {"metrics": {"coherence": {"value": 13.613728595914115}}}}))
     ends = {line.index("   ", line.index(line.split()[1])) for line in lines}
     assert len(ends) == 1, "the figures column is ragged:\n" + "\n".join(lines)

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for the fetch lock (tools/dev/fetch_model.py).
 
 A sister project lost a day to a 987 MB fragment of a 5.16 GB checkpoint that passed an "exists

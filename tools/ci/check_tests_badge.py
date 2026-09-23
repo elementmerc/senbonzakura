@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The README's `tests-NNNN` badge states the number of tests that actually exist.
 
 WHY THIS IS A SCRIPT AND NOT A TEST

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Is this result file the one the caller is about to produce, or merely A result file?
 
 Every resume guard in this project's run specs asked the same question, and asked it wrong:

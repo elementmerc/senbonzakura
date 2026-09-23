@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The seeded corpus of known-bad setups, run through the checker end to end.
 
 WHY THIS IS NOT THE SAME TEST AS THE PER-CHECK CONTROLS

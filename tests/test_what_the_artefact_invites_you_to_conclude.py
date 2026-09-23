@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Three surfaces that were accurate and still left the reader with a false belief.
 
 All three found by hostile outside reviewers on 2026-09-17, working from an installed wheel with

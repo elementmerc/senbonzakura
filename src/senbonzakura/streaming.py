@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Read and rewrite a checkpoint one tensor at a time, never holding the model.
 
 THE PROBLEM THIS SOLVES. Abliterating a model today means loading it: `load_model_and_tokenizer`

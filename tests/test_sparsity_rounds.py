@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`--sparsity` and `--ablation-rounds` do what each of them says when used together.
 
 THE DEFECT, found 2026-09-09 and warned about rather than fixed until 2026-09-12. `--sparsity`

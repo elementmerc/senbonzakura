@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The three rule operators added on 2026-09-21, and the checks that needed each one.
 
 The engine's vocabulary is deliberately small, and `registry.py` sets the condition for growing

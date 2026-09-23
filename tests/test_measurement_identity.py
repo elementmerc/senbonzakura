@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Every number carries its name, its estimator and its units, and the registry refuses the rest.
 
 Item D of the non-GPU shortlist. The incident is 2026-08-05: four published claims withdrawn

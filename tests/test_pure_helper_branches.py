@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Branches in the small pure helpers of `headtohead` and `capability` that nothing has taken.
 
 The companion to `test_cli_helpers_branches.py`, and the same argument. Measured on 2026-09-11,

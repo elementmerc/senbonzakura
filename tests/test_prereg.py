@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The pre-registration format, and the four this project wrote before the format existed.
 
 The rung sets its own acceptance test and it is the right one: *"the pre-registrations this

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The last of shortlist item A: downloads, manifests, and byte comparison.
 
 Same argument as the two files before it, and this batch is mostly about what happens when input

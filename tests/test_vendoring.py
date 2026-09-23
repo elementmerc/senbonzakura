@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The pin-freshness policy, tested without a network and without waiting ninety days.
 
 The rule being encoded (operator, 2026-08-17): adopt nothing younger than the cooldown, and

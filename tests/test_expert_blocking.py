@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The fused-expert rewrite edits a block of experts at a time, and that must not change it.
 
 `orthogonalize_np_3d_` built four [E, out, in] float32 intermediates for a rewrite that is

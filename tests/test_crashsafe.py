@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for the crash-resilience helpers (persist by default, recover a lost save, fail loud early).
 
 These are the pure cores of the fixes from the first large-model H100 run, where a save crash

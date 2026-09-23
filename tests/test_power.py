@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """What a comparison can see, and the plan's own figure being 14% optimistic.
 
 The v0.7 rung asks for "a stated effect size that five seeds can actually resolve" and quotes

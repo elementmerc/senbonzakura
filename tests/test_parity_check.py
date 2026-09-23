@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The CPU-versus-accelerator parity gate's comparison logic.
 
 The gate itself needs two devices and a few seconds of model time, so it is exercised on real

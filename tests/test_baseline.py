@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The regression gate's core: what a baseline is, and when two numbers may be compared.
 
 These tests are organised by the loophole hunt in `private/plans/06-v0.9-the-regression-gate.md`

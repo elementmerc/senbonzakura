@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`senbonzakura check`: the thirty-second finding, and the three outcomes it must tell apart.
 
 Item G of the shortlist, property 1 of the six. `strategy-2026-08-02.md` on why the 10x axis

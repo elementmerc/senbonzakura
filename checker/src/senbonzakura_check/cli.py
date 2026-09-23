@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`senbonzakura check`: point it at a result file and find out how the number could be wrong.
 
 ITEM G OF THE SHORTLIST, AND PROPERTY 1 OF THE SIX.

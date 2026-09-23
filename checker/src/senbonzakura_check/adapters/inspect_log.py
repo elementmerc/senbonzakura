@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Inspect eval logs.
 
 SHAPE, read out of `src/inspect_ai/log/_log.py` on 2026-09-11: the `EvalLog`, `EvalResults`,

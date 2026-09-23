@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """What a mistyped argument costs, on the paths where the cost is a download or an hour.
 
 FOUND BY ADVERSARIAL USER TESTING, 2026-09-17, from an installed wheel with no source access.

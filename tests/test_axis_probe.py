@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for the axis probe (tools/research/axis_probe.py).
 
 The probe exists to answer one question: when a layer keeps a single refusal direction, is that

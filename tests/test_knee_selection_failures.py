@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """A search that measured nothing must say so, not die in `min()`.
 
 `_select_knee` runs after the whole search. Every way it can fail arrives hours into a run that

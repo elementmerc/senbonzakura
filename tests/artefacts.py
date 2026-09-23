@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """One definition each for "this test needs an artefact that is built, not committed".
 
 WHY THIS FILE EXISTS, AND WHAT IT COST NOT TO HAVE IT

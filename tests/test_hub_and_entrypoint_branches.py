@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The Hub transfer, the `fetch` command, and the bundled-alias branch of the manifest.
 
 Fourth and last batch of shortlist item A. Everything here is a wrapper: `fetch.run` around

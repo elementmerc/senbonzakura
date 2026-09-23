@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """A flag the documentation tells you to pass has to be a flag the tool accepts.
 
 `test_every_flag_is_documented.py` checks that every flag the tool has appears in the docs. This

@@ -1,0 +1,37 @@
+{
+    "version": "0.0.0",
+    "description": "Read an evaluation result file and report how the number could be wrong. No model, no GPU, no network.",
+    "homepage": "https://github.com/elementmerc/senbonzakura",
+    "license": "AGPL-3.0-or-later",
+    "notes": [
+        "senbonzakura-check reads result files from lm-evaluation-harness, Inspect and senbonzakura.",
+        "It imports nothing outside the standard library, so it needs no virtualenv and no network.",
+        "The full abliteration tool is not packaged here: it pulls torch and is better installed",
+        "with pip, Docker, or the Colab notebook. See the repository."
+    ],
+    "suggest": {
+        "Python": "python"
+    },
+    "url": "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.0.0.zip",
+    "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "extract_dir": "senbonzakura-0.0.0\\checker",
+    "installer": {
+        "script": [
+            "python -m pip install --quiet --upgrade --target \"$dir\\lib\" \"$dir\"",
+            "if ($LASTEXITCODE -ne 0) { throw 'senbonzakura-check failed to install' }"
+        ]
+    },
+    "bin": [
+        [
+            "lib\\bin\\senbonzakura-check.exe",
+            "senbonzakura-check"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/elementmerc/senbonzakura"
+    },
+    "autoupdate": {
+        "url": "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v$version.zip",
+        "extract_dir": "senbonzakura-$version\\checker"
+    }
+}

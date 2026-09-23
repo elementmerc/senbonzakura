@@ -1,0 +1,242 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Distribution fan-out: get every channel that needs no approval out of one push.
+#
+# WHY THIS EXISTS AS ITS OWN WORKFLOW
+#
+# `publish.yml` puts wheels on PyPI when a release is published, and it is deliberately narrow:
+# it holds the trusted-publishing identity, so the less it does the better. This does everything
+# else, holds no publishing identity beyond the repository's own package registry, and can
+# therefore run on ordinary pushes.
+#
+# THE TWO LANES, AND WHY PYPI IS NOT IN THE FAST ONE
+#
+#   push to dev          container :dev, and a rolling pre-release carrying the wheels
+#   tag vX.Y.Zrc1        the same, plus PyPI as a pre-release (pip install --pre)
+#   tag vX.Y.Z on main   PyPI proper, container :latest, a real release
+#
+# The fast lane deliberately stops short of PyPI. A version on PyPI can never be reused and never
+# really be withdrawn, so publishing one per commit would burn the version space permanently and
+# fill the index with builds nobody asked for. A container tag is mutable and a GitHub pre-release
+# is deletable, so the fast lane uses the channels where being wrong is recoverable.
+#
+# WHAT STILL NEEDS A HUMAN, ONCE
+#
+#   The Action's Marketplace listing is a tick-box on the first release that carries `action.yml`.
+#   After that every release updates it automatically.
+#
+# WHAT IS NOT HERE AND WHY
+#
+#   Hugging Face Spaces and the VS Code Marketplace both need an account and a token this
+#   repository does not hold. They are one secret away rather than one workflow away, and adding
+#   half of each would be worse than a note saying so.
+name: distribute
+
+on:
+  push:
+    branches: [dev]
+    tags: ["v*"]
+  workflow_dispatch:
+
+# The default token, and only what the registry needs. `contents: write` is scoped to the job that
+# writes a pre-release rather than granted here, so the build job cannot write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  # One fan-out at a time per ref. Two pushes in a minute should produce the later artefact, not a
+  # race over the same mutable tag.
+  group: distribute-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lane:
+    name: work out which lane this is
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.decide.outputs.channel }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+      - id: decide
+        # Stated as one shell step rather than spread across `if:` expressions on every job,
+        # because "which lane am I" is one question and answering it in six places is how two of
+        # them end up disagreeing.
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF}"
+          if [[ "$ref" == refs/tags/v*rc* ]]; then
+            echo "channel=prerelease" >> "$GITHUB_OUTPUT"
+          elif [[ "$ref" == refs/tags/v* ]]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=dev" >> "$GITHUB_OUTPUT"
+          fi
+          version=$(python -c "import re,pathlib;\
+            print(re.search(r'__version__ = \"([^\"]+)\"', \
+            pathlib.Path('src/senbonzakura/_version.py').read_text()).group(1))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "lane: $(grep channel= "$GITHUB_OUTPUT" | cut -d= -f2), version $version"
+
+  container:
+    name: container to ghcr
+    needs: lane
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # tip of the v3 series, resolved 2026-09-23
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # tip of the v3 series, resolved 2026-09-23
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: tags
+        # `:dev` is mutable on purpose and `:vX.Y.Z` never moves. Somebody pinning a version gets
+        # the bytes they pinned; somebody following the edge gets the edge.
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          case "${{ needs.lane.outputs.channel }}" in
+            stable)     tags="$image:latest,$image:v${{ needs.lane.outputs.version }}" ;;
+            prerelease) tags="$image:rc,$image:v${{ needs.lane.outputs.version }}" ;;
+            *)          tags="$image:dev" ;;
+          esac
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image can answer for itself
+        # A pushed image nobody ran is a pushed image that does not work. `doctor` is the command
+        # whose whole job is to say what this install can and cannot do, so it is the right smoke
+        # test: it exercises the vendored binaries rather than only the Python import.
+        run: |
+          set -euo pipefail
+          image=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
+          docker run --rm "$image" doctor || {
+            echo "the image was pushed and cannot run doctor" >&2
+            exit 1
+          }
+
+  wheels:
+    name: wheels for the fast lane
+    needs: lane
+    if: needs.lane.outputs.channel != 'stable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0, as pinned in ci.yml
+        with:
+          python-version: "3.12"
+
+      - name: Build both distributions
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build
+          python -m build checker --outdir dist
+
+      - name: The wheel carries what it claims
+        # The same check the release path runs. A fast lane that skipped it would be a fast lane
+        # for shipping a wheel with no corpora in it, which is the defect this project has already
+        # shipped once.
+        run: python tools/ci/check_wheel.py dist/*.whl
+
+      - name: Publish or refresh the rolling pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # One rolling tag rather than a release per commit. `dev` moves; anybody who wants a fixed
+        # artefact takes a real release. Deleting and recreating is deliberate: a release whose
+        # assets are stale is worse than no release, because the version string still looks right.
+        run: |
+          set -euo pipefail
+          tag="rolling-dev"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" dist/* \
+            --prerelease \
+            --title "Rolling development build" \
+            --notes "Built from ${GITHUB_SHA}. This is not a release: it is whatever \`dev\` was
+          at the time, it has not been through the release review, and it will be replaced without
+          warning. Use it to try something today. Do not build anything on it.
+
+          Install: \`pip install <the wheel below>\`
+          Container: \`docker run --rm ghcr.io/${GITHUB_REPOSITORY,,}:dev doctor\`"
+
+  packaging-manifests:
+    name: refresh the brew formula and scoop manifest
+    needs: lane
+    if: needs.lane.outputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    permissions:
+      # The only job here that writes to the repository, and it touches exactly two files. Kept
+      # separate from the container and wheel jobs for the reason ci.yml gives about its badge
+      # job: a token that can write should never be in the same job as code it did not build.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+        with:
+          ref: main
+
+      - name: Rewrite the version and the hashes
+        env:
+          VERSION: ${{ needs.lane.outputs.version }}
+        # Hand-editing these is how a formula ends up pointing at a tarball that no longer has
+        # that hash, which fails for the user and nobody else. The hash is taken from the archive
+        # GitHub actually serves rather than computed from the working tree, because those are not
+        # the same bytes and only one of them is what `brew` will download.
+        run: |
+          set -euo pipefail
+          tarball="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
+          zipball="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.zip"
+          tar_sha=$(curl -fsSL "$tarball" | sha256sum | cut -d' ' -f1)
+          zip_sha=$(curl -fsSL "$zipball" | sha256sum | cut -d' ' -f1)
+          repo_name="${GITHUB_REPOSITORY#*/}"
+
+          python - "$VERSION" "$tarball" "$tar_sha" "$zip_sha" "$repo_name" <<'PY'
+          import json, pathlib, re, sys
+          version, tarball, tar_sha, zip_sha, repo = sys.argv[1:6]
+
+          formula = pathlib.Path("packaging/senbonzakura-check.rb")
+          text = formula.read_text(encoding="utf-8")
+          text = re.sub(r'^  url ".*"$', f'  url "{tarball}"', text, flags=re.M)
+          text = re.sub(r'^  sha256 ".*"$', f'  sha256 "{tar_sha}"', text, flags=re.M)
+          formula.write_text(text, encoding="utf-8")
+
+          manifest = pathlib.Path("bucket/senbonzakura-check.json")
+          doc = json.loads(manifest.read_text(encoding="utf-8"))
+          doc["version"] = version
+          doc["url"] = tarball.replace(".tar.gz", ".zip")
+          doc["hash"] = zip_sha
+          doc["extract_dir"] = f"{repo}-{version}\\checker"
+          manifest.write_text(json.dumps(doc, indent=4) + "\n", encoding="utf-8")
+          print(f"refreshed both manifests to {version}")
+          PY
+
+      - name: Commit them if they moved
+        env:
+          VERSION: ${{ needs.lane.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "manifests already describe ${VERSION}; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packaging/senbonzakura-check.rb bucket/senbonzakura-check.json
+          git commit -m "chore(packaging): point the brew formula and scoop manifest at v${VERSION}"
+          git push

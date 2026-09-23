@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # Project pre-commit gate: refuse a commit that carries retained prompts or generations.
 #
 # Wired in through the baseline hook's project extension point, which runs every

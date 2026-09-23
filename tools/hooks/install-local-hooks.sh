@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # Wire this project's own pre-commit gates into the shared baseline hook.
 #
 # Run once per clone. The baseline hook runs every executable in .githooks/local.d/ as a

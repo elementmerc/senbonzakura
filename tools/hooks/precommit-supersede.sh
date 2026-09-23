@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # A deleted tool must say what does its job now.
 #
 # THE RULE THIS GATES

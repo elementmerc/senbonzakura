@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 #
 # repair_manylinux.sh — turn the platform wheel into one PyPI will accept, and prove it runs.
 #

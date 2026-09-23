@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Derive a miniature of a head-to-head spec, so the rehearsal cannot drift from the performance.
 
 WHY GENERATE IT RATHER THAN WRITE IT

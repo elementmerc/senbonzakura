@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # A real run of the track audit, filmed in a real terminal for the release notes.
 #
 # expect: TRACK_AUDIT_OK

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """SPIKE: how much host memory will this machine page-lock, and what does exceeding it cost?
 
 RECONNAISSANCE, NOT A FEATURE. It answers one question and stops. Nothing in the tool calls it.

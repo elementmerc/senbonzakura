@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # Re-record every terminal capture on the docs site, from the committed tapes.
 #
 # The rule this exists to make cheap: a recording is part of its feature's change surface. If the

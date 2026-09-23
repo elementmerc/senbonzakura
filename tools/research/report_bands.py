@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Print a matched-refusal comparison, using the harness's verdict rather than a fresh argmin.
 
 Every run spec in this repo grew its own report as a Python heredoc, and every one of them ended

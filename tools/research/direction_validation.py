@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Thin shim: the validation experiments now live in the package as `senbonzakura validate`.
 
 Kept because run specs on the measurement machines invoke this path, and a spec that has already

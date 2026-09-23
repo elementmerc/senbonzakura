@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 #
 # e2_arms.sh — run one base model through every ablation method and measure what each one COST.
 #

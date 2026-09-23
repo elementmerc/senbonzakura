@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # Record a REAL terminal running a REAL command, for release notes.
 #
 # The other recorder, tools/dev/record-docs.sh, renders a terminal headlessly and is reproducible by

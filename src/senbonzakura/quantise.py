@@ -445,8 +445,11 @@ def preflight(source, out, quant, *, allow_requantize, force):
     if not src.is_file():
         raise SystemExit(
             f"no source GGUF at {src}.\n"
-            f"  This quantises a GGUF, and converts a transformers checkpoint directory on the "
-            f"way in. {src} is neither: it does not exist.")
+            f"  This takes either a GGUF or a transformers checkpoint directory, and {src} is "
+            f"neither: nothing is there.\n"
+            f"  If you have a checkpoint, pass it straight to this command; it converts first.\n"
+            f"  If you want the intermediate GGUF kept, make it yourself:\n"
+            f"    senbonzakura convert <model directory> {src}")
 
     # BEFORE the exists check, because it is the more specific and the more destructive of the
     # two. Ordered the other way, the only case that reaches it is `--force` on the same path,

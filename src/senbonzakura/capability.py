@@ -651,7 +651,7 @@ def cpu_probe_estimate(n, max_new):
     return int(n) * int(max_new) * CPU_SECONDS_PER_TOKEN
 
 
-def refuse_a_slow_probe(device, n, max_new, *, allowed=False, log=print):
+def refuse_a_slow_probe(device, n, max_new, *, spec="bundled", allowed=False, log=print):
     """Refuse a CPU probe measured in hours unless somebody asked for one.
 
     THE SAME SHAPE AS `--short-budget-ok`, and for the same reason. The capability probe became a
@@ -669,6 +669,13 @@ def refuse_a_slow_probe(device, n, max_new, *, allowed=False, log=print):
 
     So the default stays honest and the run says what it will cost before spending it.
     """
+    # THE SAME CONDITION THE PROBE ITSELF USES, mirrored rather than approximated. `_score_items`
+    # returns without measuring anything when the spec is empty or `n` is zero, so a run that
+    # turned the probe off with `--capability-eval ""` was being refused for hours it was never
+    # going to spend. The first version of this guard read `n` and `max_new` alone and did exactly
+    # that, which is a guard inventing a cost for work that does not happen.
+    if not spec or int(n or 0) <= 0:
+        return
     if str(device).lower() not in ("cpu", "", "none"):
         return
     seconds = cpu_probe_estimate(n, max_new)

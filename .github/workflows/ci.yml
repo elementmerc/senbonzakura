@@ -266,6 +266,14 @@ jobs:
         # every matrix row because it costs milliseconds.
         run: python tools/ci/check_prompt_artefacts.py .
 
+      - name: Contributed probes keep their shape
+        # `probes/` holds probes other people wrote and this project distributes, so a malformed
+        # one reaches everybody who installs. The gate is mechanical and checks shape only: it
+        # cannot tell whether the items measure what their author says. That is what the human
+        # review in probes/README.md is for, and this step prints as much on success rather than
+        # letting a green tick read as "somebody checked the contents".
+        run: python tools/ci/check_probes.py
+
   tests-badge:
     # THE ONLY JOB IN THIS WORKFLOW THAT CAN WRITE TO THE REPOSITORY, and it is deliberately the
     # one that runs nothing. It installs no dependencies, executes no project code and no

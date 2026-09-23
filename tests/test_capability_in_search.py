@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The search can finally see what it is costing.
 
 WHY THIS FILE EXISTS
@@ -212,3 +214,19 @@ def test_an_ungradeable_candidate_is_charged_the_baseline_end_to_end(
     obj = _abl()
     obj.model, obj.tok, obj.dev = tiny_model, tiny_tok, "cpu"
     assert obj._capability_drop(0.71, [("q", "#### 1")]) == 0.71
+
+
+def test_the_summary_side_channel_is_cleared_rather_than_left_stale(tmp_path):
+    """A STALE SIDE CHANNEL IS WORSE THAN AN ABSENT ONE.
+
+    `_capability_score` publishes the full summary on `_last_capability_summary` so the record can
+    carry intervals and counts rather than a bare decimal. It is read immediately after the call
+    that produced it. If a later call returns early without clearing it, a reader picks up the
+    PREVIOUS measurement and writes the baseline's counts into the post-bake field, which is a
+    plausible wrong answer rather than a visible missing one.
+    """
+    obj = _abl(capability_eval=str(tmp_path / "unused.jsonl"), capability_n=0)
+    obj._last_capability_summary = {"accuracy": 0.99, "correct": 999}
+    assert obj._capability_score([]) is None
+    assert obj._last_capability_summary is None, (
+        "a scoring call that measured nothing left the previous run's summary in place")

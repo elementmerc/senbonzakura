@@ -1,0 +1,26 @@
+# A probe somebody else could have written. This one is the smallest complete example, and it is
+# here to be copied rather than to be useful: four items is far below the reporting floor, so the
+# tool will decline to state a rate from it and say why.
+#
+# Copy this directory, change the items, keep the shape.
+
+[probe]
+name = "arithmetic-demo"
+version = "1"
+# What it claims to measure, in words a reader can disagree with. "Reasoning" would be too vague
+# to argue with, which is the point of the field.
+measures = "two-step arithmetic on small whole numbers"
+# One of this tool's grading rules. A probe names a rule rather than shipping code, so running
+# somebody's probe reads their data rather than runs their program.
+task = "numeric"
+items = "items.jsonl"
+
+[content]
+# Required rather than defaulted. The default anybody would want is "benign", and this format is
+# an obvious way to post a harmful corpus as a benchmark, so the word has to be written down.
+class = "benign"
+
+[source]
+author = "Senbonzakura, as a worked example"
+licence = "AGPL-3.0-or-later"
+citation = "written by hand for the probe format documentation"

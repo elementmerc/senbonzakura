@@ -1,10 +1,10 @@
 # Flags worth knowing
 
-There are forty-odd flags. `senbonzakura --help` lists them all. These are the six that
+There are forty-odd flags. `senbonzakura --help` lists them all. These are the seven that
 change what a run *means* rather than how it's spelled, so if you're going to read about any
 of them, read about these.
 
-## The six
+## The seven
 
 | Flag | What it does | Reach for it when |
 |---|---|---|
@@ -14,8 +14,9 @@ of them, read about these.
 | `--patience N` | Stop once the search hasn't improved for N trials | You're paying for the GPU by the hour |
 | `--eval-refusal-final N` | Re-score the best candidates on a bigger evaluation before picking the winner | Always, really. See below |
 | `--inspect LAYER STRENGTH` | Print real generations from before and after a cut | You want to look at the actual text instead of a percentage |
+| `--capability-eval` | What the run measures the edit's cost against. On by default, using a benchmark that ships with the package | You want to point it at your own graded benchmark, or turn it off. See below |
 
-## The two that deserve a paragraph
+## The three that deserve a paragraph
 
 **`--hedge-ds`** exists because refusal has a polite cousin. A model that no longer says "I
 can't help with that" may instead produce four paragraphs of disclaimers wrapped around a
@@ -60,3 +61,25 @@ constantly.
 
 - [The full CLI reference](/reference/cli).
 - [Your first run](/guide/first-run), which uses almost none of this.
+
+**`--capability-eval`** is the one that runs whether you ask for it or not, so it is worth
+knowing what it does. Every other number a run gives you is about refusal: how often the model
+refused, how often it hedged, how far its output distribution moved, whether it still forms
+sentences. None of those asks the model to do anything hard. A model can come through a bake with
+a low divergence and nothing broken, and have lost the ability to work through a problem in
+several steps, because nothing in the run ever asked it to.
+
+So every run now answers 256 arithmetic questions before the edit and the same ones after, and
+reports the difference. The questions ship inside the package, so this needs no network and no
+account. `--capability-n` sets how many are used; the default of 200 is chosen because a smaller
+sample does not give you a weaker answer, it gives you none at all, and the run then says "not
+gradeable" however well the model did.
+
+Two things it will tell you that are easy to miss. If the answers get cut off before the model
+reaches a number, those count as *ungradeable*, never as wrong: a budget set too low would
+otherwise look exactly like the model getting worse. And if the unedited model was already bad at
+the task, the run says so, because a model that could not do something before the edit cannot be
+shown to have lost it.
+
+Point it at your own benchmark with a question column and an answer column, or pass an empty
+string to switch it off.

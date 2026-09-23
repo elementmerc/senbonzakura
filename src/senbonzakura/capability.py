@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """What the edit cost, measured on a task the model either gets right or does not.
 
 WHY THIS EXISTS
@@ -691,10 +693,12 @@ def build_parser():
         description="Measure what an edit cost, on a task the model either gets right or does "
                     "not. Refusal rates and KL cannot see capability loss; this can.",
         parents=[loader_parser()])
-    ap.add_argument("--eval", required=True,
-                    help="a graded benchmark with a question column and an answer column, such "
-                         "as openai/gsm8k:main::test. A plain prompt list will not do: marking needs "
-                         "the reference answer")
+    ap.add_argument("--eval", default="bundled",
+                    help="what to measure against. 'bundled' (the default) is the probe that "
+                         "ships with the package, so this works offline. Otherwise a graded "
+                         "benchmark with a question column and an answer column, such as "
+                         "openai/gsm8k:main::test, or a contributed probe directory. A plain "
+                         "prompt list will not do: marking needs the reference answer")
     ap.add_argument("--task", choices=TASK_CHOICES, default=DEFAULT_TASK,
                     help="how the answers are graded. 'numeric' (default) reads the last number, "
                          "for arithmetic sets like GSM8K; 'multiple-choice' reads the last option "
@@ -715,7 +719,7 @@ def build_parser():
                     help="how many items (default 200). A FIXED subset, taken from the head, so "
                          "two arms are compared on the same questions")
     ap.add_argument("--skip", type=int, default=0, help="drop this many items from the head first")
-    ap.add_argument("--max-new", dest="max_new", type=int, default=320,
+    ap.add_argument("--max-new", dest="max_new", type=int, default=512,
                     help="token budget per answer (default 320). A worked solution is long, and "
                          "a budget that truncates most of them measures the budget rather than "
                          "the model. Truncated items are reported as indeterminate, never wrong")
@@ -754,12 +758,35 @@ def main(argv=None):
     if a.n is not None and a.n < 1:
         raise SystemExit("--n must be at least 1.")
 
-    try:
-        questions, answers = dataset.resolve_pairs(
-            a.eval, question_column=a.question_column, answer_column=a.answer_column,
-            token=a.hf_token or None)
-    except dataset.DatasetError as e:
-        raise SystemExit(str(e)) from e
+    # THREE THINGS `--eval` CAN BE, resolved here rather than by `resolve_pairs`, because two of
+    # them are this project's own shapes and one is a general table reader. Keeping the package's
+    # own formats out of the dataset layer is what stops that layer growing a special case per
+    # release.
+    from . import probe as probefmt
+    if a.eval == "bundled":
+        questions, answers = zip(*load_probe(), strict=True)
+        questions, answers = list(questions), list(answers)
+        probe_notice(used=min(a.n, len(questions)) if a.n else None)
+    elif probefmt.is_probe(a.eval):
+        try:
+            loaded = probefmt.load(a.eval)
+        except probefmt.ProbeError as e:
+            raise SystemExit(str(e)) from e
+        pairs = loaded.pairs()
+        questions, answers = [q for q, _ in pairs], [r for _, r in pairs]
+        # The probe names its own grading rule. A probe graded by a rule it was not written for
+        # produces a number that looks fine and means nothing.
+        a.task = loaded.task
+        print(f"probe {loaded.name!r}: {loaded.measures!r}, graded by {loaded.task!r}")
+        print("  The format gate checks shape, not contents. Read a contributed probe before "
+              "reporting a number from it.")
+    else:
+        try:
+            questions, answers = dataset.resolve_pairs(
+                a.eval, question_column=a.question_column, answer_column=a.answer_column,
+                token=a.hf_token or None)
+        except dataset.DatasetError as e:
+            raise SystemExit(str(e)) from e
 
     if a.skip >= len(questions):
         raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(questions)} items.")
@@ -922,18 +949,25 @@ def probe_is_available():
     return probe_path().is_file()
 
 
-def probe_notice(log=print):
+def probe_notice(log=print, used=None):
     """Say what the bundled probe is and where it came from. Once per process.
 
     Somebody who installs a package and runs a default has not read a dataset card. The bundled
     track prints the same kind of notice for the same reason; the licence here is permissive
     rather than restrictive, which changes what the notice asks of them and not whether it is
     owed.
+
+    `used` is how many items this run will actually score. It is reported because the first
+    version said "256 bundled items" on a run using 200 of them, and a number in a log is a
+    number somebody quotes. The bundle is deliberately larger than any sensible sample, so the
+    two will usually differ.
     """
     if _probe_state["notified"]:
         return
     _probe_state["notified"] = True
-    log(f"Capability probe: {len(load_probe())} bundled items from {PROBE_SOURCE}.")
+    have = len(load_probe())
+    scope = f"{used} of {have}" if used is not None and used != have else f"{have}"
+    log(f"Capability probe: {scope} bundled items from {PROBE_SOURCE}.")
     log("  Attribution travels with it. See THIRD-PARTY-CORPORA.md.")
 
 

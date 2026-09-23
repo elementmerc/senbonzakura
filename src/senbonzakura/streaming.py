@@ -39,10 +39,13 @@ extract the direction in the first place. That needs a forward pass and therefor
 is the open half of the v0.5 spike. This module is the bake half, which needs neither a GPU nor a
 model, and is the part that can be tested on any machine.
 """
+import collections
 import contextlib
 import itertools
 import json
 import os
+import pathlib
+import re
 import struct
 
 #: safetensors pads its header to this boundary. Writing a header that is not padded produces a
@@ -62,6 +65,18 @@ DTYPE_BYTES = {
 #: is not syscall bound, small enough that it is not part of the memory story this module exists
 #: to fix.
 CHUNK = 1 << 22
+
+#: Every spelling of "how many transformer layers" across the architectures this tool supports.
+#: Read from the config rather than inferred from the weights, for the reason the whole module
+#: turns on: a checkpoint whose layers are named in some new way must be measured rather than
+#: silently skipped. Same list-from-the-config discipline as `tools/research/expert_layout.py`,
+#: which was rewritten after name matching reported a mixture-of-experts checkpoint as dense.
+LAYER_COUNT_KEYS = ("num_hidden_layers", "n_layer", "n_layers", "num_layers",
+                    "num_decoder_layers", "n_block")
+
+#: An integer path component, which is how every architecture spells an index:
+#: `model.layers.3.mlp.experts.7.w2.weight` has two, and only the first of them is the layer.
+_INDEXED = re.compile(r"(?<=\.)(\d+)(?=\.)")
 
 
 class ShardError(Exception):
@@ -281,3 +296,202 @@ def _copy_range(src, out, offset, count):
             raise ShardError("the shard ended while copying a range its header said was there")
         out.write(chunk)
         count -= len(chunk)
+
+
+# ── the layer index ──────────────────────────────────────────────────────────────────────────
+#
+# WHAT IT IS FOR. Everything downstream of here works one layer at a time, and none of it can
+# start without knowing which tensors belong to which layer and which file they sit in:
+#
+#   * the capture pass loads layer i, runs the prompts through it, and evicts it;
+#   * the bake rewrites layer i's residual writers and writes a completion marker, so a run that
+#     dies on layer 30 of 48 resumes at 30 rather than at 0;
+#   * the preflight sizes the largest layer to say, before anything starts, whether the run fits
+#     and roughly how long it will take.
+#
+# It reads HEADERS ONLY. A whole 30B checkpoint costs a few hundred kilobytes of JSON to index
+# and no weights at all, which is what makes it usable in a preflight that has to answer before
+# the user has committed to anything.
+
+
+class LayerIndex:
+    """Which tensors make up each layer, and where their bytes are.
+
+    `layers[i]` maps a tensor name to `(shard_path, Tensor)`. `shared` holds everything that is
+    not part of any layer: embeddings, the final norm, the language-model head.
+    """
+
+    __slots__ = ("count", "layers", "root", "shared")
+
+    def __init__(self, root, count, layers, shared):
+        self.root = pathlib.Path(root)
+        self.count = count
+        self.layers = layers
+        self.shared = shared
+
+    def nbytes(self, i):
+        """On-disk bytes of layer `i`. What one layer costs to read, and the preflight's unit."""
+        return sum(t.nbytes for _shard, t in self.layers[i].values())
+
+    def writers(self, i, ablate_conv=True):
+        """The tensors in layer `i` that write to the residual stream, which are the edited ones.
+
+        From `writers.py`, which is the SAME list the editor walks and the snapshot estimator
+        sizes against. A streaming bake that kept its own idea of which tensors to edit would be
+        the third hand-kept copy of a set of architecture names, and the second one already
+        drifted far enough to refuse a model the editor could edit perfectly well.
+
+        A name match is an estimate and cannot apply the structural conditions the editor applies
+        with the module in hand. It is what walks the checkpoint; on an architecture the resident
+        path would refuse, `refuse_unrecognised_writers` is still the one that refuses it.
+        """
+        from .writers import is_writer_tensor
+        return {name: entry for name, entry in self.layers[i].items()
+                if is_writer_tensor(name, ablate_conv)}
+
+    def widest(self):
+        """(index, bytes) of the largest layer.
+
+        The memory budget is set by the WORST layer, not the average. Architectures that put a
+        dense mixture-of-experts block on some layers and not others exist, and budgeting the mean
+        would fit every layer but one and fail hours in.
+        """
+        sizes = [self.nbytes(i) for i in range(self.count)]
+        widest = max(range(self.count), key=sizes.__getitem__)
+        return widest, sizes[widest]
+
+    def shards(self):
+        """Every shard the checkpoint spans, in a stable order."""
+        seen = {shard for layer in self.layers for shard, _t in layer.values()}
+        seen |= {shard for shard, _t in self.shared.values()}
+        return sorted(seen)
+
+    def __repr__(self):
+        return (f"LayerIndex({self.count} layers, {len(self.shards())} shard(s), "
+                f"{len(self.shared)} shared tensor(s))")
+
+
+def layer_count(model_dir):
+    """How many layers the CONFIG says there are, and which key said so.
+
+    From the config rather than from the weights, deliberately. Counting distinct indices in the
+    tensor names would agree on every checkpoint that is already understood and would quietly
+    agree with itself on one that is not: a checkpoint whose last layer is stored under a name
+    this reader does not match would report one fewer layer and edit one fewer, and nothing
+    anywhere would say so. The config is a second, independent account, which is the whole point
+    of consulting it.
+    """
+    model_dir = pathlib.Path(model_dir)
+    for cfg_path in sorted(model_dir.rglob("config.json")):
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(cfg, dict):
+            continue
+        # Some configs nest the text model's settings a level down, which is where a multimodal
+        # checkpoint keeps the part this tool edits.
+        for scope in (cfg, cfg.get("text_config") or {}):
+            if not isinstance(scope, dict):
+                continue
+            for key in LAYER_COUNT_KEYS:
+                if isinstance(scope.get(key), int) and scope[key] > 0:
+                    return scope[key], key
+    raise ShardError(
+        f"{model_dir}: no config declares a layer count under any of {list(LAYER_COUNT_KEYS)}. "
+        f"A streaming run has to know how many layers it is walking before it starts, and "
+        f"counting them from the tensor names would agree with whatever the names happen to "
+        f"spell rather than with the model")
+
+
+def _layer_axis(names, count):
+    """Which integer position in a tensor name is the LAYER index.
+
+    Decided against the config's count rather than by matching the word "layers", because the
+    name for that block is `layers` on most architectures, `h` on GPT-2 descendants and
+    `blocks` elsewhere, and a reader that knows three spellings reports clean on the fourth.
+
+    A name can carry several indices: `model.layers.3.mlp.experts.7.w2.weight` has the layer and
+    the expert. The layer is the FIRST, on every architecture this tool has met, because the
+    layer stack is the outer structure and everything indexed inside it is nested underneath. So
+    candidate positions are tried in order and the earliest whose values cover exactly
+    `0..count-1` wins. A mixture-of-experts checkpoint with as many experts as layers would
+    otherwise make position 1 look just as good, and it is the position that is ambiguous there,
+    not the answer.
+
+    Returns None when nothing matches, which is a refusal for the caller to make rather than an
+    assumption for this to paper over.
+    """
+    wanted = set(range(count))
+    seen = collections.defaultdict(set)
+    for name in names:
+        for position, match in enumerate(_INDEXED.finditer(name)):
+            seen[position].add(int(match.group(1)))
+    for position in sorted(seen):
+        if seen[position] == wanted:
+            return position
+    return None
+
+
+def _nth_index(name, position):
+    """The integer at `position` among the name's integer components, or None."""
+    for i, match in enumerate(_INDEXED.finditer(name)):
+        if i == position:
+            return int(match.group(1))
+    return None
+
+
+def index_layers(model_dir):
+    """Map a checkpoint to its layers, reading headers and no weights.
+
+    Refuses loudly rather than returning a partial answer. A streaming run that silently skipped
+    a layer would produce a model that loads, generates, and was edited in 47 places out of 48,
+    and nothing downstream could tell. That is the failure this whole module is shaped around.
+    """
+    model_dir = pathlib.Path(model_dir)
+    count, _key = layer_count(model_dir)
+
+    located = {}
+    for shard in sorted(model_dir.rglob("*.safetensors")):
+        for tensor in tensors(shard):
+            if tensor.name in located:
+                raise ShardError(
+                    f"{model_dir}: {tensor.name!r} appears in more than one shard "
+                    f"({located[tensor.name][0].name} and {shard.name}). Editing it would leave "
+                    f"the other copy behind, and a loader may read either")
+            located[tensor.name] = (shard, tensor)
+    if not located:
+        raise ShardError(f"{model_dir}: no safetensors shards, so there is nothing to index")
+
+    axis = _layer_axis(located, count)
+    if axis is None:
+        raise ShardError(
+            f"{model_dir}: the config declares {count} layers and no position in the tensor "
+            f"names carries exactly the indices 0 to {count - 1}. This is a naming layout this "
+            f"reader does not know, not a checkpoint without layers, and guessing which tensors "
+            f"belong to which layer is how a streaming run edits 47 layers of 48 in silence")
+
+    layers = [{} for _ in range(count)]
+    shared = {}
+    for name, entry in located.items():
+        i = _nth_index(name, axis)
+        if i is None:
+            shared[name] = entry
+        elif 0 <= i < count:
+            layers[i][name] = entry
+        else:
+            # An index at the layer position outside the declared range. Refused rather than
+            # filed under `shared`, because the two readings ("the config is wrong" and "this
+            # position is not the layer after all") have opposite fixes and picking one quietly
+            # would hide whichever it was.
+            raise ShardError(
+                f"{model_dir}: {name!r} carries {i} where the layer index sits, and the config "
+                f"declares {count} layers. Either the config disagrees with the weights or this "
+                f"reader picked the wrong index position")
+
+    empty = [i for i, layer in enumerate(layers) if not layer]
+    if empty:
+        raise ShardError(
+            f"{model_dir}: the config declares {count} layers and layer(s) {empty} hold no "
+            f"tensors. A streaming run would walk straight past them and report success")
+    return LayerIndex(model_dir, count, layers, shared)

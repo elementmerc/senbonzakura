@@ -205,7 +205,13 @@ def test_the_install_surfaces_say_the_release_is_not_on_pypi_yet():
     """
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
-    for name in ("README.md", "docs/guide/install.md"):
+    # EVERY install surface, not the two somebody happened to think of. `INSTALL_SURFACES`
+    # has listed `quickstart.md` all along while this loop named two pages by hand, so the
+    # quickstart offered a bare `pip install senbonzakura` with no warning at all until
+    # 2026-09-23. Of the three that was the worst one to miss, because it is the page a
+    # newcomer lands on, and the list it should have been read from is at the top of this
+    # file.
+    for name in INSTALL_SURFACES:
         text = " ".join((root / name).read_text(encoding="utf-8").split())
         assert "senbonzakura-check` is not on PyPI yet" in text, (
             f"{name} offers `pip install senbonzakura` without saying the current version cannot "
@@ -261,7 +267,13 @@ def test_the_interim_install_says_the_bundled_track_is_not_in_it():
     """
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
-    for name in ("README.md", "docs/guide/install.md"):
+    # EVERY install surface, not the two somebody happened to think of. `INSTALL_SURFACES`
+    # has listed `quickstart.md` all along while this loop named two pages by hand, so the
+    # quickstart offered a bare `pip install senbonzakura` with no warning at all until
+    # 2026-09-23. Of the three that was the worst one to miss, because it is the page a
+    # newcomer lands on, and the list it should have been read from is at the top of this
+    # file.
+    for name in INSTALL_SURFACES:
         text = " ".join((root / name).read_text(encoding="utf-8").split())
         assert "track default" in text, f"{name} does not mention --track default at all"
         assert "build_corpora" in text, (

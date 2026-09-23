@@ -47,7 +47,19 @@ import json
 import pathlib
 from dataclasses import dataclass, field
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:   # Python 3.10, where `tomllib` is not yet in the standard library.
+    # `tomli` is the same parser under its pre-adoption name, declared as a dependency for 3.10
+    # alone. A RUNTIME dependency rather than the test-only one `tests/tomlread.py` uses, because
+    # this module ships: a user on the declared minimum interpreter who loads a probe needs a TOML
+    # parser present, and `tests/` is not installed.
+    #
+    # The bare `import tomllib` here is the SAME DEFECT `tests/tomlread.py` was written to fix,
+    # one file over and one severity worse. That shim existed, the reason was written down in it,
+    # and this module still imported the 3.11 name directly, so CI's 3.10 job could not collect
+    # the suite. A guard that covers one spelling of a defect reports clean on the others.
+    import tomli as tomllib
 
 #: The manifest's filename. One name, so a directory either is a probe or is not.
 MANIFEST = "probe.toml"

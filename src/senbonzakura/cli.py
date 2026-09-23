@@ -1078,12 +1078,12 @@ def _owned_weight(parent, name):
     return _real_tensor(parent, name)
 
 
-#: Child names that can hold an attention block. `mixer` is NemotronH, whose decoder layer holds
-#: exactly ONE child called `mixer` that is an attention block, a Mamba-2 mixer, an MLP or a MoE
-#: depending on the layer. It appears here AND in MIXER_BLOCKS AND in MLP_BLOCKS for that reason:
-#: the name says where it sits, not what it is, so every position has to look at it and the
-#: contents decide.
-ATTN_BLOCKS = ("self_attn", "attention", "self_attention", "attn", "mixer")
+#: THE NAMES NOW LIVE IN `writers.py`, and are re-exported here so every reference in this file
+#: is unchanged. They moved because `streaming.py` needs the same list and deliberately imports
+#: no torch, while this module imports torch, optuna and transformers at module scope. Copying
+#: them would have recreated the two-hand-kept-copies defect the list exists to prevent; see that
+#: module's docstring for the full argument.
+from .writers import ATTN_BLOCKS  # noqa: E402
 
 
 def _attn_block(layer):
@@ -1131,40 +1131,9 @@ def _attn_outproj(layer):
         f"(type {type(layer).__name__}); architecture not supported.")
 
 
-#: Blocks that can sit in the attention position and write the residual stream through their own
-#: `out_proj`. The field has moved away from uniform attention stacks and this is the list that
-#: moves with it: LFM2 puts a short convolution there, Qwen3.5 puts a gated delta net. In every
-#: case the writer is a 2-D Linear whose OUTPUT dimension is hidden size, which is dimensionally
-#: the same object as an attention `o_proj`, so the row-wise norm-preserving bake applies to it
-#: unchanged and no per-vendor edit path is needed.
-#:
-#: Verified by building each architecture on the meta device and reading the shapes:
-#:     LFM2.5-8B-A1B      conv.out_proj        [2048, 2048]
-#:     Qwen3.6-35B-A3B    linear_attn.out_proj [2048, 4096]
-#: The inner width differs and does not matter: the projection contracts over the output axis.
-#: Non-attention sequence mixers that sit in the attention position and write the residual stream
-#: through an `out_proj`. Every one of these was verified by building the architecture on the meta
-#: device and reading the shapes, never by reasoning about the mechanism:
-#:
-#:     LFM2.5-8B-A1B      conv.out_proj          [2048, 2048]
-#:     Qwen3.6-35B-A3B    linear_attn.out_proj   [2048, 4096]
-#:     Bamba              mamba.out_proj         [hidden, 2 x hidden]
-#:     FalconH1           mamba.out_proj         [hidden, 16 x hidden]
-#:     Jamba              mamba.out_proj         [hidden, 2 x hidden]
-#:     GraniteMoeHybrid   mamba.out_proj         [hidden, 2 x hidden]
-#:
-#: All are 2-D Linears whose OUTPUT dimension is hidden size, which is what an o_proj is. The
-#: inner width differs and does not matter, because the projection contracts over it.
-MIXER_BLOCKS = ("conv", "linear_attn", "mamba", "mixer")
-
-#: Blocks that hold the MLP-position residual writer. One list, read by the editor AND by the
-#: guard, because two hand-kept copies of a set of names is exactly how the guard came to refuse
-#: Qwen3.5 while the editor was perfectly able to edit it.
-#:
-#: `shared_mlp` is GraniteMoeHybrid's always-on expert, whose writer is `output_linear`. It sits
-#: beside a routed `block_sparse_moe` and a `mamba` block in the same layer, so a layer there has
-#: three residual writers rather than two.
-MLP_BLOCKS = ("block_sparse_moe", "mlp", "feed_forward", "shared_mlp", "mixer")
+#: Both re-exported from `writers.py`, as ATTN_BLOCKS above is. Their comments, including the
+#: per-architecture shapes each entry was verified against, live there.
+from .writers import MIXER_BLOCKS, MLP_BLOCKS  # noqa: E402
 
 
 def _conv_outproj(layer):
@@ -4748,46 +4717,18 @@ def _preflight_output(args):
           f"  delete {out} yourself    if you meant to start again")
 
 
-#: Terminal projection names that carry a residual write. Every one is read from where the
-#: editor reads it: `layer_attn_writers` tries `o_proj`, `out_proj` and `dense`;
-#: `_block_outproj_param` takes `out_proj` on a mixer; `_mlp_downprojs` takes `down_proj`, `w2`
-#: and `output_linear`, fused or per expert. Kept beside `snapshot_weights` in this file rather
-#: than in a module of its own, because the whole risk here is the two drifting apart.
-WRITER_PROJECTIONS = ("o_proj", "out_proj", "dense", "down_proj", "w2", "output_linear")
+#: Re-exported from `writers.py`, where the comment explaining each entry now lives. It moved
+#: out of this file so `streaming.py` could read the same list without importing torch; the
+#: risk it guards against, two hand-kept copies drifting apart, is unchanged and is why there is
+#: still exactly one definition.
+from .writers import is_writer_tensor  # noqa: E402
+
+#: The private spelling this file has always used. One name, one implementation.
+_is_writer_tensor = is_writer_tensor
 
 #: Bytes per element, by the dtype strings safetensors uses in its header.
 _DTYPE_BYTES = {"F64": 8, "I64": 8, "F32": 4, "I32": 4, "BF16": 2, "F16": 2, "I16": 2,
                 "F8_E4M3": 1, "F8_E5M2": 1, "I8": 1, "U8": 1, "BOOL": 1}
-
-
-def _is_writer_tensor(name, ablate_conv=True):
-    """Does this tensor NAME look like a residual writer the snapshot would hold?
-
-    NAMES, NOT ARCHITECTURE. The tempting way to size the snapshot before a download is to
-    compute it from `config.json`, and it gives the right answer: by hand it reproduces 20.13 GB
-    for Qwen3-30B-A3B. It would also be a second, independent account of which tensors get
-    snapshotted, and this project has already shipped that failure once, when the guard and the
-    editor kept separate architecture name lists and drifted apart. Matching names against the
-    SAME constants the editor walks keeps one list.
-
-    It is an estimate and says so: a name-based match cannot apply the structural conditions the
-    editor applies with the module in hand, such as refusing an `out_proj` on a `mixer` that is
-    really Mamba-2. It is used to refuse a run that obviously cannot fit, not to decide a close
-    one, and the real check still runs with the weights resident.
-    """
-    parts = name.split(".")
-    if parts[-1] != "weight":
-        return False
-    blocks = set(ATTN_BLOCKS) | set(MLP_BLOCKS) | set(MIXER_BLOCKS)
-    if not ablate_conv:
-        # `--skip-conv-ablation` is the control arm: `layer_attn_writers` leaves the convolution
-        # alone, so the snapshot is smaller and an estimate that counted it would refuse a run
-        # that fits. Only blocks that are mixer-ONLY are dropped: `mixer` itself appears in all
-        # three lists, because on NemotronH one child name means four things, and a name alone
-        # cannot say which. Counting those is the safe direction, since over-counting a shared
-        # name risks a spurious refusal only on architectures that use it.
-        blocks -= set(MIXER_BLOCKS) - set(ATTN_BLOCKS) - set(MLP_BLOCKS)
-    return any(p in blocks for p in parts) and any(p in WRITER_PROJECTIONS for p in parts)
 
 
 def snapshot_bytes_from_tensors(tensors, ablate_conv=True):

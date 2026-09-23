@@ -30,12 +30,11 @@
 Senbonzakura removes the refusal behaviour from an open-weight language model, and measures what
 that removal cost.
 
-The removal is the easy half. Any abliterator can stop a model saying "I can't help with that";
-the hard part is knowing whether you also took out its judgement, its reasoning, or its grip on
-the language, and a tool that cannot tell those apart will report a lobotomy as a success. So
-every number this prints arrives with the conditions attached: what it was measured on, on rows
-nothing was fitted or selected on, with an interval, and with the controls that would expose it if
-it were measuring the wrong thing.
+Removing it is the easy half. Any abliterator can stop a model saying "I can't help with that".
+The hard part is knowing whether you also took out its reasoning, and a tool that cannot tell the
+difference will report a lobotomy as a success. So every number here arrives with its conditions:
+what it was measured on, on rows nothing was fitted or selected on, with an interval, and with a
+control that would expose it if it were measuring the wrong thing.
 
 Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand blades.
 
@@ -46,6 +45,21 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 >
 > [The detail](#what-this-repository-does-not-contain), and `ACCEPTABLE-USE.md` ships in the
 > package.
+
+## Try it without installing anything
+
+[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/dev/notebooks/senbonzakura_colab.ipynb).
+Free GPU, nothing on your machine, about fifteen minutes. It measures a model, edits it, then
+measures what that cost.
+
+Or, if you have Docker:
+
+```sh
+docker run --rm ghcr.io/elementmerc/senbonzakura:dev doctor
+```
+
+`doctor` reports what your install can and cannot do, which on a first run is more useful than it
+sounds.
 
 ## Install
 
@@ -79,10 +93,9 @@ prints the command that fixes it, changing nothing unless you add `--apply`.
 
 Editing a model wants a CUDA card with 6 GB. The measuring commands run on CPU.
 
-## Try it in one command
+## One command, on your own machine
 
-No corpus, no GPU, no model to edit first. The toy track is committed to this repository and any
-small instruct model will do:
+No corpus, no GPU, no model to edit first. The toy track is committed here:
 
 ```sh
 senbonzakura compass \
@@ -93,16 +106,13 @@ senbonzakura compass \
     --out compass-toy.json --device cpu
 ```
 
-That runs the harm-recognition measurement end to end and writes a result file with its
-conditions attached. **Do not quote what it says**: twelve rows measures nothing, and the tool
-makes you pass those three flags rather than pretending otherwise.
-[The compass page](https://elementmerc.github.io/senbonzakura/guide/compass) explains why each
-flag is there.
+**Do not quote what it says.** Twelve rows measures nothing, and the tool makes you pass those
+three flags rather than pretending otherwise.
 
 ## The real thing
 
 ```sh
-# Build a corpus with a split that stops you marking your own homework.
+# A corpus with a split that stops you marking your own homework.
 senbonzakura track --harmful harmful.txt --harmless harmless.txt --out mytrack
 
 # Search for a configuration and apply it. About an hour for a 1.7B on a 6 GB card.
@@ -113,23 +123,22 @@ senbonzakura compass --model abliterated \
     --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds --out compass.json
 ```
 
-`harmful.txt` and `harmless.txt` are yours to supply, and this repository deliberately does not
-ship them: see [what this repository does not contain](#what-this-repository-does-not-contain).
+`harmful.txt` and `harmless.txt` are yours to supply, deliberately.
 [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) covers building an
-equivalent corpus from public sources, and the split is the part that matters more than the
-prompts.
+equivalent from public sources. The split matters more than the prompts.
 
 ## What it measures
 
-Each of these is a command, and each reports an interval rather than a bare number:
+Each is a command, and each reports an interval rather than a bare number:
 
 | | The question it answers |
 |---|---|
 | `score` | Are the refusals actually gone, on rows the search never saw? |
 | `compass` | Does the model still **recognise** harm, as opposed to still refusing it? |
-| `capability` | What did the edit cost on tasks the model either gets right or does not? Refusal rates and KL cannot see reasoning loss. |
-| `drift` | How far did the output distribution move from the original, on one ruler that can be pointed at a model edited by any tool? |
+| `capability` | What did the edit cost on tasks the model either gets right or does not? Refusal rates and divergence cannot see reasoning loss. Runs by default. |
+| `drift` | How far did the output distribution move, on a ruler that can be pointed at a model edited by any tool? |
 | `validate` | Does a direction set carry refusal, or carry topic? |
+| `check` | Reads result files from **other** tools and reports how their numbers could be wrong. No GPU, no model, no network. |
 | `report` | Assembles the above into the card that should travel beside the weights. |
 
 Two habits run through all of them. **The split is three-way**, so the rows a configuration is
@@ -137,9 +146,9 @@ selected on are never the rows it is reported on. And **every figure arrives wit
 usually a ruler reading nothing but prompt length: if that separates the arms as well as the real
 instrument does, the real instrument is measuring sentence length.
 
-**The honest ceiling.** Nothing has been measured above 3B parameters. The instruments also
-weaken as the model does: Qwen3-1.7B's compass scores 0.9887 against a length-only ruler's 0.6564,
-and Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measurement of anything.
+**The honest ceiling.** Nothing has been measured above 3B parameters, and the instruments weaken
+as the model does. Qwen3-1.7B's compass scores 0.9887 against a length-only ruler's 0.6564.
+Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measurement of anything.
 
 - [What is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know)
   — the full account, including the results that went against us.
@@ -147,6 +156,7 @@ and Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measur
   command that makes it. No GPU or corpus needed to check them.
 - [METHOD.md](METHOD.md) — how to measure a behavioural property of a model defensibly. Not about
   this tool.
+- [probes/](probes/) — add a behaviour of your own for the tool to measure.
 
 ## Documentation
 

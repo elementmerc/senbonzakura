@@ -13,15 +13,22 @@ it is not the code these pages describe. The current work is on `dev` and is not
 because the companion package `senbonzakura-check` is not on PyPI yet and this version depends on
 it by name. Verified 2026-09-22.
 
-Until that is published, install from the repository, checker first:
+Until that is published, install from the repository, in one command:
 
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
-pip install "git+https://github.com/elementmerc/senbonzakura"
+pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
+            "git+https://github.com/elementmerc/senbonzakura@dev"
 ```
 
-Checker first is not a style preference. `senbonzakura` names `senbonzakura-check` as a
-dependency, so installing the big one alone fails to resolve. Neither command needs a clone.
+Both URLs go in the same command because `senbonzakura` names `senbonzakura-check` as a
+dependency: given on its own, the big one looks for the small one on PyPI and does not find it.
+Given together, pip resolves both from this repository. Neither needs a clone.
+
+**`@dev` is load-bearing.** Without it pip takes the repository's default branch, which is `main`,
+and `main` is a long way behind the work these pages describe: it predates `checker/` entirely, so
+the first URL fails with *"does not appear to be a Python project"* and the second installs
+something close to the withdrawn 0.3.0 this page is warning you off. That was the documented
+command here until 2026-09-23, and it had never been run.
 
 **One thing that install does not give you: `--track default`.** The two `.bin` blobs in
 `src/senbonzakura/data/` are generated rather than committed, because they hold harmful prompts,

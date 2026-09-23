@@ -40,6 +40,12 @@ NOT_OURS = {
     "--flag",           # a placeholder in prose about flags in general
     "--help",           # argparse's own, present on every command
     "--version",        # likewise
+    # OURS, and not a flag of the installed command: `tools/packaging/build_track.py` is a script
+    # run from a clone, so `_accepted()` cannot see it by asking the CLI for help. The reader is
+    # told to type it after being told to run that script, which is coherent. A third category
+    # from the two above, and named rather than folded into them, because "a flag of a script in
+    # the repository" is exactly the excuse under which a genuinely missing CLI flag would hide.
+    "--no-balance",
 }
 
 FLAG = re.compile(r"`(--[a-z][a-z0-9-]+)")

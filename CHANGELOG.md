@@ -101,6 +101,17 @@ install rather than only in a source checkout.
 
 ### Measurement
 
+- Every run now measures what the edit cost on a task the model either gets right or does not,
+  and it does so by default. Refusal rates, the keyword rate, drift and brokenness never ask the
+  model to reason, so a model could hold a low divergence with nothing broken and have lost
+  multi-step arithmetic, with nothing in the run saying so.
+- The package carries the probe it uses, so this works with no network: 256 grade-school
+  arithmetic questions, listed in THIRD-PARTY-CORPORA.md. Point `--capability-eval` at your own
+  graded benchmark instead, or pass an empty string to turn it off.
+- The capability probe previously ran only on configurations a search had shortlisted, so a run
+  that pinned its settings and skipped the search accepted the request, measured nothing, and
+  reported success. Result files now always say whether capability was measured, and say so
+  separately from whether it was asked for.
 - The compass, a harm-recognition score, is now a first-class command: it asks whether an
   abliterated model still recognises harm rather than only whether it complies.
 - Every compass figure now carries a confidence interval. An AUC without one invites belief

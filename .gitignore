@@ -49,6 +49,12 @@ data/
 src/senbonzakura/data/*
 !src/senbonzakura/data/templates/
 !src/senbonzakura/data/templates/*.jinja
+# The capability probe is committed rather than generated, for the opposite reason to the blobs
+# below: it is 256 GSM8K arithmetic questions under MIT, with no prompts and nothing gated. The
+# blobs are generated precisely BECAUSE they are harmful, and applying that rule to harmless
+# content would leave a clone install unable to run the capability gate that is now on by default,
+# which is the 2026-09-22 `--track default` defect on the one gate whose absence is hardest to
+# notice. Its negation cannot live here, because `*.jsonl` further down would undo it; see there.
 # `corpora.bin` and `default-track.bin` DELIBERATELY STAY OUT, and the rule above keeps them
 # out. They hold 4,895 harmful prompts under a shipping key, and the project publishes that
 # corpus as a GATED dataset on purpose. The wheel carries them because building one is a
@@ -58,6 +64,12 @@ src/senbonzakura/data/*
 # Retained generations and per-prompt margins. These hold harmful prompts and the
 # replies a model gave to them, so the default is out.
 *.jsonl
+# The capability probe is the other explicit exception, and it has to sit AFTER `*.jsonl` rather
+# than beside the other data/ negations: git applies the last matching rule, so a negation written
+# earlier is silently undone here. `git check-ignore -v` is the only way to know, and it caught
+# exactly that on 2026-09-22. The file holds 256 GSM8K arithmetic questions under MIT: no prompts,
+# no generations, nothing the rule above exists to keep out.
+!src/senbonzakura/data/capability-gsm8k.jsonl
 # evidence/ is the one committed home, and it needs an explicit negation: the rule
 # above would otherwise force `git add -f`, which defeats the ignore it bypasses.
 # Files landing here must already have their prompt and generation fields stripped,

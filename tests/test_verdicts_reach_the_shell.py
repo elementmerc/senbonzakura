@@ -178,15 +178,26 @@ def test_a_score_file_that_cannot_be_read_fails_only_its_own_arm(tmp_path, monke
 
 
 # ── S4: a probe that could not reach the decision it exists to inform ─────────────────
-def test_asking_for_the_capability_probe_without_the_rescore_is_refused(base_args, tiny_model,
-                                                                        tiny_tok, track,
-                                                                        monkeypatch):
-    """`--capability-eval` on the abliterate path bought a number nothing could act on.
+def test_the_capability_probe_no_longer_depends_on_the_rescore(base_args, tiny_model,
+                                                               tiny_tok, track,
+                                                               monkeypatch):
+    """The old assertion here was the exact opposite, and the inversion is the point.
 
-    The probe measures what each FINALIST cost, and the finalists only exist inside the best-of-N
-    re-score, which runs under `if args.eval_refusal_final and ...`. That flag defaults to 0 and
-    `abliterate` never sets it, so the run paid for a baseline in generations and could not move
-    the shipped model by a single trial. Refused before the generations rather than after.
+    It asserted that `--capability-eval` without `--eval-refusal-final` was REFUSED, because the
+    probe measured what each finalist cost and the finalists only existed inside the best-of-N
+    re-score. That was a true description of where the probe ran, and the refusal was the right
+    response to it: the run would otherwise have paid for a baseline in generations and been
+    unable to move the shipped model by a single trial.
+
+    On 2026-09-22 the probe moved. It now runs in `_bake_and_save`, on the weights that ship, for
+    every method including the ones that pin a profile and never search at all, so it depends on
+    nothing this flag controls. Leaving the guard in place would have been actively harmful once
+    the probe became the default: every run that had not set `--eval-refusal-final` would have
+    refused to start over a coupling that no longer exists.
+
+    So what is asserted now is that the run gets PAST that point. It still fails, because the
+    benchmark named here cannot be fetched, and that is the correct refusal: a probe whose
+    benchmark cannot be read would otherwise score every candidate identically.
     """
     from senbonzakura import cli
 
@@ -199,13 +210,32 @@ def test_asking_for_the_capability_probe_without_the_rescore_is_refused(base_arg
     with pytest.raises(SystemExit) as e:
         cli.Abliterator(base_args, lambda _m: None).run()
     message = str(e.value)
-    assert "--eval-refusal-final" in message, "it has to name the flag that turns the probe on"
-    assert "kageyoshi" in message, "and the mode that sets it for you"
+    assert "--eval-refusal-final" not in message, (
+        "the run was refused over the old coupling between the probe and the re-score pass. That "
+        "coupling is gone, and with the probe on by default this refusal would fire on almost "
+        "every run")
+    assert "cannot be read" in message, (
+        f"expected the run to reach the probe and fail on the unfetchable benchmark, and it said: "
+        f"{message}")
 
 
-def test_the_probe_is_allowed_once_the_rescore_can_run(base_args, tiny_model, tiny_tok, track,
-                                                       monkeypatch):
-    """The refusal must be about the probe being inert, not about the probe existing."""
+def test_a_probe_whose_benchmark_cannot_be_read_refuses_and_says_which(base_args, tiny_model,
+                                                                       tiny_tok, track,
+                                                                       monkeypatch):
+    """A probe that cannot load its benchmark must refuse rather than measure nothing.
+
+    THE PAIR THIS BELONGED TO IS GONE. It asserted that the S4 gate did not fire when the re-score
+    pass could reach the probe, and that gate no longer exists, so the assertion had nothing left
+    to be about. What survives is the behaviour underneath it: an unreadable benchmark is refused
+    loudly, because a probe with nothing behind it would score every candidate identically and the
+    run would report that as no capability cost.
+
+    Its old body also carried a latent bug that only surfaced when this path started raising.
+    `pytest.raises` hands back an ExceptionInfo, which has `.value`; a caught exception does not,
+    and `str(e.value)` on a SystemExit raises AttributeError. The branch had never executed. The
+    comment above it describes fixing an earlier version that made every failure read as a pass,
+    which is worth keeping in view: the repair was real and the repaired branch was still wrong.
+    """
     from senbonzakura import cli
 
     base_args.track = track
@@ -226,13 +256,11 @@ def test_the_probe_is_allowed_once_the_rescore_can_run(base_args, tiny_model, ti
     #
     # It used to catch bare `Exception` and set `refusal = None`, which made every failure read as
     # a pass: mutating `Abliterator.run` to raise on its first line left it green.
-    refusal = None
-    try:
+    with pytest.raises(SystemExit) as e:
         cli.Abliterator(base_args, lambda _m: None).run()
-    except SystemExit as e:
-        refusal = str(e.value)
-    except Exception as e:
-        pytest.fail(f"the run failed before the gate under test could have fired, so this test "
-                    f"proved nothing: {type(e).__name__}: {e}")
-    assert refusal is None or "--capability-eval" not in refusal, (
-        f"the S4 refusal fired on a run where the re-score pass can reach the probe: {refusal}")
+    refusal = str(e.value)
+    assert "some/benchmark::test" in refusal, (
+        f"the refusal has to name the benchmark that could not be read, or the operator cannot "
+        f"tell which of their flags is wrong: {refusal}")
+    assert "score every candidate the same" in refusal, (
+        f"and it has to say why an unreadable probe is worse than no probe: {refusal}")

@@ -875,3 +875,86 @@ def main(argv=None):
 if __name__ == "__main__":   # pragma: no cover
     from .entry import module_entry
     module_entry(main)
+
+
+# ── the probe that ships in the package ──────────────────────────────────────────────────────
+#
+# WHY THERE IS ONE AT ALL. Until 2026-09-22 `--capability-eval` defaulted to empty, so the gate
+# that matters most was the one nobody switched on, and a run could report a clean bake on a model
+# that had quietly lost multi-step arithmetic. A default that needs a download is not a default:
+# this tool is meant to work with no network, which is why the corpora ship inside the wheel.
+#
+# WHY IT IS COMMITTED WHERE THE CORPORA ARE GENERATED. They hold harmful prompts and are published
+# as a gated dataset on purpose. This is grade-school arithmetic under MIT. Generating it would
+# mean a clone install could not run the default gate, which is the `--track default` defect found
+# that same morning, reproduced on the gate whose absence is hardest to notice.
+
+#: The bundled probe's filename. Rebuilt by `tools/packaging/build_capability_probe.py`, which
+#: pins the upstream revision and can check this file against what the pin rebuilds to.
+PROBE_NAME = "capability-gsm8k.jsonl"
+
+#: The probe's own column names, and they are deliberately not "question" and "answer".
+#: `tools/ci/check_prompt_artefacts.py` treats those two as prompt-shaped field names and
+#: refuses to let them reach a public tree, which is exactly its job: it is the one control
+#: between a harmful prompt and a public push and it does not get weakened for our
+#: convenience. It carries a carve-out for files whose SCHEMA belongs to somebody else, and
+#: this schema is ours, so the fix is to rename our own fields rather than to claim the
+#: exemption. The upstream rows keep their own names; only what we write changes.
+PROBE_QUESTION_KEY = "problem"
+PROBE_REFERENCE_KEY = "reference"
+
+#: What the bundled probe is and what using it obliges. MIT is permissive and still requires the
+#: notice to travel, which is why it is stated rather than assumed to be common knowledge.
+PROBE_SOURCE = "GSM8K (Cobbe et al. 2021), openai/gsm8k, MIT licence"
+
+#: Held in a mutable holder rather than a bare global, matching `bundled.py`, so tests can reset
+#: it without reaching into module internals.
+_probe_state = {"notified": False}
+
+
+def probe_path():
+    """Where the bundled probe is, whether or not it is there."""
+    import pathlib
+    return pathlib.Path(__file__).resolve().parent / "data" / PROBE_NAME
+
+
+def probe_is_available():
+    return probe_path().is_file()
+
+
+def probe_notice(log=print):
+    """Say what the bundled probe is and where it came from. Once per process.
+
+    Somebody who installs a package and runs a default has not read a dataset card. The bundled
+    track prints the same kind of notice for the same reason; the licence here is permissive
+    rather than restrictive, which changes what the notice asks of them and not whether it is
+    owed.
+    """
+    if _probe_state["notified"]:
+        return
+    _probe_state["notified"] = True
+    log(f"Capability probe: {len(load_probe())} bundled items from {PROBE_SOURCE}.")
+    log("  Attribution travels with it. See THIRD-PARTY-CORPORA.md.")
+
+
+def load_probe(limit=None):
+    """The bundled probe as (question, answer) pairs, in file order.
+
+    Raises rather than returning an empty list when the file is missing. An empty probe would make
+    every candidate score identically and the run would report that as no capability cost, which
+    is the most flattering possible reading of an absent measurement.
+    """
+    import json
+    path = probe_path()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"the bundled capability probe is not in this install ({path}). A build from a clone "
+            f"carries it, so this is an install that lost it rather than a clone; rebuild it with "
+            f"tools/packaging/build_capability_probe.py, or pass --capability-eval to name your "
+            f"own benchmark")
+    pairs = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            pairs.append((row[PROBE_QUESTION_KEY], row[PROBE_REFERENCE_KEY]))
+    return pairs if limit is None else pairs[:limit]

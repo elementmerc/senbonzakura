@@ -322,24 +322,31 @@ def build_parser():
                          "2026-09-17 did. For reproducing an older run, and for nothing else: "
                          "the comparison it restores is the one Q-14 showed cannot distinguish "
                          "refusal from subject matter")
-    ap.add_argument("--capability-eval", dest="capability_eval", default="",
-                    help="a graded benchmark (a question column and an answer column, e.g. "
-                         "openai/gsm8k:main::test) used to measure what each finalist config COST in "
-                         "capability. Off by default because it needs a benchmark you supply. "
-                         "Refusal rates, the keyword rate, drift and brokenness cannot see "
-                         "reasoning loss: a model can hold a low KL with nothing broken and have "
-                         "lost multi-step arithmetic, because none of them asks it to reason.")
-    ap.add_argument("--capability-n", dest="capability_n", type=int, default=0,
-                    help="how many items the capability probe uses (0 = off). It runs on the "
-                         "finalists rather than on every trial, so it costs --top-rescore "
-                         "generations and not one per trial.")
+    ap.add_argument("--capability-eval", dest="capability_eval", default="bundled",
+                    help="what the capability probe measures against. 'bundled' (the default) is "
+                         "256 grade-school arithmetic questions that ship with the package, so "
+                         "this works offline. Give a graded benchmark instead (a question column "
+                         "and an answer column, e.g. openai/gsm8k:main::test) to use your own, or "
+                         "an empty string to turn the probe off. Refusal rates, the keyword rate, "
+                         "drift and brokenness cannot see reasoning loss: a model can hold a low "
+                         "KL with nothing broken and have lost multi-step arithmetic, because "
+                         "none of them asks it to reason.")
+    ap.add_argument("--capability-n", dest="capability_n", type=int, default=200,
+                    help="how many items the capability probe uses (0 = off). 200 by default, and "
+                         "the number is chosen rather than round: before and after are scored on "
+                         "the SAME items, so the comparison is paired, and 200 resolves the "
+                         "several-point drop this class of edit is reported to cause. A much "
+                         "smaller sample produces a figure whose error bar covers the effect, "
+                         "which reads like a measurement and is not one.")
     ap.add_argument("--capability-task", dest="capability_task",
                     choices=_capability_tasks(), default="numeric",
                     help="how the probe grades: see `senbonzakura capability --help`.")
-    ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=320,
+    ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=512,
                     help="token budget per probe answer. A worked solution is long, and a budget "
                          "that truncates them measures the budget rather than the model; "
-                         "truncated answers are counted as ungradeable, never as wrong.")
+                         "truncated answers are counted as ungradeable, never as wrong. 512 is "
+                         "measured rather than guessed: on a model that reasons before answering, "
+                         "256 tokens left 11 of 24 items ungradeable and 512 left 1.")
     ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
                     help="how many times to alternate restoring the row lengths and removing the "
                          "direction again. 0 (default) is the single pass this tool has always "

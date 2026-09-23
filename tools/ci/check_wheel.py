@@ -152,6 +152,13 @@ RELEASE_DATA = {
         "senbonzakura/data/corpora.bin": "python tools/packaging/build_corpora.py",
         "senbonzakura/data/default-track.bin": "python tools/packaging/pack_track.py",
         "senbonzakura/data/templates/plain.jinja": "it is committed; check the ignore rules",
+        # The capability gate is ON BY DEFAULT as of 2026-09-22, so a wheel without its probe
+        # installs, imports, answers --help, and fails on the first bake. That is the exact shape
+        # of the `--track default` defect found the same morning, and it is why this is checked
+        # against a built wheel rather than reasoned about from the glob: `package-data` listed
+        # `data/*.bin`, which does not match a `.jsonl`.
+        "senbonzakura/data/capability-gsm8k.jsonl":
+            "it is committed; check the ignore rules and the package-data globs",
     },
     # Deliberately empty, and the emptiness is the property the distribution exists to hold.
     "senbonzakura-check": {},

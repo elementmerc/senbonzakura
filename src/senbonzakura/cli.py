@@ -179,6 +179,11 @@ def code_version():
 # existed, and the tail is rounding error by construction (see the rank floor below).
 MAX_RECORDED_AXES = 8
 
+#: What `--capability-eval` means when it names the probe that ships in the package rather than a
+#: benchmark the operator supplies. A word rather than a path, because the path is install
+#: dependent and a default that prints an absolute path in `--help` is one nobody can retype.
+BUNDLED_CAPABILITY = "bundled"
+
 #: A candidate separation below this FRACTION of the threshold is floating-point residue around an
 #: exact zero rather than a small measurement, and means the filter is structurally unsatisfiable.
 #: Relative rather than absolute, and that is not a style choice: the first version of this constant
@@ -3342,16 +3347,17 @@ class Abliterator:
         # "set, but not larger than the search slice" case depends on how many rows `bad_eval_ds`
         # actually has, which is not known until it is read, and guessing it here would refuse
         # short-track runs that the gate itself would have allowed.
-        if getattr(args, "capability_eval", "") and not args.eval_refusal_final:
-            raise SystemExit(
-                "--capability-eval measures what each finalist configuration cost in capability, "
-                "and there are no finalists without the best-of-N re-score pass. That pass is off "
-                "here, because --eval-refusal-final is 0.\n"
-                "  * Set --eval-refusal-final (128 is what kageyoshi uses under 5B), or\n"
-                "  * use `kageyoshi`, which sets it as part of its budget.\n"
-                "Refusing before the run rather than after, because the probe costs generations "
-                "and every one of them would have been spent on a number that could not reach the "
-                "decision it exists to inform.")
+        # THE REFUSAL THAT USED TO SIT HERE IS GONE, and removing it was the point rather than a
+        # casualty. It said: `--capability-eval` needs `--eval-refusal-final`, because the probe
+        # runs inside the best-of-N re-score and there are no finalists without it. That was a
+        # true description of where the probe ran and it is no longer where the probe runs. It now
+        # runs in `_bake_and_save`, on the weights that ship, for every method including the ones
+        # that pin a profile and never search at all. It depends on nothing this flag controls.
+        #
+        # Leaving it would have been worse than useless now that the probe is on by default: every
+        # run that had not set `--eval-refusal-final` would refuse to start, over a coupling that
+        # no longer exists. A guard outliving the thing it guarded does not fail safe, it fails
+        # loudly at everybody.
 
         GOOD_DS = args.good_ds or f"{TR}/good_ds"
         clean_src = args.clean_ds or GOOD_DS
@@ -3441,14 +3447,29 @@ class Abliterator:
         n = int(getattr(args, "capability_n", 0) or 0)
         if not spec or n <= 0:
             return None, []
-        from . import dataset
-        try:
-            questions, answers = dataset.resolve_pairs(spec, token=args.hf_token or None)
-        except dataset.DatasetError as e:
-            raise SystemExit(
-                f"--capability-eval {spec} cannot be read: {e}. A capability probe with no "
-                f"benchmark behind it would silently score every candidate the same.") from e
-        items = list(zip(questions[:n], answers[:n], strict=True))
+        from . import capability, dataset
+        if spec == BUNDLED_CAPABILITY:
+            # The bundled probe, which is the default. Read from the package rather than through
+            # `resolve_pairs`, because the path is install-dependent and a default that names an
+            # absolute path in `--help` is a default nobody can retype.
+            try:
+                items = capability.load_probe(n)
+            except (OSError, ValueError) as e:
+                raise SystemExit(
+                    f"the bundled capability probe could not be read: {e}") from e
+            capability.probe_notice(log=self.log)
+        else:
+            try:
+                questions, answers = dataset.resolve_pairs(spec, token=args.hf_token or None)
+            except dataset.DatasetError as e:
+                raise SystemExit(
+                    f"--capability-eval {spec} cannot be read: {e}. A capability probe with no "
+                    f"benchmark behind it would silently score every candidate the same.") from e
+            items = list(zip(questions[:n], answers[:n], strict=True))
+        if len(items) < n:
+            self.log(f"  WARNING: asked for {n} capability items and the probe has {len(items)}. "
+                     f"A rate carries the sample behind it, so the figure this produces resolves "
+                     f"less than the one that was asked for.")
         self.restore_weights()          # measure the model as it arrived, not as a trial left it
         return self._capability_score(items), items
 

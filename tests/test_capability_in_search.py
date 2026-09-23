@@ -153,10 +153,19 @@ def test_the_probe_reads_both_columns_of_the_benchmark(tmp_path):
 
 # ── the flags ────────────────────────────────────────────────────────────────────────
 
-def test_the_probe_is_off_by_default_on_the_command_line():
+def test_the_probe_is_on_by_default_on_the_command_line():
+    """CHANGED ON 2026-09-22, and the old assertion is worth recording rather than just replacing.
+
+    It used to read `capability_eval == ""` and `capability_n == 0`, and that was a faithful test
+    of a default that was itself the problem: every other figure a run reports is a refusal ruler
+    or a distributional proxy, so a run could report a clean bake on a model that had lost
+    multi-step arithmetic, and the one gate that could see it was off unless somebody supplied a
+    benchmark. The package now ships a probe, so the default can point at something real without
+    needing a download.
+    """
     a = build_parser().parse_args(["--model", "m"])
-    assert a.capability_eval == ""
-    assert a.capability_n == 0
+    assert a.capability_eval == "bundled"
+    assert a.capability_n == 200
 
 
 def test_the_probe_task_choices_match_the_capability_command():

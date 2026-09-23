@@ -233,7 +233,7 @@ def verdict_rows(results):
         r = results[name]
         metric, note = READINGS[name]
         if isinstance(r, str):                  # a failure, carried as its message
-            rows.append((name, "not measured", r))
+            rows.append((name, "not measured", "", r))
             continue
         value, why_not, units = read_figure(r, metric)
         if value is None:

@@ -316,3 +316,21 @@ def test_the_rendered_table_puts_the_units_beside_the_number():
         "coherence": {"metrics": {"coherence": {"value": 2.6111,
                                                 "units": "nats-per-token"}}}}))
     assert "2.6111  nats-per-token" in line
+
+
+def test_every_row_has_the_same_shape_whatever_happened_to_the_stage():
+    """THE DEFECT THIS CAUGHT. When the rows grew a units column, the failure branch kept
+    appending three fields, so `format_table` unpacking four would raise on any run where an
+    instrument failed: the exact run where the table matters most.
+
+    Asserted on the shape rather than on one branch, so the next column added cannot reintroduce
+    it in whichever branch is forgotten next.
+    """
+    rows = measure.verdict_rows({
+        "score": "CUDA out of memory",                                      # failed outright
+        "compass": {"metrics": {}},                                         # wrote nothing usable
+        "coherence": {"metrics": {"coherence": {"value": 2.6, "units": "nats-per-token"}}},
+    })
+    assert len(rows) == 3
+    assert {len(r) for r in rows} == {4}, f"ragged rows: {[len(r) for r in rows]}"
+    measure.format_table(rows)      # unpacks four; raises if any row disagrees

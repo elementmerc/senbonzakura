@@ -165,6 +165,19 @@ READINGS = {
 }
 
 
+def _figure(value):
+    """One number, at a width a column can hold.
+
+    A real run printed `13.613728595914115` in a table beside `0.2083`, which is fifteen decimal
+    places of a perplexity nobody can use and a column that no longer lines up. Four places is
+    past the precision any of these instruments claims; the full value is in the stage's own
+    result file, which is what a reader quotes from.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    return f"{value:.4f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+
+
 def verdict_rows(results):
     """(stage, figure, note) per stage, with a named absence where a stage produced nothing."""
     rows = []
@@ -177,7 +190,7 @@ def verdict_rows(results):
             rows.append((name, "not measured", r))
             continue
         value = r.get(key) if isinstance(r, dict) else None
-        rows.append((name, "not reported" if value is None else f"{value}", note))
+        rows.append((name, "not reported" if value is None else _figure(value), note))
     return rows
 
 

@@ -224,3 +224,33 @@ def test_every_reading_names_a_key_its_command_writes():
         assert key in written, (
             f"`measure` reads {key!r} out of {name}'s result file and that module never writes "
             f"the string. The table would carry a blank row and nothing would fail")
+
+
+# ── the table's numbers fit in the table ─────────────────────────────────────────
+
+def test_a_long_float_is_cut_to_something_a_column_can_hold():
+    """FOUND BY RUNNING IT on the ROG, 2026-09-23. `coherence` reported
+    `13.613728595914115` beside a refusal rate of `0.2083`, which is fifteen decimal places of a
+    perplexity nobody can use and a column that no longer lines up.
+    """
+    rows = measure.verdict_rows({"coherence": {"ppl": 13.613728595914115}})
+    assert rows[0][1] == "13.6137"
+
+
+def test_a_round_number_does_not_grow_a_tail_of_zeros():
+    assert measure.verdict_rows({"score": {"refusal": 0.0}})[0][1] == "0"
+    assert measure.verdict_rows({"score": {"refusal": 0.5}})[0][1] == "0.5"
+
+
+def test_a_non_number_is_left_alone():
+    """Some stages report a string where a figure would be, and inventing a format for it would
+    be this module deciding what another command meant.
+    """
+    assert measure.verdict_rows({"score": {"refusal": "withheld"}})[0][1] == "withheld"
+
+
+def test_the_column_lines_up_across_mixed_magnitudes():
+    lines = measure.format_table(measure.verdict_rows({
+        "score": {"refusal": 0.2083}, "coherence": {"ppl": 13.613728595914115}}))
+    ends = {line.index("   ", line.index(line.split()[1])) for line in lines}
+    assert len(ends) == 1, "the figures column is ragged:\n" + "\n".join(lines)

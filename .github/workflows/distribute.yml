@@ -133,7 +133,6 @@ jobs:
           set -euo pipefail
           python -m pip install --quiet --upgrade pyarrow
           python tools/packaging/build_corpora.py
-          python tools/packaging/pack_track.py
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
         # BUILT AND LOADED, NOT PUSHED. The smoke test below used to run after the push, and its
@@ -166,12 +165,17 @@ jobs:
           docker run --rm senbonzakura:smoke doctor 2>&1 | tee doctor.txt || true
           grep -q "llama-quantize *vendored, runs" doctor.txt \
             || { echo "::error::the image ships a quantiser that does not run"; exit 1; }
-          if grep -qE "[1-9][0-9]* failed" doctor.txt; then
-            echo "::error::doctor reports failing checks inside the image, so it is not shippable"
-            exit 1
-          fi
+          # The bundled track is the one named exception: it is packed from a held-out track that
+          # lives outside this repository, so no CI job can build one. Named rather than covered
+          # by a loosened count, and the line is still asserted to EXIST so that doctor dropping
+          # the check entirely cannot pass as doctor being happy about it.
           grep -q "bundled track" doctor.txt \
             || { echo "::error::doctor no longer reports on the bundled track"; exit 1; }
+          if grep -vE "bundled track" doctor.txt | grep -qE "^\s+✗"; then
+            echo "::error::doctor reports failing checks inside the image, so it is not shippable"
+            grep -E "^\s+✗" doctor.txt
+            exit 1
+          fi
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
         # The same layers, now that something has actually run them.
@@ -208,7 +212,6 @@ jobs:
           set -euo pipefail
           python -m pip install --quiet --upgrade pyarrow
           python tools/packaging/build_corpora.py
-          python tools/packaging/pack_track.py
 
       - name: Build both distributions
         run: |
@@ -263,7 +266,12 @@ jobs:
           set -euo pipefail
           wheel=$(ls dist/senbonzakura-*.whl)
           python -c "import sys, zipfile; print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$wheel" > names.txt
-          for want in senbonzakura/data/corpora.bin senbonzakura/data/default-track.bin; do
+          # THE CORPORA ONLY, and `default-track.bin` deliberately is not here. The bundled
+          # evaluation track is packed from a HELD-OUT track the operator keeps off this machine
+          # and out of this repository (RELEASING.md, "Before anything else"), so no CI job can
+          # build one and asserting it here would fail every push forever. What a CI-built
+          # artefact can and cannot do is a live question, recorded in DEFERRED.md.
+          for want in senbonzakura/data/corpora.bin; do
             grep -qxF "$want" names.txt || {
               echo "::error::$wheel does not carry $want, so --track default fails for anyone who installs it"
               exit 1

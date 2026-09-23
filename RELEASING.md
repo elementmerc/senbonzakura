@@ -93,11 +93,18 @@ upstream's release binaries, which would change the provenance model and has not
 
 ```sh
 python tools/packaging/build_corpora.py          # writes src/senbonzakura/data/corpora.bin
-python tools/packaging/pack_track.py             # writes src/senbonzakura/data/default-track.bin
+# `--track` is REQUIRED and this line read as a bare command until 2026-09-23, which is an
+# `error: --track is required` rather than anything subtler. The same bare form had been copied
+# into the Colab notebook and into the distribute workflow, where CI is what finally ran it.
+python tools/packaging/pack_track.py --track <your held-out track>   # writes default-track.bin
 
 # 1. the PLATFORM wheel, repaired to a manylinux tag so PyPI will take it
 python -m build --wheel
-python tools/ci/check_wheel.py dist/*.whl                 # tag-versus-contents only
+# ONE WHEEL PER CALL. `dist/*.whl` globs to both distributions since Q-29 gave the checker its
+# own tree, and this script takes a single positional argument: it exits 2 on "unrecognized
+# arguments" having checked nothing. That is how the distribute workflow shipped a release lane
+# whose wheel check had never once run.
+for w in dist/*.whl; do python tools/ci/check_wheel.py "$w"; done   # tag-versus-contents only
 tools/packaging/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
 python tools/ci/check_wheel.py dist-manylinux/*.whl --release
 

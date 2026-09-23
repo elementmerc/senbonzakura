@@ -155,7 +155,15 @@ RUN senbonzakura doctor 2>&1 | tee /tmp/doctor.txt; \
 # doctor's own exit code is still not used on its own: a CPU-only image legitimately carries a
 # torch advisory and would exit non-zero for a reason that is not a fault. The count is the
 # assertion.
-RUN if grep -qE "[1-9][0-9]* failed" /tmp/doctor.txt; then \
+#
+# THE BUNDLED TRACK IS THE ONE NAMED EXCEPTION, and it is named rather than tolerated by a
+# loosened count. It is packed from a HELD-OUT track the operator keeps off this repository
+# (RELEASING.md, "Before anything else: pack the evaluation track"), so no CI job can build one
+# and a build that demanded it would fail every push forever. Its absence means `--track default`
+# does not work in an image built this way, which is a real limitation of the dev lane rather
+# than a check to switch off; it is recorded in DEFERRED.md as an open question.
+RUN grep -vE "^\s+✗\s+bundled track" /tmp/doctor.txt > /tmp/doctor-checked.txt; \
+    if grep -qE "^\s+✗" /tmp/doctor-checked.txt; then \
       echo "----------------------------------------------------------------"; \
       echo "This image cannot do what it claims. doctor reports:"; \
       grep -E "^\s+✗" /tmp/doctor.txt || true; \
@@ -163,8 +171,11 @@ RUN if grep -qE "[1-9][0-9]* failed" /tmp/doctor.txt; then \
       echo "The bundled data is generated, not committed, so a build from a clean"; \
       echo "clone has nothing to copy. Build it first, in the source tree:"; \
       echo "    python tools/packaging/build_corpora.py   # needs an authenticated gh"; \
-      echo "    python tools/packaging/pack_track.py"; \
       echo "then build the image again."; \
+      echo ""; \
+      echo "The bundled TRACK is separate and is not checked here: it is packed"; \
+      echo "from a held-out track that lives outside this repository, with"; \
+      echo "    python tools/packaging/pack_track.py --track <your held-out track>"; \
       echo "----------------------------------------------------------------"; \
       exit 1; \
     fi

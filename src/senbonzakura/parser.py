@@ -349,6 +349,13 @@ def build_parser():
                          "truncated answers are counted as ungradeable, never as wrong. 512 is "
                          "measured rather than guessed: on a model that reasons before answering, "
                          "256 tokens left 11 of 24 items ungradeable and 512 left 1.")
+    ap.add_argument("--slow-probe-ok", dest="slow_probe_ok", action="store_true",
+                    help="run the capability probe on a CPU even when it will take hours. The "
+                         "defaults above are sized for a GPU, where they are minutes; measured on "
+                         "a CPU with a 1.7B model they are about four hours, so the run stops and "
+                         "says so rather than looking identical to a hung one for an afternoon. "
+                         "Same shape as --short-budget-ok: the honest default stays, and spending "
+                         "that long has to be asked for.")
     ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
                     help="how many times to alternate restoring the row lengths and removing the "
                          "direction again. 0 (default) is the single pass this tool has always "

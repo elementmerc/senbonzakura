@@ -948,3 +948,67 @@ class TestThePairedComparisonKnowsWhichItemsItPaired:
         """
         from senbonzakura import capability
         assert capability.items_digest([])
+
+
+# ── the slow-probe refusal ───────────────────────────────────────────────────────────────────
+
+
+def test_the_default_probe_on_a_cpu_is_refused_rather_than_started():
+    """FOUR HOURS, MEASURED, and the run used to just start.
+
+    The capability probe became a default on 2026-09-22 at 200 items and 512 new tokens. Timed on
+    2026-09-23 with a 1.7B model on a CPU: 73.1 seconds an item, so about four hours. A heartbeat
+    was added first and is not enough, because it makes a long wait legible rather than short.
+    """
+    from senbonzakura import capability
+
+    with pytest.raises(SystemExit) as raised:
+        capability.refuse_a_slow_probe("cpu", 200, 512)
+    message = str(raised.value)
+    assert "4.1 hours" in message
+    # The way out has to be in the message. A refusal that does not say what to do instead is a
+    # wall, and this one sits in front of the tool's own default.
+    for escape in ("--device cuda", "--capability-n 40", "--capability-n 0", "--slow-probe-ok"):
+        assert escape in message, f"the refusal does not offer {escape}"
+
+
+def test_a_gpu_runs_the_same_defaults_without_comment():
+    """The default is honest and stays put. Only the CPU case is asked about."""
+    from senbonzakura import capability
+
+    capability.refuse_a_slow_probe("cuda", 200, 512)
+    capability.refuse_a_slow_probe("cuda:1", 10_000, 4096)
+
+
+@pytest.mark.parametrize(("n", "max_new"), [(40, 256), (0, 512), (4, 32), (200, 0)])
+def test_a_cpu_probe_that_finishes_in_reasonable_time_is_not_refused(n, max_new):
+    """Including CI's own smoke, which passes 4 items at 32 tokens and must keep working."""
+    from senbonzakura import capability
+
+    capability.refuse_a_slow_probe("cpu", n, max_new)
+
+
+def test_asking_for_it_is_allowed_and_says_what_was_asked_for():
+    """Same shape as --short-budget-ok: allowed, and loud about what it allowed."""
+    from senbonzakura import capability
+
+    said = []
+    capability.refuse_a_slow_probe("cpu", 200, 512, allowed=True, log=said.append)
+    assert said and "4.1 hours" in said[0]
+    assert "--slow-probe-ok" in said[0]
+    # The heartbeat is what makes the wait readable, so the warning points at it: a line that has
+    # stopped moving is a fault, and a reader needs to know which is which.
+    assert "30 seconds" in said[0]
+
+
+def test_the_estimate_matches_the_measurement_it_came_from():
+    """The constant is a measurement and this pins it to the number it was taken from.
+
+    73.1 seconds an item at 512 new tokens, so 200 items is about four hours. If somebody re-times
+    it on other hardware and changes the constant, this fails and asks them to say so rather than
+    letting the refusal's arithmetic drift away from the sentence that justifies it.
+    """
+    from senbonzakura import capability
+
+    assert capability.cpu_probe_estimate(1, 512) == pytest.approx(73.1, abs=0.1)
+    assert capability.cpu_probe_estimate(200, 512) / 3600 == pytest.approx(4.06, abs=0.05)

@@ -632,6 +632,67 @@ def items_digest(questions):
     return h.hexdigest()[:16]
 
 
+#: Seconds to generate one token for one item, on a CPU, measured 2026-09-23 on an RTX 3060
+#: laptop's host CPU with Qwen3-1.7B in float32 at batch 4: 73.1 s per item at 512 new tokens.
+#: A larger model is worse, and this is not scaled by model size on purpose. It is used to say
+#: roughly how long a run will take before it starts, not to predict it; a number that is right
+#: to the order of magnitude is what decides whether somebody should be asked first.
+CPU_SECONDS_PER_TOKEN = 73.1 / 512
+
+#: How long a capability probe may take on a CPU before it has to be asked for. Half an hour is
+#: chosen as the point past which somebody would reasonably assume the tool had hung, which is
+#: exactly what happened to CI: the probe's own notice was the last line before the 900 second
+#: kill, and nothing said whether it was working.
+CPU_REFUSE_AFTER_SECONDS = 30 * 60
+
+
+def cpu_probe_estimate(n, max_new):
+    """Roughly how long `n` items at `max_new` tokens will take on a CPU, in seconds."""
+    return int(n) * int(max_new) * CPU_SECONDS_PER_TOKEN
+
+
+def refuse_a_slow_probe(device, n, max_new, *, allowed=False, log=print):
+    """Refuse a CPU probe measured in hours unless somebody asked for one.
+
+    THE SAME SHAPE AS `--short-budget-ok`, and for the same reason. The capability probe became a
+    default on 2026-09-22 at 200 items and 512 new tokens, which are sensible on a GPU. Measured
+    on a CPU the same defaults take about four hours for a 1.7B model, and this project is aimed
+    at people on laptops.
+
+    A heartbeat was added first, and it is not enough: it makes a long wait legible rather than
+    short, and somebody watching a progress line crawl for four hours reaches for Ctrl+C on a run
+    that was working. The alternatives were all worse. Shrinking the default weakens every
+    measurement to suit the slowest machine, and 200 paired items is what makes the number worth
+    quoting. Varying the default by device is the one that looks most helpful and is the most
+    dangerous: two people running an identical command would no longer be running an identical
+    experiment, which is precisely the comparability hole this codebase has spent months closing.
+
+    So the default stays honest and the run says what it will cost before spending it.
+    """
+    if str(device).lower() not in ("cpu", "", "none"):
+        return
+    seconds = cpu_probe_estimate(n, max_new)
+    if seconds <= CPU_REFUSE_AFTER_SECONDS:
+        return
+    hours = seconds / 3600
+    if allowed:
+        log(f"WARNING: the capability probe is {int(n)} items at {int(max_new)} tokens on a CPU, "
+            f"roughly {hours:.1f} hours, and --slow-probe-ok was given. It reports progress every "
+            f"30 seconds; a line that has not moved for several minutes is a fault, not the wait.")
+        return
+    raise SystemExit(
+        f"senbonzakura: the capability probe would take roughly {hours:.1f} hours on this CPU "
+        f"({int(n)} items at {int(max_new)} tokens each).\n"
+        f"  That estimate comes from a measurement of a 1.7B model, so a larger one is worse. It "
+        f"is stopping here rather than starting, because a run that looks identical to a hung one "
+        f"for four hours is how somebody kills work that was fine.\n"
+        f"  What to do:\n"
+        f"    run it on a GPU with --device cuda, where these defaults are minutes, or\n"
+        f"    measure less of it:  --capability-n 40 --capability-max-new 256\n"
+        f"    turn it off entirely with --capability-n 0, and get no capability number at all\n"
+        f"    if you meant it and will leave it running, add --slow-probe-ok")
+
+
 def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320, *, log=None,
                              heartbeat=30.0):
     """Generate, and say for each item whether it finished or ran out of budget.

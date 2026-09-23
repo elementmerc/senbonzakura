@@ -5229,6 +5229,15 @@ def run_parsed(args, bankai, argv):
     # network for a Hub track and is still nothing beside pulling a model.
     _preflight_output(args)
     _preflight_datasets(args)
+    # BEFORE THE MODEL, because the whole point is to stop a run that would take an afternoon on
+    # this hardware, and everything needed to say so is on the command line already. Finding it
+    # after the download would be finding it once the wait had started.
+    from . import capability as _capability
+    _capability.refuse_a_slow_probe(
+        getattr(args, "device", "cpu"),
+        getattr(args, "capability_n", 0),
+        getattr(args, "capability_max_new", 512),
+        allowed=getattr(args, "slow_probe_ok", False))
     preflight_snapshot_ram(args, log=print)
 
     t0 = time.time()

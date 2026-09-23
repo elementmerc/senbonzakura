@@ -610,3 +610,120 @@ def test_the_module_needs_no_torch(tmp_path):
     assert r.stdout.strip() == "", (
         f"importing senbonzakura.streaming pulled in {r.stdout.strip()}, which is what this "
         f"module is shaped to avoid")
+
+
+# ── loading a layer ──────────────────────────────────────────────────────────────────────────
+
+
+def test_a_loaded_layer_matches_what_safetensors_reads(tmp_path):
+    """THE ONLY CHECK THAT MATTERS HERE: the bytes come back as the same numbers.
+
+    Compared against `safetensors.torch.load_file`, which is the reference implementation of the
+    format, rather than against a value written into the test. A reader that agreed with itself
+    and not with safetensors would produce a model that loads and is numerically wrong, and
+    nothing downstream could tell.
+    """
+    weights = {}
+    for i in range(2):
+        weights[f"model.layers.{i}.self_attn.o_proj.weight"] = torch.randn(4, 6)
+        weights[f"model.layers.{i}.mlp.down_proj.weight"] = torch.randn(8, 3)
+    root = _checkpoint(tmp_path / "load", weights, layers=2)
+    index = streaming.index_layers(root)
+    reference = load_file(str(root / "model.safetensors"))
+
+    for i in range(2):
+        loaded = streaming.load_layer(index, i)
+        assert sorted(loaded) == sorted(n for n in weights if f".layers.{i}." in n)
+        for name, got in loaded.items():
+            assert got.shape == reference[name].shape
+            assert torch.equal(got, reference[name]), f"{name} did not read back identically"
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16,
+                                   torch.int64, torch.uint8, torch.bool])
+def test_every_dtype_a_checkpoint_uses_reads_back_identically(tmp_path, dtype):
+    """bf16 is the one that matters, because it is what checkpoints are stored in.
+
+    It is also the one a naive mapping gets wrong: safetensors spells it `BF16` and torch spells
+    it `bfloat16`, so `getattr(torch, name.lower())` raises on it, and any reader that fell back
+    to a dtype of the same width would read a model as float16 and produce numerical nonsense
+    that still loads.
+    """
+    if dtype is torch.bool:
+        payload = torch.tensor([[True, False, True], [False, True, False]])
+    elif dtype.is_floating_point:
+        payload = torch.randn(2, 3).to(dtype)
+    else:
+        payload = torch.tensor([[1, 2, 3], [4, 5, 6]]).to(dtype)
+
+    weights = {"model.layers.0.mlp.down_proj.weight": payload}
+    root = _checkpoint(tmp_path / f"dt{dtype}".replace(".", "_"), weights, layers=1)
+    index = streaming.index_layers(root)
+    got = streaming.load_layer(index, 0)["model.layers.0.mlp.down_proj.weight"]
+
+    assert got.dtype == dtype
+    assert torch.equal(got, payload)
+
+
+def test_a_dtype_this_torch_cannot_name_is_refused(tmp_path):
+    """Reading unknown bytes as the nearest known dtype is the worst failure available here."""
+    with pytest.raises(streaming.ShardError, match="cannot represent the safetensors dtype"):
+        streaming.torch_dtype("F4_SOMETHING")
+
+
+def test_only_narrows_the_load_to_the_tensors_about_to_be_edited(tmp_path):
+    """On a mixture-of-experts layer this is the difference between the layer and the part edited."""
+    weights = {"model.layers.0.self_attn.o_proj.weight": torch.randn(4, 4),
+               "model.layers.0.mlp.down_proj.weight": torch.randn(4, 6),
+               "model.layers.0.input_layernorm.weight": torch.randn(4)}
+    root = _checkpoint(tmp_path / "only", weights, layers=1)
+    index = streaming.index_layers(root)
+
+    writers_only = streaming.load_layer(index, 0, only=set(index.writers(0)))
+    assert sorted(writers_only) == ["model.layers.0.mlp.down_proj.weight",
+                                    "model.layers.0.self_attn.o_proj.weight"]
+    assert "model.layers.0.input_layernorm.weight" not in writers_only
+
+
+def test_loading_a_layer_holds_one_layer_and_not_the_checkpoint(tmp_path):
+    """THE ENTIRE REASON THIS MODULE EXISTS, so it is measured rather than asserted in a comment.
+
+    Every correctness test above passes just as happily against an implementation that reads the
+    whole file first. `tracemalloc` can see these allocations because the bytes pass through
+    Python `bytes` on the way to the tensor.
+
+    The bound is per LAYER, not per tensor: `load_layer` returns the layer, because that is the
+    unit the whole design is built around holding. What must never be held is the model.
+    """
+    per_tensor = 256 * 1024 * 4
+    weights = {}
+    for i in range(6):
+        weights[f"model.layers.{i}.mlp.down_proj.weight"] = torch.zeros(256, 1024)
+    root = _checkpoint(tmp_path / "bounded", weights, layers=6)
+    index = streaming.index_layers(root)
+    whole = per_tensor * 6
+
+    tracemalloc.start()
+    try:
+        got = streaming.load_layer(index, 0)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(got) == 1
+    assert peak < whole // 2, (
+        f"loading one layer of a {whole // 1024} KiB checkpoint peaked at {peak / 1024:.0f} KiB, "
+        f"so it is holding more than the layer it was asked for")
+
+
+def test_a_writable_tensor_comes_back_so_the_bake_can_edit_it(tmp_path):
+    """`torch.frombuffer` on an immutable buffer yields a read-only tensor and warns.
+
+    The bake edits in place, so a read-only tensor would fail deep inside the orthogonaliser,
+    hours into a run, on a line that says nothing about where the tensor came from.
+    """
+    weights = {"model.layers.0.mlp.down_proj.weight": torch.randn(4, 6)}
+    root = _checkpoint(tmp_path / "writable", weights, layers=1)
+    index = streaming.index_layers(root)
+    got = streaming.load_layer(index, 0)["model.layers.0.mlp.down_proj.weight"]
+    got += 1.0  # in place, as the bake does

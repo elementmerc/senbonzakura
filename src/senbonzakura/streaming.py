@@ -495,3 +495,91 @@ def index_layers(model_dir):
             f"{model_dir}: the config declares {count} layers and layer(s) {empty} hold no "
             f"tensors. A streaming run would walk straight past them and report success")
     return LayerIndex(model_dir, count, layers, shared)
+
+
+# ── loading one layer ────────────────────────────────────────────────────────────────────────
+
+
+def torch_dtype(name):
+    """The torch dtype for a safetensors dtype name, or a refusal.
+
+    A mapping rather than `getattr(torch, name.lower())`, because the two vocabularies do not line
+    up: safetensors writes `BF16` where torch says `bfloat16`, and `F8_E4M3` where torch says
+    `float8_e4m3fn`. Guessing by lowercasing produces an AttributeError on some and, worse, the
+    WRONG dtype on none of them only by luck.
+
+    Refused loudly for a dtype this cannot name. A streaming bake that quietly reinterpreted a
+    checkpoint's bytes as the nearest dtype it knew would produce a model that loads and is
+    numerically nonsense, which is this module's worst available failure.
+    """
+    import torch
+
+    table = {
+        "F64": torch.float64, "F32": torch.float32, "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "I64": torch.int64, "I32": torch.int32, "I16": torch.int16, "I8": torch.int8,
+        "U8": torch.uint8, "BOOL": torch.bool,
+    }
+    # Added to torch at different times, and a checkpoint using one on an older torch must be
+    # refused rather than silently read as something else.
+    for name_st, attr in (("F8_E4M3", "float8_e4m3fn"), ("F8_E5M2", "float8_e5m2"),
+                          ("U64", "uint64"), ("U32", "uint32"), ("U16", "uint16")):
+        if hasattr(torch, attr):
+            table[name_st] = getattr(torch, attr)
+    if name not in table:
+        known = ", ".join(sorted(table))
+        raise ShardError(
+            f"this torch cannot represent the safetensors dtype {name!r}. It knows {known}. "
+            f"Reading the bytes as a dtype of the same width would produce a model that loads "
+            f"and is numerically meaningless, so this refuses instead")
+    return table[name]
+
+
+def load_tensor(shard, tensor):
+    """One tensor, as a torch tensor. Peak memory is that tensor, which is the whole point.
+
+    THE READ IS A `pread`, and that is a measured choice rather than the obvious one. Against two
+    real checkpoints on 2026-09-23 (`tools/research/layer_read_spike.py`), reading each tensor by
+    seek-and-read beat both alternatives on a cold cache, and beat them enormously on the layout
+    that matters: a mixture-of-experts layer's tensors are scattered across 11.9 GB of shard to
+    collect 704 MB, so one big sequential read over the layer's span moves seventeen times the
+    data it needs. Memory mapping came second everywhere and is what safetensors does by default,
+    which would have cost roughly 1.7x on the estimate for a reason no profile of this code would
+    ever have shown.
+    """
+    import torch
+
+    raw = read_tensor(shard, tensor)
+    # `bytearray` rather than `bytes`, because `torch.frombuffer` on an immutable buffer warns
+    # that the tensor is not writable and the bake writes into it. It is the same bytes and the
+    # same one copy, not a second one.
+    flat = torch.frombuffer(bytearray(raw), dtype=torch_dtype(tensor.dtype))
+    if flat.numel() != _element_count(tensor.shape):
+        raise ShardError(
+            f"{shard}: {tensor.name!r} read as {flat.numel()} elements and its shape "
+            f"{tensor.shape} needs {_element_count(tensor.shape)}")
+    return flat.reshape(tensor.shape)
+
+
+def load_layer(index, i, *, only=None, log=None):
+    """Every tensor of layer `i`, as torch tensors, one at a time.
+
+    `only` narrows it to a set of names, which is how the bake asks for just the residual writers
+    and skips the norms and the router it will not touch. On a mixture-of-experts layer that is
+    the difference between 704 MB and the part being edited.
+
+    Returns a dict rather than a generator on purpose: the caller is about to hold the layer
+    anyway, and a generator would make it easy to write a loop that looks streaming while keeping
+    every tensor alive in a list comprehension one line later. What this module bounds is the
+    MODEL, not the layer; the layer is the unit the whole design is built around holding.
+    """
+    out = {}
+    for name, (shard, tensor) in sorted(index.layers[i].items()):
+        if only is not None and name not in only:
+            continue
+        out[name] = load_tensor(shard, tensor)
+    if log:
+        total = sum(t.nbytes for _n, (_s, t) in index.layers[i].items() if
+                    only is None or _n in only)
+        log(f"  layer {i}: {len(out)} tensors, {total / 1024 ** 2:.1f} MB")
+    return out

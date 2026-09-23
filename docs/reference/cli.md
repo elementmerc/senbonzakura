@@ -144,7 +144,7 @@ than two runs that happened near each other.
 | Command | What it does |
 |---|---|
 | `convert` | Turn edited weights into a GGUF with the pinned converter, optionally quantising in the same step. |
-| `quantise` | Shrink a GGUF with the pinned `llama-quantize`, then read the output back to confirm it is the quantisation that was asked for. |
+| `quantise` | Shrink a model with the pinned `llama-quantize`, then read the output back to confirm it is the quantisation that was asked for. Given a transformers checkpoint rather than a GGUF, it converts first, so `senbonzakura quantise ./abliterated` is the whole route from edited weights to something llama.cpp will serve. |
 | `imatrix` | Compute an importance matrix so a quantisation keeps the weights that matter, and record what it was calibrated on. |
 | `fetch` | Download a model file and prove it is the one asked for: length, GGUF header, architecture, and the quantisation its name claims. |
 

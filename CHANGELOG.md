@@ -229,6 +229,10 @@ install rather than only in a source checkout.
   five, each with its own required flags and its own output file. The five still exist and
   still take knobs this does not expose; the numbers are identical, because each row is that
   command run with the arguments you would have typed. It prints figures and never a verdict.
+- **`senbonzakura quantise ./abliterated` now works on a checkpoint, not only on a GGUF.**
+  It converts first, with the same pinned converter `convert` uses. The two-step route and
+  `convert --quantise` are both unchanged; what changed is that the command people reach
+  for no longer sends them away to learn a file format first.
 - **Four commands stopped demanding arguments they could work out.** `capability` takes the
   model without a flag and defaults its output; `track` defaults its output directory to the
   one the abliterator already looks for; `baseline` takes the artefact as its first argument,

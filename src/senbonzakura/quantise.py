@@ -155,8 +155,12 @@ def quantiser_identity(exe, source_of, log=print):
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura quantise",
-        description="Quantise a GGUF with the pinned llama-quantize, then verify what was written.")
-    ap.add_argument("source", help="an f16 or f32 GGUF to quantise")
+        description="Quantise a model with the pinned llama-quantize, then verify what was "
+                    "written. A transformers checkpoint is converted to GGUF on the way in, so "
+                    "edited weights reach something llama.cpp will serve in one command.")
+    ap.add_argument("source",
+                    help="an f16 or f32 GGUF to quantise, or a transformers checkpoint "
+                         "directory, which is converted to GGUF first with the pinned converter")
     ap.add_argument("out", nargs="?", default=None,
                     help="output path (default: the source with its quant name substituted)")
     ap.add_argument("--type", default="Q4_K_M", choices=QUANT_TYPES,
@@ -441,9 +445,8 @@ def preflight(source, out, quant, *, allow_requantize, force):
     if not src.is_file():
         raise SystemExit(
             f"no source GGUF at {src}.\n"
-            f"  This quantises a GGUF; it does not create one. If you have a transformers "
-            f"checkpoint, convert it first:\n"
-            f"    senbonzakura convert <model directory> {src}")
+            f"  This quantises a GGUF, and converts a transformers checkpoint directory on the "
+            f"way in. {src} is neither: it does not exist.")
 
     # BEFORE the exists check, because it is the more specific and the more destructive of the
     # two. Ordered the other way, the only case that reaches it is `--force` on the same path,
@@ -479,8 +482,40 @@ def preflight(source, out, quant, *, allow_requantize, force):
     return head
 
 
+#: What a transformers checkpoint directory looks like from outside. `config.json` alone, because
+#: a checkpoint may hold safetensors, shards, a `.bin`, or nothing this tool can read, and the
+#: converter is the thing qualified to say which; this only has to decide which command owns it.
+def looks_like_a_checkpoint(path):
+    p = Path(path)
+    return p.is_dir() and (p / "config.json").is_file()
+
+
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
+
+    # A CHECKPOINT, NOT A GGUF. `convert --quantise` has always done both steps in one command,
+    # and this is the name people reach for when they want a quantised model: they typed
+    # `quantise`, were told to run a different command first, and went away to learn a file
+    # format in order to be handed back to the command they started with. The conversion is
+    # delegated rather than reimplemented, so there is one converter and one set of checks.
+    if looks_like_a_checkpoint(a.source):
+        from . import convert
+        log(f"{a.source} is a transformers checkpoint rather than a GGUF, so it is converted "
+            f"first. That is `senbonzakura convert --quantise {a.type}`, run for you.")
+        c_argv = [str(a.source), "--quantise", a.type]
+        if a.out:
+            # The user's path names the QUANTISED file, which is what they asked for. The
+            # intermediate takes the converter's own default beside the checkpoint and is
+            # removed afterwards unless --keep-source says otherwise.
+            log(f"  the quantised model will be at {a.out}; the intermediate GGUF is temporary")
+        if a.imatrix:
+            c_argv += ["--imatrix", a.imatrix]
+        if a.force:
+            c_argv.append("--force")
+        if a.keep_source:
+            c_argv.append("--keep-intermediate")
+        return convert.run(c_argv, log=log)
+
     _preflight_arguments(a, log=log)
     out = Path(a.out) if a.out else default_output(a.source, a.type)
 

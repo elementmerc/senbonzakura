@@ -387,6 +387,14 @@ author = "Daniel Iwugo"
 notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 
 [tool.ruff.lint.per-file-ignores]
+# A Colab notebook is a tutorial a stranger reads in a browser, and the rules that make sense for
+# source do not all survive that move. `CPY001` would put a copyright header in the first visible
+# cell of a first-run walkthrough, which is noise aimed at somebody who came to try the tool. The
+# licence is stated in the repository, in the wheel, and in the notebook's own closing links.
+# Everything else ruff has to say about these cells still applies: they are code a newcomer will
+# run, and a broken line there is worse than a broken line in the source, because the reader
+# cannot tell whether they did something wrong.
+"notebooks/*.ipynb" = ["CPY001"]
 # Only rules that are NOT in the global `ignore` above belong here. A per-file
 # entry duplicating a global one is dead config that reads as a decision, and
 # the wrong lesson gets drawn from it when the global entry is later lifted.

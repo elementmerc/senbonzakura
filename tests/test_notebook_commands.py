@@ -97,3 +97,38 @@ def test_the_notebook_does_not_promise_a_subcommand_that_does_not_exist():
         "the notebook's prose names `abliterate` as a command. It is the bare invocation")
     unknown = mentioned - set(entry.DELEGATED)
     assert not unknown, f"the notebook names commands that do not exist: {sorted(unknown)}"
+
+
+def test_the_notebook_does_not_send_a_reader_to_pypi_while_pypi_is_stale():
+    """THE DEFECT THIS FILE DID NOT CATCH THE FIRST TIME.
+
+    `test_docs_match_the_package.py` keeps a list of install surfaces and asserts each one warns
+    that PyPI serves a withdrawn 0.3.0. The notebook is an install surface and was not on that
+    list, so it shipped `%pip install senbonzakura` as its very first cell: a reader following it
+    in a browser would have got July's version, silently, and then met commands that version does
+    not have.
+
+    Switching it to the repository alone is not enough either, and that is the second half. A
+    clone carries no bundled corpora, because they are generated rather than committed, so
+    `--track default` fails on a git install. The notebook therefore has to build them, and this
+    asserts it does, because a reader cannot be expected to know that the failure two cells later
+    is about a build step nobody ran.
+    """
+    doc = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    everything = "\n".join("".join(c["source"]) for c in doc["cells"])
+
+    assert "pip install --quiet senbonzakura\n" not in everything, (
+        "the notebook installs from PyPI, which serves a withdrawn 0.3.0 whose numbers are "
+        "retracted and which has none of the measurement this notebook demonstrates")
+
+    uses_bundled_track = "--track default" in everything
+    if uses_bundled_track:
+        assert "build_corpora.py" in everything, (
+            "the notebook uses `--track default` and never builds the corpora. They are generated "
+            "rather than committed, so a clone does not have them and the run fails on the first "
+            "real command, which is the 0.3.0 defect in a browser")
+
+    code = "\n".join("".join(c["source"]) for c in doc["cells"] if c["cell_type"] == "code")
+    assert "bundled.is_available()" in code, (
+        "nothing in the notebook checks the track was actually built, so a reader whose build "
+        "step failed finds out several minutes later from a command that looks unrelated")

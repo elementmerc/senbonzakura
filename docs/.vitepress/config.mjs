@@ -1,3 +1,5 @@
+// Author:  Daniel Iwugo
+// Comment: Christ is King
 // Senbonzakura documentation site.
 //
 // Built under a standing rule: every project with readers who are not its author ships built

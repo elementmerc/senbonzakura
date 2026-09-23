@@ -109,26 +109,78 @@ jobs:
           esac
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0, as pinned in ci.yml
+        with:
+          python-version: "3.12"
+
+      - name: Build the bundled data, because a checkout does not carry it
+        # THE IMAGE SHIPPED WITHOUT ITS CORPORA UNTIL 2026-09-23, and the first run of this
+        # workflow is what found it: `doctor` inside the image reported 7 of 19 checks failed,
+        # every one of them a missing corpus or the missing evaluation track.
+        #
+        # The corpora and the track are GENERATED, not committed: they hold 4,895 harmful prompts
+        # and the project publishes that corpus as a gated dataset on purpose, so a public git
+        # tree must not carry them. A wheel gets them because building a wheel is a deliberate act
+        # that attaches the licence notice. `.dockerignore` says in as many words that an image is
+        # a release artefact like a wheel and should carry them too. Nothing ever built them here.
+        #
+        # This is the same two lines ci.yml already runs, for the same reason and with the same
+        # credential. The third channel to be caught by one root cause in two days: an artefact
+        # generated at build time is absent from every channel that does not explicitly build it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade pyarrow
+          python tools/packaging/build_corpora.py
+          python tools/packaging/pack_track.py
+
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
+        # BUILT AND LOADED, NOT PUSHED. The smoke test below used to run after the push, and its
+        # own failure message said so out loud: "the image was pushed and cannot run doctor".
+        # A test that can only report what the public already has is not a gate, and on the first
+        # real run of this workflow it published a broken image to :dev before saying anything.
+        #
+        # The push is a second call below. It costs no rebuild: the layers are in the GitHub
+        # Actions cache from this step, so the second call is a cache hit and a registry upload.
+        id: build
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          tags: senbonzakura:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image can answer for itself, BEFORE anybody else can pull it
+        # `doctor` is the right smoke test because its whole job is to say what an install can and
+        # cannot do, and it exercises the vendored binaries rather than only the Python import.
+        #
+        # Its exit code is not used on its own: a CPU-only image legitimately carries a torch
+        # advisory and exits non-zero for a reason that is not a fault. So the report is read.
+        # "0 failed" is the assertion, and it is the one that was missing while the image job
+        # grepped for two lines that said nothing about the bundled data.
+        run: |
+          set -euo pipefail
+          docker run --rm senbonzakura:smoke doctor 2>&1 | tee doctor.txt || true
+          grep -q "llama-quantize *vendored, runs" doctor.txt \
+            || { echo "::error::the image ships a quantiser that does not run"; exit 1; }
+          if grep -qE "[1-9][0-9]* failed" doctor.txt; then
+            echo "::error::doctor reports failing checks inside the image, so it is not shippable"
+            exit 1
+          fi
+          grep -q "bundled track" doctor.txt \
+            || { echo "::error::doctor no longer reports on the bundled track"; exit 1; }
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
+        # The same layers, now that something has actually run them.
         with:
           context: .
           file: Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: The image can answer for itself
-        # A pushed image nobody ran is a pushed image that does not work. `doctor` is the command
-        # whose whole job is to say what this install can and cannot do, so it is the right smoke
-        # test: it exercises the vendored binaries rather than only the Python import.
-        run: |
-          set -euo pipefail
-          image=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
-          docker run --rm "$image" doctor || {
-            echo "the image was pushed and cannot run doctor" >&2
-            exit 1
-          }
 
   wheels:
     name: wheels for the fast lane
@@ -143,6 +195,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Build the bundled data, because a checkout does not carry it
+        # WITHOUT THIS THE FAST LANE PUBLISHES A WHEEL WITH NO CORPORA, which is the defect the
+        # step below exists to catch and the same one that made the Colab notebook unusable. They
+        # are generated rather than committed on purpose: they hold 4,895 harmful prompts and the
+        # project publishes that corpus as a gated dataset. A wheel carries them because building
+        # one is a deliberate act that attaches the licence notice, and nothing here was making
+        # that act happen.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade pyarrow
+          python tools/packaging/build_corpora.py
+          python tools/packaging/pack_track.py
+
       - name: Build both distributions
         run: |
           set -euo pipefail
@@ -154,7 +221,55 @@ jobs:
         # The same check the release path runs. A fast lane that skipped it would be a fast lane
         # for shipping a wheel with no corpora in it, which is the defect this project has already
         # shipped once.
-        run: python tools/ci/check_wheel.py dist/*.whl
+        #
+        # ONE WHEEL PER CALL, in a loop. This read `dist/*.whl`, which globs to BOTH distributions
+        # since Q-29 put the checker in its own tree, and the script takes a single positional
+        # argument: it exited 2 on "unrecognized arguments" before checking anything at all. So on
+        # the first real run of this workflow the guard against a corpora-less wheel was itself
+        # the reason nothing was checked. The script already knows both distributions and holds a
+        # separate table of expectations for each, because what a distribution owes follows from
+        # what it ships.
+        #
+        # NOT `--release`. A fast-lane build is a `.dev` version, `is_release_artefact` says that
+        # is not a release artefact, and `test_a_pre_release_of_ours_is_not_forced_into_release_mode`
+        # pins that on purpose: a pre-release is allowed to be thin. Forcing the strict table here
+        # would override a decision somebody made deliberately and wrote a test for.
+        #
+        # The thing that actually needs guarding is narrower, so it is guarded directly below
+        # rather than by reaching for a flag that means something else.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          test ${#wheels[@]} -eq 2 || {
+            echo "::error::expected two wheels, found ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          }
+          for wheel in "${wheels[@]}"; do
+            echo "== $wheel"
+            python tools/ci/check_wheel.py "$wheel"
+          done
+
+      - name: The wheel this lane publishes is not a thin one
+        # The fast lane publishes a rolling pre-release somebody can actually install, and a wheel
+        # without the corpora installs, imports, answers `--help` and then fails `--track default`
+        # for every one of them. That is not hypothetical: it is what made the Colab notebook
+        # unusable, found on 2026-09-22.
+        #
+        # Asserted against the built wheel rather than against the source tree, because the
+        # question is what the artefact carries, and `package-data` has already once listed a glob
+        # that matched none of the files it was meant to ship.
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/senbonzakura-*.whl)
+          python -c "import sys, zipfile; print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$wheel" > names.txt
+          for want in senbonzakura/data/corpora.bin senbonzakura/data/default-track.bin; do
+            grep -qxF "$want" names.txt || {
+              echo "::error::$wheel does not carry $want, so --track default fails for anyone who installs it"
+              exit 1
+            }
+          done
+          echo "the published wheel carries its corpora and its track"
 
       - name: Publish or refresh the rolling pre-release
         env:

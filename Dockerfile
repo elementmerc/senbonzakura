@@ -32,6 +32,16 @@
 #
 # The build needs a network, to fetch dependencies and the pinned binaries. Running does not:
 # the corpora are bundled and nothing is fetched at first use.
+#
+# "The corpora are bundled" IS A CONDITION ON THE BUILD, not a property of this file, and until
+# 2026-09-23 it was simply false in CI. They are generated rather than committed, so they have to
+# exist in the build context before `docker build` runs:
+#
+#     python tools/packaging/build_corpora.py   # needs an authenticated gh
+#     python tools/packaging/pack_track.py
+#
+# The runtime stage now refuses the build when they are missing, rather than producing an image
+# that starts, answers `--help` and fails `--track default` for everybody who pulls it.
 
 # ── builder ─────────────────────────────────────────────────────────────────────
 FROM python:3.13-slim AS builder
@@ -129,6 +139,35 @@ ENV HF_HOME=/work/.cache/huggingface \
 RUN senbonzakura doctor 2>&1 | tee /tmp/doctor.txt; \
     grep -q "llama-quantize *vendored, runs" /tmp/doctor.txt \
       || { echo "the image ships a quantiser that does not run:"; cat /tmp/doctor.txt; exit 1; }
+# AND NOTHING ELSE IS FAILING, which the grep above could not see and therefore did not.
+#
+# On 2026-09-23 the first real run of the distribute workflow published an image whose `doctor`
+# reported 7 of 19 checks failed: the bundled track and all six corpora were absent. The build
+# above passed, because it asserts one line about the quantiser and reads nothing else, and the
+# image job asserted the same one line. Two gates, one blind spot, shared.
+#
+# The corpora and the track are GENERATED rather than committed, so a plain `docker build` from a
+# clean clone has nothing to copy and produces exactly that image. The right answer is to refuse
+# the build and say what to run, rather than to ship something that starts, answers `--help`, and
+# then fails `--track default` for everybody. `.dockerignore` already says an image is a release
+# artefact like a wheel and should carry them; this is the check that it does.
+#
+# doctor's own exit code is still not used on its own: a CPU-only image legitimately carries a
+# torch advisory and would exit non-zero for a reason that is not a fault. The count is the
+# assertion.
+RUN if grep -qE "[1-9][0-9]* failed" /tmp/doctor.txt; then \
+      echo "----------------------------------------------------------------"; \
+      echo "This image cannot do what it claims. doctor reports:"; \
+      grep -E "^\s+✗" /tmp/doctor.txt || true; \
+      echo ""; \
+      echo "The bundled data is generated, not committed, so a build from a clean"; \
+      echo "clone has nothing to copy. Build it first, in the source tree:"; \
+      echo "    python tools/packaging/build_corpora.py   # needs an authenticated gh"; \
+      echo "    python tools/packaging/pack_track.py"; \
+      echo "then build the image again."; \
+      echo "----------------------------------------------------------------"; \
+      exit 1; \
+    fi
 RUN senbonzakura head-to-head --help >/dev/null \
  && senbonzakura quantise --help >/dev/null \
  && echo "the delegated commands start"

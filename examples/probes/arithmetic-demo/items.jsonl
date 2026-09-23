@@ -1,0 +1,4 @@
+{"problem": "A shelf holds 7 books. Two more shelves are added, each with 7 books. How many books are there now?", "reference": "7 + 7 + 7 = 21\n#### 21"}
+{"problem": "A bus carries 12 people. At the first stop 5 get off and 3 get on. How many are on the bus?", "reference": "12 - 5 = 7, then 7 + 3 = 10\n#### 10"}
+{"problem": "Pens cost 4 pounds each. How much change from 20 pounds after buying 3?", "reference": "3 x 4 = 12, then 20 - 12 = 8\n#### 8"}
+{"problem": "A tank holds 30 litres and is half full. If 6 litres are added, how many litres are in it?", "reference": "30 / 2 = 15, then 15 + 6 = 21\n#### 21"}

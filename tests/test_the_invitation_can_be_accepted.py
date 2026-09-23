@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The first command of the published reproduction recipe has to run.
 
 FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17, working from an installed wheel with no source

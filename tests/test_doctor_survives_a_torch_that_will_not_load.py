@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 r"""`doctor` has to survive the most likely way an install is broken, because that is when it runs.
 
 FOUND ON REAL WINDOWS HARDWARE, 2026-09-17, on the project's own laptop, in a disposable venv

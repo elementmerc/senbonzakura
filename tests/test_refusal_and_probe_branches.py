@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The refusal messages and hardware probes that nothing had ever driven.
 
 Third file of shortlist item A, and the branches here are the ones that matter most per line.

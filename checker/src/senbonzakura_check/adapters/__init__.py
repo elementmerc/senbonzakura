@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Read other harnesses' result files, so the checks apply to somebody else's work.
 
 Item C of the non-GPU shortlist, and property 2 of the six: **breadth inherited by

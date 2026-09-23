@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """lm-evaluation-harness result files.
 
 SHAPE, read out of `lm_eval/evaluator_utils.py::_to_eval_results` and `lm_eval/evaluator.py` on

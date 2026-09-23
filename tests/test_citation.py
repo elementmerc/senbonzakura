@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`CITATION.cff`, and the community files JOSS checks for at intake.
 
 These are cheap to get wrong and expensive to get wrong late: a submission is bounced at intake

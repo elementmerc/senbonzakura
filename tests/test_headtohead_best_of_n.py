@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for head-to-head/best_of_n_heretic.py, the selection pass that decides Heretic's reported arm.
 
 This script chooses which of Heretic's candidates goes into a published table, so its decision

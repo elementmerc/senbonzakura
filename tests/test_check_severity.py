@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Findings are ranked by how far they could move the number, and severity is where that lives.
 
 THE RUNG ASKS FOR IT AND THE REPORT DID NOT DO IT. Until 2026-09-21 the command printed findings

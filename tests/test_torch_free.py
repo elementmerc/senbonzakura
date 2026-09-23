@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The commands that check other people's work must run with no deep-learning stack at all.
 
 WHY THIS IS THE ADOPTION QUESTION RATHER THAN A TIDINESS ONE

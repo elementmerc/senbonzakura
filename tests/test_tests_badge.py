@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`tools/ci/check_tests_badge.py`: the count in the README, and the second place it lives.
 
 WHY THIS FILE EXISTS AT ALL. It did not, until 2026-09-21. The checker ran in CI and nothing

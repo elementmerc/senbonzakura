@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for tools/packaging/make_dryrun_spec.py, which derives the rehearsal from the real spec.
 
 The whole value of a rehearsal is that it runs the same spec the real thing will. Written by hand

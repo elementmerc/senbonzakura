@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The advisories this repository has decided to live with, held to what they claim.
 
 An `audit_ignore` entry silences a real finding. Written once and never read again, it is how a

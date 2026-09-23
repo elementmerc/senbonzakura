@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The checkpoint index, treated as something a stranger wrote.
 
 `accelerate` PYSEC-2026-3804: `load_checkpoint_in_model` and `load_checkpoint_and_dispatch` take

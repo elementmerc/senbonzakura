@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """A search cannot be steered by a signal too short to see the thing it is searching for.
 
 THE DEFECT THIS WAS WRITTEN FOR, AND IT IS THE SHAPE THIS PROJECT KEEPS REPEATING.

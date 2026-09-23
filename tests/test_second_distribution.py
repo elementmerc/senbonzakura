@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The checker is a separate distribution, and the separation is a property rather than a plan.
 
 DECISION Q-29 (2026-09-11). `roadmap.md` scores this project against the six properties shared

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Run a head-to-head between abliteration tools, on one machine, in one command.
 
 `senbonzakura head-to-head run --tools senbon,heretic --seeds 5` is the whole thing: it runs

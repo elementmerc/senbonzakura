@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Find a vendored third-party executable, or say exactly why there is not one.
 
 WHAT IS VENDORED AND WHAT IS NOT, AND WHY THEY DIFFER

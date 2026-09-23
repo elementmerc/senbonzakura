@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The quantisation page lists types, so it will drift from the code unless something stops it.
 
 A documented list is a promise about what the tool does. This project has already shipped a page

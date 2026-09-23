@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for tools/research/report_bands.py, the thing that actually prints a verdict.
 
 Every guard in `matched_refusal_table` was bypassed for weeks because the reports were Python

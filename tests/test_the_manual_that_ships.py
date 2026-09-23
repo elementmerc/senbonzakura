@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The man page is an installed artefact, and it went stale where nobody looks.
 
 FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17. `man/senbonzakura.1` installs to

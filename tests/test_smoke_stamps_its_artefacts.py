@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Nothing the CI smoke writes can leave it looking like a measurement.
 
 THE SHAPE OF THE PROBLEM. `tools/ci/smoke_end_to_end.py` runs a genuine search on

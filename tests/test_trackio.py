@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Reading and writing a track's tables without `datasets`, and proving the two agree.
 
 WHAT THIS SUITE IS ACTUALLY FOR

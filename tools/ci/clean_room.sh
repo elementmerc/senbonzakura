@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 #
 # clean_room.sh — install the wheel on a machine that has never seen this project, and find out
 # what it can actually do.

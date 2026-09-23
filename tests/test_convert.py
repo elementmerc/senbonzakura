@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`senbonzakura convert`: safetensors to GGUF, and the pre-flight that stops a long job early.
 
 The conversion itself is upstream code and is not what these test. What they hold down is the

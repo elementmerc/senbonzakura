@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """A wheel that carries a Linux executable must not claim to run anywhere.
 
 `pip install senbonzakura` gets a `py3-none-any` wheel that cannot convert or quantise, because

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Three judges, and the rule that makes having three worth the trouble.
 
 The v0.7 gate: each arm is scored by at least three judges that differ in a way that matters,

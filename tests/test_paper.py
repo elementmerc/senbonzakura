@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """The JOSS paper, held to the things that get a submission bounced or a claim wrong.
 
 Two different kinds of assertion live here and the distinction matters. The word count is a

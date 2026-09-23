@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """On every public surface, what this does comes before how to do it.
 
 FOUND BY A HOSTILE OUTSIDE REVIEW, 2026-09-17, and the reviewer's own summary is the fairest

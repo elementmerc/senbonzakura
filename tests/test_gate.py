@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """`senbonzakura gate`: the command that makes a baseline do something.
 
 `baseline.py` holds the rules and was written with no caller, which in this project is a green

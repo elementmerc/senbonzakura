@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Tests for tools/research/direction_validation.py, the experiment that judges the directions.
 
 This is the instrument that decides whether the multi-direction claim survives, so the tests

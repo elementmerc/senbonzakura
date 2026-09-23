@@ -110,7 +110,9 @@ class TestADeadKnobSaysSo:
         `--help` is what people read.
         """
         from senbonzakura import parser
-        text = parser.build_parser().format_help()
+        # The FULL help. `--kl-scale` is a search knob, so it sits behind `--help-all` since the
+        # default page was split; the sentence still has to be there for the reader who asks.
+        text = parser.build_parser(full=True).format_help()
         assert "SCALAR objective" in text
         # The option BODY, not the usage line, which also names the flag and says nothing.
         body = text.split("  --kl-scale KL_SCALE", 1)[1][:1200]

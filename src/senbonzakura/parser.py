@@ -109,7 +109,45 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     return ap
 
 
-def build_parser():
+#: The flags a first run actually needs, by `dest`. Everything else stays real, stays accepted and
+#: stays documented; it just does not greet somebody who typed `--help` to find out what this is.
+#:
+#: WHY THIS EXISTS. The default command carries 69 flags and its help is 470 lines. That surface is
+#: honest for the research side of this tool, where the knobs ARE the product, and it is a wall in
+#: front of the other side, where somebody wants a model at the end. Chosen by counting: these are
+#: the flags the user-facing pages actually tell a reader to type, plus the three that only matter
+#: when something is wrong (`--resume`, `--hf-token`, `--trust-remote-code`).
+CORE_FLAGS = frozenset({
+    "model_positional", "model", "track", "out", "device", "method", "trials", "max_directions",
+    "load_in_4bit", "hf_token", "trust_remote_code", "resume", "seed", "help", "help_all",
+    "version",
+})
+
+
+class _HelpAll(argparse.Action):
+    """Print the full help, which is what `--help` printed before the split.
+
+    A separate parser rather than a stored one: this parser has already had its help text
+    suppressed by the time anybody can type the flag, and un-suppressing in place would mean
+    holding two descriptions of every flag.
+    """
+
+    def __init__(self, option_strings, dest, **kw):
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kw)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        build_parser(full=True).print_help()
+        parser.exit()
+
+
+def build_parser(full=False):
+    """The default command's parser. `full=True` is the long help, behind `--help-all`.
+
+    Suppression happens at the END, after every flag is declared, so a flag cannot be added in a
+    way that quietly escapes it. The parse is identical either way: this changes what is printed,
+    never what is accepted, and `tools/research/audit_flags.py` and the documentation guards read
+    the full form for exactly that reason.
+    """
     ap = argparse.ArgumentParser(
         prog="senbonzakura",
         description="Refusal abliteration for transformer language models, with the instruments "
@@ -539,6 +577,22 @@ def build_parser():
                     help="skip the search entirely: load a saved best-config.json and bake+save that "
                          "config directly. Recovers a crashed save in minutes instead of re-searching.")
     ap.add_argument("--version", action="version", version=f"senbonzakura {__version__}")
+    ap.add_argument("--help-all", action=_HelpAll, dest="help_all",
+                    help="show every flag, with the full description of each. This page shows the "
+                         "ones a run needs; there are 69 in total, and the rest are the search, "
+                         "the scoring and the measurement knobs.")
+    if not full:
+        # AT THE END, ON WHAT WAS ACTUALLY DECLARED, so a flag added later cannot escape the
+        # split by being added somewhere this function does not look.
+        hidden = 0
+        for action in ap._actions:
+            if action.dest not in CORE_FLAGS and action.help is not argparse.SUPPRESS:
+                action.help = argparse.SUPPRESS
+                hidden += 1
+        ap.epilog += (
+            f"\n\nThis page shows the {len(ap._actions) - hidden} flags a run needs. "
+            f"{hidden} more control the search, the scoring and the measurement:\n"
+            f"  senbonzakura --help-all\n")
     return ap
 
 

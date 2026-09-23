@@ -225,6 +225,9 @@ install rather than only in a source checkout.
 
 ### CLI
 
+- **`--help` shows the flags a run needs; `--help-all` shows all 69.** The default command's help
+  page was 470 lines, which is the research side of this tool standing in the doorway of the
+  other side. Both forms accept exactly the same arguments.
 - **Two build steps became commands: `senbonzakura corpora` and `senbonzakura track build`.**
   They were scripts under `tools/`, which ships in no wheel, so the guide told a reader who had
   just installed to run a file their install did not contain. The only way through was to clone

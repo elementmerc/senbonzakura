@@ -3,6 +3,10 @@
 Every command is `python -m senbonzakura <name>`, or `senbonzakura <name>` after installing.
 `--help` on any of them is authoritative; this page is the map.
 
+The default command has 69 flags. `--help` shows the ones a run needs, and `--help-all` shows
+every one of them with its full description. Nothing is hidden from the parser: both forms accept
+exactly the same arguments.
+
 ## Editing a model
 
 | Command | What it does |

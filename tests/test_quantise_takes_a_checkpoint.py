@@ -112,7 +112,12 @@ def test_the_route_is_announced_rather_than_taken_silently(tmp_path, monkeypatch
     assert "convert" in joined and "checkpoint" in joined
 
 
-def test_a_source_that_is_neither_is_still_refused(tmp_path):
+def test_a_source_that_is_neither_is_still_refused_and_names_both_routes(tmp_path):
+    """A path that is neither a GGUF nor a checkpoint. The refusal has to say what this command
+    takes, and it still names `convert`, which is what makes the first of the two.
+    """
     with pytest.raises(SystemExit) as e:
         quantise.run([str(tmp_path / "nothing.gguf")], log=lambda _m: None)
-    assert "does not exist" in str(e.value)
+    message = str(e.value)
+    assert "nothing is there" in message
+    assert "checkpoint" in message and "senbonzakura convert" in message

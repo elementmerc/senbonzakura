@@ -45,10 +45,20 @@ def test_the_refusal_names_the_command_that_produces_what_is_missing(entry, argv
 
 
 def test_quantise_points_at_convert_rather_than_only_saying_the_file_is_absent(tmp_path):
+    """Still true after `quantise` learned to take a checkpoint itself.
+
+    It was tempting to delete this when the command stopped needing a separate conversion step,
+    and the first version of that change did exactly that: the refusal became "it does not exist"
+    and named nothing. But somebody reaching this message has a path that is neither a GGUF nor a
+    checkpoint, and `convert` is still what makes the first of those. Both routes belong in the
+    message: pass the checkpoint here, or make the GGUF yourself if you want it kept.
+    """
     with pytest.raises(SystemExit) as caught:
         quantise.main([str(tmp_path / "nothing.gguf"), str(tmp_path / "out.gguf")])
     message = str(caught.value)
     assert "senbonzakura convert" in message, message
+    assert "checkpoint" in message, (
+        "the refusal names the two-step route and not the one-step one this command now has")
 
 
 def test_whatever_the_stage_refusal_recommends_actually_works(tmp_path):

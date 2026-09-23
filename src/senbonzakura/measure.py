@@ -55,7 +55,7 @@ STAGE_ORDER = ("score", "compass", "coherence", "capability", "drift")
 OUTPUTS = {name: f"{name}.json" for name in STAGE_ORDER}
 
 
-class StageFailed(Exception):
+class StageError(Exception):
     """One instrument did not produce a number, with the reason phrased for a person."""
 
 
@@ -133,9 +133,12 @@ def run_stage(name, argv, *, log=print):
     except SystemExit as e:
         # A refusal, which is a stage's normal way of saying no. `str(e)` is the message where
         # there is one and the status where there is not.
-        raise StageFailed(str(e) or f"exited {e.code}") from e
-    except Exception as e:                      # noqa: BLE001 - deliberately broad, see docstring
-        raise StageFailed(f"{type(e).__name__}: {e}") from e
+        raise StageError(str(e) or f"exited {e.code}") from e
+    except Exception as e:
+        # DELIBERATELY BROAD. Whatever one instrument does wrong, the other four still have
+        # numbers to report, and a stage is allowed to fail on its own; narrowing this would make
+        # the list of exceptions five commands can raise something this module has to track.
+        raise StageError(f"{type(e).__name__}: {e}") from e
 
 
 def read_result(path):
@@ -149,16 +152,16 @@ def read_result(path):
 #: How to read one number out of each stage's result, and what it means in one line. The caveat
 #: is not decoration: every one of these is a figure this project has had to qualify in public.
 READINGS = {
-    "score": ("refusal", "hard refusals left, as a fraction. Measured on this track's held-out "
-                         "rows and on no others"),
-    "compass": ("auc", "harm recognition. 0.5 is a coin toss, which means the model no longer "
-                       "tells a harmful request from a harmless one"),
-    "coherence": ("ppl", "perplexity on a fixed neutral passage. Comparable only against the "
-                         "same passage on the same tokeniser"),
-    "capability": ("accuracy", "arithmetic the model either gets right or does not. Read "
-                               "`accuracy_reportable` before quoting it"),
-    "drift": ("kl", "divergence from the baseline on one ruler, which is the comparable cost. "
-                    "Read `precision_ok` before quoting it"),
+    "score": ("refusal", ("hard refusals left, as a fraction. Measured on this track's held-out "
+                          "rows and on no others")),
+    "compass": ("auc", ("harm recognition. 0.5 is a coin toss, which means the model no longer "
+                        "tells a harmful request from a harmless one")),
+    "coherence": ("ppl", ("perplexity on a fixed neutral passage. Comparable only against the "
+                          "same passage on the same tokeniser")),
+    "capability": ("accuracy", ("arithmetic the model either gets right or does not. Read "
+                                "`accuracy_reportable` before quoting it")),
+    "drift": ("kl", ("divergence from the baseline on one ruler, which is the comparable cost. "
+                     "Read `precision_ok` before quoting it")),
 }
 
 
@@ -256,7 +259,7 @@ def run(args, *, log=print):
         started = time.monotonic()
         try:
             run_stage(name, argv, log=log)
-        except StageFailed as e:
+        except StageError as e:
             log(f"  FAILED after {time.monotonic() - started:.0f}s: {e}")
             results[name] = str(e)
             failures.append(name)
@@ -292,11 +295,11 @@ def main(argv=None):
     print(f"measuring {args.model} on track {args.track}, into {out_dir}/")
     results, failures = run(args, log=print)
 
-    print("")
+    print()
     print("what the instruments said:")
     for line in format_table(verdict_rows(results)):
         print(line)
-    print("")
+    print()
     print("None of this is a pass or a fail. Each figure is comparable only against the same "
           "instrument on the same track; see docs/guide/what-we-know before quoting any of it.")
 

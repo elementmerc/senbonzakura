@@ -24,7 +24,6 @@ import pytest
 
 from senbonzakura import argresolve, baseline
 
-
 # ── the model, in two spellings ──────────────────────────────────────────────────
 
 def test_the_positional_is_accepted_where_the_flag_would_be():

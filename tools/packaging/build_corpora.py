@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from senbonzakura.corporabuild import main  # noqa: E402
+from senbonzakura.corporabuild import main
 
 if __name__ == "__main__":
     sys.exit(main())

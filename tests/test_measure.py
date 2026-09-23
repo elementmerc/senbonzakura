@@ -85,7 +85,8 @@ def test_the_compass_stage_does_not_keep_per_prompt_rows():
 
 
 def test_the_token_never_reaches_the_printed_line_or_the_summary():
-    argv = measure.stage_argv("score", _args(hf_token="hf_secret"), Path("out"))
+    # Not a credential: a string this test watches for, to prove it never reaches the log.
+    argv = measure.stage_argv("score", _args(hf_token="hf_secret"), Path("out"))  # noqa: S106
     assert "hf_secret" in argv, "the stage itself needs the token, or a gated model fails"
     assert "hf_secret" not in measure._shown(argv, "hf_secret"), (
         "the token survives into what is printed and into measure.json")
@@ -133,7 +134,7 @@ def test_the_figure_is_read_from_the_key_the_command_actually_writes():
 
 
 def test_the_table_never_prints_a_verdict():
-    """This project has withdrawn published numbers. A green tick over four instruments is the
+    """Withdrawn numbers are this project's history. A green tick over four instruments is the
     artefact that invites somebody to quote a result they have not read.
     """
     rendered = " ".join(measure.format_table(
@@ -168,7 +169,7 @@ def test_one_stage_failing_does_not_stop_the_others(tmp_path, monkeypatch):
     """
     def _fake(name, _argv, **_k):
         if name == "score":
-            raise measure.StageFailed("CUDA out of memory")
+            raise measure.StageError("CUDA out of memory")
         (tmp_path / measure.OUTPUTS[name]).write_text(json.dumps({"ppl": 11.2}))
 
     monkeypatch.setattr(measure, "run_stage", _fake)

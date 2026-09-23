@@ -120,7 +120,7 @@ def test_only_keeps_the_declared_order():
 def test_a_failed_stage_is_named_in_the_table_rather_than_dropped():
     rows = measure.verdict_rows({"score": "CUDA out of memory"})
     assert rows and rows[0][1] == "not measured"
-    assert "out of memory" in rows[0][2]
+    assert "out of memory" in rows[0][3]
 
 
 def test_the_figure_is_read_from_the_stamp_the_command_writes():
@@ -240,14 +240,14 @@ def test_a_reading_that_finds_nothing_says_what_the_file_does_carry():
     """
     rows = measure.verdict_rows({"score": {"metrics": {"something_else": {"value": 1}}}})
     assert rows[0][1] == "not reported"
-    assert "something_else" in rows[0][2], (
+    assert "something_else" in rows[0][3], (
         "the row has to name what the file does carry, or the reader is left opening it by hand")
 
 
 def test_a_result_with_no_metrics_block_is_named_as_such():
     rows = measure.verdict_rows({"score": {"refusal": 0.2}})
     assert rows[0][1] == "not reported"
-    assert "metrics" in rows[0][2]
+    assert "metrics" in rows[0][3]
 
 
 def test_a_stamped_figure_is_read_from_its_value():
@@ -292,3 +292,27 @@ def test_the_column_lines_up_across_mixed_magnitudes():
         "coherence": {"metrics": {"coherence": {"value": 13.613728595914115}}}}))
     ends = {line.index("   ", line.index(line.split()[1])) for line in lines}
     assert len(ends) == 1, "the figures column is ragged:\n" + "\n".join(lines)
+
+
+def test_the_units_come_out_of_the_stamp_and_not_out_of_this_module():
+    """A row that names its own units can be wrong about them, and one was: the coherence row
+    said "perplexity" over a value that is the log likelihood. The stamp declares
+    `nats-per-token`, and that is what the table now shows beside the number.
+    """
+    rows = measure.verdict_rows({"coherence": {"metrics": {"coherence": {
+        "value": 2.6111, "units": "nats-per-token"}}}})
+    assert rows[0][2] == "nats-per-token"
+    assert "perplexity" not in rows[0][3].split(".")[0], (
+        "the first clause of the note calls the figure a perplexity, and the file says otherwise")
+
+
+def test_a_stamp_without_units_leaves_the_column_empty_rather_than_guessing():
+    rows = measure.verdict_rows({"coherence": {"metrics": {"coherence": {"value": 2.6}}}})
+    assert rows[0][2] == ""
+
+
+def test_the_rendered_table_puts_the_units_beside_the_number():
+    line, = measure.format_table(measure.verdict_rows({
+        "coherence": {"metrics": {"coherence": {"value": 2.6111,
+                                                "units": "nats-per-token"}}}}))
+    assert "2.6111  nats-per-token" in line

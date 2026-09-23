@@ -168,9 +168,15 @@ READINGS = {
     "compass": ("compass_auc.margin-past-preamble",
                 ("harm recognition. 0.5 is a coin toss, which means the model no longer tells a "
                  "harmful request from a harmless one")),
+    # NOT the perplexity. This command stamps the negative log likelihood, and the perplexity
+    # printed in its own log is that number exponentiated. The first version of this row said
+    # "perplexity" over a value of 2.6111 while the stage had printed `ppl=13.61`, which is a
+    # mislabelled number and worse than the blank row it replaced. The units below now come out
+    # of the stamp, so a row cannot describe itself as something the file disagrees with.
     "coherence": ("coherence",
-                  ("perplexity on a fixed neutral passage. Comparable only against the same "
-                   "passage on the same tokeniser")),
+                  ("how surprised the model is by a fixed neutral passage. Its exponential is "
+                   "the perplexity, which the stage's own result file carries. Comparable only "
+                   "against the same passage on the same tokeniser")),
     "capability": ("capability",
                    ("what the edit cost, on questions the model either gets right or does not. "
                     "Read `accuracy_reportable` in the file before quoting it")),
@@ -183,23 +189,26 @@ READINGS = {
 def read_figure(result, metric):
     """One stage's stamped figure, or (None, why not) so the table can say which.
 
-    Returns a pair rather than a bare value, because "this stage wrote no figure" and "this
-    stage wrote a figure I could not find" are different faults and only one of them is the
-    user's problem.
+    Returns (value, why_not, units). The units come from the stamp rather than from a sentence
+    in this module, because a row that names its own units can be wrong about them: the first
+    version called the coherence figure a perplexity, over a value that was the log likelihood.
+
+    Why-not is separate from value because "this stage wrote no figure" and "this stage wrote a
+    figure I could not find" are different faults and only one of them is the user's problem.
     """
     if not isinstance(result, dict):
-        return None, "the result file did not parse as an object"
+        return None, "the result file did not parse as an object", None
     metrics = result.get("metrics")
     if not isinstance(metrics, dict):
-        return None, "the result carries no stamped `metrics` block"
+        return None, "the result carries no stamped `metrics` block", None
     block = metrics.get(metric)
     if not isinstance(block, dict):
         return None, (f"no stamped metric {metric!r}; the file carries "
-                      f"{', '.join(sorted(metrics)) or 'none'}")
+                      f"{', '.join(sorted(metrics)) or 'none'}"), None
     value = block.get("value")
     if value is None:
-        return None, f"{metric} was stamped without a value"
-    return value, None
+        return None, f"{metric} was stamped without a value", None
+    return value, None, block.get("units")
 
 
 def _figure(value):
@@ -216,7 +225,7 @@ def _figure(value):
 
 
 def verdict_rows(results):
-    """(stage, figure, note) per stage, with a named absence where a stage produced nothing."""
+    """(stage, figure, units, note) per stage, with a named absence where one produced nothing."""
     rows = []
     for name in STAGE_ORDER:
         if name not in results:
@@ -226,13 +235,13 @@ def verdict_rows(results):
         if isinstance(r, str):                  # a failure, carried as its message
             rows.append((name, "not measured", r))
             continue
-        value, why_not = read_figure(r, metric)
+        value, why_not, units = read_figure(r, metric)
         if value is None:
             # The REASON, not a blank. A row saying only "not reported" beside a stage that
             # printed its number two lines earlier tells the reader nothing they can act on.
-            rows.append((name, "not reported", why_not))
+            rows.append((name, "not reported", "", why_not))
             continue
-        rows.append((name, _figure(value), note))
+        rows.append((name, _figure(value), units or "", note))
     return rows
 
 
@@ -330,11 +339,10 @@ def run(args, *, log=print):
 def format_table(rows):
     if not rows:
         return ["nothing was measured"]
-    width = max(len(name) for name, _, _ in rows)
-    lines = []
-    for name, figure, note in rows:
-        lines.append(f"  {name:<{width}}  {figure:>12}   {note}")
-    return lines
+    name_w = max(len(name) for name, _, _, _ in rows)
+    unit_w = max(len(u) for _, _, u, _ in rows)
+    return [f"  {name:<{name_w}}  {figure:>12}  {units:<{unit_w}}  {note}"
+            for name, figure, units, note in rows]
 
 
 def main(argv=None):

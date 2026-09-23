@@ -149,20 +149,57 @@ def read_result(path):
         return None
 
 
-#: How to read one number out of each stage's result, and what it means in one line. The caveat
-#: is not decoration: every one of these is a figure this project has had to qualify in public.
+#: Which STAMPED metric to read out of each stage's result, and what it means in one line. The
+#: caveat is not decoration: every one of these is a figure this project has had to qualify in
+#: public.
+#:
+#: READ OUT OF THE `metrics` BLOCK, not off the top of the file. Every command stamps its figure
+#: there through `measurement.stamp`, which exists precisely so that a reader, or the checker in
+#: `senbonzakura/check/`, can find a number without knowing which command wrote the file. The
+#: first version of this read plain top-level keys, and three of the five happened to have one:
+#: `capability` keeps its accuracy under `summary`, so the table printed "not reported" for a
+#: model that had just scored 29 of 39 in the log two lines above. A guard that checked the key
+#: appeared anywhere in the writing module passed it, which is this project's own through-line:
+#: a check that covers one spelling of a defect reports clean on the others.
 READINGS = {
-    "score": ("refusal", ("hard refusals left, as a fraction. Measured on this track's held-out "
-                          "rows and on no others")),
-    "compass": ("auc", ("harm recognition. 0.5 is a coin toss, which means the model no longer "
-                        "tells a harmful request from a harmless one")),
-    "coherence": ("ppl", ("perplexity on a fixed neutral passage. Comparable only against the "
-                          "same passage on the same tokeniser")),
-    "capability": ("accuracy", ("arithmetic the model either gets right or does not. Read "
-                                "`accuracy_reportable` before quoting it")),
-    "drift": ("kl", ("divergence from the baseline on one ruler, which is the comparable cost. "
-                     "Read `precision_ok` before quoting it")),
+    "score": ("refusal_rate.senbonzakura-ruler",
+              ("hard refusals left, as a fraction. Measured on this track's held-out rows and on "
+               "no others")),
+    "compass": ("compass_auc.margin-past-preamble",
+                ("harm recognition. 0.5 is a coin toss, which means the model no longer tells a "
+                 "harmful request from a harmless one")),
+    "coherence": ("coherence",
+                  ("perplexity on a fixed neutral passage. Comparable only against the same "
+                   "passage on the same tokeniser")),
+    "capability": ("capability",
+                   ("what the edit cost, on questions the model either gets right or does not. "
+                    "Read `accuracy_reportable` in the file before quoting it")),
+    "drift": ("kl",
+              ("divergence from the baseline on one ruler, which is the comparable cost. Read "
+               "`precision_ok` before quoting it")),
 }
+
+
+def read_figure(result, metric):
+    """One stage's stamped figure, or (None, why not) so the table can say which.
+
+    Returns a pair rather than a bare value, because "this stage wrote no figure" and "this
+    stage wrote a figure I could not find" are different faults and only one of them is the
+    user's problem.
+    """
+    if not isinstance(result, dict):
+        return None, "the result file did not parse as an object"
+    metrics = result.get("metrics")
+    if not isinstance(metrics, dict):
+        return None, "the result carries no stamped `metrics` block"
+    block = metrics.get(metric)
+    if not isinstance(block, dict):
+        return None, (f"no stamped metric {metric!r}; the file carries "
+                      f"{', '.join(sorted(metrics)) or 'none'}")
+    value = block.get("value")
+    if value is None:
+        return None, f"{metric} was stamped without a value"
+    return value, None
 
 
 def _figure(value):
@@ -185,12 +222,17 @@ def verdict_rows(results):
         if name not in results:
             continue
         r = results[name]
-        key, note = READINGS[name]
+        metric, note = READINGS[name]
         if isinstance(r, str):                  # a failure, carried as its message
             rows.append((name, "not measured", r))
             continue
-        value = r.get(key) if isinstance(r, dict) else None
-        rows.append((name, "not reported" if value is None else _figure(value), note))
+        value, why_not = read_figure(r, metric)
+        if value is None:
+            # The REASON, not a blank. A row saying only "not reported" beside a stage that
+            # printed its number two lines earlier tells the reader nothing they can act on.
+            rows.append((name, "not reported", why_not))
+            continue
+        rows.append((name, _figure(value), note))
     return rows
 
 

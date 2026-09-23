@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """SPIKE: can a checkpoint be edited one layer at a time, never holding the whole model?
 
 RECONNAISSANCE, NOT A FEATURE. It answers one question and stops. Nothing here is wired into the

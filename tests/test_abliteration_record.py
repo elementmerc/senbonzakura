@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """What `abliteration.json` says about a run, asserted without baking a model.
 
 WHY THIS FILE EXISTS
@@ -456,3 +458,93 @@ def test_asking_for_a_benchmark_with_no_items_is_not_a_request():
     """`--capability-eval` without `--capability-n` buys nothing, and must not read as a probe."""
     block = _build(args=_cap_args(capability_n=0))["capability"]
     assert block["state"] == "not_requested"
+
+
+def test_a_measured_probe_carries_its_intervals_and_counts():
+    """A DROP STATED AS A BARE DECIMAL CANNOT BE GATED ON, and this record was exempting itself.
+
+    METHOD.md tells everybody else that a figure without an interval cannot be gated on, because a
+    gate that fires on noise is a gate that gets switched off. The first real run of this probe
+    produced `drop: 0.037` with nothing beside it, while `capability.summarise` had already
+    computed the interval and the counts one call upstream and they were being discarded.
+
+    The counts matter as much as the interval: a paired difference over the same items is a
+    different statistic from two independent proportions, and handing a reader two decimals forces
+    them to assume the wrong one.
+    """
+    summary = {"accuracy": 0.8154, "accuracy_ci": [0.756, 0.864], "accuracy_reportable": True,
+               "accuracy_withheld_because": None, "correct": 159, "wrong": 36,
+               "indeterminate": 5, "graded": 195, "indeterminate_rate": 0.025}
+    block = _build(args=_cap_args(), capability_baseline=0.8154, capability_after=0.7784,
+                   capability_items=200, capability_baseline_summary=summary,
+                   capability_after_summary=dict(summary, accuracy=0.7784))["capability"]
+    assert block["baseline"]["accuracy_ci"] == [0.756, 0.864]
+    assert block["baseline"]["correct"] == 159
+    assert block["baseline"]["indeterminate"] == 5
+    assert block["post_bake"]["accuracy"] == 0.7784
+
+
+def test_the_record_names_the_benchmark_rather_than_the_flag_value():
+    """`--capability-eval bundled` is a convenience on a command line and tells a file's reader
+    nothing. This artefact exists to be read by somebody who has only the artefact.
+    """
+    from senbonzakura import capability
+    block = _build(args=_cap_args(capability_eval="bundled"), capability_baseline=0.8,
+                   capability_after=0.7, capability_items=200)["capability"]
+    assert block["benchmark"] == capability.PROBE_SOURCE
+    assert "GSM8K" in block["benchmark"]
+
+
+def test_a_probe_with_no_summary_still_produces_a_block():
+    """A caller that did not carry the summaries must not crash the record.
+
+    The summaries were added after the block was, so a record built by anything older, or by a
+    path that scores without summarising, has to degrade to the point estimates rather than to an
+    exception while writing the only artefact a run leaves behind.
+    """
+    block = _build(args=_cap_args(), capability_baseline=0.8, capability_after=0.7,
+                   capability_items=200)["capability"]
+    assert block["baseline"] is None
+    assert block["drop"] == pytest.approx(0.1)
+
+
+# ── the saturation gate ──────────────────────────────────────────────────────────────────────
+#
+# A drop is bounded below by zero, so a model that could not do the task before the edit cannot
+# demonstrably lose anything by it. "No capability cost" on such a model is not a clean result, it
+# is an uninterpretable one, and it fails in the flattering direction, which is the one worth
+# guarding. This is separate from whether a measurement happened: a run can measure perfectly and
+# still be unable to support the conclusion somebody wants to draw from it.
+
+def test_a_healthy_baseline_leaves_room_for_a_drop_to_be_seen():
+    block = _build(args=_cap_args(), capability_baseline=0.815, capability_after=0.778,
+                   capability_items=200)["capability"]
+    assert block["headroom"]["sufficient"] is True
+    assert block["headroom"]["why"] is None
+
+
+def test_a_model_that_could_not_do_the_task_is_flagged_rather_than_passed():
+    """THE FLATTERING FAILURE. A baseline near the floor produces a tiny drop whatever the edit
+    did, and a reader who sees only the drop reads it as a gentle method.
+    """
+    block = _build(args=_cap_args(), capability_baseline=0.04, capability_after=0.03,
+                   capability_items=200)["capability"]
+    assert block["headroom"]["sufficient"] is False
+    assert "could not do the task before" in block["headroom"]["why"]
+    # The measurement still happened and the number is still there. The gate qualifies the
+    # reading; it does not delete the evidence.
+    assert block["state"] == "measured"
+    assert block["drop"] == pytest.approx(0.01)
+
+
+def test_the_headroom_floor_is_larger_than_the_effect_it_protects():
+    """A floor below the effect size would admit baselines where a full drop cannot be expressed."""
+    assert cli.MIN_CAPABILITY_HEADROOM >= 0.10
+
+
+def test_headroom_is_unknown_rather_than_false_when_there_is_no_baseline():
+    """Absent and insufficient are different, and collapsing them would report a run that never
+    measured as a run whose model could not do the task.
+    """
+    block = _build(args=_cap_args())["capability"]
+    assert block["state"] == "requested_but_not_measured"

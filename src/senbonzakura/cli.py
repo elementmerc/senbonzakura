@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Multi-direction refusal abliteration for transformer language models, with an Optuna search.
 
 Handles dense transformers and mixture-of-experts models, including the *fused* expert layout
@@ -3448,7 +3450,25 @@ class Abliterator:
         if not spec or n <= 0:
             return None, []
         from . import capability, dataset
-        if spec == BUNDLED_CAPABILITY:
+        from . import probe as probefmt
+        if probefmt.is_probe(spec):
+            # A contributed probe: a directory declaring what it measures and how to grade it.
+            # Loaded through the format rather than read as a table, because the format is where
+            # the refusals live, and a probe that reached the scorer without them would be a file
+            # somebody handed us and we ran.
+            try:
+                loaded = probefmt.load(spec)
+            except probefmt.ProbeError as e:
+                raise SystemExit(str(e)) from e
+            items = loaded.pairs(n)
+            # The probe names its own grading rule, and it overrides the flag. A probe graded by
+            # a rule it was not written for produces a number that looks fine and means nothing.
+            args.capability_task = loaded.task
+            self.log(f"capability probe: {loaded.name!r} from {loaded.path}, "
+                     f"measuring {loaded.measures!r}, graded by {loaded.task!r}")
+            self.log("  The format gate checks shape, not contents. Read a contributed probe "
+                     "before reporting a number from it.")
+        elif spec == BUNDLED_CAPABILITY:
             # The bundled probe, which is the default. Read from the package rather than through
             # `resolve_pairs`, because the path is install-dependent and a default that names an
             # absolute path in `--help` is a default nobody can retype.
@@ -3457,7 +3477,7 @@ class Abliterator:
             except (OSError, ValueError) as e:
                 raise SystemExit(
                     f"the bundled capability probe could not be read: {e}") from e
-            capability.probe_notice(log=self.log)
+            capability.probe_notice(log=self.log, used=len(items))
         else:
             try:
                 questions, answers = dataset.resolve_pairs(spec, token=args.hf_token or None)
@@ -3480,6 +3500,13 @@ class Abliterator:
         everywhere else: a run that measured nothing must not read as a run that measured a zero,
         and here that difference would move a selection.
         """
+        # CLEARED BEFORE EVERY EARLY RETURN, not only set on success. `_last_capability_summary`
+        # is a side channel, and a stale one is worse than an absent one: a caller reading it
+        # after a scoring call that did nothing would pick up the PREVIOUS measurement and record
+        # the baseline's counts as the post-bake ones. The contract is that it is read immediately
+        # after the call that produced it, and clearing it here is what makes a violation show up
+        # as a missing summary rather than as a plausible wrong one.
+        self._last_capability_summary = None
         if not items:
             return None
         from . import capability
@@ -3497,6 +3524,12 @@ class Abliterator:
         verdicts = capability.grade(gens, [a for _q, a in items], truncated,
                                     task=getattr(self.args, "capability_task", "numeric"))
         s = capability.summarise(verdicts)
+        # THE SUMMARY IS KEPT, NOT JUST THE POINT ESTIMATE. It used to return `s["accuracy"]` and
+        # drop the rest on the floor, so the record stated a capability drop with no interval
+        # beside it. METHOD.md says in as many words that a figure with no interval cannot be
+        # gated on, and this project was breaking that rule in the very artefact it tells readers
+        # to check. `summarise` had already computed the interval and the counts.
+        self._last_capability_summary = s
         return s["accuracy"]
 
     def _capability_drop(self, baseline, items):
@@ -3929,6 +3962,7 @@ class Abliterator:
         # drop needs a before. A baseline measured after any bake compares a damaged model to
         # itself and reports zero.
         cap_baseline, cap_items = self._capability_baseline()
+        cap_baseline_summary = getattr(self, "_last_capability_summary", None) if cap_items else None
         if cap_items:
             log(f"capability probe: {len(cap_items)} items, baseline accuracy "
                 f"{'not gradeable' if cap_baseline is None else f'{cap_baseline:.3f}'}")
@@ -3953,6 +3987,7 @@ class Abliterator:
         # nothing gradeable has not scored zero, it has not been measured, and the two must not
         # read alike in a file whose whole purpose is that somebody else can check it.
         post_cap = self._capability_score(cap_items) if cap_items else None
+        cap_after_summary = getattr(self, "_last_capability_summary", None) if cap_items else None
         if cap_items:
             drop = None if (cap_baseline is None or post_cap is None) else cap_baseline - post_cap
             log(f"POST-BAKE capability: {'not gradeable' if post_cap is None else f'{post_cap:.3f}'}"
@@ -3981,7 +4016,9 @@ class Abliterator:
             post={"refusals": post_ref, "heretic": post_heretic,
                   "broken": post_brk, "kl": post_kl,
                   "capability_baseline": cap_baseline, "capability_after": post_cap,
-                  "capability_items": len(cap_items)})
+                  "capability_items": len(cap_items),
+                  "capability_baseline_summary": cap_baseline_summary,
+                  "capability_after_summary": cap_after_summary})
         with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump(record, f, indent=2)
         self._write_model_card(args, log)
@@ -4075,12 +4112,89 @@ def _capability_block(args, post):
                 "benchmark": getattr(args, "capability_eval", "") or None, "items": items,
                 "baseline_accuracy": before, "post_bake_accuracy": after, "drop": None}
     return {"state": "measured",
-            "benchmark": getattr(args, "capability_eval", "") or None,
+            "benchmark": _capability_benchmark_name(args),
             "task": getattr(args, "capability_task", "numeric"),
             "items": items,
             "baseline_accuracy": before,
             "post_bake_accuracy": after,
-            "drop": None if (before is None or after is None) else before - after}
+            "drop": None if (before is None or after is None) else before - after,
+            # WHETHER A DROP COULD HAVE BEEN SEEN AT ALL. See `_capability_headroom`.
+            "headroom": _capability_headroom(before),
+            # THE INTERVALS AND THE COUNTS, because a drop stated as a bare decimal cannot be
+            # gated on and cannot be argued with. METHOD.md says so about everybody else's numbers
+            # and this record was quietly exempting its own. `summarise` computes both; they were
+            # being discarded one call upstream.
+            "baseline": _capability_side(post.get("capability_baseline_summary")),
+            "post_bake": _capability_side(post.get("capability_after_summary"))}
+
+
+#: Below this baseline accuracy, a capability drop is not a measurement.
+#:
+#: The effect this probe exists to detect is several accuracy points. A drop is bounded below by
+#: zero, so a model that only scored 0.04 in the first place cannot demonstrably lose five points,
+#: and "no capability cost" on such a model says nothing about the edit: it says the model could
+#: not do the task before it was touched. Reporting that as a clean result is the saturation
+#: failure, and it is the flattering direction, which is the one to guard.
+#:
+#: 0.15 is three times the effect of interest, so a full-sized drop is still expressible with room
+#: to spare. It is a floor on interpretability rather than on arithmetic: the number is computed
+#: either way and the record says whether it can be read.
+MIN_CAPABILITY_HEADROOM = 0.15
+
+
+def _capability_headroom(baseline):
+    """Whether the stock model was good enough at the task for a drop to mean anything.
+
+    Kept separate from `state`, which says whether a measurement happened. This says whether the
+    measurement that happened can be interpreted, and those are different questions: a run can
+    measure perfectly and still be unable to support the conclusion somebody wants to draw.
+    """
+    if baseline is None:
+        return {"sufficient": None, "baseline_accuracy": None,
+                "why": "there is no baseline, so there is nothing to have room beneath"}
+    if baseline < MIN_CAPABILITY_HEADROOM:
+        return {"sufficient": False, "baseline_accuracy": baseline,
+                "why": f"the stock model scored {baseline:.3f} on this probe, under the "
+                       f"{MIN_CAPABILITY_HEADROOM} floor. A drop is bounded by the baseline, so "
+                       f"no capability cost here means the model could not do the task before "
+                       f"the edit, not that the edit was harmless"}
+    return {"sufficient": True, "baseline_accuracy": baseline,
+            "why": None}
+
+
+def _capability_side(summary):
+    """One end of the comparison: the rate, its interval, and the counts behind it.
+
+    Counts as well as the rate, because they are what lets a reader recompute the comparison a
+    different way. A paired difference over the same items is not the same statistic as two
+    independent proportions, and handing over only two decimals forces whoever checks this to
+    assume the wrong one.
+    """
+    if not summary:
+        return None
+    return {"accuracy": summary.get("accuracy"),
+            "accuracy_ci": summary.get("accuracy_ci"),
+            "accuracy_reportable": summary.get("accuracy_reportable"),
+            "withheld_because": summary.get("accuracy_withheld_because"),
+            "correct": summary.get("correct"),
+            "wrong": summary.get("wrong"),
+            "indeterminate": summary.get("indeterminate"),
+            "graded": summary.get("graded"),
+            "indeterminate_rate": summary.get("indeterminate_rate")}
+
+
+def _capability_benchmark_name(args):
+    """What was actually measured against, rather than the word the flag took.
+
+    `--capability-eval bundled` is a convenience on the command line and tells a reader of this
+    file nothing. An artefact that says "bundled" is not self-describing, and this record exists
+    to be read by somebody who has only the file.
+    """
+    from . import capability
+    spec = getattr(args, "capability_eval", "") or None
+    if spec == BUNDLED_CAPABILITY:
+        return capability.PROBE_SOURCE
+    return spec
 
 
 def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post):

@@ -85,6 +85,38 @@ def test_the_shipped_example_is_a_valid_probe():
     assert len(loaded.items) == 4
 
 
+def test_every_file_the_shipped_example_needs_is_tracked_by_git():
+    """PRESENT ON THIS MACHINE IS NOT THE SAME AS SHIPPED, and the test above cannot tell them apart.
+
+    The example's items file was untracked for its first day: `.gitignore` carries a blanket
+    `*.jsonl` to keep harmful prompts out of the tree, it matched `items.jsonl`, and `git add`
+    said nothing. The test above passed on the machine that wrote the file and CI failed on every
+    runner, because the manifest pointed at a file only one computer had.
+
+    So this asks git rather than the filesystem. It is the cheap half of the lesson from
+    2026-09-22, when the same rule silently undid a negation for the capability probe: a file you
+    can open is not evidence that a stranger can.
+    """
+    import subprocess
+
+    listed = subprocess.run(["git", "ls-files", "-z", "--", str(EXAMPLE)],
+                            capture_output=True, text=True, cwd=ROOT, check=False, timeout=60)
+    if listed.returncode != 0:
+        pytest.skip("no git history here, so what is tracked cannot be asked")
+    tracked = {ROOT / name for name in listed.stdout.split("\0") if name}
+
+    # Every file in the directory rather than only the ones the manifest names. The example is
+    # copied wholesale by whoever uses it, so a file present here and absent from the tree
+    # misleads them whether or not the manifest happens to point at it today.
+    on_disk = {p for p in EXAMPLE.iterdir() if p.is_file()}
+    assert probe.MANIFEST in {p.name for p in on_disk}, "the example lost its manifest"
+    missing = sorted(str(p.relative_to(ROOT)) for p in on_disk - tracked)
+    assert not missing, (
+        f"the shipped example probe carries {missing}, which git is not tracking. Check "
+        f"`git check-ignore -v` on each: a blanket ignore rule matching them is the usual cause, "
+        f"and it does not announce itself")
+
+
 def test_a_directory_without_a_manifest_is_simply_not_a_probe(tmp_path):
     """Not an error. A directory that does not claim to be a probe is not a broken probe."""
     (tmp_path / "plain").mkdir()

@@ -70,6 +70,22 @@ src/senbonzakura/data/*
 # exactly that on 2026-09-22. The file holds 256 GSM8K arithmetic questions under MIT: no prompts,
 # no generations, nothing the rule above exists to keep out.
 !src/senbonzakura/data/capability-gsm8k.jsonl
+# Probe items, which are the whole point of the contribution format and have to be readable in the
+# tree for anyone to review one before it is merged. Same placement rule as the line above, and for
+# the same reason: written earlier, `*.jsonl` would silently undo it.
+#
+# THIS IS NOT A HOLE IN THE RULE ABOVE. `tools/ci/check_prompt_artefacts.py` reads every tracked
+# `.jsonl` in the repository, so anything landing here meets the leak gate exactly as it would
+# anywhere else, and `probe.PROMPT_SHAPED_KEYS` refuses an items file that spells its columns the
+# way a corpus does. What the gates check is SHAPE; a person still reads the contents, which is
+# what `probes/README.md` says to the contributor and to the user in the same words.
+#
+# It was written on 2026-09-23 because `examples/probes/arithmetic-demo/items.jsonl` was NOT
+# tracked: the example shipped as a manifest pointing at a file that existed on one machine, its
+# test passed there, and CI failed everywhere. Second time in two days that `*.jsonl` quietly ate
+# a file somebody had deliberately added.
+!probes/**/*.jsonl
+!examples/probes/**/*.jsonl
 # evidence/ is the one committed home, and it needs an explicit negation: the rule
 # above would otherwise force `git add -f`, which defeats the ignore it bypasses.
 # Files landing here must already have their prompt and generation fields stripped,

@@ -58,17 +58,27 @@ def test_the_notebook_is_valid_and_has_commands():
 @pytest.mark.parametrize("command", _shell_commands(), ids=lambda c: c.split()[1][:24])
 def test_every_notebook_command_parses(command):
     """THE ASSERTION. A flag that does not exist fails here rather than in somebody's browser."""
-    from senbonzakura import capability, entry, parser
+    import importlib
+
+    from senbonzakura import entry, parser
 
     argv = shlex.split(command)[1:]          # drop the program name
     if argv and argv[0] in entry.DELEGATED:
-        # A subcommand. Each one owns its parser; `capability` is the only one the notebook uses,
-        # and this looks it up rather than hard-coding it so a moved command fails loudly.
-        assert argv[0] == "capability", (
-            f"the notebook now uses the {argv[0]!r} subcommand and this test only knows how to "
-            f"parse 'capability'. Teach it rather than dropping the assertion")
-        args = capability.build_parser().parse_args(argv[1:])
-        assert args.model
+        # A subcommand. The module is resolved through `entry.DELEGATED` rather than named here,
+        # so a command that moves to a different module keeps being parsed instead of quietly
+        # falling out of this test.
+        #
+        # `track` joined `capability` on 2026-09-23, when the notebook stopped using
+        # `--track default`: the bundled track is packed from a held-out corpus outside this
+        # repository, so a reader in Colab has to build their own.
+        required = {"capability": "model", "track": "out"}
+        assert argv[0] in required, (
+            f"the notebook now uses the {argv[0]!r} subcommand and this test does not know which "
+            f"of its arguments must come out set. Teach it rather than dropping the assertion")
+        module_name, _attr = entry.DELEGATED[argv[0]]
+        module = importlib.import_module(f"senbonzakura.{module_name}")
+        args = module.build_parser().parse_args(argv[1:])
+        assert getattr(args, required[argv[0]])
     else:
         # The bare invocation, which is abliteration. There is no `abliterate` subcommand, and the
         # first draft of the notebook invented one.
@@ -121,14 +131,33 @@ def test_the_notebook_does_not_send_a_reader_to_pypi_while_pypi_is_stale():
         "the notebook installs from PyPI, which serves a withdrawn 0.3.0 whose numbers are "
         "retracted and which has none of the measurement this notebook demonstrates")
 
-    uses_bundled_track = "--track default" in everything
-    if uses_bundled_track:
-        assert "build_corpora.py" in everything, (
-            "the notebook uses `--track default` and never builds the corpora. They are generated "
-            "rather than committed, so a clone does not have them and the run fails on the first "
-            "real command, which is the 0.3.0 defect in a browser")
-
     code = "\n".join("".join(c["source"]) for c in doc["cells"] if c["cell_type"] == "code")
-    assert "bundled.is_available()" in code, (
+
+    # `--track default` CANNOT WORK HERE AND MUST NOT BE USED, which is stronger than the
+    # conditional this replaced. The bundled track is packed from a held-out corpus that is
+    # deliberately outside this repository, so no clone can build one and no amount of running
+    # `build_corpora.py` produces it. The first version of this check asked only that the corpora
+    # were built if `--track default` appeared, which the notebook satisfied while still being
+    # unable to run: the corpora and the track are two different artefacts and only one of them
+    # is buildable from a clone.
+    command_lines = [line for line in code.splitlines() if line.strip().startswith("--track ")]
+    assert not any("default" in line for line in command_lines), (
+        "the notebook passes `--track default`, which needs the bundled track. That is packed "
+        "from a held-out corpus kept out of this repository on purpose, so a reader in Colab "
+        "cannot build one and the run fails several cells after the step that was supposed to "
+        "provide it")
+
+    assert "build_corpora.py" in code, (
+        "the notebook never builds the refusal corpora. They are generated rather than "
+        "committed, so a clone does not have them")
+    assert "build_track.py" in code and "senbonzakura track" in code, (
+        "the notebook never builds a track. Without one there is nothing to pass to `--track`, "
+        "and `--track default` is not available to a clone")
+
+    # Something has to CHECK the build worked, whatever form the track takes. Named by what it
+    # proves rather than by the exact call, so that changing how the track is built does not
+    # silently drop the verification along with it.
+    checks_the_track = "track.json" in code or "bundled.is_available()" in code
+    assert checks_the_track, (
         "nothing in the notebook checks the track was actually built, so a reader whose build "
         "step failed finds out several minutes later from a command that looks unrelated")

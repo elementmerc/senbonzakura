@@ -275,3 +275,46 @@ def test_the_interim_install_says_the_bundled_track_is_not_in_it():
                              capture_output=True, text=True, cwd=root, check=False).stdout
     assert "corpora.bin" not in tracked, (
         "corpora.bin is tracked now, so the warning about a clone install lacking it is stale")
+
+
+# ── every git reference points at a branch that has this code ────────────────────────
+
+
+def test_no_documented_git_command_resolves_to_the_default_branch():
+    """THE WORKAROUND POINTED AT A SECOND STALE THING.
+
+    Every install page warns that PyPI serves a withdrawn 0.3.0 and tells the reader to install
+    from the repository instead. Those commands named no branch, so pip and git took the default
+    one, which is `main`. On 2026-09-23 `main` was 593 commits behind `dev` and did not contain
+    `checker/` at all, so the documented command failed with "does not appear to be a Python
+    project" and the fallback installed something close to the very version the warning was
+    about.
+
+    Nothing caught it because nobody had run it: the commands were syntactically fine and pointed
+    at a real repository. This asserts the branch is named, which is the part that decides WHICH
+    code a stranger gets.
+
+    It will keep being right after `dev` is promoted: `@dev` still resolves then, and if the
+    project later wants these to read `@main` deliberately, this fails and asks for that to be a
+    decision rather than a default.
+    """
+    import re as _re
+
+    # The WHOLE token, up to whitespace or a quote. A non-greedy match stopping at the repository
+    # name would cut `@dev` off the end and report every fixed line as an offender.
+    pattern = _re.compile(r"(git\+https://github\.com/[^\s\"'\\]+|"
+                          r"git clone[^\n\"\\]*senbonzakura[^\s\"'\\]*)", _re.IGNORECASE)
+    offenders = []
+    for rel in [*INSTALL_SURFACES, "notebooks/senbonzakura_colab.ipynb"]:
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in pattern.finditer(text):
+            fragment = match.group(0)
+            named = "@dev" in fragment or "@main" in fragment or "--branch" in fragment
+            if not named:
+                offenders.append(f"{rel}: {fragment[:90]}")
+    assert not offenders, (
+        "these documented git commands name no branch, so they resolve to the repository's "
+        "default branch rather than to the code the page describes:\n  " + "\n  ".join(offenders))

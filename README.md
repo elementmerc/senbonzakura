@@ -70,12 +70,17 @@ senbonzakura setup
 
 > **PyPI serves 0.3.0, from July 2026, and you do not want it.** Its numbers are withdrawn, and
 > `senbonzakura-check` is not on PyPI yet, so this version cannot resolve from the index.
-> Until it is published, install from the repository, checker first:
+> Until it is published, install from the repository, in one command:
 >
 > ```sh
-> pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
-> pip install "git+https://github.com/elementmerc/senbonzakura"
+> pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
+>             "git+https://github.com/elementmerc/senbonzakura@dev"
 > ```
+>
+> **`@dev` is load-bearing, not decoration.** Without it pip takes the default branch, which is
+> `main`, and `main` is a long way behind: it predates the checker entirely, so the first URL
+> fails with "does not appear to be a Python project" and the second installs something close to
+> the withdrawn 0.3.0 you came here to avoid.
 >
 > **`--track default` will not work from that install.** The bundled corpora are generated
 > artefacts kept out of git, because they are harmful prompts. Build them from a clone

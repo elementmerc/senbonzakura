@@ -420,6 +420,60 @@ def test_a_tokenizer_with_no_eos_marks_everything_truncated(monkeypatch):
     assert truncated == [True]
 
 
+def test_the_probe_says_something_while_it_works(monkeypatch):
+    """A SILENT LOOP IS INDISTINGUISHABLE FROM A WEDGED ONE, and this one is the longest in a run.
+
+    The capability probe became a default on 2026-09-22 at 200 items and up to 512 new tokens
+    each. This loop printed nothing, so a plain `abliterate` on a CPU emitted the probe's
+    attribution notice and then said nothing for hours. CI's end-to-end smoke was killed at 900
+    seconds with that notice as its last line, which told nobody whether it was working.
+
+    The first batch always reports, because that is the moment somebody is deciding whether to
+    reach for Ctrl+C.
+    """
+    from senbonzakura import capability, cli
+
+    monkeypatch.setattr(cli, "render_chat", lambda _tok, p: p)
+    lines = []
+    rows = [[0, 0, 0, 9, 9, 2]]
+    capability.generate_with_truncation(
+        _FakeModel(rows), _FakeTok(), ["a", "b", "c"], "cpu", batch=1, max_new=3,
+        log=lines.append, heartbeat=0.0)
+    assert len(lines) == 3, f"expected one line per batch at heartbeat=0, got {lines}"
+    assert "1/3" in lines[0] and "3/3" in lines[-1]
+    assert all("capability probe" in line for line in lines)
+
+
+def test_the_heartbeat_is_rate_limited_rather_than_one_line_per_batch(monkeypatch):
+    """On a GPU the batches are fast, and a line each would bury the run's real output.
+
+    Only the first batch is unconditional; the rest wait for the interval. An hour is used here so
+    nothing in between can fire, which is what makes this a test of the rate limit rather than of
+    how quickly the machine running it happens to be.
+    """
+    from senbonzakura import capability, cli
+
+    monkeypatch.setattr(cli, "render_chat", lambda _tok, p: p)
+    lines = []
+    capability.generate_with_truncation(
+        _FakeModel([[0, 0, 0, 9, 9, 2]]), _FakeTok(), ["a", "b", "c"], "cpu", batch=1, max_new=3,
+        log=lines.append, heartbeat=3600.0)
+    # The first batch, and the last, which reports unconditionally so a run always ends on a
+    # complete count rather than trailing off at whatever the interval last allowed.
+    assert len(lines) == 2, f"expected the first and the final line only, got {lines}"
+    assert "1/3" in lines[0] and "3/3" in lines[1]
+
+
+def test_no_log_means_no_output_and_no_crash(monkeypatch):
+    """`log` defaults to None, and the two existing callers that pass nothing must stay silent."""
+    from senbonzakura import capability, cli
+
+    monkeypatch.setattr(cli, "render_chat", lambda _tok, p: p)
+    gens, _ = capability.generate_with_truncation(
+        _FakeModel([[0, 0, 0, 9, 9, 2]]), _FakeTok(), ["a"], "cpu", batch=1, max_new=3)
+    assert len(gens) == 1
+
+
 # ── the command's own guards ─────────────────────────────────────────────────────────
 
 def test_a_reference_of_a_different_length_is_refused(tmp_path, monkeypatch):

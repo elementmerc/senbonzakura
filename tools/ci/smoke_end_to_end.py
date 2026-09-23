@@ -344,6 +344,13 @@ def main(argv=None):
          # there is no number here for the short budget to distort. `stamp_smoke_artefacts`
          # marks every artefact this run writes as unquotable for the same reason.
          "--gen-tokens", "16", "--short-budget-ok", "--gen-batch", "4", "--no-persist-study",
+         # THE CAPABILITY PROBE IS A DEFAULT AS OF 2026-09-22, and its defaults are sized for a
+         # GPU: 200 items at up to 512 new tokens each. This runner is a CPU, and the first run
+         # after that change was killed at 900 seconds with the probe's attribution notice as its
+         # last line. Four items at 32 tokens proves the plumbing, which is all a smoke is for;
+         # the NUMBER it produces is meaningless at this size and `stamp_smoke_artefacts` already
+         # marks everything this run writes as unquotable.
+         "--capability-n", "4", "--capability-max-new", "32",
          # Q-37: given the base licence, the run writes a card beside the weights.
          "--base-licence", "apache-2.0"],
         expect_marker="DONE")

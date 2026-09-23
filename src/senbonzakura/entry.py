@@ -85,6 +85,24 @@ DELEGATED: dict[str, tuple[str, str]] = {
 }
 
 
+#: Plain-English second names for commands whose first name says nothing to somebody who has not
+#: read the project. `auto` for `kageyoshi` was the first of these and is handled in `split_mode`,
+#: because that one is a mode rather than a delegated command.
+#:
+#: ALIASES RATHER THAN RENAMES, deliberately. Every run spec on record, every documented example
+#: and every script anybody has written uses the existing names, and a tool that renames its own
+#: commands breaks the record of what was already run. So the old name stays canonical, is what
+#: every artefact records, and the alias is a door rather than a replacement.
+#:
+#: Each entry earns its place by being a word somebody would guess. A second name for a command
+#: that was already plain is surface without a reader, and this list is short on purpose.
+ALIASES = {
+    # `compass` is a metaphor that has to be explained before it means anything. What the command
+    # answers is whether the model still tells a harmful request from a harmless one.
+    "harm-recognition": "compass",
+}
+
+
 #: Which optional install brings each heavy dependency in, so a failure can say what to type.
 #: Only the ones a partial install actually loses; anything absent gets the generic line.
 #:
@@ -214,6 +232,11 @@ def main(argv=None):
     # see exactly what they saw before this existed.
     from . import banner
     banner.emit(__version__, sys.stdout)
+
+    # A plain-English second name resolves to the command it stands for, before anything else
+    # looks at it, so every downstream error message names the real command.
+    if argv and argv[0] in ALIASES:
+        argv[0] = ALIASES[argv[0]]
 
     if argv and argv[0] in DELEGATED:
         name = argv[0]

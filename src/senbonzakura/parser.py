@@ -180,6 +180,7 @@ def build_parser(full=False):
             "released wheel already carries them; an install made straight from the repository "
             "does not, because they are generated rather than committed\n"
             "  auto         alias for kageyoshi, for anyone who has not met the name\n"
+            "  harm-recognition   alias for compass, for the same reason\n"
             "  interactive  a guided walk through the handful of choices that decide whether a "
             "run means anything. It prints the exact command it is about to run before running "
             "it, so the second time you can type that instead\n"

@@ -167,8 +167,10 @@ class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
 
     def _args(self, tmp_path, **kw):
         import types
-        base = dict(bake_config=None, resume=False, study_db=None, no_persist_study=False,
-                    track="default", out=str(tmp_path), search="pareto")
+        # `model` because a real parse always carries one and `run_parsed` resolves it first,
+        # refusing a run without one. Without it that refusal preempts the check under test.
+        base = dict(model="x", bake_config=None, resume=False, study_db=None,
+                    no_persist_study=False, track="default", out=str(tmp_path), search="pareto")
         base.update(kw)
         return types.SimpleNamespace(**base)
 
@@ -256,7 +258,7 @@ class TestTheTwoFlagsThatExistToSaveTimeAndSpentItInstead:
         args = types.SimpleNamespace(
             track="default", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
             gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False, text_column=None,
-            hf_token=None, load_in_4bit=False, model=None, out=str(tmp_path), resume=False,
+            hf_token=None, load_in_4bit=False, model="x", out=str(tmp_path), resume=False,
             study_db=None, no_persist_study=False, search="pareto",
             bake_config=str(tmp_path / "definitely-not-here.json"))
         with pytest.raises(SystemExit, match="nothing to bake"):

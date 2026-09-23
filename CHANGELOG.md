@@ -166,6 +166,16 @@ install rather than only in a source checkout.
   Hub rather than remembered, and records which links are inferred. It also records that the
   exact corpus behind the published numbers cannot be rebuilt by anyone: harmless top-ups were
   added by hand and never recorded.
+- `build_track.py` balances the two sides, because the sources return roughly four times as many
+  harmless prompts as harmful ones and `senbonzakura track` refuses a pair more than 10% apart.
+  The two commands did not compose at all before this, so following the track guide in order
+  stopped at its second step. `sources.json` records the seed and how many rows were dropped, and
+  `--no-balance` gives you the raw pools.
+- A format for contributing a behavioural probe, with a manifest, a declared content class and
+  gates that refuse a corpus posing as a benchmark. The gates check shape only; a person still
+  reads what a probe contains, and `probes/README.md` says so to contributor and user alike.
+- A capability probe ships in the package, so the capability measurement runs offline and by
+  default rather than needing a benchmark downloaded first.
 
 ### Benchmark
 
@@ -215,6 +225,16 @@ install rather than only in a source checkout.
 
 ### CLI
 
+- **`senbonzakura Qwen/Qwen3-1.7B` is now the whole command.** The model is the only thing the
+  tool cannot guess; the output directory and the evaluation track are defaulted. `--model` still
+  works and is what a script should use.
+- Left out, `--track` takes `./track` when that directory exists and the track bundled in the
+  install otherwise, and says in the log which it chose.
+- The capability probe refuses to start a run that would take hours on a CPU, and names four ways
+  forward rather than being a wall in front of a default. Measured on a 1.7B model: the defaults
+  are minutes on a GPU and about four hours on a processor.
+- The probe reports progress every 30 seconds. It printed nothing at all before, so a run on a
+  CPU looked identical to a hung one for as long as it took.
 - Real subcommands: `abliterate`, `kageyoshi`, `compass`, `score`, `coherence` and `track`.
   The existing flag form is unchanged, because every run on record is written that way.
 - A startup banner on a terminal, from a rotating set of five designs. It prints nothing when
@@ -238,6 +258,14 @@ install rather than only in a source checkout.
 
 ### Documentation
 
+- **The install commands now name a branch.** Without one, pip and git took the repository's
+  default branch, which did not contain the checker package at all, so the documented command
+  failed outright and the fallback installed something close to the version the page was warning
+  you about. All of it goes in one command now.
+- A Colab notebook that measures a model, edits it, and measures what that cost, on a free GPU
+  with nothing installed locally.
+- The quickstart said `pip install senbonzakura` with no warning that the published version is
+  withdrawn. It now carries the same warning the other install pages do.
 - The README documents the track layout, the manifest, and the optional datasets.
 - The headline comparison table now carries its caveats beside it: which two scoring bugs
   affected it, that its evaluation is not held out, that it is one seed, and why it has not

@@ -5179,6 +5179,12 @@ def run_parsed(args, bankai, argv):
     # The mode word is not a flag, so it never reaches `args`, and the run record needs it: a
     # resume of a `kageyoshi` run typed as `abliterate` is a different search.
     args.bankai = bool(bankai)
+    # THE SHORT FORM, resolved before anything reads either value. `senbonzakura Qwen/Qwen3-1.7B`
+    # gives the model as a positional and leaves the track to be worked out from the machine, so
+    # both have to become ordinary values here, at the top, rather than being special-cased at
+    # each of the several places downstream that read them.
+    resolve_model(args)
+    resolve_track(args)
     # WHOSE NUMBER IS IT. Recorded here because this is where argv still exists, and read much
     # later by the boundary check, which cannot refuse a user for a value this project chose.
     # See `_fit_final_eval_to_the_track`.
@@ -5229,16 +5235,18 @@ def run_parsed(args, bankai, argv):
     # network for a Hub track and is still nothing beside pulling a model.
     _preflight_output(args)
     _preflight_datasets(args)
-    # BEFORE THE MODEL, because the whole point is to stop a run that would take an afternoon on
-    # this hardware, and everything needed to say so is on the command line already. Finding it
-    # after the download would be finding it once the wait had started.
+    preflight_snapshot_ram(args, log=print)
+    # LAST OF THE PRE-FLIGHTS, and before the model. Everything above reports a run that CANNOT
+    # work; this one reports a run that would work and take an afternoon. Told about both, a
+    # person wants the impossible one first, and the first version of this jumped the queue: it
+    # announced a four-hour probe to somebody whose track did not exist.
     from . import capability as _capability
     _capability.refuse_a_slow_probe(
         getattr(args, "device", "cpu"),
         getattr(args, "capability_n", 0),
         getattr(args, "capability_max_new", 512),
+        spec=getattr(args, "capability_eval", ""),
         allowed=getattr(args, "slow_probe_ok", False))
-    preflight_snapshot_ram(args, log=print)
 
     t0 = time.time()
     def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
@@ -5257,3 +5265,81 @@ def run_parsed(args, bankai, argv):
 
 if __name__ == "__main__":
     main()
+
+# ── the short form ───────────────────────────────────────────────────────────────────────
+#
+# THESE LIVE HERE RATHER THAN IN `parser.py` because they READ parsed arguments, and that
+# module's job is to declare them. `tools/research/audit_flags.py` is built on that split: it
+# pairs each declaration with the modules that read it, and a declaring module that also reads
+# its own flags breaks the pairing for every flag in the file. Putting them there reported all
+# 66 of them as declared by a module that never reads them, which is the audit being right.
+
+def resolve_model(args):
+    """The model, from the positional or the flag, or a refusal naming both ways to give one.
+
+    Two spellings of one argument, so the failure modes are: neither given, or both given and
+    disagreeing. Both are refused here rather than resolved by precedence. Silently preferring one
+    when somebody typed two different models is how a run measures a model nobody asked for, and
+    the artefact would record the winner with nothing saying the other was ever mentioned.
+    """
+    positional = getattr(args, "model_positional", None)
+    flag = getattr(args, "model", None)
+    if positional and flag and positional != flag:
+        raise SystemExit(
+            f"senbonzakura: two different models were given: {positional!r} as a positional and "
+            f"{flag!r} with --model. Pass one.")
+    args.model = flag or positional
+    if not args.model:
+        raise SystemExit(
+            "senbonzakura: no model given.\n"
+            "  The short form is the model on its own:\n"
+            "    senbonzakura Qwen/Qwen3-1.7B\n"
+            "  The long form still works and is what a script should use:\n"
+            "    senbonzakura --model Qwen/Qwen3-1.7B --track default --out abliterated")
+    return args.model
+
+
+def resolve_track(args, *, log=print):
+    """Turn `--track auto` into the track this machine actually has, and say which.
+
+    THE ORDER IS CHOSEN TO BREAK NOTHING. A local `track/` wins, because that is the directory
+    `senbonzakura track` suggests building into and the workflow every existing run spec and every
+    documented example follows: someone who built a track and then typed the short form means
+    theirs. Only when there is no local track does this fall back to the one packed into the
+    install, which is what makes `senbonzakura Qwen/Qwen3-1.7B` work on a fresh machine.
+
+    It ALWAYS says which it chose. A default that silently depends on the working directory is
+    exactly the kind of thing that makes two runs of the same command incomparable, and the cure
+    is not to remove the convenience but to put the choice in the log next to the numbers.
+    """
+    import os
+
+    from . import dataset as _dataset
+    from .parser import TRACK_AUTO
+
+    if getattr(args, "track", TRACK_AUTO) != TRACK_AUTO:
+        return args.track
+
+    if os.path.isdir("track"):
+        args.track = "track"
+        log("track: using ./track, the directory `senbonzakura track` builds into. Pass "
+            "--track default to use the one bundled in this install instead.")
+        return args.track
+
+    from .bundled import is_available
+    if is_available():
+        args.track = _dataset.BUNDLED_ALIAS
+        log("track: using the evaluation track bundled in this install (CC BY-NC 4.0, "
+            "attribution required, non-commercial). Build your own with `senbonzakura track`.")
+        return args.track
+
+    raise SystemExit(
+        "senbonzakura: no evaluation track to measure against.\n"
+        "  There is no `track/` directory here, and this install carries no bundled track.\n"
+        "  An install from a clone has none: the bundled track is a generated artefact kept out "
+        "of git because it is harmful prompts.\n"
+        "  What to do:\n"
+        "    build one from public sources:  python tools/packaging/build_track.py --out corpus\n"
+        "    then split it:  senbonzakura track --harmful corpus/harmful.txt "
+        "--harmless corpus/harmless.txt --out track\n"
+        "    or point at one you already have with --track <directory>")

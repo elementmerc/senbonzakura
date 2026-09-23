@@ -1,85 +1,98 @@
 # Quickstart
 
 ::: danger What you are about to make
-A model that will answer requests the original refused, including harmful ones. It is permanent
-in the weights, the base model's licence still governs it, and you should not put one in front of
+A model that will answer requests the original refused, including harmful ones. It is permanent in
+the weights, the base model's licence still governs it, and you should not put one in front of
 other people without saying what it is. [What it is](/guide/what-it-is) has the rest.
 :::
 
-Two commands and about an hour. The install is 5.8 GB and takes about two minutes; after that there is nothing to
-download but the model.
+One command to install, one to run. About an hour on a 6 GB card, most of it waiting.
 
-You need a GPU with 6 GB or more, and Python 3.10 or newer. No GPU? Skip to
-[try it without a graphics card](#try-it-without-a-graphics-card) below.
+You need a GPU with 6 GB or more, and Python 3.10 or newer. No card? Jump to
+[without a graphics card](#without-a-graphics-card).
 
 ## Install
 
+::: warning Not from PyPI, not yet
+PyPI serves 0.3.0 from July 2026. Its numbers are withdrawn, and `senbonzakura-check` is not on
+PyPI yet, so the current version cannot resolve from the index at all. Install from the repository
+instead:
+
 ```sh
-pip install senbonzakura
+pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
+            "git+https://github.com/elementmerc/senbonzakura@dev"
+```
+
+Both URLs, one command: given separately, the big package goes looking for the small one on PyPI
+and does not find it. `@dev` is load-bearing too, or pip takes the default branch and hands you
+something close to the version this box is warning you about.
+
+**That install has no prompts in it.** The corpora and the bundled track are generated artefacts
+kept out of git, because they are harmful prompts and a public repository is not where those
+belong. So `--track default` will not work from it. Build them from a clone:
+
+```sh
+python tools/packaging/build_corpora.py            # the refusal corpora
+python tools/packaging/build_track.py --out corpus # prompts, from public sources
+senbonzakura track --harmful corpus/harmful.txt \
+                   --harmless corpus/harmless.txt --out track
+```
+
+Or bring your own; [the track page](/guide/the-track) has both routes. A released wheel carries
+all of it and none of this is needed.
+:::
+
+```sh
 senbonzakura setup
 ```
 
-The first command brings everything: torch, transformers, accelerate, optuna. It is 68 packages
-and 5.8 GB on disk, measured 2026-09-11, and there is nothing else to choose. (`pip list` will
-say 69, because it counts pip itself.)
+That brings torch, transformers, accelerate and optuna: 68 packages, 5.8 GB, nothing to choose.
 
-The second command exists because **pip picks by platform, not by hardware**. There is no way for
-a package to say "install the CUDA build if there is a card", so what you get depends on which
-operating system you are on rather than on what is in the machine:
+`setup` exists because **pip picks by platform, not by hardware**:
 
 | Your machine | What pip alone gives you |
 |---|---|
 | Linux with a GPU | the CUDA build. Correct |
-| Linux with no GPU | the CUDA build anyway, and about 15 CUDA packages you cannot use |
-| macOS | a build that uses Metal. Correct |
-| Windows with a GPU | **a CPU-only build. Your card will sit idle** |
+| Linux with no GPU | the CUDA build anyway, and 15 CUDA packages you cannot use |
+| macOS | a Metal build. Correct |
+| Windows with a GPU | **a CPU-only build. Your card sits idle** |
 
-`senbonzakura setup` looks at the machine, says what it found, and prints the one command that
-fixes it. It changes nothing unless you add `--apply`.
-
-::: tip Why the Windows row is in bold
-PyPI's Windows torch is 124 MB; the CUDA one is not on PyPI at all. So a gaming laptop with a
-3060 in it installs a torch that cannot see the card, and nothing warns you. The search then runs
-on CPU and takes a day instead of an hour.
-:::
+`setup` reads the machine, says what it found, and prints the command that fixes it. It changes
+nothing unless you add `--apply`. The Windows row is bold because a gaming laptop with a 3060 in it
+installs a torch that cannot see the card, nothing warns you, and the search then takes a day
+instead of an hour.
 
 ## Edit a model
 
 ```sh
-senbonzakura kageyoshi \
-    --model Qwen/Qwen3-1.7B \
-    --track default \
-    --out my-abliterated-model \
-    --device cuda
+senbonzakura Qwen/Qwen3-1.7B
 ```
 
-Then go and make a cup of tea. On a 6 GB card, a 1.7B model takes about an hour.
+That is the whole command. The model is the only thing it cannot guess.
 
-`--track default` is the evaluation track bundled inside the wheel. It needs no network and no
-files on disk, so there is nothing to assemble before your first run. It is also **roughly 6,500
-harmful prompts sitting inside your site-packages**, which is worth knowing before you put this on
-a shared machine; [the install page](/guide/install#what-comes-in-the-box-including-the-part-people-don-t-expect) says what is in it and
-how to build a wheel without it. When you want to measure
-your own model on your own prompts, [build a track](/guide/the-track); until then this is the one
-to use.
+It writes to `./abliterated`, and picks a track: `./track` if you have built one, otherwise the
+evaluation track bundled in the install. It says which in the log, because a default that quietly
+depends on your working directory is how two runs of the same command stop being comparable.
+
+Then go and make a cup of tea.
+
+::: tip The bundled track is about 6,500 harmful prompts in your site-packages
+Worth knowing before you put this on a shared machine.
+[The install page](/guide/install#what-comes-in-the-box-including-the-part-people-don-t-expect)
+says what is in it and how to build a wheel without it.
+:::
+
+Everything is still a flag when you want it:
+
+```sh
+senbonzakura Qwen/Qwen3-1.7B --track mytrack --out my-model --device cuda
+```
 
 ## What you get
 
-A model in `my-abliterated-model`, and beside it a `run.json` recording what was done, and an
-`abliteration.json` recording what it cost: how many refusals are left, how far the model drifted
-from the original, and whether the output turned to mush.
-
-::: warning What you are now holding
-The model will answer things the original declined to answer, and that is not reversible by
-loading it differently: the refusal behaviour has been removed from the weights. **The base
-model's licence still governs it**, unchanged, and this tool cannot loosen those terms. If you
-publish it, run `senbonzakura report` to generate the card that should travel beside the weights.
-
-The run itself writes the weights and `abliteration.json`, which records the settings and the
-numbers and contains no prompts and no replies. The command that keeps per-prompt rows, with the
-prompt text and what the model said, is `senbonzakura compass`, and that one takes `--no-margins`
-if you would rather it did not.
-:::
+A model in `./abliterated`, with `run.json` recording what was done and `abliteration.json`
+recording what it cost: refusals left, how far the model drifted, and whether the output turned to
+mush.
 
 While it runs you will see lines like this:
 
@@ -87,15 +100,25 @@ While it runs you will see lines like this:
 trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 per_layer -> refusals=3.1% soft=5.2% heretic=12.5% broken=0% KL=0.1900 obj=0.2431
 ```
 
-`refusals` is the one you came for: hard refusals left, as a percentage. `KL` is what it cost
-you, and lower is less damage. The rest, briefly: `soft` counts hedging as well as refusal,
-`heretic` is the other tool's keyword metric reported so the two are comparable, `broken` is
-output that stopped being English, and `obj` is the single number the search is minimising.
+`refusals` is the one you came for. `KL` is what it cost you, lower is less damage. Briefly:
+`soft` counts hedging too, `heretic` is the other tool's keyword metric so the two are comparable,
+`broken` is output that stopped being English, `obj` is the number the search minimises.
 
-## Try it without a graphics card {#try-it-without-a-graphics-card}
+::: warning What you are now holding
+The model will answer things the original declined to, and loading it differently does not undo
+that: the behaviour is gone from the weights. **The base model's licence still governs it**, and
+this tool cannot loosen those terms. If you publish it, `senbonzakura report` writes the card that
+should travel beside the weights.
 
-You cannot edit a model on CPU in any useful time, but you can run the instruments. This scores
-a stock model on the toy track committed in the repository, on CPU, in a couple of minutes:
+`abliteration.json` records settings and numbers, no prompts and no replies. The command that
+keeps per-prompt rows is `senbonzakura compass`, and it takes `--no-margins` if you would rather
+it did not.
+:::
+
+## Without a graphics card {#without-a-graphics-card}
+
+You cannot edit a model on CPU in any useful time, but the instruments run fine. This scores a
+stock model on the toy track in the repository, in a couple of minutes:
 
 ```sh
 senbonzakura compass \
@@ -106,15 +129,12 @@ senbonzakura compass \
     --out compass-toy.json --device cpu
 ```
 
-It asks whether the model still recognises a harmful request when it sees one. See
-[the compass](/guide/compass) for how to read what comes back, which is worth doing before you
-trust any number this tool prints.
+It asks whether the model still recognises a harmful request when it sees one. Twelve rows
+measures nothing, and the tool makes you pass those three flags rather than pretending otherwise.
+[The compass](/guide/compass) explains how to read it.
 
 ## Where next
 
-- [Your first run](/guide/first-run) walks through the same command in detail, and the manual mode.
-- [What it is](/guide/what-it-is) is what this does and what it destroys. It now comes before this
-  page rather than after it, and this line used to offer it as the background "if you would rather
-  have it before the buttons", which made reading it the optional path.
-- [Read this before quoting a number](/guide/what-we-know) matters if you plan to publish anything
-  you measured with this.
+- [Your first run](/guide/first-run) walks the same command in detail, plus manual mode.
+- [What it is](/guide/what-it-is): what this does, and what it destroys.
+- [Read this before quoting a number](/guide/what-we-know), if you plan to publish anything.

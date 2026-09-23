@@ -32,7 +32,11 @@ from senbonzakura import cli, lengthsweep
 
 
 def _args(**over):
-    a = dict(track="track", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
+    # A real parse always carries a model, and `run_parsed` resolves it first,
+    # refusing a run without one. Without this the refusal preempts the check
+    # each of these tests is actually about.
+    a = dict(model="x",
+             track="track", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
              # Sound by default: these tests are about the ORDER pre-flights run in, so
              # none should trip the generation-budget gate before reaching its subject.
              gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False,

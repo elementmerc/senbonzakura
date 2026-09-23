@@ -97,7 +97,7 @@ class TestADeadKnobSaysSo:
         args = types.SimpleNamespace(
             track="default", good_ds=None, hedge_ds="", clean_ds="", harmless_matched="",
             gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False, text_column=None,
-            hf_token=None, load_in_4bit=False, model=None, out=str(tmp_path), resume=False,
+            hf_token=None, load_in_4bit=False, model="x", out=str(tmp_path), resume=False,
             study_db=None, no_persist_study=False, search="pareto", bake_config=None,
             kl_scale=9.0)
         with pytest.raises((_Reached, SystemExit)):

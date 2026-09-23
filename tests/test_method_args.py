@@ -38,7 +38,12 @@ from senbonzakura import cli, lengthsweep, methods
 
 
 def _args(**over):
-    a = dict(method="searched-one-direction", max_directions=8, track="default", good_ds=None,
+    # A real parse always carries a model, and `run_parsed` resolves it first,
+    # refusing a run without one. Without this the refusal preempts the check
+    # each of these tests is actually about.
+    a = dict(model="x",
+             method="searched-one-direction", max_directions=8, track="default",
+             good_ds=None,
              hedge_ds="", clean_ds="", harmless_matched="", text_column=None, hf_token=None,
              load_in_4bit=False,
              # Sound by default: these tests are about the ORDER pre-flights run in, so none of

@@ -90,3 +90,23 @@ def test_the_notice_says_the_numbers_are_meaningless_not_merely_provisional():
     assert "meaningless" in smoke.SMOKE_NOTICE
     assert "must not be quoted" in smoke.SMOKE_NOTICE
     assert "8 harmful" in smoke.SMOKE_NOTICE, "it should say how small the track actually is"
+
+
+def test_the_smoke_bounds_every_default_that_is_sized_for_a_gpu():
+    """A DEFAULT THAT CHANGES ELSEWHERE MUST NOT SILENTLY LENGTHEN THIS JOB.
+
+    The smoke runs on a CPU runner with a fifteen minute ceiling and passes explicit small values
+    for the knobs that drive generation. The capability probe was NOT among them: it became a
+    default on 2026-09-22 at 200 items and up to 512 new tokens, the smoke inherited both, and the
+    job was killed at 900 seconds having measured nothing.
+
+    So this reads the source rather than trusting the defaults to stay small. It is a cheap guard
+    against a class, not against the one flag: any future knob defaulted for a GPU costs this job
+    the same way, and the fix is always to pin it here.
+    """
+    source = (ROOT / "tools" / "ci" / "smoke_end_to_end.py").read_text(encoding="utf-8")
+    for flag in ("--capability-n", "--capability-max-new", "--gen-tokens", "--trials"):
+        assert flag in source, (
+            f"the end-to-end smoke does not pin {flag}, so it runs at whatever that default "
+            f"happens to be. On a CPU runner with a 900 second ceiling that is how this job "
+            f"comes back having measured nothing")

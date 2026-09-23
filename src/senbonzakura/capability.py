@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 
 #: A number as a model writes one: optional sign, digits with optional thousands separators, an
@@ -631,10 +632,24 @@ def items_digest(questions):
     return h.hexdigest()[:16]
 
 
-def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
+def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320, *, log=None,
+                             heartbeat=30.0):
     """Generate, and say for each item whether it finished or ran out of budget.
 
     Returns (generations, truncated_flags).
+
+    SAY SOMETHING WHILE IT WORKS. This loop had no output of any kind, and once the capability
+    probe became a default on 2026-09-22 that turned every plain `abliterate` on a CPU into a run
+    that prints the probe's attribution notice and then goes silent for as long as it takes to
+    generate 200 worked solutions. CI found it the hard way: the end-to-end smoke was killed at
+    900 seconds with the notice as its last line, and nothing in the log said whether the job was
+    working or wedged. A user on a laptop gets exactly the same thing and no timeout to rescue
+    them, so they reach for Ctrl+C, which is the worst available reading of a run that was fine.
+
+    Baseline 2.1 asks for a heartbeat every 30 to 60 seconds on every long-running loop. This is
+    that, emitted per batch and rate limited by `heartbeat` seconds so a fast GPU run does not
+    paper the log with a line per batch. The first batch reports unconditionally, because the
+    useful moment is the one where a person is deciding whether anything is happening at all.
 
     Separate from `score.generate` because that one returns text alone, and text alone cannot
     answer the question this module turns on. An item is truncated when the model produced the
@@ -655,6 +670,7 @@ def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
     # told apart, so everything is marked truncated and therefore indeterminate, which reports
     # nothing rather than reporting wrong answers.
     eos = getattr(tok, "eos_token_id", None)
+    started = last_beat = time.monotonic()
     for i in range(0, len(prompts), batch):
         chunk = prompts[i:i + batch]
         texts = [render_chat(tok, p) for p in chunk]
@@ -671,6 +687,17 @@ def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320):
             # Without one, it was still going when the budget ran out.
             finished = eos is not None and bool((new_tokens == eos).any())
             truncated.append(not finished)
+        now = time.monotonic()
+        if log and (i == 0 or now - last_beat >= heartbeat or len(gens) == len(prompts)):
+            last_beat = now
+            done, total = len(gens), len(prompts)
+            elapsed = now - started
+            # An ETA from the rate so far, which is honest on this loop: every batch does the same
+            # work, so the estimate does not drift the way it would on a search whose trials get
+            # cheaper. Omitted on the first batch, where one sample is not a rate.
+            rest = (elapsed / done) * (total - done) if done else 0.0
+            eta = f", about {rest:.0f}s left" if done < total and done > batch else ""
+            log(f"  capability probe: {done}/{total} items, {elapsed:.0f}s elapsed{eta}")
     return gens, truncated
 
 
@@ -826,7 +853,7 @@ def main(argv=None):
     task = get_task(a.task)
     prompts = [task.prompt.format(q) for q in questions]
     gens, truncated = generate_with_truncation(
-        model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
+        model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new, log=print)
     verdicts = grade(gens, answers, truncated, task=a.task)
     summary = summarise(verdicts)
     change = None

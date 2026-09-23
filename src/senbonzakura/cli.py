@@ -3520,7 +3520,10 @@ class Abliterator:
             # suite because the test built its namespace by hand and invented `batch_size=2` in
             # it, so the code and the test agreed with each other and neither matched the parser.
             batch=max(1, int(self.args.gen_batch)),
-            max_new=int(getattr(self.args, "capability_max_new", 320)))
+            max_new=int(getattr(self.args, "capability_max_new", 320)),
+            # THE LONGEST SILENT STRETCH IN THE WHOLE RUN, now that the probe is on by default:
+            # 200 items at up to 512 new tokens each, and on a CPU that is measured in hours.
+            log=self.log)
         verdicts = capability.grade(gens, [a for _q, a in items], truncated,
                                     task=getattr(self.args, "capability_task", "numeric"))
         s = capability.summarise(verdicts)

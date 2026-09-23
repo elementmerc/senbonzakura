@@ -35,6 +35,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import sys
 import urllib.error
 import urllib.request
@@ -205,7 +206,69 @@ def write_atomic(path, rows):
         raise
 
 
-def build(out, *, skip_licence_check=False, log=print):
+#: The seed the harmless side is sampled with when the two sides are balanced. Fixed and recorded
+#: rather than drawn, so that two people running this command get the same corpus and can compare
+#: numbers measured on it. A corpus that differs run to run makes every comparison across machines
+#: a comparison of corpora, which is the failure `senbonzakura track`'s own size check exists to
+#: prevent one step later.
+BALANCE_SEED = 0
+
+
+def balance(pools, *, seed=BALANCE_SEED, log=print):
+    """Cut the larger side down to the smaller one's size, by a seeded sample.
+
+    WHY THIS IS HERE RATHER THAN IN `senbonzakura track`, WHICH IS WHERE IT IS TEMPTING.
+
+    The sources return about 5,900 harmful prompts and about 25,000 harmless ones. `track` refuses
+    a pair that differs by more than 10%, correctly: a contrast between a small pool and a large
+    one partly measures which pool was bigger. Until 2026-09-23 nothing said so, and the two tools
+    shipped together with the guide showing them one after the other, so the only route open to
+    anybody without the private track stopped three commands in.
+
+    It could have been fixed by having `track` quietly subsample the larger side. That was
+    refused: discarding rows without saying so is the thing this project does not do, and a tool
+    that silently measured 5,884 of the 25,000 rows it was handed has told the user nothing. Here
+    the discarding is a recorded act. The count and the seed go into `sources.json`, the log says
+    what was dropped, and `--no-balance` returns the raw pools for anybody who would rather sample
+    them a different way.
+
+    A SAMPLE RATHER THAN A TRUNCATION. Taking the first N would inherit whatever order the upstream
+    dataset happens to be in, and these arrive concatenated per source, so the head of the harmless
+    pool is one dataset and the tail is another. That would quietly make the harmless side a
+    different distribution from the one the pool describes.
+
+    THIS IS THE ONE PLACE THIS FILE PERMUTES ANYTHING, and `fetch` says a few lines up that it
+    never does, because "a shuffle at this layer would put an unrecorded permutation underneath a
+    recorded one". That rule still holds and this is its stated exception: the permutation here is
+    recorded, by a fixed seed written into `sources.json` alongside the count it dropped. An
+    unrecorded shuffle in `fetch` would be invisible; this one can be reproduced exactly and
+    reasoned about afterwards, which is the property the rule was protecting.
+    """
+    sizes = {side: len(rows) for side, rows in pools.items()}
+    smallest = min(sizes.values())
+    largest = max(sizes.values())
+    if largest == smallest:
+        return pools, {"balanced": False, "reason": "the sides were already the same size"}
+
+    # Not cryptographic, and deliberately predictable: the whole point is that two people running
+    # this command get the same corpus, so a generator nobody can reproduce would be the defect.
+    rng = random.Random(seed)  # noqa: S311
+    dropped = {}
+    out = {}
+    for side, rows in pools.items():
+        if len(rows) <= smallest:
+            out[side] = list(rows)
+            continue
+        sampled = list(rows)
+        rng.shuffle(sampled)
+        out[side] = sampled[:smallest]
+        dropped[side] = len(rows) - smallest
+        log(f"  balanced {side}: {len(rows)} to {smallest}, a seeded sample dropping "
+            f"{dropped[side]} rows")
+    return out, {"balanced": True, "seed": seed, "kept_per_side": smallest, "dropped": dropped}
+
+
+def build(out, *, skip_licence_check=False, balance_sides=True, log=print):
     os.makedirs(out, exist_ok=True)
     log("build-track: checking what each upstream declares today")
     check_licences(SOURCES, skip=skip_licence_check, log=log)
@@ -229,6 +292,13 @@ def build(out, *, skip_licence_check=False, log=print):
             f"rate with no harmless arm cannot tell a working abliteration apart from a model too "
             f"damaged to refuse anything.")
 
+    if balance_sides:
+        pools, balancing = balance(pools, log=log)
+    else:
+        balancing = {"balanced": False,
+                     "reason": "--no-balance was passed, so the sides are as the sources gave "
+                               "them. `senbonzakura track` refuses a pair more than 10% apart"}
+
     written = {}
     for side, rows in pools.items():
         path = os.path.join(out, f"{side}.txt")
@@ -241,6 +311,10 @@ def build(out, *, skip_licence_check=False, log=print):
         "sources": per_source,
         "outputs": {k: {"rows": v["rows"], "sha256": v["sha256"]} for k, v in written.items()},
         "licence_check_skipped": bool(skip_licence_check),
+        # What was thrown away and on what seed, because a corpus that silently dropped 19,000
+        # rows is not one anybody can reason about later. `per_source` above still records what
+        # each upstream gave, so the two together say both what was fetched and what survived.
+        "balancing": balancing,
         "reproduces_published_track": False,
     }
     mpath = os.path.join(out, "sources.json")
@@ -276,12 +350,20 @@ def build_parser():
     ap.add_argument("--skip-licence-check", action="store_true",
                     help="do not ask the Hub what each upstream declares today. Only for an "
                          "offline rebuild, and it means the recorded positions are unverified")
+    ap.add_argument("--no-balance", action="store_true",
+                    help="write the pools at whatever sizes the sources gave them. The default "
+                         "cuts the larger side to the smaller one's size with a seeded sample, "
+                         "because `senbonzakura track` refuses a pair more than 10%% apart and "
+                         "the sources return roughly four times as many harmless prompts as "
+                         "harmful ones. Pass this if you would rather sample them yourself; the "
+                         "seed and the dropped counts are recorded in sources.json either way")
     return ap
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    build(args.out, skip_licence_check=args.skip_licence_check)
+    build(args.out, skip_licence_check=args.skip_licence_check,
+          balance_sides=not args.no_balance)
     return 0
 
 

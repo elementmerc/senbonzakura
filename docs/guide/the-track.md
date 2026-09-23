@@ -47,6 +47,15 @@ one prompt per line, and records what it fetched in `sources.json`. It refuses t
 upstream's declared licence has moved since the recipe was written, because that is the single
 fact deciding what a track built from it may be used for.
 
+It also **balances the two sides**, and that is worth knowing about rather than discovering. The
+sources return roughly four times as many harmless prompts as harmful ones, and `senbonzakura
+track` refuses a pair more than 10% apart, so the two commands did not compose at all until
+2026-09-23: following this page in order stopped at the second step. The larger side is now cut to
+the smaller one's size by a seeded sample, and `sources.json` records the seed and exactly how many
+rows were dropped, because a corpus that quietly lost nineteen thousand rows is not one anybody can
+reason about later. `--no-balance` gives you the raw pools if you would rather sample them
+yourself.
+
 ::: warning The track itself is published, gated, under CC BY-NC 4.0
 Every row came from somewhere else, so the track carries the strictest term in its chain forward:
 attribution to every source, non-commercial use only. Access is gated so taking it is a

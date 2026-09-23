@@ -24,18 +24,11 @@ from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 
 from senbonzakura import quantise
-
-
-def _record(seen):
-    """A stand-in for `convert.run` that keeps its argv and reports success."""
-    def _run(argv, log=print):
-        seen["argv"] = list(argv)
-        return 0
-    return _run
 
 
 def _checkpoint(tmp_path, name="edited"):
@@ -61,22 +54,78 @@ def test_a_directory_without_a_config_is_not(tmp_path):
     assert not quantise.looks_like_a_checkpoint(d)
 
 
-def test_a_checkpoint_is_handed_to_the_converter_with_the_quantisation_asked_for(
-        tmp_path, monkeypatch):
+def _stub_convert_and_quantise(monkeypatch, tmp_path, seen):
+    """Stand in for both halves: the converter writes a file, the quantiser records its argv.
+
+    `quantise.run` calls itself for the second half, so the recursion is intercepted rather than
+    the whole function replaced; otherwise the test would assert nothing about the step that
+    names the output file, which is the step the defect was in.
+    """
+    def _convert(argv, log=print):
+        seen["convert"] = list(argv)
+        Path(argv[1]).write_bytes(b"GGUF")      # the intermediate the second half consumes
+        return 0
+
+    real_run = quantise.run
+
+    def _run(argv=None, log=print):
+        if seen.get("convert") is not None and "--type" in (argv or []):
+            seen["quantise"] = list(argv)
+            return 0
+        return real_run(argv, log=log)
+
+    monkeypatch.setattr("senbonzakura.convert.run", _convert)
+    monkeypatch.setattr(quantise, "run", _run)
+    return _run
+
+
+def test_a_checkpoint_is_converted_then_quantised_to_the_type_asked_for(tmp_path, monkeypatch):
     seen = {}
-    monkeypatch.setattr("senbonzakura.convert.run", _record(seen))
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
     d = _checkpoint(tmp_path)
-    assert quantise.run([str(d), "--type", "Q5_K_M"], log=lambda _m: None) == 0
-    argv = seen["argv"]
-    assert argv[0] == str(d)
-    assert argv[argv.index("--quantise") + 1] == "Q5_K_M"
+    assert run([str(d), "--type", "Q5_K_M"], log=lambda _m: None) == 0
+    assert seen["convert"][0] == str(d)
+    assert seen["quantise"][seen["quantise"].index("--type") + 1] == "Q5_K_M"
+
+
+def test_the_output_path_names_the_quantised_file_not_the_intermediate(tmp_path, monkeypatch):
+    """THE DEFECT A REAL RUN FOUND, and a log line could not.
+
+    Handing the whole job to `convert --quantise` meant the converter's positional named the
+    INTERMEDIATE and the quantised file took a name derived from it. A run given an explicit
+    output path wrote 0.73 GB into a directory the user had not named, under a log line saying
+    it would be somewhere else. Measured on the ROG, 2026-09-23.
+    """
+    seen = {}
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
+    wanted = tmp_path / "somewhere" / "mine.gguf"
+    assert run([str(_checkpoint(tmp_path)), str(wanted), "--type", "Q4_K_M"],
+               log=lambda _m: None) == 0
+    assert seen["quantise"][1] == str(wanted), (
+        f"the quantised file would go to {seen['quantise'][1]}, not where the user asked")
+    assert str(wanted) != seen["convert"][1], "the intermediate must not take the output's name"
+
+
+def test_the_intermediate_is_not_left_beside_the_checkpoint(tmp_path, monkeypatch):
+    """The checkpoint may sit in a read-only Hub cache, and it is not the user's output
+    directory either way.
+    """
+    seen = {}
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
+    d = _checkpoint(tmp_path)
+    out = tmp_path / "out" / "m.gguf"
+    run([str(d), str(out), "--type", "Q4_K_M"], log=lambda _m: None)
+    assert not list(d.glob("*.gguf")), "the intermediate was written into the checkpoint directory"
+    assert Path(seen["convert"][1]).parent.parent == out.parent, (
+        "the intermediate belongs in a temporary directory beside the OUTPUT, which is "
+        "the directory the user has just said they can write to")
 
 
 def test_the_converter_is_not_reimplemented_here():
     """The delegation is the design. A second converter is a second set of checks to keep in
     step with a pinned binary, and the pin is what makes the output reproducible.
     """
-    body = inspect.getsource(quantise.run)
+    body = inspect.getsource(quantise._quantise_a_checkpoint)
     assert "from . import convert" in body, "the conversion must be delegated, not rebuilt"
 
 
@@ -85,31 +134,40 @@ def test_an_importance_matrix_survives_the_hand_off(tmp_path, monkeypatch):
     quietly dropped on this route would produce a file whose name says something it is not.
     """
     seen = {}
-    monkeypatch.setattr("senbonzakura.convert.run", _record(seen))
     d = _checkpoint(tmp_path)
     im = tmp_path / "calib.imatrix"
     im.write_bytes(b"x")
-    quantise.run([str(d), "--imatrix", str(im)], log=lambda _m: None)
-    assert "--imatrix" in seen["argv"]
-    assert seen["argv"][seen["argv"].index("--imatrix") + 1] == str(im)
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
+    run([str(d), "--imatrix", str(im)], log=lambda _m: None)
+    argv = seen["quantise"]
+    assert "--imatrix" in argv
+    assert argv[argv.index("--imatrix") + 1] == str(im)
 
 
-def test_keep_source_keeps_the_intermediate(tmp_path, monkeypatch):
+def test_keep_source_moves_the_intermediate_somewhere_findable(tmp_path, monkeypatch):
+    """Kept means kept where the user can see it, not left in a temporary directory named after
+    an internal function.
+    """
     seen = {}
-    monkeypatch.setattr("senbonzakura.convert.run", _record(seen))
-    quantise.run([str(_checkpoint(tmp_path)), "--keep-source"], log=lambda _m: None)
-    assert "--keep-intermediate" in seen["argv"]
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
+    out = tmp_path / "out" / "m.gguf"
+    run([str(_checkpoint(tmp_path)), str(out), "--keep-source"], log=lambda _m: None)
+    assert list(out.parent.glob("*-bf16.gguf")), (
+        f"nothing kept in {out.parent}: {sorted(p.name for p in out.parent.iterdir())}")
 
 
 def test_the_route_is_announced_rather_than_taken_silently(tmp_path, monkeypatch, capsys):
     """Two commands ran where one was typed. A user reading the log has to be able to see that,
     or the provenance of the file they end up with is a guess.
     """
-    monkeypatch.setattr("senbonzakura.convert.run", lambda argv, log=print: 0)
+    seen = {}
+    run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)
     said = []
-    quantise.run([str(_checkpoint(tmp_path))], log=said.append)
+    run([str(_checkpoint(tmp_path)), str(tmp_path / "o" / "m.gguf")], log=said.append)
     joined = " ".join(said)
-    assert "convert" in joined and "checkpoint" in joined
+    assert "checkpoint" in joined and "converted first" in joined
+    assert str(tmp_path / "o" / "m.gguf") in joined, (
+        "the log must name where the file will be, and it must be true")
 
 
 def test_a_source_that_is_neither_is_still_refused_and_names_both_routes(tmp_path):

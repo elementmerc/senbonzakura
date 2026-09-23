@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -493,6 +494,58 @@ def looks_like_a_checkpoint(path):
     return p.is_dir() and (p / "config.json").is_file()
 
 
+def _quantise_a_checkpoint(a, *, log=print):
+    """Convert, then quantise, with the caller's `--out` naming the file they asked for.
+
+    TWO EXPLICIT STEPS RATHER THAN `convert --quantise`, and the reason is a defect found by
+    running it. Handing the whole job to `convert` meant the converter's positional named the
+    INTERMEDIATE, and the quantised file took a name derived from that: a run given an explicit
+    output path wrote 0.73 GB to a directory the user had not named, under a log line saying it
+    would be somewhere else. A command that states where a file will be and then puts it
+    elsewhere is worse than one that never said.
+
+    So the conversion is asked for on its own, into a temporary GGUF beside the output, and the
+    quantisation is this module's ordinary path with the source it was always going to have. The
+    converter is still the only thing that converts.
+    """
+    import tempfile
+
+    from . import convert
+
+    out = Path(a.out) if a.out else default_output(Path(a.source).name + ".gguf", a.type)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    log(f"{a.source} is a transformers checkpoint rather than a GGUF, so it is converted first, "
+        f"then quantised to {a.type}. Two commands, run for you.")
+    log(f"  the quantised model will be at {out}")
+
+    # Beside the OUTPUT rather than beside the checkpoint: the checkpoint may be in a read-only
+    # cache, and the output directory is the one the user has just said they can write to.
+    tmp_dir = tempfile.mkdtemp(prefix=".senbonzakura-convert-", dir=str(out.parent))
+    intermediate = Path(tmp_dir) / (Path(a.source).name + "-bf16.gguf")
+    try:
+        rc = convert.run([str(a.source), str(intermediate)], log=log)
+        if rc != 0:
+            return rc
+        q_argv = [str(intermediate), str(out), "--type", a.type]
+        if a.imatrix:
+            q_argv += ["--imatrix", a.imatrix]
+        if a.force:
+            q_argv.append("--force")
+        if a.threads:
+            q_argv += ["--threads", str(a.threads)]
+        return run(q_argv, log=log)
+    finally:
+        # The intermediate is scaffolding, not a result. `--keep-source` asks for it, and then it
+        # moves next to the output where the user can find it rather than staying in a temporary
+        # directory named after this function.
+        if a.keep_source and intermediate.is_file():
+            kept = out.parent / intermediate.name
+            intermediate.replace(kept)
+            log(f"  kept the intermediate GGUF at {kept}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
 
@@ -502,22 +555,7 @@ def run(argv=None, log=print):
     # format in order to be handed back to the command they started with. The conversion is
     # delegated rather than reimplemented, so there is one converter and one set of checks.
     if looks_like_a_checkpoint(a.source):
-        from . import convert
-        log(f"{a.source} is a transformers checkpoint rather than a GGUF, so it is converted "
-            f"first. That is `senbonzakura convert --quantise {a.type}`, run for you.")
-        c_argv = [str(a.source), "--quantise", a.type]
-        if a.out:
-            # The user's path names the QUANTISED file, which is what they asked for. The
-            # intermediate takes the converter's own default beside the checkpoint and is
-            # removed afterwards unless --keep-source says otherwise.
-            log(f"  the quantised model will be at {a.out}; the intermediate GGUF is temporary")
-        if a.imatrix:
-            c_argv += ["--imatrix", a.imatrix]
-        if a.force:
-            c_argv.append("--force")
-        if a.keep_source:
-            c_argv.append("--keep-intermediate")
-        return convert.run(c_argv, log=log)
+        return _quantise_a_checkpoint(a, log=log)
 
     _preflight_arguments(a, log=log)
     out = Path(a.out) if a.out else default_output(a.source, a.type)

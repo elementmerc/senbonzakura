@@ -84,6 +84,13 @@ classifiers = [
 #
 # ────────────────────────────────────────────────────────────────────────────────────
 dependencies = [
+  # A TOML PARSER ON THE DECLARED MINIMUM INTERPRETER. `tomllib` entered the standard library in
+  # 3.11 and `requires-python` says 3.10, so on 3.10 `senbonzakura/probe.py` has nothing to read a
+  # probe manifest with. `tomli` is the same parser under its pre-adoption name, pure Python, and
+  # this marker means nothing is installed on 3.11 and up, where the stdlib module is used
+  # instead. The `dev` extra declares it too, for `tests/tomlread.py`; this one is what a USER
+  # gets, and a test-only declaration did not reach them.
+  "tomli>=2.0; python_version < '3.11'",
   # `datasets` USED TO BE HERE and is now the `hub` extra below. It is the heaviest thing in
   # this tree, Debian does not package it in stable, testing or unstable, and it was carrying
   # a single job: reading and writing a one-column table. `senbonzakura/trackio.py` does that

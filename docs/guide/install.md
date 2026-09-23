@@ -39,7 +39,7 @@ meet it, but nothing warns you beforehand, which is why it is here.
 Build them from a clone before building the wheel:
 
 ```sh
-python tools/packaging/build_corpora.py          # public corpora, pinned commits
+senbonzakura corpora          # public corpora, pinned commits
 python tools/packaging/pack_track.py --track <your-track>
 ```
 
@@ -109,7 +109,7 @@ many words. Every one of them is a public research dataset. The tool prints the 
 and the licence the first time it loads one, because several of them require it.
 
 If you'd rather not have them, build the wheel yourself without running
-`tools/packaging/build_corpora.py` and `tools/packaging/pack_track.py`; everything except the bundled defaults
+`senbonzakura corpora` and `tools/packaging/pack_track.py`; everything except the bundled defaults
 still works, and the tool tells you what to run if you ask for one.
 
 A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your

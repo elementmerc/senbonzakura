@@ -166,7 +166,7 @@ install rather than only in a source checkout.
   Hub rather than remembered, and records which links are inferred. It also records that the
   exact corpus behind the published numbers cannot be rebuilt by anyone: harmless top-ups were
   added by hand and never recorded.
-- `build_track.py` balances the two sides, because the sources return roughly four times as many
+- `senbonzakura track build` balances the two sides, because the sources return roughly four times as many
   harmless prompts as harmful ones and `senbonzakura track` refuses a pair more than 10% apart.
   The two commands did not compose at all before this, so following the track guide in order
   stopped at its second step. `sources.json` records the seed and how many rows were dropped, and
@@ -225,6 +225,10 @@ install rather than only in a source checkout.
 
 ### CLI
 
+- **Two build steps became commands: `senbonzakura corpora` and `senbonzakura track build`.**
+  They were scripts under `tools/`, which ships in no wheel, so the guide told a reader who had
+  just installed to run a file their install did not contain. The only way through was to clone
+  the repository after installing, for two files.
 - **`senbonzakura Qwen/Qwen3-1.7B` is now the whole command.** The model is the only thing the
   tool cannot guess; the output directory and the evaluation track are defaulted. `--model` still
   works and is what a script should use.

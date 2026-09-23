@@ -2,26 +2,23 @@
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
 # Comment: Christ is King  # noqa: ERA001
-"""Tests for the corpus builder (tools/packaging/build_track.py).
+"""Tests for the corpus builder (`senbonzakura track build`).
 
 The builder exists because two of the three upstream datasets declare no licence, so the rows
 cannot be redistributed and only the recipe can. That makes the licence check the load-bearing
 part rather than a courtesy, and most of these tests are about it refusing rather than about it
 succeeding.
 """
-import importlib.util
 import json
 import sys
 import urllib.error
-from pathlib import Path
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "build_track", Path(__file__).resolve().parent.parent / "tools" / "packaging" / "build_track.py")
-bt = importlib.util.module_from_spec(_SPEC)
-sys.modules["build_track"] = bt
-_SPEC.loader.exec_module(bt)
+# Imported as a package module rather than loaded from a path under `tools/`, because that is
+# now where it lives: `tools/` ships in no wheel, so the builder the guide sends users to was
+# absent from every install.
+from senbonzakura import trackbuild as bt
 
 
 def _src(repo="a/b", side="harmful", licence="apache-2.0"):

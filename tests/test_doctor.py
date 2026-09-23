@@ -320,7 +320,7 @@ def test_the_corpus_fix_names_the_github_cli_when_it_is_missing(monkeypatch):
     monkeypatch.setattr(doctor.shutil if hasattr(doctor, "shutil") else __import__("shutil"),
                         "which", lambda _n: None)
     fix = doctor._corpus_fix()
-    assert "build_corpora.py" in fix
+    assert "senbonzakura corpora" in fix
     assert "GitHub CLI" in fix and "cli.github.com" in fix
 
 
@@ -328,7 +328,7 @@ def test_the_corpus_fix_stays_short_when_the_cli_is_there(monkeypatch):
     import shutil
     monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/gh")
     fix = doctor._corpus_fix()
-    assert "build_corpora.py" in fix
+    assert "senbonzakura corpora" in fix
     assert "GitHub CLI" not in fix, "the note is only useful when the tool is actually absent"
 
 

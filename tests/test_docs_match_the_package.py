@@ -276,7 +276,7 @@ def test_the_interim_install_says_the_bundled_track_is_not_in_it():
     for name in INSTALL_SURFACES:
         text = " ".join((root / name).read_text(encoding="utf-8").split())
         assert "track default" in text, f"{name} does not mention --track default at all"
-        assert "build_corpora" in text, (
+        assert "senbonzakura corpora" in text, (
             f"{name} tells a reader to install from the repository without saying the bundled "
             f"corpora are not in it, or how to build them")
 

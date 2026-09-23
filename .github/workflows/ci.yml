@@ -681,7 +681,7 @@ jobs:
           # that quietly returned rows from somewhere, or reported a pass with no corpora, is the
           # failure worth catching, and this catches it.
           grep -qE '^\s*✗\s+corpus advbench' cpu.txt
-          grep -q 'build_corpora.py' cpu.txt
+          grep -q 'senbonzakura corpora' cpu.txt
           # WHATEVER THE IMAGE CARRIES, IT MUST BE HONEST ABOUT IT. A runner builds without the
           # blobs and a release build has them, so this asserts the property that matches what is
           # actually there: corpora present must load at their declared size, corpora absent must

@@ -905,6 +905,13 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in ("promote", "verify"):
         return _promote_main(argv)
+    # `build` fetches the prompt pools this command then splits, so it is the step BEFORE this
+    # one and the two are typed in sequence. It lived in `tools/`, which ships in no wheel, so
+    # the documented sequence could not be typed by anybody who had installed rather than cloned.
+    if argv and argv[0] == "build":
+        from . import trackbuild
+
+        return trackbuild.main(argv[1:])
 
     a = build_parser().parse_args(argv)
     out = Path(a.out)

@@ -71,14 +71,30 @@ def test_every_notebook_command_parses(command):
         # `track` joined `capability` on 2026-09-23, when the notebook stopped using
         # `--track default`: the bundled track is packed from a held-out corpus outside this
         # repository, so a reader in Colab has to build their own.
-        required = {"capability": "model", "track": "out"}
-        assert argv[0] in required, (
-            f"the notebook now uses the {argv[0]!r} subcommand and this test does not know which "
-            f"of its arguments must come out set. Teach it rather than dropping the assertion")
-        module_name, _attr = entry.DELEGATED[argv[0]]
+        # A SUB-VERB IS A DIFFERENT PARSER, and parsing `track build --out X` with `track`'s own
+        # parser would reject `build` rather than checking the flags that follow it. `corpora`
+        # and `track build` both joined the notebook on 2026-09-23, when they stopped being
+        # scripts under `tools/`: that directory ships in no wheel, so the notebook was cloning
+        # the repository for two files.
+        subverbs = {("track", "build"): ("trackbuild", "out")}
+        key = (argv[0], argv[1] if len(argv) > 1 else None)
+        if key in subverbs:
+            module_name, required_arg = subverbs[key]
+            rest = argv[2:]
+        else:
+            # `None` where a command requires nothing: the parse itself is the assertion.
+            required = {"capability": "model", "track": "out", "corpora": None}
+            assert argv[0] in required, (
+                f"the notebook now uses the {argv[0]!r} subcommand and this test does not know "
+                f"which of its arguments must come out set. Teach it rather than dropping the "
+                f"assertion")
+            module_name, _attr = entry.DELEGATED[argv[0]]
+            required_arg = required[argv[0]]
+            rest = argv[1:]
         module = importlib.import_module(f"senbonzakura.{module_name}")
-        args = module.build_parser().parse_args(argv[1:])
-        assert getattr(args, required[argv[0]])
+        args = module.build_parser().parse_args(rest)
+        if required_arg:
+            assert getattr(args, required_arg)
     else:
         # The bare invocation, which is abliteration. There is no `abliterate` subcommand, and the
         # first draft of the notebook invented one.
@@ -147,12 +163,27 @@ def test_the_notebook_does_not_send_a_reader_to_pypi_while_pypi_is_stale():
         "cannot build one and the run fails several cells after the step that was supposed to "
         "provide it")
 
-    assert "build_corpora.py" in code, (
+    assert "senbonzakura corpora" in code, (
         "the notebook never builds the refusal corpora. They are generated rather than "
-        "committed, so a clone does not have them")
-    assert "build_track.py" in code and "senbonzakura track" in code, (
-        "the notebook never builds a track. Without one there is nothing to pass to `--track`, "
-        "and `--track default` is not available to a clone")
+        "committed, so an install from the repository does not have them")
+    # Two different commands: `track build` fetches the pools, `track` splits them. Matched on
+    # the joined form, because the notebook wraps the splitter across lines for readability.
+    # Whitespace is collapsed as well as the continuations, because the wrapped lines are
+    # indented and a joined command would otherwise carry the indentation in the middle of it.
+    joined = " ".join(code.replace("\\\n", " ").split())
+    assert "senbonzakura track build" in joined, (
+        "the notebook never fetches the prompt pools, so there is nothing for the splitter below "
+        "it to split")
+    assert "senbonzakura track --harmful" in joined, (
+        "the notebook never splits a track. Without one there is nothing to pass to `--track`, "
+        "and `--track default` is not available to an install from the repository")
+
+    # THE BUILDERS MUST BE THE INSTALLED ONES, not paths into a clone. `tools/` ships in no
+    # wheel, so a notebook that runs them out of a cloned tree is describing a route only a
+    # cloner has, and it was cloning for exactly two files.
+    assert "tools/packaging/" not in code, (
+        "the notebook runs a script out of `tools/`, which ships in no wheel. Both builders are "
+        "commands now: `senbonzakura corpora` and `senbonzakura track build`")
 
     # Something has to CHECK the build worked, whatever form the track takes. Named by what it
     # proves rather than by the exact call, so that changing how the track is built does not

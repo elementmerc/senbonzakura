@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
@@ -25,8 +24,16 @@ WHAT IS VERIFIED, AND IN WHICH ORDER
 
 Only then is anything packed.
 
-    python tools/packaging/build_corpora.py            # fetch, verify, pack
-    python tools/packaging/build_corpora.py --check    # verify what is recorded, write nothing
+    senbonzakura corpora            # fetch, verify, pack
+    senbonzakura corpora --check    # verify what is recorded, write nothing
+
+WHY IT LIVES IN THE PACKAGE RATHER THAN IN `tools/`
+
+It was `tools/packaging/build_corpora.py`, and `tools/` ships in no wheel. A wheel from a release
+carries the packed corpora and never needs this; an install straight from the repository does not,
+because the packed blob is generated rather than committed, and that is the install every current
+instruction hands out while PyPI is still serving a withdrawn version. So the one command those
+users have to run was the one command their install did not contain.
 """
 from __future__ import annotations
 
@@ -38,16 +45,43 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
+from . import bundled, corpora
 
-from senbonzakura import bundled, corpora
+#: The installed package's own directory. Everything written below lands inside it, which is where
+#: the loader reads from, so this works the same from a checkout and from an install.
+PKG = Path(__file__).resolve().parent
 
 #: Where the fetched CSVs and the recorded hashes live. The hashes are committed; the CSVs are not,
 #: for the same reason the llama.cpp binaries are not: what ships is reviewable in a diff of one
 #: small file rather than by unpacking a wheel.
-PINS = ROOT / "src" / "senbonzakura" / "vendor" / "corpora-pins.json"
-CACHE = ROOT / "build" / "corpora"
+PINS = PKG / "vendor" / "corpora-pins.json"
+
+#: The repository this package was built from, when it was built from one: `src/senbonzakura`'s
+#: grandparent. In an install that is whatever happens to sit two levels above site-packages, so
+#: it is only ever used behind the check below.
+ROOT = PKG.parents[1]
+
+
+def in_a_checkout():
+    """Is there a repository around this package to write the generated notices into?
+
+    An install has no `pyproject.toml` above it, and writing `THIRD-PARTY-CORPORA.md` next to
+    somebody's site-packages would put a file nobody reads in a directory nobody owns.
+    """
+    return (ROOT / "pyproject.toml").is_file() and (ROOT / "src" / "senbonzakura").is_dir()
+
+
+def _relative(path):
+    """A path the reader can act on: repo-relative in a checkout, absolute otherwise."""
+    try:
+        return path.relative_to(ROOT) if in_a_checkout() else path
+    except ValueError:
+        return path
+
+
+#: Fetched CSVs are cached beside the build in a checkout, and under the package otherwise. They
+#: are intermediate rather than shipped, so either location is fine as long as it is writable.
+CACHE = (ROOT / "build" / "corpora") if in_a_checkout() else (PKG / "data" / "corpora-cache")
 
 
 class BuildError(Exception):
@@ -119,7 +153,7 @@ def build(*, check_only=False, log=print):
         cached = CACHE / f"{c.commit[:12]}-{Path(c.path).name}"
         if cached.is_file():
             data = cached.read_bytes()
-            log(f"{skey}\n  using the local copy at {cached.relative_to(ROOT)}")
+            log(f"{skey}\n  using the local copy at {_relative(cached)}")
         else:
             log(f"{skey}\n  fetching")
             data = fetch(c.upstream, c.commit, c.path)
@@ -154,17 +188,17 @@ def build(*, check_only=False, log=print):
     pins.update({"schema": "senbonzakura-corpora-pins/1", "files": dict(sorted(files.items()))})
     PINS.parent.mkdir(parents=True, exist_ok=True)
     PINS.write_text(json.dumps(pins, indent=2) + "\n", encoding="utf-8")
-    log(f"recorded {len(files)} file hash(es) in {PINS.relative_to(ROOT)}")
+    log(f"recorded {len(files)} file hash(es) in {_relative(PINS)}")
 
     # Packed through the same container as the evaluation track, and for the same stated reason:
     # a speed bump against a scraper, not protection. `bundled.py` says so in as many words.
-    blob = ROOT / "src" / "senbonzakura" / "data" / corpora.CORPORA_BLOB
+    blob = PKG / "data" / corpora.CORPORA_BLOB
     blob.parent.mkdir(parents=True, exist_ok=True)
     doc = {"schema": "senbonzakura-corpora/1",
            "corpora": {k: payload[k] for k in sorted(payload)},
            "notices": corpora.notices()}
     blob.write_bytes(bundled.pack(json.dumps(doc, ensure_ascii=False).encode("utf-8")))
-    log(f"packed {blob.relative_to(ROOT)} ({blob.stat().st_size:,} bytes)")
+    log(f"packed {_relative(blob)} ({blob.stat().st_size:,} bytes)")
 
     # Read it straight back. Writing a pack is not the same claim as shipping a usable one, and
     # the round trip is the only thing that distinguishes them.
@@ -174,6 +208,14 @@ def build(*, check_only=False, log=print):
             raise BuildError(f"{key}: the pack did not read back as what was written")
     log(f"  round-tripped all {len(payload)} corpora out of the pack")
 
+    # Only in a checkout. The file is a committed artefact generated from the same table the
+    # loader reads; an install already carries the notices inside the pack, and writing a
+    # Markdown file two levels above site-packages would put it somewhere nobody looks.
+    if not in_a_checkout():
+        log("not a checkout, so THIRD-PARTY-CORPORA.md was not written. The notices travel "
+            "inside the pack either way; `senbonzakura doctor` prints them.")
+        return payload
+
     notices = ROOT / "THIRD-PARTY-CORPORA.md"
     notices.write_text(
         "# Bundled corpora\n\n"
@@ -182,15 +224,20 @@ def build(*, check_only=False, log=print):
         "with the work. This file is generated from the same table the loader reads, so it cannot "
         "fall out of step with what actually ships.\n\n"
         "```\n" + corpora.notices() + "\n```\n", encoding="utf-8")
-    log(f"wrote {notices.relative_to(ROOT)}")
+    log(f"wrote {_relative(notices)}")
     return payload
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+def build_parser():
+    ap = argparse.ArgumentParser(prog="senbonzakura corpora",
+                                 description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true",
                     help="verify the pins and the counts, write nothing")
-    a = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None):
+    a = build_parser().parse_args(argv)
     try:
         preflight()
         payload = build(check_only=a.check)
@@ -203,5 +250,7 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+
+    module_entry(main)

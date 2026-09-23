@@ -62,7 +62,7 @@ def test_an_image_carrying_the_wrong_number_of_rows_fails(loads, capsys):
 def test_an_image_without_corpora_passes_when_it_names_the_builder(loads, capsys):
     # THE BRANCH A RUNNER TAKES. An image built from a clean clone has no corpora, and the
     # property that must hold is that the absence is legible rather than silent.
-    loads(CorpusError("the bundled corpora are not installed; run tools/packaging/build_corpora.py"))
+    loads(CorpusError("the bundled corpora are not installed; run `senbonzakura corpora`"))
     assert honest.main() == 0
     assert "names the builder" in capsys.readouterr().out
 

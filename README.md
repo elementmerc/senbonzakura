@@ -84,7 +84,7 @@ senbonzakura setup
 >
 > **`--track default` will not work from that install.** The bundled corpora are generated
 > artefacts kept out of git, because they are harmful prompts. Build them from a clone
-> (`tools/packaging/build_corpora.py`, public sources, pinned commits) or bring your own
+> (`senbonzakura corpora`, public sources, pinned commits) or bring your own
 > corpus. [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) has both
 > routes.
 

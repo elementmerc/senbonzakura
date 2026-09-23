@@ -81,7 +81,11 @@ def test_the_report_is_the_files_found_not_a_boolean(tmp_path):
 # ── the command line refuses ─────────────────────────────────────────────────────────
 
 def _args(out, **over):
-    a = dict(out=str(out), resume=False, bake_config=None,
+    # A real parse always carries a model, and `run_parsed` resolves it first,
+    # refusing a run without one. Without this the refusal preempts the check
+    # each of these tests is actually about.
+    a = dict(model="x",
+             out=str(out), resume=False, bake_config=None,
              # Sound by default: these tests are about the ORDER pre-flights run in, so
              # none should trip the generation-budget gate before reaching its subject.
              gen_tokens=lengthsweep.DEFAULT_BUDGET, short_budget_ok=False)

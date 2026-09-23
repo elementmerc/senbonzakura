@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from senbonzakura import cli, crashsafe, metrics
+from senbonzakura import parser as parser_mod
 
 
 def _log_sink():
@@ -500,9 +501,13 @@ def test_main_end_to_end(monkeypatch, tiny_model, tiny_tok, track, tmp_path):
     # 3 tokens keeps the test fast and is far below the budget a refusal is visible at, which the
     # abliterator refuses rather than warns about. Nothing here reads the resulting rate, so this
     # is the case `--short-budget-ok` exists for.
+    # `--capability-n 0` for the same reason as the short budget above: nothing here reads a
+    # capability figure, and the probe's defaults are sized for a GPU. On the CPU this runs on
+    # they are hours, which the abliterator now refuses rather than starts, so a run that wants
+    # neither the number nor the wait says so.
     cli.main(["--model", "x", "--track", track, "--out", out, "--device", "cpu",
               "--trials", "2", "--dir-prompts", "8", "--eval-refusal", "6", "--eval-kl", "6",
-              "--gen-tokens", "3", "--short-budget-ok"])
+              "--gen-tokens", "3", "--short-budget-ok", "--capability-n", "0"])
     assert os.path.exists(os.path.join(out, "abliteration.json"))
 
 
@@ -559,13 +564,45 @@ def test_parser_defaults():
     args = cli.build_parser().parse_args(["--model", "some/model"])
     assert args.search == "pareto" and args.max_directions == 3 and args.device == "cuda"
     assert args.per_component is True and args.load_in_4bit is False
-    assert args.out == "abliterated" and args.track == "track"   # sane relative defaults
+    assert args.out == "abliterated"
+    # `auto` rather than the old relative `track`, resolved by `parser.resolve_track` once the
+    # machine can be looked at: ./track when it exists, the bundled track otherwise. The old
+    # default silently named a directory that usually did not exist, and the run then failed
+    # several steps later on a Hub lookup for `track/bad_ds`.
+    assert args.track == parser_mod.TRACK_AUTO
 
 
-def test_parser_requires_model():
+def test_a_run_with_no_model_is_still_refused():
+    """The requirement MOVED, it did not go away.
+
+    `--model` stopped being argparse-required when the model became available as a positional, so
+    `senbonzakura Qwen/Qwen3-1.7B` parses. A run with neither spelling is still refused, one layer
+    later, where the message can name both ways to give one.
+    """
     import pytest as _pytest
-    with _pytest.raises(SystemExit):
-        cli.build_parser().parse_args([])   # --model is required
+
+    args = cli.build_parser().parse_args([])   # parses now, and must not run
+    with _pytest.raises(SystemExit, match="no model given"):
+        cli.resolve_model(args)
+
+
+def test_the_two_ways_to_name_a_model_agree_or_the_run_stops():
+    """Silently preferring one would measure a model nobody asked for, and record it as chosen."""
+    import pytest as _pytest
+
+    both = cli.build_parser().parse_args(["one/model", "--model", "other/model"])
+    with _pytest.raises(SystemExit, match="two different models"):
+        cli.resolve_model(both)
+
+    same = cli.build_parser().parse_args(["one/model", "--model", "one/model"])
+    assert cli.resolve_model(same) == "one/model"
+
+
+def test_the_model_can_be_given_without_a_flag():
+    """`senbonzakura Qwen/Qwen3-1.7B` is the whole command."""
+    args = cli.build_parser().parse_args(["Qwen/Qwen3-1.7B"])
+    assert cli.resolve_model(args) == "Qwen/Qwen3-1.7B"
+    assert args.model == "Qwen/Qwen3-1.7B", "resolve_model must fill the flag the rest of the code reads"
 
 
 def test_the_version_the_tool_reports_is_the_version_the_package_declares():
@@ -1752,8 +1789,15 @@ def test_auto_is_an_alias_for_kageyoshi(monkeypatch):
 
     for name in ("kageyoshi", "auto"):
         seen.clear()
+        # `--capability-n 0` for the same reason as the patches above: the capability probe's
+        # defaults are hours on a CPU and the run now refuses them rather than starting, which
+        # would raise before the abliterator was reached. This test is about the alias getting
+        # there, and the `except SystemExit` below would have swallowed that into a silent
+        # failure of the wrong thing.
+        cmd = [name, "--model", "fixture", "--device", "cpu", "--bench-only",
+               "--capability-n", "0"]
         try:
-            cli.main([name, "--model", "fixture", "--device", "cpu", "--bench-only"])
+            cli.main(cmd)
         except (SystemExit, AttributeError, TypeError):
             pass
         assert seen.get("model") == "fixture", f"{name} did not reach the abliterator"

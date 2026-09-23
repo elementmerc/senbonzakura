@@ -67,7 +67,7 @@ def split_mode(argv):
 
 
 def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
-                  chat_template=True):
+                  chat_template=True, model_required=True):
     """The flags every entry point needs in order to LOAD a model, defined once.
 
     A parent parser rather than a copy in each of the four commands. The copies had already
@@ -81,7 +81,11 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     which is what turns an obscure failure at bake time into a sentence at startup.
     """
     ap = argparse.ArgumentParser(add_help=False)
-    ap.add_argument("--model", required=True, help=model_help)
+    # `model_required=False` ONLY for the abliterate parser, which also takes the model as a
+    # positional so that `senbonzakura Qwen/Qwen3-1.7B` works. It still refuses a run with no
+    # model at all; the check just moves from argparse to `resolve_model`, where it can say which
+    # of the two ways to give it you meant to use. Every other command keeps the flag required.
+    ap.add_argument("--model", required=model_required, default=None, help=model_help)
     ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="allow models that ship custom modelling code (some Hub models need "
@@ -188,7 +192,22 @@ def build_parser():
             four_bit_help="NOT supported by the abliterator: the weight bake needs full "
                           "precision. Use it with the scorer "
                           "(python -m senbonzakura.score --load-in-4bit) to measure a model "
-                          "on low VRAM.")])
+                          "on low VRAM.",
+            model_required=False)])
+    # THE ONE-COMMAND FORM: `senbonzakura Qwen/Qwen3-1.7B`, with everything else defaulted.
+    #
+    # `--model` still works and is what every run spec, every README example and every holst job
+    # already passes, so nothing that exists breaks. This is an additional way to say the same
+    # thing, for the case where somebody has just installed the tool and wants to see it do
+    # something. `entry.main` already routes anything that is not a subcommand here, so the only
+    # missing piece was a parser that would accept it.
+    #
+    # `nargs="?"` rather than required, because `--model` has to keep working on its own, and
+    # `metavar` so the usage line reads MODEL rather than the dest name.
+    ap.add_argument("model_positional", nargs="?", default=None, metavar="MODEL",
+                    help="the model to abliterate, given without a flag. `senbonzakura "
+                         "Qwen/Qwen3-1.7B` is the whole command: the track, the output directory "
+                         "and the search are all defaulted. Equivalent to --model.")
     try:   # optional shell completion; degrade gracefully if shtab is not installed
         import shtab
         shtab.add_argument_to(ap, ["--print-completion"],
@@ -264,12 +283,13 @@ def build_parser():
     # `default` was findable only by omitting --track and reading the refusal, and the refusal
     # buried it under three paragraphs of Hub-package advice. It is the easiest way to get a first
     # run working, so it belongs in the one place a user looks first.
-    ap.add_argument("--track", default="track",
+    ap.add_argument("--track", default=TRACK_AUTO,
                     help="a directory holding bad_ds / good_ds / bad_eval_ds, as built by "
                          "`senbonzakura track`. Pass the word 'default' to use the evaluation "
                          "track bundled in this install, which needs no network and no download "
                          "and is the quickest way to a first run (CC BY-NC 4.0, attribution "
-                         "required, non-commercial)")
+                         "required, non-commercial). Left out, it takes ./track when that exists "
+                         "and the bundled one otherwise, and says in the log which it chose.")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
     # Every dataset argument above accepts a save_to_disk directory, a .txt/.csv/.json/.jsonl/
     # .parquet file, or a Hub id, optionally with `::split[:N]`. These two are the knobs the
@@ -515,3 +535,9 @@ def build_parser():
                          "config directly. Recovers a crashed save in minutes instead of re-searching.")
     ap.add_argument("--version", action="version", version=f"senbonzakura {__version__}")
     return ap
+
+
+#: What `--track` means when nobody passed it. A sentinel rather than a path or the bundled alias,
+#: because the right answer depends on what is on the machine and the run has to be able to SAY
+#: which it chose. `resolve_defaults` turns it into one of the two.
+TRACK_AUTO = "auto"

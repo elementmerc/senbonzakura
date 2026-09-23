@@ -19,7 +19,7 @@ exactly the same arguments.
 | Command | What it does |
 |---|---|
 | `measure` | Every instrument against one model, into one directory, as one table: refusal, harm recognition, fluency and capability, plus the coherence cost when `--baseline` names the model it was edited from. It measures nothing itself; each row is the command below it, run with the arguments you would have typed. |
-| `compass` | Harm recognition: does the edited model still know a harmful request when it sees one? Reports an AUC with a seeded bootstrap interval and its null controls. |
+| `compass`<br>(or `harm-recognition`) | Harm recognition: does the edited model still know a harmful request when it sees one? Reports an AUC with a seeded bootstrap interval and its null controls. |
 | `score` | Refusal and compliance rates over an evaluation set. |
 | `coherence` | Perplexity against a reference, so a model that stopped refusing because it stopped working is visible as such. |
 | `drift` | One coherence ruler applied to any model after the fact, so a model edited by any tool lands on the same scale. This is the comparable coherence number. |

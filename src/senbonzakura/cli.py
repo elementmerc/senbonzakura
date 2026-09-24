@@ -5238,6 +5238,9 @@ def run_parsed(args, bankai, argv):
     # unusable interpreter makes every other fault moot, so it goes first; this one may touch the
     # network for a Hub track and is still nothing beside pulling a model.
     _preflight_output(args)
+    # HERE, not at resolution time. Everything above is decidable from the command line alone and
+    # needs no track; this is the first step that reads one.
+    refuse_without_a_track(args)
     _preflight_datasets(args)
     preflight_snapshot_ram(args, log=print)
     # LAST OF THE PRE-FLIGHTS, and before the model. Everything above reports a run that CANNOT
@@ -5291,6 +5294,27 @@ def resolve_model(args):
     return args.model
 
 
+def refuse_without_a_track(args):
+    """Stop a run that has no track, at the point where the cheaper checks have all had their say.
+
+    Separate from `resolve_track` because resolution happens first, before anything reads either
+    value, and refusing from there put this message in front of every argument-level fault a run
+    could have. See the note at the end of `resolve_track`.
+    """
+    if getattr(args, "track", None):
+        return
+    raise SystemExit(
+        "senbonzakura: no evaluation track to measure against.\n"
+        "  There is no `track/` directory here, and this install carries no bundled track.\n"
+        "  An install from a clone has none: the bundled track is a generated artefact kept out "
+        "of git because it is harmful prompts.\n"
+        "  What to do:\n"
+        "    build one from public sources:  senbonzakura track build --out corpus\n"
+        "    then split it:  senbonzakura track --harmful corpus/harmful.txt "
+        "--harmless corpus/harmless.txt --out track\n"
+        "    or point at one you already have with --track <directory>")
+
+
 def resolve_track(args, *, log=print):
     """Turn `--track auto` into the track this machine actually has, and say which.
 
@@ -5303,6 +5327,9 @@ def resolve_track(args, *, log=print):
     It ALWAYS says which it chose. A default that silently depends on the working directory is
     exactly the kind of thing that makes two runs of the same command incomparable, and the cure
     is not to remove the convenience but to put the choice in the log next to the numbers.
+
+    Returns None when this machine has neither, leaving `args.track` unset. The refusal belongs
+    to `refuse_without_a_track`, which runs after the checks that need no track.
     """
     import os
 
@@ -5325,13 +5352,14 @@ def resolve_track(args, *, log=print):
             "attribution required, non-commercial). Build your own with `senbonzakura track`.")
         return args.track
 
-    raise SystemExit(
-        "senbonzakura: no evaluation track to measure against.\n"
-        "  There is no `track/` directory here, and this install carries no bundled track.\n"
-        "  An install from a clone has none: the bundled track is a generated artefact kept out "
-        "of git because it is harmful prompts.\n"
-        "  What to do:\n"
-        "    build one from public sources:  senbonzakura track build --out corpus\n"
-        "    then split it:  senbonzakura track --harmful corpus/harmful.txt "
-        "--harmless corpus/harmless.txt --out track\n"
-        "    or point at one you already have with --track <directory>")
+    # NOT A REFUSAL HERE. Resolution runs at the top, before every other pre-flight, and a
+    # refusal raised from it jumps the queue ahead of checks that need no track at all: the
+    # 4-bit rejection, the matched-corpus rejection, the occupied-output check. CI caught this
+    # on eight tests at once, each asserting some other refusal and receiving this one, because
+    # a runner has no `./track` and no bundled track while the development machines have both.
+    #
+    # It is the same defect the slow-probe guard had a day earlier, in the same function, for
+    # the same reason: a check that fires before the cheaper ones tells somebody about the
+    # second thing wrong with their command line instead of the first.
+    args.track = None
+    return None

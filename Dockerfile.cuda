@@ -86,8 +86,28 @@ print('torch', torch.__version__)"
 # The checker is installed FIRST, from this tree, for the same reason the CPU image does it
 # (decision Q-29). `--no-deps` is honest rather than defensive: the distribution declares no
 # dependencies at all, and that emptiness is the property it exists to hold.
-RUN pip install --no-cache-dir --quiet --no-deps ./checker \
- && pip install --no-cache-dir --quiet "requests>=2" ".[abliterate]" \
+#
+# PIP IS UPGRADED FIRST, AND THE INSTALLS ARE SEPARATE, because of a resolver bug this build hit
+# on 2026-09-25:
+#
+#     File ".../pip/_internal/resolution/resolvelib/resolver.py", line 276, in
+#     get_topological_weights
+#         assert len(weights) == expected_node_count
+#     AssertionError
+#
+# That is pip's own assertion, not a statement about this project. It fires when a distribution is
+# already present from a `--no-deps` install and then reappears in a graph being resolved, which
+# is exactly the shape here: the checker goes in first by necessity, and `.[abliterate]` is an
+# extra that resolves to this package itself. The CPU image does the same two installs on separate
+# lines and does not trip it, so the combined resolution is what tips this one over.
+#
+# Both halves of the fix are deliberate. The upgrade addresses the cause, since the bug is fixed
+# upstream. Splitting the line mirrors the image that works, so the two Dockerfiles stop differing
+# in a way that has no reason behind it.
+RUN pip install --no-cache-dir --quiet --upgrade pip \
+ && pip install --no-cache-dir --quiet --no-deps ./checker \
+ && pip install --no-cache-dir --quiet "requests>=2" \
+ && pip install --no-cache-dir --quiet ".[abliterate]" \
  && python tools/packaging/vendor_llama.py \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
 

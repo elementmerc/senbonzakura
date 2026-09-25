@@ -12,6 +12,7 @@ dependency nobody has looked at in a year.
 Every function under test is pure, which is the point: the boundary cases here are a day either
 side of a cooldown and a pin three months old, and neither is testable against a live upstream.
 """
+import datetime as _dt
 import json
 
 import pytest
@@ -165,11 +166,25 @@ def test_the_shipped_manifest_loads():
     assert "llama_conversion" in m["pins"]
 
 
-def test_the_shipped_pin_had_cleared_the_cooldown_when_it_was_chosen():
-    """b10250 was 13 days old on the day it was pinned. b10456 was hours old."""
-    pin = vendoring.load_manifest()["pins"]["llama.cpp"]
-    assert vendoring.eligible(pin["published"], TODAY)
-    assert vendoring.pin_age_days(pin, TODAY) >= vendoring.COOLDOWN_DAYS
+def test_every_shipped_pin_has_aged_past_the_cooldown():
+    """Whatever is pinned right now must be older than the cooldown, checked against the real date.
+
+    This used to compare the shipped pin against TODAY, the frozen date the synthetic fixtures
+    above use. That made it fail on the b10355 to b11046 refresh for no reason except that the
+    calendar had moved, and the obvious repair, bumping the constant to the day of the refresh,
+    would have turned it into an assertion that a pin chosen today had aged past a cooldown today:
+    always true, testing nothing, and looking green while doing it.
+
+    The live obligation is not about the day a pin was adopted, which nothing machine-readable
+    records. It is that no pin currently in the manifest is younger than the cooldown, and that
+    stays checkable forever without a constant to maintain.
+    """
+    today = _dt.date.today().isoformat()
+    for key, pin in vendoring.load_manifest()["pins"].items():
+        assert vendoring.eligible(pin["published"], today), (
+            f"{key} is pinned at {pin['tag']}, published {pin['published']}, which has not cleared "
+            f"the {vendoring.COOLDOWN_DAYS}-day cooldown")
+        assert vendoring.pin_age_days(pin, today) >= vendoring.COOLDOWN_DAYS
 
 
 def test_every_shipped_pin_declares_a_licence_and_a_reason():

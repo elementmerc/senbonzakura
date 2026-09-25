@@ -128,20 +128,27 @@ def binary_dataset_findings(path: Path, raw: bytes) -> list[str]:
     import hashlib
 
     key = path.as_posix()
-    for known in KNOWN_BINARY_DATASETS:
-        if key == known or key.endswith("/" + known):
-            got = hashlib.sha256(raw).hexdigest()
-            if got == KNOWN_BINARY_DATASETS[known]:
-                return []
-            return [f"{path}: is a known dataset file whose contents have CHANGED "
-                    f"(sha256 {got[:16]}..., recorded {KNOWN_BINARY_DATASETS[known][:16]}...). "
-                    f"If this was regenerated from a real corpus it must not be committed. If it "
-                    f"is a deliberate change to the toy data, record the new hash in "
-                    f"KNOWN_BINARY_DATASETS and say why in the commit."]
-    return [f"{path}: is a binary dataset file this gate cannot read and does not know. It is "
-            f"refused rather than cleared, because the formats it covers exist to carry prompts. "
-            f"If it genuinely belongs in the repository, record its sha256 in "
-            f"KNOWN_BINARY_DATASETS."]
+    for known, recorded in KNOWN_BINARY_DATASETS.items():
+        if key != known and not key.endswith("/" + known):
+            continue
+        got = hashlib.sha256(raw).hexdigest()
+        if got == recorded:
+            return []
+        changed = (
+            f"{path}: is a known dataset file whose contents have CHANGED "
+            f"(sha256 {got[:16]}..., recorded {recorded[:16]}...). "
+            f"If this was regenerated from a real corpus it must not be committed. If it "
+            f"is a deliberate change to the toy data, record the new hash in "
+            f"KNOWN_BINARY_DATASETS and say why in the commit."
+        )
+        return [changed]
+    unknown = (
+        f"{path}: is a binary dataset file this gate cannot read and does not know. It is "
+        f"refused rather than cleared, because the formats it covers exist to carry prompts. "
+        f"If it genuinely belongs in the repository, record its sha256 in "
+        f"KNOWN_BINARY_DATASETS."
+    )
+    return [unknown]
 
 #: Markdown under a results directory, which `.gitignore` re-admits explicitly.
 #:

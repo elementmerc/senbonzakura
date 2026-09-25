@@ -58,10 +58,15 @@ dependencies = []
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
+  # ONLY THE INTERPRETERS A JOB ACTUALLY RUNS. The CI matrix is 3.10, 3.12 and 3.14.
+  #
+  # 3.11 and 3.13 were listed here until 2026-09-25, which is the exact claim the main
+  # pyproject.toml spends nine lines withdrawing for itself: "no job has ever run either ... a
+  # promise made to strangers and kept by luck". The sibling distribution kept making it, in the
+  # same commit, so a packager reading both files in one sitting would conclude the policy was
+  # decorative. `requires-python` still admits them; what stops is ADVERTISING them.
   "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]

@@ -67,7 +67,7 @@ had been using one blade since the day it was written. 🥲
 
 *Source, stated rather than implied: the 13,970 figure is a count from the run logs of that
 sweep, which are not published. It is a measurement, not an estimate, and you cannot currently
-check it. [REPRODUCING.md](../../REPRODUCING.md) says a quoted number with no published source is
+check it. `REPRODUCING.md`, in the repository root, says a quoted number with no published source is
 a defect, and by that rule this is one; it is named here rather than quietly left as a number
 with no provenance.*
 

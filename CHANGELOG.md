@@ -337,7 +337,10 @@ install rather than only in a source checkout.
 ### Packaging and CI
 
 - Continuous integration, which this repository had never had, on Linux, Windows and macOS
-  across five Python versions.
+  across five platform and interpreter combinations, covering three Python versions. This said
+  "five Python versions" until 2026-09-25; the matrix has five ROWS and runs 3.10, 3.12 and 3.14.
+  Claiming an interpreter nothing tests is a promise to strangers kept by luck, which is the
+  reason 3.11 and 3.13 were removed from the package classifiers in this same release.
 - **A plain `pip install senbonzakura` still installs the deep-learning stack, as 0.3.0 did.**
   During development this release briefly split it out behind an `abliterate` extra, and that
   split was reversed before release: somebody who types the plain command wants to edit a model,

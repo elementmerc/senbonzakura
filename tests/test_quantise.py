@@ -346,11 +346,22 @@ BANNERS = [
 
 @pytest.mark.parametrize(("label", "banner", "build", "commit"), BANNERS,
                          ids=[b[0] for b in BANNERS])
-def test_build_info_reads_both_banner_spellings(tmp_path, label, banner, build, commit):
-    stub = tmp_path / f"quantize-{label}"
-    stub.write_text(f"#!/bin/sh\necho '{banner}' >&2\nexit 1\n", encoding="utf-8")
-    stub.chmod(0o755)
-    assert quantise.build_info(stub) == {"build": build, "commit": commit}
+def test_build_info_reads_both_banner_spellings(monkeypatch, label, banner, build, commit):
+    """The banner is fed in directly rather than through an executable stub.
+
+    The first version of this wrote a `#!/bin/sh` script and ran it. That is a shell script, so
+    it does not execute on Windows, and the Windows job went red with `assert None == {...}`:
+    `build_info` was correctly reporting "cannot say" about a file the machine could not run,
+    and the test was reading that as a parsing failure. The subject here is the PARSING, and the
+    subprocess was never part of it.
+    """
+    import subprocess
+
+    def _fake_run(*_a, **_k):
+        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=banner)
+
+    monkeypatch.setattr(quantise.subprocess, "run", _fake_run)
+    assert quantise.build_info("any-path") == {"build": build, "commit": commit}
 
 
 def test_build_info_returns_none_rather_than_guessing(tmp_path):

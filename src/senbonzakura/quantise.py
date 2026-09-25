@@ -547,13 +547,22 @@ def _quantise_a_checkpoint(a, *, log=print):
         rc = convert.run([str(a.source), str(intermediate)], log=log)
         if rc != 0:
             return rc
+        # EVERY QUANTISATION FLAG IS FORWARDED, not the four somebody remembered.
+        #
+        # This rebuilt the inner command line by hand and carried `--type`, `--imatrix`,
+        # `--force` and `--threads`. So `--output-tensor-type`, `--token-embedding-type`,
+        # `--tensor-type` and `--allow-requantize` were accepted on the way in, silently dropped,
+        # and the run reported DONE having produced a file the user had not asked for. Worse for
+        # `--tensor-type`: its value is validated by `parse_tensor_type` inside
+        # `_preflight_arguments`, which this path skips, so a malformed one was accepted and
+        # ignored rather than refused.
+        #
+        # Driven off the parser's own actions rather than a second hand-written list, because a
+        # hand-written list is what was wrong: a flag added later would be dropped again and
+        # nothing would say so.
         q_argv = [str(intermediate), str(out), "--type", a.type]
-        if a.imatrix:
-            q_argv += ["--imatrix", a.imatrix]
-        if a.force:
-            q_argv.append("--force")
-        if a.threads:
-            q_argv += ["--threads", str(a.threads)]
+        for flag, value in _forwardable_quantiser_flags(a):
+            q_argv += [flag] if value is True else [flag, str(value)]
         return run(q_argv, log=log)
     finally:
         # The intermediate is scaffolding, not a result. `--keep-source` asks for it, and then it
@@ -566,6 +575,37 @@ def _quantise_a_checkpoint(a, *, log=print):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+#: Flags the checkpoint path must hand to the inner quantisation, and the ones it must NOT.
+#:
+#: `source` and `out` are positional and are replaced. `--type` is passed explicitly. The three
+#: source-disposal flags belong to the OUTER run: the checkpoint is the user's source, and the
+#: intermediate GGUF is scaffolding this function owns and deletes, so forwarding them would
+#: point `--keep-source` or `--prune-source` at the wrong file entirely.
+_NOT_FORWARDED = frozenset({"source", "out", "type", "keep_source", "prune_source", "help"})
+
+
+def _forwardable_quantiser_flags(a):
+    """(flag, value) for every quantiser flag the user set, read off the parser itself.
+
+    Read off the parser rather than listed by hand, because the hand-written list is the defect:
+    four flags were carried and four were dropped, and a flag added later would have been dropped
+    too with nothing to say so. `--tensor-type` is `append`, so it yields once per occurrence.
+    """
+    for action in build_parser()._actions:   # noqa: SLF001 - argparse exposes no public accessor
+        dest = action.dest
+        if dest in _NOT_FORWARDED or not action.option_strings:
+            continue
+        value = getattr(a, dest, None)
+        if value in (None, False, 0, [], ""):
+            continue
+        flag = max(action.option_strings, key=len)
+        if isinstance(value, list):
+            for item in value:
+                yield flag, item
+        else:
+            yield flag, value
+
+
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
 
@@ -575,6 +615,13 @@ def run(argv=None, log=print):
     # format in order to be handed back to the command they started with. The conversion is
     # delegated rather than reimplemented, so there is one converter and one set of checks.
     if looks_like_a_checkpoint(a.source):
+        # BEFORE the conversion, not after it. This branch used to return straight into
+        # `_quantise_a_checkpoint`, whose inner `run()` reaches `_preflight_arguments` only once
+        # the checkpoint has been converted. So `--imatrix /nope` or `--threads 99999` was
+        # refused after tens of minutes and tens of gigabytes of writes, for a fault decidable
+        # from the command line before anything started. That is precisely what this function's
+        # own docstring says it exists to prevent.
+        _preflight_arguments(a, log=log)
         return _quantise_a_checkpoint(a, log=log)
 
     _preflight_arguments(a, log=log)

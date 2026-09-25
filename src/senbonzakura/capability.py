@@ -830,7 +830,7 @@ def build_parser():
                          "two arms are compared on the same questions")
     ap.add_argument("--skip", type=int, default=0, help="drop this many items from the head first")
     ap.add_argument("--max-new", dest="max_new", type=int, default=512,
-                    help="token budget per answer (default 320). A worked solution is long, and "
+                    help="token budget per answer (default 512). A worked solution is long, and "
                          "a budget that truncates most of them measures the budget rather than "
                          "the model. Truncated items are reported as indeterminate, never wrong")
     ap.add_argument("--batch", type=int, default=8,

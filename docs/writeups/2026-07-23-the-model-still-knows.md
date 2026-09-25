@@ -129,12 +129,27 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 
 I lost the first sweep's artefacts. It kept only percentages, so when I wanted a number nobody had computed at the time, the only way to get it was to rent the hardware again. That is how a broken metric survived twice.
 
-Published with this writeup:
+**CORRECTED 2026-09-25: three of the five items below are not reachable, and this section is the
+one that promised they were.** Checked against the account rather than from memory. The
+checkpoints and the GGUF builds are public. The result files, the per-prompt margins and the raw
+generations are in a dataset that is **private**, with zero downloads, so the invitation two
+paragraphs down to "check it on a laptop without renting anything" could not be taken up by
+anybody. The direction of that error is the safe one for the generations, which are output from
+models with their refusal removed and should not be public. It is the wrong direction for the
+result files and the margins, which are aggregate JSON carrying no prompts and could be published;
+whether to do that is an open decision rather than an oversight, and it is recorded as one.
+
+Published with this writeup, and still reachable:
 
 - The abliterated models, one repo each, with the evaluation on every card.
 - GGUF builds, F16 and Q4_K_M, for llama.cpp, Ollama and LM Studio.
+Held, but NOT published:
+
 - Every result file, for every arm and both sides.
 - Every per-prompt logit margin, so the AUC table can be recomputed or re-cut.
 - Every raw generation: each prompt, and every word each model said back.
 
-If you think my third ruler is bent too, you can check it on a laptop without renting anything.
+These exist and are kept. They are in a private dataset, so the sentence that used to sit here,
+inviting you to check the third ruler on a laptop without renting anything, was an invitation to
+something you could not do. The raw generations will stay unpublished; the results and the
+margins are a decision rather than a policy.

@@ -25,6 +25,7 @@ import math
 
 import torch
 
+from . import stamps
 from .cli import load_model_and_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
@@ -68,25 +69,10 @@ def passage_digest(text=NEUTRAL) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def model_precision(model, load_in_4bit):
-    """What numerical precision this reading was taken at, as a short string.
-
-    A PINNED FIELD SINCE 2026-09-21, added because a panel reviewer pointed out that the loader
-    offers bfloat16 by default and nf4 double-quantised under `--load-in-4bit`, and that nothing
-    recorded which one produced a number. A baseline taken on a rented card in bf16 and a
-    candidate taken in 4-bit because that is the only way it fits on a 6 GB card are not the same
-    measurement: the nf4 round-trip alone moves per-token likelihood by an amount comparable to
-    what an ablation costs, and a gate that cannot see the difference attributes all of it to the
-    edit.
-
-    `getattr` rather than attribute access because a fake or a wrapped model may not carry a
-    dtype, and an absent dtype should read as unknown rather than crash a measurement that has
-    already been paid for.
-    """
-    if load_in_4bit:
-        return "nf4"
-    dtype = getattr(model, "dtype", None)
-    return str(dtype).removeprefix("torch.") if dtype is not None else "unknown"
+#: Moved to `stamps` on 2026-09-25, when the other four writers needed the same answer and
+#: `coherence` was the only module that had one. Re-exported under its old name because it
+#: is this module's own call, and a reader following `precision` back arrives here first.
+model_precision = stamps.model_precision
 
 
 def _stamp_coherence(res, precision="unknown"):
@@ -150,6 +136,13 @@ def _stamp_coherence(res, precision="unknown"):
         # Which precision the number was computed at. See `model_precision`: a 4-bit reading and
         # a bfloat16 one of the same model are different measurements, and the gate pins this.
         precision=precision,
+        # THE FIELD THAT LET THIS FIGURE THROUGH THE GATE AT ALL, and it is a claim rather than a
+        # convenience: see `baseline.DETERMINISTIC_MEANS`. One forward pass over one fixed passage
+        # under fixed precision returns the same number, so there is no run-to-run spread for an
+        # interval to describe, and `from_artefact` required one from every metric. The
+        # alternative that looks like finishing the job, a token-level interval, would put
+        # variation across the passage's tokens in a field that means variation across runs.
+        deterministic=True,
         tool_version=__version__)
 
 

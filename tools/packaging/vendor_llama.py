@@ -355,8 +355,8 @@ def vendor_conversion(manifest, *, dry_run=False, verify_only=False, log=print):
     One download rather than 158 API calls for 158 files. The archive is hashed as a whole, so the
     pin covers every file in the package at once and a single changed byte anywhere in it shows up.
 
-    Why the whole package and not just the script: as of b10355 `convert_hf_to_gguf.py` is a
-    307-line entry point whose first real statement is `from conversion import ...`. Vendoring only
+    Why the whole package and not just the script: as of b11046 `convert_hf_to_gguf.py` is a
+    312-line entry point whose first real statement is `from conversion import ...`. Vendoring only
     the named file produces a stub that raises ImportError, which is what the first version of this
     tool did, silently and with a green exit code.
     """

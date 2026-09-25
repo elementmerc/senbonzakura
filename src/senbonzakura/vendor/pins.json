@@ -15,8 +15,8 @@
     "llama.cpp": {
       "name": "llama.cpp release binaries (llama-quantize, llama-imatrix)",
       "repo": "ggml-org/llama.cpp",
-      "tag": "b10355",
-      "published": "2026-08-10T23:15:19Z",
+      "tag": "b11046",
+      "published": "2026-09-18T23:56:03Z",
       "licence": "MIT",
       "why": [
         "llama-quantize is the only route to a k-quant. The gguf pip package implements",
@@ -26,64 +26,73 @@
         "Reimplementing them in numpy was considered and rejected: the failure mode is a model",
         "that loads and is quietly slightly worse, which is the defect class this project has",
         "withdrawn results over twice.",
-        "llama-imatrix was added on 2026-08-18 and costs 0.34 MB. An importance matrix is what separates an i1- quantisation from a plain one of the same weights, and that difference is not cosmetic: it confounded a sister project's headline 8B comparison, where an abliterated arm quantised WITH an imatrix was read against a stock arm quantised without one, so part of the measured gain was the quantiser rather than the edit. Shipping both halves is what lets that comparison be run with one variable instead of two."
+        "llama-imatrix was added on 2026-08-18 and costs 0.32 MB at b11046. An importance matrix is what separates an i1- quantisation from a plain one of the same weights, and that difference is not cosmetic: it confounded a sister project's headline 8B comparison, where an abliterated arm quantised WITH an imatrix was read against a stock arm quantised without one, so part of the measured gain was the quantiser rather than the edit. Shipping both halves is what lets that comparison be run with one variable instead of two."
       ],
       "assets": {
         "linux-x86_64": {
-          "file": "llama-b10355-bin-ubuntu-x64.tar.gz",
-          "size": 16544604
+          "file": "llama-b11046-bin-ubuntu-x64.tar.gz",
+          "size": 16864882
         },
         "linux-aarch64": {
-          "file": "llama-b10355-bin-ubuntu-arm64.tar.gz",
-          "size": 13415414
+          "file": "llama-b11046-bin-ubuntu-arm64.tar.gz",
+          "size": 13487644
         },
         "macos-arm64": {
-          "file": "llama-b10355-bin-macos-arm64.tar.gz",
-          "size": 11040935
+          "file": "llama-b11046-bin-macos-arm64.tar.gz",
+          "size": 11157542
         },
         "macos-x86_64": {
-          "file": "llama-b10355-bin-macos-x64.tar.gz",
-          "size": 11321528
+          "file": "llama-b11046-bin-macos-x64.tar.gz",
+          "size": 11206288
         },
         "windows-x86_64": {
-          "file": "llama-b10355-bin-win-cpu-x64.zip",
-          "size": 18427275
+          "file": "llama-b11046-bin-win-cpu-x64.zip",
+          "size": 18454127
         },
         "windows-arm64": {
-          "file": "llama-b10355-bin-win-cpu-arm64.zip",
-          "size": 12263344
+          "file": "llama-b11046-bin-win-cpu-arm64.zip",
+          "size": 12002145
         }
       },
       "sha256": {
-        "linux-x86_64": "e180cabf4cd5d685fc5756315f99d6e254c0d54604814647f46bfebb242b66cb"
+        "linux-aarch64": "7920918ce4d5a61ff8b3654102060fe0fc4bf695057d79949e3a4e3b1fb50663",
+        "linux-x86_64": "ca14dec04b4c5725b6373681cc3685c5dbb914301f7f8be6c89649c0a68734a9",
+        "macos-arm64": "96623092033e83545cd92316ff63d0378a976a4979735f80a1934cc128efb0ad",
+        "macos-x86_64": "df796167a64469d8ab805a71aadc9a531982f0b0d86a9b449df5fe72af26a065",
+        "windows-arm64": "b3e4292373b369dd6791be76268e8902fc31af1aca087efeaec065010ff9c111",
+        "windows-x86_64": "dece5ebc80fbc48063540aa4c48fdc91c59328b7ea44c2bdf6e85ec4383b5fc7"
       },
       "note": [
         "CPU archives only. Quantisation is CPU work, so the CUDA, Vulkan, SYCL and ROCm builds",
         "would add hundreds of megabytes per wheel for nothing.",
         "There is no libllama-imatrix-impl.so in the archive: llama-imatrix links against libllama directly, which is already vendored, so the second binary adds no new library."
       ],
-      "chosen_by": "tools/ci/check_vendor_pins.py on 2026-08-17: the newest release that had cleared the 7-day cooldown. It was chosen over b10250, which a human had picked by eye, and over b10456, which was hours old."
+      "chosen_by": "tools/ci/check_vendor_pins.py on 2026-08-17 first chose b10355: the newest release that had cleared the 7-day cooldown. It was chosen over b10250, which a human had picked by eye, and over b10456, which was hours old. Refreshed to b11046 on 2026-09-25 by the same check, for the v0.4 release, and the six platform hashes were recorded from six actual downloads rather than the one this pin previously carried."
     },
     "llama_conversion": {
       "name": "llama.cpp conversion package (convert_hf_to_gguf.py + conversion/)",
       "repo": "ggml-org/llama.cpp",
-      "tag": "b10355",
-      "published": "2026-08-10T23:15:19Z",
+      "tag": "b11046",
+      "published": "2026-09-18T23:56:03Z",
       "licence": "MIT",
       "why": [
         "Not in the gguf pip package: its scripts/ holds only the dump, hash, endian, metadata and",
-        "editor tools. And convert_hf_to_gguf.py alone is NOT enough. As of b10355 it is a 307-line",
-        "entry point that does `from conversion import ...`; the real work is 85 modules and 845 KB",
+        "editor tools. And convert_hf_to_gguf.py alone is NOT enough. As of b11046 it is a 312-line",
+        "entry point that does `from conversion import ...`; the real work is 94 modules and 988 KB",
         "in conversion/. Fetching the one file gives a stub that fails at import, which is exactly",
         "what the first attempt at this produced.",
         "Fetched at build time from the source archive at the pinned tag and hash-verified, NOT",
-        "committed. An 859 KB, 87-file third-party package in our tree would make every pin bump an",
-        "87-file diff, and 'reviewable in a diff' stops being true at that size. Committing it would",
+        "committed. A 1,726 KB, 114-file third-party package in our tree would make every pin bump a",
+        "114-file diff, and 'reviewable in a diff' stops being true at that size. Committing it would",
         "buy the appearance of reviewability rather than the fact of it.",
-        "The module count and size here were MEASURED on 2026-08-18 from the extracted package. The",
-        "figures they replace, 158 modules and 752 KB, were written a day earlier alongside the",
+        "Every count and size here is MEASURED from the extracted package, re-measured at each pin",
+        "refresh, most recently on 2026-09-25 at b11046. The figures they replace were 85 modules",
+        "and 845 KB in conversion/ and an 87-file package, measured at b10355 on 2026-08-18; and the",
+        "ones THOSE replaced, 158 modules and 752 KB, were written a day earlier alongside the",
         "unmeasured hash described below, by the same commit and for the same reason: nothing had",
-        "been downloaded yet. Three claims, one fetch that never happened.",
+        "been downloaded yet. Three claims, one fetch that never happened. The package grew by a",
+        "third between the two pinned tags, which is the reason these numbers are re-measured rather",
+        "than carried forward: a figure that travels across a version bump stops describing anything.",
         "Its cost is that architecture support freezes at the pinned tag, which is why the",
         "refresh-every-release rule matters here as much as for the binaries: a new architecture",
         "landing upstream reaches us at the next release rather than never."
@@ -105,6 +114,14 @@
             "failed to import, while --print-supported-models still advertised Lfm2MoeForCausalLM,",
             "because that list is built from a static registry rather than from what imported.",
             "A claim of support the machinery could not deliver, presenting as green.",
+            "Re-checked at b11046 on 2026-09-25, and UPSTREAM HAS RENAMED THE MOE ENTRY: the enum",
+            "member is MODEL_ARCH.LFM2MOE and the architecture string it writes is 'lfm2moe', where",
+            "b10355 spelled them LFM2_MOE. GEMMA4_ASSISTANT is unchanged and MODEL_ARCH.LFM2, the",
+            "dense entry this project actually quantises, is unchanged and still writes 'lfm2'.",
+            "Nothing in our own source breaks on the rename, because we key off the transformers",
+            "class names (Lfm2MoeForCausalLM) and never off the GGUF enum; the only thing the rename",
+            "invalidated was the sentence above it, which is why it is corrected here rather than",
+            "left to read as a symbol that has gone missing.",
             "No version constraint can express this: the two share a version NUMBER and differ in",
             "contents, so a floor, a ceiling and a pin are all equally unable to tell them apart.",
             "Vendoring gguf-py from the same tag makes the converter and its library consistent by",
@@ -114,8 +131,8 @@
         }
       },
       "sha256": {
-        "any": "e95e4628eea911b817cec473fd95451fc0720304dce72b316980a156c3d1481d",
-        "content": "497a43b50f294216ffd0b37a348d9005427d859c8e55fdc461be165f1ec1c783"
+        "any": "69f27f8899677757cf75f825af0d2400771aa0aac23ab22c06d854c5f011e734",
+        "content": "a97bbbb8babdb2bde61ef8ee2bd71864f77eeedee56c12207a0ac7de16e89166"
       },
       "_hash_note": [
         "The value that sat here until 2026-08-18 was NEVER MEASURED. It was written on 2026-08-17",

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import torch
 
+from . import stamps
 from .cli import (
     accelerator_name,
     last_token_logits,
@@ -871,7 +872,7 @@ def suspect_readout_arms(res):
             if readout.get(arm) and readout[arm].get("suspect")]
 
 
-def _stamp_compass(res):
+def _stamp_compass(res, pinned=None):
     """Add the canonical metrics block beside the fields this command has always written.
 
     ADDITIVE: nothing existing moves, because the published compass figures are recomputed from
@@ -889,12 +890,15 @@ def _stamp_compass(res):
     n = None
     if isinstance(res.get("n_harmful"), int) and isinstance(res.get("n_harmless"), int):
         n = res["n_harmful"] + res["n_harmless"]
+    # THE FIVE PINNED FIELDS, absent here until 2026-09-25, which made every compass figure this
+    # command wrote incomparable with every other one. See `stamps`.
+    fields = dict(pinned or {})
     measurement.stamp(res, "compass_auc", res["auc"], "margin-past-preamble",
-                      n=n, interval=res.get("auc_ci"), by_estimator=True)
+                      n=n, interval=res.get("auc_ci"), by_estimator=True, **fields)
     control = (res.get("controls") or {}).get("length_only_auc")
     if isinstance(control, (int, float)):
         measurement.stamp(res, "compass_auc", control, "length-only-control",
-                          n=n, by_estimator=True)
+                          n=n, by_estimator=True, **fields)
 
 
 def main(argv=None):
@@ -1121,7 +1125,15 @@ def main(argv=None):
                                                   seed=a.seed, resamples=a.bootstrap)
         res["compared_to"] = a.compare_to
 
-    _stamp_compass(res)
+    # BOTH ARMS IN THE DIGEST, and the harmful skip as the partition. An AUC is a statement about
+    # the two sets together, so a digest of either one alone would report two runs as comparable
+    # when one of them scored a different harmless arm. The boundary is called verified only when
+    # the track's own manifest records the same skip: `resolve_skips` accepts an explicit flag
+    # too, and a flag nobody checked is not a partition anybody can trace afterwards.
+    _recorded = (read_manifest(a.track) or {}).get("skip_harmful") if a.track else None
+    _stamp_compass(res, stamps.pinned(prompts=[*harmful, *harmless], model=model, tok=tok,
+                                      load_in_4bit=a.load_in_4bit, skip=a.skip_harmful,
+                                      recorded_skip=_recorded))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
 

@@ -52,6 +52,7 @@ import torch
 # direction allowed: `senbonzakura_check` may never import `senbonzakura`.
 from senbonzakura_check import measurement
 
+from . import stamps
 from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
@@ -331,7 +332,16 @@ def main(argv=None):
                       interval=res["kl_ci"],
                       interval_method=res["kl_ci_method"],
                       computed_in=dtype_name,
-                      supported_by_precision=precise)
+                      supported_by_precision=precise,
+                      # THE FIVE PINNED FIELDS, absent until 2026-09-25. `prompt_format` is said
+                      # out loud rather than derived: this command's loader takes no chat
+                      # template, so the prompts reach the model exactly as the file holds them,
+                      # and a KL taken that way is not comparable with one taken through an
+                      # instruction format. Nothing is skipped here, so the partition is every
+                      # row of the file, which is a different claim from a held-out tail.
+                      **stamps.pinned(prompts=prompts, model=cand,
+                                      load_in_4bit=a.load_in_4bit,
+                                      prompt_format="raw", skip=0))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     if not precise:

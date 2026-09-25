@@ -60,6 +60,7 @@ from . import (
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     separation,  # the candidate statistics for "does this axis carry refusal?" (Q-14)
+    stamps,  # how a measuring command fills the fields `baseline.PINNED` decides comparability on
 )
 
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
@@ -4446,6 +4447,19 @@ def _stamp_separation(record, run, args):
         # corpus is the input here, which is what `input_digest` names.
         input_digest=record.get("track_digest"),
         prompt_format=record.get("chat_template") or "raw",
+        # THE TWO THAT WERE STILL MISSING, found on 2026-09-25 by the guard in
+        # `test_every_writer_stamps_the_pinned_fields`, on its first run, in a writer the manual
+        # sweep that prompted the guard had not counted.
+        #
+        # The partition is `search` and is named rather than derived: candidate directions are
+        # fitted on the fit rows and scored on the search rows, which is where this statistic
+        # comes from, and a separation figure is never taken on the measure partition. Saying so
+        # is what keeps it from ever comparing equal to a figure that was.
+        partition="search",
+        # Which precision the search ran at. A separation computed in nf4 and one in bfloat16 are
+        # different measurements for the same reason every other figure here pins this.
+        precision=stamps.model_precision(getattr(run, "model", None),
+                                         getattr(args, "load_in_4bit", False)),
         tool_version=__version__)
 
 

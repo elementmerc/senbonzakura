@@ -54,6 +54,35 @@ SCHEMA = "senbonzakura-baseline/1"
 #: to learn once; what they never meet is a hole.
 FIXED_PASSAGE = "fixed-passage"
 
+#: What a writer is claiming when it stamps `deterministic=True`, and why the claim is the writer's
+#: to make rather than the gate's to infer.
+#:
+#: THE HOLE THIS FILLS (operator decision, 2026-09-25, option A of three). `from_artefact` demanded
+#: an interval from every metric, and `coherence` is one deterministic forward pass over one fixed
+#: passage: it has no run-to-run spread for an interval to describe. So the one writer that carried
+#: all eight pinned fields was refused on the field it could not honestly supply, and `baseline`
+#: accepted nothing this repository could produce, which is the exact condition the module header
+#: says it was written to end.
+#:
+#: The two rejected alternatives are both worse in the same way. Recording a TOKEN-LEVEL interval
+#: would fill the field with variation across the passage's tokens, which is a different quantity
+#: wearing the interval's name, and this project withdraws numbers over exactly that. Reporting
+#: over SEVERAL passages would produce a real interval and change what the metric means, breaking
+#: comparability with every coherence figure already published.
+#:
+#: THE CLAIM: under the conditions `PINNED` fixes, re-running this measurement returns the same
+#: number. Not "the spread is small"; the same number. A metric that is merely stable is not
+#: deterministic and must record its interval like everything else.
+#:
+#: THE RESIDUAL, named rather than papered over: `PINNED` does not fix the accelerator, and a
+#: bfloat16 forward pass can differ in its last bits between two devices. A deterministic baseline
+#: compared across machines can therefore read as a regression on a difference that is hardware
+#: rather than model. If that turns up in practice the answer is to pin the device in `PINNED`, not
+#: to add a tolerance: a tolerance is an interval that nobody measured.
+DETERMINISTIC_MEANS = (
+    "declared deterministic: under the pinned conditions this measurement returns the same "
+    "number, so it has no interval and is compared exactly")
+
 #: What must agree for two measurements to be comparable, and what each one decides. This is the
 #: whole safety argument of the module, so each entry says why it is here rather than only what it
 #: is called.
@@ -111,26 +140,46 @@ class BaselineError(Exception):
 
 
 def record(*, model, metric, direction, point, interval, input_digest, partition,
-           prompt_format, tool_version, estimator, precision, seeds, n, extra=None):
+           prompt_format, tool_version, estimator, precision, seeds, n, deterministic=False,
+           extra=None):
     """Build a baseline artefact. Every field is required except `extra`, deliberately.
 
     A baseline with a hole in it is the thing this module exists to refuse, so there is no way to
     build one by forgetting an argument: a missing field would be silently absent later, and
     absence is exactly what the comparability check has to treat as unknown.
+
+    `deterministic=True` is the ONE case where `interval` may be None, and it is a claim rather
+    than an exemption: see DETERMINISTIC_MEANS for what the writer is asserting by setting it.
     """
     if direction not in DIRECTIONS:
         raise BaselineError(
             f"direction must be one of {DIRECTIONS}, not {direction!r}. Whether a number moving up "
             f"is better or worse is not inferable from the metric's name, and guessing it wrong "
             f"turns a regression into a pass.")
-    lo, hi = interval
-    if lo > hi:
-        raise BaselineError(f"interval {interval} is inverted: its low bound exceeds its high one.")
-    if not (lo <= point <= hi):
-        raise BaselineError(
-            f"point estimate {point} lies outside its own interval {interval}. One of the two was "
-            f"computed on different data from the other, and a gate built on it would compare a "
-            f"number to an interval that never described it.")
+    if deterministic:
+        if interval is not None:
+            raise BaselineError(
+                f"this baseline is declared deterministic and also carries an interval "
+                f"{interval}. A number that does not vary between runs has nothing for an "
+                f"interval to describe, so one of the two claims is wrong, and a gate cannot "
+                f"tell which. Drop the interval, or drop the deterministic flag.")
+    else:
+        if interval is None:
+            raise BaselineError(
+                "this baseline has no interval and is not declared deterministic, so there is "
+                "nothing for the gate to fire on: it compares intervals rather than point "
+                "estimates, because a gate that fails on noise is switched off within a "
+                "fortnight. Record the interval the measurement reports, or declare the metric "
+                "deterministic if it genuinely does not vary between runs.")
+        lo, hi = interval
+        if lo > hi:
+            raise BaselineError(
+                f"interval {interval} is inverted: its low bound exceeds its high one.")
+        if not (lo <= point <= hi):
+            raise BaselineError(
+                f"point estimate {point} lies outside its own interval {interval}. One of the two "
+                f"was computed on different data from the other, and a gate built on it would "
+                f"compare a number to an interval that never described it.")
     if n <= 0:
         raise BaselineError(f"a baseline measured on {n} observations is not a measurement.")
     return {
@@ -139,7 +188,8 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
         "metric": str(metric),
         "direction": direction,
         "point": float(point),
-        "interval": [float(lo), float(hi)],
+        "interval": None if deterministic else [float(interval[0]), float(interval[1])],
+        "deterministic": bool(deterministic),
         "n": int(n),
         "input_digest": str(input_digest),
         "partition": str(partition),
@@ -236,11 +286,31 @@ def comparability(baseline, now):
 MAX_WIDTH_RATIO = 2.0
 
 
+def interval_of(doc):
+    """The interval a baseline or a stamped measurement carries, or None if it is deterministic.
+
+    One place that knows the field may legitimately be absent, so no caller has to remember it.
+    `tuple(doc["interval"])` at three call sites was how a deterministic measurement turned into
+    a TypeError, and this command reports a TypeError as a refusal, which reads as "not
+    comparable" for a measurement that was perfectly comparable.
+    """
+    if doc.get("deterministic"):
+        return None
+    interval = doc.get("interval")
+    return None if interval is None else (float(interval[0]), float(interval[1]))
+
+
 def refuse_if_too_blunt(baseline, now_interval):
     """Stop a comparison whose current measurement is too imprecise to have seen anything.
 
     Raises BaselineError, which the gate reports as REFUSED rather than as a regression.
+
+    SKIPPED FOR A DETERMINISTIC BASELINE, per `DETERMINISTIC_MEANS`. The guard asks whether this
+    run's interval is too wide to have seen the property move; a measurement that returns the same
+    number every time has no width, and there is nothing for it to have failed to see.
     """
+    if baseline.get("deterministic") or now_interval is None:
+        return
     lo, hi = float(now_interval[0]), float(now_interval[1])
     base_lo, base_hi = float(baseline["interval"][0]), float(baseline["interval"][1])
     base_width, width = base_hi - base_lo, hi - lo
@@ -283,6 +353,40 @@ def overlaps(a, b):
     return a[0] <= b[1] and b[0] <= a[1]
 
 
+def _deterministic_verdict(baseline, now_point, now_interval, metric, direction, moved):
+    """Compare two readings of a metric that claims to return the same number every time.
+
+    EXACTLY, and that is the point rather than an oversight. `DETERMINISTIC_MEANS` records what
+    the writer asserted: under the pinned conditions this measurement does not vary. If it varied,
+    either the model changed or the claim was false, and both deserve a reader's attention. A
+    tolerance here would be an interval nobody measured, which is the thing the whole module
+    refuses to compare against.
+    """
+    if now_interval is not None:
+        raise BaselineError(
+            f"the baseline for {metric} is deterministic and this measurement carries an "
+            f"interval {list(now_interval)}, so the two were not produced by the same "
+            f"instrument. Compare a deterministic reading against a deterministic baseline.")
+    base = float(baseline["point"])
+    if moved == 0:
+        return True, f"{metric}: unchanged", (
+            f"baseline {base:.4f} and this run {float(now_point):.4f} are the same number. "
+            f"{DETERMINISTIC_MEANS.capitalize()}, so an exact match is what a pass looks like "
+            f"and any difference at all would have been reported.")
+    worse = moved < 0 if direction == HIGHER_IS_BETTER else moved > 0
+    where = "below" if moved < 0 else "above"
+    if worse:
+        return False, f"{metric}: REGRESSED", (
+            f"baseline {base:.4f}, this run {float(now_point):.4f}, {abs(moved):.4f} {where} it "
+            f"and in the worse direction for a metric where {direction.replace('_', ' ')}. This "
+            f"metric is {DETERMINISTIC_MEANS}, so there is no run-to-run noise for the move to "
+            f"be: either the model changed or the determinism claim was wrong.")
+    return True, f"{metric}: improved", (
+        f"baseline {base:.4f}, this run {float(now_point):.4f}, {abs(moved):.4f} {where} it and "
+        f"in the better direction. This metric is {DETERMINISTIC_MEANS}, so the move is real "
+        f"rather than noise and is worth knowing about even though it passes.")
+
+
 def verdict(baseline, now_point, now_interval):
     """Compare, and return (ok, headline, detail). Refuses first; never compares blind.
 
@@ -290,12 +394,22 @@ def verdict(baseline, now_point, now_interval):
     direction that is worse. Disjoint-and-better is a pass, and it still says so out loud, because
     a measurement that moved a long way is worth a reader's attention whichever way it went.
     """
+    metric, direction = baseline["metric"], baseline["direction"]
+    moved = float(now_point) - float(baseline["point"])
+
+    if baseline.get("deterministic"):
+        return _deterministic_verdict(baseline, now_point, now_interval, metric, direction, moved)
+
+    if now_interval is None:
+        raise BaselineError(
+            f"the baseline for {metric} carries an interval and this measurement does not, so "
+            f"there is nothing to compare it against. A metric that was measured with a spread "
+            f"and is now declared deterministic changed instrument between the two readings, "
+            f"which is what `estimator` and `tool_version` are pinned to catch.")
     lo, hi = float(now_interval[0]), float(now_interval[1])
     if lo > hi:
         raise BaselineError(f"interval [{lo}, {hi}] is inverted.")
     base_iv = (float(baseline["interval"][0]), float(baseline["interval"][1]))
-    metric, direction = baseline["metric"], baseline["direction"]
-    moved = float(now_point) - float(baseline["point"])
 
     if overlaps(base_iv, (lo, hi)):
         # THE INTERVAL IS PRINTED ON A PASS, not only on a failure. A gate whose threshold is so
@@ -399,12 +513,19 @@ def from_artefact(doc, metric_key, *, seeds):
             f"no metric {metric_key!r} in this artefact. It carries: "
             f"{', '.join(sorted(metrics))}.")
 
+    deterministic = bool(block.get("deterministic"))
     interval = block.get("interval")
-    if not (isinstance(interval, (list, tuple)) and len(interval) == 2):
+    if deterministic and interval is not None:
+        raise BaselineError(
+            f"{metric_key} is stamped deterministic and also carries an interval {interval}. "
+            f"A number that does not vary between runs has nothing for an interval to describe, "
+            f"so one of the two claims is wrong and nothing here can tell which.")
+    if not deterministic and not (isinstance(interval, (list, tuple)) and len(interval) == 2):
         raise BaselineError(
             f"{metric_key} has no interval, and this gate fires on intervals rather than on point "
             f"estimates: a gate that fails on noise is switched off within a fortnight. Measure it "
-            f"with the interval its command reports, or record the baseline by hand and say in "
+            f"with the interval its command reports, stamp it `deterministic=True` if it genuinely "
+            f"returns the same number every run, or record the baseline by hand and say in "
             f"the filename what it rests on.")
     n = block.get("n")
     if not isinstance(n, int) or n <= 0:
@@ -418,7 +539,8 @@ def from_artefact(doc, metric_key, *, seeds):
             f"tell a regression from an improvement.")
     return record(
         direction=HIGHER_IS_BETTER if higher else LOWER_IS_BETTER,
-        point=block["value"], interval=tuple(interval), seeds=seeds, n=n,
+        point=block["value"], interval=None if deterministic else tuple(interval),
+        deterministic=deterministic, seeds=seeds, n=n,
         extra={"from_metric_key": metric_key, "units": block.get("units")},
         **pinned)
 

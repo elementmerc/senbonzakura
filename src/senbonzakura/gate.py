@@ -73,7 +73,7 @@ def run(argv=None, log=print):
         # Comparability asks "were these measured under the same conditions"; this asks "could
         # this measurement have seen the thing move at all". A run that could not is refused
         # rather than passed, because a pass here is the reassurance a reader takes away.
-        baseline.refuse_if_too_blunt(recorded, tuple(current["interval"]))
+        baseline.refuse_if_too_blunt(recorded, baseline.interval_of(current))
     except baseline.BaselineError as e:
         # NOT `--quiet`-able. The one thing a reader must never have to go looking for is the
         # reason a gate declined to answer, because the alternative reading of a silent refusal
@@ -89,7 +89,7 @@ def run(argv=None, log=print):
     # itself can also raise on an inverted interval, which was outside both try blocks.
     try:
         ok, headline, detail = baseline.verdict(
-            recorded, current["point"], tuple(current["interval"]))
+            recorded, current["point"], baseline.interval_of(current))
     except (KeyError, TypeError, ValueError, IndexError) as e:
         log(f"gate REFUSED: {a.measurement} is not a measurement this gate can read: "
             f"{type(e).__name__}: {e}")

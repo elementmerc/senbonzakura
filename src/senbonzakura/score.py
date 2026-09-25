@@ -16,7 +16,7 @@ import json
 
 import torch
 
-from . import lengthsweep, metrics
+from . import lengthsweep, metrics, stamps
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
@@ -145,7 +145,7 @@ def generate_prefixes(model, tok, prompts, device, batch=16, cuts=None):
     return rows
 
 
-def _stamp_refusal(res):
+def _stamp_refusal(res, pinned=None):
     """Add the canonical metrics block beside the fields this command has always written.
 
     ADDITIVE. Every existing top-level field stays exactly where it is, because the published
@@ -160,10 +160,15 @@ def _stamp_refusal(res):
     """
     from senbonzakura_check import measurement
     n = res.get("n")
+    # THE FIVE PINNED FIELDS, absent here until 2026-09-25. `baseline.PINNED` requires them and
+    # `comparability` reports an absent one as a mismatch, so every refusal figure this command
+    # wrote was incomparable with every other one and nothing said why. Derived in `stamps` rather
+    # than here, because the same five were missing from four writers for the same reason.
+    fields = dict(pinned or {})
     measurement.stamp(res, "refusal_rate", res["refusal"], "senbonzakura-ruler",
-                      n=n, by_estimator=True)
+                      n=n, by_estimator=True, **fields)
     measurement.stamp(res, "refusal_rate", res["heretic"], "heretic-keyword",
-                      n=n, by_estimator=True)
+                      n=n, by_estimator=True, **fields)
 
 
 def score(gens, label="", model="", eval_path=""):
@@ -302,7 +307,10 @@ def main(argv=None):
     # Recorded in the artefact and not only printed, so a number read back months later carries
     # the caveat it was produced under rather than relying on somebody having seen a log line.
     res["budget_warning"] = warning
-    _stamp_refusal(res)
+    # The prompts as scored, after --skip and --n, so the digest describes the rows the number was
+    # actually taken on rather than the file they were drawn from.
+    _stamp_refusal(res, stamps.pinned(prompts=prompts, model=model, tok=tok,
+                                      load_in_4bit=a.load_in_4bit, skip=a.skip))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

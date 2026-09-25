@@ -4,9 +4,15 @@ All notable changes to Senbonzakura are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — TYBW
+## [0.4.0] "TYBW" — YYYY-MM-DD
 
-The release that makes the measurement trustworthy. The date is added at tag time.
+The release that makes the measurement trustworthy.
+
+**`YYYY-MM-DD` above is a placeholder and it is deliberate.** The date is set in the tag sequence,
+in the same step that drops the `.devN` suffix from both distributions, because a date written
+before the tag is a date that goes stale the first time a release slips. The two are tied by
+`tests/test_the_release_heading_and_the_version_agree.py`, so a non-dev version with this
+placeholder still in place fails the build rather than shipping.
 
 **The multi-direction feature had never worked, and was rewritten in this release.** The check
 that decided whether a candidate direction carries refusal could not accept any direction, on

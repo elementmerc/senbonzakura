@@ -60,6 +60,38 @@ whether it complied, and it carried full weight in the rule that decides which t
 the finished model, so the search was being steered toward models that do not caveat. Noncompliance
 rates from before this date are not comparable with rates after it.
 
+### Breaking
+
+Read this section before upgrading. Nothing here breaks an install; what breaks is the meaning of
+results you already hold.
+
+- **Every number produced by an earlier version is withdrawn, not adjusted.** Three separate
+  faults in this cycle each changed what the tool measures: the direction filter accepted every
+  candidate it was given, the hedging detector scored compliant answers as soft refusals, and the
+  weight edit did not reach the running state on one family of models. There is no conversion
+  factor between an old figure and a new one. Re-measure.
+- **`--max-directions` above 1 did nothing before this release, on any model, at any setting.**
+  Every earlier run applied exactly one direction however many it was asked for. A run whose
+  records say it used eight used one. This release finds up to eight per layer, and the
+  comparison that was meant to show several beat one is withdrawn; when it was finally run
+  properly, more directions lost.
+- **Gemma, Gemma 3 and Olmo 2 results from earlier versions describe the base model.** Those
+  architectures rescale each layer's output before adding it to the model's running state, and
+  the edit was applied upstream of that rescaling, so it was largely undone. Fixed in this
+  release. Any earlier Gemma checkpoint or figure is about an unedited model.
+- **The evaluation track is now required, and a run without one refuses instead of guessing.**
+  An install carries a bundled track and `--track default` uses it, so most users see no change.
+  A clone has none, because the track is generated rather than committed, and there the refusal
+  names the two commands that build one.
+- **The `datasets` package moved to an extra, and naming a dataset by its HuggingFace id needs
+  it.** `--good-ds owner/name` now asks for `pip install 'senbonzakura[hub]'`. Local tracks, the
+  bundled corpora and every file format the tool reads are unaffected. Shell completion moved the
+  same way, to `senbonzakura[completion]`. Both were part of a plain install in 0.3.0.
+- **0.3.0 could not run the compass at all**, and neither could 0.3.1, which was a licence patch
+  with byte-identical code. Those wheels contain no `margin.py` and no `crashsafe.py`. If you
+  read about `senbonzakura compass` and could not find it, that is why, and this release is the
+  first one that has it.
+
 ### Install
 
 - `pip install senbonzakura` installs torch, transformers, accelerate and optuna, as 0.3.0 also
@@ -300,16 +332,15 @@ install rather than only in a source checkout.
 
 - Continuous integration, which this repository had never had, on Linux, Windows and macOS
   across five Python versions.
-- **`pip install senbonzakura` no longer installs the deep-learning stack.** It is now one
-  library, and it gets you the commands that check things: building an
-  evaluation split, auditing one, checking a benchmark for contamination, checking what an
-  install can do. None of those need a model or a graphics card. Editing a model needs
-  `pip install 'senbonzakura[abliterate]'`. Measured on Linux with Python 3.14 and the CPU-only
-  torch wheel, that is roughly 210 MB against roughly 1.5 GB; the default CUDA wheel is
-  considerably larger again, so read these as the size of the difference rather than as what you
-  will see.
-- **If you are upgrading from 0.3.0, abliterating a model needs that extra.** The tool says so
-  and prints the exact command; it does not fail with a traceback.
+- **A plain `pip install senbonzakura` still installs the deep-learning stack, as 0.3.0 did.**
+  During development this release briefly split it out behind an `abliterate` extra, and that
+  split was reversed before release: somebody who types the plain command wants to edit a model,
+  and handing them a skeleton that then asks which extra they needed is a worse first five
+  minutes than a large download. The `abliterate` extra still exists and still resolves, so
+  anything written down against it keeps working; it now installs what the plain command does.
+  The torch-free capability itself was not withdrawn, only the default, and it is still measured
+  on every commit: the checking commands run with torch, transformers, accelerate and optuna all
+  made unimportable, so a verifier or a distribution package can still be built without them.
 - **Two other things move behind extras in this release.** Naming a dataset by its HuggingFace id
   (`--good-ds owner/name`) needs `pip install 'senbonzakura[hub]'`, and shell completion needs
   `pip install 'senbonzakura[completion]'`. Both were part of a plain install in 0.3.0.

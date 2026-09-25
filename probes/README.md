@@ -3,7 +3,16 @@
 A probe is a behaviour somebody wants measured: a set of items, a rule for grading them, and
 enough provenance that the number it produces can be argued with.
 
-Probes in this directory are distributed with the project. Anyone who installs it gets them.
+Probes in this directory are NOT yet distributed with the project. That sentence said they
+were until 2026-09-25, and nothing packages this directory: it appears in neither
+`pyproject.toml`'s `package-data` nor `MANIFEST.in`, so a `pip install` does not carry it.
+The one probe that does ship is the bundled capability probe under `senbonzakura/data/`,
+which is built rather than contributed.
+
+This matters because the provenance and licence requirements below were justified by that
+claim, and asking a contributor to meet them in exchange for distribution that does not
+happen is not a fair trade. The requirements stand on their own merits, and packaging this
+directory is queued.
 
 ## Read this before you use one
 
@@ -38,8 +47,10 @@ Open a pull request adding it here. Three things happen, in this order.
 2. **A human reads the items.** This is required and it is not a formality. The gate can only see
    shape, and the obvious way to abuse a contribution format on a tool like this one is to post a
    harmful corpus as a benchmark. A probe is merged when somebody has read it.
-3. **It ships.** From then on it travels inside other people's runs, which is why the licence and
-   the provenance are required rather than encouraged.
+3. **It is merged, and packaging it is queued.** The licence and the provenance are required
+   because a contributed probe is meant to travel inside other people's runs. Be aware that
+   this directory is not packaged yet, so today it travels to anyone who clones rather than
+   to anyone who installs.
 
 ## What will be refused
 

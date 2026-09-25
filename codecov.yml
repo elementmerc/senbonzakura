@@ -1,3 +1,5 @@
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 # Codecov reports; it does not gate.
 #
 # The coverage gate for this project is `fail_under` in pyproject.toml, enforced by pytest on

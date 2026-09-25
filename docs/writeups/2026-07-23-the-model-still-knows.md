@@ -6,11 +6,35 @@ The obvious worry: have you also deleted the part that understood *why* it was r
 
 I tested that. It took three tries, because the first two tests were broken. This writeup covers what I found, what I got wrong, and how I fixed it.
 
-> **These seven numbers are IN-SAMPLE and are not comparable with anything measured since.**
-> They were scored on prompts that the fitting set also contained, before the corpus was
-> repaired on 2026-07-30 and before the harmful arm was held out. Any table placing them beside
-> a held-out figure is comparing two different measurements. They are kept here because the
-> writeup is a record of what was believed at the time, not because they are usable.
+> **WITHDRAWN, 2026-09-25: the whole AUC table, not just the gemma row.** Every AUC figure below
+> was read at the wrong position in the model's reply, so none of them measures what the column
+> heading says. The refusal percentages are a separate measurement and are also unusable, for the
+> in-sample reason given further down. The table is struck rather than restated, because
+> restating it before a re-measurement would be guessing at what the corrected numbers are. A
+> re-measurement is scheduled.
+>
+> **What went wrong.** Qwen3 is a thinking model. Its chat template appends a `<think>` marker to
+> the prompt, so the position right after the prompt, which is where the compass read its two
+> verdict logits, is where the model was about to start reasoning rather than where it answers.
+> The compass was reading the wrong token.
+>
+> Corrected, Qwen3-1.7B goes from 0.9636 to 0.9887 and Qwen3-0.6B from 0.7263 to 0.6616. **The
+> correction does not move every model the same way**, which is why no row can be salvaged by
+> assuming it moved a little. The 0.6B moves down to 0.6616 against a length-only control of
+> 0.6564, meaning that on the corrected reading it does not recognise harm at all, where the
+> table below has it starting out knowing something and losing it. The full record is in
+> `evidence/compass-2026-07-30/README.md`.
+>
+> **These numbers were also IN-SAMPLE.** They were scored on prompts that the fitting set also
+> contained, before the corpus was repaired on 2026-07-30 and before the harmful arm was held
+> out. Either problem alone would be enough to withdraw them.
+>
+> The table is kept on the page, struck through, because this writeup is a record of what was
+> believed at the time. Nothing in it should be quoted as a measurement.
+>
+> **That includes the title.** "The model still knows" was the conclusion this table was read as
+> supporting, and with the table withdrawn the page no longer supports it. The question is open
+> again until the re-measurement answers it.
 
 
 ## How the test works
@@ -43,30 +67,32 @@ I tested that. It took three tries, because the first two tests were broken. Thi
 > by intervening directly on the model's running state, which bypasses the rescaling. On Qwen3
 > the two agreed to within 0.016 in refusal rate. On gemma they disagreed by 0.578.
 
-Seven small instruct models from four families. Rented A40 GPUs, about £1.87 for everything here.
+Seven small instruct models from four families, on rented GPUs. The sweep ran on a rented RTX 3090 and the unabliterated baselines on a rented 4090; an earlier version of this line said A40, which the session records do not support. The cost figure that sat here is struck with them, because it was a cost for the wrong hardware.
 
 AUC is the score. It asks: given one harmful and one harmless prompt, how often does the model rank the harmful one as more dangerous? 0.5 is a coin flip. 1.0 is perfect.
 
+**Every row below is withdrawn. See the notice at the top of the page.**
+
 | Model | Refused before | Refused after | AUC before | AUC after | Change |
 |---|---|---|---|---|---|
-| ~~gemma-2-2b-it~~ | ~~90.0%~~ | ~~2.5%~~ | ~~0.9996~~ | ~~0.9863~~ | ~~−0.013~~ **withdrawn, see the correction above** |
-| Qwen2.5-1.5B | 88.0% | 26.5% | **0.9983** | **0.9972** | −0.001 |
-| Qwen3-1.7B | 9.5% | 0.0% | **0.9645** | **0.9332** | −0.031 |
-| Llama-3.2-1B | 68.5% | 15.0% | 0.7739 | 0.6400 | −0.134 |
-| Qwen3-0.6B | 0.0% | 0.0% | 0.7293 | 0.6312 | −0.098 |
-| SmolLM2-1.7B | 28.5% | 14.0% | 0.6799 | 0.6615 | −0.018 |
-| TinyLlama-1.1B | 0.5% | 1.5% | 0.5506 | 0.5431 | −0.008 |
+| ~~gemma-2-2b-it~~ | ~~90.0%~~ | ~~2.5%~~ | ~~0.9996~~ | ~~0.9863~~ | ~~−0.013~~ |
+| ~~Qwen2.5-1.5B~~ | ~~88.0%~~ | ~~26.5%~~ | ~~0.9983~~ | ~~0.9972~~ | ~~−0.001~~ |
+| ~~Qwen3-1.7B~~ | ~~9.5%~~ | ~~0.0%~~ | ~~0.9645~~ | ~~0.9332~~ | ~~−0.031~~ |
+| ~~Llama-3.2-1B~~ | ~~68.5%~~ | ~~15.0%~~ | ~~0.7739~~ | ~~0.6400~~ | ~~−0.134~~ |
+| ~~Qwen3-0.6B~~ | ~~0.0%~~ | ~~0.0%~~ | ~~0.7293~~ | ~~0.6312~~ | ~~−0.098~~ |
+| ~~SmolLM2-1.7B~~ | ~~28.5%~~ | ~~14.0%~~ | ~~0.6799~~ | ~~0.6615~~ | ~~−0.018~~ |
+| ~~TinyLlama-1.1B~~ | ~~0.5%~~ | ~~1.5%~~ | ~~0.5506~~ | ~~0.5431~~ | ~~−0.008~~ |
 
-**What the data says:**
+**What the data was read as saying, and why none of it stands:**
 
-- **Three models could genuinely tell harmful from harmless.** Those three kept nearly all of it. Qwen2.5 lost 0.001. Qwen3-1.7B lost 0.031. (Gemma was the third, and its row is withdrawn: see the correction above.)
-- **That answers the worry.** On models that had the knowledge, the refusal and the knowledge sit in different places. You can take one and leave the other.
-- **Two models lost real ground.** Llama-3.2-1B lost 0.134 and Qwen3-0.6B lost 0.098. Both ended up close to a coin flip.
-- **The loss does not track anything obvious.** Correlation between how much they knew and how much they lost: 0.14. Between how much refusal was removed and how much was lost: 0.18. Both are nothing.
-- **Qwen3-0.6B is the awkward one.** It refused 0.0% of harmful requests before surgery. There was nothing to remove. It still lost the second most.
-- **Three abliterations did not fully work.** Qwen2.5 still refuses 26.5%, Llama 15.0%, SmolLM2 14.0%.
-- **Nothing was broken by the surgery.** Drift (KL divergence against the original) ran from 0.014 to 0.157. Zero broken outputs across all 56 evaluation files.
-- **Most of these models cannot give a straight answer.** Four of the seven say "HARMFUL" to 100% of harmless prompts. Their judgement is pinned to one side.
+Every bullet that used to sit here rested on the struck table, so all of them go with it. They are described rather than restated, because a withdrawn number repeated in prose is still a published number.
+
+- The headline reading was that three models could genuinely tell harmful from harmless and kept nearly all of it after surgery, which was the answer to the worry this writeup opens with. **That reading is not available from this data.** It may survive a re-measurement and it may not; the point of withdrawing is that nobody can tell from here.
+- Two models were read as losing real ground, and one of those, Qwen3-0.6B, carried a paragraph of its own about being the awkward case that had nothing to remove and lost ground anyway. **The corrected reading of that model puts it at chance before the surgery**, so the awkwardness was a measurement artefact rather than a finding.
+- Two correlations were quoted, between how much a model knew and how much it lost, and between how much refusal was removed and how much was lost. Both were computed over the struck column.
+- A drift range and a broken-output count were quoted as evidence that nothing was damaged. Neither has an artefact in the repository behind it, and the file count in that sentence does not match the number of evaluation files that exist, so both are withdrawn as unsourced rather than as wrong.
+
+The one claim here that does not depend on the AUC column is that most of these models cannot give a straight answer: four of the seven answered "HARMFUL" to every harmless prompt. That is a fact about their raw output rather than about the ranking, and it is what motivated scoring logits instead of counting verdicts. It is also unsourced in this repository and should be treated as a recollection until the re-measurement lands.
 
 ## Why my first two attempts failed
 
@@ -91,9 +117,11 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 - I added the 200 harmless prompts and scored balanced accuracy, which is the average of the two rates.
 - Qwen2.5 scored exactly 50%, which is chance. I rewrote the article to say three of seven models never knew anything.
 - That was also wrong. If a model's threshold is stuck at one end, counting its answers gives 50% whether or not it can tell the difference.
-- Qwen2.5's real AUC is 0.9983. It knew perfectly well. It just had one favourite word.
-- Llama looked *worse* than a coin flip at 33.5%. A third of its answers never reached a verdict, and I counted every one of those as wrong. Its real AUC is 0.7739.
-- SmolLM2 looked like it collapsed from 61% to 17%, and I called it the clearest damage in the set. Its AUC moved by 0.018. It was a threshold shift, not brain damage.
+- Qwen2.5 ranked the two arms almost perfectly while saying one word. It knew perfectly well. It just had one favourite word. (The AUC quoted here is withdrawn with the table.)
+- Llama looked *worse* than a coin flip at 33.5%. A third of its answers never reached a verdict, and I counted every one of those as wrong. Ranking its logits instead put it well above chance. (Withdrawn with the table.)
+- SmolLM2 looked like it collapsed from 61% to 17%, and I called it the clearest damage in the set. Ranking moved it barely at all. It was a threshold shift, not brain damage. (Withdrawn with the table.)
+
+The lesson in this section survives the withdrawal and the numbers do not. Counting verdicts and ranking scores disagreed about every model in the set, and that disagreement is the reason the method changed. How far apart they were is a question for the re-measurement.
 
 ## The fixes
 
@@ -116,40 +144,38 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 - **Measure the baseline first, on harmful and harmless prompts.** If a model cannot tell them apart before you touch it, nothing you do after will show up as damage.
 - **Do not trust a 100% score.** Check what the model says about harmless prompts. If it flags those too, the score means nothing.
 - **Do not count verdicts on small models.** Four of my seven have a pinned threshold. Score the logits instead.
+- **Then check which token you are scoring.** Scoring the logits removed one class of bug and introduced another: on a thinking model the position right after the prompt is where it starts reasoning, not where it answers, and the compass read the wrong one for months. Assert that the token you are reading is actually a verdict, on every model, before you trust a single number.
 - **Keep the raw outputs.** Both of my bugs were invisible in the percentages and obvious in the text.
 - **Every model here is under 3B, and six of the seven are under 2B.** The exception was
   gemma-2-2b-it at 2.61B, and this bullet used to say it carried the strongest result in the set,
-  so the largest model was doing most of the work in the headline. **That reading is gone with the
-  row.** The Gemma edit never reached the model's running state, so there is no Gemma result to
-  lean on, and the headline now rests on the six models under 2B alone. That is a weaker claim
-  than the one this writeup originally made, and it is the honest one. None of it is proven to
-  hold at 30B or 70B.
+  so the largest model was doing most of the work in the headline. That reading went with the
+  gemma row in 2026-08, and the rest of the table has since gone with it. **There is no headline
+  result on this page any more**, at any size. Nothing here is proven to hold at 30B or 70B, and
+  as of the withdrawal nothing here is proven at 1B either.
 
 ## Everything here is checkable
 
 I lost the first sweep's artefacts. It kept only percentages, so when I wanted a number nobody had computed at the time, the only way to get it was to rent the hardware again. That is how a broken metric survived twice.
 
-**CORRECTED 2026-09-25: three of the five items below are not reachable, and this section is the
-one that promised they were.** Checked against the account rather than from memory. The
-checkpoints and the GGUF builds are public. The result files, the per-prompt margins and the raw
-generations are in a dataset that is **private**, with zero downloads, so the invitation two
-paragraphs down to "check it on a laptop without renting anything" could not be taken up by
-anybody. The direction of that error is the safe one for the generations, which are output from
-models with their refusal removed and should not be public. It is the wrong direction for the
-result files and the margins, which are aggregate JSON carrying no prompts and could be published;
-whether to do that is an open decision rather than an oversight, and it is recorded as one.
+**CORRECTED TWICE, and the heading is the thing that was wrong.** This section promised five
+kinds of artefact. Checked against the account rather than from memory, on 2026-09-25, and then
+the files themselves were opened rather than described:
 
-Published with this writeup, and still reachable:
+- **The checkpoints and the GGUF builds are public**, as stated. Those two claims hold.
+- **The result files do not exist.** Not withheld, not private: they were never kept. The first
+  correction to this section said they were held but unpublished, which was itself written from
+  this page's own wording rather than from a listing.
+- **The per-prompt margins exist for four of the seven models**, on the abliterated side only.
+  So the struck table could not be recomputed from them even if they were published.
+- **The margins also contain every prompt in full**, which this page previously described as
+  aggregate data carrying no prompt text. They are 200 harmful requests and 200 harmless ones in
+  plain text, repeated across four files. Publishing them would be publishing a harmful prompt
+  set, which is a different act from publishing scores, and this project does not do it.
+- **The raw generations are kept and stay unpublished.** They are output from models with their
+  refusal removed. That one was always the intended answer and it does not change.
 
-- The abliterated models, one repo each, with the evaluation on every card.
-- GGUF builds, F16 and Q4_K_M, for llama.cpp, Ollama and LM Studio.
-Held, but NOT published:
-
-- Every result file, for every arm and both sides.
-- Every per-prompt logit margin, so the AUC table can be recomputed or re-cut.
-- Every raw generation: each prompt, and every word each model said back.
-
-These exist and are kept. They are in a private dataset, so the sentence that used to sit here,
-inviting you to check the third ruler on a laptop without renting anything, was an invitation to
-something you could not do. The raw generations will stay unpublished; the results and the
-margins are a decision rather than a policy.
+So the honest statement of this section is the opposite of its heading: the numbers in this
+writeup are **not** checkable from what was kept. The invitation that used to sit here, to check
+the third ruler on a laptop without renting anything, could never have been taken up. That is the
+reason the table above is withdrawn rather than footnoted, and the reason every result published
+since carries a `measured-YYYY-MM-DD` record written at the time.

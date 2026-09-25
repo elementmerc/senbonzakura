@@ -28,28 +28,31 @@ the ten seeds returns **p = 0.238**, so there is **no detectable coherence diffe
 at this size**, and the earlier "roughly half the collateral damage" is not a finding.
 
 The per-seed values are listed above in full precisely so this block does not have to be taken on
-trust. Publishing the run's thirty artefacts, which are aggregate JSON with no prompts and no
-weights in them, is an open decision rather than an oversight: this repository's ignore rules
-exclude every `results/` directory by default, under a heading that begins "No loaded guns", and
-widening that is not a change to make casually. `CONTRACT.md` §4 asks for the record; until it is
-here, these numbers are a report of what we measured rather than something you can re-derive.
+trust, and **the run's artefacts are now published**: 31 aggregate JSON files plus a README under
+[`head-to-head/results/2026-09-10/`](https://github.com/elementmerc/senbonzakura/tree/main/head-to-head/results/2026-09-10),
+carrying no prompts and no weights. This paragraph previously said publishing them was an open
+decision; it was taken, and the paragraph was not updated. `CONTRACT.md` §4 asks for the record,
+and for this run the record is here, so every number in the block above can be re-derived rather
+than taken as a report of what we measured.
 
 The same run put Heretic **marginally ahead** on refusal removal, not behind. Both differences are
 negligible; the direction was not, and it was reported the wrong way round here for a month.
 
-The re-run's arms are not yet committed to this repository, which is a gap named in
+The re-run's arms ARE committed to this repository, under `head-to-head/results/2026-09-10/`, so
+the gap named in
 [CONTRACT.md](https://github.com/elementmerc/senbonzakura/blob/main/head-to-head/CONTRACT.md) 4
-and not yet closed. Until they are, treat every number on this page as provisional in both
-directions.
+is closed for this run. This box said the opposite until 2026-09-25, which understated the
+project's own reproducibility rather than overstating it. What remains provisional is the older
+2026-08-12 run, whose arms are not here.
 :::
 
 | Axis | Senbonzakura | Heretic |
 |---|---|---|
-| Hard refusal | 0.0% | 0.0% |
+| Hard refusal | 0.1% | 0.0% |
 | Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ withdrawn, see below |
 | Keyword rate | 20.1% | **12.9%** |
 | Coherence drift | ~~0.191~~ | ~~0.341~~ superseded, see above |
-| Harm recognition | 0.9807 | 0.9821 (tie) |
+| Harm recognition | 0.9870 | 0.9872 (tie) |
 
 **Both tools took hard refusal to zero, which is what makes the rest readable.** What that leaves
 is the price each paid for it, and on the one run where both tools were selected the same way,
@@ -91,6 +94,20 @@ got the selection pass.
   look worse. The superseded figures are deliberately not repeated here, because a reader
   skimming a correction should not be able to carry the withdrawn number away from it.
   `tests/test_published_head_to_head.py` now pins this row so the next such drift fails a build.
+- **CORRECTED 2026-09-25: the harm recognition row carried two figures that no artefact holds.**
+  It read 0.9807 against 0.9821. Neither number appears anywhere in this repository, in any run,
+  and recomputing the mean AUC from the ten committed 2026-09-10 arms gives **0.9870 against
+  0.9872**, which is what the row says now. The reading is unchanged, a tie with Heretic a
+  fraction ahead, so nothing downstream of it moves; what was wrong was that a reader could not
+  have arrived at the printed pair from anything published, and the page's own promise is that
+  they can. Found by a release gate sweep that recomputed every figure on this page from the
+  committed arms rather than reading the prose.
+- **CORRECTED 2026-09-25, also against us: hard refusal was printed as 0.0% on both sides.**
+  Heretic's is genuinely 0.0% across all five seeds. Ours is **0.1%**: four seeds at zero and
+  seed 46 at 0.5%. The row had rounded our own number down to match theirs. It is a tenth of a
+  point and it is still the wrong direction to round in, and the test pinning this row asserted
+  only that Heretic's side was zero, so it could not have caught it. That assertion now covers
+  both arms.
 - **The drift figures in the table were measured on 64 prompts** where the other axes use 200,
   and that slice is the one Heretic tunes against. The re-measurement on 200 held-out prompts has
   since been done, and it is the superseding block at the top of this page: no detectable
@@ -111,10 +128,10 @@ got the selection pass.
 The recipe below is how you run this comparison today. It is **not**, as this page used to claim,
 the same command that produced the table: that run was scored on 2026-08-12, and the harness has
 been renamed and repaired since, so the command shown here did not exist in this form when those
-figures were measured. No record of the run is kept in this repository either, which the harness's
-own contract requires and which this page should have said. Re-running it under the current code
-is queued work, and until that happens the figures above are a report of what we saw rather than
-something you can reproduce from this page.
+figures were measured. No record of THAT run, the 2026-08-12 one, is kept in this repository,
+which the harness's own contract requires and which this page should have said. The 2026-09-10
+re-run is a different matter and its arms are committed; this paragraph is about the older run
+alone. Re-running the 2026-08-12 comparison under the current code is queued work.
 
 ## Run it yourself
 

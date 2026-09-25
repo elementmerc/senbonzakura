@@ -118,6 +118,35 @@ def test_heretic_is_marginally_ahead_on_refusal_not_behind(drift):
     assert statistics.mean(her) < statistics.mean(sen)
 
 
+# ── the printed row, against the run ─────────────────────────────────────────────────
+#
+# The two tests below exist because the pair above passed throughout, and the page was still
+# wrong. They assert a relationship in the DATA, that our hard refusal is not zero while
+# Heretic's is, and the page printed "0.0% | 0.0%" regardless. Nothing compared the printed
+# figure to the computed one, so a row could say anything and the suite stayed green.
+#
+# Found 2026-09-25 by a release gate sweep that recomputed the table from the arms. The harm
+# recognition row was worse than a rounding: it carried 0.9807 and 0.9821, two numbers that
+# appear nowhere in this repository, in any run, at all.
+
+def test_the_printed_hard_refusal_row_is_the_measured_one():
+    sen = statistics.mean(_series("senbon", "refusal", "refusal")) * 100
+    her = statistics.mean(_series("heretic", "refusal", "refusal")) * 100
+    row = f"| Hard refusal | {sen:.1f}% | {her:.1f}% |"
+    assert row in PAGE.read_text(encoding="utf-8"), (
+        f"the page does not carry the measured hard refusal row. Expected {row!r}. Rounding our "
+        f"own figure down to match Heretic's is how this row read 0.0% against 0.0% for a month.")
+
+
+def test_the_printed_harm_recognition_row_is_the_measured_one():
+    sen = statistics.mean(_series("senbon", "scored", "auc"))
+    her = statistics.mean(_series("heretic", "scored", "auc"))
+    row = f"| Harm recognition | {sen:.4f} | {her:.4f} (tie) |"
+    assert row in PAGE.read_text(encoding="utf-8"), (
+        f"the page does not carry the measured harm recognition row. Expected {row!r}. The pair "
+        f"it carried until 2026-09-25 was traceable to no artefact anywhere.")
+
+
 def test_the_page_does_not_still_carry_the_fixture_numbers():
     text = PAGE.read_text(encoding="utf-8")
     assert "0.405" not in text, "the fixture's p-value is back on the page"

@@ -161,7 +161,8 @@ def build(*, check_only=False, log=print):
         digest = hashlib.sha256(data).hexdigest()
         recorded = files.get(skey)
         if recorded is None:
-            log(f"  recording sha256 {digest} ({len(data):,} bytes, first fetch of this pin)")
+            log(f"  sha256 {digest} ({len(data):,} bytes, first fetch of this pin; will record if "
+                f"the run completes)")
             files[skey] = {"sha256": digest, "bytes": len(data)}
         elif recorded["sha256"] != digest:
             raise BuildError(

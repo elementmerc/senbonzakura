@@ -193,7 +193,14 @@ def _check_items(directory, probe_decl, problems):
         return []
     path = (directory / name).resolve()
     # A manifest must not reach outside its own directory. A probe is a thing somebody hands you.
-    if not str(path).startswith(str(directory.resolve())):
+    #
+    # `is_relative_to`, NOT `str.startswith`, which is what this was until 2026-09-25 and which
+    # compares text rather than path structure. A SIBLING whose name merely extends this
+    # directory's name passes it: with the probe at `/x/p`, the manifest `../p-evil/items.jsonl`
+    # resolves to `/x/p-evil/items.jsonl`, and `"/x/p-evil/...".startswith("/x/p")` is True.
+    # `tools/ci/check_probes.py` calls this function as its only gate, so a contributed probe
+    # reading a file outside itself passed CI clean.
+    if not path.is_relative_to(directory.resolve()):
         problems.append(f"[probe] items {name!r} points outside the probe directory")
         return []
     if not path.is_file():

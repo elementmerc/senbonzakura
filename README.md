@@ -82,10 +82,16 @@ senbonzakura setup
 > fails with "does not appear to be a Python project" and the second installs something close to
 > the withdrawn 0.3.0 you came here to avoid.
 >
-> **`--track default` will not work from that install.** The bundled corpora are generated
-> artefacts kept out of git, because they are harmful prompts. Build them from a clone
-> (`senbonzakura corpora`, public sources, pinned commits) or bring your own
-> corpus. [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) has both
+> **`--track default` will not work from that install.** The bundled corpora and the packed
+> track are generated artefacts kept out of git, because they are harmful prompts.
+>
+> From a clone you can restore both: `senbonzakura corpora` fetches the corpora from public
+> sources at pinned commits, and `tools/packaging/pack_track.py` writes the packed track. From a
+> `pip install git+...` you get neither, because `tools/` ships in no wheel; build a track with
+> `senbonzakura track build` and pass it by name with `--track track`, which works everywhere.
+> This said "build them from a clone (`senbonzakura corpora`)" until 2026-09-25, and that command
+> alone does not produce the packed track, so following it exactly left `--track default` still
+> broken. [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) has both
 > routes.
 
 That brings torch, transformers, accelerate and optuna: **68 packages, 5.8 GB**, nineteen of them

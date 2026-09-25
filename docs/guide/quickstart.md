@@ -29,7 +29,14 @@ something close to the version this box is warning you about.
 
 **That install has no prompts in it.** The corpora and the bundled track are generated artefacts
 kept out of git, because they are harmful prompts and a public repository is not where those
-belong. So `--track default` will not work from it. Build them, in the install you just made:
+belong. So `--track default` will not work from it.
+
+**What follows builds a track you pass by name, and does NOT restore `--track default`.** That
+one needs the packed blob, which is written by `tools/packaging/pack_track.py`, and `tools/`
+ships in no wheel, so it is reachable from a clone and not from a `pip install git+...`. Use
+`--track track` with what you build here; that is the working arrangement, not a consolation
+prize. This box said "build them" without saying which of the two you get, which sent a reader
+who followed it exactly back to the failure it was written to prevent.
 
 ```sh
 senbonzakura corpora                   # the refusal corpora

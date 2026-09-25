@@ -117,3 +117,62 @@ def test_the_live_readme_agrees_with_itself():
     assert url.group(1) == alt.group(1), (
         f"the README badge says {url.group(1)} in its URL and {alt.group(1)} in its alt text. "
         f"Both are the same claim and a reader meets one or the other, never both.")
+
+
+# ── the delta the correction reports ──────────────────────────────────────────────────────────
+#
+# THE DEFECT. The message computed its delta from the URL count alone, so the case this checker
+# was extended to catch, a correct URL beside an alt text hundreds behind, printed "corrected ...
+# which is 0 fewer" while silently fixing the gap. A report that says nothing changed teaches its
+# reader not to read it, which is how the badge drifted to 4059 against 4674 in the first place.
+
+def _badge_markup(url_count, alt_count):
+    return (f'<img src="https://img.shields.io/badge/tests-{url_count}-0A9EDC?style=flat" '
+            f'alt="{alt_count} tests">\n')
+
+
+def _run_write(tmp_path, monkeypatch, capsys, *, url, alt, real):
+    from tools.ci import check_tests_badge as badge
+    readme = tmp_path / "README.md"
+    readme.write_text(_badge_markup(url, alt), encoding="utf-8")
+    monkeypatch.setattr(badge, "README", readme)
+    monkeypatch.setattr(badge, "collected_count", lambda: real)
+    code = badge.main(["--write"])
+    return code, capsys.readouterr().out, readme.read_text(encoding="utf-8")
+
+
+def test_a_stale_alt_text_alone_is_reported_as_the_move_it_was(tmp_path, monkeypatch, capsys):
+    code, out, written = _run_write(tmp_path, monkeypatch, capsys, url=4674, alt=4059, real=4674)
+    assert code == 0
+    assert "4674" in written and "4059" not in written
+    assert "615 more" in out, out
+    assert "already correct" in out, "the URL did not move and the message should say so"
+    assert "0 fewer" not in out
+
+
+def test_both_stale_by_different_amounts_are_reported_separately(tmp_path, monkeypatch, capsys):
+    code, out, _ = _run_write(tmp_path, monkeypatch, capsys, url=4600, alt=4000, real=4674)
+    assert code == 0
+    assert "74 more" in out and "674 more" in out, out
+
+
+def test_the_failing_path_reports_each_place_too(tmp_path, monkeypatch, capsys):
+    from tools.ci import check_tests_badge as badge
+    readme = tmp_path / "README.md"
+    readme.write_text(_badge_markup(4674, 4059), encoding="utf-8")
+    monkeypatch.setattr(badge, "README", readme)
+    monkeypatch.setattr(badge, "collected_count", lambda: 4674)
+    assert badge.main([]) == 1
+    out = capsys.readouterr().out
+    assert "already correct" in out and "615 more" in out, out
+    assert readme.read_text(encoding="utf-8") == _badge_markup(4674, 4059), "no --write, no write"
+
+
+def test_a_matching_badge_still_passes_silently_enough(tmp_path, monkeypatch, capsys):
+    from tools.ci import check_tests_badge as badge
+    readme = tmp_path / "README.md"
+    readme.write_text(_badge_markup(4674, 4674), encoding="utf-8")
+    monkeypatch.setattr(badge, "README", readme)
+    monkeypatch.setattr(badge, "collected_count", lambda: 4674)
+    assert badge.main([]) == 0
+    assert "4674" in capsys.readouterr().out

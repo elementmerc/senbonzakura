@@ -102,7 +102,16 @@ def main(argv=None):
         print(f"tests badge says {claimed} in the URL and the alt text, suite collects {real}")
         return 0
 
-    direction = "more" if real > claimed else "fewer"
+    # PER PLACE, because the two can be stale by different amounts and were. This reported the
+    # URL's delta for the whole correction, so the case this check was extended to catch, a
+    # correct URL beside an alt text hundreds behind, printed "corrected ... which is 0 fewer"
+    # while silently fixing the gap. A report that says nothing changed is how the next reader
+    # learns not to read it.
+    def _moved(was):
+        if was == real:
+            return "already correct"
+        return f"{abs(real - was)} {'more' if real > was else 'fewer'}"
+
     if a.write:
         # BOTH SPANS, rewritten back to front so the earlier offsets stay valid. Correcting one
         # and not the other is the defect this function grew.
@@ -110,12 +119,13 @@ def main(argv=None):
         for span in sorted((m.span("count"), alt.span("count")), reverse=True):
             out = out[:span[0]] + str(real) + out[span[1]:]
         README.write_text(out, encoding="utf-8")
-        print(f"tests badge corrected from {claimed} (alt text {alt_claimed}) to {real} in both "
-              f"places, which is {abs(real - claimed)} {direction}.")
+        print(f"tests badge set to {real}: URL was {claimed} ({_moved(claimed)}), alt text was "
+              f"{alt_claimed} ({_moved(alt_claimed)}).")
         return 0
 
-    print(f"the README badge says {claimed} tests in its URL and {alt_claimed} in its alt text, "
-          f"and the suite collects {real}.\n"
+    print(f"the README badge says {claimed} tests in its URL ({_moved(claimed)}) and "
+          f"{alt_claimed} in its alt text ({_moved(alt_claimed)}), and the suite collects "
+          f"{real}.\n"
           f"Update both to {real} in README.md, or run this with --write.")
     return 1
 

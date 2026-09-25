@@ -330,6 +330,29 @@ def test_build_info_reads_what_the_binary_says_about_itself():
     assert info and isinstance(info["build"], int) and info["commit"]
 
 
+#: The two banner spellings llama.cpp has used, as literal text. The one above needs a real binary
+#: and so only ever proves whatever build this machine happens to hold; these prove both, anywhere.
+#:
+#: Upstream changed the wording between b10355 and b11046, and the only symptom was a sidecar
+#: field going quietly null while every neighbouring field stayed right. A quantisation that
+#: records its type, its hashes and its pinned tag, and says nothing about the binary that ran,
+#: reads as fully provenanced. The old spelling stays covered because `source_of` may be a system
+#: llama.cpp of any age, and that is exactly the case the field exists to describe.
+BANNERS = [
+    ("b10355", "build = 10355 (0a1b2c3)", 10355, "0a1b2c3"),
+    ("b11046", "version: 0.4.1-dev (build 11046, commit 60081bb2b)", 11046, "60081bb2b"),
+]
+
+
+@pytest.mark.parametrize(("label", "banner", "build", "commit"), BANNERS,
+                         ids=[b[0] for b in BANNERS])
+def test_build_info_reads_both_banner_spellings(tmp_path, label, banner, build, commit):
+    stub = tmp_path / f"quantize-{label}"
+    stub.write_text(f"#!/bin/sh\necho '{banner}' >&2\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    assert quantise.build_info(stub) == {"build": build, "commit": commit}
+
+
 def test_build_info_returns_none_rather_than_guessing(tmp_path):
     """A stub that says nothing about itself yields no field, not an invented one."""
     stub = tmp_path / "quiet"

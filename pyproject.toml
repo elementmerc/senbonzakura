@@ -496,6 +496,22 @@ omit = ["*/senbonzakura/__main__.py"]   # a two-line `from .cli import main; mai
 # ratchet keeps going up at each tranche close, but it is never set above the
 # measured figure, because a gate that is red on a clean checkout gets commented out.
 fail_under = 95
+# PRECISION IS PART OF THE GATE, NOT A DISPLAY SETTING.
+#
+# `fail_under` is compared against the total ROUNDED to this many decimal places, and the default
+# is zero. So with no precision set, a floor of 95 passed anything at 94.5 or above, and it did it
+# while pytest-cov printed "FAIL Required test coverage of 95% not reached" in the same log.
+#
+# That is not hypothetical. Measured on 2026-09-25 across three green CI runs: the ubuntu 3.10 row
+# reported 94.58% and 94.74%, printed the FAIL line each time, and the step concluded SUCCESS,
+# because the table beside it rounded to 95. The exit status comes from this comparison and not
+# from the message, so the message had been saying one thing and the gate doing another since at
+# least 2026-09-22.
+#
+# Two decimal places makes the gate mean what it prints. It also makes the floor bite half a point
+# higher than it used to, which is why the per row floors in ci.yml were corrected to the measured
+# figures in the same change rather than left to fail.
+precision = 2
 exclude_also = [
   # EVERY EXCLUSION CARRIES A REASON, which the v1.0 gate asks for and which these two did not
   # have until 2026-09-22. An exclusion without one is a line nobody has to justify, and the

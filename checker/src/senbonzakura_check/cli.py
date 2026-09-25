@@ -336,14 +336,22 @@ def main(argv=None, out=None):
     # evidence could not have failed for that reason, which makes it a gate that proves the
     # checker still runs rather than that it still checks.
     if args.min_applied:
+        # THE DENOMINATOR IS WHAT COULD APPLY HERE, NOT EVERY CHECK THAT EXISTS.
+        #
+        # `arity: pair` checks read two arms and are skipped without evaluation on a single
+        # document. Counting them made the ceiling unreachable: 4 of the 15 checks are pair
+        # checks, so a single artefact can never exceed 11 applied, while this compared against
+        # 15 and printed "of 15". `--min-applied 12` and above could not be satisfied by a
+        # healthy run, which is the opposite of what a floor is for.
+        reachable = [c for c in checks if getattr(c, "arity", "document") != "pair"]
         thin = sorted((path, applied) for path, _, _, problem, _, applied in results
-                      if not problem and applied < args.min_applied)
+                      if not problem and applied < min(args.min_applied, len(reachable)))
         if thin:
             if not args.json and not args.quiet:
                 print(f"\nFEWER THAN {args.min_applied} CHECKS APPLIED to "
                       f"{len(thin)} artefact(s):", file=out)
                 for path, applied in thin:
-                    print(f"  {path}: {applied} of {len(checks)} applied", file=out)
+                    print(f"  {path}: {applied} of {len(reachable)} applied", file=out)
                 print("Either these artefacts stopped carrying what the checks read, or the "
                       "checks stopped recognising them. Both look like a clean run.", file=out)
             return 1

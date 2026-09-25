@@ -370,7 +370,20 @@ def run(args, *, log=print):
         path = out_dir / OUTPUTS[name]
         if path.is_file() and not args.force:
             log(f"{name}: already measured, at {path}. --force re-runs it")
-            results[name] = read_result(path) or "the result file could not be read"
+            # A RESUMED STAGE WHOSE FILE CANNOT BE READ IS A FAILURE, like any other.
+            #
+            # This set the message and did not append to `failures`, so a truncated or corrupt
+            # result from an earlier run printed "not measured" in the table and the command
+            # exited 0, against a module docstring promising a non-zero status if any stage
+            # failed. The resume path is exactly where a half-written file turns up, which makes
+            # it the worst place to treat one as merely absent.
+            got = read_result(path)
+            if got is None:
+                log(f"  FAILED: {path} exists and could not be read")
+                results[name] = "the result file could not be read"
+                failures.append(name)
+            else:
+                results[name] = got
             continue
         log(f"{name}:")
         started = time.monotonic()

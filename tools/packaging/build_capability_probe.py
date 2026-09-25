@@ -90,6 +90,9 @@ def _verify(rows):
             f"{DATASET}:{CONFIG}::{SPLIT} at {REVISION[:12]} has {len(rows)} rows and this build "
             f"expects {EXPECTED_ROWS}. Upstream changed; read what changed before moving the "
             f"number, because the probe's meaning travels with it")
+    # Kept, and now genuinely reachable only for a caller that builds `rows` itself. `main`
+    # checks the split's own column names before projecting, because by the time a row exists
+    # here it has already been read by name and a missing column has already raised.
     missing = [c for c in ("question", "answer") if rows and c not in rows[0]]
     if missing:
         problems.append(f"columns {missing} are not in the split; it has {sorted(rows[0])}")
@@ -111,6 +114,20 @@ def main():
 
     print(f"fetching {DATASET}:{CONFIG}::{SPLIT} at {REVISION[:12]}")
     ds = load_dataset(DATASET, CONFIG, split=SPLIT, revision=REVISION)
+
+    # BEFORE THE PROJECTION, and that ordering is the whole point. `_verify` has always carried a
+    # message for a split missing our two columns, and it could never print: the comprehension
+    # below reads `r["question"]` first, so an upstream rename raised a bare KeyError from inside
+    # a list comprehension and the written explanation went unused. An upstream rename is exactly
+    # the case this script exists to catch, and it was the case it handled worst.
+    available = sorted(getattr(ds, "column_names", None) or [])
+    absent = [c for c in ("question", "answer") if available and c not in available]
+    if absent:
+        print(f"  REFUSED: columns {absent} are not in "
+              f"{DATASET}:{CONFIG}::{SPLIT} at {REVISION[:12]}; it has {available}. Upstream "
+              f"renamed them, so read what changed before mapping the new names: the probe's "
+              f"meaning travels with the columns", file=sys.stderr)
+        raise SystemExit(1)
     rows = [{"question": r["question"], "answer": r["answer"]} for r in ds]
 
     problems = _verify(rows)

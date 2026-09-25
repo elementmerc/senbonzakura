@@ -224,7 +224,12 @@ def _check_items(directory, probe_decl, problems):
         if missing:
             problems.append(f"{name}:{number} has no {' or '.join(missing)}")
             continue
-        rows.append(row)
+        # PAIRED WITH ITS LINE NUMBER, because the gradeability check reports one. Until
+        # 2026-09-25 it enumerated this list and called the result a line number, and this list
+        # has already dropped blank lines, unparseable ones, non-objects and rows missing a key.
+        # So the one file where the count drifts is the file that had other problems too, and a
+        # contributor was sent to the wrong row of it.
+        rows.append((number, row))
 
     if bad_keys:
         # Whatever the manifest declared. The shape is the check, because reading the items and
@@ -251,14 +256,16 @@ def _check_gradeable(rows, task_name, problems):
         task = capability.get_task(task_name)
     except KeyError:
         return                      # already reported by the declaration check
-    ungradeable = [i for i, row in enumerate(rows, start=1)
+    ungradeable = [number for number, row in rows
                    if task.reference(row[REFERENCE_KEY]) is None]
     if ungradeable:
         shown = ", ".join(str(i) for i in ungradeable[:5])
+        more = "" if len(ungradeable) <= 5 else f", and {len(ungradeable) - 5} more"
         problems.append(
             f"{len(ungradeable)} item(s) have a reference the {task_name!r} rule cannot read "
-            f"(first: line {shown}). They would score indeterminate however the model answered, "
-            f"so the probe is smaller than it says it is")
+            f"(line{'s' if len(ungradeable) > 1 else ''} {shown}{more}). They would score "
+            f"indeterminate however the model answered, so the probe is smaller than it says "
+            f"it is")
 
 
 def problems_with(path):
@@ -298,7 +305,10 @@ def load(path):
     with open(directory / MANIFEST, "rb") as fh:
         doc = tomllib.load(fh)
     decl = doc["probe"]
-    rows = _check_items(directory, decl, [])
+    # `_check_items` pairs each row with its line number for the gradeability message. A loaded
+    # probe is the items themselves, so the numbers are dropped here rather than carried into
+    # everything downstream that only ever wanted the rows.
+    rows = [row for _number, row in _check_items(directory, decl, [])]
     return Probe(name=decl["name"], measures=decl["measures"], task=decl["task"],
                  items=rows, source=doc.get("source") or {},
                  version=str(decl.get("version", "1")), path=directory)

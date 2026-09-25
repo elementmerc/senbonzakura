@@ -472,8 +472,15 @@ def only_metric(doc):
 
 
 def default_out(metric):
-    """Where a baseline goes when nobody said: one directory, one file per metric."""
-    return str(Path("baselines") / f"{metric.replace('/', '_')}.json")
+    """Where a baseline goes when nobody said: one directory, one file per metric.
+
+    BUILT AS A STRING WITH FORWARD SLASHES, not through `Path`. This value is documented in
+    `--help` as `./baselines/<metric>.json` and it goes into the log and into a baseline file that
+    people compare across machines. `Path` renders it with a backslash separator on Windows, so
+    the documented default and the real one disagreed there; CI's windows row caught it. Windows
+    accepts a forward slash in every path API, so nothing is lost by pinning the spelling.
+    """
+    return f"baselines/{metric.replace('/', '_')}.json"
 
 
 def main(argv=None):

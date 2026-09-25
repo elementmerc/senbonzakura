@@ -172,7 +172,11 @@ def _check_or_record(pin, key, got_size, got_hash, *, expect_size=None, fatal=Tr
             f"release asset does not change size, so either the pin is wrong or the download is "
             f"truncated. Nothing has been extracted.")
     if recorded is None:
-        log(f"  {key}: recording sha256 {got_hash} (first fetch of this pin)")
+        # "will record", not "recording": the manifest is written once at the very end of main(), so
+        # a later stage failing means none of these hashes land. Said in the present tense it reads
+        # as work already done, and a refreshed pin whose run aborted looks indistinguishable from
+        # one that succeeded.
+        log(f"  {key}: sha256 {got_hash} (first fetch of this pin; will record if the run completes)")
         return got_hash, True
     if recorded != got_hash:
         if not fatal:
@@ -455,7 +459,7 @@ def _check_or_record_content(pin, dest, *, log=print):
     got = content_digest(dest)
     recorded = (pin.get("sha256") or {}).get("content")
     if recorded is None:
-        log(f"  content: recording sha256 {got} (first extraction of this pin)")
+        log(f"  content: sha256 {got} (first extraction of this pin; will record if the run completes)")
         return got, True
     if recorded != got:
         raise VendorFetchError(

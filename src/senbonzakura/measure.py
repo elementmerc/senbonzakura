@@ -131,9 +131,15 @@ def run_stage(name, argv, *, log=print):
     try:
         return module.main(argv)
     except SystemExit as e:
-        # A refusal, which is a stage's normal way of saying no. `str(e)` is the message where
-        # there is one and the status where there is not.
-        raise StageError(str(e) or f"exited {e.code}") from e
+        # A refusal, which is a stage's normal way of saying no.
+        #
+        # `e.code` IS THE MESSAGE OR THE STATUS, and telling them apart matters. `SystemExit(3)`
+        # stringifies to "3", which is truthy, so a naive `str(e) or ...` reports a bare "3" as
+        # the reason a stage produced no number, and the table then carries a status code where a
+        # sentence belongs. An int is a status; anything else is something a person wrote.
+        code = e.code
+        reason = f"exited {code}" if isinstance(code, int) else (str(code) if code else "exited 1")
+        raise StageError(reason) from e
     except Exception as e:
         # DELIBERATELY BROAD. Whatever one instrument does wrong, the other four still have
         # numbers to report, and a stage is allowed to fail on its own; narrowing this would make

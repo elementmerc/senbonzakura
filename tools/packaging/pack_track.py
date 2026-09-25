@@ -63,7 +63,18 @@ def build_tar(track, log=print):
         return info
 
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=9) as tar:
+    # SYMLINKS ARE FOLLOWED, NOT RECORDED. A packed track has to carry the bytes.
+    #
+    # `tar.add` stores a symlink as a link by default, and the track this project actually ships
+    # is fetched from the Hub, where every data file in a snapshot directory is a symlink into a
+    # sibling `blobs/` store. Packed as links, the blob names a path that exists on exactly one
+    # machine, and the failure is not even deferred to the user: re-reading the archive here dies
+    # with `KeyError: linkname 'track/bad_ds/../../../blobs/5fc37e...' not found`, which is what
+    # happened on 2026-09-25 packing the gated dataset for the v0.4 release.
+    #
+    # Following them is correct beyond that one case. A track directory assembled by hand with a
+    # symlinked split would otherwise produce a blob that packs cleanly and cannot be extracted.
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=9, dereference=True) as tar:
         for name in [*sorted(present), "track.json"]:
             source = track / name
             for path in sorted(source.rglob("*")) if source.is_dir() else [source]:

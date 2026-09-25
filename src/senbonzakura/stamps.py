@@ -100,7 +100,7 @@ def prompt_format_of(tok) -> str:
     return str(getattr(tok, "senbon_chat_template", None) or "raw")
 
 
-def partition_of(skip, recorded_skip=None) -> str:
+def partition_of(skip, recorded_skip=None, *, verified=None) -> str:
     """Which rows of the input a number was taken on, by name where that can be established.
 
     Three answers and they are not interchangeable:
@@ -112,17 +112,23 @@ def partition_of(skip, recorded_skip=None) -> str:
     - `rows-from-N`, when rows were skipped and no manifest confirms where the boundary was. It
       carries the skip so two identical unverified runs still compare, and it never equals
       `measure`, so an unverified boundary cannot be compared against a verified one.
+
+    `verified` is the caller stating outright whether a manifest confirmed the boundary, which is
+    what `track.resolve_skip_for_arm` returns. Passing it is better than passing `recorded_skip`,
+    because a caller that read the boundary FROM the manifest has nothing separate to compare it
+    against and would otherwise look unverified.
     """
     skip = int(skip or 0)
     if skip == 0:
         return ALL_ROWS
-    if recorded_skip is not None and int(recorded_skip) == skip:
+    if verified if verified is not None else (
+            recorded_skip is not None and int(recorded_skip) == skip):
         return MEASURE
     return f"{UNVERIFIED_PREFIX}{skip}"
 
 
 def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorded_skip=None,
-           input_digest=None, partition=None, prompt_format=None, precision=None):
+           verified=None, input_digest=None, partition=None, prompt_format=None, precision=None):
     """The five pinned fields a writer passes straight into `measurement.stamp`, plus the version.
 
     Every derived value can be overridden, because two of the five writers genuinely know better
@@ -133,7 +139,8 @@ def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorde
     from ._version import __version__
     return {
         "input_digest": input_digest if input_digest is not None else input_digest_of(prompts),
-        "partition": partition if partition is not None else partition_of(skip, recorded_skip),
+        "partition": partition if partition is not None else partition_of(
+            skip, recorded_skip, verified=verified),
         "prompt_format": prompt_format if prompt_format is not None else prompt_format_of(tok),
         "precision": precision if precision is not None else model_precision(model, load_in_4bit),
         "tool_version": __version__,

@@ -16,7 +16,7 @@ import json
 
 import torch
 
-from . import lengthsweep, metrics, stamps
+from . import lengthsweep, metrics, stamps, track
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
@@ -40,11 +40,26 @@ def build_parser():
                          "it is how you tell two result files apart later, so give it the thing "
                          "that varied")
     ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
-    ap.add_argument("--skip", type=int, default=0,
+    ap.add_argument("--track", default=None,
+                    help="the track these prompts came from. Its track.json records where the "
+                         "partition boundaries actually fell, and passing it is what lets this "
+                         "number say it was scored on the held-out rows rather than on a "
+                         "boundary nobody checked. Requires --track-arm")
+    ap.add_argument("--track-arm", dest="track_arm", default=None,
+                    choices=sorted(track.SKIP_KEY_FOR_ARM),
+                    help="which arm --eval holds, so the right recorded boundary is read. There "
+                         "is no default: the two arms have different boundaries and guessing "
+                         "wrong would stamp a figure with a partition it does not have")
+    # DEFAULT None RATHER THAN 0, so "not given" and "given as zero" stay distinguishable.
+    # `--skip 0` against a track that records a boundary is a deliberate choice to score the
+    # selection rows, and it has to be refused as a contradiction rather than read as silence.
+    # Every existing caller passes a number or nothing, and None is falsy where 0 was.
+    ap.add_argument("--skip", type=int, default=None,
                     help="drop the first N prompts before taking --n. Needed to score a model on "
                          "prompts its own surgery was NOT fitted on: direction extraction consumes "
                          "the head of the harmless set and the KL check the slice after it, so "
-                         "measuring false positives on the head would be measuring the training data.")
+                         "measuring false positives on the head would be measuring the training "
+                         "data. Read from --track when that is given instead.")
     ap.add_argument("--max-new", type=int, default=lengthsweep.DEFAULT_BUDGET,
                     help=f"how many tokens each reply may run to (default: "
                          f"{lengthsweep.DEFAULT_BUDGET}). A refusal the model never gets far "
@@ -219,6 +234,20 @@ def main(argv=None):
     # Before a single prompt is sent. A ruler that misreads yields a confident wrong
     # number rather than an error, and this scorer is where those numbers come from.
     metrics.validate_ruler()
+    # Before the model loads. A boundary mistake is a mistake about which rows the number
+    # describes, and finding it out after a multi-gigabyte load is what makes an operator skip
+    # the check next time.
+    if a.track and not a.track_arm:
+        raise SystemExit(
+            "--track needs --track-arm, which says whether --eval holds the harmful arm or the "
+            "harmless one. The two have different recorded boundaries, so there is nothing safe "
+            "to default to: guessing wrong would skip the wrong rows and stamp the figure with a "
+            "partition it does not have.")
+    if a.track_arm and not a.track:
+        raise SystemExit(
+            f"--track-arm {a.track_arm} says which arm this is, but without --track there is no "
+            f"manifest to read a boundary from, so it changes nothing. Pass --track as well, or "
+            f"drop it and give --skip directly.")
     if a.length_sweep and a.harm_recognition:
         # Refused rather than ordered. Both flags replace the ordinary scoring pass, so silently
         # letting one win would run the experiment the operator did not ask for and label the
@@ -240,6 +269,10 @@ def main(argv=None):
                                   token=a.hf_token or None, what="evaluation set")
     except dataset.DatasetError as e:
         raise SystemExit(str(e)) from e
+    # WHERE THE HELD-OUT ROWS BEGIN, and whether anything confirms it. Resolved before the slice,
+    # so a contradiction between the flag and the manifest is refused rather than acted on.
+    a.skip, boundary_verified = track.resolve_skip_for_arm(
+        a.track, a.skip, a.track_arm, log=print)
     if a.skip:
         if a.skip >= len(prompts):
             raise SystemExit(f"--skip {a.skip} leaves nothing: the set has {len(prompts)} prompts")
@@ -310,7 +343,8 @@ def main(argv=None):
     # The prompts as scored, after --skip and --n, so the digest describes the rows the number was
     # actually taken on rather than the file they were drawn from.
     _stamp_refusal(res, stamps.pinned(prompts=prompts, model=model, tok=tok,
-                                      load_in_4bit=a.load_in_4bit, skip=a.skip))
+                                      load_in_4bit=a.load_in_4bit, skip=a.skip,
+                                      verified=boundary_verified))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

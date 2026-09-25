@@ -481,6 +481,64 @@ def read_manifest(track_dir):
     return m
 
 
+#: Which manifest key records where a given arm's held-out rows begin.
+SKIP_KEY_FOR_ARM = {"harmful": "skip_harmful", "harmless": "skip_harmless"}
+
+
+def resolve_skip_for_arm(track, given, arm, log=None):
+    """Where one arm's held-out rows begin: from the track's manifest, or an explicit override.
+
+    The single-arm form of `margin.resolve_skips`, for commands that score one set at a time.
+    `score` had no way to say which rows it read, so the only partition it could honestly stamp
+    was "some rows from N", which never compares equal to a verified `measure` and therefore left
+    a genuinely held-out refusal rate incomparable with any baseline.
+
+    Same precedence, and for the same reasons. An explicit flag wins, because scoring the
+    selection set on purpose is a legitimate thing to want. A manifest beats a guess, because it
+    records where the rows actually went. And an explicit value that CONTRADICTS the manifest is
+    refused rather than silently preferred: one of the two is wrong about the corpus, and a number
+    scored under the wrong one cannot be traced to a partition afterwards.
+
+    Returns `(skip, verified)`. `verified` is True only when the manifest is what supplied or
+    confirmed the boundary, and it is what lets the caller stamp `measure` rather than a boundary
+    nobody checked.
+    """
+    _log = log or (lambda _m: None)
+    # THE ARM ONLY MATTERS WHEN THERE IS A MANIFEST TO READ. Without a track there is no recorded
+    # boundary for it to name, so requiring one would refuse every existing caller for a value
+    # that would change nothing. With a track, an unrecognised arm is refused rather than guessed:
+    # the two arms have different boundaries and reading the wrong one slices the wrong rows.
+    recorded = None
+    if track:
+        key = SKIP_KEY_FOR_ARM.get(arm)
+        if key is None:
+            raise SystemExit(
+                f"--track-arm {arm!r} is not an arm this track records. It is one of "
+                f"{', '.join(sorted(SKIP_KEY_FOR_ARM))}.")
+        recorded = (read_manifest(track) or {}).get(key)
+    if given is not None and recorded is not None and given != recorded:
+        raise SystemExit(
+            f"--skip {given} contradicts the track, which records {key} = {recorded}. The "
+            f"manifest is where the rows actually went, so one of these is wrong about the "
+            f"corpus and a number scored under the wrong one cannot be traced to a partition "
+            f"afterwards. Drop --skip to use the recorded boundary, or drop --track if these "
+            f"prompts did not come from it.")
+    if given is not None:
+        if recorded is None:
+            if track:
+                _log(f"  --skip {given}: the track records no {key}, so this boundary is "
+                     f"unverified and the figure will say so")
+            return given, False
+        # Given AND recorded, and they agree: the flag is confirmed by the manifest, so this is
+        # every bit as traceable as reading it from the manifest in the first place.
+        _log(f"  --skip {given}, which matches the track's recorded {key}")
+        return given, True
+    if recorded is not None:
+        _log(f"  --skip {recorded}, read from the track's recorded boundary")
+        return recorded, True
+    return 0, False
+
+
 def flag_violations(m, *, eval_refusal=0, eval_refusal_final=0, dir_prompts=0, eval_kl=0):
     """Ways a run's flags would reach past the boundaries the track records.
 

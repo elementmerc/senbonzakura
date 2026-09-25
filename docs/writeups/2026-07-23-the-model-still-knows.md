@@ -49,7 +49,7 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 
 | Model | Refused before | Refused after | AUC before | AUC after | Change |
 |---|---|---|---|---|---|
-| gemma-2-2b-it | 90.0% | 2.5% | **0.9996** | **0.9863** | −0.013 |
+| ~~gemma-2-2b-it~~ | ~~90.0%~~ | ~~2.5%~~ | ~~0.9996~~ | ~~0.9863~~ | ~~−0.013~~ **withdrawn, see the correction above** |
 | Qwen2.5-1.5B | 88.0% | 26.5% | **0.9983** | **0.9972** | −0.001 |
 | Qwen3-1.7B | 9.5% | 0.0% | **0.9645** | **0.9332** | −0.031 |
 | Llama-3.2-1B | 68.5% | 15.0% | 0.7739 | 0.6400 | −0.134 |
@@ -117,9 +117,13 @@ AUC is the score. It asks: given one harmful and one harmless prompt, how often 
 - **Do not trust a 100% score.** Check what the model says about harmless prompts. If it flags those too, the score means nothing.
 - **Do not count verdicts on small models.** Four of my seven have a pinned threshold. Score the logits instead.
 - **Keep the raw outputs.** Both of my bugs were invisible in the percentages and obvious in the text.
-- **Every model here is under 3B, and six of the seven are under 2B.** The exception matters:
-  gemma-2-2b-it is 2.61B and carries the strongest result in the set, so the largest model is
-  doing most of the work in the headline. None of this is proven to hold at 30B or 70B.
+- **Every model here is under 3B, and six of the seven are under 2B.** The exception was
+  gemma-2-2b-it at 2.61B, and this bullet used to say it carried the strongest result in the set,
+  so the largest model was doing most of the work in the headline. **That reading is gone with the
+  row.** The Gemma edit never reached the model's running state, so there is no Gemma result to
+  lean on, and the headline now rests on the six models under 2B alone. That is a weaker claim
+  than the one this writeup originally made, and it is the honest one. None of it is proven to
+  hold at 30B or 70B.
 
 ## Everything here is checkable
 

@@ -65,6 +65,12 @@ every single one rejected, none of them close.**
 whatever it was asked for. The tool named after a sword that splits into a thousand blades
 had been using one blade since the day it was written. 🥲
 
+*Source, stated rather than implied: the 13,970 figure is a count from the run logs of that
+sweep, which are not published. It is a measurement, not an estimate, and you cannot currently
+check it. [REPRODUCING.md](../../REPRODUCING.md) says a quoted number with no published source is
+a defect, and by that rule this is one; it is named here rather than quietly left as a number
+with no provenance.*
+
 ## What's been fixed
 
 The extractor was rewritten the same day.
@@ -91,6 +97,10 @@ candidate direction is a cluster's mean minus the harmless mean, and the score j
 difference of those same means, computed on those same rows. It was asking whether the quantity
 a vector was built to maximise is large along that vector. It cannot come out small. The bar was
 never doing anything, on any run, ever.
+
+*Source, stated rather than implied: the 678 count and the 0.90 to 9.02 range are read from that
+run's logs, which are not published. Measured, not estimated, and not currently checkable by a
+reader. Same defect class as the figure earlier on this page, and named for the same reason.*
 
 That's fixed. Each candidate is now fitted on half its rows and scored on the half it never saw,
 and the threshold has a measured floor beside it: directions built from random subsets of the
@@ -121,6 +131,12 @@ Read the top row twice. **The two worlds score the same**, so no threshold anywh
 could separate them, and no choice of statistic changes that. We tried four. The bottom row is the
 same data judged against matched controls: the world with no refusal lands on the scale's own
 "nothing here" value, and the world with refusal stands clear.
+
+*Source, stated rather than implied: these four values come from a synthetic experiment whose
+result files are held outside this repository and are not published, so a reader cannot re-derive
+them from anything here. The experiment is synthetic by design, which is the point of it (the two
+worlds are constructed, so what refusal is present is known rather than inferred), but that does
+not make the numbers checkable. Same defect class as the two above.*
 
 Two things follow, and the second was a surprise.
 

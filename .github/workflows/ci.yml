@@ -1,3 +1,5 @@
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 name: CI
 
 # Actions are pinned by commit SHA, not by tag (baseline §5): a tag can be moved

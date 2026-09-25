@@ -179,7 +179,10 @@ def test_every_shipped_pin_has_aged_past_the_cooldown():
     records. It is that no pin currently in the manifest is younger than the cooldown, and that
     stays checkable forever without a constant to maintain.
     """
-    today = _dt.date.today().isoformat()
+    # UTC explicitly, not the local date: every `published` field in the manifest is a UTC
+    # timestamp, and comparing them against a local calendar date would make this test's verdict
+    # depend on the machine's timezone for the few hours a day the two disagree.
+    today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
     for key, pin in vendoring.load_manifest()["pins"].items():
         assert vendoring.eligible(pin["published"], today), (
             f"{key} is pinned at {pin['tag']}, published {pin['published']}, which has not cleared "

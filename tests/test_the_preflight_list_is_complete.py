@@ -21,9 +21,9 @@ machine that added it.
 import inspect
 import re
 
-from senbonzakura import cli
-
 from conftest import ENVIRONMENT_PREFLIGHTS
+
+from senbonzakura import cli
 
 #: Calls in `run_parsed` that can refuse, but on the strength of the ARGV rather than the machine.
 #: A parsing test has no reason to silence these and several exist to assert that they fire, so

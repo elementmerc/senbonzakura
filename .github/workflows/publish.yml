@@ -1,3 +1,5 @@
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 name: Publish
 
 # Uploads to PyPI with trusted publishing (OIDC), so there is no long-lived API

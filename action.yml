@@ -1,3 +1,5 @@
+# Author:  Daniel Iwugo
+# Comment: Christ is King
 name: "Senbonzakura check"
 description: >-
   Read evaluation result files and report how the numbers could be wrong. Reads

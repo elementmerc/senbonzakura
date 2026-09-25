@@ -188,7 +188,43 @@ class TinyTokenizer:
             f.write("tok")
 
 
+#: The pre-flights in `run_parsed` that refuse for a reason about the MACHINE rather than the
+#: argv: no card, no corpora, no evaluation track. A test about argument parsing has to get past
+#: all of them, and it must get past all of them in one place.
+#:
+#: This list exists because the same failure has now reached CI three times. A new pre-flight goes
+#: in ahead of the code a parsing test is aiming at; the development machines all carry the
+#: artefact it checks for, so the suite stays green locally; the runners carry none of them and go
+#: red. The first two times the repair was to patch the new pre-flight into each test that broke,
+#: which left the next pre-flight free to do it again.
+#:
+#: `test_the_preflight_list_is_complete` keeps this honest: it reads `run_parsed` and fails if it
+#: calls an environment pre-flight that is not named here. Adding one to the product without
+#: adding it here is the mistake this guards, so the guard is what makes the list a contract
+#: rather than a comment.
+ENVIRONMENT_PREFLIGHTS = {
+    "_preflight_device": lambda _a, log=None: "cpu",
+    "_preflight_datasets": lambda _a: None,
+    "refuse_without_a_track": lambda _a: None,
+}
+
+
 # ── fixtures ───────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def past_the_environment_preflights(monkeypatch):
+    """Neutralise every check that refuses because of what this machine lacks.
+
+    For tests whose subject is argv: which subcommand was reached, which flag won, what the
+    parser did with a positional. Each neutralised check has its own dedicated test elsewhere;
+    silencing them here removes the environment from tests that are not about it.
+    """
+    from senbonzakura import cli
+
+    for name, stub in ENVIRONMENT_PREFLIGHTS.items():
+        monkeypatch.setattr(cli, name, stub, raising=True)
+    return monkeypatch
+
+
 @pytest.fixture
 def tiny_model():
     return TinyModel(H=8, NL=4, V=16)

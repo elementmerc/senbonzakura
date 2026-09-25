@@ -19,27 +19,26 @@ These tests are the control. A refusal nobody exercises is a claim.
 import json
 
 import pytest
-
 from senbonzakura_check.registry import (
     MAX_ARTEFACT_BYTES,
     MAX_ARTEFACT_DEPTH,
-    ArtefactTooLarge,
-    read_artefact,
+    ArtefactTooLargeError,
+    read_json_bounded,
 )
 
 
 def test_an_ordinary_artefact_still_reads(tmp_path):
     p = tmp_path / "ok.json"
     p.write_text(json.dumps({"metric": "refusal_rate", "value": 0.025}), encoding="utf-8")
-    assert read_artefact(p) == {"metric": "refusal_rate", "value": 0.025}
+    assert read_json_bounded(p) == {"metric": "refusal_rate", "value": 0.025}
 
 
 def test_a_file_past_the_size_cap_is_refused_before_it_is_read(tmp_path):
     """The cap is checked with stat, so an over-large file is never held in memory at all."""
     p = tmp_path / "big.json"
     p.write_text("[" + "0," * 5000 + "0]", encoding="utf-8")
-    with pytest.raises(ArtefactTooLarge) as e:
-        read_artefact(p, max_bytes=100)
+    with pytest.raises(ArtefactTooLargeError) as e:
+        read_json_bounded(p, max_bytes=100)
     assert "100" in str(e.value), "the refusal has to name the limit it applied"
 
 
@@ -47,15 +46,15 @@ def test_a_deeply_nested_document_is_refused_rather_than_crashing(tmp_path):
     """The hazard a size cap does not cover: small on disk, unbounded in the parser."""
     p = tmp_path / "deep.json"
     p.write_text("[" * 400 + "]" * 400, encoding="utf-8")
-    with pytest.raises(ArtefactTooLarge):
-        read_artefact(p, max_depth=50)
+    with pytest.raises(ArtefactTooLargeError):
+        read_json_bounded(p, max_depth=50)
 
 
 def test_nesting_at_the_limit_is_allowed(tmp_path):
     """The boundary, so the guard cannot quietly become stricter than it says."""
     p = tmp_path / "edge.json"
     p.write_text("[" * 10 + "]" * 10, encoding="utf-8")
-    assert read_artefact(p, max_depth=10) is not None
+    assert read_json_bounded(p, max_depth=10) is not None
 
 
 def test_a_recursion_error_becomes_a_refusal_not_a_traceback(tmp_path):
@@ -66,8 +65,8 @@ def test_a_recursion_error_becomes_a_refusal_not_a_traceback(tmp_path):
     """
     p = tmp_path / "bomb.json"
     p.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
-    with pytest.raises(ArtefactTooLarge):
-        read_artefact(p)
+    with pytest.raises(ArtefactTooLargeError):
+        read_json_bounded(p)
 
 
 def test_the_cli_reports_an_over_large_file_as_a_refusal(tmp_path, monkeypatch):

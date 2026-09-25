@@ -60,9 +60,9 @@ from pathlib import Path
 
 from .adapters import UnknownArtefactError, normalise
 from .registry import (
-    ArtefactTooLarge,
+    ArtefactTooLargeError,
     load_checks,
-    read_artefact,
+    read_json_bounded,
     run_checks,
     run_pair_checks,
 )
@@ -145,12 +145,12 @@ def read_artefact(path):
     them would be a second set of error sentences to keep in step.
     """
     try:
-        doc = read_artefact(path)
+        doc = read_json_bounded(path)
     except OSError as e:
         return None, f"could not read it: {e}"
     except json.JSONDecodeError as e:
         return None, f"not valid JSON: {e}"
-    except ArtefactTooLarge as e:
+    except ArtefactTooLargeError as e:
         # A third refusal beside the other two, in the same shape, because this path reads files
         # nobody here wrote. SECURITY.md puts a crafted result file in scope in those words.
         return None, f"this tool declines to read it: {e}"

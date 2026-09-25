@@ -49,7 +49,7 @@ features:
 
 A model that will answer requests the original refused, including harmful ones. That is the
 point, and it is permanent in the weights. The base model's licence still governs the result, and
-the package carries roughly 6,500 harmful prompts so it runs offline.
+the package carries roughly 6,200 harmful prompts so it runs offline.
 
 Everything else here is about whether the removal can be measured honestly, which only matters
 once that paragraph is understood.

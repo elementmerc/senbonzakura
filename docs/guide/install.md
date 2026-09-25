@@ -100,7 +100,7 @@ isn't in Debian at all, and pyarrow is.
 ## What comes in the box, including the part people don't expect
 
 The wheel carries the evaluation track and six public research corpora, so `--track default`
-and `--good-ds advbench` work with no network. That is roughly 6,500 harmful prompts sitting
+and `--good-ds advbench` work with no network. That is roughly 6,200 harmful prompts sitting
 inside your site-packages.
 
 They're wrapped rather than plaintext, which stops a scraper finding them by accident and

@@ -10,7 +10,7 @@ before quoting us, read this one.
 
 ::: warning The one-line version
 Everything measured before 2026-07-30 was measured with a broken ruler, every Gemma number
-is withdrawn, nothing has been tested above 3B parameters, and the headline multi-direction
+is withdrawn, no measurement above 3B parameters still stands, and the headline multi-direction
 claim was tested and [it lost](/guide/what-we-know).
 :::
 
@@ -70,7 +70,7 @@ exactly why the same code worked on one family and silently didn't on the other.
 
 ## Nothing here is evidence about a big model
 
-Every model this tool has ever been run on is **under 3B parameters, and six of the seven
+Every model whose numbers still stand is **under 3B parameters, and six of the seven
 are under 2B**. The largest is gemma-2-2b-it at 2.61B, and its numbers are withdrawn
 anyway.
 

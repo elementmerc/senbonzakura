@@ -18,7 +18,7 @@ The gate collects nothing about you beyond what HuggingFace needs to operate it;
 make the agreement intentional, not to build a list.
 
 **The wheel you install from PyPI is a different matter, and you should know it.** The same rows
-ship inside the package as `--track default`, so `pip install senbonzakura` puts roughly 6,500
+ship inside the package as `--track default`, so `pip install senbonzakura` puts roughly 6,200
 harmful prompts in your site-packages with no gate and no terms accepted. They are obfuscated
 rather than protected: the key ships beside them, and anyone who wants them can have them in an
 afternoon. The gate on the HuggingFace copy does not apply to them. Saying only the paragraph

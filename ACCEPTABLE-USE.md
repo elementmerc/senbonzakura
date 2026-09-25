@@ -65,7 +65,7 @@ figure you publish from them.
 
 ## What the package contains that you should know about
 
-The wheel carries roughly 6,500 harmful prompts: the evaluation track and six public research
+The wheel carries roughly 6,200 harmful prompts: the evaluation track and six public research
 corpora, so the tool runs with no network. They are obfuscated in the package to keep them out of
 automated scrapes, and the key ships beside them, so that is a speed bump and not protection. One
 ordinary run unpacks them to your cache directory in plain form.

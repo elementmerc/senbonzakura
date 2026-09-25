@@ -15,7 +15,7 @@ refusing without being retrained.
 Senbonzakura's one difference from the single-direction method is that it can treat
 refusal as a small *subspace* rather than one direction, finding several at once and
 orthogonalising all of them out. **Whether that helps is a question this project has
-now answered, against itself:** on Qwen3-1.7B, two directions cost about twice the
+now answered, against itself:** on Qwen3-1.7B, two directions cost 1.5 to 1.9 times the
 coherence of one at the same refusal rate and bought nothing. The capability stays
 because the question is open on architectures we cannot yet measure, but the default
 posture is that one direction is what works. See

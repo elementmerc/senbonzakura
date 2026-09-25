@@ -18,7 +18,7 @@ That was true and it was measurable:
   the landing page   a hero, a tagline and three feature cards, all about measurement quality,
                      with no statement of what the tool produces.
   "Your first run"   no line about licence or danger anywhere on it.
-  the README         `pip install` at line 42; the disclosure of roughly 6,500 bundled harmful
+  the README         `pip install` at line 42; the disclosure of roughly 6,200 bundled harmful
                      prompts at line 196; "removes safety guardrails wholesale" at line 203. The
                      README is what PyPI renders, so that ordering is what PyPI shows.
 
@@ -127,8 +127,8 @@ class TestTheReadmeIsWhatPypiRenders:
         """The operator decided on 2026-09-17 that the corpus ships. Disclosure is the condition."""
         text = (ROOT / "README.md").read_text(encoding="utf-8")
         install = text.find("pip install senbonzakura")
-        disclosed = text.find("6,500 harmful prompts")
+        disclosed = text.find("6,200 harmful prompts")
         assert disclosed != -1, "the README no longer discloses the bundled harmful prompts"
         assert disclosed < install, (
             "the bundled corpus is disclosed after the install command, so a reader installs "
-            "6,500 harmful prompts and is told afterwards")
+            "6,200 harmful prompts and is told afterwards")

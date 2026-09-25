@@ -12,9 +12,12 @@ outright. Nothing here is hidden and nothing here is settled.
 :::
 
 ::: danger The coherence row is superseded, 2026-09-10. Do not quote it.
-The table below is the 2026-08-12 run, in which **Heretic was not given the best-of-N selection
-pass that Senbonzakura gave itself**. When both tools got that pass, on 2026-09-10, the coherence
-difference disappeared:
+**Two rows of the table below are the 2026-08-12 run and three are the 2026-09-10 one**, and the
+table says which is which. In the 2026-08-12 run **Heretic was not given the best-of-N selection
+pass that Senbonzakura gave itself**; on 2026-09-10 both tools got it. This box used to say the
+whole table was the older run, which was true when it was written and progressively less true as
+each row was corrected. With both tools selected the same way, the coherence difference
+disappeared:
 
 | Coherence drift, both tools selected the same way | Senbonzakura | Heretic |
 |---|---|---|
@@ -46,13 +49,22 @@ project's own reproducibility rather than overstating it. What remains provision
 2026-08-12 run, whose arms are not here.
 :::
 
-| Axis | Senbonzakura | Heretic |
-|---|---|---|
-| Hard refusal | 0.1% | 0.0% |
-| Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ withdrawn, see below |
-| Keyword rate | 20.1% | **12.9%** |
-| Coherence drift | ~~0.191~~ | ~~0.341~~ superseded, see above |
-| Harm recognition | 0.9870 | 0.9872 (tie) |
+**Every row carries the run it came from, because three of the five were migrated and two were
+not.** The table used to have no provenance column while the box above it said the whole thing was
+the 2026-08-12 run. That stopped being true as each row was corrected, and a reader going
+top to bottom was told something the corrections four hundred lines below quietly contradicted.
+
+| Axis | Senbonzakura | Heretic | Run | All figures are Qwen3-1.7B, five seeds |
+|---|---|---|---|---|
+| Hard refusal | 0.1% | 0.0% | **2026-09-10** | both tools selected the same way |
+| Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ | 2026-08-12 | withdrawn, see below |
+| Keyword rate | 20.1% | **12.9%** | **2026-09-10** | both tools selected the same way |
+| Coherence drift | ~~0.191~~ | ~~0.341~~ | 2026-08-12 | superseded, see above |
+| Harm recognition | 0.9870 | 0.9872 (tie) | **2026-09-10** | both tools selected the same way |
+
+**One model.** Every figure above is Qwen3-1.7B at 1.7B parameters. The five seeds are stated
+loudly and the single model was, until 2026-09-25, stated once in a box further up. Nothing here
+licenses a claim about another model or another size.
 
 **Both tools took hard refusal to zero, which is what makes the rest readable.** What that leaves
 is the price each paid for it, and on the one run where both tools were selected the same way,
@@ -188,11 +200,17 @@ than adjusting for it: the honest position is that our arm had a selection advan
 not, and any result where we win by less than that advantage is not a result. Where the two tied,
 this matters less; where we lead, read it with this paragraph in mind.
 
-That changed on 2026-09-01, after the table above was measured. The harness now gives Heretic the
-same best-of-N selection, applied from outside its own code, and `head-to-head/EQUAL-BUDGET.md`
-records the reasoning. **It has not yet produced a number**: no Heretic arm has run through it, so
-the table above is still the one measured without it. The two paragraphs read as a contradiction
-if you meet them without their dates, so here are the dates.
+That changed on 2026-09-01, after the 2026-08-12 table was measured. The harness now gives Heretic
+the same best-of-N selection, applied from outside its own code, and `head-to-head/EQUAL-BUDGET.md`
+records the reasoning.
+
+**It has since produced numbers, and they are the ones in the table.** This paragraph said "it has
+not yet produced a number: no Heretic arm has run through it" until 2026-09-25, which stopped being
+true on 2026-09-10 and was contradicted by a file committed in this repository: the run's own
+README says "this is the run where **both tools were given the same best-of-N selection pass**",
+and its five Heretic arms are under `head-to-head/results/2026-09-10/`. Three rows of the table
+were migrated to that run and this paragraph was not updated with them, which is how a page ends
+up telling a reader the fair run does not exist while linking to it.
 :::
 
 The slices record which corpus they were cut from, and the run refuses to start if that
@@ -248,7 +266,7 @@ is why one seed is an anecdote.
 An adapter, and it's data rather than logic: how to invoke the tool, what output proves it
 actually ran, where it leaves its model, and how to read its own reported figures.
 
-See `ADAPTERS` in `senbonzakura/bench.py`. A pull request adding one is genuinely welcome,
+See `ADAPTERS` in `senbonzakura/headtohead.py`. A pull request adding one is genuinely welcome,
 including from the author of the tool you're adding.
 
 ## Where next

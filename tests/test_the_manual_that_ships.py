@@ -152,7 +152,7 @@ class TestTheUsePolicyReachesTheUser:
         assert "ACCEPTABLE\\-USE.md" in text, "the manual does not point at the full text"
 
     def test_the_manual_names_the_corpus_the_package_carries(self):
-        assert "6,500 harmful prompts" in _text()
+        assert "6,200 harmful prompts" in _text()
 
 
 def test_the_manual_says_the_multi_direction_question_is_open():

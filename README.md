@@ -41,7 +41,7 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 > **What it makes.** A model that will answer requests the original refused, including harmful
 > ones. That is the point, and it is permanent in the weights. The base model's licence still
 > governs the result. Don't put one in front of other people without saying what it is. The
-> package carries roughly 6,500 harmful prompts so it runs offline.
+> package carries roughly 6,200 harmful prompts so it runs offline.
 >
 > [The detail](#what-this-repository-does-not-contain), and `ACCEPTABLE-USE.md` ships in the
 > package.
@@ -151,7 +151,8 @@ selected on are never the rows it is reported on. And **every figure arrives wit
 usually a ruler reading nothing but prompt length: if that separates the arms as well as the real
 instrument does, the real instrument is measuring sentence length.
 
-**The honest ceiling.** Nothing has been measured above 3B parameters, and the instruments weaken
+**The honest ceiling.** No measurement above 3B parameters still stands: Qwen3-4B was run in
+July 2026 and withdrawn, and nothing has been re-run above 3B since. The instruments also weaken
 as the model does. Qwen3-1.7B's compass scores 0.9887 against a length-only ruler's 0.6564.
 Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measurement of anything.
 
@@ -179,9 +180,16 @@ By design, this is methods and results, not a loaded weapon:
   **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
   CC BY-NC 4.0. It holds prompts only: no completions, no answers.
 
-  **The installed wheel is a different matter.** It carries roughly 6,500 harmful prompts,
+  **The installed wheel is a different matter.** It carries roughly 6,200 harmful prompts,
   wrapped so a scraper does not find them in plaintext. The wrapping is a speed bump, not
   protection: the key ships beside them and `bundled.py` says so. An install is not prompt-free.
+
+  Where that number comes from, since a figure nobody can derive is a figure nobody can check:
+  4,895 in the packed evaluation track (259 fitting rows plus 4,636 evaluation rows) and 1,333
+  across the five harmful research corpora (advbench 520, harmbench 200, harmbench-copyright 100,
+  strongreject 313, xstest-unsafe 200). A sixth corpus, xstest-safe, holds 250 BENIGN prompts
+  used as controls and is not counted here. This said "roughly 6,500" until 2026-09-25, which was
+  only reachable by counting those 250 benign controls as harmful.
 - **No harmful outputs.**
 
 Abliteration removes safety guardrails wholesale. That is both the point and the danger. Use it

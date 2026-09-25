@@ -15,8 +15,16 @@ strengths that drive refusals toward zero without wrecking the model, guarded by
 Method (Arditi et al., "refusal is mediated by a direction"), with Heretic's refinements plus two
 additions here (5 multi-directional, 6 interpolated index):
   1. Extract per-layer refusal directions: the difference-of-means (bad - good), good-
-     orthogonalised, PLUS up to KMAX-1 secondary axes from PCA of the bad residual cloud,
-     giving an orthonormal basis of the refusal SUBSPACE at every layer.
+     orthogonalised, PLUS up to KMAX-1 secondary axes, each one a CLUSTER's own mean minus the
+     harmless mean, giving an orthonormal basis of the refusal SUBSPACE at every layer.
+
+     NOT PCA, and this docstring said PCA until 2026-09-25. The principal-axes method was
+     withdrawn on 2026-08-03 and replaced with clustered difference-of-means, for the reason
+     recorded at the extraction site itself: a principal axis of the harmful cloud describes how
+     the harmful prompts VARY, which is mostly topic, and the rewrite is the central correction
+     of this release. The file every new reader opens first went on documenting the method the
+     project had publicly retracted, in the same words the CHANGELOG uses to say what was wrong
+     with it.
   2. SEARCH (Optuna): a candidate is a windowed strength profile (peak position + strengths +
      width) AND how the directions are chosen (num_directions K; per-layer own directions vs a
      single interpolated direction_index shared across layers). Each trial applies the REAL

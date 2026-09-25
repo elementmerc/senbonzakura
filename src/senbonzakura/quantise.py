@@ -72,7 +72,24 @@ def _now():
 
 #: llama.cpp prints this on the way into a real operation. The number is the upstream build, which
 #: is the same number our pin carries as `bNNNNN`, so the two can be checked against each other.
-_BUILD_RE = re.compile(r"build\s*=\s*(\d+)\s*\(([0-9a-f]+)\)")
+#:
+#: TWO SPELLINGS, because upstream changed the banner between b10355 and b11046:
+#:
+#:     b10355   build = 10355 (0a1b2c3)
+#:     b11046   version: 0.4.1-dev (build 11046, commit 60081bb2b)
+#:
+#: Both are matched rather than the newest only. The binary that runs is not always the one we
+#: vendored: `source_of` can be a system llama.cpp of any age, and the field exists precisely to
+#: record what actually ran. Reading only the current spelling would report "cannot say" for every
+#: older build, which is indistinguishable from a binary that refused to identify itself.
+#:
+#: Found on 2026-09-25 by re-verifying the pin bump against a real model rather than trusting it:
+#: the sidecar had started writing `reported_build: null` while every other field stayed correct,
+#: so a quantisation looked fully provenanced and had lost the one field that can catch a binary
+#: disagreeing with its pin.
+_BUILD_RE = re.compile(
+    r"build\s*=\s*(\d+)\s*\(([0-9a-f]+)\)"
+    r"|build\s+(\d+)\s*,\s*commit\s+([0-9a-f]+)")
 
 
 def build_info(exe, *, timeout=20):
@@ -97,7 +114,10 @@ def build_info(exe, *, timeout=20):
     # the result means "cannot say", never a crash on the way into a real quantisation.
     text = (getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or "")
     m = _BUILD_RE.search(text if isinstance(text, str) else "")
-    return {"build": int(m.group(1)), "commit": m.group(2)} if m else None
+    if not m:
+        return None
+    build, commit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+    return {"build": int(build), "commit": commit}
 
 
 def _sha256(path, *, chunk=1 << 20):

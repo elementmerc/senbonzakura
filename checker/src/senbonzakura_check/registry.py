@@ -97,6 +97,80 @@ from typing import Any
 
 CHECKS_DIR = Path(__file__).resolve().parent / "checks"
 
+#: The largest artefact this tool will read, in bytes.
+#:
+#: SECURITY.md puts crafted result files in scope in so many words: "This tool loads other people's
+#: files, so this is the category that matters most." Both ingestion points read an entire
+#: caller-supplied path into memory, and REPRODUCING.md invites exactly that, telling people to
+#: point the checker at somebody else's lm-evaluation-harness and Inspect output.
+#:
+#: 64 MB is generous rather than tight. These artefacts are aggregate JSON: the largest this
+#: project publishes is under 100 KB, and a harness result file carrying per-sample records runs to
+#: a few megabytes. A file past this is not a result file that got big, it is a different kind of
+#: object, and refusing it names the limit rather than letting the machine decide by running out of
+#: memory.
+MAX_ARTEFACT_BYTES = 64 * 1024 * 1024
+
+#: How deep a JSON document may nest before this refuses it.
+#:
+#: The separate hazard, and the one a size cap does not cover: `[[[[...]]]]` is small on disk and
+#: raises RecursionError in the parser. Neither ingestion point caught RecursionError, which is not
+#: an OSError and not a JSONDecodeError, so a few kilobytes produced a traceback rather than a
+#: refusal. Python's own limit is around 1000 frames and the parser burns several per level; 200 is
+#: far past any real artefact and far short of the interpreter's ceiling.
+MAX_ARTEFACT_DEPTH = 200
+
+
+class ArtefactTooLarge(Exception):
+    """A file this tool declines to read, with the limit named in the message."""
+
+
+def _depth(obj, limit, _at=0):
+    """Deepest nesting in a parsed document, giving up as soon as it passes `limit`.
+
+    Iterative in the sense that matters: it stops at the limit rather than walking a document that
+    is already known to be too deep, so the guard cannot itself be the thing that runs out of
+    stack.
+    """
+    if _at > limit:
+        return _at
+    if isinstance(obj, dict):
+        return max((_depth(v, limit, _at + 1) for v in obj.values()), default=_at)
+    if isinstance(obj, list):
+        return max((_depth(v, limit, _at + 1) for v in obj), default=_at)
+    return _at
+
+
+def read_artefact(path, *, max_bytes=MAX_ARTEFACT_BYTES, max_depth=MAX_ARTEFACT_DEPTH):
+    """Parse a JSON artefact, bounded in size and in nesting depth.
+
+    Raises OSError, json.JSONDecodeError or ArtefactTooLarge. Callers already distinguish the first
+    two and turn them into their own refusal sentences, so this adds one more of the same shape
+    rather than a new failure mode to handle.
+
+    The size is checked with `stat` BEFORE the read, so an over-large file is never held in memory
+    even briefly. The depth can only be checked after parsing, which is why the parse itself is
+    guarded for RecursionError.
+    """
+    p = Path(path)
+    size = p.stat().st_size
+    if size > max_bytes:
+        raise ArtefactTooLarge(
+            f"it is {size:,} bytes and this reads at most {max_bytes:,}. Result artefacts are "
+            f"aggregate JSON and are thousands of times smaller than this; a file this large is "
+            f"something else.")
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except RecursionError:
+        raise ArtefactTooLarge(
+            f"its JSON nests deeper than the parser will go. This reads at most {max_depth} "
+            f"levels.") from None
+    if _depth(doc, max_depth) > max_depth:
+        raise ArtefactTooLarge(
+            f"its JSON nests deeper than {max_depth} levels. A result artefact is a few levels "
+            f"deep; this is not one.")
+    return doc
+
 #: Every field a check file must carry. Absence of any one is a refusal, not a default.
 REQUIRED_FIELDS = (
     "id", "title", "detects", "incident", "remedy",
@@ -549,8 +623,8 @@ def load_checks(directory: Path | str | None = None) -> list[Check]:
     out = []
     for path in sorted(root.glob("*.json")):
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
+            raw = read_artefact(path)
+        except (OSError, json.JSONDecodeError, ArtefactTooLarge) as e:
             raise CheckError(f"could not read the check at {path}: {e}") from e
         out.append(_validate(raw, path))
 

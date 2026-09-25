@@ -59,7 +59,13 @@ import sys
 from pathlib import Path
 
 from .adapters import UnknownArtefactError, normalise
-from .registry import load_checks, run_checks, run_pair_checks
+from .registry import (
+    ArtefactTooLarge,
+    load_checks,
+    read_artefact,
+    run_checks,
+    run_pair_checks,
+)
 
 #: What each severity means, in the words a reader meets rather than as a bare label. The label
 #: alone ("severity: notes") tells somebody who has not read the documentation nothing, and the
@@ -139,11 +145,15 @@ def read_artefact(path):
     them would be a second set of error sentences to keep in step.
     """
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_artefact(path)
     except OSError as e:
         return None, f"could not read it: {e}"
     except json.JSONDecodeError as e:
         return None, f"not valid JSON: {e}"
+    except ArtefactTooLarge as e:
+        # A third refusal beside the other two, in the same shape, because this path reads files
+        # nobody here wrote. SECURITY.md puts a crafted result file in scope in those words.
+        return None, f"this tool declines to read it: {e}"
 
     try:
         return normalise(doc), None

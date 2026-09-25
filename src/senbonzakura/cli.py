@@ -3501,7 +3501,12 @@ class Abliterator:
             # suite because the test built its namespace by hand and invented `batch_size=2` in
             # it, so the code and the test agreed with each other and neither matched the parser.
             batch=max(1, int(self.args.gen_batch)),
-            max_new=int(getattr(self.args, "capability_max_new", 320)),
+            # 512 IS THE PARSER'S DEFAULT AND THIS FALLBACK MUST MATCH IT. It read 320, while the
+            # refusal that estimates how long this will take reads 512, so a hand-built namespace
+            # would be sized at one budget and run at the other, and the hours the guard quoted
+            # would not be the hours the run took. Only reachable without the parser, which is
+            # exactly where the two copies of a default stop being checked against each other.
+            max_new=int(getattr(self.args, "capability_max_new", 512)),
             # THE LONGEST SILENT STRETCH IN THE WHOLE RUN, now that the probe is on by default:
             # 200 items at up to 512 new tokens each, and on a CPU that is measured in hours.
             log=self.log)

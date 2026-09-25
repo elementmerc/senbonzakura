@@ -102,12 +102,22 @@ That's a claim, not a measurement.
 It's now `senbonzakura head-to-head`, it ships inside the wheel, and it has its own tests. See
 [Benchmarking against another tool](/guide/benchmark).
 
-**The head-to-head against Heretic is published but provisional.** It ran on 2026-08-12 under
-the corrected code, five seeds each, both tools driven by us. Two conditions are still attached
-and both are on [the benchmark page](/guide/benchmark) beside the table: we lose the keyword
-axis we ourselves optimise, which is usually a ruler problem rather than a model one, and the
-coherence figures were measured on a 64-prompt slice that Heretic tunes against, where the other
-axes use 200 held-out prompts.
+**The head-to-head against Heretic is published, and it has been re-run since.** It first ran on
+2026-08-12, five seeds each, both tools driven by us, but with only our arm given the best-of-N
+selection pass. It was re-run on **2026-09-10** with both tools selected the same way, and those
+arms are committed under `head-to-head/results/2026-09-10/`.
+
+What that discharged: the coherence figures were measured on a 64-prompt slice that Heretic
+tunes against, and the re-measurement on 200 held-out prompts found **no detectable difference**
+(exact permutation test, p = 0.238). That row is struck on the benchmark page.
+
+What still stands: **we lose the keyword axis we ourselves optimise**, 20.1% against 12.9%, and
+the corrected figures make that gap wider rather than narrower.
+
+This section described both conditions as open until 2026-09-25, four months after one of them
+was discharged, on the page that opens by calling itself every condition attached to every
+number "in one place". A register that lags the corrections is worse than no register, because a
+reader who checks it stops checking anything else.
 
 ## The headline table's own conditions
 

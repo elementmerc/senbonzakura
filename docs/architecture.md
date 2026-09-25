@@ -52,14 +52,56 @@ and picks the knee of that trade-off, not the extreme.
 
 ## Module map
 
+There are 56 modules under `src/senbonzakura/`. This lists the ones somebody reading or extending
+the code will meet, grouped by what they are for. It listed six until 2026-09-25, none of them
+from the measurement suite, which is the half of the project the README calls the interesting one.
+
+**The edit**
+
 | Module | Responsibility |
 |---|---|
-| `cli.py` | The command surface and the orchestration of the pipeline above. Architecture detection (dense, fused MoE, expert-list), the extract-search-bake flow, `kageyoshi` one-shot preset, and all flags. |
-| `score.py` | Refusal scoring against an eval set: hard refusal, the strict (keyword) rate, and broken-output detection. |
-| `metrics.py` | The keyword metric itself (the list copied from Heretic, hence the AGPL licence) and the normalisation around it. |
-| `coherence.py` | The neutral-passage perplexity probe, the check that a cut model still reads coherently. Reuses the shared model loader so its flags match the scorer exactly. |
+| `cli.py` | The command surface and the orchestration of the pipeline above. Architecture detection (dense, fused MoE, expert-list), and the extract, search and bake flow. It is the largest module here by a wide margin. |
+| `parser.py` | **Every flag.** The line above used to say `cli.py` held them; it does not, and the split is deliberate: `parser.py` imports no deep-learning stack, so `--help` does not load torch. |
 | `resources.py` | The resource governor: VRAM-pressure-adaptive batch sizing, accelerate offload for models larger than VRAM, and the background mode that yields the GPU to a foreground game. |
+| `crashsafe.py` | Reversible snapshots, resume markers, and the provenance block every result carries. |
+| `streaming.py` | The shard-at-a-time path for models larger than memory. |
+
+**The instruments, which is what the release is about**
+
+| Module | Responsibility |
+|---|---|
+| `score.py` | Refusal scoring against an eval set: hard refusal, the strict (keyword) rate, and broken-output detection. |
+| `margin.py` | The compass. Does the model still recognise harm, scored by logit margin rather than by counting verdicts. |
+| `capability.py` | What the edit cost, on five code-graded tasks. |
+| `coherence.py` | The neutral-passage perplexity probe, the check that a cut model still reads coherently. |
+| `drift.py` | Distributional cost as KL divergence against the unedited model. |
+| `measure.py` | Runs all five of the above into one table. It measures nothing itself; each stage is the command that owns that number. |
+| `metrics.py` | The keyword metric itself (the list copied from Heretic, hence the AGPL licence) and the normalisation around it. |
+| `lengthsweep.py` | The token-budget sweep behind the "a refusal cut off before it is emitted counts as compliance" caveat. |
+
+**The evidence**
+
+| Module | Responsibility |
+|---|---|
+| `track.py`, `trackbuild.py`, `trackio.py` | Building, splitting and reading the evaluation track, and the contamination audit. |
+| `bundled.py`, `corpora.py` | The packed track and corpora that ship inside the wheel, and the key that unwraps them. |
+| `baseline.py` | Turning a measurement into a baseline a later run can be gated against. |
+| `validate.py` | The six experiments behind the multi-direction claim. |
+| `modelcard.py` | The model card for a finished run. |
+
+**Comparison, conversion and the environment**
+
+| Module | Responsibility |
+|---|---|
+| `headtohead.py`, `headtohead_report.py` | Running this tool and another one on the same model under one ruler, and reporting it. |
+| `convert.py`, `quantise.py`, `gguf_io.py` | GGUF conversion, quantisation, and reading a GGUF header without loading the model. |
+| `doctor.py`, `envsetup.py` | Whether this install can do what it claims, and putting the right torch on the machine. |
+| `interactive.py` | The guided mode for people who would rather not read the flag list. |
+| `fetch.py`, `dataset.py` | Resumable model fetching, and reading the shapes of dataset a track can come from. |
 | `__main__.py` | `python -m senbonzakura` entry point. |
+
+The separate `senbonzakura-check` distribution lives under `checker/` and imports none of this;
+the dependency runs big to small and only that way.
 
 ## The search objectives
 

@@ -121,7 +121,7 @@ MAX_ARTEFACT_BYTES = 64 * 1024 * 1024
 MAX_ARTEFACT_DEPTH = 200
 
 
-class ArtefactTooLarge(Exception):
+class ArtefactTooLargeError(Exception):
     """A file this tool declines to read, with the limit named in the message."""
 
 
@@ -141,10 +141,10 @@ def _depth(obj, limit, _at=0):
     return _at
 
 
-def read_artefact(path, *, max_bytes=MAX_ARTEFACT_BYTES, max_depth=MAX_ARTEFACT_DEPTH):
+def read_json_bounded(path, *, max_bytes=MAX_ARTEFACT_BYTES, max_depth=MAX_ARTEFACT_DEPTH):
     """Parse a JSON artefact, bounded in size and in nesting depth.
 
-    Raises OSError, json.JSONDecodeError or ArtefactTooLarge. Callers already distinguish the first
+    Raises OSError, json.JSONDecodeError or ArtefactTooLargeError. Callers already distinguish the first
     two and turn them into their own refusal sentences, so this adds one more of the same shape
     rather than a new failure mode to handle.
 
@@ -155,18 +155,18 @@ def read_artefact(path, *, max_bytes=MAX_ARTEFACT_BYTES, max_depth=MAX_ARTEFACT_
     p = Path(path)
     size = p.stat().st_size
     if size > max_bytes:
-        raise ArtefactTooLarge(
+        raise ArtefactTooLargeError(
             f"it is {size:,} bytes and this reads at most {max_bytes:,}. Result artefacts are "
             f"aggregate JSON and are thousands of times smaller than this; a file this large is "
             f"something else.")
     try:
         doc = json.loads(p.read_text(encoding="utf-8"))
     except RecursionError:
-        raise ArtefactTooLarge(
+        raise ArtefactTooLargeError(
             f"its JSON nests deeper than the parser will go. This reads at most {max_depth} "
             f"levels.") from None
     if _depth(doc, max_depth) > max_depth:
-        raise ArtefactTooLarge(
+        raise ArtefactTooLargeError(
             f"its JSON nests deeper than {max_depth} levels. A result artefact is a few levels "
             f"deep; this is not one.")
     return doc
@@ -623,8 +623,8 @@ def load_checks(directory: Path | str | None = None) -> list[Check]:
     out = []
     for path in sorted(root.glob("*.json")):
         try:
-            raw = read_artefact(path)
-        except (OSError, json.JSONDecodeError, ArtefactTooLarge) as e:
+            raw = read_json_bounded(path)
+        except (OSError, json.JSONDecodeError, ArtefactTooLargeError) as e:
             raise CheckError(f"could not read the check at {path}: {e}") from e
         out.append(_validate(raw, path))
 

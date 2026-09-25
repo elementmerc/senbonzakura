@@ -154,3 +154,21 @@ def test_the_metric_and_the_path_are_both_worked_out_end_to_end(tmp_path, monkey
     assert (tmp_path / "baselines" / "coherence.json").is_file(), out.out
     assert "stamped only 'coherence'" in out.out, (
         "an inferred metric has to be announced, or a reader cannot tell it was inferred")
+
+
+def test_the_default_baseline_path_never_changes_shape_by_platform():
+    """FOUND BY CI's WINDOWS ROW, 2026-09-23.
+
+    `default_out` built the path with `Path`, which renders a backslash separator on Windows, so
+    the value documented in `--help` as `./baselines/<metric>.json` and the value the tool used
+    disagreed there. It goes into the log and into a file people compare across machines, so the
+    spelling is pinned rather than left to the platform. Windows accepts a forward slash in every
+    path API, so nothing is lost.
+
+    Asserted on the character rather than by running on Windows, because this machine is not one
+    and the property is about what the function returns, not about the filesystem.
+    """
+    for metric in ("coherence", "refusal_rate.senbonzakura-ruler", "a/b"):
+        got = baseline.default_out(metric)
+        assert "\\" not in got, f"{metric!r} yields {got!r}, which is a Windows-shaped path"
+        assert got.startswith("baselines/")

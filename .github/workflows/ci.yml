@@ -655,7 +655,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Build the CPU image
-        run: docker build -f Dockerfile -t senbonzakura:ci-cpu .
+        # ALLOW_CODE_ONLY=1 BECAUSE THIS JOB WANTS THE CORPORA-LESS IMAGE. The corpora are
+        # generated rather than committed, so a runner can never have them, and the assertions
+        # below are written around that: they check the absence is legible rather than silent.
+        # Without this argument the Dockerfile's release gate refuses the build outright and the
+        # job cannot obtain the very image it exists to read.
+        run: docker build -f Dockerfile --build-arg ALLOW_CODE_ONLY=1 -t senbonzakura:ci-cpu .
       - name: The CPU image runs the quantiser
         # Not `doctor` exiting 0: it exits 1 on warnings, and a CPU image legitimately
         # warns about having no card. The claim under test is narrower and is read from

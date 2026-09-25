@@ -183,7 +183,18 @@ def test_the_two_invocation_forms_agree_about_failure(command):
 #: job is to look at this machine and say what it found, and requiring an argument would be
 #: ceremony. The silence half of the check still applies to it, and is the half that catches a
 #: module with no `__main__` guard.
-NEEDS_NO_ARGUMENTS = {"setup"}
+#: Commands that legitimately do their whole job with no arguments, so exiting 0 is correct and
+#: the assertion below would be asserting the opposite of the truth. Each one is named with its
+#: reason, because an unexplained entry here is how a genuinely silent module would hide.
+NEEDS_NO_ARGUMENTS = {
+    "setup",     # reads the machine and prints what it found; changes nothing without --apply
+    # Fetches and packs the corpora, which is the entire command. It became a command on
+    # 2026-09-23, having been `tools/packaging/build_corpora.py`, and only the ubuntu-3.12 CI row
+    # caught it: that is the one row given an authenticated `gh`, so it is the only place the
+    # build SUCCEEDS with no arguments. Everywhere else it failed for want of a credential and
+    # the assertion passed for the wrong reason, which is the shape this whole file is about.
+    "corpora",
+}
 
 
 @pytest.mark.parametrize("command", sorted(entry.DELEGATED))

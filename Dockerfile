@@ -162,7 +162,28 @@ RUN senbonzakura doctor 2>&1 | tee /tmp/doctor.txt; \
 # and a build that demanded it would fail every push forever. Its absence means `--track default`
 # does not work in an image built this way, which is a real limitation of the dev lane rather
 # than a check to switch off; it is recorded in DEFERRED.md as an open question.
+# A DELIBERATELY CODE-ONLY BUILD IS A REAL THING AND IS NOT A RELEASE.
+#
+# The check below and the CI job that runs it disagreed, and the job was the one that broke.
+# `.github/workflows/ci.yml` builds this image on a runner ON PURPOSE without corpora, to prove
+# the property a runner CAN prove: that an image lacking them says so rather than quietly
+# returning rows from somewhere. Its own comment says as much at length. Then this gate arrived
+# and refused to build that image at all, so the job asserting "the absence is legible" could no
+# longer get an image whose absence it could read.
+#
+# So the refusal is opt-out, by a build argument, rather than absolute. The default is still to
+# refuse, which is what protects a release: nothing changes for anyone who types `docker build`.
+# CI passes `--build-arg ALLOW_CODE_ONLY=1` and says why at the call site. An argument is used
+# rather than loosening the count because a code-only build is a DECLARED intent, and a reader of
+# either file can see which kind of image they are looking at.
+ARG ALLOW_CODE_ONLY=0
 RUN grep -vE "^\s+✗\s+bundled track" /tmp/doctor.txt > /tmp/doctor-checked.txt; \
+    if [ "${ALLOW_CODE_ONLY}" = "1" ]; then \
+      grep -vE "^\s+✗\s+corpus " /tmp/doctor-checked.txt > /tmp/doctor-kept.txt; \
+      mv /tmp/doctor-kept.txt /tmp/doctor-checked.txt; \
+      echo "ALLOW_CODE_ONLY=1: this image is built without corpora on purpose."; \
+      echo "It cannot serve --track default and is not a release artefact."; \
+    fi; \
     if grep -qE "^\s+✗" /tmp/doctor-checked.txt; then \
       echo "----------------------------------------------------------------"; \
       echo "This image cannot do what it claims. doctor reports:"; \

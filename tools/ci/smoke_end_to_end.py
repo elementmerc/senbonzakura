@@ -448,10 +448,20 @@ def main(argv=None):
             raise SmokeError(f"the model card does not carry {want!r}")
 
     # ── the refusals, which are the half a smoke test usually forgets ────────────────
+    # `--capability-eval ""` TURNS THE PROBE OFF FOR THIS STAGE, and it has to. On a CPU the
+    # default probe is roughly four hours, and since 2026-09-22 the tool refuses that rather than
+    # starting it. That refusal is correct and it fires before this one, so without this flag the
+    # stage exits 1 on the probe and never reaches the behaviour it is named after: a stage that
+    # passes on the wrong refusal is worse than no stage.
+    #
+    # The expected text is the wording `cli.py` actually prints. It read "rows this track holds
+    # for selection", which appears nowhere in the source; the real line is "this track holds N
+    # harmful rows for selection". Matched on the part that carries no number.
     run("kageyoshi refuses a track too small for its own budget",
         ["senbonzakura", "kageyoshi", "--model", MODEL, "--track", str(TRACK),
-         "--out", str(out / "never"), "--device", "cpu", "--no-persist-study"],
-        expect_text="rows this track holds for selection", expect_fail=True)
+         "--out", str(out / "never"), "--device", "cpu", "--no-persist-study",
+         "--capability-eval", ""],
+        expect_text="harmful rows for selection", expect_fail=True)
 
     run("interactive refuses a pipe and names the alternative",
         ["senbonzakura", "interactive"], expect_text="needs a terminal", expect_fail=True)

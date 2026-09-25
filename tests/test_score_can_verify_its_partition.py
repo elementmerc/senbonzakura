@@ -93,7 +93,8 @@ def test_an_unknown_arm_is_refused_rather_than_guessed(tmp_path):
 
 def test_no_track_means_the_arm_is_not_needed():
     """Without a manifest there is no recorded boundary for an arm to name, so requiring one
-    would refuse every caller that never had a track, for a value that changes nothing."""
+    would refuse every caller that never had a track, for a value that changes nothing.
+    """
     assert track.resolve_skip_for_arm(None, 5, None) == (5, False)
     assert track.resolve_skip_for_arm(None, None, None) == (0, False)
 

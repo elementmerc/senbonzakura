@@ -334,3 +334,113 @@ def test_every_row_has_the_same_shape_whatever_happened_to_the_stage():
     assert len(rows) == 3
     assert {len(r) for r in rows} == {4}, f"ragged rows: {[len(r) for r in rows]}"
     measure.format_table(rows)      # unpacks four; raises if any row disagrees
+
+
+# ── the dispatch, and what it does with a stage that raises ──────────────────────
+
+def test_a_stage_is_run_through_the_module_that_owns_the_command(monkeypatch):
+    """In process, through `entry.DELEGATED`, so a command that moves keeps being run."""
+    import sys
+    import types as _types
+
+    seen = {}
+    fake = _types.ModuleType("senbonzakura.score")
+    fake.main = lambda argv: seen.setdefault("argv", argv) or 0
+    monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
+    measure.run_stage("score", ["--out", "x.json"], log=lambda _m: None)
+    assert seen["argv"] == ["--out", "x.json"]
+
+
+def test_a_refusal_from_a_stage_becomes_one_failed_stage(monkeypatch):
+    """Several commands say no with `SystemExit`. Left uncaught it would end the whole run, so
+    the other four instruments would report nothing because one of them declined.
+    """
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("senbonzakura.score")
+
+    def _refuse(_argv):
+        raise SystemExit("that track does not exist")
+
+    fake.main = _refuse
+    monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
+    with pytest.raises(measure.StageError, match="that track does not exist"):
+        measure.run_stage("score", [], log=lambda _m: None)
+
+
+def test_a_bare_exit_status_still_produces_a_readable_reason(monkeypatch):
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("senbonzakura.score")
+
+    def _exit(_argv):
+        raise SystemExit(3)
+
+    fake.main = _exit
+    monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
+    with pytest.raises(measure.StageError, match="exited 3"):
+        measure.run_stage("score", [], log=lambda _m: None)
+
+
+def test_any_other_exception_is_named_by_its_type(monkeypatch):
+    """Deliberately broad: whatever one instrument does wrong, the other four still have numbers.
+    The type is kept because "RuntimeError: CUDA out of memory" is actionable and "failed" is not.
+    """
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("senbonzakura.score")
+
+    def _boom(_argv):
+        raise RuntimeError("CUDA out of memory")
+
+    fake.main = _boom
+    monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
+    with pytest.raises(measure.StageError, match="RuntimeError: CUDA out of memory"):
+        measure.run_stage("score", [], log=lambda _m: None)
+
+
+# ── the command end to end, with nothing loaded ──────────────────────────────────
+
+def test_main_writes_the_summary_and_reports_success(tmp_path, monkeypatch, capsys):
+    def _fake(name, _argv, **_k):
+        (tmp_path / measure.OUTPUTS[name]).write_text(json.dumps(
+            {"metrics": {measure.READINGS[name][0]: {"value": 0.5, "units": "proportion"}}}))
+        return 0
+
+    monkeypatch.setattr(measure, "run_stage", _fake)
+    rc = measure.main(["Qwen/Qwen3-1.7B", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    summary = json.loads((tmp_path / "measure.json").read_text())
+    assert summary["model"] == "Qwen/Qwen3-1.7B"
+    assert summary["failed"] == []
+    assert "commands" in summary, "a reader has to be able to re-run any single stage"
+    assert "None of this is a pass or a fail" in out, (
+        "the closing caveat is the thing that stops a reader quoting this as a verdict")
+
+
+def test_main_reports_non_zero_when_an_instrument_produced_nothing(tmp_path, monkeypatch, capsys):
+    """A script gating on this has to be able to tell. The table still prints the rest."""
+    def _fake(name, _argv, **_k):
+        if name == "score":
+            raise measure.StageError("CUDA out of memory")
+        (tmp_path / measure.OUTPUTS[name]).write_text(json.dumps(
+            {"metrics": {measure.READINGS[name][0]: {"value": 0.5}}}))
+        return 0
+
+    monkeypatch.setattr(measure, "run_stage", _fake)
+    rc = measure.main(["Qwen/Qwen3-1.7B", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "score" in json.loads((tmp_path / "measure.json").read_text())["failed"]
+    assert "compass" in out, "one failure must not hide the instruments that worked"
+
+
+def test_the_token_is_not_written_into_the_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr(measure, "run_stage", lambda name, _a, **_k: (
+        (tmp_path / measure.OUTPUTS[name]).write_text("{}") or 0))
+    measure.main(["m", "--out", str(tmp_path), "--hf-token", "hf_secret"])
+    assert "hf_secret" not in (tmp_path / "measure.json").read_text()

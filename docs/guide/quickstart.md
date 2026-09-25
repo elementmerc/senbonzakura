@@ -76,7 +76,7 @@ depends on your working directory is how two runs of the same command stop being
 
 Then go and make a cup of tea.
 
-::: tip The bundled track is about 6,500 harmful prompts in your site-packages
+::: tip The bundled track is about 6,200 harmful prompts in your site-packages
 Worth knowing before you put this on a shared machine.
 [The install page](/guide/install#what-comes-in-the-box-including-the-part-people-don-t-expect)
 says what is in it and how to build a wheel without it.

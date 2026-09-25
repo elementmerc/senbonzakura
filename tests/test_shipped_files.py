@@ -28,8 +28,10 @@ it asks git the same question a clone's contents answer.
 
 WHAT DELIBERATELY STAYS UNTRACKED
 
-`corpora.bin` and `default-track.bin` hold 4,895 harmful prompts under a key that ships beside
-them, and the project publishes that corpus as a gated dataset on purpose. They belong in the
+`corpora.bin` and `default-track.bin` hold 6,228 harmful prompts between them under a key that
+ships beside them (4,895 in the track, 1,333 across the five harmful corpora; the sixth
+corpus is 250 benign controls and is not counted), and the project publishes that corpus as a
+gated dataset on purpose. They belong in the
 wheel, where building one is a deliberate act that attaches the licence notice, and not in a
 public git tree where a crawler would find them. Their absence from a clone is correct, and
 what has to be true instead is that the tool says so in words a person can act on. That is

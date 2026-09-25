@@ -68,6 +68,33 @@ def _track_spec(track, split):
     return f"{track.rstrip('/')}/{split}"
 
 
+#: The stages whose parsers declare `--hf-token`. `margin`, `coherence` and `drift` do not, and
+#: handing a flag to a parser that does not know it makes argparse print the flag AND ITS VALUE.
+#: Kept as data beside the builder rather than as a `try` around the run, because the failure is
+#: at argument-construction time and the fix has to be too.
+TAKES_HF_TOKEN = frozenset({"score", "capability"})
+
+
+def _harmful_skip(track):
+    """How many harmful rows the search consumed, from the track's own manifest. 0 if unknown.
+
+    Reads `skip_harmful`, which `senbonzakura track` records for exactly this purpose. A track
+    that does not declare it gets 0, which is the old behaviour and is honest: this cannot invent
+    a partition boundary a manifest does not state.
+    """
+    import json
+    from pathlib import Path
+
+    if not track:
+        return 0
+    try:
+        doc = json.loads((Path(track) / "track.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    value = doc.get("skip_harmful")
+    return value if isinstance(value, int) and value > 0 else 0
+
+
 def stage_argv(name, args, out_dir):
     """The command line this stage would have been given by hand.
 
@@ -75,17 +102,37 @@ def stage_argv(name, args, out_dir):
     table. A reader who wants to re-run one stage with different knobs can copy the line.
     """
     common = ["--model", args.model, "--device", args.device]
-    if args.hf_token:
+    if args.hf_token and name in TAKES_HF_TOKEN:
         # The VALUE is never printed: `_shown` below replaces it. It is here because the stage
         # needs it, and a gated model fails four ways without it.
+        #
+        # GUARDED BY THE STAGE, because three of the five do not declare the flag and argparse
+        # prints an unrecognised argument WITH ITS VALUE. `--hf-token hf_live_token` therefore
+        # went to stderr verbatim, in the error text of three stages, under a comment on this
+        # very line promising the value is never printed. Found 2026-09-25.
         common += ["--hf-token", args.hf_token]
     if args.trust_remote_code:
         common += ["--trust-remote-code"]
     out = str(out_dir / OUTPUTS[name])
 
     if name == "score":
-        return [*common, "--eval", _track_spec(args.track, "bad_eval_ds"),
+        # `--skip` IS NOT OPTIONAL HERE. `bad_eval_ds` is the search rows followed by the measure
+        # rows, and `track.json` records `skip_harmful` so a caller can land on the second half.
+        # Without it `score` takes prompts from the head of the file, which is the partition the
+        # search chose the configuration on, and the table below labels the figure "measured on
+        # this track's held-out rows and on no others".
+        #
+        # `compass` already did this correctly through `margin.resolve_skips`, so one table was
+        # reading two different partitions and saying so about neither. This is the project's own
+        # documented incident class: `checker/.../a-rate-with-no-partition-beside-it.json` records
+        # a 0.0% that travelled as a measured refusal rate having been scored on the selection
+        # partition.
+        argv = [*common, "--eval", _track_spec(args.track, "bad_eval_ds"),
                 "--out", out, "--n", str(args.n)]
+        skip = _harmful_skip(args.track)
+        if skip:
+            argv += ["--skip", str(skip)]
+        return argv
     if name == "compass":
         return [*common,
                 "--harmful", _track_spec(args.track, "bad_eval_ds"),

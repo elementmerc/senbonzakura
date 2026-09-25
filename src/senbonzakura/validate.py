@@ -6,8 +6,19 @@ r"""Do the extra refusal directions carry refusal, or do they carry topic?
 
 Senbonzakura's clustered extractor finds several directions per layer. That it finds them is not
 evidence that they are refusal directions: a cluster of harmful prompts about one subject differs
-from harmless prompts partly BECAUSE of the subject, and the separation filter that was supposed
-to tell those apart currently accepts every candidate it is shown.
+from harmless prompts partly BECAUSE of the subject, and the separation filter is what has to tell
+those apart.
+
+That filter used to accept every candidate it was shown, for a reason in the arithmetic rather
+than in the data: it scored each candidate on the very rows the candidate was built from. Since
+2026-08-16 each one is fitted on half its rows and scored on the half it never saw, against a
+threshold with a measured floor beneath it, taken from directions built to carry nothing and put
+through the identical path (`cli.py`, `threshold = max(sep_stat.threshold, null_floor)`). So it
+rejects, and this docstring said otherwise until 2026-09-25.
+
+What that does NOT establish is the thing this module exists for. A filter that can reject is not
+evidence that what it accepted carries refusal rather than topic, and the six experiments below
+are what would answer that.
 
 The published work has the same hole. The clustering approach here was arrived at independently
 in "Exploring the multi-dimensional refusal subspace" (LessWrong), which validates with refusal

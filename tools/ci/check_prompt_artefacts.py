@@ -85,6 +85,64 @@ FOREIGN_SCHEMA_FILES = frozenset({"dataset_info.json", "state.json"})
 
 SUFFIXES = frozenset({".json", ".jsonl"})
 
+#: Binary dataset files, which this gate REFUSES unless it already knows them byte for byte.
+#:
+#: THE GAP THIS CLOSES. Until 2026-09-25 the gate read `.json`, `.jsonl` and results Markdown, and
+#: nothing else. Three `.arrow` files are tracked under `examples/toy-track/`, and an arrow file is
+#: the one committed on-disk format in this tree that carries prompts as its whole purpose: a
+#: track's `bad_ds` IS harmful prompts. The gate could not read them, so it cleared them by not
+#: looking. The same blindness covered `.parquet`, and `.txt` and `.csv` are the formats the guide
+#: tells users to build corpora in.
+#:
+#: WHY A FINGERPRINT RATHER THAN A CONTENT SCAN. The toy track legitimately contains prompt-shaped
+#: rows; they are placeholders, twelve of them, reading "example harmful request number N". So
+#: "does this file contain prompts" is the wrong question and would answer yes forever. The
+#: question that matters is "is this still the TOY track", and the failure to prevent is somebody
+#: regenerating it from a real corpus and committing the result, which looks identical to the gate
+#: and completely different to a reader.
+#:
+#: A content scan cannot answer that without a denylist of what a real harmful prompt says, and
+#: this project refused exactly that on 2026-09-17, for the reason recorded below: the guard
+#: carrying the denylist inline published the terms it existed to keep out. A gate whose own
+#: source is the leak is not a gate.
+#:
+#: DENY-FIRST, the same principle the private-remote gate uses: absence from this table is not an
+#: allowance. A new binary dataset file refuses until somebody records it here deliberately, and a
+#: changed one refuses until somebody re-records it. Both are decisions, and both become visible in
+#: review, which is the property a silent pass never had.
+BINARY_DATASET_SUFFIXES = frozenset({".arrow", ".parquet", ".feather"})
+
+#: Path (repo-relative, forward slashes) to sha256. Recorded 2026-09-25 from the tracked files.
+KNOWN_BINARY_DATASETS = {
+    "examples/toy-track/bad_ds/data-00000-of-00001.arrow":
+        "a1e2f8de3b4c4e2a045691567794647b243e68bba7f0ba52f8297acf1bc2385d",
+    "examples/toy-track/bad_eval_ds/data-00000-of-00001.arrow":
+        "e3a1099e3570112147a73433dc60d07d8a27368081321cb21c1ef4c412bdd74c",
+    "examples/toy-track/good_ds/data-00000-of-00001.arrow":
+        "44f8817afb72b88c7f0830d07e742b447720e2836120a1d29f9f3e2a7d13b889",
+}
+
+
+def binary_dataset_findings(path: Path, raw: bytes) -> list[str]:
+    """A binary dataset file is cleared only by being one this gate already knows."""
+    import hashlib
+
+    key = path.as_posix()
+    for known in KNOWN_BINARY_DATASETS:
+        if key == known or key.endswith("/" + known):
+            got = hashlib.sha256(raw).hexdigest()
+            if got == KNOWN_BINARY_DATASETS[known]:
+                return []
+            return [f"{path}: is a known dataset file whose contents have CHANGED "
+                    f"(sha256 {got[:16]}..., recorded {KNOWN_BINARY_DATASETS[known][:16]}...). "
+                    f"If this was regenerated from a real corpus it must not be committed. If it "
+                    f"is a deliberate change to the toy data, record the new hash in "
+                    f"KNOWN_BINARY_DATASETS and say why in the commit."]
+    return [f"{path}: is a binary dataset file this gate cannot read and does not know. It is "
+            f"refused rather than cleared, because the formats it covers exist to carry prompts. "
+            f"If it genuinely belongs in the repository, record its sha256 in "
+            f"KNOWN_BINARY_DATASETS."]
+
 #: Markdown under a results directory, which `.gitignore` re-admits explicitly.
 #:
 #: WHY THIS IS A SECOND KIND OF CHECK. Everything above reads a document's KEYS: it decodes JSON
@@ -223,6 +281,8 @@ def scan_bytes(path: Path, raw: bytes) -> list[str]:
     Separate from `scan_file` because what a pre-commit check must read is the staged
     blob rather than the working copy, and those two are not the same bytes.
     """
+    if path.suffix in BINARY_DATASET_SUFFIXES:
+        return binary_dataset_findings(path, raw)
     if is_results_markdown(path):
         try:
             return markdown_findings(path, raw.decode("utf-8"))
@@ -272,7 +332,8 @@ def staged_paths() -> list[Path]:
         raise SystemExit(2) from e
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
     return [Path(n) for n in names
-            if Path(n).suffix in SUFFIXES or is_results_markdown(Path(n))]
+            if Path(n).suffix in SUFFIXES or Path(n).suffix in BINARY_DATASET_SUFFIXES
+               or is_results_markdown(Path(n))]
 
 
 def scan_staged(path: Path) -> list[str]:
@@ -342,7 +403,8 @@ def tracked_under(directory: Path) -> list[Path] | None:
         return None
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
     return [directory / n for n in names
-            if Path(n).suffix in SUFFIXES or is_results_markdown(directory / n)]
+            if Path(n).suffix in SUFFIXES or Path(n).suffix in BINARY_DATASET_SUFFIXES
+               or is_results_markdown(directory / n)]
 
 
 def collect(paths: list[str]) -> list[Path]:
@@ -371,10 +433,11 @@ def collect(paths: list[str]) -> list[Path]:
             if tracked is None:
                 found.extend(sorted(
                     q for q in p.rglob("*")
-                    if q.is_file() and q.suffix in SUFFIXES and not _is_vendored(q)))
+                    if q.is_file() and (q.suffix in SUFFIXES or q.suffix in BINARY_DATASET_SUFFIXES)
+                    and not _is_vendored(q)))
             else:
                 found.extend(sorted(tracked))
-        elif p.suffix in SUFFIXES:
+        elif p.suffix in SUFFIXES or p.suffix in BINARY_DATASET_SUFFIXES:
             found.append(p)
     return found
 

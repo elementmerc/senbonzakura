@@ -109,7 +109,7 @@ results you already hold.
   Linux box with no GPU gets fifteen CUDA packages it cannot use. It prints the command that fixes
   it and changes nothing unless you pass `--apply`.
 - The wheel now carries the bundled evaluation track, so `--track default` works with no network
-  and nothing to assemble. That is roughly 6,500 harmful prompts inside your site-packages; the
+  and nothing to assemble. That is roughly 6,200 harmful prompts inside your site-packages; the
   install page says what is in it and how to build a wheel without it. 0.3.0 shipped no corpora at
   all, so this is new.
 
@@ -405,10 +405,14 @@ install rather than only in a source checkout.
   a deliberate trade-off inherited from the upstream method rather than a new fault, but it was
   not written down anywhere and "the direction was ablated" reads stronger than what happens.
 - **Finding several directions is not the same as showing they are refusal directions.** The
-  check meant to tell a refusal direction from a topic direction now accepts every candidate it
-  is shown, where before it rejected every one. It has changed which way it fails rather than
-  started working, so nothing in this release establishes that the extra directions remove
-  refusal rather than ability. A run reports the rejection rate on every extraction, and both
+  check meant to tell a refusal direction from a topic direction does now reject: each candidate
+  is fitted on half its rows and scored on the half it never saw, against a threshold with a
+  measured floor beneath it. This entry said it "accepts every candidate it is shown" until
+  2026-09-25, which described the state before that fix and contradicted the body of this same
+  release entry. **What is still open is the thing that matters**: a filter that can reject is
+  not evidence that what it accepted carries refusal rather than topic, so nothing in this
+  release establishes that the extra directions remove refusal rather than ability. A run reports
+  the rejection rate on every extraction, and both
   "none rejected" and "all rejected" print a warning.
 - **A direction count reported before this release cannot be trusted**, including the
   comparison table in the README. Those runs applied one direction whatever they requested.

@@ -18,8 +18,9 @@ which is why the corpora ship inside the wheel. So the probe ships too.
 WHY THIS ONE IS COMMITTED WHEN THE CORPORA ARE NOT
 
 `src/senbonzakura/data/*` is gitignored and `corpora.bin` is built rather than committed, for one
-reason and one only: it holds 4,895 harmful prompts and the project publishes that corpus as a
-gated dataset on purpose. GSM8K is grade-school arithmetic under the MIT licence. Applying the
+reason and one only: it holds 1,333 harmful prompts across five research corpora, and its sibling
+`default-track.bin` holds another 4,895, and the project publishes that corpus as a gated dataset
+on purpose. GSM8K is grade-school arithmetic under the MIT licence. Applying the
 harmful-content rule to harmless content would buy nothing and would cost the thing it cost on
 2026-09-22, when a build from a clone turned out to have no `--track default` because the blobs
 are generated: the tool installed, imported and answered `--help`, then failed on the first real

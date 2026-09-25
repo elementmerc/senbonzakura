@@ -8,7 +8,7 @@ WHAT THIS IS FOR, STATED WITHOUT FLATTERY
 
 The prompts are encrypted with a key that ships beside them. Anyone who reads this file can
 recover them, and that is not a defect: **this is not a secret, it is a speed bump.** It exists
-so that a crawler scraping PyPI for harmful text finds a blob of noise instead of 4,895 harmful
+so that a crawler scraping PyPI for harmful text finds a blob of noise instead of 6,228 harmful
 prompts in a plaintext file, while a person who deliberately runs the tool gets the corpus with
 no ceremony. Deliberate use, yes; automatic ingestion, no.
 

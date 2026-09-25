@@ -11,9 +11,19 @@ claim that traces to a command can be re-taken on your own hardware and disagree
 ## Before anything: what you need
 
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura#subdirectory=checker"
-pip install "git+https://github.com/elementmerc/senbonzakura"
+pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
+            "git+https://github.com/elementmerc/senbonzakura@dev"
 ```
+
+**`@dev` is load-bearing and so is putting both URLs in one command.** Without `@dev`, pip takes
+the default branch, which is `main`, and `main` is a long way behind: it has no `checker/`
+directory at all, so the first URL fails with "does not appear to be a Python project", and the
+second installs something close to the withdrawn 0.3.0. Given as two separate commands, the big
+package goes looking for the small one on PyPI, where it is not published, and the install fails
+for a second reason that reads exactly like the first.
+
+This file carried the two-command form without `@dev` until 2026-09-25, which is both documented
+failures at once, in the one document whose whole job is letting a stranger re-take the numbers.
 
 To stand exactly where the numbers were taken, add the pinned set. It needs Python 3.12 or newer,
 for the reason `docs/guide/install.md` gives:
@@ -35,7 +45,7 @@ all, and re-take it with hardware if you want to.
 |---|---|
 | `evidence/compass-2026-07-30/` | Harm-recognition AUC for two base models, with the null controls beside them |
 | `evidence/k-sweep-2026-08-13/` | Per-seed coherence drift for the one-direction against two-direction comparison |
-| `head-to-head/results/` | Thirty arms of the comparison against another tool, on one corpus and one budget |
+| `head-to-head/results/` | Thirty artefacts: ten arms, three instruments against another tool, on one corpus and one budget |
 
 Result files have the `prompt` and `generation` fields stripped. That is not tidying: this
 repository does not carry model generations or harmful prompts, and `CONTRIBUTING.md` explains
@@ -74,7 +84,7 @@ all 4,504 harmful prompts and all 4,504 harmless ones.
 
 | Claim | Artefact |
 |---|---|
-| Five seeds, one direction against two, no measurable refusal gain at roughly twice the divergence | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
+| Five seeds, one direction against two, no measurable refusal gain at 1.5 to 1.9 times the divergence | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
 
 That file exists because the p-value this project was quoted on most often traced to a working
 note nobody outside could open. It is ten floats and no prompts.
@@ -85,7 +95,8 @@ python -c "import json;d=json.load(open('evidence/k-sweep-2026-08-13/drift-per-s
 
 ### The head-to-head, quoted in `docs/guide/benchmark.md`
 
-Thirty arms, committed under `head-to-head/results/`. The whole comparison runs as one command,
+Thirty artefacts, which is ten arms measured by three instruments, committed under
+`head-to-head/results/`. The whole comparison runs as one command,
 and it takes hardware and hours:
 
 ```sh
@@ -124,7 +135,10 @@ public sources. This is the deliberate limit on reproducibility in this project,
 trade: a fully reproducible harmful corpus in a public repository is a harmful corpus in a public
 repository.
 
-**Anything above 3B parameters.** It has never been run. The instruments also weaken as the model
+**Anything above 3B parameters.** No measurement above 3B still stands. Qwen3-4B WAS run, in
+July 2026, and those figures are withdrawn: the scorer had thinking mode switched on, so the
+replies being scored were not the replies the search had picked its winner on. Nothing has been
+re-run above 3B since, because the card this project owns cannot hold one. The instruments also weaken as the model
 shrinks, which the compass row above shows better than any sentence could.
 
 **The abliterated weights.** No abliterated checkpoint is published with this software.

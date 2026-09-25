@@ -383,7 +383,7 @@ both attach to a `v*` tag and to the promotion of `main`; a dev cut touches neit
 exactly why it must not acquire a tag out of convenience.
 
 **It does not go on any public host, and that is a security decision rather than tidiness.** The
-wheel carries the packed evaluation track and six research corpora, roughly 6,500 harmful
+wheel carries the packed evaluation track and six research corpora, roughly 6,200 harmful
 prompts. The README discloses that for the published release and the operator has weighed it
 there. A dev artefact has had no such weighing, so it moves point to point, over ssh, to a
 machine that is going to use it, and nowhere else.

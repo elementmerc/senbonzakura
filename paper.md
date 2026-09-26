@@ -65,12 +65,13 @@ normalisation, which is why this package is AGPL-3.0-or-later, and runs that met
 so both tools read on one ruler. `abliterix` [@abliterix2025] is ahead on method breadth,
 mixture-of-experts handling and prebuilt configurations.
 
-The multi-direction idea is not mine. Wollschläger et al. [@wollschlager2025] show refusal is a
-cone, and Piras et al. [@piras2025] report large gains over one direction. Five seeds per
+Wollschläger et al. [@wollschlager2025] show refusal is a cone, and Piras et al.
+[@piras2025] report large gains over one direction. Five seeds per
 arm on Qwen3-1.7B went the other way, at matched hard refusal: drift 0.0497 against 0.0932,
 *p* = 0.016 two-sided exact permutation, 0.048 dropping the outlying seed.
-These arms predate the held-out selection, so they price an *arbitrary* second direction where
-both papers choose theirs deliberately, on one family at one size.
+These arms predate the held-out selection and took whatever an unselective filter accepted, so
+they price an *arbitrary* second direction where both papers choose theirs deliberately, on one
+family at one size.
 
 What this package adds is narrow: it validates the instrument before reporting the number.
 

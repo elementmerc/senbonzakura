@@ -2045,6 +2045,31 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     return model, tok
 
 
+def _weights_live_on(model):
+    """The device kind the weights are actually on, as a word, or None when it cannot be told.
+
+    `"cuda"`, `"cpu"`, `"meta"`, or a mixture reported as `"mixed"`. The KIND rather than the index,
+    because the question being asked is "is this generating at card speed or at host speed", and
+    `cuda:0` against `cuda:1` does not change the answer.
+
+    This exists because `self.dev` is what the run was ASKED for and stays `cuda` for the whole run
+    even while the weights are parked in host RAM for a save. A check on the declared device reports
+    clean on a model that is no longer on it, and that is how a twenty-fold slowdown went unseen
+    until somebody watched `nvidia-smi` read 187 MiB during a probe.
+    """
+    kinds = set()
+    try:
+        for p in model.parameters():
+            kinds.add(p.device.type)
+            if len(kinds) > 1:
+                return "mixed"
+    except (AttributeError, TypeError, RuntimeError):
+        return None
+    if not kinds:
+        return None
+    return next(iter(kinds))
+
+
 class Abliterator:
     """The loaded model plus everything that operates on it: direction extraction, the
     reversible norm-preserving bake (shared by the search and the final save), evaluation
@@ -2075,6 +2100,14 @@ class Abliterator:
         # than here, because a constructor that refuses is a constructor every caller has to work
         # around.
         self._slow_probe_checked = False
+        # Where the last probe generated, so a change of placement between two probes is visible.
+        # `None` means no probe has run, which is not the same as "ran on nothing".
+        self._last_probe_device = None
+        # Set by `free_before_save` when it parks a resident model in host RAM for the write, and
+        # read by `restore_device_after_save`. Remembered rather than re-derived: the condition that
+        # moved the weights included "not dispatched across devices", and a model that was left
+        # alone must be left alone on the way back too.
+        self._weights_parked_on_host = False
         self.layers = _decoder_layers(model)             # the decoder blocks, resolved defensively
         self.H = model.config.hidden_size
         self.NL = model.config.num_hidden_layers
@@ -3073,8 +3106,18 @@ class Abliterator:
         holds a host-RAM copy of every residual-writing weight, and by this point it has
         done its job: the search is over and the winner is baked.
 
-        Dropping the snapshot means restore_weights() no longer works, which is why this
-        runs after the post-bake measurement and immediately before the write.
+        Dropping the snapshot means restore_weights() no longer works, which is why this runs after
+        the post-bake REFUSAL measurement and immediately before the write.
+
+        IT NO LONGER RUNS AFTER EVERY POST-BAKE MEASUREMENT, and that sentence used to be here
+        unqualified. On 2026-09-25 the capability probe was moved to after the save, so that an
+        out-of-memory in the hungriest generation of the run could not lose a baked model. Correct
+        on its own terms, and it put that probe on the far side of the line below, which takes the
+        weights off the card. Measured on the ROG on 2026-09-26: the same sixteen items took 604
+        seconds with the model on the host against 25 to 37 on the card, a twenty-fold penalty, with
+        the GPU sitting at 187 MiB. Two hours per arm for a measurement that takes six minutes.
+        `restore_device_after_save` puts them back, and this docstring says which measurements are
+        before the line and which are after, because the one that moved is the one that broke.
         """
         log = self.log
         held = len(self._pristine)
@@ -3091,9 +3134,41 @@ class Abliterator:
             log("  save prep: model is dispatched across devices, leaving its placement alone")
         elif str(self.dev).startswith("cuda"):
             self.model.to("cpu")
+            # Remembered rather than re-derived, so whoever puts them back does not have to
+            # reconstruct the condition that moved them. A dispatched model was left alone above and
+            # must be left alone afterwards too.
+            self._weights_parked_on_host = True
             log("  save prep: moved the weights to host RAM for the write")
         if str(self.dev).startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def restore_device_after_save(self):
+        """Put the weights back on the card once the write is done.
+
+        WHY THIS EXISTS, and it is a regression this project made and measured rather than a
+        precaution. `free_before_save` moves a resident model to host RAM so the write has the VRAM
+        it needs, and that was harmless while every measurement happened before it. On 2026-09-25
+        the capability probe moved to after the save, because it is the hungriest generation in the
+        run and an out-of-memory there used to throw away a baked model. The probe then ran wherever
+        the weights happened to be, which was the host.
+
+        MEASURED, on the ROG, 2026-09-26: sixteen probe items took 604 seconds with the weights on
+        the host and 25 to 37 seconds with them on the card, while `nvidia-smi` read 187 MiB. Twenty
+        times slower, for a default `--capability-n 200`, which turns a six minute measurement into
+        two hours and makes a ten arm comparison a day's work instead of an evening's.
+
+        THE GUARD THAT SHOULD HAVE CAUGHT IT COULD NOT SEE IT, which is the part worth keeping in
+        mind. `refuse_a_slow_probe_after_load` exists for exactly this cost and asks about the
+        DEVICE THE RUN WAS GIVEN. The arm was given `--device cuda` and the flag stayed `cuda` the
+        whole way through; only the weights moved. A check on the declared device reports clean on a
+        model that is no longer on it, which is this project's most-repeated defect shape written
+        once more.
+        """
+        if not getattr(self, "_weights_parked_on_host", False):
+            return
+        self._weights_parked_on_host = False
+        self.model.to(self.dev)
+        self.log(f"  save prep: put the weights back on {self.dev} for the measurements that follow")
 
     def eval_provenance(self):
         """Which rows the run's refusal figures came from, and what they may therefore be used for.
@@ -3518,6 +3593,30 @@ class Abliterator:
                 spec=getattr(self.args, "capability_eval", "bundled"),
                 allowed=getattr(self.args, "slow_probe_ok", False),
                 log=self.log)
+
+        # THE FOURTH DOOR, and the one the three above could not cover because they fire ONCE.
+        #
+        # The check above runs on the first probe of a run, which on an abliterate run is the
+        # baseline, taken while the model is still resident. The post-bake probe happens after the
+        # save, and `free_before_save` parks a resident model in host RAM for the write, so between
+        # the two checks the weights moved and nothing looked again. Measured on the ROG on
+        # 2026-09-26: 604 seconds for sixteen items against 25 to 37, with the GPU at 187 MiB.
+        #
+        # `restore_device_after_save` fixes the cause. This is the backstop, and it re-checks on
+        # PLACEMENT rather than on a flag, so it fires whenever the weights move rather than once
+        # per run. A check that runs once cannot see a change; that is the whole lesson here.
+        #
+        # A WARNING AND NOT A REFUSAL, deliberately. By the time a probe runs on the wrong device the
+        # search is over and the weights are on disk, so refusing would throw away a measurement to
+        # punish a placement, and the user would lose the figure rather than the wait. Loud, named,
+        # and it says what to do.
+        where = _weights_live_on(self.model)
+        if where is not None and self._last_probe_device not in (None, where):
+            self.log(f"  WARNING: the weights are on {where} and the last probe ran on "
+                     f"{self._last_probe_device}, so these two capability figures were not measured "
+                     f"under the same conditions. On a card this is roughly twenty times slower on "
+                     f"the host; the numbers stay comparable, the wait does not.")
+        self._last_probe_device = where
 
         task = capability.get_task(getattr(self.args, "capability_task", "numeric"))
         prompts = [task.prompt.format(q) for q, _a in items]
@@ -4034,6 +4133,13 @@ class Abliterator:
         # becoming a zero: a model that answered nothing gradeable has not scored zero, it has not
         # been measured, and the two must not read alike in a file whose whole purpose is that
         # somebody else can check it.
+        #
+        # AND THE WEIGHTS GO BACK ON THE CARD FIRST. Moving the probe after the save put it after
+        # `free_before_save`, which parks a resident model in host RAM for the write, so the probe
+        # ran on the host: 604 seconds for sixteen items against 25 to 37 on the card, measured on
+        # the ROG on 2026-09-26 with the GPU at 187 MiB. The save still gets its headroom, because by
+        # here the write is finished and the VRAM is free again.
+        self.restore_device_after_save()
         post_cap = self._capability_score(cap_items) if cap_items else None
         cap_after_summary = getattr(self, "_last_capability_summary", None) if cap_items else None
         if cap_items:

@@ -449,9 +449,9 @@ def test_the_universal_wheel_is_not_dragged_impure(monkeypatch, tmp_path):
 # being skippable: a flag can be forgotten, a version cannot.
 
 
-def _wheel_declaring(tmp_path, version, *requires):
+def _wheel_declaring(tmp_path, version, *requires, name=None):
     import zipfile
-    w = tmp_path / f"senbonzakura-{version}-py3-none-any.whl"
+    w = tmp_path / (name or f"senbonzakura-{version}-py3-none-any.whl")
     lines = "\n".join(f"Requires-Dist: {r}" for r in requires)
     with zipfile.ZipFile(w, "w") as z:
         z.writestr(f"senbonzakura-{version}.dist-info/METADATA",
@@ -583,3 +583,51 @@ def test_both_images_copy_every_declared_licence_file(dockerfile):
     assert not absent, (
         f"{dockerfile} does not copy {absent} into the build context, so the image ships without "
         f"licence files this project declares it distributes")
+
+
+# ── the intermediate wheel, which the documented order could not check ───────────────
+#
+# FOUND BY DOING THE RELEASE, 2026-09-26. `RELEASING.md` step 4 builds the platform wheel, checks
+# it, then repairs it to a manylinux tag. The check turns its release rules on by itself for any
+# wheel naming this project at a release version, and one of those rules refuses a platform tag PyPI
+# will not take. `linux_x86_64` is exactly that tag, and it is the CORRECT tag for this artefact:
+# being unacceptable to PyPI is why the next line repairs it.
+#
+# So the documented order could not pass at a release version, and nobody had met it, because every
+# previous build was a `.devN` and the release rules stay off there. A procedure that has only ever
+# been run in the one mode where its gate is disabled has not been run.
+
+def test_the_intermediate_wheel_is_refused_without_the_flag(tmp_path, capsys):
+    """The refusal is right in general, and this is the case it is wrong about."""
+    w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5",
+                         name="senbonzakura-0.4.0-py3-none-linux_x86_64.whl")
+    rc = _wheel_check().main([str(w)])
+    assert rc != 0
+    assert "not one PyPI accepts" in capsys.readouterr().out
+
+
+def test_the_intermediate_flag_skips_only_the_pypi_tag_question(tmp_path, capsys):
+    w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5",
+                         name="senbonzakura-0.4.0-py3-none-linux_x86_64.whl")
+    rc = _wheel_check().main([str(w), "--intermediate"])
+    out = capsys.readouterr().out
+    assert "not one PyPI accepts" not in out, (
+        "the PyPI tag question is still asked of a wheel that is published nowhere, so the "
+        "documented build order still cannot run at a release version")
+    assert "intermediate" in out, "nothing says why the question was skipped"
+    # It still fails, on the things an intermediate genuinely must satisfy. This fixture carries no
+    # licences and no bundled data, and that is the point: the flag is not a way to wave a wheel
+    # through.
+    assert rc != 0
+    assert "PROBLEM" in out
+
+
+def test_the_intermediate_flag_does_not_excuse_a_mislabelled_wheel(tmp_path, capsys):
+    """THE CHECK THIS ARTEFACT MOST NEEDS, since it is the one carrying the binaries. A wheel
+    claiming `py3-none-any` while holding Linux shared objects must be refused with the flag as
+    firmly as without it.
+    """
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl", payload=True)
+    rc = _wheel_check().main([str(w), "--intermediate"])
+    assert rc != 0, "the intermediate flag waved through a wheel that lies about its platform"
+    assert "PROBLEM" in capsys.readouterr().out

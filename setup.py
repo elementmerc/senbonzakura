@@ -24,7 +24,10 @@ state needs anyone to remember anything, and the dangerous combination cannot be
     python -m build                              # no binaries vendored -> py3-none-any
     python tools/packaging/vendor_llama.py && python -m build   # -> linux_x86_64, with the binaries
 """
+import datetime
+import os
 import pathlib
+import subprocess
 
 from setuptools import setup
 from setuptools.command.bdist_wheel import bdist_wheel
@@ -36,6 +39,60 @@ VENDOR_BIN = ROOT / "src" / "senbonzakura" / "vendor" / "bin"
 #: setuptools stages the package here and REUSES what it finds. A previous platform build leaves
 #: binaries in it, and the next build copies them into a wheel whose tag says "any".
 STAGED_BIN = ROOT / "build" / "lib" / "senbonzakura" / "vendor" / "bin"
+
+
+#: Written at build time, shipped in the wheel, and required of a release artefact by
+#: `tools/ci/check_wheel.py`. Kept out of git, because it is generated per build.
+BUILD_STAMP = ROOT / "src" / "senbonzakura" / "_build.py"
+
+
+def _commit_for_this_build():
+    """The commit these artefacts come from, or None if it genuinely cannot be known.
+
+    Two sources, in this order, and the order is the whole point.
+
+    `SENBON_BUILD_COMMIT` comes first because THE RELEASE BUILD HAS NO `.git`. The box that holds
+    the evaluation track is reached by an rsync that does not carry it, so on 2026-09-26 the v0.4.0
+    build printed `fatal: not a git repository` and carried on, and the artefacts went out with no
+    record of the tree that produced them. Provenance then rested on somebody's memory of the order
+    they did things in, and it was recovered afterwards only by finding a one-line change inside the
+    sdist. That works and is not a process.
+
+    `git rev-parse` second, so an ordinary local or CI build stamps itself with no ceremony.
+    """
+    env = os.environ.get("SENBON_BUILD_COMMIT", "").strip()
+    if env:
+        return env
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = out.stdout.strip()
+    return sha if out.returncode == 0 and sha else None
+
+
+def _write_build_stamp():
+    """Record the commit, unless doing so would REPLACE a known one with nothing.
+
+    `python -m build` builds the sdist and then builds the wheel FROM that sdist, in an isolated
+    directory with no `.git` in it. A version of this that wrote unconditionally would stamp the
+    sdist correctly and then blank the wheel, which is the artefact people actually install.
+    """
+    commit = _commit_for_this_build()
+    if commit is None and BUILD_STAMP.exists():
+        return
+    BUILD_STAMP.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    BUILD_STAMP.write_text(
+        "# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+        "# Generated at build time by setup.py. Not in git; see setup.py for why it exists.\n"
+        f"COMMIT = {commit!r}\n"
+        f"BUILT_AT = {now!r}\n",
+        encoding="utf-8")
+
+
+_write_build_stamp()
 
 
 def vendored_platforms():

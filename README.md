@@ -122,8 +122,22 @@ first command under a heading saying "on your own machine" could not be run by a
 installed the tool rather than cloned it. Two readers hit it on 2026-09-26 and neither could get
 past it without guessing. From a clone, `examples/toy-track/` still works and is smaller.
 
+**This writes two files, and one of them holds harmful prompts in the clear.** Beside
+`compass-toy.json` you get `compass-toy.margins.jsonl`, the per-prompt rows the AUC was computed
+from, and twelve of those rows are the harmful prompts themselves, unwrapped, in whatever directory
+you ran the command in. They are there so the number can be checked rather than believed, which is
+the whole argument of this project, and they are the same prompts the wheel deliberately keeps
+obfuscated. **Do not `git add` that file.** Add `--no-margins` to the command above if you would
+rather not have it at all.
+
+Said here because this is the first command most people run, and until 2026-09-26 it was said only
+on two pages this section does not link, so the reader most likely to be surprised was the one least
+likely to have been told.
+
 **Do not quote what it says.** Twelve rows measures nothing, and the tool makes you pass those
-three flags rather than pretending otherwise.
+three flags rather than pretending otherwise. The run also prints its own null controls, and on
+twelve rows one of those will often beat the instrument; if it does, the number is not a weak
+measurement, it is not one at all.
 
 ## The real thing
 

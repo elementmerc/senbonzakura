@@ -24,9 +24,27 @@ implying there is only one.
 
 ## Before anything: what you need
 
+**Both of these, and each carries something the other does not.**
+
 ```sh
-pip install senbonzakura==0.4.0
+git clone https://github.com/elementmerc/senbonzakura     # the artefacts
+cd senbonzakura
+pip install senbonzakura==0.4.0                           # the tool and the track
 ```
+
+The clone is what holds `evidence/` and `head-to-head/`, and every verification command below
+reads a path inside one of them. **No install carries those files**, so a reader who ran only the
+pip install meets `FileNotFoundError` on the first command in the table. Found on 2026-09-26 by
+someone following this document as written, one revision after it was corrected in the other
+direction.
+
+The install is what holds the tool and the bundled evaluation track, so `--track default` resolves.
+A source build carries neither of the two `.bin` blobs, which is why this says `pip install` rather
+than `pip install .`, and why the version is pinned: this document states figures, and a figure is
+only re-takeable against the code that produced it.
+
+If you only want to **read** the committed numbers rather than re-take them, the clone alone is
+enough, and `senbonzakura-check` installs in a second with no dependencies at all.
 
 The version is pinned deliberately: this document states figures, and a figure is only re-takeable
 against the code that produced it. `senbonzakura-check` resolves automatically, and the wheel

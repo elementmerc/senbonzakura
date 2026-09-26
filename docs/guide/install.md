@@ -50,11 +50,33 @@ The first needs only the network. The second needs a track, which is either
 [one you built](/guide/the-track) or the gated dataset.
 :::
 
-The first brings everything: torch, transformers, accelerate, optuna, and the rest. It is 68
-packages and 5.8 GB on disk, measured on a clean Python 3.12 environment on
-2026-09-11, and there is nothing else to choose. Nineteen of the 68 are NVIDIA CUDA and Triton
-wheels, which is where almost all of it goes. (`pip list` will say 69: it counts pip itself.)
-Nothing is behind an extra.
+The first brings everything: torch, transformers, accelerate, optuna, and the rest, and there is
+nothing else to choose. Nothing is behind an extra.
+
+It is **69 packages and 5.9 GB**, measured 2026-09-26 in an empty virtualenv on Python 3.14. That
+count is what `pip list` shows you, and it breaks down like this:
+
+| | |
+|---|---|
+| Rows in `pip list` | **69** |
+| On disk | **5.9 GB** |
+| Of those rows, `nvidia-*` wheels | 15 |
+| Plus `triton` | 1 |
+| Rows that are pip and setuptools rather than dependencies | 2 |
+| Rows that are this project (`senbonzakura`, `senbonzakura-check`) | 2 |
+
+Sixteen CUDA and Triton wheels are where almost all of the 5.9 GB goes.
+
+**This is the one place these figures are measured**, and the count is what `pip list` prints
+rather than a tidied version of it, because the tidied version is what somebody then compares
+against their own terminal and finds disagrees.
+
+Until 2026-09-26 this page understated all three, from a measurement taken on an older Python two
+weeks earlier, and the quickstart and the README had drifted apart from it and from each other. A
+reader who installed the tool and counted found the disagreement before we did. Different
+interpreters ship different defaults, so a count of this kind decays without anybody editing the
+file it sits in, which is why the interpreter and the date are given beside it and why a test now
+checks that every page quoting these numbers quotes the same ones.
 
 The second exists because **pip picks by platform, not by hardware**. PEP 508 environment
 markers describe the interpreter, the operating system and the architecture, and there is no

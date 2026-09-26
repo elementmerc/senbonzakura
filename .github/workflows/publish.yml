@@ -184,11 +184,54 @@ jobs:
           name: dist
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      # TWO UPLOADS, SMALL ONE FIRST, AND THE ORDER IS THE POINT.
+      #
+      # `senbonzakura` declares `Requires-Dist: senbonzakura-check`, so until that
+      # name resolves on the index, `pip install senbonzakura` fails for everyone.
+      # RELEASING.md has said "publish senbonzakura-check FIRST" since Q-29 and
+      # this job did not: it handed the whole of dist/ to one upload, in whatever
+      # order the glob produced, which on a first release is the difference
+      # between a working install and a window where the headline package cannot
+      # resolve its own dependency. A version number on PyPI can never be
+      # replayed, so that window cannot be fixed by re-uploading.
+      #
+      # This is the same defect shape as the tag check above: the procedure was
+      # written down and the machinery was never told.
+      - name: Split the artefacts by distribution, so the order can be chosen
+        run: |
+          mkdir -p upload-checker upload-main
+          mv dist/senbonzakura_check-* upload-checker/
+          mv dist/senbonzakura-*        upload-main/
+          # Neither directory may be empty. An upload step pointed at an empty
+          # directory reports success having sent nothing, which is the same
+          # arithmetic that let a sweep over zero applicable checks read clean.
+          for d in upload-checker upload-main; do
+            n=$(find "$d" -maxdepth 1 -type f | wc -l)
+            [ "$n" -gt 0 ] || { echo "::error::$d is empty, so nothing would be uploaded for it"; exit 1; }
+            echo "$d: $n file(s)"
+          done
+          # Anything left behind is an artefact this job does not know how to
+          # place, and silently not uploading it is how a release ships short.
+          leftover=$(find dist -maxdepth 1 -type f | wc -l)
+          [ "$leftover" = 0 ] || { echo "::error::$leftover attached file(s) match neither distribution"; find dist -maxdepth 1 -type f; exit 1; }
+
+      - name: Upload senbonzakura-check, the dependency
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
+          packages-dir: upload-checker/
           # Named in full both ways rather than leaving one to the action's
           # default, so a misreading of the expression cannot upload to the real
           # index when TestPyPI was asked for.
+          repository-url: >-
+            ${{ inputs.repository == 'testpypi'
+                && 'https://test.pypi.org/legacy/'
+                || 'https://upload.pypi.org/legacy/' }}
+          print-hash: true
+
+      - name: Upload senbonzakura, which depends on it
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          packages-dir: upload-main/
           repository-url: >-
             ${{ inputs.repository == 'testpypi'
                 && 'https://test.pypi.org/legacy/'

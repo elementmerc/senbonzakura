@@ -4,6 +4,27 @@ All notable changes to Senbonzakura are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `pip install senbonzakura` is the documented install everywhere. Several pages still told readers
+  not to use PyPI and offered a pair of `git+` URLs instead, which was correct until 0.4.0 reached
+  the index and wrong from the moment it did.
+- The evaluation track card said no install a reader could make carries the 6,200 harmful prompts.
+  The published wheel carries them, so a disclosure had inverted into a reassurance about the wrong
+  artefact.
+- The first command in the README and the quickstart exited 1. It measured a 135M model, which puts
+  no verdict token where the compass reads one, so the run correctly refused to call its own figure
+  a measurement. Both pages now use a model that answers, and the compass guide explains the exit
+  code where the refusal is the point.
+- `senbonzakura corpora` needs the GitHub CLI, and neither page that introduced it said so.
+- The reference page told readers the GitHub Action and the pre-commit hook could not work yet.
+
+### Other
+
+Bug fixes and improvements.
+
 ## [0.4.0] "TYBW" — 2026-09-26
 
 The release that makes the measurement trustworthy.
@@ -575,4 +596,6 @@ The first public release: on PyPI, on GitHub, AGPL-3.0.
 ### Other
 - Bug fixes and improvements.
 
+[0.4.0]: https://github.com/elementmerc/senbonzakura/releases/tag/v0.4.0
+[0.3.1]: https://github.com/elementmerc/senbonzakura/releases/tag/v0.3.1
 [0.3.0]: https://github.com/elementmerc/senbonzakura/releases/tag/v0.3.0

@@ -24,15 +24,22 @@ protected: the key ships beside them, and anyone who wants them can have them in
 gate on the HuggingFace copy does not apply to them. Saying only the paragraph above would leave
 the impression that every install is prompt-free, and a release is not.
 
-**Which channel carries what, today.** The claim above is about the release, not about any command
-you can run right now, because neither obtainable install carries the rows:
+**Which channel carries what, today.** The ordinary install is now one of the channels that
+carries them, so read this table before running `pip install`:
 
 | Channel | Carries the 6,200 rows? |
 |---|---|
-| A released wheel with the bundled track | Yes, as `--track default`, with no gate |
-| PyPI today (0.3.0, July 2026) | No. It predates the bundled track, and its numbers are withdrawn |
-| `pip install git+...@dev` from this repository | No. The two `.bin` blobs under `src/senbonzakura/data/` are generated rather than committed, so a build from a clone carries neither |
+| `pip install senbonzakura` (PyPI, 0.4.0) | **Yes**, as `--track default`, with no gate |
+| A build from a clone, or `pip install git+...` | No. The two `.bin` blobs under `src/senbonzakura/data/` are generated rather than committed, so a build from source carries neither |
 | The HuggingFace dataset | Yes, gated, under CC BY-NC 4.0 |
+
+::: warning This table was the other way round until 2026-09-26
+It said "neither obtainable install carries the rows", which was true while PyPI served only
+0.3.0, from July 2026, and the only other route was a build from source. 0.4.0 is on PyPI and the
+wheel carries both blobs, so the sentence that had been a disclosure became a reassurance, and
+pointed at the wrong artefact. If you installed before reading this, `senbonzakura doctor` lists
+what your install holds.
+:::
 
 `senbonzakura track build` rebuilds a pool of the same shape from the same upstreams for anyone who
 would rather fetch the sources themselves.

@@ -68,12 +68,11 @@ number is right, and it says so in its own output.
 A checker somebody remembers to run is a checker that runs occasionally. Both of these install
 the package with `--no-deps`, so neither pulls torch into your CI or your commit hook.
 
-::: warning Both snippets apply from v0.4.0 onward, and v0.4.0 is not out yet
-They are written against the tag and the published package, and until the release lands neither
-resolves: the `v0.4.0` tag does not exist, `action.yml` and `.pre-commit-hooks.yaml` are on `dev`
-rather than on the default branch that Actions and pre-commit read, and `senbonzakura-check` is
-not on PyPI. They were documented before any of that was true and had never been run. Checked and
-labelled on 2026-09-25 rather than quietly left to come good.
+::: tip These work from v0.4.0, which is out
+The `v0.4.0` tag exists, `action.yml` and `.pre-commit-hooks.yaml` are on the default branch that
+Actions and pre-commit read, and `senbonzakura-check` is on PyPI. Until 2026-09-26 none of that
+was true and this box said so, because the snippets had been documented before any of it was and
+had never been run.
 :::
 
 **In GitHub Actions:**

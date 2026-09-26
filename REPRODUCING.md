@@ -25,19 +25,18 @@ implying there is only one.
 ## Before anything: what you need
 
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
-            "git+https://github.com/elementmerc/senbonzakura@dev"
+pip install senbonzakura==0.4.0
 ```
 
-**`@dev` is load-bearing and so is putting both URLs in one command.** Without `@dev`, pip takes
-the default branch, which is `main`, and `main` is a long way behind: it has no `checker/`
-directory at all, so the first URL fails with "does not appear to be a Python project", and the
-second installs something close to the withdrawn 0.3.0. Given as two separate commands, the big
-package goes looking for the small one on PyPI, where it is not published, and the install fails
-for a second reason that reads exactly like the first.
+The version is pinned deliberately: this document states figures, and a figure is only re-takeable
+against the code that produced it. `senbonzakura-check` resolves automatically, and the wheel
+carries the bundled evaluation track, so the commands below have their corpus already.
 
-This file carried the two-command form without `@dev` until 2026-09-25, which is both documented
-failures at once, in the one document whose whole job is letting a stranger re-take the numbers.
+**This told you to build from the repository until 2026-09-26**, with a pair of `git+` URLs and a
+warning that `@dev` was load-bearing. That was correct while PyPI served only the withdrawn 0.3.0
+and `senbonzakura-check` was not published at all. Both are now on PyPI at 0.4.0, and the source
+build was the worse route for this document in particular: it carries neither `.bin` blob, so a
+reader following it could not use `--track default` and could not re-take anything.
 
 To stand exactly where the numbers were taken, add the pinned set. It needs Python 3.12 or newer,
 for the reason `docs/guide/install.md` gives:

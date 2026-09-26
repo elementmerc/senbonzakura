@@ -164,6 +164,25 @@ _FILTER_WORDING = re.compile(
 RATIO_NOT_YET_CORRECTED = ()
 
 
+def _git_ignored():
+    """Repository-relative paths git ignores, or an empty set when git cannot answer.
+
+    Empty on failure by design: one CI job exports the tree without its history and runs the suite
+    there, so `git` either is absent or has nothing to say. Falling back to scanning everything is
+    the safe direction, because this guard exists to catch a claim that ships without its caveat.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT_MD), "ls-files", "--others", "--ignored",
+                              "--exclude-standard", "-z"],
+                             capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if out.returncode != 0:
+        return set()
+    return {n for n in out.stdout.split("\0") if n}
+
+
 def _public_docs():
     """Every public prose surface, minus the built VitePress output and private trees.
 
@@ -171,9 +190,27 @@ def _public_docs():
     it has already gone stale once where nobody looks: see `tests/test_the_manual_that_ships.py`.
     """
     paths = [*ROOT_MD.rglob("*.md"), ROOT_MD / "man" / "senbonzakura.1"]
+    ignored = _git_ignored()
     for path in sorted(p for p in paths if p.exists()):
         rel = path.relative_to(ROOT_MD).as_posix()
-        if rel.startswith(("private/", "docs/.vitepress/", "node_modules/", ".venv/")):
+        # BUILD OUTPUT IS NOT DOCUMENTATION, and this list does not depend on git being present.
+        # `dist-` with no slash is deliberate: it catches `dist-pypi/`, `dist-manylinux/`,
+        # `dist-checker/` and any staging directory a release invents next, which is the shape
+        # that broke this guard. A 2026-09-26 release staged a copy of the CHANGELOG under
+        # `dist-release/` so the artefacts could be attached to the GitHub Release, and the suite
+        # then failed on a developer machine and nowhere else.
+        if rel.startswith(("private/", "docs/.vitepress/", "node_modules/", ".venv/",
+                           "dist/", "dist-", "build/", "htmlcov/", ".tox/", "site/")):
+            continue
+        # ANYTHING GIT IGNORES CANNOT REACH A READER, so scanning it can only produce failures
+        # that depend on what happens to be lying around. On 2026-09-26 a staging directory
+        # holding a copy of the CHANGELOG, created to attach artefacts to the GitHub Release,
+        # failed this guard on a developer machine and on nothing else.
+        #
+        # The prefix list above is kept rather than replaced: it covers `private/`, which IS
+        # tracked in some checkouts, and it keeps working in the CI job that runs this suite from
+        # an exported tree with no `.git` at all, where `_git_ignored` returns nothing.
+        if rel in ignored:
             continue
         yield rel, path
 

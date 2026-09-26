@@ -102,7 +102,18 @@ jobs:
           rc=0
           for path in "" "/guide/quickstart" "/guide/install" "/guide/compass"; do
             url="$base$path"
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$url" || echo 000)"
+            # FOLLOW REDIRECTS, and report the code the reader ends on.
+            #
+            # The line above strips the trailing slash, so the first URL in this list is the bare
+            # site root, and GitHub Pages answers that with a 301 to the canonical trailing-slash
+            # form. Without -L this check called a link dead that works perfectly in every browser,
+            # which it did on the first deployment after `main` was promoted for v0.4.0: three real
+            # pages returned 200 and the site root failed the job at 301.
+            #
+            # -L is stricter rather than looser, which is the only direction this check may move.
+            # `%{http_code}` reports the FINAL response, so a redirect that lands on a 404 still
+            # fails here; what it stops doing is failing on a redirect that lands on the page.
+            code="$(curl -sSL -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$url" || echo 000)"
             if [ "$code" = "200" ]; then
               echo "  ok   $code  $url"
             else

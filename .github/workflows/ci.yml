@@ -636,6 +636,33 @@ jobs:
           echo "$out" | grep -q "metric-reported-without-its-estimator" \
             || { echo "the finding did not name its check; are the checks in the wheel?"; exit 1; }
 
+  docs-commands:
+    # EVERY COMMAND THE DOCUMENTATION SHOWS, RUN AGAINST A REAL INSTALL.
+    #
+    # `test_docs_match_the_package.py` asks whether a documented subcommand exists. It cannot ask
+    # whether the command WORKS, and this project's recurring defect is the second kind: the
+    # documented benchmark recipe that did not run, the REPRODUCING one-liner that raised KeyError
+    # on the first thing a sceptic typed, the quickstart pointing at a directory that ships in no
+    # wheel. Each was correct prose about a tool that had moved.
+    #
+    # No `--network`, so the model-downloading examples are skipped here and the job stays cheap.
+    # The runner prints every command it did NOT run and why, so the output says what this tick
+    # does and does not cover.
+    name: the documented commands run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install this checkout, the way the README says to
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install ./checker .
+      - name: Run them
+        run: python tools/ci/docs_commands_run.py --bin "$(dirname "$(command -v senbonzakura)")"
+
   docs:
     # The documentation site, built and link-checked on every change.
     #

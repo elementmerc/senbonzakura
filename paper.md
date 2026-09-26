@@ -65,25 +65,12 @@ normalisation, which is why this package is AGPL-3.0-or-later, and runs that met
 so both tools read on one ruler. `abliterix` [@abliterix2025] is ahead on method breadth,
 mixture-of-experts handling and prebuilt configurations.
 
-The multi-direction idea is neither mine nor new. Wollschläger et al. [@wollschlager2025] show
-refusal is a cone, and Piras et al. [@piras2025] report large gains over a single direction. Five
-seeds per arm here on Qwen3-1.7B went the other way. One direction against two, same tool, same
-corpus, same search budget, one parameter apart, with the direction budget pinned at both ends so
-neither arm could drift into the other's territory; every resulting model was then scored by one
-instrument on 200 prompts nothing was fitted or selected on. Both budgets removed hard refusal
-(0.1% against 0.3%), so this is a comparison at matched refusal, where what is left to differ is
-the price paid for it. Coherence drift was 0.0497 (spread 0.0177) for one direction and 0.0932
-(spread 0.0482) for two: 1.4 to 1.9 times the collateral damage for no refusal gain, and three
-times less predictable seed to seed. A two-sided exact permutation test on the difference of
-means, over all 252 splits of the ten seeds, puts the 0.0435 gap at *p* = 0.016; dropping the
-outlying two-direction seed halves the gap and moves *p* to 0.048, so the result does not rest on
-one bad run and is meaningfully weaker without it. The per-seed values are committed and the test
-suite recomputes every published figure from them.
-
-That result is bounded in a way worth stating. It is one model family at one size, and these arms
-predate this package's held-out selection: they took whatever an unselective filter passed, so
-they price an *arbitrary* second direction where both papers choose theirs deliberately. The
-question is open elsewhere and closed here.
+The multi-direction idea is not mine. Wollschläger et al. [@wollschlager2025] show refusal is a
+cone, and Piras et al. [@piras2025] report large gains over one direction. Five seeds per
+arm on Qwen3-1.7B went the other way, at matched hard refusal: drift 0.0497 against 0.0932,
+*p* = 0.016 two-sided exact permutation, 0.048 dropping the outlying seed.
+These arms predate the held-out selection, so they price an *arbitrary* second direction where
+both papers choose theirs deliberately, on one family at one size.
 
 What this package adds is narrow: it validates the instrument before reporting the number.
 
@@ -100,10 +87,8 @@ build is documented.
 
 # Availability
 
-`pip install senbonzakura`, on Python 3.10 or newer on Linux, macOS and Windows, built on
-`transformers` [@wolf2020], PyTorch and `Optuna` [@akiba2019]. The companion checker installs
-separately as `senbonzakura-check` with no dependencies at all, so a reader can check a result
-file without the machine-learning stack. AGPL-3.0-or-later. Thanks to Philipp Emanuel Weidmann, whose `Heretic` shaped this
+`pip install senbonzakura`, on Linux, macOS and Windows, on `transformers` [@wolf2020], PyTorch
+and `Optuna` [@akiba2019]. AGPL-3.0-or-later. Thanks to Philipp Emanuel Weidmann, whose `Heretic` shaped this
 search and whose keyword markers are used here, and to the authors of @arditi2024.
 
 # References

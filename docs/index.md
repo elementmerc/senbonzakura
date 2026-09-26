@@ -51,7 +51,8 @@ A model that will answer requests the original refused, including harmful ones. 
 point, and it is permanent in the weights. The base model's licence still governs the result, and
 a released wheel carries roughly 6,200 harmful prompts so it runs offline. Which artefact carries
 what is set out in the [evaluation track card](/evaluation-track-card): the repository itself
-carries none of them, and neither does an install straight from it.
+carries none of them, and neither does a build from a clone. A `pip install
+senbonzakura` does: the published wheel carries the track.
 
 Everything else here is about whether the removal can be measured honestly, which only matters
 once that paragraph is understood.

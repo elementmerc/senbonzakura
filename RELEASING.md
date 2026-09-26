@@ -170,9 +170,11 @@ resolve a relative image path. The banner is therefore an absolute
 
 **It is pinned to a commit SHA, not to a branch, and that is not a style preference.** This
 section used to say "promote `main` before the PyPI step or the banner ships broken", which
-treated a permanent fault as a release-ordering problem. `origin/main` carries no `assets/`
-directory at all and is hundreds of commits behind `dev`, so the branch-pinned URL was 404ing
-continuously, on GitHub and on the PyPI project page, for as long as the assets existed.
+treated a permanent fault as a release-ordering problem. `origin/main` carried no `assets/`
+directory at all and was hundreds of commits behind `dev` until it was promoted at 0.4.0, so the
+branch-pinned URL 404ed continuously, on GitHub and on the PyPI project page, for as long as the
+assets existed. The argument survives the promotion: a branch name in an asset URL is a promise
+about a branch, and this one was broken for months.
 
 A branch name in an asset URL is a promise that a branch will always carry that file. A commit
 SHA names content that cannot move. `tests/test_readme_images_resolve.py` refuses a branch-pinned
@@ -371,12 +373,10 @@ that specifier and reads the wheel's own version rather than trusting anyone to 
 decision this paragraph used to ask for is made: ship the pre-release specifier while the
 versions are pre-releases, and the release gate stops it surviving into a stable one.
 
-**What is still true, and it is the whole blocker.** `senbonzakura-check` is not on PyPI at all.
-Verified 2026-09-22: `https://pypi.org/pypi/senbonzakura-check/json` returns 404. Until it is
-published, the next release of `senbonzakura` cannot be installed by anybody, because the
-dependency resolves to nothing. Publishing it needs the pending publisher configured in a browser
-first, which is the step above that nobody can do from a shell.
-
+**This was the whole blocker and it is now discharged.** `senbonzakura-check` was on no index at
+all until 2026-09-26, so `senbonzakura` could not be installed by anybody: the dependency resolved
+to nothing. Both names went up at 0.4.0 and `pip install senbonzakura` resolves. What remains live
+from that paragraph is the ORDER, below: the checker is uploaded first, every time.
 **This was never a missing credential.** Until 2026-09-17 the workflow's tag check named one
 distribution, so a file called `senbonzakura_check-<version>-py3-none-any.whl` failed it and the
 release stopped. The procedure above had been written and the machinery had never been told.
@@ -428,9 +428,10 @@ python -m build --wheel
 python tools/ci/check_wheel.py dist/senbonzakura-*.whl
 
 # 5. THE CHECKER'S WHEEL, which is not optional on a dev cut. `senbonzakura` declares a
-#    dependency on `senbonzakura-check`, and that name is not on PyPI, so a tester handed only
-#    the big wheel gets "No matching distribution found" and cannot install anything at all.
-#    Both wheels travel together until the name is published.
+#    dependency on `senbonzakura-check`, which is on PyPI from 0.4.0, so a tester handed only the
+#    big wheel can resolve it from the index. Hand both over anyway whenever the cut's checker
+#    version is NOT on the index, which is every dev cut that bumps it: otherwise pip takes the
+#    published checker and the tester runs one that does not match the build under test.
 python -m build --wheel --outdir dist-checker checker/
 
 # 6. Hand BOTH over, and install the small one first: pip resolves the dependency at install

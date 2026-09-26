@@ -121,6 +121,14 @@ senbonzakura compass \
     --out compass-toy.json --device cpu
 ```
 
+::: warning This command exits 1, and that is the lesson
+SmolLM2-135M is kept here on purpose, unlike the quickstart, which uses `Qwen/Qwen3-0.6B` so a
+newcomer's first command succeeds. At 135M the model puts no verdict token where the compass
+reads one, so the run prints `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement,
+and exits non-zero. That refusal is what this page is demonstrating; an exit code of 1 here is the
+instrument working, not a broken install.
+:::
+
 The three extra flags are the tool refusing to pretend. Its defaults skip the first 128 harmful
 and 320 harmless rows, because on a real track those are the rows the search was fitted on and
 scoring them would be marking your own homework. The toy track has 12 and 20 rows, so the defaults

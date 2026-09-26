@@ -227,7 +227,17 @@ _INLINE = re.compile(r"`([^`\n]+)`")
 # on the line above `senbonzakura setup`. `\s+` spans newlines, so the pair read as the command
 # `senbonzakura senbonzakura` and this guard failed on correct documentation. A pip install line
 # names a distribution, not a subcommand, so excluding it narrows nothing this check is for.
-_INVOKE = re.compile(r"(?<![\w./-])(?<!from )(?<!install )senbonzakura\s+([a-z][a-z0-9-]*)")
+#
+# THE LOOKBEHINDS WERE THE WRONG FIX AND ARE NOW BELT AND BRACES. `\s+` was the actual fault: it
+# spans newlines, so any line ENDING in `senbonzakura` paired with the next line's first word. The
+# two lookbehinds above patched the two spellings that had been met (`from senbonzakura`, then
+# `pip install senbonzakura`), and on 2026-09-26 a third arrived, `cd senbonzakura` above a line
+# beginning `pip`, which reported `pip` as a subcommand this project does not have. Patching a
+# third spelling would have left a fourth.
+#
+# `[ \t]+` ends the class instead: a command and its subcommand are on the same line, always. The
+# lookbehinds stay, because they are correct about what they say and cost nothing.
+_INVOKE = re.compile(r"(?<![\w./-])(?<!from )(?<!install )senbonzakura[ \t]+([a-z][a-z0-9-]*)")
 
 
 def _invoked_commands():

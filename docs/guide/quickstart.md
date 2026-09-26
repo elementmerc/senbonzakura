@@ -52,7 +52,8 @@ all of it and none of this is needed.
 senbonzakura setup
 ```
 
-That brings torch, transformers, accelerate and optuna: 68 packages, 5.8 GB, nothing to choose.
+That brings torch, transformers, accelerate and optuna: 69 packages, 5.9 GB, nothing to choose.
+[Install](/guide/install) has the breakdown and the date it was measured.
 
 `setup` exists because **pip picks by platform, not by hardware**:
 

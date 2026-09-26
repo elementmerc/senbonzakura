@@ -83,7 +83,11 @@ def test_every_notebook_command_parses(command):
             rest = argv[2:]
         else:
             # `None` where a command requires nothing: the parse itself is the assertion.
-            required = {"capability": "model", "track": "out", "corpora": None}
+            required = {"capability": "model", "track": "out", "corpora": None,
+                        # `doctor` takes nothing and reports what the install can do. It replaced
+                        # the two builder cells when the bundled track started arriving with the
+                        # wheel, so the notebook now checks the install instead of assembling one.
+                        "doctor": None}
             assert argv[0] in required, (
                 f"the notebook now uses the {argv[0]!r} subcommand and this test does not know "
                 f"which of its arguments must come out set. Teach it rather than dropping the "
@@ -92,6 +96,19 @@ def test_every_notebook_command_parses(command):
             required_arg = required[argv[0]]
             rest = argv[1:]
         module = importlib.import_module(f"senbonzakura.{module_name}")
+        if not hasattr(module, "build_parser"):
+            # `doctor` builds its parser inside `main`, so there is nothing to parse against
+            # without running it, and running it inspects the whole machine. What CAN be asserted
+            # is that the command takes no arguments here: the moment the notebook passes one,
+            # this fails and asks to be taught, which is the same bargain as the map above.
+            assert hasattr(module, "main"), (
+                f"senbonzakura.{module_name} has neither build_parser nor main, so nothing in "
+                f"this test can say whether the notebook's invocation is valid")
+            assert not rest, (
+                f"the notebook now passes {rest} to {argv[0]!r}, whose parser is built inside "
+                f"main and cannot be checked from here. Give it a build_parser, or teach this "
+                f"test what those arguments mean")
+            return
         args = module.build_parser().parse_args(rest)
         if required_arg:
             assert getattr(args, required_arg)
@@ -125,70 +142,42 @@ def test_the_notebook_does_not_promise_a_subcommand_that_does_not_exist():
     assert not unknown, f"the notebook names commands that do not exist: {sorted(unknown)}"
 
 
-def test_the_notebook_does_not_send_a_reader_to_pypi_while_pypi_is_stale():
-    """THE DEFECT THIS FILE DID NOT CATCH THE FIRST TIME.
+def test_the_notebook_installs_the_release_and_uses_the_track_that_comes_with_it():
+    """INVERTED ON 2026-09-26, when 0.4.0 reached PyPI. The history is the point.
 
-    `test_docs_match_the_package.py` keeps a list of install surfaces and asserts each one warns
-    that PyPI serves a withdrawn 0.3.0. The notebook is an install surface and was not on that
-    list, so it shipped `%pip install senbonzakura` as its very first cell: a reader following it
-    in a browser would have got July's version, silently, and then met commands that version does
-    not have.
+    This test used to assert the opposite of all three things below, and it was right to. PyPI
+    served a withdrawn 0.3.0, `senbonzakura-check` was on no index at all, and the bundled track
+    was packed from a held-out corpus outside this repository, so:
 
-    Switching it to the repository alone is not enough either, and that is the second half. A
-    clone carries no bundled corpora, because they are generated rather than committed, so
-    `--track default` fails on a git install. The notebook therefore has to build them, and this
-    asserts it does, because a reader cannot be expected to know that the failure two cells later
-    is about a build step nobody ran.
+    - installing from PyPI handed a reader July's version, silently, and then commands it lacks;
+    - `--track default` could not work, because no clone can build the packed track;
+    - the notebook therefore had to build the corpora itself, and a reader who skipped that step
+      met a failure several cells after the one that caused it.
+
+    All three ended at the release. The wheel carries the packed track and the corpora, so
+    `--track default` is the simplest correct thing a Colab reader can do, and the two builder
+    cells that existed to work around the gap are now an optional aside.
+
+    Left as a test rather than deleted, because the drift runs both ways: a notebook that goes
+    back to `git+...@dev` would be exercising unreleased code in the surface most likely to be a
+    stranger's first contact with this project.
     """
     doc = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-    everything = "\n".join("".join(c["source"]) for c in doc["cells"])
-
-    assert "pip install --quiet senbonzakura\n" not in everything, (
-        "the notebook installs from PyPI, which serves a withdrawn 0.3.0 whose numbers are "
-        "retracted and which has none of the measurement this notebook demonstrates")
-
     code = "\n".join("".join(c["source"]) for c in doc["cells"] if c["cell_type"] == "code")
 
-    # `--track default` CANNOT WORK HERE AND MUST NOT BE USED, which is stronger than the
-    # conditional this replaced. The bundled track is packed from a held-out corpus that is
-    # deliberately outside this repository, so no clone can build one and no amount of running
-    # `build_corpora.py` produces it. The first version of this check asked only that the corpora
-    # were built if `--track default` appeared, which the notebook satisfied while still being
-    # unable to run: the corpora and the track are two different artefacts and only one of them
-    # is buildable from a clone.
-    command_lines = [line for line in code.splitlines() if line.strip().startswith("--track ")]
-    assert not any("default" in line for line in command_lines), (
-        "the notebook passes `--track default`, which needs the bundled track. That is packed "
-        "from a held-out corpus kept out of this repository on purpose, so a reader in Colab "
-        "cannot build one and the run fails several cells after the step that was supposed to "
-        "provide it")
+    assert "%pip install --quiet senbonzakura" in code, (
+        "the notebook no longer installs the published package. From 0.4.0 that is the whole "
+        "install and it is what a reader in a browser should be running")
+    assert "git+https://github.com/elementmerc/senbonzakura" not in code, (
+        "the notebook installs from a branch. That was required while the index could not serve "
+        "this project and is now a way to hand a stranger unreleased code")
 
-    assert "senbonzakura corpora" in code, (
-        "the notebook never builds the refusal corpora. They are generated rather than "
-        "committed, so an install from the repository does not have them")
-    # Two different commands: `track build` fetches the pools, `track` splits them. Matched on
-    # the joined form, because the notebook wraps the splitter across lines for readability.
-    # Whitespace is collapsed as well as the continuations, because the wrapped lines are
-    # indented and a joined command would otherwise carry the indentation in the middle of it.
-    joined = " ".join(code.replace("\\\n", " ").split())
-    assert "senbonzakura track build" in joined, (
-        "the notebook never fetches the prompt pools, so there is nothing for the splitter below "
-        "it to split")
-    assert "senbonzakura track --harmful" in joined, (
-        "the notebook never splits a track. Without one there is nothing to pass to `--track`, "
-        "and `--track default` is not available to an install from the repository")
-
-    # THE BUILDERS MUST BE THE INSTALLED ONES, not paths into a clone. `tools/` ships in no
-    # wheel, so a notebook that runs them out of a cloned tree is describing a route only a
-    # cloner has, and it was cloning for exactly two files.
-    assert "tools/packaging/" not in code, (
-        "the notebook runs a script out of `tools/`, which ships in no wheel. Both builders are "
-        "commands now: `senbonzakura corpora` and `senbonzakura track build`")
-
-    # Something has to CHECK the build worked, whatever form the track takes. Named by what it
-    # proves rather than by the exact call, so that changing how the track is built does not
-    # silently drop the verification along with it.
-    checks_the_track = "track.json" in code or "bundled.is_available()" in code
-    assert checks_the_track, (
-        "nothing in the notebook checks the track was actually built, so a reader whose build "
-        "step failed finds out several minutes later from a command that looks unrelated")
+    # ACTIVE lines only. The optional builder cells are commented out on purpose, and a check that
+    # could not tell a live command from a commented one would fail on the explanation beside it.
+    live = [ln for ln in code.splitlines() if not ln.lstrip().startswith("#")]
+    assert any("--track default" in ln for ln in live), (
+        "the notebook does not use `--track default`, which now ships inside the wheel. Building "
+        "a corpus in Colab to avoid it is work the reader no longer has to do")
+    assert "senbonzakura doctor" in "\n".join(live), (
+        "the notebook does not run `doctor`, so a reader never sees what their install can and "
+        "cannot do before the first command that depends on it")

@@ -22,6 +22,7 @@ terms it guarded against (2026-09-17).
 """
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -316,3 +317,71 @@ class TestTheHookInstallerWiresTheStripper:
         text = (REPO / "tools" / "hooks" / "install-local-hooks.sh").read_text(encoding="utf-8")
         head, _, tail = text.partition("command -v nbstripout")
         assert "exit 1" not in tail.split("# TWO CLONES")[0]
+
+
+class TestZeroTargetsSaysWhichZeroItIs:
+    """Nothing checked is not nothing wrong, and the two ways of getting there differ.
+
+    The gate reaches "no targets" down two paths that need opposite responses from whoever reads
+    the line. A `--staged` commit of code and prose has nothing of an inspected kind in it, which
+    is routine and wants no action. A named directory that expanded to nothing means the artefact
+    somebody meant to check was never opened, which wants action immediately.
+
+    Until 2026-09-26 both printed the untracked-directory explanation, so a commit of three
+    ordinary source files was answered with advice about a situation that was not the committer's.
+    An explanation of the wrong cause is worse than none: it reads as though the gate understood
+    the case and cleared it.
+    """
+
+    @staticmethod
+    def _repo(tmp_path):
+        """A throwaway git repository, so these two branches are checked off a real index.
+
+        Built here rather than run against this project's own checkout, because the branch under
+        test is reached only when the index holds nothing of an inspected kind, and this repository
+        cannot be put in that state without staging something in it.
+        """
+        def run(*argv):
+            return subprocess.run(argv, cwd=tmp_path, check=True, capture_output=True, timeout=60)
+
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.invalid")
+        run("git", "config", "user.name", "t")
+        return run
+
+    def test_a_staged_commit_of_code_does_not_blame_untracked_files(
+            self, tmp_path, monkeypatch, capsys):
+        run = self._repo(tmp_path)
+        (tmp_path / "thing.py").write_text("x = 1\n", encoding="utf-8")
+        run("git", "add", "thing.py")
+        monkeypatch.chdir(tmp_path)
+
+        assert guard.main(["--staged"]) == 0
+        out = capsys.readouterr().out
+        assert "no staged file is of a kind this gate inspects" in out
+        assert "untracked" not in out, (
+            "the staged path printed the named-directory explanation, which cannot be the cause "
+            f"here: every staged file is tracked by definition. Got:\n{out}")
+
+    def test_it_never_claims_anything_passed(self, tmp_path, monkeypatch, capsys):
+        """`0 file(s) clean` was the shape this message exists to avoid reading like."""
+        run = self._repo(tmp_path)
+        (tmp_path / "notes.md").write_text("prose\n", encoding="utf-8")
+        run("git", "add", "notes.md")
+        monkeypatch.chdir(tmp_path)
+
+        assert guard.main(["--staged"]) == 0
+        out = capsys.readouterr().out
+        assert "clean" not in out, f"a zero-target run must not read as a pass. Got:\n{out}"
+        assert "NOT a statement" in out
+
+    def test_a_named_directory_that_expands_to_nothing_still_says_so(
+            self, tmp_path, monkeypatch, capsys):
+        """The other branch has to keep its own explanation, which is the useful one there."""
+        self._repo(tmp_path)
+        (tmp_path / "results").mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        assert guard.main(["results"]) == 0
+        out = capsys.readouterr().out
+        assert "untracked files are skipped" in out

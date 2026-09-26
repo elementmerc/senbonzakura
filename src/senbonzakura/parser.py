@@ -86,7 +86,13 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     # model at all; the check just moves from argparse to `resolve_model`, where it can say which
     # of the two ways to give it you meant to use. Every other command keeps the flag required.
     ap.add_argument("--model", required=model_required, default=None, help=model_help)
-    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
+    ap.add_argument("--device", default="cuda",
+                    help="cuda, cuda:N, or cpu (default: cuda). THE DEFAULT IS STATED "
+                         "because it decides whether the command runs at all: on a machine "
+                         "with no card the default fails, and until 2026-09-26 the only way "
+                         "to learn what it was was to trigger that failure. `senbonzakura "
+                         "doctor` reports what this machine has, without a card and without "
+                         "a download")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="allow models that ship custom modelling code (some Hub models need "
                          "it); off by default.")

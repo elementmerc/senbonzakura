@@ -102,12 +102,20 @@ so it works straight after `pip install`:
 
 ```sh
 senbonzakura compass \
-    --model HuggingFaceTB/SmolLM2-135M-Instruct \
+    --model Qwen/Qwen3-0.6B \
     --harmful default/bad_eval_ds \
     --harmless default/good_ds \
     --skip-harmful 0 --skip-harmless 0 --n 12 \
     --out compass-toy.json --device cpu
 ```
+
+> **Why this model and not a smaller one.** This example used
+> `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26, which downloads in seconds and then
+> exits 1: at 135M the model does not put a verdict token where the compass reads one, so the run
+> says `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement, and is right to. That
+> is the tool being honest, and it is a poor first command, because it looks like a broken
+> install. Qwen3-0.6B answers with a verdict on 100% of prompts and exits 0. It is a larger
+> download, and a first command that works is worth it.
 
 This used to read `examples/toy-track/...`, which is in the repository and in **no install**, so the
 first command under a heading saying "on your own machine" could not be run by anyone who had

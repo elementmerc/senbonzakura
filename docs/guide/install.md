@@ -40,6 +40,12 @@ senbonzakura corpora          # public corpora, pinned commits
 python tools/packaging/pack_track.py --track <your-track>
 ```
 
+::: warning `senbonzakura corpora` needs the GitHub CLI
+It fetches from public sources through `gh`, deliberately, so that no credential is ever handled
+by this project's own code. Without it the command exits 1 and says so. Install `gh` from
+<https://cli.github.com>, run `gh auth login`, then run this again.
+:::
+
 The first needs only the network. The second needs a track, which is either
 [one you built](/guide/the-track) or the gated dataset.
 :::

@@ -231,19 +231,19 @@ def missing_build_provenance(wheel: Path) -> list[str]:
         if not any(n.split("/")[0] == "senbonzakura" or "/senbonzakura/" in n for n in names):
             return []
         if not stamp:
-            return ["a release wheel must record the commit it was built from, and this one "
-                    "carries no senbonzakura/_build.py. setup.py writes it; if the build box has "
-                    "no .git, pass SENBON_BUILD_COMMIT=<sha>."]
+            return [("a release wheel must record the commit it was built from, and this one "
+                     "carries no senbonzakura/_build.py. setup.py writes it; if the build box "
+                     "has no .git, pass SENBON_BUILD_COMMIT=<sha>.")]
         text = z.read(stamp[0]).decode("utf-8", "replace")
-    found = re.search(r"^COMMIT\s*=\s*['\"]?([^'\"\n]*)['\"]?", text, re.M)
+    found = re.search(r"^COMMIT\s*=\s*['\"]?([^'\"\n]*)['\"]?", text, re.MULTILINE)
     value = (found.group(1) if found else "").strip()
     if value in ("", "None"):
-        return ["this release wheel records no commit: senbonzakura/_build.py has COMMIT = None, "
-                "which means the build could not see a .git and nothing supplied one. Rebuild "
-                "with SENBON_BUILD_COMMIT=<sha>."]
+        return [("this release wheel records no commit: senbonzakura/_build.py has COMMIT = "
+                 "None, which means the build could not see a .git and nothing supplied one. "
+                 "Rebuild with SENBON_BUILD_COMMIT=<sha>.")]
     if not _SHA.match(value):
-        return [f"senbonzakura/_build.py records COMMIT = {value!r}, which is not a 40 character "
-                f"git sha, so it names nothing anybody can check out."]
+        return [(f"senbonzakura/_build.py records COMMIT = {value!r}, which is not a 40 "
+                 f"character git sha, so it names nothing anybody can check out.")]
     return []
 
 

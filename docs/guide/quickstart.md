@@ -38,6 +38,12 @@ senbonzakura track --harmful corpus/harmful.txt \
                    --harmless corpus/harmless.txt --out track
 ```
 
+::: warning `senbonzakura corpora` needs the GitHub CLI
+It fetches from public sources through `gh`, deliberately, so that no credential is ever handled
+by this project's own code. Without it the command exits 1 and says so. Install `gh` from
+<https://cli.github.com>, run `gh auth login`, then run this again.
+:::
+
 Or bring your own; [the track page](/guide/the-track) has both routes. A released wheel carries
 all of it and none of this is needed.
 :::
@@ -122,15 +128,24 @@ stock model on the track bundled in your install, in a couple of minutes:
 
 ```sh
 senbonzakura compass \
-    --model HuggingFaceTB/SmolLM2-135M-Instruct \
+    --model Qwen/Qwen3-0.6B \
     --harmful default/bad_eval_ds \
     --harmless default/good_ds \
     --skip-harmful 0 --skip-harmless 0 --n 12 \
     --out compass-toy.json --device cpu
 ```
 
-`default/<partition>` means the evaluation track inside the install, so this needs no network and
-nothing to assemble. It used to say `examples/toy-track/...`, which exists in a clone and in no
+::: tip Why this model and not a smaller one
+This said `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26. That downloads in seconds and
+then exits 1: at 135M the model puts no verdict token where the compass reads one, so the run
+prints `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement, and is right to. It is
+the tool being honest and a poor first command, because it reads as a broken install. Qwen3-0.6B
+answers with a verdict on 100% of prompts and exits 0.
+:::
+
+`default/<partition>` means the evaluation track inside the install, so there is no corpus to
+fetch and nothing to assemble. The **model** is still downloaded from the Hub the first time, so
+this one does need a network. It used to say `examples/toy-track/...`, which exists in a clone and in no
 install, so the one recipe written for readers without a card was the one they could not run. If you
 did clone the repository, `examples/toy-track/` still works and is smaller.
 

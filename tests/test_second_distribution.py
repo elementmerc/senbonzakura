@@ -25,6 +25,7 @@ environment and confirming torch is absent from the resolution. That needs a net
 build, so it lives in CI rather than in the suite, and `DEFERRED.md` carries it until it does.
 """
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -318,3 +319,39 @@ def test_every_site_that_installs_this_project_installs_the_checker_first():
         + "\n  ".join(missed)
         + "\n\nAdd `pip install --no-deps ./checker` (and, in an image, the `COPY checker/`) "
           "above the line. Delete this test once `senbonzakura-check` is published.")
+
+
+# ── the publish order, which is the one install site that is not a pip command ────────
+
+PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
+
+
+def test_the_publish_workflow_uploads_the_checker_before_the_package_that_needs_it():
+    """The upload steps are ordered, and the order is asserted rather than remembered.
+
+    Every other site in this file is a `pip install`. This one is an upload, and it was missed
+    for exactly that reason: the list of places the order matters was written as a list of
+    install commands, so the workflow that puts the names on the index in the first place was
+    never on it. Until 2026-09-26 the job handed the whole of `dist/` to one upload action, in
+    whatever order the glob produced.
+
+    On a first release that is the difference between a working `pip install senbonzakura` and a
+    window in which the headline package cannot resolve its own dependency, and a version number
+    on PyPI can never be replayed, so the window cannot be closed by uploading again.
+    """
+    text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+
+    uploads = [(m.start(), m.group(1)) for m in
+               re.finditer(r"packages-dir:\s*(\S+)", text)]
+    assert len(uploads) >= 2, (
+        "publish.yml no longer names a `packages-dir` per distribution, so the two uploads have "
+        "been merged back into one and their order is whatever the glob produces")
+
+    first = uploads[0][1]
+    assert "checker" in first, (
+        f"the first upload in publish.yml points at {first!r}, and it must be the checker's "
+        f"directory: `senbonzakura` declares Requires-Dist on `senbonzakura-check`, so uploading "
+        f"the other way round leaves a window where the install cannot resolve")
+    assert any("checker" not in d for _pos, d in uploads[1:]), (
+        "publish.yml uploads the checker and nothing else, so the abliterator would never reach "
+        "the index")

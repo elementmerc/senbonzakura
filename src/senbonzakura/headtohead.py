@@ -29,6 +29,7 @@ tool on your own machine deserves a sandbox, and that matters more to a stranger
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import os
 import posixpath
@@ -40,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import lengthsweep
+from ._version import __version__
 from .metrics import min_achievable_p
 
 # Every arm writes this when it has finished, and the runner checks the file rather than the word.
@@ -445,11 +447,34 @@ def slices_match_track(slices: Path, track: Path) -> list[str]:
     return []
 
 
-def write_slice_provenance(slices: Path, track: Path) -> Path:
-    """Record which corpus a set of staged slices came from, beside the slices themselves."""
+def write_slice_provenance(slices: Path, track: Path, *, counts=None, budgets=None) -> Path:
+    """Record where a set of staged slices came from, and what is in them, beside the slices.
+
+    `track` IS THE ONLY LOAD-BEARING FIELD and keeps its exact spelling, because
+    `slices_match_track` reads it and a file written by an older version must still be readable.
+    Everything else is a record rather than a check.
+
+    WHY THE REST WAS WORTH ADDING, found on 2026-09-26. The file held one key, the track path. Its
+    own `--help` says to re-cut the slices "whenever the track changes, or after an upgrade that
+    adds a required slice", and neither of those could be answered from it: no date, so nothing says
+    which came first; no counts, so a directory cannot be told from one cut at different budgets;
+    no version, so "after an upgrade" is unanswerable. A directory of prompt files that cannot say
+    when it was cut or how big its slices are is one a reader has to take on trust, and the counts
+    are the specific thing that was surprising enough to need checking: `--eval-refusal-final` is
+    a reach into the corpus and `final_prompts.txt` holds the remainder, so the flag and the file
+    do not carry the same number and only the file's own count settles it.
+
+    The prompts are not recorded, obviously, and nor is any text from them. Counts and budgets only.
+    """
     path = Path(slices) / SLICE_PROVENANCE
-    path.write_text(json.dumps({"track": str(Path(track).resolve())}, indent=2) + "\n",
-                    encoding="utf-8")
+    doc = {"track": str(Path(track).resolve())}
+    if counts:
+        doc["counts"] = {k: int(v) for k, v in sorted(counts.items())}
+    if budgets:
+        doc["budgets"] = {k: int(v) for k, v in sorted(budgets.items())}
+    doc["staged_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    doc["tool_version"] = __version__
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 
@@ -798,10 +823,30 @@ def preflight(*, tools, track: Path, out: Path, model: str, isolate: str, images
     # The scoring inputs are checked here rather than after the arms have run, because
     # discovering them missing costs the whole run's GPU time and nothing else.
     if score:
+        # THE REFUSAL NAMES THE PATH, because the answer is in the track the user already passed.
+        #
+        # This used to say "pass it, or --no-score", which tells somebody that a thing is missing
+        # and not what to put there. Its sibling six lines up prints a runnable `stage` command,
+        # and the difference was visible in one run on 2026-09-26: the same refusal block held one
+        # problem that could be fixed from what it said and two that could not, so the user had to
+        # go and find `docs/guide/benchmark.md` to learn that the answer is two subdirectories of
+        # the track sitting right there on the command line.
+        #
+        # The suggested paths are named rather than checked. `--harmless` conventionally reads
+        # `good_ds`, the whole harmless side, while `--harmful` reads `bad_eval_ds`, the measured
+        # partition and NOT `bad_ds`, which is what the directions are fitted on. Getting that pair
+        # the wrong way round scores a model on the rows it was built from, which is the mistake
+        # this release's headline critical was, so the hint says which is which.
+        suggested = {"--harmful": "bad_eval_ds", "--harmless": "good_ds"}
         for flag, path in (("--harmful", harmful), ("--harmless", harmless)):
             if not path:
+                hint = ""
+                if track:
+                    leaf = suggested[flag]
+                    hint = (f"\n    {flag} {Path(track) / leaf}"
+                            f"       # the track's own {leaf}")
                 problems.append(f"{flag} is needed to score the models; pass it, or --no-score "
-                                f"to run the arms and score them later")
+                                f"to run the arms and score them later{hint}")
             elif not Path(path).exists():
                 problems.append(f"{flag} points at {path}, which is not there")
     if isolate == "docker":
@@ -904,6 +949,46 @@ def default_runner(argv, *, cwd=None, log=print, timeout=ARM_TIMEOUT_S) -> int:
     return proc.returncode
 
 
+def _on_this_interpreter(argv, isolate):
+    """Rewrite a leading bare `python` to the interpreter this harness is running under.
+
+    ONE PLACE, and the reason is that there were four. Every adapter builds its command starting
+    with the word `python`, which is right inside an image and wrong on a host, and
+    `--isolate none` is the DEFAULT, so the default path was the broken one. A user following
+    `docs/guide/benchmark.md` with a virtualenv invoked by its full path
+    (`~/venv/bin/python -m senbonzakura head-to-head run ...`) has no `python` on PATH, and the run
+    died about thirty seconds in, after loading the model and cutting a baseline, with a ten frame
+    traceback ending `could not start 'python'`. Found on 2026-09-26 by running the documented
+    recipe as written.
+
+    THE SAME DEFECT WAS FIXED FOR THE SCORER ON 2026-08-11 AND NOT HERE, and the comment beside that
+    fix says why it was thought not to apply: "the arms run inside a container where `python`
+    exists". They do when asked to, and by default they do not. That is this project's most-repeated
+    shape, a correction applied where it was noticed rather than everywhere it lives, and the
+    reasoning for stopping rested on an assumption the default contradicts.
+
+    It also matters where `python` DOES resolve, which is the quieter half. A host carrying a system
+    `python` runs the arms under that interpreter while the harness runs under another, so
+    `-m senbonzakura` inside an arm can resolve to a different install than the one being measured.
+    `--senbon-src` exists to make precisely that visible, and a bare interpreter name was undoing it
+    silently.
+
+    THE CONTAINER PATH IS LEFT ALONE, deliberately. `sys.executable` is a path on this machine and
+    inside an image it is a path to nothing, so the guest's own `python` is the correct name there.
+
+    Written as a helper rather than inline because the first attempt at this fix was inline, covered
+    the arm, and missed the best-of-N selection pass, which builds its own argv further down and
+    starts with the same word. A test over every adapter caught it within a minute. Two call sites
+    spelling one rule separately is the defect being repaired, so it is spelled once.
+    """
+    if isolate == "docker":
+        return list(argv)
+    argv = list(argv)
+    if argv and argv[0] == "python":
+        argv[0] = sys.executable
+    return argv
+
+
 def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isolate="none",
             slices=None, image=None, runner=None, log=print, force=False,
             senbon_src=None) -> ArmResult:
@@ -935,7 +1020,8 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     else:
         paths = dict(model=model, track=track, out=arm, slices=slices)
 
-    argv = adapter.argv(seed=seed, trials=trials, extra=list(extra), **paths)
+    argv = _on_this_interpreter(adapter.argv(seed=seed, trials=trials, extra=list(extra), **paths),
+                                isolate)
     if isolate == "docker":
         script = find_run_isolated()
         if script is not None:
@@ -970,7 +1056,9 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     # itself, and saves the winner. Without it the arm runs for the full budget and produces
     # nothing to score, which is precisely what 2026-08-11 spent four hours doing.
     if adapter.finalise is not None:
-        final_argv = adapter.finalise(**paths)
+        # Through the same rule as the arm itself. This pass was the fourth bare `python` in the
+        # file and the one an inline fix at the call site above missed.
+        final_argv = _on_this_interpreter(adapter.finalise(**paths), isolate)
         if isolate == "docker":
             script = find_run_isolated()
             if script is not None:
@@ -1431,10 +1519,15 @@ def build_parser():
                     help="how many held-out harmful prompts to stage for the in-search refusal "
                          "score (default: 64)")
     st.add_argument("--eval-refusal-final", type=int, default=128,
-                    help="how many harmful prompts to stage for the larger final re-score that "
-                         "picks the winner (default: 128). Bigger than --eval-refusal on purpose: "
-                         "crowning a winner on the same small set the search optimised against "
-                         "picks whichever arm got luckiest on those rows")
+                    help="HOW FAR INTO bad_eval_ds THE FINAL RE-SCORE REACHES, counted from the "
+                         "start, not the size of the file it writes (default: 128). The rows up to "
+                         "--eval-refusal are the search-time slice; `final_prompts.txt` gets what "
+                         "is left, so 128 here with --eval-refusal 64 writes 64 prompts and the "
+                         "two sets share no rows. Bigger than --eval-refusal on purpose: crowning "
+                         "a winner on the same small set the search optimised against picks "
+                         "whichever arm got luckiest on those rows. The wording used to say 'how "
+                         "many prompts to stage', which reads as the file's own length, and it "
+                         "took three runs at different settings to tell which it meant")
     st.add_argument("--eval-kl", type=int, default=64,
                     help="how many harmless prompts to stage for the KL divergence score "
                          "(default: 64)")

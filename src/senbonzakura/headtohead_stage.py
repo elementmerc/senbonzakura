@@ -202,7 +202,8 @@ def main(argv=None):
             load_texts(track / "bad_eval_ds", a.eval_refusal_final),
             a.eval_refusal, a.eval_refusal_final,
             lambda m: print(f"headtohead stage: WARNING {m}", file=sys.stderr)),
-        "best-of-N re-score, both tools, held out from the search-time slice")
+        f"best-of-N re-score, both tools, rows {a.eval_refusal} to {a.eval_refusal_final} of "
+        f"bad_eval_ds, so no row here is in the search-time slice above")
     # The coherence slice, disjoint from the extraction prompts by the same rule the abliterator
     # applies, computed by the same function rather than a second copy of the arithmetic.
     counts["kl"] = write_slice(
@@ -248,7 +249,14 @@ def main(argv=None):
     # beside a run pointed at corpus B would be silent: every arm finishes, every artefact is
     # present, and the table means nothing.
     from .headtohead import write_slice_provenance
-    print(f"headtohead stage: recorded the source corpus in {write_slice_provenance(out, track)}")
+    # The counts as WRITTEN, not as asked for. They are the two different numbers: `--eval-refusal-final`
+    # is a reach into the corpus and the file it produces holds the remainder, so recording the
+    # request alone would record the more misleading of the pair.
+    recorded = write_slice_provenance(
+        out, track, counts=counts,
+        budgets={"dir_prompts": a.dir_prompts, "eval_refusal": a.eval_refusal,
+                 "eval_refusal_final": a.eval_refusal_final, "eval_kl": a.eval_kl})
+    print(f"headtohead stage: recorded the source corpus, the counts and the budgets in {recorded}")
 
     # THIS CHECK'S PREMISE INVERTED WHEN THE SLICES BECAME DISJOINT, so its question changed with
     # it. It used to require the final slice to be strictly LARGER than the search slice, because

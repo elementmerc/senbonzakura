@@ -181,10 +181,39 @@ def test_the_reference_documents_every_command_that_does_exist():
 #: Markdown that is shipped or published. Fixture and note trees under `private/` are excluded
 #: because they are not a surface a reader meets.
 def _prose_markdown():
+    """Tracked Markdown, or every Markdown file when there is no history to ask.
+
+    THE FALLBACK IS NOT A CONVENIENCE. A released tarball carries every tracked file and no
+    `.git`, and so does the CI job whose whole purpose is running the suite there, so `git
+    ls-files` exits 128 and this raised rather than measuring anything. Skipping would have been
+    the cheaper repair and the wrong one: the property under test is that no page names a command
+    the package does not have, and that is exactly as true of a tarball, where it is what a reader
+    actually holds.
+
+    git is preferred where it answers, because a source checkout carries untracked scratch
+    Markdown that is not a surface anybody meets. Without git the two sets coincide, since an
+    export has nothing untracked in it.
+    """
     import subprocess
-    listed = subprocess.run(["git", "ls-files", "*.md"],
-                            capture_output=True, text=True, cwd=ROOT, check=True).stdout.split()
-    return [p for p in listed if not p.startswith("private/")]
+    try:
+        listed = subprocess.run(["git", "ls-files", "*.md"], capture_output=True, text=True,
+                                cwd=ROOT, check=True, timeout=60).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        listed = [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.md")]
+    # Trees and files that are not a surface a reader meets. The second group is the operator-state
+    # set that `.githooks/private-remote-gate.sh` keeps off every remote, so none of it is tracked
+    # and the git listing never carries it. The fallback has to drop it by name instead: the ledger
+    # records commands this release RETIRED, which is exactly the thing the guard below refuses, so
+    # reading it turns a correct ledger entry into a failing build.
+    skip = ("private/", "docs/.vitepress/", "node_modules/", ".venv/", "build/", "dist/",
+            "dist-", "wheels/",
+            "DEFERRED.md", "OPERATOR_ACTIONS.md", ".project-state.md")
+    # A PATH THAT DOES NOT RESOLVE TO A FILE IS DROPPED, and the case is a real one rather than
+    # defensive padding. `CLAUDE.md` is a symlink on the build box, pointing at a baseline document
+    # outside this tree, so it is listed and cannot be opened. `is_file()` follows the link and
+    # answers False for a dangling one, which is the question being asked: is there prose here to
+    # read. A page a reader cannot reach is not a surface this test is about.
+    return [p for p in listed if not p.startswith(skip) and (ROOT / p).is_file()]
 
 
 _FENCE = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)

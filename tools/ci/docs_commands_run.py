@@ -111,8 +111,15 @@ RULES: list[tuple[str, str, str]] = [
      "ships in no wheel: `tools/` is repository-only, which is itself documented"),
     (r"^(git|cd|export|source|\.) ", SKIP, "shell housekeeping, not this project's surface"),
 
+    # ── the manual page, which is part of what the wheel ships ───────────────────────
+    # `man` reads; it does not write, and grouping it with `rm` and `apt-get` below meant the one
+    # documented command that proves the manual page SHIPS was skipped under a reason that was not
+    # true of it. `run_one` puts the install under test first on PATH, and `man` builds its search
+    # path from PATH, so this resolves to the page inside the environment being checked.
+    (r"^man senbonzakura$", RUN, "the manual page ships in the wheel and is documented"),
+
     # ── changes the machine, or needs the repository ─────────────────────────────────
-    (r"^(rm|mv|cp|mkdir|apt-get|tee|man) ", SKIP, "changes the machine rather than exercising the tool"),
+    (r"^(rm|mv|cp|mkdir|apt-get|tee) ", SKIP, "changes the machine rather than exercising the tool"),
     (r"^python3? -m build\b", SKIP, "builds a distribution: slow, and needs the source tree"),
     (r"^(bash|sh) tools/|^python3? -m senbonzakura\.", SKIP,
      "repository-only: `tools/` and the private module entry points ship in no wheel"),

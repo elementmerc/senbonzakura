@@ -201,6 +201,52 @@ def missing_licences(wheel: Path) -> list[str]:
             if not any(n.endswith("/" + want) for n in names)]
 
 
+#: A git commit, and nothing looser. Anything that is not 40 hex characters is a value somebody
+#: typed rather than a tree anybody can check out.
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def missing_build_provenance(wheel: Path) -> list[str]:
+    """A release artefact must be able to say which commit produced it.
+
+    WHAT WENT WRONG. The v0.4.0 build printed `fatal: not a git repository` and carried on. The box
+    that holds the evaluation track is reached by an rsync that does not carry `.git`, so the one
+    line meant to record the commit could not run, and it failed quietly into a log nobody reads on
+    a good day. RELEASING.md asks a person to write the SHA down afterwards, which is the kind of
+    control that gets done while the interesting part is still interesting.
+
+    The artefacts went out carrying no commit at all. Provenance rested on one person's memory of
+    the order they did things in, and was recovered only by finding a one-line change inside the
+    sdist that existed in exactly one commit. That worked, and it is not a process.
+
+    ONLY THE ABLITERATOR IS ASKED. `senbonzakura-check` builds from `checker/` with no `setup.py`
+    of its own, so it has nowhere to write a stamp, and asking it for one would fail every release
+    honestly. A wheel with no top-level `senbonzakura/` package is not this distribution and is
+    left alone.
+    """
+    with zipfile.ZipFile(wheel) as z:
+        names = z.namelist()
+        stamp = [n for n in names if n.endswith("senbonzakura/_build.py")
+                 and "senbonzakura_check/" not in n]
+        if not any(n.split("/")[0] == "senbonzakura" or "/senbonzakura/" in n for n in names):
+            return []
+        if not stamp:
+            return ["a release wheel must record the commit it was built from, and this one "
+                    "carries no senbonzakura/_build.py. setup.py writes it; if the build box has "
+                    "no .git, pass SENBON_BUILD_COMMIT=<sha>."]
+        text = z.read(stamp[0]).decode("utf-8", "replace")
+    found = re.search(r"^COMMIT\s*=\s*['\"]?([^'\"\n]*)['\"]?", text, re.M)
+    value = (found.group(1) if found else "").strip()
+    if value in ("", "None"):
+        return ["this release wheel records no commit: senbonzakura/_build.py has COMMIT = None, "
+                "which means the build could not see a .git and nothing supplied one. Rebuild "
+                "with SENBON_BUILD_COMMIT=<sha>."]
+    if not _SHA.match(value):
+        return [f"senbonzakura/_build.py records COMMIT = {value!r}, which is not a 40 character "
+                f"git sha, so it names nothing anybody can check out."]
+    return []
+
+
 def missing_release_data(wheel: Path) -> list[str]:
     """Which of the bundled data files this wheel does not carry, and what builds each.
 
@@ -508,8 +554,13 @@ def main(argv=None):
         # artefact we are about to hand to strangers? The tool is also pointed at synthetic
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
+        # Provenance is asked of EVERY release artefact, including the intermediate, because the
+        # intermediate is what `repair_manylinux.sh` turns into a published wheel and it carries
+        # the stamp across. A build that cannot say what it came from is not publishable whether or
+        # not this particular file is the one going to the index.
         found += (missing_licences(a.wheel) + leaks_a_build_path(a.wheel)
-                  + prerelease_dependency_in_a_release(a.wheel))
+                  + prerelease_dependency_in_a_release(a.wheel)
+                  + missing_build_provenance(a.wheel))
         # THE TWO CHECKS AN UNPUBLISHED ARTEFACT IS EXEMPT FROM, and only these two. Both ask a
         # question about something being handed to strangers, and neither of these wheels is.
         #

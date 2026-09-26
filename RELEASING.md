@@ -98,6 +98,14 @@ python tools/packaging/build_corpora.py          # writes src/senbonzakura/data/
 # into the Colab notebook and into the distribute workflow, where CI is what finally ran it.
 python tools/packaging/pack_track.py --track <your held-out track>   # writes default-track.bin
 
+# 0. THE COMMIT, because the build box has no `.git`.
+#    The track lives on a machine reached by an rsync that does not carry `.git`, so `setup.py`
+#    cannot read the commit and stamps `COMMIT = None`. `check_wheel.py` then refuses the wheel,
+#    which is the point: v0.4.0 went to PyPI with no record of the tree that produced it, because
+#    the build printed `fatal: not a git repository` and carried on. Export this on the machine
+#    you are building on, taking the sha from the machine that has the repository.
+export SENBON_BUILD_COMMIT=<the sha you are releasing>
+
 # 1. the PLATFORM wheel, repaired to a manylinux tag so PyPI will take it
 python -m build --wheel
 # ONE WHEEL PER CALL. `dist/*.whl` globs to both distributions since Q-29 gave the checker its

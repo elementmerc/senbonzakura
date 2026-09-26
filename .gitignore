@@ -168,3 +168,7 @@ src/senbonzakura/vendor/src/
 # carries is reviewable in a diff of one small file. The CSVs themselves are other people's data
 # at a pinned commit; re-fetch with `python tools/packaging/build_corpora.py`.
 build/corpora/
+
+# Generated at build time by setup.py: the commit these artefacts came from.
+# See setup.py `_write_build_stamp`. Never committed; it is per build, not per tree.
+src/senbonzakura/_build.py

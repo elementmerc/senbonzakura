@@ -248,6 +248,62 @@ def test_expect_failure_inverts_the_verdict_both_ways(tmp_path):
     assert cw.main([str(good), "--expect-failure"]) == 1
 
 
+def _wheel_with_stamp(tmp_path, name, stamp=None, pkg="senbonzakura"):
+    """A wheel carrying a `<pkg>/_build.py` with whatever COMMIT line is asked for."""
+    import zipfile
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"{pkg}/__init__.py", "")
+        z.writestr("senbonzakura-0.4.0.dist-info/WHEEL", "Wheel-Version: 1.0\nTag: py3-none-any\n")
+        if stamp is not None:
+            z.writestr(f"{pkg}/_build.py", stamp)
+    return path
+
+
+def test_a_release_wheel_that_cannot_say_which_commit_built_it_is_refused(tmp_path):
+    """THE v0.4.0 FAILURE, which shipped and was only caught afterwards by hand.
+
+    The build box holds the evaluation track and is reached by an rsync that does not carry `.git`,
+    so the line meant to record the commit printed `fatal: not a git repository` and the build
+    carried on. The artefacts went to PyPI with no record of the tree behind them, and provenance
+    was recovered later only by finding a one-line change inside the sdist.
+
+    Three shapes are refused, because "records a commit" has three ways of being false and a guard
+    that covers one spelling reports clean on the others.
+    """
+    cw = _wheel_check()
+    absent = _wheel_with_stamp(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl", stamp=None)
+    assert cw.missing_build_provenance(absent), "a wheel with no stamp at all must be refused"
+
+    nothing = _wheel_with_stamp(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl",
+                                stamp="COMMIT = None\nBUILT_AT = '2026-09-26T00:00:00+00:00'\n")
+    assert cw.missing_build_provenance(nothing), "COMMIT = None is the build saying it does not know"
+
+    typed = _wheel_with_stamp(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl",
+                              stamp="COMMIT = 'the release build'\n")
+    assert cw.missing_build_provenance(typed), (
+        "a value that is not a 40 character sha names nothing anybody can check out")
+
+
+def test_a_release_wheel_carrying_a_real_commit_passes(tmp_path):
+    cw = _wheel_check()
+    good = _wheel_with_stamp(tmp_path, "senbonzakura-0.4.0-py3-none-any.whl",
+                             stamp="COMMIT = '49320439da67e568deddca30499d8cd4673f0e71'\n")
+    assert cw.missing_build_provenance(good) == []
+
+
+def test_the_checker_is_never_asked_for_a_stamp_it_cannot_write(tmp_path):
+    """`senbonzakura-check` builds from `checker/` with no setup.py, so it has nowhere to write one.
+
+    Asking it would fail every release honestly, which is the shape that gets a gate loosened for
+    both distributions, and loosening a gate for both is how the 0.3.0 wheel shipped with no corpora.
+    """
+    cw = _wheel_check()
+    checker = _wheel_with_stamp(tmp_path, "senbonzakura_check-0.4.0-py3-none-any.whl",
+                                stamp=None, pkg="senbonzakura_check")
+    assert cw.missing_build_provenance(checker) == []
+
+
 def test_release_and_intermediate_together_are_refused_rather_than_resolved(tmp_path):
     """The two flags are contradictory claims about one artefact, and the contradiction is unsafe.
 

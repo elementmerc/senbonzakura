@@ -96,6 +96,18 @@ def _abl(**over):
     # no `hf_device_map`, so it reads as fully resident and returns immediately, which is the
     # behaviour worth asserting rather than skipping.
     obj._slow_probe_checked = False
+    # Where the last probe generated, so a move between two probes is visible. Added 2026-09-26 with
+    # the check that reads it: the probe now re-checks on PLACEMENT rather than once per run, because
+    # the post-bake probe was running on the host after the save parked the weights there, 604
+    # seconds for sixteen items against 25 to 37 on the card.
+    #
+    # SET HERE RATHER THAN DEFAULTED IN THE READER. `_capability_score` could have used
+    # `getattr(self, ..., None)` and this fixture would not have needed touching, and that would be
+    # defensive code for a state the real constructor cannot produce. This helper is the third
+    # attribute it has had to learn about (`gov`, `_slow_probe_checked`, now this), which is the cost
+    # of building the object with `__new__`, and the cost is paid here where it is visible.
+    obj._last_probe_device = None
+    obj._weights_parked_on_host = False
     return obj
 
 

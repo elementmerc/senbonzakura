@@ -581,3 +581,57 @@ def test_the_bundled_track_check_says_where_it_unpacks_to():
         pytest.skip("the packed track is not installed here, so there is no unpack path to report")
     assert str(bundled.cache_dir()) in row.detail, (
         f"the bundled-track row should carry its path, got: {row.detail}")
+
+
+# ── the check six of seven readers reported, 2026-09-26 ──────────────────────────────
+#
+# The operator had the release exercised by seven personas, novice to expert, each working only from
+# `--help`, the man page and the published docs, each forbidden the source, none seeing another's
+# report. Six of the seven independently reported these same two lines, which is the strongest
+# agreement this project has measured on anything.
+
+def _quantise_check_with_no_binary(monkeypatch):
+    from senbonzakura import vendored
+
+    def boom(_name, log=None):
+        raise vendored.VendorError("llama-quantize is not available. Vendor it first.")
+
+    monkeypatch.setattr(vendored, "find_binary", boom)
+    return doctor.check_quantize()
+
+
+def test_a_missing_quantiser_is_an_advisory_and_not_a_failure(monkeypatch):
+    """THE VERDICT OVERREACHED. `doctor` exits 2 on a failure and prints "This install cannot do
+    what it claims", and it was saying that to anyone who installed the universal wheel, which
+    carries no binaries BY DESIGN: PyPI refuses a `linux_x86_64` tag, so the portable wheel ships
+    without them and RELEASING.md publishes both. An install behaving exactly as documented must
+    not be reported as broken, least of all to somebody on their first run.
+    """
+    got = _quantise_check_with_no_binary(monkeypatch)
+    assert got.status == "warn", (
+        f"a missing quantiser is reported as {got.status!r}. Every measurement path works without "
+        f"it; only `convert` and `quantise` need it.")
+
+
+def test_the_quantiser_remedy_says_what_to_do_rather_than_restating_the_problem(monkeypatch):
+    """The whole point of the arrow. Every advisory beside it teaches something; this one echoed
+    the failure back, and it was the only line in the report a user had to act on.
+    """
+    got = _quantise_check_with_no_binary(monkeypatch)
+    assert got.fix, "the one check a user has to act on carries no remedy"
+    assert got.fix.strip().lower() != got.detail.strip().lower(), (
+        "the remedy repeats the detail verbatim, which is what six readers reported")
+    assert "quantise" in got.fix and "convert" in got.fix, (
+        "the remedy does not say which commands need it, so a user cannot tell whether it matters")
+
+
+def test_the_quantiser_remedy_does_not_name_a_command_that_cannot_supply_it(monkeypatch):
+    """A WRONG REMEDY IS WORSE THAN A TAUTOLOGY, because it sends somebody somewhere.
+
+    One reader proposed `senbonzakura fetch llama-cpp` and I nearly wrote it down without checking.
+    `fetch` downloads a model file from the Hub and has nothing to do with llama.cpp.
+    """
+    got = _quantise_check_with_no_binary(monkeypatch)
+    assert "fetch" not in got.fix, (
+        "the remedy points at `senbonzakura fetch`, which downloads a model file and cannot supply "
+        "a llama.cpp binary")

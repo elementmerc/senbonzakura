@@ -103,16 +103,22 @@ Editing a model wants a CUDA card with 6 GB. The measuring commands run on CPU.
 
 ## One command, on your own machine
 
-No corpus, no GPU, no model to edit first. The toy track is committed here:
+No corpus, no GPU, no model to edit first. This reads the evaluation track bundled in the install,
+so it works straight after `pip install`:
 
 ```sh
 senbonzakura compass \
     --model HuggingFaceTB/SmolLM2-135M-Instruct \
-    --harmful examples/toy-track/bad_eval_ds \
-    --harmless examples/toy-track/good_ds \
+    --harmful default/bad_eval_ds \
+    --harmless default/good_ds \
     --skip-harmful 0 --skip-harmless 0 --n 12 \
     --out compass-toy.json --device cpu
 ```
+
+This used to read `examples/toy-track/...`, which is in the repository and in **no install**, so the
+first command under a heading saying "on your own machine" could not be run by anyone who had
+installed the tool rather than cloned it. Two readers hit it on 2026-09-26 and neither could get
+past it without guessing. From a clone, `examples/toy-track/` still works and is smaller.
 
 **Do not quote what it says.** Twelve rows measures nothing, and the tool makes you pass those
 three flags rather than pretending otherwise.
@@ -188,10 +194,16 @@ By design, this is methods and results, not a loaded weapon:
 
   **A released wheel is a different matter.** It carries roughly 6,200 harmful prompts, wrapped so
   a scraper does not find them in plaintext. The wrapping is a speed bump, not protection: the key
-  ships beside them and `bundled.py` says so. Neither install you can run today carries them,
-  because 0.3.0 on PyPI predates the bundled track and a `git+...` build from this repository
-  generates the blobs rather than committing them; the disclosure is about what a release puts on
-  your disk. [The dataset card](docs/evaluation-track-card.md) has the channel-by-channel table.
+  ships beside them and `bundled.py` says so. **To find out whether they are on your disk, run
+  `senbonzakura doctor`**, which lists every bundled corpus it can decode, with its licence.
+
+  This paragraph used to end "neither install you can run today carries them", and explained that
+  0.3.0 on PyPI predated the bundled track and that a `git+...` build generates the blobs rather
+  than committing them. That was true when it was written and stopped being true at this release:
+  the wheel carries both blobs, so a plain `pip install` now puts those prompts on your disk. A
+  sentence telling a reader which installs hold harmful content is a sentence that goes stale
+  silently, and the wrong direction for it to go stale is reassuring. Asking the tool cannot go
+  stale. [The dataset card](docs/evaluation-track-card.md) has the channel-by-channel table.
 
   Where that number comes from, since a figure nobody can derive is a figure nobody can check:
   4,895 in the packed evaluation track (259 fitting rows plus 4,636 evaluation rows) and 1,333

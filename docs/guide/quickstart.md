@@ -125,16 +125,21 @@ it did not.
 ## Without a graphics card {#without-a-graphics-card}
 
 You cannot edit a model on CPU in any useful time, but the instruments run fine. This scores a
-stock model on the toy track in the repository, in a couple of minutes:
+stock model on the track bundled in your install, in a couple of minutes:
 
 ```sh
 senbonzakura compass \
     --model HuggingFaceTB/SmolLM2-135M-Instruct \
-    --harmful examples/toy-track/bad_eval_ds \
-    --harmless examples/toy-track/good_ds \
+    --harmful default/bad_eval_ds \
+    --harmless default/good_ds \
     --skip-harmful 0 --skip-harmless 0 --n 12 \
     --out compass-toy.json --device cpu
 ```
+
+`default/<partition>` means the evaluation track inside the install, so this needs no network and
+nothing to assemble. It used to say `examples/toy-track/...`, which exists in a clone and in no
+install, so the one recipe written for readers without a card was the one they could not run. If you
+did clone the repository, `examples/toy-track/` still works and is smaller.
 
 It asks whether the model still recognises a harmful request when it sees one. Twelve rows
 measures nothing, and the tool makes you pass those three flags rather than pretending otherwise.

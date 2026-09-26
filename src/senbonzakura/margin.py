@@ -1134,6 +1134,15 @@ def main(argv=None):
     _stamp_compass(res, stamps.pinned(prompts=[*harmful, *harmless], model=model, tok=tok,
                                       load_in_4bit=a.load_in_4bit, skip=a.skip_harmful,
                                       recorded_skip=_recorded))
+    # BEFORE THE FILE IS WRITTEN, which is the whole point and which the first version of this got
+    # wrong. The field was being set further down, beside the message that prints it, so the exit
+    # status was right and the artefact carried nothing: the checker rule written to refuse such a
+    # file could never have fired, because the field never reached the file. Found by running the
+    # command and reading the JSON back rather than trusting the fix.
+    #
+    # A verdict that lives only in the terminal is the defect this whole field exists to close.
+    if suspect_readout_arms(res):
+        res["self_invalidated"] = True
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
 
@@ -1188,6 +1197,10 @@ def main(argv=None):
     suspect_arms = suspect_readout_arms(res)
     if suspect_arms:
         r = res["readout"][suspect_arms[0]]
+        # `res["self_invalidated"]` was set before the write, above. `entry.exit_status` turns it
+        # into status 1 for every entry point at once; it used to be decided in this module's
+        # `__main__` guard, which meant `python -m senbonzakura.margin` exited 1 and
+        # `senbonzakura compass` exited 0 on the same run.
         # Printed BESIDE the AUC, not buried in the JSON. The diagnostic already existed, was
         # already recorded and was already printed, and none of that stops a figure being quoted:
         # somebody has to know that 0.0% agreement invalidates the number above it. So it says so.

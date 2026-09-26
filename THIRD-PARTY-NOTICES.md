@@ -160,6 +160,40 @@ The full provenance, including the per-source commit hashes and the reasoning
 behind the inferred licence on the harmless side, is in the dataset card at
 <https://elementmerc.github.io/senbonzakura/evaluation-track-card>.
 
+## The bundled capability probe
+
+**An eighth thing ships in the wheel and was attributed nowhere, and this is the
+third time that sentence has had to be written in this file.** The section above
+records it happening to the evaluation track, which records it happening to
+THIRD-PARTY-CORPORA.md before that. Found on 2026-09-26 by a reader who was
+trying to work out whom to credit for a capability number and could not: the
+string `gsm8k` appeared in no notice, no licence file and no user-facing
+document, while the tool told them six times per run that *"every bundled corpus
+and its terms are listed in THIRD-PARTY-CORPORA.md"*.
+
+`src/senbonzakura/data/capability-gsm8k.jsonl` is what `--capability-eval
+bundled` reads, which is the **default**, so any capability figure this tool
+reports was measured on it unless the user supplied their own benchmark. At
+152 KB it is the largest data file in the package, larger than either prompt
+blob.
+
+| | |
+|---|---|
+| Source | `openai/gsm8k`, the `main` config, `test` split |
+| Pinned revision | `740312add88f781978c0658806c59bc2815b9866` |
+| Licence | **MIT**, which requires this notice to travel with the distribution |
+| What ships | 256 of the split's 1,319 rows, problem and reference answer only |
+| Built by | `tools/packaging/build_capability_probe.py`, which verifies the count and the revision |
+
+Citation: Cobbe, Kosaraju, Bavarian, Chen, Jun, Kaiser, Plappert, Tworek, Hilton,
+Nakano, Hesse and Schulman, *Training Verifiers to Solve Math Word Problems*
+(2021).
+
+It is grade-school arithmetic rather than corpus material, which is why it is
+committed to the repository while the prompt corpora are not. That distinction
+explains where the file lives; it says nothing about whether the licence applies,
+and MIT applies to 256 rows exactly as it applies to 1,319.
+
 ## Licence reach, and why this file stops where it does
 
 Recorded 2026-09-22, because the v1.0 gate asks for it and because "these notices look complete"

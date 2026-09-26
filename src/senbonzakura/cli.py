@@ -5117,6 +5117,23 @@ def _preflight_numbers(args):
         bad.append(
             f"  --layer-lo is {lo:g} and --layer-hi is {hi:g}, so the search window is empty. "
             f"They are fractions of depth and the low one comes first.")
+    # THE SAME PAIR CHECK FOR THE DIRECTION BUDGET, which had none until 2026-09-26, ten lines from
+    # one that does exactly this for the layer window.
+    #
+    # Found by an expert reader working only from `--help`, who ran
+    # `--min-directions 5 --max-directions 2` and watched it accept the pair and start fetching. Both
+    # flags document that they bound each other, so the contract is written down and was enforced
+    # nowhere, and what the search then does with K is not knowable from the outside. Their point
+    # about why it matters is the right one: this command refuses `--gen-tokens 8`, `--kl-scale -5`
+    # and an empty layer window before touching the network, so a reader learns to trust it to stop
+    # them, and that is exactly the reader who will let an unsatisfiable range run overnight.
+    kmin = getattr(args, "min_directions", None)
+    kmax = getattr(args, "max_directions", None)
+    if kmin is not None and kmax is not None and not bad and kmin > kmax:
+        bad.append(
+            f"  --min-directions is {kmin:g} and --max-directions is {kmax:g}, so no trial can "
+            f"satisfy both. Set them to the same number to pin the budget, or raise "
+            f"--max-directions.")
     if bad:
         raise SystemExit(
             "senbonzakura: these values cannot be used, and they are checked before the model is "

@@ -231,14 +231,55 @@ def notice(key, log=print):
     c = CORPORA[key]
     log(f"Using the bundled corpus {c.name} ({c.licence}).")
     log(f"  {c.attribution}")
-    log(f"  From {c.upstream} @ {c.commit}. Attribution is required by that licence and travels")
-    log("  with any figure you publish from it. Every bundled corpus and its terms are listed in")
-    log("  THIRD-PARTY-CORPORA.md, which ships inside this package.")
+    log(f"  From {c.upstream} @ {c.commit}. Attribution travels with any figure you publish.")
+    # THE SHARED SENTENCE, ONCE PER PROCESS RATHER THAN ONCE PER CORPUS.
+    #
+    # The per-corpus lines above are the obligation and are per corpus because they differ. The two
+    # sentences below are identical for every entry in the table, and there are six entries, so
+    # `senbonzakura doctor` opened with the same paragraph six times and pushed its own report about
+    # thirty lines down the screen. Five of seven readers in the 2026-09-26 user pass reported that
+    # independently, and one of them called it the "wall of correct prose" case: every word true,
+    # and the reader still has to hunt for the line they came for.
+    #
+    # Nothing about the obligation is weakened. The licences ask for the notice to travel with the
+    # work, not for it to be repeated once per file.
+    if not _tail_shown:
+        _tail_shown.append(True)
+        where = _notices_path()
+        log(f"  Terms for every bundled corpus: {where}")
+        log("  The default capability probe is listed in THIRD-PARTY-NOTICES.md beside it.")
+
+
+#: Whether the shared tail of the notice has been printed in this process. A list rather than a
+#: module-level bool so `_reset_notice_for_tests` can clear it the same way it clears `_notified`,
+#: and so nothing needs a `global`.
+_tail_shown: list[bool] = []
+
+
+def _notices_path() -> str:
+    """Where the licence files actually are on this machine, or their names if they cannot be found.
+
+    A READER WENT LOOKING AND COULD NOT FIND THEM. The notice used to end "which ships inside this
+    package", and a reader in the 2026-09-26 user pass read that as
+    `site-packages/senbonzakura/`, which is where the code is and not where the licences are:
+    packaging puts `license-files` under `<dist-info>/licenses/`. They found it with `find`. A
+    pointer a user cannot follow is a pointer that fails exactly when somebody is trying to comply
+    with a licence.
+    """
+    try:
+        from importlib.metadata import files as _dist_files
+        for f in _dist_files("senbonzakura") or ():
+            if f.name == "THIRD-PARTY-CORPORA.md":
+                return str(f.locate())
+    except Exception:                       # pragma: no cover - metadata absent in a source tree
+        pass
+    return "THIRD-PARTY-CORPORA.md (installed beside the package metadata)"
 
 
 def _reset_notice_for_tests():
     """Let a test see the notice again. The record is per process, and tests share one."""
     _notified.clear()
+    _tail_shown.clear()
 
 
 def notices():

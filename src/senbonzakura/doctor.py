@@ -123,7 +123,32 @@ def check_quantize():
     try:
         exe, source = find_binary("llama-quantize", log=lambda _m: None)
     except VendorError as e:
-        return _fail("llama-quantize", "not available", str(e).split(".")[0])
+        # AN ADVISORY, NOT A FAILURE, and the remedy says what it is for.
+        #
+        # Six of seven readers in the 2026-09-26 user pass reported this same check independently,
+        # and they reported two things about it. First, the remedy was `str(e).split(".")[0]`, which
+        # is the error's own first clause, so the one FAILING line in the report restated itself
+        # while every advisory beside it taught something. Second, and worse: a missing quantiser
+        # made `doctor` print "This install cannot do what it claims" and exit 2, at people who had
+        # installed the tool correctly and only wanted to measure.
+        #
+        # It is not a failure, because the universal wheel carries no binaries BY DESIGN: PyPI
+        # refuses a `linux_x86_64` tag, so the portable wheel ships without them and `RELEASING.md`
+        # publishes both. An install behaving exactly as documented must not be reported as broken.
+        # `convert` and `quantise` are the only two commands that need it; everything else, the
+        # whole measurement side included, works without it.
+        #
+        # The remedy names where the binaries actually come from. An earlier draft of this fix said
+        # `senbonzakura fetch llama-cpp`, suggested by one of the readers and repeated by me without
+        # checking: `fetch` downloads a MODEL FILE and has nothing to do with llama.cpp. A wrong
+        # remedy is worse than the tautology it replaced, because it sends somebody somewhere.
+        del e                     # its first clause is the check's own detail line, printed above
+        return _warn("llama-quantize", "not available",
+                     "only `senbonzakura convert` and `senbonzakura quantise` need it; measuring "
+                     "and abliterating do not. On Linux with glibc 2.35 or newer the manylinux "
+                     "wheel ships the binaries, so `pip install --force-reinstall senbonzakura` "
+                     "picks them up; otherwise build llama.cpp yourself and put `llama-quantize` "
+                     "on PATH")
     # Runs, not exists. A binary missing a shared library exists and cannot start, which is exactly
     # what the first vendoring attempt produced.
     try:

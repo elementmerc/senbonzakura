@@ -202,6 +202,16 @@ class SenbonzakuraAdapter:
             # ignores the one sentence the producer left about why its number might be wrong is
             # not reading the artefact, it is reading past it.
             "budget_warning": doc.get("budget_warning") or _generation_field(doc, "budget_warning"),
+            # THE SECOND FIELD OF THE SAME KIND, and the same lesson one field along. The paragraph
+            # above records a reviewer getting "nothing found" on an artefact whose own
+            # `budget_warning` said the number might be wrong, and it was fixed for that field.
+            # `self_invalidated` is the compass saying something stronger: not that the figure might
+            # be wrong, but that it is not a measurement of harm discrimination at all, because the
+            # verdict was not at the scored position. On 2026-09-26 a first-time reader met exactly
+            # the old failure again through the new field, and said the thing that matters: two
+            # commands in the same tool looked at one run and disagreed, and the one that reads like
+            # a verdict was the one that was wrong.
+            "self_invalidated": doc.get("self_invalidated"),
             # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
             # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
             # which is the whole point of an adapter. And the record nests it: under

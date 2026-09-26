@@ -12,4 +12,4 @@ reading the version across it would reintroduce it for the sake of one string.
 Kept in step by `tests/test_second_distribution.py` rather than by anyone remembering.
 """
 
-__version__ = "0.4.0.dev9"
+__version__ = "0.4.0"

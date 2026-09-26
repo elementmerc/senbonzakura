@@ -3,7 +3,7 @@
 cff-version: 1.2.0
 # Kept in step with `_version.py` by `tests/test_citation.py`: a citation naming a version
 # nobody can install is worse than one naming none.
-version: "0.4.0.dev9"
+version: "0.4.0"
 message: >-
   If you use Senbonzakura in your work, please cite it. If you cite a number produced by it,
   please also read the limitations page: several published figures have been withdrawn and the

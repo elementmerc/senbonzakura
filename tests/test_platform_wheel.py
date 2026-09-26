@@ -606,7 +606,7 @@ def test_the_intermediate_wheel_is_refused_without_the_flag(tmp_path, capsys):
     assert "not one PyPI accepts" in capsys.readouterr().out
 
 
-def test_the_intermediate_flag_skips_only_the_pypi_tag_question(tmp_path, capsys):
+def test_the_unpublished_flag_skips_the_pypi_tag_question(tmp_path, capsys):
     w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5",
                          name="senbonzakura-0.4.0-py3-none-linux_x86_64.whl")
     rc = _wheel_check().main([str(w), "--intermediate"])
@@ -614,10 +614,10 @@ def test_the_intermediate_flag_skips_only_the_pypi_tag_question(tmp_path, capsys
     assert "not one PyPI accepts" not in out, (
         "the PyPI tag question is still asked of a wheel that is published nowhere, so the "
         "documented build order still cannot run at a release version")
-    assert "intermediate" in out, "nothing says why the question was skipped"
-    # It still fails, on the things an intermediate genuinely must satisfy. This fixture carries no
-    # licences and no bundled data, and that is the point: the flag is not a way to wave a wheel
-    # through.
+    assert "not published" in out, "nothing says which questions were skipped"
+    # It still fails, on the things an unpublished artefact genuinely must satisfy. This fixture is
+    # two lines of metadata in a zip and carries no licences, and that is the point: the flag is not
+    # a way to wave a wheel through.
     assert rc != 0
     assert "PROBLEM" in out
 
@@ -631,3 +631,38 @@ def test_the_intermediate_flag_does_not_excuse_a_mislabelled_wheel(tmp_path, cap
     rc = _wheel_check().main([str(w), "--intermediate"])
     assert rc != 0, "the intermediate flag waved through a wheel that lies about its platform"
     assert "PROBLEM" in capsys.readouterr().out
+
+
+def test_the_unpublished_flag_also_excuses_the_bundled_data(tmp_path, capsys):
+    """THE SECOND ARTEFACT THAT NEEDS IT, and the one that turned CI red on the version bump.
+
+    Every wheel CI builds comes from a plain clone, and the packed evaluation track is cut from a
+    held-out corpus kept off the build machines on purpose, so no CI job can produce one. While the
+    tree declared `0.4.0.dev9` nothing noticed, because the release checks stay off for a
+    pre-release. The first push after the bump to `0.4.0` failed two jobs across two workflows on a
+    file that cannot exist in CI.
+    """
+    w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5")
+    _wheel_check().main([str(w), "--intermediate"])
+    out = capsys.readouterr().out
+    assert "default-track.bin" not in out, (
+        "an unpublished wheel is still required to carry the packed track, which no CI job can "
+        "build, so every push fails on a file that cannot exist there")
+    assert "corpora.bin" not in out, "the same goes for the packed corpora"
+    # NOT `rc == 0`. This fixture is two lines of metadata in a zip and carries no licences either,
+    # so it is still refused, correctly, and the flag is not a way to make a wheel pass. What is
+    # asserted is the narrow thing: the complaint about the data a clone cannot hold is gone. A test
+    # that demanded a clean exit here would have to build a wheel with licences in it to say
+    # something about the bundled data, which is a different subject.
+    assert "not published" in out, "nothing says which questions were skipped"
+
+
+def test_the_unpublished_flag_still_requires_the_bundled_data_of_a_published_wheel(tmp_path, capsys):
+    """The protection that matters is unchanged: 0.3.0 shipped with neither blob and nothing said
+    so. Without the flag, a release-versioned wheel missing them is still refused.
+    """
+    w = _wheel_declaring(tmp_path, "0.4.0", "torch>=2.5")
+    rc = _wheel_check().main([str(w)])
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "default-track.bin" in out, "the bundled-data requirement is gone for published wheels too"

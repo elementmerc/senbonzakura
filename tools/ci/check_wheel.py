@@ -426,17 +426,19 @@ def main(argv=None):
                         "out of git on purpose, and it installs and imports perfectly happily. "
                         "That wheel is fine for CI and must never reach PyPI.")
     p.add_argument("--intermediate", action="store_true",
-                   help="this wheel is the INPUT to `repair_manylinux.sh` and is published nowhere, "
-                        "so do not ask whether PyPI would take its platform tag. Everything else is "
-                        "still checked, including that the tag matches the contents, which is the "
-                        "check this artefact most needs: it is the one carrying the binaries. "
-                        "RELEASING.md's step 4 builds this wheel and then repairs it, and until "
-                        "2026-09-26 there was no way to say so: the release checks turn themselves "
-                        "on at a release version and then refuse the bare `linux_x86_64` tag, which "
-                        "is the correct tag for this artefact and the reason it gets repaired. So "
-                        "the documented order could not pass at a release version, and it had never "
-                        "been run at one, because every previous build was a `.devN` where those "
-                        "checks stay off.")
+                   help="THIS WHEEL IS NOT GOING TO BE PUBLISHED, so skip the two questions that "
+                        "only make sense about something that is. Those are whether PyPI would "
+                        "accept the platform tag, and whether the bundled corpora and evaluation "
+                        "track are inside. Everything else still runs, including whether the tag "
+                        "matches the contents, the licences, the build paths and the dependency "
+                        "range. Two artefacts need this. The platform wheel built in RELEASING.md "
+                        "step 4 is the INPUT to `repair_manylinux.sh` and its bare `linux_x86_64` "
+                        "tag is correct, which is the whole reason the next line repairs it. And "
+                        "every wheel CI builds comes from a plain clone, which cannot carry the "
+                        "packed track: that track is cut from a held-out corpus kept off the build "
+                        "machines on purpose, so no CI job can produce one. Both cases were "
+                        "invisible until 2026-09-26, because the release checks turn themselves on "
+                        "at a release version and until then every build had been a `.devN`.")
     p.add_argument("--expect-failure", action="store_true",
                    help="invert the verdict: the wheel MUST be found dishonest. CI builds a "
                         "deliberately mislabelled wheel and runs this, because a gate only ever "
@@ -489,19 +491,26 @@ def main(argv=None):
         # artefact we are about to hand to strangers? The tool is also pointed at synthetic
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
-        found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
-                  + leaks_a_build_path(a.wheel)
+        found += (missing_licences(a.wheel) + leaks_a_build_path(a.wheel)
                   + prerelease_dependency_in_a_release(a.wheel))
-        # THE ONE CHECK AN INTERMEDIATE IS EXEMPT FROM, and only this one. `--intermediate` says the
-        # wheel is the input to `repair_manylinux.sh` and goes nowhere, so "would PyPI take this
-        # tag" is not a question about it; the answer is no by construction, which is why it is
-        # repaired. Every other release check still runs, including the tag-versus-contents one,
-        # because this is the artefact that actually carries the binaries.
+        # THE TWO CHECKS AN UNPUBLISHED ARTEFACT IS EXEMPT FROM, and only these two. Both ask a
+        # question about something being handed to strangers, and neither of these wheels is.
+        #
+        # The PyPI tag: the platform wheel's `linux_x86_64` is the correct tag for it, and being
+        # unacceptable to PyPI is exactly why the next line of the runbook repairs it.
+        #
+        # The bundled data: the packed evaluation track is cut from a held-out corpus deliberately
+        # kept off the build machines, so a wheel built from a plain clone cannot carry it and no CI
+        # job can make one. Requiring it there would fail every push for ever.
+        #
+        # EVERYTHING ELSE STILL RUNS, which is what keeps this from being a way to wave a wheel
+        # through: the tag must still match the contents, the licences must still be present, no
+        # build path may leak, and a stable artefact still may not admit a pre-release dependency.
         if not a.intermediate:
-            found += unacceptable_to_pypi(info)
+            found += unacceptable_to_pypi(info) + missing_release_data(a.wheel)
         else:
-            print("  intermediate    the PyPI tag question is skipped; this wheel is the input to "
-                  "repair_manylinux.sh and is published nowhere")
+            print("  not published   skipping the PyPI tag question and the bundled-data "
+                  "requirement; every other release check still ran")
     for line in found:
         print(f"  PROBLEM: {line}")
 

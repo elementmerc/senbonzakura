@@ -481,6 +481,23 @@ def main(argv=None):
     print(f"  platform files {len(info['platform_payload'])}"
           + (f": {', '.join(info['platform_payload'][:3])}" if info["platform_payload"] else ""))
 
+    # `--release` and `--intermediate` are contradictory claims about the same artefact, and the
+    # contradiction is not harmless. `--intermediate` skips the PyPI tag question and the
+    # bundled-data requirement, and those two are precisely what stopped the 0.3.0 shape: a wheel
+    # that installs, imports, answers --help and then fails `--track default` for every stranger
+    # who installed it. So somebody who typed `--release` because this IS the published artefact,
+    # and `--intermediate` from the line above it in the runbook, would disarm the two checks they
+    # most meant to run, and the output would say the release checks were on.
+    #
+    # Refused rather than resolved in either direction, because there is no reading of both flags
+    # together that is what the person meant.
+    if a.release and a.intermediate:
+        print("  PROBLEM: --release and --intermediate contradict each other: one says this "
+              "artefact is going to strangers, the other says it is not. --intermediate skips the "
+              "PyPI tag question and the bundled-data requirement, so accepting both would turn "
+              "off the two checks --release exists for. Pass whichever is true of this wheel.")
+        return 1
+
     found = problems(info)
     release_mode = a.release
     if not release_mode and is_release_artefact(a.wheel):

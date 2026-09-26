@@ -248,6 +248,41 @@ def test_expect_failure_inverts_the_verdict_both_ways(tmp_path):
     assert cw.main([str(good), "--expect-failure"]) == 1
 
 
+def test_release_and_intermediate_together_are_refused_rather_than_resolved(tmp_path):
+    """The two flags are contradictory claims about one artefact, and the contradiction is unsafe.
+
+    `--intermediate` skips exactly two checks: whether PyPI would take the tag, and whether the
+    bundled corpora and evaluation track are inside. Those two are what stops the 0.3.0 shape, a
+    wheel that installs, imports, answers `--help`, and then fails `--track default` for every
+    stranger who installed it.
+
+    So the dangerous invocation is not a forgotten flag, it is both flags: somebody who typed
+    `--release` because this IS the published wheel, and `--intermediate` because it sits on the
+    line above in RELEASING.md, would switch off the two checks they most meant to run, and the
+    output would still say the release checks were on. There is no reading of both together that
+    is what the person meant, so neither is preferred and the invocation is refused.
+
+    Added 2026-09-26 during the pre-tag sweep. `--intermediate` had landed hours earlier with no
+    test of its own, which is how the combination stayed invisible.
+    """
+    cw = _wheel_check()
+    w = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl")
+    assert cw.main([str(w), "--release", "--intermediate"]) == 1
+    # And each flag alone still works, so the refusal has not been bought by breaking both.
+    assert cw.main([str(w), "--intermediate"]) == 0
+
+
+def test_intermediate_still_runs_every_check_it_does_not_name(tmp_path):
+    """The exemption is two checks wide, and a wheel lying about its tag is not one of them.
+
+    A universal tag over a Linux binary is the combination that breaks for strangers, and it is
+    independent of whether anybody is publishing this wheel, so `--intermediate` must not clear it.
+    """
+    cw = _wheel_check()
+    lying = _fake_wheel(tmp_path, "pkg-0.0.0-py3-none-any.whl", payload=True)
+    assert cw.main([str(lying), "--intermediate"]) == 1
+
+
 def test_a_missing_or_unreadable_file_exits_two_not_one(tmp_path):
     """Distinguished so CI can tell 'the wheel is wrong' from 'the check could not run'."""
     cw = _wheel_check()

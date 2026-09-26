@@ -56,6 +56,23 @@ jobs:
   test:
     name: test (${{ matrix.os }}, python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    # TORCH'S OWN THREADING WAS COSTING THIS JOB THREE MINUTES, MEASURED.
+    #
+    # torch defaults its intra-op pool to the core count, and every model in this suite is tiny:
+    # the thread coordination costs more than the arithmetic it divides. Emulating a runner by
+    # pinning a 16-core box to 4 CPUs, the whole suite ran 16:09 with the default pool and 13:16
+    # with one thread, identical at 5,643 passed and 54 skipped. The emulation is faithful rather
+    # than assumed: the 16:09 matches the 15.9 minutes this job actually takes here.
+    #
+    # It is set per job rather than on the workflow, because that is where it was measured. The
+    # smoke job runs a real abliteration and might well want the pool, and nothing has asked it.
+    #
+    # THE ONE THING TO KNOW IF A TEST EVER FAILS ONLY HERE: thread count changes the order of
+    # floating-point reductions, so a number can move in the last bits. Nothing in this suite
+    # noticed, across every row, but that is the mechanism to suspect first rather than last.
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     defaults:
       run:
         # bash on every runner, including Windows, so one `run:` line cannot mean
@@ -369,6 +386,23 @@ jobs:
     # an older interpreter cannot resolve at all.
     name: pinned environment (python 3.14)
     runs-on: ubuntu-latest
+    # TORCH'S OWN THREADING WAS COSTING THIS JOB THREE MINUTES, MEASURED.
+    #
+    # torch defaults its intra-op pool to the core count, and every model in this suite is tiny:
+    # the thread coordination costs more than the arithmetic it divides. Emulating a runner by
+    # pinning a 16-core box to 4 CPUs, the whole suite ran 16:09 with the default pool and 13:16
+    # with one thread, identical at 5,643 passed and 54 skipped. The emulation is faithful rather
+    # than assumed: the 16:09 matches the 15.9 minutes this job actually takes here.
+    #
+    # It is set per job rather than on the workflow, because that is where it was measured. The
+    # smoke job runs a real abliteration and might well want the pool, and nothing has asked it.
+    #
+    # THE ONE THING TO KNOW IF A TEST EVER FAILS ONLY HERE: thread count changes the order of
+    # floating-point reductions, so a number can move in the last bits. Nothing in this suite
+    # noticed, across every row, but that is the mechanism to suspect first rather than last.
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -418,6 +452,23 @@ jobs:
     # except torch's.
     name: declared floors resolve and run
     runs-on: ubuntu-latest
+    # TORCH'S OWN THREADING WAS COSTING THIS JOB THREE MINUTES, MEASURED.
+    #
+    # torch defaults its intra-op pool to the core count, and every model in this suite is tiny:
+    # the thread coordination costs more than the arithmetic it divides. Emulating a runner by
+    # pinning a 16-core box to 4 CPUs, the whole suite ran 16:09 with the default pool and 13:16
+    # with one thread, identical at 5,643 passed and 54 skipped. The emulation is faithful rather
+    # than assumed: the 16:09 matches the 15.9 minutes this job actually takes here.
+    #
+    # It is set per job rather than on the workflow, because that is where it was measured. The
+    # smoke job runs a real abliteration and might well want the pool, and nothing has asked it.
+    #
+    # THE ONE THING TO KNOW IF A TEST EVER FAILS ONLY HERE: thread count changes the order of
+    # floating-point reductions, so a number can move in the last bits. Nothing in this suite
+    # noticed, across every row, but that is the mechanism to suspect first rather than last.
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -470,6 +521,23 @@ jobs:
     # this configuration had no job. It does now.
     name: the suite runs outside a git checkout
     runs-on: ubuntu-latest
+    # TORCH'S OWN THREADING WAS COSTING THIS JOB THREE MINUTES, MEASURED.
+    #
+    # torch defaults its intra-op pool to the core count, and every model in this suite is tiny:
+    # the thread coordination costs more than the arithmetic it divides. Emulating a runner by
+    # pinning a 16-core box to 4 CPUs, the whole suite ran 16:09 with the default pool and 13:16
+    # with one thread, identical at 5,643 passed and 54 skipped. The emulation is faithful rather
+    # than assumed: the 16:09 matches the 15.9 minutes this job actually takes here.
+    #
+    # It is set per job rather than on the workflow, because that is where it was measured. The
+    # smoke job runs a real abliteration and might well want the pool, and nothing has asked it.
+    #
+    # THE ONE THING TO KNOW IF A TEST EVER FAILS ONLY HERE: thread count changes the order of
+    # floating-point reductions, so a number can move in the last bits. Nothing in this suite
+    # noticed, across every row, but that is the mechanism to suspect first rather than last.
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0

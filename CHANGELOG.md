@@ -4,15 +4,9 @@ All notable changes to Senbonzakura are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] "TYBW" — YYYY-MM-DD
+## [0.4.0] "TYBW" — 2026-09-26
 
 The release that makes the measurement trustworthy.
-
-**`YYYY-MM-DD` above is a placeholder and it is deliberate.** The date is set in the tag sequence,
-in the same step that drops the `.devN` suffix from both distributions, because a date written
-before the tag is a date that goes stale the first time a release slips. The two are tied by
-`tests/test_the_release_heading_and_the_version_agree.py`, so a non-dev version with this
-placeholder still in place fails the build rather than shipping.
 
 **The multi-direction feature had never worked, and was rewritten in this release.** The check
 that decided whether a candidate direction carries refusal could not accept any direction, on
@@ -451,6 +445,29 @@ install rather than only in a source checkout.
 
 ### Fixed
 
+- **`senbonzakura measure` scored the prompts a configuration had been chosen on, and captioned
+  the figure as held out.** The command carried its own second copy of the code that reads a
+  track's boundaries, and that copy did not know the bundled track's alias, so on the default
+  track it read the boundary as zero where the real one is 132. There is one reader now, and the
+  caption is taken from what the run recorded rather than from what the report assumes, so a
+  figure whose boundary nothing confirmed says exactly that instead of claiming a partition.
+- **A run could wait for ever for video memory.** The pause that fires under memory pressure
+  waited for a level a card filled by our own model can never reach, and the wait before the
+  first batch had no deadline at all. A pause now asks who is holding the memory: it will wait
+  for another application to give it back, never for our own model to stop being resident.
+- **The first run the documentation describes failed at its second command.** `senbonzakura
+  track build` needed a package that only the `hub` extra installs, and no documented install
+  installs it. It reads the Hub directly now, verified against the pinned revisions on an install
+  where that package is absent.
+- `senbonzakura score` could not say which rows its number came from, so the headline refusal
+  rate could never be compared against a baseline. It records the partition it measured, and a
+  confidence interval for both estimators.
+- A mistyped or retired command printed a usage block. It now names the closest real command, and
+  for a command this release retires it says what replaced it.
+- A problem in a probe file reported a line number from inside the tool instead of the line in the
+  file the user wrote.
+- An empty prompt file was read as a run with nothing to refuse rather than as a mistake, and the
+  refusal now names the column it looked in.
 - A run that requests several refusal directions and applies one now says so in those words.
   The note that reported this was scoped to part of the model and read as though the rest had
   been fine, which is what hid the defect above for most of a day.

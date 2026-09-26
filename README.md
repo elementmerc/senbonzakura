@@ -175,9 +175,12 @@ Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measuremen
 
 By design, this is methods and results, not a loaded weapon:
 
-- **No model weights in this git tree.** Abliterated checkpoints from this work are published
-  separately on HuggingFace, each under its base model's own licence, which travels with the
-  weights and is not ours to loosen.
+- **No model weights in this git tree, and none published yet.** This sentence used to say that
+  abliterated checkpoints from this work were published separately on HuggingFace, which was a
+  statement of intent written in the present tense: none are up, and the sentence gave no link
+  because there was none to give. When any are published they go up separately, each under its
+  base model's own licence, which travels with the weights and is not ours to loosen. Until then
+  the way to get one is to run the tool.
 - **No harmful prompt sets in this git tree, and this is the bullet that needs the most care.**
   The evaluation track is published separately as a
   **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under

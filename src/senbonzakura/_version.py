@@ -45,4 +45,4 @@ machine where torch is exactly what is missing.
 # bumped past rather than reused even though it never left this machine: a version that was
 # built is spent, because a wheel with that name existed and could have been copied.
 # See RELEASING.md, "A dev-only cut".
-__version__ = "0.4.0.dev9"
+__version__ = "0.4.0"

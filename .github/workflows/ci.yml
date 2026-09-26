@@ -974,18 +974,27 @@ jobs:
                       f"copy of them, so it stops rather than running something else.")
               return found[0]
 
-          install = only("README.md", "git+https://github.com")
+          install = only("README.md", "pip install senbonzakura")
           quickstart = only("docs/guide/quickstart.md", "track build")
 
-          swaps = [('"git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker"',
-                    "./checker"),
-                   ('"git+https://github.com/elementmerc/senbonzakura@dev"', ".")]
-          for old, new in swaps:
-              if old not in install:
-                  raise SystemExit(
-                      f"the README install command no longer contains {old}, so it cannot be "
-                      f"pointed at this checkout. Update this job together with the README.")
-              install = install.replace(old, new)
+          # POINT THE DOCUMENTED COMMAND AT THIS CHECKOUT, which is the whole trick of this job:
+          # it runs what the README says, against the branch under test rather than against
+          # whatever PyPI is serving. `pip install senbonzakura` would otherwise resolve to the
+          # last release and this job would report on a tree nobody changed.
+          #
+          # The checker is named first and separately because the abliterator depends on it: given
+          # only `.`, pip goes to the index for `senbonzakura-check` and installs the published one
+          # beside a local build of its dependent.
+          #
+          # The README said `pip install "git+...@dev"` until 2026-09-26, and this job swapped the
+          # two URLs for paths. That swap is gone with the URLs; the refusal below is what caught
+          # the change, which is the behaviour it was written for.
+          old, new = "pip install senbonzakura", "pip install ./checker ."
+          if old not in install:
+              raise SystemExit(
+                  f"the README install command no longer contains {old!r}, so it cannot be "
+                  f"pointed at this checkout. Update this job together with the README.")
+          install = install.replace(old, new, 1)
 
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "firstrun"
           (out / "install.sh").write_text(install, encoding="utf-8")

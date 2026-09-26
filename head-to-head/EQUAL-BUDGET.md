@@ -51,12 +51,29 @@ A run's budget is the triple, all three recorded per arm:
 option, which was to state the advantage and leave it in place. Equalising is the stronger result:
 if senbonzakura wins with its selection advantages removed, the win is about the method.
 
-**Since 2026-09-01, and not yet exercised.** This describes the harness as it now stands, not the
-comparison published on the documentation site: that table was measured on 2026-08-12, three weeks
-before this pass was wired in, and its own page says Heretic was not given the pass. Both
-statements are true of different moments and neither used to say which, which read as a flat
-contradiction. No Heretic arm has run through this pass yet, so nothing published rests on it, and
-the rule it should apply is itself an open question (see the S1 decision brief).
+**Since 2026-09-01. Exercised on 2026-09-10.**
+
+Appended rather than rewritten, on 2026-09-25. The paragraph below is what this file said between
+2026-09-01 and 2026-09-10, kept verbatim because a pre-commitment that gets edited after the run is
+not one. What made it worth keeping is that it went stale and nothing noticed:
+
+> **Since 2026-09-01, and not yet exercised.** This describes the harness as it now stands, not the
+> comparison published on the documentation site: that table was measured on 2026-08-12, three weeks
+> before this pass was wired in, and its own page says Heretic was not given the pass. Both
+> statements are true of different moments and neither used to say which, which read as a flat
+> contradiction. No Heretic arm has run through this pass yet, so nothing published rests on it, and
+> the rule it should apply is itself an open question (see the S1 decision brief).
+
+**What is true now.** The equal-budget pass ran on 2026-09-10, and the published comparison at
+`head-to-head/results/2026-09-10/` rests on it: five seeds a side, Heretic's arms selected through
+this pass. The documentation site's table was corrected to say so on 2026-09-25.
+
+**Why this matters more than an ordinary stale sentence.** This file is the pre-commitment, and it
+is what a sceptic is pointed at to check that the rules were fixed before the run rather than after
+it. For a fortnight it told that reader the fair comparison did not exist, while three rows of the
+published table rested on it. A reviewer doing the right thing, ignoring the summary page and
+opening the pre-registration, would have concluded the published table was the old unfair design
+relabelled. Found by the 2026-09-25 review panel.
 
 Concretely:
 
@@ -145,10 +162,20 @@ longer applies.
 | Corpus | both | both |
 | Direction-fit prompts | 256 per side | 256 per side |
 | Card | same | same |
-| Container, torch, CUDA | same | same |
+| Container, torch, CUDA | same, by construction | same, by construction |
 
 **The warm start is the one asymmetry left**, and it is disclosed rather than hidden. Everything
 else is matched.
+
+**"By construction" is doing real work in that last row, and it used to say only "same".** Both
+arms run from the same image by design, and that is what the harness enforces. It is not what the
+published artefacts record: the `provenance` block in every committed result file describes the
+environment of the machine that SCORED the arms, not the machine that ran them, so nothing on disk
+can be used to check the claim. A reader auditing this table would find the row unverifiable and
+have to take the design on trust. Naming which of the two it is, an enforced property or a recorded
+one, is the difference between a claim and a receipt. Publishing the per-arm environment is a
+separate open item (see the panel artefact of 2026-09-25); until it lands, this row is an assertion
+about the harness and reads as one.
 
 ## The pre-commitment
 

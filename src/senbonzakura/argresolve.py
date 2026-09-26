@@ -27,7 +27,44 @@ defect `entry.py` exists to prevent. The standard library is the whole budget.
 """
 from __future__ import annotations
 
+import argparse
 import os
+
+
+def whole_number(what, *, minimum=0):
+    """An argparse `type=` for a count or an offset: a whole number, never below `minimum`.
+
+    `minimum` is 0 for the counts where zero means something (`--n 0` is every prompt, `--skip 0`
+    is the head) and 1 for the ones where it does not: a batch of zero is `range(0, n, 0)`, which
+    is a ValueError several screens from the flag that caused it, and a token budget of zero
+    measures the budget rather than the model.
+
+    WHY AT PARSE TIME, AND WHY SHARED. `score --skip -5` passed every check it met: it is truthy,
+    it is not `>= len(prompts)`, and `prompts[-5:]` is a perfectly good slice. So a refusal rate
+    came back measured over the LAST five prompts, and the partition it was stamped with read
+    `rows-from--5`, a boundary that does not exist. `--n -5` dropped the last five instead of
+    taking the first five. Neither said anything. `capability` refused the same input correctly,
+    which is the worse half of the finding: two sibling commands disagreed about whether a
+    negative sample size is a thing, and the one that disagreed silently is the one people script.
+
+    A number is checked where it is read, so a command cannot forget to ask, and the sentence
+    names the flag rather than the type: argparse's own message for a bad `int` says the value is
+    invalid without saying what would have been valid.
+    """
+    def parse(value):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(
+                f"{what} wants a whole number and got {value!r}.") from None
+        if number < minimum:
+            raise argparse.ArgumentTypeError(
+                f"{what} is {number}, and a count or an offset cannot be below {minimum}. A "
+                f"negative one slices from the END of the set, so the run would measure rows "
+                f"nobody asked for and report them under the rows they did. Pass {minimum} or "
+                f"more.")
+        return number
+    return parse
 
 
 def pick_model(positional, flag, *, command="senbonzakura", long_form=None):

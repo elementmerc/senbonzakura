@@ -1,26 +1,24 @@
 # Install
 
-Two commands, and then you can go and read the interesting pages.
-
-```sh
-pip install senbonzakura
-senbonzakura setup
-```
-
-::: warning What that gets you today
+::: warning Not from PyPI, not yet
 PyPI currently serves **0.3.0**, from July 2026. The CHANGELOG says not to trust its numbers, and
 it is not the code these pages describe. The current work is on `dev` and is not released,
 because the companion package `senbonzakura-check` is not on PyPI yet and this version depends on
-it by name. Verified 2026-09-22.
+it by name, so `pip install senbonzakura` can't give you the software this page documents.
+Verified 2026-09-22.
 
-Until that is published, install from the repository, in one command:
+Until the checker is published, the repository is the only route, and it's the command below.
+:::
+
+Two commands, and then you can go and read the interesting pages.
 
 ```sh
 pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
             "git+https://github.com/elementmerc/senbonzakura@dev"
+senbonzakura setup
 ```
 
-Both URLs go in the same command because `senbonzakura` names `senbonzakura-check` as a
+Both URLs go in the same `pip install` because `senbonzakura` names `senbonzakura-check` as a
 dependency: given on its own, the big one looks for the small one on PyPI and does not find it.
 Given together, pip resolves both from this repository. Neither needs a clone.
 
@@ -30,11 +28,11 @@ the first URL fails with *"does not appear to be a Python project"* and the seco
 something close to the withdrawn 0.3.0 this page is warning you off. That was the documented
 command here until 2026-09-23, and it had never been run.
 
-**One thing that install does not give you: `--track default`.** The two `.bin` blobs in
-`src/senbonzakura/data/` are generated rather than committed, because they hold harmful prompts,
-so a build from a plain clone carries neither. The tool installs, imports and answers `--help`
-exactly as normal, and then fails on `--track default`. That is not a subtle failure once you
-meet it, but nothing warns you beforehand, which is why it is here.
+::: warning One thing that install does not give you: `--track default`
+The two `.bin` blobs in `src/senbonzakura/data/` are generated rather than committed, because they
+hold harmful prompts, so a build from a plain clone carries neither. The tool installs, imports
+and answers `--help` exactly as normal, and then fails on `--track default`. That is not a subtle
+failure once you meet it, but nothing warns you beforehand, which is why it is here.
 
 Build them from a clone before building the wheel:
 

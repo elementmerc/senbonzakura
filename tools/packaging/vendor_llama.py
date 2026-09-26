@@ -225,6 +225,17 @@ def _wanted(name):
 
 def extract(archive, out_dir, *, log=print):
     """Pull the wanted binaries and their libraries out, flat. Returns the names written."""
+    # CHECKED BEFORE A SINGLE BYTE IS WRITTEN. The notice used to be handled at the end, and the
+    # end is too late twice over: the old code warned and carried on, and even raising there would
+    # leave 35 MB of unlicensed object code sitting in a directory the Dockerfile copies into an
+    # image. Absent is recoverable; present-and-unlicensed is what got published.
+    licence_src = out_dir.parent.parent / "src" / "LICENSE"
+    if not licence_src.is_file():
+        raise VendorFetchError(
+            f"there is no licence text at {licence_src}, so these binaries would ship without "
+            f"the MIT notice they are required to carry. Nothing has been extracted. Vendor the "
+            f"source tree first: run `python tools/packaging/vendor_llama.py` without "
+            f"--skip-script.")
     out_dir.mkdir(parents=True, exist_ok=True)
     written, links = [], []
     with _open_archive(archive) as (handle, members):
@@ -269,15 +280,23 @@ def extract(archive, out_dir, *, log=print):
             f"being broken.")
     # MIT asks for the notice in "all copies or substantial portions", and 35 MB of ggml and
     # llama.cpp object code in a directory with no LICENSE beside it is the omission an auditor
-    # finds first. The vendored SOURCE tree carried the notice and the binaries did not. Placed
-    # here rather than by hand so a re-vendor cannot drop it again.
-    licence_src = out_dir.parent.parent / "src" / "LICENSE"
-    if licence_src.is_file():
-        shutil.copyfile(licence_src, out_dir / "LICENSE")
-        written.append("LICENSE")
-    else:
-        log(f"  WARNING: no licence text at {licence_src}, so the binaries ship without one. "
-            f"That is an MIT compliance gap; vendor the source tree first.")
+    # finds first. The vendored SOURCE tree carries the verbatim notice at the pinned tag, so the
+    # binaries take their copy from there rather than from a paraphrase typed by hand.
+    #
+    # IT USED TO WARN AND CARRY ON, and that failed open on every clean build. `vendor/bin/` and
+    # `vendor/src/` are both ignored, so a fresh checkout has neither; binaries were vendored
+    # BEFORE the source tree, which is the only step that fetches the notice; so the warning
+    # branch was the branch that always ran, and the container published to ghcr on every push to
+    # `dev` shipped the object code with no notice beside it. The comment here claimed a
+    # re-vendor could not drop it and THIRD-PARTY-NOTICES.md said so publicly, and both were
+    # false. Found by the review panel, 2026-09-25.
+    #
+    # The refusal is now at the top of this function, so it costs nothing and leaves nothing;
+    # `vendor_binaries` pre-flights the same file before it spends a download; and
+    # `distribute.yml` asserts it against the built image, because a gate that reads a comment
+    # rather than the artefact is what let this run for a month.
+    shutil.copyfile(licence_src, out_dir / "LICENSE")
+    written.append("LICENSE")
 
     log(f"  extracted {len(written)} file(s): {', '.join(sorted(written))}")
     return written
@@ -326,6 +345,15 @@ def vendor_binaries(manifest, keys, *, dry_run=False, verify_only=False, log=pri
     """Fetch, verify and extract the binary pin for each platform key. Returns hashes to record."""
     pin = manifest["pins"]["llama.cpp"]
     recorded = dict(pin.get("sha256") or {})
+    # PRE-FLIGHT, before several hundred megabytes are fetched. `extract` refuses without the MIT
+    # notice, and finding that out after six platform archives have downloaded is a bad way to
+    # learn it. The only path that reaches here without the notice is `--skip-script` on a tree
+    # that has never vendored the source, so the message names that.
+    if not (dry_run or verify_only) and not (vendored.VENDOR_SRC / "LICENSE").is_file():
+        raise VendorFetchError(
+            f"the MIT notice is not vendored at {vendored.VENDOR_SRC / 'LICENSE'}, and the "
+            f"binaries must not be placed without it. Drop --skip-script, or run "
+            f"`python tools/packaging/vendor_llama.py` once to fetch the source tree first.")
     with tempfile.TemporaryDirectory(prefix="senbon-vendor-") as td:
         for key in keys:
             asset = (pin["assets"] or {}).get(key)
@@ -525,10 +553,14 @@ def main(argv=None):
 
     print(f"llama.cpp pinned at {pin['tag']} ({pin['published'][:10]}), fetching: {', '.join(keys)}")
     try:
-        hashes = vendor_binaries(manifest, keys, dry_run=a.dry_run,
-                                 verify_only=a.verify_only)
+        # THE SOURCE TREE FIRST, and the order is load-bearing rather than tidy. It is the only
+        # step that fetches llama.cpp's LICENSE, and `vendor_binaries` refuses to place object
+        # code without it. Run the other way round, as this did until 2026-09-25, the notice is
+        # never present on a clean checkout and the binaries shipped bare.
         script_hashes = ({} if a.skip_script else
                          vendor_conversion(manifest, dry_run=a.dry_run, verify_only=a.verify_only))
+        hashes = vendor_binaries(manifest, keys, dry_run=a.dry_run,
+                                 verify_only=a.verify_only)
     except VendorFetchError as e:
         print(f"vendor: {e}", file=sys.stderr)
         return 1

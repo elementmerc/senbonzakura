@@ -12,7 +12,7 @@ causal claim the project had already measured as false:
     refusal is not one blade, it is a small subspace, and cutting several
     directions at once removes the stubborn residual without wrecking coherence
 
-Against this project's own five seed result: two directions cost roughly 1.5 to 1.9 times the
+Against this project's own five seed result: two directions cost roughly 1.4 to 1.9 times the
 collateral damage of one at the same refusal rate, permutation p = 0.016. The docs site retracts
 the claim prominently. The manual that ships with the binary did not, and the README is not what
 `pip install` puts on somebody's machine.

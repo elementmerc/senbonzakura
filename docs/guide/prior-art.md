@@ -38,10 +38,27 @@ centroid subtracted. Large reported gains:
 
 ## So why does this project measure the opposite?
 
-Our own comparison found two directions costing roughly **1.5 to 1.9 times** the coherence damage
-of one at matched refusal, and buying nothing. The range is there because one outlying seed carries
-much of the gap; the direction of the result is sturdier than its size. Both papers above report multi-direction winning. Three
-honest readings, and we cannot yet separate them:
+Our own comparison found two directions costing roughly **1.4 to 1.9 times** the coherence damage
+of one at matched refusal, and buying nothing. That range is the mean over five seeds: 1.9 with
+every seed, 1.4 dropping the one outlying two-direction seed that carries much of the gap. The
+direction of the result is sturdier than its size. Both papers above report multi-direction
+winning.
+
+::: warning Our arms did not choose their directions, and theirs did
+This is the first thing to say about the disagreement, because it means the two sides are not
+measuring the same experiment. Wollschläger et al. find directions by gradient optimisation with
+an independence penalty; Piras et al. fit a self-organising map. Both select deliberately. Our
+five seeds ran on 2026-08-13, before held-out direction selection existed here, so the second
+direction came from a filter now known to accept every candidate it was given.
+
+So our number prices an *arbitrary* second direction and theirs price a chosen one. That makes
+this a different experiment rather than a failed reproduction, and our five seeds stand as the old
+filter's answer until a re-run under the fixed selector replaces them. The same caveat is
+recorded in the evidence file, at
+[`evidence/k-sweep-2026-08-13/drift-per-seed.json`](https://github.com/elementmerc/senbonzakura/blob/dev/evidence/k-sweep-2026-08-13/drift-per-seed.json).
+:::
+
+With that said, three honest readings of the remaining gap, and we cannot yet separate them:
 
 1. **They measure a different thing.** Both report *attack success rate* and **neither reports KL
    or any coherence cost**. "More directions remove more refusal" and "more directions are worth

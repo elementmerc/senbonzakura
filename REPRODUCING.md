@@ -1,12 +1,26 @@
 # Reproducing the published numbers
 
-Every figure this project states in public, what file it came from, and what you would run to
-produce that file yourself. If a number is quoted anywhere in the documentation and is not in the
-table below, that is a defect: please open an issue.
+What a published figure came from, and what you would run to produce that file yourself.
 
 The point of this file is narrow and worth stating. A claim that traces to a paragraph is not
 checkable. A claim that traces to a committed artefact can be read without trusting us, and a
 claim that traces to a command can be re-taken on your own hardware and disagreed with.
+
+The figures this project quotes fall into three groups, and naming them is more honest than
+implying there is only one.
+
+1. **It traces to a committed artefact.** That is the table below: the compass AUCs, the
+   per-seed coherence drift, and the head-to-head. Every one of these can be read out of a
+   file in this repository with no hardware and no network, and re-taken with hardware.
+2. **It traces to a run whose logs are not committed.** The two that carry weight are the
+   evidence for the Gemma withdrawal (`docs/guide/limits.md`) and the count of rejected
+   candidate directions in
+   [what is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know).
+   Both pages state what the number is and that you cannot currently check it. That is worth
+   less than an artefact and it is said out loud where the number is quoted.
+3. **Neither.** If a number is quoted anywhere in the documentation, is not in the table below,
+   and has nothing beside it saying where it came from, that is a defect: please open an issue.
+   That rule is why group 2 is written down rather than left to look like group 1.
 
 ## Before anything: what you need
 
@@ -55,25 +69,44 @@ why that is a firm rule.
 
 ### The compass figures, quoted in the README and in `paper.md`
 
-| Claim | Value | Artefact |
-|---|---|---|
-| Qwen3-1.7B harm-recognition AUC | 0.9887 | `evidence/compass-2026-07-30/base-qwen3-1.7b.json` |
-| Length-only control, both models | 0.6564 | the same two files |
-| Qwen3-0.6B harm-recognition AUC | 0.6616 | `evidence/compass-2026-07-30/base-qwen3-0.6b.json` |
+| Claim | Value | Field | Artefact |
+|---|---|---|---|
+| Qwen3-1.7B harm-recognition AUC | 0.9887 | `auc` | `evidence/compass-2026-07-30/base-qwen3-1.7b.json` |
+| Length-only control, both models | 0.6564 | `controls.length_only_auc` | the same two files |
+| Qwen3-0.6B harm-recognition AUC | 0.6616 | `auc` | `evidence/compass-2026-07-30/base-qwen3-0.6b.json` |
 
-Read them without running anything:
+The control is recorded at full precision, `0.6563985752549933`, and quoted rounded to four
+places to sit beside the two AUCs, which the files record rounded already.
 
-```sh
-python -c "import json;d=json.load(open('evidence/compass-2026-07-30/base-qwen3-1.7b.json'));print(d['metrics'])"
-```
-
-Re-take them. This needs a GPU and the corpus, and the split is the part that matters:
+Read all three without running anything:
 
 ```sh
-senbonzakura track --harmful harmful.txt --harmless harmless.txt --out mytrack
-senbonzakura compass --model Qwen/Qwen3-1.7B \
-    --harmful mytrack/bad_eval_ds --harmless mytrack/good_ds --out compass.json
+python -c "
+import json
+for name in ('base-qwen3-1.7b', 'base-qwen3-0.6b'):
+    d = json.load(open('evidence/compass-2026-07-30/' + name + '.json'))
+    print(name, d['auc'], d['auc_ci'], round(d['controls']['length_only_auc'], 4))
+"
 ```
+
+Re-take them. This needs a GPU and the corpus, and the split is the part that matters. The
+recipe lives beside the artefacts, in
+[`evidence/compass-2026-07-30/README.md`](evidence/compass-2026-07-30/README.md), and it is
+carried here verbatim so there is one command rather than two that can disagree:
+
+```sh
+python -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
+    --harmful <track>/bad_eval_ds --harmless <track>/good_ds \
+    --harmless-matched <matched>/good_matched_ds \
+    --skip-harmful 132 --skip-harmless 385 --n 4504 \
+    --batch 16 --bootstrap 2000 --seed 42 --device cuda \
+    --out base-qwen3-1.7b.json
+```
+
+**Every one of those flags is load-bearing.** The skips are the boundaries recorded in the
+track's `track.json`, and a compass run given none of them falls back to the older defaults of
+128 and 320, warns that the number may include rows the search selected on, and still writes a
+file that looks like the published one. `<track>` is what `senbonzakura track` wrote.
 
 **The second row is the one to look at**, and it is the reason this project believes what it says
 about controls. 0.6616 against a length-only control at 0.6564 is not a weak result, it is a null:
@@ -84,24 +117,53 @@ all 4,504 harmful prompts and all 4,504 harmless ones.
 
 | Claim | Artefact |
 |---|---|
-| Five seeds, one direction against two, no measurable refusal gain at 1.5 to 1.9 times the divergence | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
+| Five seeds, one direction against two, no measurable refusal gain at 1.4 to 1.9 times the divergence, on the mean over five seeds, the low end dropping the one outlying two-direction seed | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
+| Both budgets at matched hard refusal, 0.1% against 0.3% | `evidence/k-sweep-2026-08-13/drift-per-seed.json`, `hard_refusal` |
 
 That file exists because the p-value this project was quoted on most often traced to a working
-note nobody outside could open. It is ten floats and no prompts.
+note nobody outside could open. It is twenty floats and no prompts: ten of divergence, and ten of
+refusal recovered from the run's own database on 2026-09-25, because the 0.1% and 0.3% were the
+premise of the whole comparison and had no artefact behind them until then.
+
+**Which end of that range you get depends on one seed, and on the estimator.** The mean over all
+five seeds is 1.8757. Dropping the one outlying two-direction seed gives 1.4472. This file put
+the low end at 1.5 until 2026-09-25, and that came from an unstated switch to medians (1.5073)
+with 1.45 rounded up, which widened the project's own negative result by a tenth. The estimator
+is named here so nobody has to work out which one produced the number.
+
+**Read that result with its limit attached.** Those arms ran on 2026-08-13, before the held-out
+direction score existed, so their second directions were chosen by a filter since found to accept
+every candidate it was shown. What they measure is that *arbitrary* second directions cost drift,
+which is a weaker claim than the thesis the table gets read against. The artefact says so in its
+own `caveat` field. A re-run under the fixed selector is scheduled, and until it lands this is a
+known limit rather than a settled answer.
 
 ```sh
-python -c "import json;d=json.load(open('evidence/k-sweep-2026-08-13/drift-per-seed.json'));print(d['drift_kl'])"
+python -c "
+import json
+d = json.load(open('evidence/k-sweep-2026-08-13/drift-per-seed.json'))
+print(d['seeds'])
+print(d['drift_kl'])
+print(d['hard_refusal'])
+print(d['caveat'])
+"
 ```
 
 ### The head-to-head, quoted in `docs/guide/benchmark.md`
 
 Thirty artefacts, which is ten arms measured by three instruments, committed under
-`head-to-head/results/`. The whole comparison runs as one command,
-and it takes hardware and hours:
+`head-to-head/results/`. The whole comparison runs as one command, and it takes hardware and
+hours:
 
 ```sh
-senbonzakura bench --help
+senbonzakura head-to-head --help
 ```
+
+The command is `head-to-head`, not `bench`. This file said `bench` until 2026-09-25, and the
+parser does not refuse an unknown first word: it takes it as the model to edit and prints the
+abliterator's help, exiting 0. So a reader checking the benchmark got a plausible screen with
+nothing about the benchmark on it, and the same wrong word without `--help` would have gone
+looking for a model of that name on the Hub and started editing its weights.
 
 The keyword-rate row on that page was corrected on 2026-09-21: it had been quoting a superseded
 run on the one axis where we lose. The page carries the correction rather than only the corrected

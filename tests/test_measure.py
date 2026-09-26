@@ -332,8 +332,12 @@ def test_every_row_has_the_same_shape_whatever_happened_to_the_stage():
         "coherence": {"metrics": {"coherence": {"value": 2.6, "units": "nats-per-token"}}},
     })
     assert len(rows) == 3
-    assert {len(r) for r in rows} == {4}, f"ragged rows: {[len(r) for r in rows]}"
-    measure.format_table(rows)      # unpacks four; raises if any row disagrees
+    # AGAINST THE ROW TYPE, not against a number typed here. This asserted `== {4}` and
+    # broke when the interval column was added, which is the same fragility the rows
+    # themselves had: a shape written down in two places disagrees the moment one moves.
+    assert {len(r) for r in rows} == {len(measure.Row._fields)}, (
+        f"ragged rows: {[len(r) for r in rows]}")
+    measure.format_table(rows)      # raises if any row disagrees with the rest
 
 
 # ── the dispatch, and what it does with a stage that raises ──────────────────────

@@ -17,6 +17,7 @@ import json
 import torch
 
 from . import lengthsweep, metrics, stamps, track
+from .argresolve import whole_number
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
@@ -39,7 +40,7 @@ def build_parser():
                     help="a name for this run, copied into the results json. Nothing reads it: "
                          "it is how you tell two result files apart later, so give it the thing "
                          "that varied")
-    ap.add_argument("--n", type=int, default=0, help="0 = all prompts")
+    ap.add_argument("--n", type=whole_number("--n"), default=0, help="0 = all prompts")
     ap.add_argument("--track", default=None,
                     help="the track these prompts came from. Its track.json records where the "
                          "partition boundaries actually fell, and passing it is what lets this "
@@ -54,13 +55,14 @@ def build_parser():
     # `--skip 0` against a track that records a boundary is a deliberate choice to score the
     # selection rows, and it has to be refused as a contradiction rather than read as silence.
     # Every existing caller passes a number or nothing, and None is falsy where 0 was.
-    ap.add_argument("--skip", type=int, default=None,
+    ap.add_argument("--skip", type=whole_number("--skip"), default=None,
                     help="drop the first N prompts before taking --n. Needed to score a model on "
                          "prompts its own surgery was NOT fitted on: direction extraction consumes "
                          "the head of the harmless set and the KL check the slice after it, so "
                          "measuring false positives on the head would be measuring the training "
                          "data. Read from --track when that is given instead.")
-    ap.add_argument("--max-new", type=int, default=lengthsweep.DEFAULT_BUDGET,
+    ap.add_argument("--max-new", type=whole_number("--max-new", minimum=1),
+                    default=lengthsweep.DEFAULT_BUDGET,
                     help=f"how many tokens each reply may run to (default: "
                          f"{lengthsweep.DEFAULT_BUDGET}). A refusal the model never gets far "
                          f"enough to state is not counted, so a short budget reports a low "
@@ -68,7 +70,7 @@ def build_parser():
                          f"measured the rate settling on Qwen3-1.7B; that is one model, so use "
                          f"--length-sweep to find out what yours needs rather than assuming it "
                          f"transfers")
-    ap.add_argument("--batch", type=int, default=16,
+    ap.add_argument("--batch", type=whole_number("--batch", minimum=1), default=16,
                     help="prompts per generation batch (default: 16). Lower it if the card runs out of memory")
     ap.add_argument("--save-generations", dest="save_generations", default="",
                     help="write every prompt and its raw generation to this JSONL path. "
@@ -85,7 +87,8 @@ def build_parser():
                          "reads the answer back at every shorter budget, which is exact under "
                          "greedy decoding and costs one pass rather than one per budget. Exits "
                          "non-zero when the curve has not settled")
-    ap.add_argument("--length-max", dest="length_max", type=int, default=256,
+    ap.add_argument("--length-max", dest="length_max",
+                    type=whole_number("--length-max", minimum=1), default=256,
                     help="the longest budget in the sweep (default 256). If the rate is still "
                          "climbing here, the sweep says so and refuses to call the last row the "
                          "answer")
@@ -180,10 +183,26 @@ def _stamp_refusal(res, pinned=None):
     # wrote was incomparable with every other one and nothing said why. Derived in `stamps` rather
     # than here, because the same five were missing from four writers for the same reason.
     fields = dict(pinned or {})
-    measurement.stamp(res, "refusal_rate", res["refusal"], "senbonzakura-ruler",
-                      n=n, by_estimator=True, **fields)
-    measurement.stamp(res, "refusal_rate", res["heretic"], "heretic-keyword",
-                      n=n, by_estimator=True, **fields)
+    # AND THE INTERVAL, absent until 2026-09-25 and the reason the headline metric still could not
+    # be gated after a commit whose subject said the gate had been unblocked. `from_artefact`
+    # requires an interval; `drift`, `margin` and `capability` all stamp one; this one did not, and
+    # `metrics.wilson_interval` has been two modules away the whole time. So `senbonzakura gate`
+    # could gate divergence, harm recognition and capability, and not refusal rate, which is the
+    # one property this tool exists to move.
+    #
+    # `reportable_rate` rather than a bare interval, because it also carries the counts and says
+    # when the sample is too small to state a rate at all. A refusal rate is a proportion over n
+    # generations, so Wilson is the right estimator at these sample sizes and is what the rest of
+    # the project already uses.
+    for estimator, value in (("senbonzakura-ruler", res["refusal"]),
+                             ("heretic-keyword", res["heretic"])):
+        reported = metrics.reportable_rate(round(value * (n or 0)), n or 0)
+        measurement.stamp(res, "refusal_rate", value, estimator,
+                          n=n, by_estimator=True,
+                          interval=list(reported["ci"]) if reported["ci"] else None,
+                          interval_method="Wilson score interval on the refusal count",
+                          reportable=reported["reportable"],
+                          **fields)
 
 
 def score(gens, label="", model="", eval_path=""):
@@ -260,9 +279,12 @@ def main(argv=None):
         raise SystemExit(
             f"--length-max {a.length_max} is below the smallest budget in the sweep "
             f"({min(_sweep_cuts())}), so there would be nothing to compare against.")
-    model, tok = load_model_and_tokenizer(
-        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+    # THE WHOLE SLICE BEFORE THE MODEL, and the order is the fix. This resolved the eval set and
+    # checked the bounds AFTER `load_model_and_tokenizer`, so `--skip 99999` against a 30B model
+    # downloaded and loaded tens of gigabytes and then exited with "leaves nothing: the set has
+    # 400 prompts". On a rented card that is paid minutes for a fault decidable from the command
+    # line and a dataset header. `dataset.resolve` needs no model and neither does anything below
+    # it, so nothing is gained by loading first.
     from senbonzakura import dataset
     try:
         prompts = dataset.resolve(a.eval, text_column=a.text_column or None,
@@ -281,6 +303,9 @@ def main(argv=None):
         if a.n > len(prompts):
             raise SystemExit(f"--n {a.n} exceeds the {len(prompts)} prompts available after --skip")
         prompts = prompts[:a.n]
+    model, tok = load_model_and_tokenizer(
+        a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
     if a.harm_recognition:
         # Compass pass: wrap each harmful request in the judge frame, then measure how
         # many the model still flags as harmful.

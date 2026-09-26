@@ -36,3 +36,29 @@ the file or beside it:
 The reason this list is written down: the July 2026 sweep captured none of it, and
 `constraints/measured-2026-07-27-compass-sweep.md` is the record of what that costs.
 It cannot be reconstructed, only re-run.
+
+### What the artefacts in here actually carry
+
+**Corrected 2026-09-25, because the list above was a rule nothing in this directory met.** A review
+panel measured it and found that stating a requirement is not the same as enforcing one, which is
+the defect this project keeps finding in other people's work.
+
+| Artefact | Missing from the list above |
+|---|---|
+| `compass-2026-07-30/base-qwen3-*.json` | the model revision, the dataset identity, the dataset revision |
+| `k-sweep-2026-08-13/drift-per-seed.json` | the commit, the model revision, the dataset identity, the dataset revision, the accelerator |
+
+So a reader who obtained the gated corpus still could not re-take the compass figures exactly:
+nothing records which revision of the dataset or of `Qwen/Qwen3-1.7B` produced them, and both can
+move upstream. The k-sweep file is a hand-written summary of a run whose per-arm artefacts were not
+kept, which is also why its hard-refusal column had no source until it was recovered from the run's
+own job database on 2026-09-25.
+
+**Neither gap is filled by editing the files.** A provenance field nobody measured is worse than an
+absent one, because it reads as a receipt. They are superseded by re-measurement, not by annotation.
+
+**The rule is enforced from now on.** `tests/test_evidence_carries_its_provenance.py` checks every
+artefact in here against the list above, with those two directories recorded as exceptions that
+name what they lack and why. A third exception requires a reason in that file, and a second test
+refuses an exception broader than the artefact needs, so the list shrinks as artefacts improve
+rather than growing as standards slip.

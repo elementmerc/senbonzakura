@@ -221,18 +221,24 @@ def test_crlf_json_is_parsed(tmp_path):
 
 
 # ── collecting targets ─────────────────────────────────────────────────────────────
-def test_collect_walks_directories_and_ignores_other_suffixes(tmp_path):
+def test_collect_walks_directories_and_drops_only_recorded_kinds(tmp_path):
+    """Deny-first: a `.py` is dropped because IGNORED_KINDS says so, a `.txt` is not.
+
+    This used to assert that everything but `.json` and `.jsonl` was dropped, which is the
+    behaviour the review panel found on 2026-09-25: the guide teaches `.txt` corpora and the
+    filter threw them away before anything looked at them.
+    """
     (tmp_path / "nested").mkdir()
-    for name in ("a.json", "nested/b.jsonl", "c.txt", "d.safetensors"):
+    for name in ("a.json", "nested/b.jsonl", "c.txt", "d.safetensors", "e.py"):
         (tmp_path / name).write_text("{}", encoding="utf-8")
     got = {p.name for p in guard.collect([str(tmp_path)])}
-    assert got == {"a.json", "b.jsonl"}
+    assert got == {"a.json", "b.jsonl", "c.txt", "d.safetensors"}
 
 
 def test_collect_takes_named_files_directly(tmp_path):
     f = tmp_path / "a.json"
     f.write_text("{}", encoding="utf-8")
-    assert guard.collect([str(f), str(tmp_path / "skip.txt")]) == [f]
+    assert guard.collect([str(f), str(tmp_path / "skip.py")]) == [f]
 
 
 # ── the command ────────────────────────────────────────────────────────────────────
@@ -279,13 +285,18 @@ def test_main_refuses_neither_staged_nor_paths():
     assert e.value.code == 2
 
 
-def test_staged_paths_keeps_only_json_and_jsonl(monkeypatch):
-    """Git reports every staged path; only two suffixes are this guard's business."""
+def test_staged_paths_drops_only_the_kinds_that_are_recorded(monkeypatch):
+    """Git reports every staged path, and only a RECORDED kind is dropped before the dispatcher.
+
+    `c.py` goes because IGNORED_KINDS says a Python file is source. `d.safetensors` stays,
+    because nobody has recorded it and an unrecognised kind is refused rather than cleared.
+    """
     class _Done:
-        stdout = b"a.json\0b.jsonl\0c.py\0d.safetensors\0"
+        stdout = b"a.json\0b.jsonl\0c.py\0d.safetensors\0harmful.txt\0"
 
     monkeypatch.setattr(guard.subprocess, "run", lambda *a, **k: _Done())
-    assert [p.name for p in guard.staged_paths()] == ["a.json", "b.jsonl"]
+    assert [p.name for p in guard.staged_paths()] == [
+        "a.json", "b.jsonl", "d.safetensors", "harmful.txt"]
 
 
 def test_staged_paths_fails_loudly_when_git_cannot_be_run(monkeypatch):

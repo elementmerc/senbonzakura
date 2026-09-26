@@ -582,6 +582,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # FULL HISTORY, because the link checker resolves every repository link against the
+          # PUBLISHED ref rather than the local one. A shallow clone has no `origin/main` to ask,
+          # so the checker would fall back to a network fetch per ref and depend on it succeeding.
+          # The ref matters more than it looks: on the maintainer's machine local `main` is 611
+          # commits AHEAD of `origin/main` and carries every path, so asking the local branch
+          # answers yes to links that 404 for every reader.
+          fetch-depth: 0
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v5.0.0
         with:
           node-version: "22"
@@ -835,4 +843,164 @@ jobs:
           card = (out / "CARD.md").read_text(encoding="utf-8")
           assert "NOT MEASURED" in card or "Capability" in card, "the card lost its sections"
           print(f"  CARD.md: {len(card.splitlines())} lines")
+          PY
+
+  documented-first-run:
+    # THE COMMANDS IN THE GUIDE, RUN AS WRITTEN, IN AN ENVIRONMENT THAT HAS NOTHING.
+    #
+    # Nothing else in this file installs the way the documentation tells a stranger to install,
+    # and nothing else runs the first commands it tells them to run. `smoke` comes closest and
+    # installs from the tree with `pip install -e .`, which resolves a different dependency set
+    # from the one a reader gets, and drives the tool through a script rather than through the
+    # documented sequence.
+    #
+    # That gap shipped a release candidate whose documented first run died at the SECOND command.
+    # `senbonzakura track build` opened with `from datasets import load_dataset`, `datasets` is
+    # the `hub` extra, and every install string in the guide is the bare package. Every command
+    # after it needs the track that one builds, so the whole guide stopped there, and 3,000 tests
+    # and nine jobs all passed.
+    #
+    # THE COMMANDS ARE READ OUT OF THE FILES, NOT RETYPED HERE. A job holding its own copy of the
+    # install line proves that copy works and says nothing about the one people read. If the
+    # documentation changes shape so this cannot find them, the step fails and says what it
+    # looked for, which is the correct outcome: a gate that cannot find the thing it gates has
+    # stopped gating it.
+    name: the documented first run works, from a clean environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Read the documented commands out of README.md and the guide
+        # Two substitutions, both of which MUST match or this refuses. The documented install
+        # points at `@dev` on GitHub, so running it verbatim would test the branch instead of
+        # this commit and a broken first run would stay green here until after it was merged.
+        # Everything else runs exactly as written.
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/firstrun"
+          python - <<'PY'
+          import os, pathlib, re
+
+          def blocks(path):
+              text = pathlib.Path(path).read_text(encoding="utf-8")
+              return re.findall(r"```sh\n(.*?)```", text, re.DOTALL)
+
+          def only(path, needle):
+              found = [b for b in blocks(path) if needle in b]
+              if len(found) != 1:
+                  raise SystemExit(
+                      f"expected exactly one ```sh block in {path} containing {needle!r}, "
+                      f"found {len(found)}. This job runs the documented commands rather than a "
+                      f"copy of them, so it stops rather than running something else.")
+              return found[0]
+
+          install = only("README.md", "git+https://github.com")
+          quickstart = only("docs/guide/quickstart.md", "track build")
+
+          swaps = [('"git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker"',
+                    "./checker"),
+                   ('"git+https://github.com/elementmerc/senbonzakura@dev"', ".")]
+          for old, new in swaps:
+              if old not in install:
+                  raise SystemExit(
+                      f"the README install command no longer contains {old}, so it cannot be "
+                      f"pointed at this checkout. Update this job together with the README.")
+              install = install.replace(old, new)
+
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "firstrun"
+          (out / "install.sh").write_text(install, encoding="utf-8")
+          # The guide's block ends at the command that needs a GPU and a 5 GB download; every
+          # line before it runs on a runner.
+          (out / "quickstart.sh").write_text(quickstart, encoding="utf-8")
+          print("--- install ---");    print(install)
+          print("--- quickstart ---"); print(quickstart)
+          PY
+
+      - name: A clean virtual environment, with nothing in it
+        # A virtual environment rather than the runner's interpreter, because the defect being
+        # gated is about WHICH packages arrive with the install, and a runner's Python has
+        # whatever earlier steps left there.
+        run: |
+          set -euo pipefail
+          python -m venv "${RUNNER_TEMP}/firstrun/venv"
+          echo "${RUNNER_TEMP}/firstrun/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install torch (CPU build)
+        # The same line every other job here uses, and it does not weaken the test. What is under
+        # test is the package's own dependency set: which of its dependencies are base and which
+        # are extras. Which torch wheel pip would have chosen is a different question, and letting
+        # it choose costs 5.8 GB and nineteen CUDA wheels a runner cannot use.
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install exactly the way the README says to
+        run: bash -euo pipefail "${RUNNER_TEMP}/firstrun/install.sh"
+
+      - name: The heavy optional extras did NOT arrive, which is the point
+        # `datasets` is the `hub` extra. If it is here, this job can no longer detect the defect
+        # it exists for: a base-install path that quietly needs it would pass. This is the
+        # negative control, and without it the steps below prove nothing.
+        run: |
+          set -euo pipefail
+          if python -c "import datasets" 2>/dev/null; then
+            echo "datasets is installed in the documented environment, so this job can no longer"
+            echo "tell a base-install path from one that needs the hub extra."
+            exit 1
+          fi
+          echo "datasets is absent, as a bare install leaves it"
+
+      - name: Run the documented first commands, as written
+        # `corpora` fetches through the GitHub CLI, which is what `senbonzakura corpora` uses so
+        # that no credential passes through this project's own code.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ runner.temp }}/firstrun
+        run: bash -euo pipefail quickstart.sh
+
+      - name: What the documented run was supposed to produce is there
+        # Exit codes are not the assertion. A command that printed a plan and wrote nothing exits
+        # 0, and this project has already had five benchmark jobs report success having measured
+        # nothing.
+        working-directory: ${{ runner.temp }}/firstrun
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          corpus = pathlib.Path("corpus")
+          manifest = json.loads((corpus / "sources.json").read_text(encoding="utf-8"))
+          for side in ("harmful", "harmless"):
+              rows = (corpus / f"{side}.txt").read_text(encoding="utf-8").splitlines()
+              assert rows, f"{side}.txt is empty"
+              assert manifest["outputs"][side]["rows"] == len(rows), (
+                  f"sources.json claims {manifest['outputs'][side]['rows']} rows for {side} and "
+                  f"the file holds {len(rows)}")
+              print(f"  {side}: {len(rows)} prompts")
+          assert [s["revision"] for s in manifest["sources"]], "no revisions recorded"
+          # THE COUNTS THE REVISIONS PIN, AND THEY CANNOT MOVE UNDER THIS. A commit is immutable,
+          # so these two numbers are a property of the recipe rather than of upstream's mood: a
+          # `datasets`-based run of the same pins fetched 5,884 and 25,058, and the reader that
+          # replaced it must agree to the row. Anything else means the shards were selected,
+          # ordered or filtered differently, which is the failure mode that produces a corpus
+          # that loads and scores and is not the corpus the manifest describes.
+          pinned = {"Bahushruth/abliteration-harmful-enriched": 5884,
+                    "mlabonne/harmless_alpaca": 25058}
+          for source in manifest["sources"]:
+              want = pinned.get(source["repo"])
+              if want is None:
+                  raise SystemExit(
+                      f"{source['repo']} is pinned in SOURCES and has no recorded row count here. "
+                      f"Record what a run of the pin fetches, so a reader that starts reading it "
+                      f"differently is caught.")
+              assert source["rows"] == want, (
+                  f"{source['repo']} at {source['revision'][:12]} gave {source['rows']} prompts "
+                  f"and the pin has always given {want}")
+          print("  both sources gave exactly what their pins have always given")
+          track = pathlib.Path("track")
+          for name in ("bad_eval_ds", "good_ds"):
+              assert (track / name).is_dir(), f"the split left no {name}"
+          print("  the track has both sides split")
           PY

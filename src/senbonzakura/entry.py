@@ -102,6 +102,22 @@ ALIASES = {
     "harm-recognition": "compass",
 }
 
+#: Words that were commands here once, or that this project's own documents have used as one, and
+#: what they are now. Kept rather than deleted, because a renamed command does not stop being typed
+#: the moment it is renamed: it lives on in run specs, in shell history, and in prose.
+#:
+#: `bench` is the reason this exists. `REPRODUCING.md` told readers to run `senbonzakura bench
+#: --help` for months. There is no such command, so `bench` was taken as the model positional,
+#: argparse fell through to the abliterator, and it printed a plausible help screen and EXITED 0.
+#: The reader checking the benchmark concluded the harness was not shipped. Worse without `--help`:
+#: `senbonzakura bench` would have gone to the Hub for a model called `bench` and started editing
+#: weights. Found twice, independently, by the 2026-09-25 panel.
+RETIRED = {
+    "bench": "head-to-head",
+    "benchmark": "head-to-head",
+    "harm_recognition": "compass",
+}
+
 
 #: Which optional install brings each heavy dependency in, so a failure can say what to type.
 #: Only the ones a partial install actually loses; anything absent gets the generic line.
@@ -224,6 +240,51 @@ def module_entry(fn, argv=None):
     sys.exit(exit_status(fn(argv)))
 
 
+def _not_a_command(word):
+    """A refusal when the first word is a command somebody meant, or None to carry on.
+
+    THE FALLTHROUGH THIS CLOSES. The model is a positional, so ANY unrecognised first word is a
+    valid model id as far as argparse is concerned. `senbonzakura bench --help` therefore printed
+    the abliterator's help and exited 0, and `senbonzakura bnech Qwen/Qwen3-1.7B` would go to the
+    Hub for a repo called `bnech`. A tool that answers a typo with a plausible screen teaches its
+    reader that the documentation is unreliable, which is what happened.
+
+    DELIBERATELY NARROW, because a bare word is a legitimate model id: `gpt2` has no slash and is
+    not a path. Refusing every unknown bare word would break real invocations to catch typos. So
+    this fires on exactly two things it can be sure about:
+
+      - a word this project has itself used as a command and no longer has (`RETIRED`);
+      - a word that is a near miss for a command that exists, when it cannot be a model reference.
+
+    A model id or a local path is never either: a Hub id carries a slash, and a local checkpoint is
+    a path that exists. Both are checked before the near-miss test, and the refusal still names the
+    way through for the one person who really does have a model called `scoer`.
+    """
+    import difflib
+    import os
+
+    if not word or word.startswith("-"):
+        return None
+    known = sorted({*DELEGATED, *ALIASES, "abliterate"})
+    if word in known:
+        return None
+    if word in RETIRED:
+        return (f"senbonzakura: `{word}` was renamed to `{RETIRED[word]}`.\n"
+                f"  Run `senbonzakura {RETIRED[word]}` instead.\n"
+                f"  It is refused rather than ignored because the model is a positional argument, "
+                f"so `{word}` would otherwise be read as a model to edit.")
+    # A Hub id or a path on disk is a model, never a mistyped command.
+    if "/" in word or os.path.exists(word):
+        return None
+    near = difflib.get_close_matches(word, known, n=3, cutoff=0.8)
+    if not near:
+        return None
+    return (f"senbonzakura: `{word}` is not a command. Did you mean "
+            f"{' or '.join('`' + n + '`' for n in near)}?\n"
+            f"  If you meant a model called `{word}`, pass it as `--model {word}`, which cannot "
+            f"be mistaken for a command.")
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -237,6 +298,12 @@ def main(argv=None):
     # looks at it, so every downstream error message names the real command.
     if argv and argv[0] in ALIASES:
         argv[0] = ALIASES[argv[0]]
+
+    if argv:
+        mistake = _not_a_command(argv[0])
+        if mistake:
+            print(mistake, file=sys.stderr)
+            return 2
 
     if argv and argv[0] in DELEGATED:
         name = argv[0]

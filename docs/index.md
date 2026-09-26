@@ -49,7 +49,9 @@ features:
 
 A model that will answer requests the original refused, including harmful ones. That is the
 point, and it is permanent in the weights. The base model's licence still governs the result, and
-the package carries roughly 6,200 harmful prompts so it runs offline.
+a released wheel carries roughly 6,200 harmful prompts so it runs offline. Which artefact carries
+what is set out in the [evaluation track card](/evaluation-track-card): the repository itself
+carries none of them, and neither does an install straight from it.
 
 Everything else here is about whether the removal can be measured honestly, which only matters
 once that paragraph is understood.

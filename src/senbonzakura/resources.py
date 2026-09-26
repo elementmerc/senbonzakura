@@ -91,6 +91,36 @@ def _is_oom(exc, extra_types=()):
     return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
 
 
+#: How long a single forced pause may run before control returns to the caller, when the operator
+#: has set no `--max-pause`.
+#:
+#: NOT A TIMEOUT ON THE PROBLEM. It is a deadline on `_forced_pause`, and it exists because the
+#: thing that can turn a full card into a sentence a user can act on is the batch=1 OOM counter,
+#: which only advances when the pause returns. Thirty seconds times twenty permitted OOMs is ten
+#: minutes of patience before the run names what to lower, which is generous for a transient (a
+#: game closing, another notebook exiting) and finite for the case that is not transient.
+FORCED_PAUSE_DEADLINE_S = 30.0
+
+#: How much VRAM something other than senbonzakura must hold before a starvation pause is worth
+#: waiting out.
+#:
+#: NOT A TUNING KNOB, A QUESTION OF ATTRIBUTION. The pause exists so that another application
+#: taking the card does not crash a run; it cannot help when the run's own model is what fills the
+#: card, because no amount of waiting will make us smaller. Below this floor, nothing external is
+#: meaningfully holding memory and a shortfall is ours to handle by shrinking the batch or by
+#: refusing, not by waiting. 64 MB is comfortably under a desktop compositor and comfortably over
+#: measurement noise.
+EXTERNAL_HOLD_FLOOR_BYTES = 64 * 1024 * 1024
+
+#: How often a wait says it is still waiting.
+#:
+#: Every long wait in this class was announced once and then went quiet, which is the property that
+#: made a wedge indistinguishable from patience on 2026-09-25. The baseline asks for a heartbeat
+#: every 30 to 60 seconds on any long-running loop; this is the low end of it, because the thing
+#: being waited on is a card the user may be able to free by closing something.
+HEARTBEAT_S = 30.0
+
+
 def fmt_duration(seconds):
     # Compact human duration: "45s", "12m 30s", "2h 05m". Negative/NaN guarded to "0s".
     try:
@@ -201,7 +231,25 @@ class ResourceGovernor:
     def _should_pause(self):
         # Pause for either reason: a VRAM crash risk (another app dropped usable VRAM too low) or,
         # in background mode, a foreground app on the card that wants the compute.
-        return self._avail_frac() < self.min_free_frac or self._foreground_pressure()
+        #
+        # THE STARVATION PAUSE NOW ASKS WHO TOOK THE MEMORY, and that is the second half of the
+        # 2026-09-25 wedge. `_avail_frac` counts driver-free VRAM plus senbon's own RECLAIMABLE
+        # cache, and its comment claimed "only another process taking the card pulls this fraction
+        # down". That is false for memory the model has ALLOCATED rather than cached: a 5 GB model
+        # on a 6 GB card with nothing else running reads as starved. `wait_for_headroom` is
+        # unbounded by design, so `run` waited forever, before the first batch, for headroom that
+        # only unloading the model could ever provide. Found by the test written to prove the
+        # OTHER wedge was fixed, which hung the suite at the same test twice.
+        #
+        # Waiting is the right answer to somebody else holding the card and the wrong answer to
+        # ourselves holding it: patience cannot change our own residency, and the batch sizer and
+        # the OOM counter are what handle a card we have filled. So low availability only pauses
+        # when something external is actually holding memory.
+        if self._foreground_pressure():
+            return True
+        if self._avail_frac() >= self.min_free_frac:
+            return False
+        return self._external_used() > EXTERNAL_HOLD_FLOOR_BYTES
 
     def _calibrate_once(self):
         # On the first real batch, announce the operating baseline: how much of the card senbon has
@@ -229,13 +277,21 @@ class ResourceGovernor:
 
         "Usable" is availability (free + senbon's own reclaimable cache), so this only ever blocks
         when ANOTHER process is holding the card, not because the model fills it. Returns the seconds
-        spent waiting (0 when there was headroom). Honours ``max_pause_s`` as a safety cap so a
-        mismeasuring driver can never wedge a run forever.
+        spent waiting (0 when there was headroom).
+
+        ``max_pause_s`` caps it WHEN THE OPERATOR SETS ONE, and its default is None. This docstring
+        used to say the cap meant a mismeasuring driver "can never wedge a run forever", which was
+        not true of any default invocation: nothing in the CLI passes `--max-pause`. The wait is
+        deliberately unbounded here, because the condition it waits on is another process releasing
+        the card and pushing on regardless would crash a run that only needed to be patient. What
+        it now does instead is SAY SO, every ``HEARTBEAT_S``, so a person watching can tell waiting
+        from wedged. That distinction is the whole of the 2026-09-25 finding.
         """
         if not self.enabled:
             return 0.0
         waited = 0.0
         announced = False
+        announced_at = 0.0
         while self._should_pause():
             if not announced:
                 if self._foreground_pressure():
@@ -254,6 +310,13 @@ class ResourceGovernor:
             self._sleep(self.poll_s)
             waited += self.poll_s
             self.paused_s += self.poll_s
+            # Announced once and then silent, until 2026-09-25. An operator cannot tell a wait
+            # from a wedge without this, and the card is often something they could free.
+            if waited - announced_at >= HEARTBEAT_S:
+                announced_at = waited
+                self.log(f"  still paused for VRAM: {fmt_duration(waited)} so far, "
+                         f"{self._avail_frac():.0%} usable, need {self.min_free_frac:.0%}. "
+                         f"Close whatever else is on the card, or pass --max-pause to push on")
             if self.max_pause_s is not None and waited >= self.max_pause_s:
                 self.log(f"  resuming after {fmt_duration(waited)} paused (max-pause reached)")
                 return waited
@@ -363,7 +426,7 @@ class ResourceGovernor:
         }
 
     def _forced_pause(self):
-        # Wait for a comfortable margin (grow-fraction, not just the min) after a batch=1 OOM.
+        # Wait after a batch=1 OOM, then hand control back to the counter that can raise.
         #
         # THE FIRST SLEEP IS UNCONDITIONAL, and without it this function did nothing at all.
         # `_avail_frac` counts senbon's OWN reclaimable cache as available, and the caller has
@@ -372,15 +435,52 @@ class ResourceGovernor:
         # refused a single item, and the "pause" returned in microseconds: that is what turned
         # a retry into a spin. A card that cannot fit one prompt is not helped by asking it
         # again immediately.
+        #
+        # AND THEN IT WENT THE OTHER WAY, found by the 2026-09-25 panel and reproduced through the
+        # injectable hooks below. Two defects, both of which only bite on the hardware this module
+        # exists for:
+        #
+        #   1. The loop waited for `grow_free_frac` (0.20), which is the threshold for GROWING the
+        #      batch back. After an OOM at the irreducible batch, that asks the card to become
+        #      emptier than it was when the model loaded. On a card the model itself fills, the
+        #      availability fraction is permanently below it, so the condition is never satisfied.
+        #   2. The escape was `if self.max_pause_s is not None`, and `max_pause_s` defaults to None
+        #      at every construction site. So there was no escape.
+        #
+        # Together: two log lines, then silence for as long as the operator left it. `batch1_ooms`
+        # never reached 2, so the counter whose whole purpose is to name what to lower could not
+        # fire, and the log's own "1 of 20" promised nineteen retries that would never come.
+        #
+        # The pause is now bounded ALWAYS. The bound is not a timeout on the problem, it is a
+        # deadline on this function: control has to return to the counter, because the counter is
+        # the thing that can turn a wedge into a sentence.
+        deadline = self.max_pause_s if self.max_pause_s is not None else FORCED_PAUSE_DEADLINE_S
         waited = self.poll_s
         self._sleep(self.poll_s)
         self.paused_s += self.poll_s
-        while self._avail_frac() < self.grow_free_frac:
+        # `min_free_frac`, not `grow_free_frac`: enough to try one item again, which is all this
+        # pause is for. Growing the batch back is `_maybe_grow`'s decision and it has its own
+        # threshold.
+        #
+        # ANNOUNCED ON ENTRY RATHER THAN PERIODICALLY, and that is a correction to this fix rather
+        # than the original design. The first version put a HEARTBEAT_S (30s) periodic log inside a
+        # loop bounded at FORCED_PAUSE_DEADLINE_S (30s), so the interval could never elapse and the
+        # heartbeat was unreachable code: a guard that cannot fire, which is the exact defect class
+        # this whole repair came out of. This pause is short and bounded, so one line when it turns
+        # out to be a real wait is the honest amount of noise. The periodic heartbeat belongs in
+        # `wait_for_headroom`, which is unbounded by design.
+        announced = False
+        while self._avail_frac() < self.min_free_frac:
+            if not announced:
+                announced = True
+                self.log(f"  the card is still too full after {fmt_duration(waited)}: "
+                         f"{self._avail_frac():.0%} usable, need {self.min_free_frac:.0%}. "
+                         f"Waiting up to {fmt_duration(deadline)} before trying again")
             self._empty_cache()
             self._sleep(self.poll_s)
             waited += self.poll_s
             self.paused_s += self.poll_s
-            if self.max_pause_s is not None and waited >= self.max_pause_s:
+            if waited >= deadline:
                 return waited
         return waited
 

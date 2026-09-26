@@ -111,17 +111,29 @@ def test_the_five_writers_are_all_still_here():
 
 
 def test_the_helpers_that_stamp_twice_pass_the_fields_through():
-    """`score` and `margin` build the fields once and stamp two estimators with them."""
-    import inspect
+    """`score` stamps two estimators of one metric, and BOTH must carry the identity.
 
-    from senbonzakura import margin, score
-    for helper in (score._stamp_refusal, margin._stamp_compass):
-        source = inspect.getsource(helper)
-        assert "pinned or {}" in source, (
-            f"{helper.__qualname__} no longer takes the pinned fields from its caller. Both "
-            f"estimators it stamps are the same measurement under two rulers, so both need the "
-            f"same identity or only one of them is gateable.")
-        assert source.count("**fields") >= 2, (
-            f"{helper.__qualname__} stamps more than one estimator and does not pass the pinned "
-            f"fields to all of them. A figure and its control that disagree about their own "
-            f"provenance are two measurements, not a comparison.")
+    ASSERTED ON THE ARTEFACT, NOT ON THE SOURCE TEXT. This counted occurrences of `**fields` in the
+    function body, which passed until the body was rewritten as a loop over the two estimators: one
+    spread, two stamps, same behaviour, failing test. A guard that reads source text measures how
+    the code is spelled rather than what it does, and it reported a regression for a refactor that
+    fixed nothing and broke nothing. So it now stamps a real document and looks at the blocks.
+    """
+    from senbonzakura import score
+    res = {"label": "t", "model": "m", "eval": "e", "n": 200,
+           "refusal": 0.094, "heretic": 0.201,
+           "soft_refusal": 0.0, "noncompliant": 0.0, "broken": 0.0}
+    fields = {"input_digest": "abc123", "partition": "measure", "prompt_format": "raw",
+              "tool_version": "0.4.0", "precision": "bfloat16"}
+    score._stamp_refusal(res, dict(fields))
+
+    blocks = {k: v for k, v in res["metrics"].items() if k.startswith("refusal_rate.")}
+    assert len(blocks) == 2, f"expected both estimators, got {sorted(blocks)}"
+    for key, block in blocks.items():
+        missing = [f for f in fields if block.get(f) in (None, "")]
+        assert not missing, (
+            f"{key} is missing {missing}. A figure and the ruler it is compared against must not "
+            f"disagree about their own provenance, or only one of them is gateable.")
+        assert block.get("interval"), (
+            f"{key} carries no interval, so `baseline.from_artefact` will refuse it and the "
+            f"headline metric stays ungateable")

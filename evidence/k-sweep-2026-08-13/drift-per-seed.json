@@ -29,5 +29,22 @@
       0.1784
     ]
   },
-  "caveat": "These arms ran before the held-out direction selection existed, so the second directions were chosen by a filter now known to accept everything. What this measures is that ARBITRARY second directions cost drift, which is a weaker claim than the thesis it is usually read against."
+  "caveat": "These arms ran before the held-out direction selection existed, so the second directions were chosen by a filter now known to accept everything. What this measures is that ARBITRARY second directions cost drift, which is a weaker claim than the thesis it is usually read against.",
+  "hard_refusal": {
+    "k1": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.005
+    ],
+    "k2": [
+      0.0,
+      0.0,
+      0.005,
+      0.005,
+      0.005
+    ]
+  },
+  "hard_refusal_note": "Per seed, in the order of `seeds`, as a fraction. Recovered on 2026-09-25 from the run's own holst database after the panel found that the 0.1% and 0.3% means were published with no artefact behind them, although they are the premise that makes this comparison readable: the argument is drift AT MATCHED REFUSAL. The means are 0.001 and 0.003, which is what the published 0.1% and 0.3% state. Measured by `senbonzakura score` on 200 held-out prompts per arm, the same rows and the same ruler as every other figure in this file."
 }

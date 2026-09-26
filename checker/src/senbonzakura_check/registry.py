@@ -125,6 +125,19 @@ class ArtefactTooLargeError(Exception):
     """A file this tool declines to read, with the limit named in the message."""
 
 
+def too_deep(obj, limit=None):
+    """Does a parsed document nest past `limit`? PUBLIC, because two packages need this answer.
+
+    `senbonzakura.probe` reads probe manifests and item files that a stranger wrote, which is the
+    same threat this module's bound was added for, and it had grown a near-copy of `_depth` rather
+    than reach into another distribution's private name. Copying a limit is the drift that matters
+    and it had already imported this module's constant; copying the walker is how two guards start
+    disagreeing about what "too deep" means. So the walker is part of the interface now.
+    """
+    return _depth(obj, MAX_ARTEFACT_DEPTH if limit is None else limit) > (
+        MAX_ARTEFACT_DEPTH if limit is None else limit)
+
+
 def _depth(obj, limit, _at=0):
     """Deepest nesting in a parsed document, giving up as soon as it passes `limit`.
 

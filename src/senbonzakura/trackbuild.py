@@ -149,20 +149,129 @@ def check_licences(sources, *, skip=False, log=print):
               "here. Update SOURCES and docs/evaluation-track-card.md together, then re-run.")
 
 
-def fetch(src, log=print):
-    """The prompt rows of one upstream, at its pinned revision, in upstream order.
+def _repo_files(src):
+    """Every file the dataset repository holds at its pinned revision.
 
-    Order is upstream's own and is never shuffled here. The split into fit, search and measure
-    happens downstream in `senbonzakura track`, which is seeded and records its boundaries; a
-    shuffle at this layer would put an unrecorded permutation underneath a recorded one.
+    The listing is what decides whether this module can read the source itself, so it is fetched
+    before anything is downloaded: an unreadable layout should cost one API call rather than a
+    few megabytes of parquet.
+    """
+    try:
+        from huggingface_hub import list_repo_files
+    except ImportError as e:
+        raise SystemExit(
+            "build-track: huggingface_hub is not installed, and it is a base dependency of this "
+            "tool rather than an optional one. The install is damaged: "
+            "pip install --force-reinstall senbonzakura") from e
+    try:
+        return list(list_repo_files(
+            src["repo"], repo_type="dataset", revision=src["revision"]))
+    except Exception as e:
+        raise SystemExit(
+            f"build-track: could not list {src['repo']} at revision {src['revision'][:12]} "
+            f"({type(e).__name__}: {e}). A pinned revision that has been deleted upstream is the "
+            f"likeliest cause; the recipe is then no longer reproducible and SOURCES needs "
+            f"re-pinning against a revision that exists.") from e
+
+
+#: The layouts a Hub dataset puts one split's parquet shards in, in the order they are tried.
+#: Everything in SOURCES uses the first, which is what the Hub's own converter writes; the rest
+#: are older spellings of the same idea. A repository matching none of them is handed to
+#: `datasets` rather than guessed at.
+_SPLIT_LAYOUTS = ("data/{split}-", "{split}/", "{split}-")
+
+
+def _split_shards(files, split):
+    """The parquet shards of one split, in name order, or None for a layout not modelled here.
+
+    Name order is what `datasets` reads these in, and the shard names carry their index
+    (`train-00000-of-00002.parquet`), so sorting them reproduces its row order exactly. Returning
+    None means "hand this to `datasets`", never "there are no rows": a silent empty split here
+    would write a corpus nobody could account for, which is the whole failure this module exists
+    upstream of.
+    """
+    for prefix in _SPLIT_LAYOUTS:
+        head = prefix.format(split=split)
+        found = sorted(f for f in files if f.startswith(head) and f.endswith(".parquet"))
+        if found:
+            return found
+    exact = f"{split}.parquet"
+    return [exact] if exact in files else None
+
+
+def _download(src, name):
+    """One file of the pinned revision, through huggingface_hub so the cache and the token are its.
+
+    Reimplementing the transfer would mean reimplementing resume, etag validation and the stored
+    login, and all three already exist one import away.
+    """
+    from huggingface_hub import hf_hub_download
+    try:
+        return hf_hub_download(repo_id=src["repo"], filename=name, repo_type="dataset",
+                               revision=src["revision"])
+    except Exception as e:
+        raise SystemExit(
+            f"build-track: could not download {name} from {src['repo']} at revision "
+            f"{src['revision'][:12]} ({type(e).__name__}: {e}). Check the network and the Hub's "
+            f"status; if the revision itself has gone, SOURCES needs re-pinning against one that "
+            f"exists.") from e
+
+
+def _read_parquet(src, shards, log=print):
+    """The prompt column of every shard, streamed a batch at a time, in shard order."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as e:
+        raise SystemExit(
+            "build-track: pyarrow is not installed, and it is a base dependency of this tool "
+            "rather than an optional one. The install is damaged: "
+            "pip install --force-reinstall senbonzakura") from e
+    rows = []
+    for name in shards:
+        path = _download(src, name)
+        try:
+            handle = pq.ParquetFile(path)
+        except Exception as e:
+            raise SystemExit(
+                f"build-track: {name} from {src['repo']} is not a readable parquet file "
+                f"({type(e).__name__}: {e}). A download that stopped early is the likeliest "
+                f"cause; clear the HuggingFace cache and run this again.") from e
+        names = list(handle.schema_arrow.names)
+        if TEXT_COLUMN not in names:
+            raise SystemExit(
+                f"build-track: {src['repo']} has columns {sorted(names)} and no "
+                f"'{TEXT_COLUMN}' column. The schema has changed upstream; this recipe reads "
+                f"'{TEXT_COLUMN}' and would otherwise assemble a corpus of empty strings.")
+        before = len(rows)
+        try:
+            for batch in handle.iter_batches(columns=[TEXT_COLUMN]):
+                rows.extend(batch.column(0).to_pylist())
+        except Exception as e:
+            raise SystemExit(
+                f"build-track: {name} from {src['repo']} could not be read to the end "
+                f"({type(e).__name__}: {e}). A truncated shard would give a pool shorter than "
+                f"the one the manifest describes, so the build stops rather than recording a "
+                f"count it cannot stand behind.") from e
+        log(f"    {name}: {len(rows) - before} rows")
+    return rows
+
+
+def _read_with_datasets(src, files):
+    """The escape hatch for a repository whose layout this module declines to model.
+
+    Nothing in SOURCES needs it today, and it is here rather than a guess because the one failure
+    this path must not have is reading a repository NEARLY correctly: a wrong shard order or a
+    missed shard writes a corpus that loads, splits and scores, and is not the corpus the manifest
+    says it is. `datasets` knows every layout the Hub has ever had, so an unfamiliar one is handed
+    to it, and an install without it is told which source needed it and why.
     """
     try:
         from datasets import load_dataset
     except ImportError as e:
         raise SystemExit(
-            "build-track: the `datasets` package is required to fetch the upstream corpora. "
-            "Install it with `pip install datasets`.") from e
-    log(f"  fetching {src['repo']} split={src['split']} revision={src['revision'][:12]}")
+            f"build-track: {src['repo']} does not keep its '{src['split']}' split as parquet in "
+            f"a layout this tool reads on its own, so reading it needs the `datasets` package: "
+            f"pip install 'senbonzakura[hub]'. It holds {sorted(files)[:10]}.") from e
     try:
         ds = load_dataset(src["repo"], split=src["split"], revision=src["revision"])
     except Exception as e:
@@ -176,7 +285,35 @@ def fetch(src, log=print):
             f"build-track: {src['repo']} has columns {sorted(ds.column_names)} and no "
             f"'{TEXT_COLUMN}' column. The schema has changed upstream; this recipe reads "
             f"'{TEXT_COLUMN}' and would otherwise assemble a corpus of empty strings.")
-    rows = [str(t).strip() for t in ds[TEXT_COLUMN]]
+    return list(ds[TEXT_COLUMN])
+
+
+def fetch(src, log=print):
+    """The prompt rows of one upstream, at its pinned revision, in upstream order.
+
+    Order is upstream's own and is never shuffled here. The split into fit, search and measure
+    happens downstream in `senbonzakura track`, which is seeded and records its boundaries; a
+    shuffle at this layer would put an unrecorded permutation underneath a recorded one.
+
+    WHY THIS READS PARQUET ITSELF RATHER THAN CALLING `datasets`.
+
+    It used to open with `from datasets import load_dataset`, and `datasets` is the `hub` extra,
+    not a base dependency. Every install string this project documents is the bare package, so a
+    stranger following the guide got two commands in and stopped, on the command every command
+    after it needs. The two ways out were adding the heaviest thing in the tree back to the first
+    run, or reading the rows with what is already there. `huggingface_hub` fetches the shards at
+    the pinned revision and `pyarrow` reads them, both base dependencies, and `trackio.py` already
+    does the same job for a track's own tables for the same reason.
+
+    Identical rows, identical order, identical digests: the shards are the ones the repository
+    holds at that commit, read in name order, which is the order `datasets` reads them in.
+    """
+    log(f"  fetching {src['repo']} split={src['split']} revision={src['revision'][:12]}")
+    files = _repo_files(src)
+    shards = _split_shards(files, src["split"])
+    raw = (_read_with_datasets(src, files) if shards is None
+           else _read_parquet(src, shards, log=log))
+    rows = [str(t).strip() for t in raw]
     rows = [t for t in rows if t]
     if not rows:
         raise SystemExit(

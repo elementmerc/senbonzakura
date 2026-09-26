@@ -17,13 +17,25 @@ acceptable-use terms before downloading, and an automated scraper does not get i
 The gate collects nothing about you beyond what HuggingFace needs to operate it; it exists to
 make the agreement intentional, not to build a list.
 
-**The wheel you install from PyPI is a different matter, and you should know it.** The same rows
-ship inside the package as `--track default`, so `pip install senbonzakura` puts roughly 6,200
-harmful prompts in your site-packages with no gate and no terms accepted. They are obfuscated
-rather than protected: the key ships beside them, and anyone who wants them can have them in an
-afternoon. The gate on the HuggingFace copy does not apply to them. Saying only the paragraph
-above would leave the impression that a `pip install` is prompt-free, and it is not. `senbonzakura track build` rebuilds a pool of
-the same shape from the same upstreams for anyone who would rather fetch the sources themselves.
+**A released wheel is a different matter, and you should know it.** The same rows ship inside the
+released package as `--track default`, so installing a release puts roughly 6,200 harmful prompts
+in your site-packages with no gate and no terms accepted. They are obfuscated rather than
+protected: the key ships beside them, and anyone who wants them can have them in an afternoon. The
+gate on the HuggingFace copy does not apply to them. Saying only the paragraph above would leave
+the impression that every install is prompt-free, and a release is not.
+
+**Which channel carries what, today.** The claim above is about the release, not about any command
+you can run right now, because neither obtainable install carries the rows:
+
+| Channel | Carries the 6,200 rows? |
+|---|---|
+| A released wheel with the bundled track | Yes, as `--track default`, with no gate |
+| PyPI today (0.3.0, July 2026) | No. It predates the bundled track, and its numbers are withdrawn |
+| `pip install git+...@dev` from this repository | No. The two `.bin` blobs under `src/senbonzakura/data/` are generated rather than committed, so a build from a clone carries neither |
+| The HuggingFace dataset | Yes, gated, under CC BY-NC 4.0 |
+
+`senbonzakura track build` rebuilds a pool of the same shape from the same upstreams for anyone who
+would rather fetch the sources themselves.
 
 ## What it is
 

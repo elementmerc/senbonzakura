@@ -11,15 +11,14 @@ something. Every open item is named below the table, and one row has since been 
 outright. Nothing here is hidden and nothing here is settled.
 :::
 
-::: danger The coherence row is superseded, 2026-09-10. Do not quote it.
+::: danger The KL divergence row is superseded, 2026-09-10. Do not quote it.
 **Two rows of the table below are the 2026-08-12 run and three are the 2026-09-10 one**, and the
 table says which is which. In the 2026-08-12 run **Heretic was not given the best-of-N selection
 pass that Senbonzakura gave itself**; on 2026-09-10 both tools got it. This box used to say the
 whole table was the older run, which was true when it was written and progressively less true as
-each row was corrected. With both tools selected the same way, the coherence difference
-disappeared:
+each row was corrected. With both tools selected the same way, the difference disappeared:
 
-| Coherence drift, both tools selected the same way | Senbonzakura | Heretic |
+| First-token KL divergence (`senbonzakura drift`), both tools selected the same way | Senbonzakura | Heretic |
 |---|---|---|
 | mean over five seeds | 0.0545 | 0.1227 |
 | **median** over five seeds | **0.0510** | **0.0573** |
@@ -27,12 +26,20 @@ disappeared:
 
 One Heretic seed (seed 43, at 0.3591 against siblings of 0.0439 to 0.1075) carries the entire mean
 difference. Drop it and Heretic's mean is 0.0636 against our 0.0545. An exact permutation test over
-the ten seeds returns **p = 0.238**, so there is **no detectable coherence difference on this model
-at this size**, and the earlier "roughly half the collateral damage" is not a finding.
+the ten seeds returns **p = 0.238**, so there is **no detectable difference in first-token KL
+divergence on this model at this size**, and the earlier "roughly half the collateral damage" is
+not a finding.
+
+The row is named after the command that produced it because this project has two coherence
+instruments answering two different questions, and a reader who mixes them up will compare numbers
+that were never on one scale. `senbonzakura drift` reports KL divergence between the base model's
+and the edited model's first-token distributions on harmless prompts, which is every figure in
+this block. `senbonzakura coherence` reports perplexity on one fixed passage of ordinary English,
+which appears nowhere on this page.
 
 The per-seed values are listed above in full precisely so this block does not have to be taken on
 trust, and **the run's artefacts are now published**: 31 aggregate JSON files plus a README under
-[`head-to-head/results/2026-09-10/`](https://github.com/elementmerc/senbonzakura/tree/main/head-to-head/results/2026-09-10),
+[`head-to-head/results/2026-09-10/`](https://github.com/elementmerc/senbonzakura/tree/dev/head-to-head/results/2026-09-10),
 carrying no prompts and no weights. This paragraph previously said publishing them was an open
 decision; it was taken, and the paragraph was not updated. `CONTRACT.md` §4 asks for the record,
 and for this run the record is here, so every number in the block above can be re-derived rather
@@ -43,7 +50,7 @@ negligible; the direction was not, and it was reported the wrong way round here 
 
 The re-run's arms ARE committed to this repository, under `head-to-head/results/2026-09-10/`, so
 the gap named in
-[CONTRACT.md](https://github.com/elementmerc/senbonzakura/blob/main/head-to-head/CONTRACT.md) 4
+[CONTRACT.md](https://github.com/elementmerc/senbonzakura/blob/dev/head-to-head/CONTRACT.md) 4
 is closed for this run. This box said the opposite until 2026-09-25, which understated the
 project's own reproducibility rather than overstating it. What remains provisional is the older
 2026-08-12 run, whose arms are not here.
@@ -59,7 +66,7 @@ top to bottom was told something the corrections four hundred lines below quietl
 | Hard refusal | 0.1% | 0.0% | **2026-09-10** | both tools selected the same way |
 | Noncompliance (refusal plus hedging) | ~~3.6%~~ | ~~1.9%~~ | 2026-08-12 | withdrawn, see below |
 | Keyword rate | 20.1% | **12.9%** | **2026-09-10** | both tools selected the same way |
-| Coherence drift | ~~0.191~~ | ~~0.341~~ | 2026-08-12 | superseded, see above |
+| First-token KL divergence (`senbonzakura drift`) | ~~0.191~~ | ~~0.341~~ | 2026-08-12 | superseded, see above |
 | Harm recognition | 0.9870 | 0.9872 (tie) | **2026-09-10** | both tools selected the same way |
 
 **One model.** Every figure above is Qwen3-1.7B at 1.7B parameters. The five seeds are stated
@@ -84,7 +91,7 @@ detector, and not before.
 :::
 
 **The two tools' self-reported figures are not a comparison, and that is the durable point.**
-Heretic self-reports a coherence divergence of 0.0014 to 0.0032 against our 0.157 to 0.212, a
+Heretic self-reports a KL divergence of 0.0014 to 0.0032 against our 0.157 to 0.212, a
 hundredfold apart, because each measured its own model on its own prompts during its own search.
 Put them on one instrument, on prompts held back from both, and that hundredfold gap goes away. An
 apparent reversal was published here for a month on the strength of a run in which only one tool

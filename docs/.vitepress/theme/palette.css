@@ -144,3 +144,37 @@
   color: var(--vp-c-text-2);
   margin-top: -0.75rem;
 }
+
+/*
+ * CONTRAST INSIDE CAVEAT BLOCKS, which is where this project puts the things that matter.
+ *
+ * VitePress tints a custom block with `--vp-c-brand-soft` and colours the inline code inside it
+ * from the same brand ramp. On the dark theme those land close enough together to be a problem:
+ * measured 2026-09-26, code inside a tip or warning ran at 3.47:1 against the block's effective
+ * background of #282e38, under the 4.5:1 that WCAG AA asks for body text. The operator read a
+ * caveat block and could not make out the file path in it.
+ *
+ * That is worse here than it would be elsewhere. The blocks carry the withdrawn figures, the
+ * conditions on a number, and the paths to the artefacts a reader is invited to recompute. A
+ * condition nobody can read is a condition nobody reads.
+ *
+ * Measured against #282e38, the tint over the dark page background:
+ *   #6d81a6   3.47:1   what it was
+ *   #d7e0f0  10.28:1   code, now
+ *   #b6c5de   7.82:1   links, now
+ * Light mode was already fine at 6.80:1 and is left alone.
+ */
+.dark .vp-doc .custom-block code {
+  color: #d7e0f0;
+  background-color: rgba(18, 21, 27, 0.55);
+}
+
+.dark .vp-doc .custom-block a {
+  color: #b6c5de;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dark .vp-doc .custom-block a code {
+  color: #b6c5de;
+}

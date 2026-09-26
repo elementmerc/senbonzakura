@@ -40,7 +40,9 @@ import argparse
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -119,9 +121,7 @@ RULES: list[tuple[str, str, str]] = [
     (r"^senbonzakura track\b", SKIP,
      "builds or audits a track, which needs a corpus this machine is not given"),
     (r"^senbonzakura score\b", SKIP, "scores a model: card and weights"),
-    (r"^senbonzakura check [^-]", SKIP,
-     ("reads a result artefact the page does not create first. THE GAP WORTH CLOSING: a reader "
-      "following the page has one, so this is the command most worth running against a fixture")),
+
 
     # A command whose inputs an EARLIER LINE OF THE SAME BLOCK produces. Run on its own it
     # fails on a missing file, which says nothing about whether the documented sequence works.
@@ -139,6 +139,40 @@ RULES: list[tuple[str, str, str]] = [
     (r"^senbonzakura track (list|show|info)\b", RUN, ""),
     (r"^python3? -c ", RUN, ""),
 ]
+
+
+
+def make_scratch() -> pathlib.Path:
+    """A working directory holding what the documented commands expect to find.
+
+    TWO PROBLEMS, ONE ANSWER.
+
+    The commands used to run with the repository root as the working directory, so every example
+    that passes `--out something.json` wrote into the checkout. A tool that checks the docs should
+    not modify the tree it is checking.
+
+    And `senbonzakura check` takes a path. The pages name `run.json`, `results/` and
+    `head-to-head/results/`, which a reader HAS because they just produced one, and which this
+    runner did not, so the single most-used command in the reference was skipped. Rewriting the
+    path to point at a fixture would have tested a command nobody runs. Creating the files the page
+    names, and then running the command verbatim, tests the command on the page.
+
+    The fixtures are this project's own committed artefacts, so the check is reading something real
+    rather than a hand-made shape that happens to satisfy it.
+    """
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="senbon-docs-"))
+    evidence = ROOT / "evidence"
+    if evidence.is_dir():
+        shutil.copytree(evidence, scratch / "evidence")
+    artefacts = sorted(evidence.glob("*/*.json")) if evidence.is_dir() else []
+    if artefacts:
+        shutil.copy(artefacts[0], scratch / "run.json")
+        for name in ("results", "head-to-head/results"):
+            d = scratch / name
+            d.mkdir(parents=True, exist_ok=True)
+            for a in artefacts[:3]:
+                shutil.copy(a, d / a.name)
+    return scratch
 
 
 def _ours(path: pathlib.Path) -> bool:
@@ -224,7 +258,7 @@ def classify(line: str):
     return None, ""
 
 
-def run_one(line: str, binary_dir: pathlib.Path, timeout: int):
+def run_one(line: str, binary_dir: pathlib.Path, timeout: int, cwd: pathlib.Path):
     """Run a documented command, with the install under test first on PATH."""
     try:
         argv = shlex.split(line)
@@ -234,14 +268,21 @@ def run_one(line: str, binary_dir: pathlib.Path, timeout: int):
     env = dict(__import__("os").environ, PATH=env_path)
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                              check=False, cwd=ROOT, env=env)
+                              check=False, cwd=cwd, env=env)
     except FileNotFoundError:
         return False, f"{argv[0]}: not found on PATH"
     except subprocess.TimeoutExpired:
         return False, f"still running after {timeout}s"
     # `doctor` exits 1 for advisories and says so in its own output; that is a working command.
-    ok = done.returncode == 0 or (argv[0].startswith("senbonzakura") and done.returncode == 1
-                                  and "advisories only" in (done.stdout + done.stderr))
+    out = done.stdout + done.stderr
+    ok = done.returncode == 0
+    # `doctor` exits 1 for advisories and says so; that is a working command.
+    if not ok and argv[0].startswith("senbonzakura") and done.returncode == 1:
+        ok = "advisories only" in out
+    # `check` exits 1 when it FINDS something, which is the command working. Exit 2 is the tool
+    # failing to read what it was given, and that is the failure this runner is looking for.
+    if not ok and "check" in argv[:2] and done.returncode == 1:
+        ok = True
     if ok:
         return True, ""
     tail = (done.stderr or done.stdout).strip().splitlines()
@@ -257,6 +298,7 @@ def main(argv=None):
     p.add_argument("--timeout", type=int, default=180)
     a = p.parse_args(argv)
 
+    scratch = make_scratch()
     unclassified, failures, ran, skipped = [], [], 0, {}
     for page, line_no, line in commands():
         disposition, reason = classify(line)
@@ -266,7 +308,7 @@ def main(argv=None):
         if disposition == SKIP or (disposition == NETWORK and not a.network):
             skipped.setdefault(reason or "needs the network", []).append(f"{page}:{line_no}")
             continue
-        ok, why = run_one(line, a.bin, a.timeout)
+        ok, why = run_one(line, a.bin, a.timeout, scratch)
         ran += 1
         if ok:
             print(f"  ok    {page}:{line_no}  {line[:70]}")
@@ -274,6 +316,7 @@ def main(argv=None):
             print(f"  FAIL  {page}:{line_no}  {line[:70]}")
             failures.append(f"{page}:{line_no}: {line}\n          {why}")
 
+    shutil.rmtree(scratch, ignore_errors=True)
     print(f"\n{ran} documented command(s) run, {len(failures)} failed.")
     print("\nNot run, and why:")
     for reason, where in sorted(skipped.items()):

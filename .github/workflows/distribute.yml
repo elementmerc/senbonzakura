@@ -234,7 +234,38 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: A rolling build may not wear a release version
+        # THE HAZARD, and it is not the wheel check being fussy. This lane publishes a PUBLIC rolling
+        # pre-release that anybody can install, and it deliberately ships without the packed
+        # evaluation track, because that track is cut from a held-out corpus kept off the build
+        # machines and no CI job can make one. That was a fair trade while `dev` declared
+        # `0.4.0.dev9`: a pre-release is allowed to be thin and the release notes say so.
+        #
+        # It stops being a fair trade the moment `dev` declares `0.4.0`. The rolling wheel's metadata
+        # would then read `senbonzakura 0.4.0`, identical to the real release heading for PyPI, while
+        # `--track default` fails for everyone who installed it. That is the 0.3.0 defect with a
+        # version number that hides it, and a user comparing two wheels both called 0.4.0 has nothing
+        # to go on. `check_wheel.py` caught it on the first push after the bump, which is the
+        # "a flag can be forgotten, a version cannot" hardening doing precisely its job.
+        #
+        # So the lane stands down between the version bump and the tag, loudly. Suppressing the
+        # artefact is the cheap and correct half; giving the rolling build a local version of its own
+        # (`0.4.0+rolling.<sha>`, which can never be mistaken for the release) is the better one, and
+        # it is recorded in DEFERRED.md rather than improvised here.
+        id: version
+        run: |
+          set -euo pipefail
+          v=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/senbonzakura/_version.py').read_text()).group(1))")
+          echo "declared=$v" >> "$GITHUB_OUTPUT"
+          if printf '%s' "$v" | grep -q '\.dev'; then
+            echo "rolling=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::the tree declares $v, a release version, so the rolling pre-release is suppressed: it would publish a wheel calling itself $v without the packed track, which is indistinguishable from the real release and fails --track default"
+            echo "rolling=no" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build the bundled data, because a checkout does not carry it
+        if: steps.version.outputs.rolling == 'yes'
         # WITHOUT THIS THE FAST LANE PUBLISHES A WHEEL WITH NO CORPORA, which is the defect the
         # step below exists to catch and the same one that made the Colab notebook unusable. They
         # are generated rather than committed on purpose: they hold 4,895 harmful prompts and the
@@ -249,6 +280,7 @@ jobs:
           python tools/packaging/build_corpora.py
 
       - name: Build both distributions
+        if: steps.version.outputs.rolling == 'yes'
         run: |
           set -euo pipefail
           python -m pip install --upgrade build
@@ -256,6 +288,7 @@ jobs:
           python -m build checker --outdir dist
 
       - name: The wheel carries what it claims
+        if: steps.version.outputs.rolling == 'yes'
         # The same check the release path runs. A fast lane that skipped it would be a fast lane
         # for shipping a wheel with no corpora in it, which is the defect this project has already
         # shipped once.
@@ -289,6 +322,7 @@ jobs:
           done
 
       - name: The wheel this lane publishes is not a thin one
+        if: steps.version.outputs.rolling == 'yes'
         # The fast lane publishes a rolling pre-release somebody can actually install, and a wheel
         # without the corpora installs, imports, answers `--help` and then fails `--track default`
         # for every one of them. That is not hypothetical: it is what made the Colab notebook
@@ -315,6 +349,7 @@ jobs:
           echo "the published wheel carries its corpora and its track"
 
       - name: Publish or refresh the rolling pre-release
+        if: steps.version.outputs.rolling == 'yes'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # One rolling tag rather than a release per commit. `dev` moves; anybody who wants a fixed

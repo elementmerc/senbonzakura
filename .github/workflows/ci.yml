@@ -644,7 +644,14 @@ jobs:
           pip install build
           python -m build --wheel --outdir dist-ci
       - name: The tag and the contents agree
-        run: python tools/ci/check_wheel.py dist-ci/*.whl
+        # `--intermediate`, because this wheel is built from a plain clone and is published nowhere.
+        # The packed evaluation track is cut from a held-out corpus kept off the build machines on
+        # purpose, so no CI job can produce one, and this job never had to say so while the version
+        # carried a `.devN`: the release checks turn themselves on at a release version, and the
+        # first push after the 0.4.0 bump failed here on a track that cannot exist in CI. The flag
+        # skips that question and the PyPI tag question, and nothing else. This job's own name is
+        # what it still asks.
+        run: python tools/ci/check_wheel.py dist-ci/*.whl --intermediate
       - name: The source distribution carries nothing platform-specific
         run: |
           python -m build --sdist --outdir dist-ci

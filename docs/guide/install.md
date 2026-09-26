@@ -115,8 +115,33 @@ If you'd rather not have them, build the wheel yourself without running
 `senbonzakura corpora` and `tools/packaging/pack_track.py`; everything except the bundled defaults
 still works, and the tool tells you what to run if you ask for one.
 
-A man page goes to `share/man/man1/senbonzakura.1`, so `man senbonzakura` works if your
-system picks up manuals from wherever pip put them. Mine doesn't. Yours might.
+A man page goes to `share/man/man1/senbonzakura.1`, and `man senbonzakura` finds it
+whenever the environment you installed into is the one you're using. `man` builds its
+search path from `PATH`: for every `.../bin` on it, `man` also looks in the sibling
+`.../share/man`. So activating the virtualenv is all it takes.
+
+```sh
+man senbonzakura        # with the virtualenv active
+```
+
+If it says `No manual entry`, the install route is what decides it.
+
+| Route | Works? | Why |
+|---|---|---|
+| Virtualenv, activated | Yes | The venv's `bin` is on `PATH`, so its `share/man` is on the manual path |
+| `pip install --user` | Yes, if `~/.local/bin` is on `PATH` | Same rule, applied to `~/.local` |
+| `pipx install` | No | The executable is linked into `~/.local/bin`, but the page stays in pipx's own virtualenv, which never reaches `PATH` |
+
+For the pipx case, or any other time you want the page without activating anything,
+point `man` straight at the file:
+
+```sh
+man "$(python -c 'import sysconfig,pathlib; print(pathlib.Path(sysconfig.get_path("data"))/"share/man/man1/senbonzakura.1")')"
+```
+
+Measured on Debian's `man-db` 2026-09-26. **This page used to say the page probably
+wouldn't be found, and that was wrong**: the machine it was written on had a broken
+`man` binary, and a local fault got written down as a property of the tool.
 
 ## If you're checking our numbers rather than using the tool
 

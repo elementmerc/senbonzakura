@@ -209,7 +209,7 @@ jobs:
         # The floor comes from this row's matrix entry, where the measurement that justifies it
         # is written down. `pyproject.toml` still carries fail_under = 95, which is what a bare
         # `pytest` meets locally and what four of these five rows meet here.
-        run: pytest --cov-report=xml --cov-fail-under=${{ matrix.floor }}
+        run: pytest -n 4 --cov-report=xml --cov-fail-under=${{ matrix.floor }}
 
       - name: Publish coverage to Codecov
         # ONE matrix row uploads, not five. Five uploads of the same suite measured on five
@@ -437,7 +437,7 @@ jobs:
         #
         # 94, from the measurement, never above it. The honest route back to 95 is to fetch the
         # artefacts here too, which costs this job the no-network property it exists to prove.
-        run: pytest --cov-fail-under=94
+        run: pytest -n 4 --cov-fail-under=94
 
   dependency-floor:
     # Installs the *lowest* version each declared dependency permits. Without this
@@ -506,7 +506,7 @@ jobs:
         # weaker, and CI said so within the hour. The lesson is the project's own and I walked
         # past it: a claim about the weakest case has to be measured on every case, not on the
         # one nearest to hand.
-        run: pytest --cov-fail-under=94.5
+        run: pytest -n 4 --cov-fail-under=94.5
 
   archive:
     # THE SUITE FROM A TREE THAT IS NOT A GIT CHECKOUT.
@@ -562,7 +562,7 @@ jobs:
         working-directory: /tmp/archive
         # No coverage gate: this job is about WHERE the tree is, and the gate is measured by the
         # matrix rows that run in a checkout.
-        run: python -m pytest -q --no-cov
+        run: python -m pytest -q -n 4 --no-cov
 
   checker:
     # THE TORCH-FREE DISTRIBUTION, RESOLVED FOR REAL (decision Q-29).

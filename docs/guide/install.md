@@ -1,32 +1,31 @@
 # Install
 
-::: warning Not from PyPI, not yet
-PyPI currently serves **0.3.0**, from July 2026. The CHANGELOG says not to trust its numbers, and
-it is not the code these pages describe. The current work is on `dev` and is not released,
-because the companion package `senbonzakura-check` is not on PyPI yet and this version depends on
-it by name, so `pip install senbonzakura` can't give you the software this page documents.
-Verified 2026-09-22.
-
-Until the checker is published, the repository is the only route, and it's the command below.
-:::
-
-Two commands, and then you can go and read the interesting pages.
+One command, and then you can go and read the interesting pages.
 
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
-            "git+https://github.com/elementmerc/senbonzakura@dev"
+pip install senbonzakura
 senbonzakura setup
 ```
 
-Both URLs go in the same `pip install` because `senbonzakura` names `senbonzakura-check` as a
-dependency: given on its own, the big one looks for the small one on PyPI and does not find it.
-Given together, pip resolves both from this repository. Neither needs a clone.
+`senbonzakura` names `senbonzakura-check` as a dependency, so pip fetches both. The small one is
+torch-free and installs in seconds; you can also install it on its own with
+`pip install senbonzakura-check` if all you want is to check somebody's result file.
 
-**`@dev` is load-bearing.** Without it pip takes the repository's default branch, which is `main`,
-and `main` is a long way behind the work these pages describe: it predates `checker/` entirely, so
-the first URL fails with *"does not appear to be a Python project"* and the second installs
-something close to the withdrawn 0.3.0 this page is warning you off. That was the documented
-command here until 2026-09-23, and it had never been run.
+::: tip What changed
+Until 0.4.0 this page said "not from PyPI, not yet" and gave a pair of `git+` URLs instead. PyPI
+served 0.3.0, whose numbers are withdrawn, and `senbonzakura-check` was not published at all, so
+`pip install senbonzakura` could not resolve. Both packages are on PyPI from 0.4.0 and the command
+above is the whole install.
+:::
+
+**You get the evaluation track with it.** The wheel carries the packed track and six research
+corpora, so `--track default` works immediately. That is roughly 6,200 harmful prompts on your
+disk; the README's "what this repository does not contain" section has the detail.
+
+**On Linux you get the quantiser too.** pip picks the most specific wheel that fits, so glibc 2.35
+or newer gets one carrying llama.cpp's binaries and `convert` and `quantise` work straight away.
+Everywhere else the universal wheel installs and works without them. `senbonzakura doctor` says
+which one you received.
 
 ::: warning One thing that install does not give you: `--track default`
 The two `.bin` blobs in `src/senbonzakura/data/` are generated rather than committed, because they

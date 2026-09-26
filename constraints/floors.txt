@@ -50,6 +50,9 @@ sentencepiece==0.1.98
 datasets==2.15
 pytest==7.0.0
 pytest-cov==4.0.0
+# The floor for the parallel runner. `-n 4` is what every suite job uses, so the
+# oldest xdist the project permits has to be one that still understands it.
+pytest-xdist==3.2.0
 build==1.0.0
 shtab==1.6.0
 # Test-only, and only where `tomllib` is not in the standard library.

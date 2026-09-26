@@ -104,7 +104,12 @@ python -m build --wheel
 # own tree, and this script takes a single positional argument: it exits 2 on "unrecognized
 # arguments" having checked nothing. That is how the distribute workflow shipped a release lane
 # whose wheel check had never once run.
-for w in dist/*.whl; do python tools/ci/check_wheel.py "$w"; done   # tag-versus-contents only
+# `--intermediate`, because this wheel is the INPUT to the repair below and is published nowhere.
+# Without it the release checks turn themselves on at a release version and refuse the bare
+# `linux_x86_64` tag, which is the correct tag for this artefact and the whole reason it gets
+# repaired. Every other check still runs, including tag-versus-contents, which matters most here:
+# this is the wheel carrying the binaries.
+for w in dist/*.whl; do python tools/ci/check_wheel.py "$w" --intermediate; done
 tools/packaging/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
 python tools/ci/check_wheel.py dist-manylinux/*.whl --release
 

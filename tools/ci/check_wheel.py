@@ -425,6 +425,18 @@ def main(argv=None):
                         "plain clone has none of them, because they are generated artefacts kept "
                         "out of git on purpose, and it installs and imports perfectly happily. "
                         "That wheel is fine for CI and must never reach PyPI.")
+    p.add_argument("--intermediate", action="store_true",
+                   help="this wheel is the INPUT to `repair_manylinux.sh` and is published nowhere, "
+                        "so do not ask whether PyPI would take its platform tag. Everything else is "
+                        "still checked, including that the tag matches the contents, which is the "
+                        "check this artefact most needs: it is the one carrying the binaries. "
+                        "RELEASING.md's step 4 builds this wheel and then repairs it, and until "
+                        "2026-09-26 there was no way to say so: the release checks turn themselves "
+                        "on at a release version and then refuse the bare `linux_x86_64` tag, which "
+                        "is the correct tag for this artefact and the reason it gets repaired. So "
+                        "the documented order could not pass at a release version, and it had never "
+                        "been run at one, because every previous build was a `.devN` where those "
+                        "checks stay off.")
     p.add_argument("--expect-failure", action="store_true",
                    help="invert the verdict: the wheel MUST be found dishonest. CI builds a "
                         "deliberately mislabelled wheel and runs this, because a gate only ever "
@@ -478,8 +490,18 @@ def main(argv=None):
         # wheels (the deliberately mislabelled one CI builds, and the fixtures in the tests),
         # which carry no licence and are not supposed to.
         found += (missing_release_data(a.wheel) + missing_licences(a.wheel)
-                  + unacceptable_to_pypi(info) + leaks_a_build_path(a.wheel)
+                  + leaks_a_build_path(a.wheel)
                   + prerelease_dependency_in_a_release(a.wheel))
+        # THE ONE CHECK AN INTERMEDIATE IS EXEMPT FROM, and only this one. `--intermediate` says the
+        # wheel is the input to `repair_manylinux.sh` and goes nowhere, so "would PyPI take this
+        # tag" is not a question about it; the answer is no by construction, which is why it is
+        # repaired. Every other release check still runs, including the tag-versus-contents one,
+        # because this is the artefact that actually carries the binaries.
+        if not a.intermediate:
+            found += unacceptable_to_pypi(info)
+        else:
+            print("  intermediate    the PyPI tag question is skipped; this wheel is the input to "
+                  "repair_manylinux.sh and is published nowhere")
     for line in found:
         print(f"  PROBLEM: {line}")
 

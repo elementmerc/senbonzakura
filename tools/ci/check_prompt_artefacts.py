@@ -714,12 +714,19 @@ def main(argv=None) -> int:
     if not findings:
         if not targets:
             # "0 file(s) clean" reads as a pass, and it is not one: it means nothing was
-            # looked at. A directory of results that are not yet tracked expands to nothing,
-            # so the most natural way to use this tool before committing is exactly the case
-            # that silently checked nothing.
-            print("prompt-artefact check: nothing to check. A directory expands to what git "
-                  "TRACKS under it, so untracked files are skipped; name them directly to "
-                  "check them before they are staged.")
+            # looked at. Both ways of reaching zero are reported, and they are reported
+            # SEPARATELY, because the two causes need opposite responses and a single message
+            # covering both hands the reader an explanation that is not theirs. The `--staged`
+            # case is routine and needs nothing; the named-path case means the thing they
+            # meant to check was never opened.
+            if a.staged:
+                print("prompt-artefact check: no staged file is of a kind this gate inspects, "
+                      "so nothing was checked. That is expected for code and prose; it is NOT a "
+                      "statement that any result artefact passed.")
+            else:
+                print("prompt-artefact check: nothing to check. A directory expands to what git "
+                      "TRACKS under it, so untracked files are skipped; name them directly to "
+                      "check them before they are staged.")
             return 0
         skipped = f", {len(_SKIPPED)} skipped as vendored" if _SKIPPED else ""
         print(f"prompt-artefact check: {len(targets)} file(s) clean{skipped}")

@@ -109,7 +109,13 @@ def build_args(argv=None):
                     help="where to write the results json. One file holds every experiment that "
                          "ran, keyed by name, so a later `--experiment` on the same path replaces "
                          "the file rather than merging into it")
-    ap.add_argument("--device", default="cuda", help="cuda, cuda:N, or cpu")
+    ap.add_argument("--device", default="cuda",
+                    help="cuda, cuda:N, or cpu (default: cuda). THE DEFAULT IS STATED "
+                         "because it decides whether the command runs at all: on a machine "
+                         "with no card the default fails, and until 2026-09-26 the only way "
+                         "to learn what it was was to trigger that failure. `senbonzakura "
+                         "doctor` reports what this machine has, without a card and without "
+                         "a download")
     ap.add_argument("--chat-template", dest="chat_template", default="",
                     help="a Jinja chat template for a model that ships none: a path, or the name "
                          "of one this tool bundles ('plain'). Every experiment here loads a model "

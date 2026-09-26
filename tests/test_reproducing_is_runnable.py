@@ -51,10 +51,16 @@ def _runnable_blocks():
     A `python -c` block touches the repository and stops there. Everything else in this document
     wants a GPU, a corpus, a network or an installed console script, and a test that silently
     decided one of those was available would be reporting on the wrong thing.
+
+    BOTH SPELLINGS OF THE INTERPRETER, since 2026-09-26. The document said `python -c`, and a
+    reviewer following it literally on a stock Debian box got `python: command not found`, because
+    outside a virtualenv there is only `python3`. The snippets were corrected and this matcher went
+    quiet on all of them at once, which the test below caught by refusing to treat zero runnable
+    blocks as a pass. That refusal is why the correction did not silently disarm its own guard.
     """
     out = []
     for lang, body in _blocks(REPRODUCING):
-        if lang in ("sh", "bash", "console") and body.lstrip().startswith("python -c"):
+        if lang in ("sh", "bash", "console") and body.lstrip().startswith(("python -c", "python3 -c")):
             out.append(body)
     return out
 
@@ -78,7 +84,8 @@ def test_every_no_hardware_block_in_reproducing_exits_zero(block):
     # and `sys.executable` is the interpreter under test, so the 3.10 job checks the block on 3.10
     # rather than on whatever `python` happens to resolve to there.
     argv = shlex.split(block)
-    assert argv[:2] == ["python", "-c"], f"not a `python -c` block after parsing: {argv[:2]}"
+    assert argv[0] in ("python", "python3") and argv[1] == "-c", (
+        f"not a `python -c` or `python3 -c` block after parsing: {argv[:2]}")
     done = subprocess.run([sys.executable, "-c", *argv[2:]], cwd=ROOT, capture_output=True,
                           text=True, timeout=120, check=False)
     assert done.returncode == 0, (

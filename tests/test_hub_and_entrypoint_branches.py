@@ -267,8 +267,16 @@ def test_a_quantiser_that_is_not_vendored_is_reported_as_unavailable(monkeypatch
     monkeypatch.setattr(doctor, "find_binary", _boom, raising=False)
     monkeypatch.setattr("senbonzakura.vendored.find_binary", _boom)
     got = doctor.check_quantize()
-    assert got.status == "fail"
+    # AN ADVISORY SINCE 2026-09-26, and the old assertion of "fail" is recorded here rather than
+    # simply replaced. It was a faithful test of a status that was itself the problem: the universal
+    # wheel carries no binaries by design, because PyPI refuses a `linux_x86_64` tag, so `doctor`
+    # was printing "This install cannot do what it claims" and exiting 2 at people whose install was
+    # exactly as documented. Six of seven readers in that day's user pass reported it independently.
+    # Only `convert` and `quantise` need the binary; nothing on the measurement side does.
+    assert got.status == "warn"
     assert got.detail == "not available"
+    assert got.fix and got.fix.strip().lower() != got.detail.strip().lower(), (
+        "the remedy restates the detail, which is the other half of what those readers reported")
 
 
 def _quantize_saying(monkeypatch, output, exe="/x/llama-quantize"):

@@ -433,12 +433,20 @@ def main(argv=None):
 
     check_the_documented_compass_figure(out)
 
+    # SAME ALLOWANCE AS THE STEP ABOVE, and missing it here is why CI stayed red after the first
+    # fix. Two compass calls in one file, one corrected, its sibling left: the defect shape this
+    # project keeps finding, committed by me while fixing an instance of it.
+    #
+    # The model under test here is a 135M model that has just been abliterated, so it is even less
+    # able to tell a harmful request from a harmless one than the stock one above. A suspect readout
+    # is the expected outcome and `MARGIN_DONE` is still required, so the stage still proves the
+    # command ran and wrote its artefact.
     run("the compass, on the same model",
         ["senbonzakura", "compass", "--model", str(model_dir),
          "--harmful", str(TRACK / "bad_eval_ds"), "--harmless", str(TRACK / "good_ds"),
          "--skip-harmful", "0", "--skip-harmless", "0", "--n", "8",
          "--out", str(out / "compass.json"), "--device", "cpu"],
-        expect_marker="MARGIN_DONE")
+        expect_marker="MARGIN_DONE", allow_self_invalidated=True)
 
     prompts = out / "prompts.txt"
     sys.path.insert(0, str(ROOT / "src"))

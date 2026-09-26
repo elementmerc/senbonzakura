@@ -448,3 +448,36 @@ def test_the_token_is_not_written_into_the_summary(tmp_path, monkeypatch):
         (tmp_path / measure.OUTPUTS[name]).write_text("{}") or 0))
     measure.main(["m", "--out", str(tmp_path), "--hf-token", "hf_secret"])
     assert "hf_secret" not in (tmp_path / "measure.json").read_text()
+
+
+def test_a_stage_that_invalidated_its_own_figure_is_not_reported_as_a_number():
+    """THE WORSE INSTANCE OF THE SAME DEFECT, because this table exists to be quoted.
+
+    A first-time reader on 2026-09-26 got `THE AUC ABOVE IS NOT A MEASUREMENT OF HARM
+    DISCRIMINATION` from the compass and exit 0. That was fixed at the shell, through
+    `entry.exit_status`. `measure` calls each stage in process and returns what its `main` returns,
+    so it never passes through `exit_status` and would have printed that AUC into the one artefact
+    the documentation tells a reader to quote from, with a partition caption beside it and no hint
+    that the producing stage had disowned the number.
+    """
+    res = {"compass": {"self_invalidated": True,
+                       "metrics": {"compass_auc.margin-past-preamble": {"value": 0.7109,
+                                                                       "units": ""}}}}
+    row = measure.verdict_rows(res)[0]
+    assert row.figure == "not a measurement", (
+        f"the table reports {row.figure!r} for a stage that recorded its own figure is not a "
+        f"measurement")
+    assert "0.7109" not in row.figure
+    assert "not a measurement of" in row.note
+
+
+def test_an_ordinary_stage_is_still_reported_as_a_number():
+    """The guard must not swallow every figure: `self_invalidated` absent or false is the normal
+    case and is what every good run writes.
+    """
+    for marker in ({}, {"self_invalidated": False}, {"self_invalidated": None}):
+        res = {"compass": {**marker,
+                           "metrics": {"compass_auc.margin-past-preamble": {"value": 0.9887,
+                                                                           "units": ""}}}}
+        row = measure.verdict_rows(res)[0]
+        assert row.figure == "0.9887", f"a good run reported {row.figure!r} with marker {marker}"

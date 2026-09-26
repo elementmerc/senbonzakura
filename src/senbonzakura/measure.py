@@ -393,6 +393,20 @@ def verdict_rows(results):
         if isinstance(r, str):                  # a failure, carried as its message
             rows.append(Row(name, "not measured", "", r))
             continue
+        # A STAGE THAT DECLARED ITS OWN FIGURE INVALID HAS NOT PRODUCED ONE, and this table is the
+        # artefact a reader quotes from. `run_stage` calls each stage in process and returns what its
+        # `main` returns, so it never passes through `entry.exit_status` and never sees the status 1
+        # that a shell now gets: the compass could hand this table an AUC it had already said was not
+        # a measurement of harm discrimination, and the row would print the number with a partition
+        # caption and nothing else. Same defect as the one a first-time reader found on 2026-09-26 at
+        # the command line, one layer along, and it would have been the worse instance because this
+        # table exists to be quoted.
+        if isinstance(r, dict) and r.get("self_invalidated"):
+            rows.append(Row(name, "not a measurement", "",
+                            f"{note}. The stage recorded that this figure is not a measurement of "
+                            f"what it is named after, so it is not reported. Read the stage's own "
+                            f"log and result file for why."))
+            continue
         value, why_not, units = read_figure(r, metric)
         if value is None:
             # The REASON, not a blank. A row saying only "not reported" beside a stage that

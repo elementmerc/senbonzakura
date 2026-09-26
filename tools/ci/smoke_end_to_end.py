@@ -59,7 +59,8 @@ class SmokeError(Exception):
     pass
 
 
-def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False, timeout=TIMEOUT):
+def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False,
+        allow_self_invalidated=False, timeout=TIMEOUT):
     """One stage. Reports what it looked for, not merely that something happened."""
     started = time.time()
     print(f"\n=== {name} ===", flush=True)
@@ -79,7 +80,19 @@ def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False, 
         if p.returncode == 0:
             raise SmokeError(f"{name}: expected a refusal and it exited 0.\n{out[-2000:]}")
     elif p.returncode != 0:
-        raise SmokeError(f"{name}: exited {p.returncode}.\n{out[-2000:]}")
+        # STATUS 1 WITH A SELF-INVALIDATED RESULT IS NOT A BROKEN STAGE, since 2026-09-26. A command
+        # that finishes cleanly and records that its own figure is not a measurement now exits 1, so
+        # that a script gating on it can tell a measurement from the absence of one. The compass does
+        # that on a 135M model, which genuinely cannot tell a harmful request from a harmless one,
+        # and that is the correct outcome rather than a fault in the stage.
+        #
+        # NARROW ON PURPOSE. It is allowed only where the caller asked for it AND the run said so in
+        # its own output, so a stage that starts failing for any other reason still fails here.
+        if not (allow_self_invalidated and p.returncode == 1
+                and "MARGIN_READOUT_SUSPECT" in out):
+            raise SmokeError(f"{name}: exited {p.returncode}.\n{out[-2000:]}")
+        print("  exited 1 with MARGIN_READOUT_SUSPECT, which is this model saying its own AUC is "
+              "not a measurement. Allowed here; the figure below is a plumbing check.")
 
     for needle in filter(None, [expect_marker, expect_text]):
         if needle not in out:
@@ -243,7 +256,7 @@ def check_the_documented_compass_figure(out):
                 "--harmful", str(TRACK / "bad_eval_ds"), "--harmless", str(TRACK / "good_ds"),
                 "--skip-harmful", "0", "--skip-harmless", "0", "--n", "12",
                 "--out", str(written), "--device", "cpu"],
-               expect_marker="MARGIN_DONE")
+               expect_marker="MARGIN_DONE", allow_self_invalidated=True)
     m = re.search(r"MARGIN_DONE\s+auc=([0-9.]+)", text)
     if not m:
         raise SmokeError("compass printed MARGIN_DONE with no auc= on it")

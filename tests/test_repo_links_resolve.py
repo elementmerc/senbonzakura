@@ -138,6 +138,25 @@ def test_only_tracked_prose_is_read(clone):
 
 # ── this repository, as it stands ────────────────────────────────────────────────────
 
+def _has_history():
+    """Whether this tree has git history, which is a stronger requirement than having the files.
+
+    `check_repo_links` asks git to resolve the ref each link names and then to show whether the
+    tree behind it carries the path. A released tarball, and the CI job that runs the suite from
+    one, have every file and no history, so every ref is unresolvable and the scan legitimately
+    reads nothing. That is an absent measurement rather than a broken link, and the two must not
+    share a representation.
+    """
+    try:
+        subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "HEAD"],
+                       capture_output=True, check=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _has_history(),
+                    reason="no git history here, so no ref a link names can be resolved")
 def test_the_notebook_and_the_issue_menu_name_a_ref_that_carries_their_files():
     """The two surfaces a reader meets before they have cloned anything.
 

@@ -36,6 +36,20 @@ _SPEC.loader.exec_module(guard)
 
 REPO = Path(__file__).resolve().parent.parent
 
+#: Whether this tree is a git work tree, asked of the GUARD'S OWN function rather than by looking
+#: for a `.git` directory.
+#:
+#: The distinction is the whole reason this constant exists. A released tarball, and the CI job
+#: named "the suite runs outside a git checkout", are trees with every tracked file present and no
+#: history, and four tests here ask git what it tracks. Outside a checkout those questions have no
+#: answer, so they were failing on the environment rather than on the gate. Asking `_repo_root`,
+#: private though it is, means the test and the guard cannot disagree about what a checkout is; a
+#: second implementation here is exactly how this gate came to mean two things on two paths.
+IN_A_CHECKOUT = guard._repo_root(str(REPO)) is not None
+
+needs_a_checkout = pytest.mark.skipif(
+    not IN_A_CHECKOUT, reason="not a git checkout, so git cannot be asked what it tracks")
+
 
 def _notebook(*cells):
     return json.dumps({"cells": list(cells), "metadata": {}, "nbformat": 4, "nbformat_minor": 5})
@@ -63,11 +77,71 @@ class TestPlaintextCorpora:
         assert "KNOWN_TEXT_FILES" in guard.scan_file(p)[0]
 
     @pytest.mark.parametrize("name", sorted(guard.KNOWN_TEXT_FILES))
-    def test_every_recorded_text_file_exists_and_clears(self, name):
+    def test_every_recorded_text_file_exists(self, name):
         """A record for a file that is not there is a record nobody will notice going stale."""
-        p = REPO / name
-        assert p.is_file(), f"{name} is recorded in KNOWN_TEXT_FILES and is not in the tree"
-        assert guard.scan_file(p) == []
+        assert (REPO / name).is_file(), (
+            f"{name} is recorded in KNOWN_TEXT_FILES and is not in the tree")
+
+    @needs_a_checkout
+    @pytest.mark.parametrize("name", sorted(guard.KNOWN_TEXT_FILES))
+    def test_every_recorded_text_file_clears(self, name):
+        """A record only clears a file the guard can name, and naming it needs the repository.
+
+        SPLIT FROM THE EXISTENCE CHECK ON 2026-09-26. The two halves need different things: a file
+        is on disk whether or not there is history, and a RECORD is a repository-relative path, so
+        matching one means asking git where the root is. Joined, the pair failed in a tarball on
+        the half that had nothing to do with the tarball.
+        """
+        assert guard.scan_file(REPO / name) == []
+
+    def test_an_output_directory_is_never_skipped(self, tmp_path):
+        """THE 2026-09-10 DECISION, pinned so it cannot be undone by a convenience.
+
+        `dist` and `build` were REMOVED from the skip list on purpose: a user pointing
+        `--out build/run1` at a run is doing nothing unusual, and a leak gate that declines to read
+        the output directory has a hole exactly where the artefacts land.
+
+        This test exists because the temptation to re-add them is real and I met it on 2026-09-26.
+        Running the suite on a machine that had built the documentation site turned the whole thing
+        red on `.js.map` files inside `docs/.vitepress/cache`, and the quick repair was to widen this
+        skip list. That would have been a loosening of the one control between a harmful prompt and a
+        public push, to fix a test whose real problem was running where git cannot say what the
+        repository contains. The skip list is unchanged and the test was scoped instead.
+        """
+        for named in ("build/run1/result.json", "dist/run1/result.json", "cache/result.json",
+                      "docs/.vitepress/cache/deps/chunk.js.map"):
+            p = tmp_path / named
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("{}", encoding="utf-8")
+            assert not guard._is_vendored(p), (
+                f"{named} is skipped by the walk. Whatever the convenience, a gate that declines to "
+                f"read a directory is a gate with a hole in it, and this one may only ever be "
+                f"widened.")
+
+    def test_outside_a_checkout_nothing_is_cleared_by_a_record(self, tmp_path):
+        """THE FAIL-SAFE DIRECTION, pinned rather than assumed.
+
+        A record is a repository-relative path, so outside a work tree the guard cannot resolve
+        one and every recorded text file reads as a kind it does not know. That makes it refuse
+        MORE, which is the right way for a deny-first gate to break, and it is the reason the four
+        tests above may be skipped in a tarball without the gate being weakened there.
+
+        Asserted on a directory that is genuinely outside any repository, so it measures the
+        property rather than the test runner's surroundings. `tmp_path` is under /tmp and this
+        project's own tree is not, so a stray `git init` in a parent cannot quietly turn this into
+        a test of nothing: the guard is asked, and if it finds a root the case does not apply.
+        """
+        name = min(guard.KNOWN_TEXT_FILES)
+        loose = tmp_path / Path(name).name
+        loose.parent.mkdir(parents=True, exist_ok=True)
+        loose.write_text("x\n", encoding="utf-8")
+        if guard._repo_root(str(tmp_path)) is not None:
+            pytest.skip("this temporary directory is inside a work tree, so it cannot show the case")
+        found = guard.scan_file(loose)
+        assert found != [], (
+            f"{name} is a recorded path and cleared from outside any repository. A record that "
+            f"applies without the repository is a record that clears a file of the same name "
+            f"anywhere, which is the opposite of what recording a PATH is for.")
 
     def test_a_recorded_name_does_not_clear_a_file_somewhere_else(self, tmp_path):
         """The record is a PATH, so `elsewhere/constraints.txt` is not the recorded one.
@@ -82,6 +156,7 @@ class TestPlaintextCorpora:
         p.write_text("x\n", encoding="utf-8")
         assert guard.scan_file(p) != []
 
+    @needs_a_checkout
     def test_the_corpus_names_the_guide_teaches_are_ignored_by_git(self):
         """Belt and braces: the gate is the control, and `.gitignore` is the first line.
 
@@ -188,6 +263,7 @@ class TestDenyFirst:
         assert guard.handler_for(p) == guard.IGNORE
         assert guard.scan_file(p) == []
 
+    @needs_a_checkout
     def test_every_kind_in_the_tracked_tree_is_recorded(self):
         """CI runs this gate over the whole tree, so an unrecorded kind is a red build.
 
@@ -203,8 +279,13 @@ class TestDenyFirst:
                              if guard.handler_for(Path(n)) == guard.UNRECORDED})
         assert unrecorded == [], f"unrecorded file kinds in the tracked tree: {unrecorded}"
 
+    @needs_a_checkout
     def test_the_whole_tracked_tree_is_clean_today(self):
-        """The refusals above must not be bought by refusing the tree we already have."""
+        """The refusals above must not be bought by refusing the tree we already have.
+
+        Needs the checkout for two reasons at once: the walk asks git what it tracks, and the
+        records that clear the tree's own text files are repository-relative paths.
+        """
         assert guard.main([str(REPO)]) == 0
 
     def test_the_dispatcher_is_the_only_place_that_decides(self):

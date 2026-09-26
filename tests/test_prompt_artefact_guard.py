@@ -370,8 +370,24 @@ def test_a_rename_into_the_tree_is_still_checked(monkeypatch):
 
 # ── the guard against its own repository ───────────────────────────────────────────
 def test_this_repository_is_clean():
-    """The check CI runs, run here too, so a bad commit fails before it is written."""
+    """The check CI runs, run here too, so a bad commit fails before it is written.
+
+    NEEDS A WORK TREE, and the reason is the subject of the test rather than a technicality. The
+    claim is about the REPOSITORY, and `collect` expands a directory to what git tracks under it.
+    Where git cannot answer it falls back to walking the filesystem, which in a synced or exported
+    tree carries local spoil beside the tracked files: a built documentation cache, an ignored
+    capture directory, whatever the last run left. None of that can reach a remote, so refusing it
+    says nothing about whether this repository is clean.
+
+    Scoped on 2026-09-26, after the deny-first widening made those two cases red on the build box.
+    The cheap repair was to add the offending directories to the guard's own skip list, which would
+    have LOOSENED the one control between a harmful prompt and a public push in order to quiet a
+    test. `tests/test_leak_gate_deny_first.py` now pins that the skip list stays as it is.
+    """
     root = Path(__file__).resolve().parent.parent
+    if guard._repo_root(str(root)) is None:
+        import pytest as _pytest
+        _pytest.skip("not a git work tree, so tracked files cannot be told from local spoil")
     assert guard.main([str(root / "evidence"), str(root / "docs")]) == 0
 
 

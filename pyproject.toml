@@ -322,6 +322,22 @@ senbonzakura = ["data/*.bin", "data/*.jsonl", "data/templates/*.jinja",
 # explanation, and breaking them reads worse. 120 keeps the rule meaningful.
 line-length = 120
 
+# THE VENDORED SOURCES ARE SOMEBODY ELSE'S CODE AND ARE NOT LINTED.
+#
+# `src/senbonzakura/vendor/src/` holds llama.cpp's conversion package and `gguf-py`, downloaded by
+# `tools/packaging/vendor_llama.py` at a pinned tag. They are gitignored, so CI never sees them and
+# `ruff check src/ tests/ tools/` passes there. A RELEASE machine has them, because the wheel ships
+# them, and the same command returns 3,017 findings that are all upstream's: 851 single-quoted
+# strings, 355 long lines, 112 missing copyright headers.
+#
+# That made the runbook's own lint step useless exactly where it matters, on the machine cutting the
+# release, and it would have gone on reading as "the release does not lint". Excluded here rather
+# than by adding a flag to the command, because the command is written down in three places and a
+# flag can be forgotten while a config cannot. Reformatting upstream's code is not an option: it
+# would have to be redone at every pin refresh and would make the vendored tree undiffable against
+# the tag it claims to be.
+extend-exclude = ["src/senbonzakura/vendor/src"]
+
 [tool.ruff.lint]
 # Everything, then subtract with a reason. Selecting a handful of families means
 # the rules that catch real defects are the ones nobody thought to enable: the

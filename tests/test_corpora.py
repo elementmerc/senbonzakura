@@ -345,3 +345,51 @@ def test_a_corrupt_pack_says_which_tool_rebuilds_it(tmp_path, monkeypatch):
     monkeypatch.setattr(bundled, "data_path", lambda: tmp_path / "default-track.bin")
     with pytest.raises(corpora.CorpusError, match=r"senbonzakura corpora"):
         corpora.load("advbench", root=tmp_path)
+
+
+# ── the attribution, once per process rather than once per corpus ─────────────────────
+#
+# Four of the seven readers in the 2026-09-26 user pass reported this independently. One called it
+# the "wall of correct prose" case: every word of it true, and `senbonzakura doctor` still opened
+# with the same four-line paragraph six times and pushed its own report about thirty lines down.
+#
+# The per-corpus lines stay per corpus, because they differ and because the licences ask for them.
+# Only the two sentences identical for all six entries were moved.
+
+def test_the_shared_sentence_appears_once_however_many_corpora_load():
+    corpora._reset_notice_for_tests()
+    said = []
+    keys = sorted(corpora.CORPORA)[:4]
+    for key in keys:
+        corpora.notice(key, log=said.append)
+    text = "\n".join(said)
+    assert text.count("Terms for every bundled corpus:") == 1, (
+        f"the shared pointer is printed {text.count('Terms for every bundled corpus:')} times for "
+        f"{len(keys)} corpora")
+    for key in keys:
+        assert corpora.CORPORA[key].name in text, f"{key} lost its own attribution line"
+
+
+def test_every_corpus_still_carries_its_own_licence_and_upstream():
+    """The obligation is untouched: the licences ask for the notice to travel with the work, not
+    for the pointer to be repeated once per file.
+    """
+    corpora._reset_notice_for_tests()
+    said = []
+    key = min(corpora.CORPORA)
+    corpora.notice(key, log=said.append)
+    text = "\n".join(said)
+    c = corpora.CORPORA[key]
+    assert c.licence in text
+    assert c.upstream in text
+    assert c.attribution in text
+
+
+def test_the_licence_pointer_names_a_path_rather_than_the_inside_of_the_package():
+    """A reader followed "ships inside this package" to `site-packages/senbonzakura/`, where the
+    licences are not: packaging puts them under `<dist-info>/licenses/`. They found it with `find`.
+    A pointer a user cannot follow fails exactly when somebody is trying to comply with a licence.
+    """
+    where = corpora._notices_path()
+    assert "THIRD-PARTY-CORPORA.md" in where
+    assert "ships inside this package" not in where

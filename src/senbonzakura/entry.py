@@ -224,6 +224,28 @@ def exit_status(value):
         # verdict that silently inverts is not a thing to leave to nobody doing it later.
         return value if 0 <= value < 256 else 1
     # A result object: the command ran and produced something. Its own failures are raised.
+    #
+    # EXCEPT WHEN THE RESULT SAYS ITS OWN NUMBER IS NOT A MEASUREMENT, which is a third case and
+    # neither of the two above. A command can finish cleanly, write a complete artefact, and know
+    # that the figure inside it means nothing: the compass does exactly this when the model's
+    # verdict was not at the position being scored, and prints THE AUC ABOVE IS NOT A MEASUREMENT
+    # OF HARM DISCRIMINATION in those words.
+    #
+    # `python -m senbonzakura.margin` already exited 1 on that condition and `senbonzakura compass`
+    # did not, because the check lived in one module's `__main__` guard rather than here. A novice
+    # in the 2026-09-26 user pass came through the console command, was told in capitals that the
+    # number was invalid, got exit 0, and said the run "told me in capitals that its own number is
+    # meaningless, and exited 0". Two doors into one command disagreeing about whether it succeeded
+    # is this project's most-repeated defect shape, and `exit_status`'s own docstring says this is
+    # the one place that knows it is talking to a shell. So the rule lives here and covers every
+    # command, including the ones that grow this condition later.
+    #
+    # A GENERIC MARKER RATHER THAN A CHECK FOR THE COMPASS. `exit_status` must not learn what a
+    # readout is; any command that can invalidate its own figure sets `self_invalidated` on the
+    # result and gets the behaviour. Status 1, not 2: the run happened and the artefact is real,
+    # which is a different thing from a refusal.
+    if isinstance(value, dict) and value.get("self_invalidated"):
+        return 1
     return 0
 
 

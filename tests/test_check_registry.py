@@ -200,6 +200,12 @@ def test_that_guard_can_actually_fail():
 @pytest.mark.parametrize(("check_id", "field"), [
     ("quoted-at-a-budget-below-the-visibility-floor", "generation_budget"),
     ("artefact-carries-its-own-warning", "budget_warning"),
+    # THE SECOND FIELD OF THE SAME KIND, added 2026-09-26. The sibling above exists because a
+    # reviewer fed this checker a file whose own `budget_warning` said the number might be wrong and
+    # was told `nothing found`. That was fixed for one field, and a first-time reader met the same
+    # failure through a new one: the compass told them THE AUC ABOVE IS NOT A MEASUREMENT, in those
+    # words, and the checker called the file clean.
+    ("a-figure-its-own-file-calls-invalid", "self_invalidated"),
     ("chat-template-never-applied", "chat_template"),
 ])
 def test_an_artefact_recording_nothing_for_a_field_skips_the_check_that_reads_it(check_id, field):
@@ -873,3 +879,34 @@ def test_a_present_paired_with_equals_null_is_not_treated_as_a_guarded_test():
         {"op": "present", "path": "eval_split"},
         {"op": "not_equals", "path": "eval_split", "value": None}]}
     assert _paired_with_a_value_test(real) == {"eval_split"}
+
+
+# ── the rule that reads a file's own verdict on itself ────────────────────────────────
+
+def test_a_file_that_calls_its_own_figure_invalid_is_refused():
+    """FOUND BY THE NOVICE READER, 2026-09-26, and it was their first real result.
+
+    The compass sets `self_invalidated` when the model's verdict was not at the position being
+    scored, so the AUC describes whatever token happened to be there. The run said so in capitals.
+    The checker, on the file that run had just written, said `nothing found (12 checks did not
+    apply)`. Their words: two commands in the same tool looked at one run and disagreed, and the one
+    that reads like a verdict was the one that was wrong.
+    """
+    from senbonzakura_check import check_document
+
+    doc = json.loads(json.dumps(_RECORDS_NOTHING_ELSE))
+    doc["self_invalidated"] = True
+    findings, _skipped = check_document(doc, CHECKS)
+    fired = {f.check_id for f in findings}
+    assert "a-figure-its-own-file-calls-invalid" in fired, (
+        "an artefact recording that its own headline figure is not a measurement is still reported "
+        "clean, which is the sibling defect one field along")
+
+
+def test_a_file_that_does_not_invalidate_itself_is_not_flagged():
+    from senbonzakura_check import check_document
+
+    doc = json.loads(json.dumps(_RECORDS_NOTHING_ELSE))
+    doc["self_invalidated"] = False
+    findings, _skipped = check_document(doc, CHECKS)
+    assert "a-figure-its-own-file-calls-invalid" not in {f.check_id for f in findings}

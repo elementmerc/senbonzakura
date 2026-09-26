@@ -263,3 +263,49 @@ def test_a_status_that_would_wrap_to_success_is_clamped(value):
 def test_a_normal_status_is_untouched():
     for value in (0, 1, 2, 255):
         assert entry.exit_status(value) == value
+
+
+# ── a result that declares its own figure invalid is not a success ────────────────────
+#
+# Found by the novice reader in the 2026-09-26 user pass, on their first real result. The compass
+# printed THE AUC ABOVE IS NOT A MEASUREMENT OF HARM DISCRIMINATION, in those words, and exited 0.
+#
+# `python -m senbonzakura.margin` already exited 1 on that condition. `senbonzakura compass` did
+# not, because the check lived in one module's `__main__` guard rather than here, and this
+# function's own docstring says this is the one place that knows it is talking to a shell. Two
+# doors into one command disagreeing about whether it succeeded is this project's most-repeated
+# defect shape.
+
+def test_a_self_invalidated_result_is_not_a_success():
+    assert entry.exit_status({"self_invalidated": True}) == 1, (
+        "a run that printed THE AUC ABOVE IS NOT A MEASUREMENT still exits 0, so a script gating "
+        "on it cannot tell a measurement from the absence of one")
+
+
+def test_an_ordinary_result_object_is_still_a_success():
+    """The rule must not turn every returned dict into a failure: five commands return their result
+    object rather than a status, and that convention is load-bearing.
+    """
+    assert entry.exit_status({"auc": 0.98}) == 0
+    assert entry.exit_status({"self_invalidated": False}) == 0
+    assert entry.exit_status({"self_invalidated": None}) == 0
+
+
+def test_self_invalidation_is_status_one_and_not_two():
+    """1 is "it ran and the figure is not usable". 2 is a refusal, where nothing ran. The artefact
+    here is real and complete, so conflating the two tells a script the opposite of what happened.
+    """
+    assert entry.exit_status({"self_invalidated": True}) == 1
+
+
+def test_the_marker_is_generic_rather_than_about_one_command():
+    """`exit_status` must not need to know which command wrote the result.
+
+    ASSERTED ON BEHAVIOUR, and the first version of this got that wrong in a way worth recording:
+    it read `inspect.getsource` and asserted the word "readout" did not appear, which failed on the
+    COMMENT explaining why the rule is generic. That is the defect this session had already fixed
+    twice elsewhere, a guard measuring how code is spelled rather than what it does.
+    """
+    assert entry.exit_status(
+        {"self_invalidated": True, "coherence": 2.61, "units": "nats-per-token"}) == 1
+    assert entry.exit_status({"self_invalidated": "any truthy reason string"}) == 1

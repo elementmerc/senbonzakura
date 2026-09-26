@@ -81,7 +81,7 @@ places to sit beside the two AUCs, which the files record rounded already.
 Read all three without running anything:
 
 ```sh
-python -c "
+python3 -c "
 import json
 for name in ('base-qwen3-1.7b', 'base-qwen3-0.6b'):
     d = json.load(open('evidence/compass-2026-07-30/' + name + '.json'))
@@ -139,7 +139,7 @@ own `caveat` field. A re-run under the fixed selector is scheduled, and until it
 known limit rather than a settled answer.
 
 ```sh
-python -c "
+python3 -c "
 import json
 d = json.load(open('evidence/k-sweep-2026-08-13/drift-per-seed.json'))
 print(d['seeds'])

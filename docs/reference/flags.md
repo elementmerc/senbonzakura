@@ -1,6 +1,8 @@
 # Flags worth knowing
 
-There are forty-odd flags. `senbonzakura --help` lists them all. These are the seven that
+There are 69 flags, and `senbonzakura --help` shows the handful a run needs while
+`senbonzakura --help-all` lists every one. This page said "forty-odd" until 2026-09-26, which was
+off by forty per cent. These are the seven that
 change what a run *means* rather than how it's spelled, so if you're going to read about any
 of them, read about these.
 
@@ -8,7 +10,7 @@ of them, read about these.
 
 | Flag | What it does | Reach for it when |
 |---|---|---|
-| `--max-directions K` | How many refusal directions to remove per layer. `1` is the classic single-direction method | You want to test the whole premise of this project. It defaults to `3` |
+| `--max-directions K` | A **ceiling**, not a count. Each trial draws its own number of directions between `--min-directions` and this, so the search decides whether a second direction earns its place. Defaults to `3`, and left alone it picks one more often than not | You want to test the whole premise of this project. Pin it by setting `--min-directions` and `--max-directions` to the **same** number: that is what turns a ceiling into an experiment, and setting one alone does not |
 | `--mlp-off` | Attention-only: leaves `mlp.down_proj` alone | You suspect the MLP is carrying the model's capability and the attention is carrying its reluctance |
 | `--hedge-ds DIR` | Folds a hedged-versus-clean contrast into the basis | The model has stopped refusing and started waffling. See below |
 | `--patience N` | Stop once the search hasn't improved for N trials | You're paying for the GPU by the hour |

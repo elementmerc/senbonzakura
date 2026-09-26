@@ -298,6 +298,31 @@ class TestNonsenseNumbers:
         with pytest.raises(SystemExit, match="window is empty"):
             cli._preflight_numbers(_numeric_args(layer_lo=0.9, layer_hi=0.1))
 
+    # THE SAME PAIR CHECK FOR THE DIRECTION BUDGET, which had none until 2026-09-26 despite sitting
+    # ten lines from the one above. Found by the expert reader in the user pass, working only from
+    # `--help`: `--min-directions 5 --max-directions 2` was accepted and the run started fetching.
+    # Their reasoning for ranking it first is the part worth keeping: this command refuses
+    # `--gen-tokens 8`, `--kl-scale -5` and an empty layer window before touching the network, so a
+    # reader learns to trust it to stop them, and that is exactly the reader who will let an
+    # unsatisfiable range run overnight.
+
+    def test_an_impossible_direction_budget_is_refused(self):
+        with pytest.raises(SystemExit, match="no trial can satisfy both"):
+            cli._preflight_numbers(_numeric_args(min_directions=5, max_directions=2))
+
+    def test_the_impossible_budget_refusal_names_both_flags_and_both_values(self):
+        with pytest.raises(SystemExit) as caught:
+            cli._preflight_numbers(_numeric_args(min_directions=5, max_directions=2))
+        message = str(caught.value)
+        for want in ("--min-directions", "--max-directions", "5", "2"):
+            assert want in message, f"the refusal does not name {want}: {message}"
+
+    def test_equal_direction_bounds_are_allowed_because_that_is_how_a_budget_is_pinned(self):
+        """Setting both to the same number is what turns a ceiling into an experiment, and it is
+        what the pinned-K arms do, so refusing it would refuse the project's own comparison.
+        """
+        cli._preflight_numbers(_numeric_args(min_directions=2, max_directions=2))
+
     def test_the_defaults_and_the_boundaries_all_pass(self):
         cli._preflight_numbers(_numeric_args())
         cli._preflight_numbers(_numeric_args(trials=1, max_directions=1, kl_scale=0.0,

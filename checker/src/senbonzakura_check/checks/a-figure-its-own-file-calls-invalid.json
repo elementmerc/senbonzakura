@@ -1,0 +1,32 @@
+{
+  "id": "a-figure-its-own-file-calls-invalid",
+  "title": "The file records that its own headline figure is not a measurement, and the figure was quoted anyway",
+  "detects": "A result artefact carrying a truthy `self_invalidated`: the producing tool recorded, at the moment it wrote the file, that the number inside it is not a measurement of the thing it is named after. The compass sets it when the model's verdict was not at the position being scored, so the AUC describes whatever token happened to be there instead. The usual cause is a thinking model whose template ignored `enable_thinking`, leaving the reasoning opener where the verdict should be.",
+  "incident": "Ours, 2026-09-26. A reader running the tool for the first time got `MARGIN_READOUT_SUSPECT ... THE AUC ABOVE IS NOT A MEASUREMENT OF HARM DISCRIMINATION on this run`, exit status 0, and then ran this checker on the file it had just written and was told `nothing found (12 checks did not apply)`. Their words: the run told them in capitals that its own number was meaningless, and two commands in the same tool looked at the same run and disagreed, with the one that reads like a verdict being the one that was wrong. The same shape is recorded one file along in `artefact-carries-its-own-warning`, whose own incident note is a reviewer feeding this checker an artefact whose `budget_warning` held the exact sentence the scorer emits, and getting `nothing found`. That was fixed for one field. This is the second field of the same kind, which is the defect shape this project keeps finding: a guard covering one spelling reports clean on the others.",
+  "remedy": "Do not quote the figure. Nothing is wrong with the model and nothing is wrong with the corpus; the scorer read the wrong token position, so there is no measurement to report yet. Check what the run printed after `top=`, which shows what was actually at the scored position. For a thinking model, pass the chat template that closes the reasoning block, or score with `--no-margins` off and read the per-prompt rows to see where the verdict landed. Re-run, and compare the AUC only once the verdict tokens carry the probability mass.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "None that we know of: the field is written only when the producing tool has already decided the figure is not a measurement, so a false positive here would be the tool having been wrong about its own readout rather than this check misreading it. An artefact that records nothing under this field is SKIPPED rather than passed, for the same reason the sibling check skips: the adapter writes the normalised field whether or not the producer put anything in it, and counting those as examined would report every artefact in the project clean on a question it never asked. An artefact from another harness with the same defect would not fire this, because the field is ours. That is a coverage gap and not a clean bill of health.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "present", "path": "self_invalidated"},
+      {"op": "not_equals", "path": "self_invalidated", "value": null}
+    ]
+  },
+
+  "rule": {"op": "truthy", "path": "self_invalidated"},
+
+  "control": {
+    "fires_on": [
+      {"self_invalidated": true},
+      {"self_invalidated": "the two verdict sets hold 10.49% of the probability"}
+    ],
+    "passes_on": [
+      {"self_invalidated": null},
+      {"self_invalidated": false},
+      {"self_invalidated": ""}
+    ]
+  }
+}

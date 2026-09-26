@@ -187,9 +187,14 @@ did roughly **1.4 to 1.9 times the collateral damage and bought nothing**, and t
 predictable seed to seed (the spread is nearly three times as wide). Both ends of that range are
 means over the five seeds: 1.9 with every seed, 1.4 dropping the outlying two-direction seed.
 
-The gap is 0.0435, and an exact permutation test over all 252 ways of splitting these ten
-seeds puts it at **p = 0.016**. That is a real difference, and stronger than the way this
-paragraph used to describe it.
+The gap is 0.0435, and a **two-sided exact permutation test on the difference of means**, over all
+252 ways of splitting these ten seeds, puts it at **p = 0.016**. That is a real difference, and
+stronger than the way this paragraph used to describe it.
+
+The test and its sidedness are named because a reader checking this in 2026-09-26 had to try six
+variants to find the one that reproduces the published figure: the one-sided version of the same
+test gives 0.008, and a reader who landed there first would conclude we had understated our own
+negative result.
 
 ::: tip You can recompute this yourself
 The ten per-seed drift values are committed at

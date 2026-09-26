@@ -325,7 +325,23 @@ jobs:
     runs-on: ubuntu-latest
     # Only on a push to our own branches. A pull request from a fork must never reach a job with
     # write access, and `github.event_name` is what separates them.
-    if: github.event_name == 'push' && github.repository == 'elementmerc/senbonzakura'
+    #
+    # AND ONLY ON `dev`, which is a branch-shape constraint rather than a security one.
+    #
+    # `main` moves forward only as a fast-forward from `dev`. This job pushed to whatever branch
+    # triggered it, so the v0.4.0 promotion was immediately followed by a badge commit on `main`
+    # alone, and `main` stopped being reachable from `dev`: the next promotion was no longer a
+    # fast-forward, and the branch workflow forbids the force-push that would "fix" it. It also
+    # pushes to `origin` only, so the same commit left the two remotes' `main` branches holding
+    # different trees.
+    #
+    # Measured 2026-09-26, one promotion after the job was written. The badge is cosmetic and it
+    # reaches `main` at the next promotion like everything else does, so confining it to `dev`
+    # costs nothing and keeps both invariants: `main` is always a fast-forward of `dev`, and every
+    # remote holds the same `main`.
+    if: >-
+      github.event_name == 'push' && github.repository == 'elementmerc/senbonzakura'
+      && github.ref_name == 'dev'
     permissions:
       contents: write
     steps:

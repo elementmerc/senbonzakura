@@ -155,6 +155,21 @@ def _has_history():
     return True
 
 
+def _remote_reachable():
+    """Whether `origin` answers, so an unresolvable ref can be told from an unreachable network.
+
+    Without this the test cannot distinguish "this link is broken" from "this machine is offline",
+    and those must not share a representation: the first is a defect a reader meets and the second
+    is a measurement that did not happen.
+    """
+    try:
+        done = subprocess.run(["git", "-C", str(ROOT), "ls-remote", "--exit-code", "origin", "HEAD"],
+                              capture_output=True, timeout=120, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
 @pytest.mark.skipif(not _has_history(),
                     reason="no git history here, so no ref a link names can be resolved")
 def test_the_notebook_and_the_issue_menu_name_a_ref_that_carries_their_files():
@@ -164,9 +179,23 @@ def test_the_notebook_and_the_issue_menu_name_a_ref_that_carries_their_files():
     CI; naming them here as well would make this test fail for somebody else's edit.
     """
     owned = ("notebooks/senbonzakura_colab.ipynb", ".github/ISSUE_TEMPLATE/config.yml")
-    checked, broken, unresolvable = links.check_repo_links(ROOT, allow_fetch=False)
+    # FETCHING IS ALLOWED HERE, and it is the difference between a real check and a false failure.
+    #
+    # `actions/checkout` fetches only the ref that triggered the run. These two surfaces link to
+    # `dev`, so a run triggered by a push to `dev` resolves it and a run triggered by the push to
+    # `main` does not. On 2026-09-26 the same commit went green for the dev push and red for the
+    # main promotion minutes later, which reads as flakiness and is not: it is this test asking a
+    # single-branch checkout about a branch it was never given.
+    #
+    # `published_ref` already knows how to shallow-fetch the one ref it needs. The unit tests above
+    # keep `allow_fetch=False` because they are about the function; this test is about the real
+    # repository, where the alternative to fetching is reporting a broken link that is not broken.
+    checked, broken, unresolvable = links.check_repo_links(ROOT, allow_fetch=True)
     assert checked >= 4, "the scan found almost nothing, so the pattern has gone quiet"
     mine = [b for b in broken if b[0] in owned]
     assert not mine, f"these link to a path the ref they name does not carry: {mine}"
-    assert not {r for r, names in unresolvable.items() if names & set(owned)}, (
-        f"a ref named by {owned} could not be resolved: {unresolvable}")
+    stray = {r for r, names in unresolvable.items() if names & set(owned)}
+    if stray and not _remote_reachable():
+        pytest.skip(f"cannot reach the remote, so {sorted(stray)} could not be resolved; that is "
+                    f"an absent measurement rather than a broken link")
+    assert not stray, f"a ref named by {owned} could not be resolved: {unresolvable}"

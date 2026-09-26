@@ -35,24 +35,37 @@ that carry nothing, so a candidate has to beat what the statistic hands out for 
 numbers are recorded in every result file. This still does not show a direction carries refusal
 rather than topic, and the run says so in those words.
 
-**And when we finally ran that comparison properly, more directions lost.** One direction
-against two, five seeds each, everything else held still, every model scored afterwards by one
-instrument on 200 prompts nothing was fitted or selected on:
+**And when we ran that comparison, more directions lost.** One direction against two, five seeds
+each, with the same tool, the same corpus, the same search budget and the same direction budget
+pinned at both ends, one parameter apart; every model scored afterwards by one instrument on 200
+prompts nothing was fitted or selected on:
 
 | Direction budget | Coherence drift | Hard refusal |
 |---|---|---|
 | One direction | 0.0497, spread 0.0177 | 0.1% |
 | Two directions | 0.0932, spread 0.0482 | 0.3% |
 
-Both budgets removed hard refusal, so this is a comparison at matched refusal. Two directions
-cost roughly 1.5 to 1.9 times the collateral damage depending on whether one outlying seed is
-included, bought nothing for it, and were less predictable run to run. One direction beats two in
-24 of the 25 pairwise seed comparisons, so the direction of the result is sturdier than its size. An exact permutation test over all 252 splits of the ten seeds puts the
-difference at p = 0.016. Dropping the worst two-direction seed halves the gap and moves that to
-p = 0.048, so the finding does not rest on one run and is weaker without it. This is one model,
-Qwen3-1.7B, and it does not settle the question for every architecture. It does mean the
-project's central idea is unsupported where we can currently measure it, and we would rather
-publish that than wait for a friendlier model.
+Both budgets removed hard refusal, so this is a comparison at matched refusal, and the per-seed
+drift and hard refusal values behind both columns are committed at
+`evidence/k-sweep-2026-08-13/drift-per-seed.json`. Two directions cost roughly 1.4 to 1.9 times
+the collateral damage on the mean over five seeds, the low end dropping the one outlying
+two-direction seed and the high end keeping it, bought nothing for it, and were less predictable
+run to run. One direction beats two in 24 of the 25 pairwise seed comparisons, so the direction of
+the result is sturdier than its size. An exact permutation test over all 252 splits of the ten
+seeds puts the difference at p = 0.016. Dropping the worst two-direction seed halves the gap and
+moves that to p = 0.048, so the finding does not rest on one run and is weaker without it. This is
+one model, Qwen3-1.7B, and it does not settle the question for every architecture.
+
+**Read that table with its limit attached.** These arms ran on 2026-08-13, before the held-out
+direction selection described above existed, so the second direction in each two-direction arm was
+chosen by the filter now known to accept everything. What the table prices is an *arbitrary* second
+direction, which is a weaker claim than the thesis it gets read against: it is not evidence that
+two well-chosen directions cost more than one. The word "properly" stood here until 2026-09-25 and
+invited exactly that reading. The table stands as the old filter's answer until a re-run under the
+fixed selector replaces it, and the same caveat is recorded in the evidence file itself.
+
+Where we can currently measure it, then, the project's central idea is unsupported, and we would
+rather publish that than wait for a friendlier model.
 
 **If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
 fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is

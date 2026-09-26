@@ -19,10 +19,21 @@ tracked directory. This checker reads what is actually staged.
 
 What counts as a finding
 ------------------------
-Any staged `.json` or `.jsonl` carrying a `prompt`, `prompts`, `generation` or
-`generations` key at any depth. Committed evidence is expected to be stripped of
-those fields before it lands, so a finding is either an unstripped artefact or a
-file that was never meant to be committed.
+Every staged and every tracked path reaches one dispatcher, which applies the reading that
+fits the file kind:
+
+    .json / .jsonl        a banned field name at any depth (`prompt`, `generation`, `text`, ...)
+    .arrow/.parquet/...   a binary dataset, cleared only by matching a recorded sha256
+    .txt / .csv / .tsv    a plaintext corpus format, cleared only by being a recorded path
+    .ipynb                a notebook, refused if any cell carries saved outputs
+    .md under results/    a fenced block or a blockquote, which is how output gets pasted in
+    anything else         cleared only if IGNORED_KINDS records that kind deliberately
+
+DENY-FIRST is the point of that last line. A kind nobody has decided about is refused rather
+than passed, because a filter that clears what it does not recognise reports clean for a tree
+it did not look at. That is not theoretical: until 2026-09-25 this gate read two suffixes, the
+guide told users to write their corpora as `.txt`, and a contributor following the guide could
+stage a plaintext harmful corpus that the hook, CI and `.gitignore` all reported as fine.
 
 Usage
 -----
@@ -40,6 +51,7 @@ in CI as the hard gate and locally by hand):
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import subprocess
 import sys
@@ -83,6 +95,9 @@ BANNED_KEYS = frozenset({
 #: not the file this exemption is about.
 FOREIGN_SCHEMA_FILES = frozenset({"dataset_info.json", "state.json"})
 
+#: The two suffixes this gate has always read by KEY NAME. Kept as a name rather than spelled at
+#: each branch, because they were once the whole of what the gate looked at and the rest of this
+#: file is about how that stopped being enough.
 SUFFIXES = frozenset({".json", ".jsonl"})
 
 #: Binary dataset files, which this gate REFUSES unless it already knows them byte for byte.
@@ -91,8 +106,12 @@ SUFFIXES = frozenset({".json", ".jsonl"})
 #: nothing else. Three `.arrow` files are tracked under `examples/toy-track/`, and an arrow file is
 #: the one committed on-disk format in this tree that carries prompts as its whole purpose: a
 #: track's `bad_ds` IS harmful prompts. The gate could not read them, so it cleared them by not
-#: looking. The same blindness covered `.parquet`, and `.txt` and `.csv` are the formats the guide
-#: tells users to build corpora in.
+#: looking. The same blindness covered `.parquet`.
+#:
+#: THIS PARAGRAPH USED TO END BY NAMING `.txt` AND `.csv` as formats the guide teaches, which read
+#: as though they were covered here. They were not: they had no handler at all until 2026-09-25,
+#: and the sentence describing the hole sat inside the paragraph describing the fix. They are
+#: covered by TEXT_CORPUS_SUFFIXES below, and the words here are about the binary formats only.
 #:
 #: WHY A FINGERPRINT RATHER THAN A CONTENT SCAN. The toy track legitimately contains prompt-shaped
 #: rows; they are placeholders, twelve of them, reading "example harmful request number N". So
@@ -123,13 +142,52 @@ KNOWN_BINARY_DATASETS = {
 }
 
 
+@functools.lru_cache(maxsize=256)
+def _repo_root(directory: str) -> str | None:
+    """The work tree containing a directory, or None outside one. Cached; one git call per dir."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+            capture_output=True, check=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.decode("utf-8", "replace").strip() or None
+
+
+def repo_relative(path: Path) -> str | None:
+    """A path as the repository sees it, which is the form every record here is written in.
+
+    WHY NOT JUST MATCH THE TAIL. The first version of this compared `path.endswith("/" + record)`,
+    so `constraints.txt` recorded at the root also cleared `anywhere/you/like/constraints.txt`.
+    That is a suffix match on a basename wearing a path's clothes, and it hands anybody a cleared
+    filename for a corpus. The tolerance was there because a caller may name an absolute path or
+    a directory outside the current one, so the answer is to ask git where the root is rather than
+    to guess from the string.
+
+    Outside a work tree this returns None and the caller refuses, which is the deny-first default:
+    a loose directory has no repository to be relative to, so nothing in it is a recorded path.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    root = _repo_root(str(resolved.parent))
+    if root is None:
+        return None
+    try:
+        return resolved.relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return None
+
+
 def binary_dataset_findings(path: Path, raw: bytes) -> list[str]:
     """A binary dataset file is cleared only by being one this gate already knows."""
     import hashlib
 
-    key = path.as_posix()
+    key = repo_relative(path)
     for known, recorded in KNOWN_BINARY_DATASETS.items():
-        if key != known and not key.endswith("/" + known):
+        if key != known:
             continue
         got = hashlib.sha256(raw).hexdigest()
         if got == recorded:
@@ -149,6 +207,124 @@ def binary_dataset_findings(path: Path, raw: bytes) -> list[str]:
         f"KNOWN_BINARY_DATASETS."
     )
     return [unknown]
+
+
+#: Plaintext corpus formats, which THE README TELLS USERS TO BUILD THEIR CORPORA IN.
+#:
+#: THE GAP THIS CLOSES, found by the review panel on 2026-09-25. The guide says to create
+#: `harmful.txt` and `harmless.txt` in the repository root. Neither name matched a `.gitignore`
+#: pattern and neither suffix was read here, so somebody following the guide and running
+#: `git add .` staged a plaintext harmful corpus that the pre-commit hook skipped, CI skipped, and
+#: the first line of `.gitignore` claimed to prevent. The comment below the binary-dataset table
+#: named `.txt` and `.csv` as formats the guide teaches, inside the paragraph describing a hole
+#: that HAD been closed, so both halves read as covered and only one was.
+#:
+#: RECORDED BY PATH, NOT BY HASH, and the difference is deliberate. A binary dataset is recorded
+#: by hash because the failure to prevent is somebody regenerating the toy track from a real
+#: corpus, which changes the contents and not the name. Here the failure to prevent is a NEW
+#: plaintext file appearing, so the name is the thing to pin: hashing `constraints.txt` would mean
+#: re-recording it at every dependency bump, and a check that cries wolf is a check people learn
+#: to override. What this cannot see is somebody overwriting one of the recorded files with prompt
+#: text, and it says so rather than implying otherwise; that shows up in a diff of a file nobody
+#: expects to change wholesale.
+TEXT_CORPUS_SUFFIXES = frozenset({".txt", ".csv", ".tsv"})
+
+#: Repo-relative paths (forward slashes) of the plaintext files legitimately tracked today,
+#: checked against the whole tree on 2026-09-25. Nothing else clears.
+KNOWN_TEXT_FILES = frozenset({
+    "APACHE-2.0.txt",
+    "constraints.txt",
+    "constraints/ci.txt",
+    "constraints/floors.txt",
+})
+
+
+def _recorded_as(path: Path, records) -> bool:
+    """Does this path match one of the recorded repo-relative paths?"""
+    return repo_relative(path) in records
+
+
+def text_corpus_findings(path: Path) -> list[str]:
+    """A plaintext file is cleared only by being one this gate already knows."""
+    if _recorded_as(path, KNOWN_TEXT_FILES):
+        return []
+    return [(
+        f"{path}: is a plaintext file in a corpus format, and this gate does not know it. The "
+        f"guide tells users to build harmful and harmless corpora as .txt, so a new one is "
+        f"refused rather than cleared. If it is not a corpus, record it in KNOWN_TEXT_FILES and "
+        f"say why in the commit; if it is, keep it out of the tree."
+    )]
+
+
+#: Notebooks, judged by their CONTAINER rather than by their content.
+#:
+#: `notebooks/senbonzakura_colab.ipynb` is tracked, it is JSON, and it carries an `outputs` array
+#: per cell. The README's first call to action is to open it in Colab. So a contributor who runs
+#: it and commits the result stages whatever an abliterated model said, verbatim, and until
+#: 2026-09-25 every layer reported clean: `.ipynb` was not a suffix this gate read.
+#:
+#: THE RULE IS "ANY SAVED OUTPUT AT ALL", not "an output that looks harmful". Reading the output
+#: text would need a denylist of what a harmful generation says, and this project refused exactly
+#: that on 2026-09-17 because the guard carrying the denylist inline published the terms it
+#: existed to keep out. The committed notebook has zero outputs today and needs none, so the rule
+#: costs nothing we use and removes the container a leak would travel in.
+#:
+#: IT CANNOT GO THROUGH THE JSON WALK. `outputs` is a banned key, so the key check would refuse
+#: every notebook including a stripped one, and a gate that refuses the clean case is a gate
+#: somebody switches off.
+NOTEBOOK_SUFFIXES = frozenset({".ipynb"})
+
+
+def notebook_findings(path: Path, raw: bytes) -> list[str]:
+    """Saved cell outputs in a notebook, as sentences. Empty means clean."""
+    try:
+        doc = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        return [f"{path}: is not valid JSON ({e}), so it cannot be cleared"]
+    if not isinstance(doc, dict) or not isinstance(doc.get("cells"), list):
+        return [(f"{path}: has no cells array, so this check cannot tell whether it carries saved "
+                 f"outputs. It is refused rather than cleared.")]
+    carrying = [i + 1 for i, cell in enumerate(doc["cells"])
+                if isinstance(cell, dict) and cell.get("outputs")]
+    if not carrying:
+        return []
+    shown = ", ".join(str(n) for n in carrying[:10])
+    more = f" and {len(carrying) - 10} more" if len(carrying) > 10 else ""
+    return [(
+        f"{path}: cell(s) {shown}{more} carry saved outputs. A notebook run against a model "
+        f"stores what the model said, verbatim, so the outputs are stripped before staging "
+        f"rather than read here. Run `nbstripout {path}`, or install the hook with "
+        f"`tools/hooks/install-local-hooks.sh` so it happens on every commit."
+    )]
+
+
+#: FILE KINDS THIS GATE HAS DECIDED IT DOES NOT READ, recorded one by one.
+#:
+#: DENY-FIRST, and this table is what makes that possible. Everything staged and everything
+#: tracked now reaches the dispatcher, and a kind that is neither handled above nor listed here is
+#: REFUSED. Absence is not an allowance: a contributor adding the first `.parquet`, `.tsv` or
+#: `.yaml`-shaped dump gets a refusal naming the file, rather than a silent pass from a filter
+#: that only ever knew two suffixes. Recording a new kind is a decision, and a decision shows up
+#: in review, which is the property the old filter never had.
+#:
+#: Keyed by lowercase suffix, or by filename where there is no suffix (`LICENSE`, `Dockerfile`)
+#: or where the name IS the dotted part (`.gitignore`, `.npmrc`). Measured against the whole
+#: tracked tree on 2026-09-25: 501 files, and these are the kinds among them that carry source,
+#: documentation, images, packaging metadata or shell, none of which is a format anybody builds a
+#: corpus in. That is the judgement being recorded, and it is about the FORMAT rather than about
+#: any particular file: a prompt dump pasted into a `.py` list literal is not something this gate
+#: can see, and the human review in `probes/README.md` is what covers that.
+#:
+#: `.safetensors`, `.gguf`, `.pt` and `.bin` are deliberately NOT here. They are model weights,
+#: `.gitignore` keeps them out for their own reasons, and if one ever reaches this dispatcher the
+#: right answer is a loud refusal rather than a shrug.
+IGNORED_KINDS = frozenset({
+    ".1", ".bib", ".cff", ".css", ".cuda", ".dockerignore", ".gif", ".gitignore", ".gitkeep",
+    ".heretic", ".ico", ".in", ".jinja", ".js", ".lock", ".mjs", ".npmrc", ".png", ".py", ".rb",
+    ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".tool", ".toml",
+    ".webmanifest", ".yaml", ".yml",
+    "Dockerfile", "LICENSE", "NOTICE",
+})
 
 #: Markdown under a results directory, which `.gitignore` re-admits explicitly.
 #:
@@ -195,6 +371,55 @@ def is_results_markdown(path: Path) -> bool:
         return False
     parts = Path(path).as_posix()
     return RESULTS_MARKDOWN in parts
+
+
+#: The readings this gate can apply. `IGNORE` is a recorded decision; `UNRECORDED` is a refusal.
+JSON_KEYS, JSONL_KEYS = "json", "jsonl"
+BINARY_DATASET, NOTEBOOK, TEXT_CORPUS = "binary-dataset", "notebook", "text-corpus"
+RESULTS_NOTE, IGNORE, UNRECORDED = "results-note", "ignore", "unrecorded"
+
+
+def dispatch_kind(path: Path) -> str:
+    """The key a path is recorded under: its lowercase suffix, or its name where it has none."""
+    return path.suffix.lower() or path.name
+
+
+def handler_for(path: Path) -> str:
+    """Which reading this gate applies to a path, or that it has no recorded reading for it.
+
+    ONE ANSWER, IN ONE PLACE. The suffix test used to be written out at each call site, and the
+    results-Markdown branch was added to one of them and not the others; that is how this file
+    came to read two suffixes on the tracked path and three on the staged one. Every caller now
+    asks here.
+    """
+    if is_results_markdown(path):
+        return RESULTS_NOTE
+    kind = dispatch_kind(path)
+    if kind in MARKDOWN_SUFFIXES:
+        # Markdown outside the results tree is documentation, and the shape rule that fits a
+        # results note (no fences, no blockquotes) would refuse every README in the repository.
+        return IGNORE
+    if kind in SUFFIXES:
+        return JSONL_KEYS if kind == ".jsonl" else JSON_KEYS
+    if kind in BINARY_DATASET_SUFFIXES:
+        return BINARY_DATASET
+    if kind in NOTEBOOK_SUFFIXES:
+        return NOTEBOOK
+    if kind in TEXT_CORPUS_SUFFIXES:
+        return TEXT_CORPUS
+    if kind in IGNORED_KINDS:
+        return IGNORE
+    return UNRECORDED
+
+
+def unrecorded_finding(path: Path) -> list[str]:
+    """The refusal for a file kind nobody has decided about yet."""
+    return [(
+        f"{path}: is a {dispatch_kind(path)} file, and this gate has no recorded reading for that "
+        f"kind. It is refused rather than cleared: a filter that passes what it does not "
+        f"recognise reports clean for a tree it did not look at. Give it a handler, or record it "
+        f"in IGNORED_KINDS with the reason it cannot carry a corpus."
+    )]
 
 
 # A line longer than this is not parsed. It is reported instead: a multi-megabyte
@@ -265,11 +490,18 @@ def findings_for(obj, where: str) -> list[str]:
 
 def scan_file(path: Path) -> list[str]:
     """Findings for one file on disk, as human-readable lines. Empty means clean."""
+    kind = handler_for(path)
+    if kind == IGNORE:
+        return []
+    if kind == UNRECORDED:
+        # Answered before the read, so an unrecorded kind cannot cost a gigabyte of memory to
+        # refuse. The verdict does not depend on the bytes.
+        return unrecorded_finding(path)
     try:
         raw = path.read_bytes()
     except OSError as e:
         return [f"{path}: could not be read ({e}), so it cannot be cleared"]
-    return scan_bytes(path, raw)
+    return scan_bytes(path, raw, kind=kind)
 
 
 def _foreign_schema(path: Path) -> bool:
@@ -277,20 +509,28 @@ def _foreign_schema(path: Path) -> bool:
     return path.name in FOREIGN_SCHEMA_FILES
 
 
-def scan_bytes(path: Path, raw: bytes) -> list[str]:
+def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
     """Findings for one artefact's CONTENT, whatever it was read from.
 
-    Markdown under a results directory is judged by SHAPE rather than by keys, and the branch is
-    here rather than at each call site so that both the staged path and the tracked-files path
-    get it. Putting it in one of them is how the leak gate came to read two suffixes in the first
-    place.
+    The reading to apply comes from `handler_for`, here rather than at each call site so that the
+    staged path and the tracked-files path cannot drift apart. Putting it in one of them is how
+    this gate came to read two suffixes in the first place.
 
     Separate from `scan_file` because what a pre-commit check must read is the staged
     blob rather than the working copy, and those two are not the same bytes.
     """
-    if path.suffix in BINARY_DATASET_SUFFIXES:
+    kind = kind or handler_for(path)
+    if kind == IGNORE:
+        return []
+    if kind == UNRECORDED:
+        return unrecorded_finding(path)
+    if kind == BINARY_DATASET:
         return binary_dataset_findings(path, raw)
-    if is_results_markdown(path):
+    if kind == TEXT_CORPUS:
+        return text_corpus_findings(path)
+    if kind == NOTEBOOK:
+        return notebook_findings(path, raw)
+    if kind == RESULTS_NOTE:
         try:
             return markdown_findings(path, raw.decode("utf-8"))
         except UnicodeDecodeError:
@@ -298,7 +538,7 @@ def scan_bytes(path: Path, raw: bytes) -> list[str]:
     findings: list[str] = []
     if _foreign_schema(path):
         return findings
-    if path.suffix == ".jsonl":
+    if kind == JSONL_KEYS:
         for lineno, line in enumerate(raw.split(b"\n"), 1):
             if not line.strip():
                 continue
@@ -338,9 +578,10 @@ def staged_paths() -> list[Path]:
         print(f"could not list staged files: {e}", file=sys.stderr)
         raise SystemExit(2) from e
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
-    return [Path(n) for n in names
-            if Path(n).suffix in SUFFIXES or Path(n).suffix in BINARY_DATASET_SUFFIXES
-               or is_results_markdown(Path(n))]
+    # EVERY staged path reaches the dispatcher. It used to be filtered to two suffixes here, so a
+    # kind nobody had thought about was cleared by never arriving. The dispatcher drops what
+    # IGNORED_KINDS records and refuses the rest, which is the deny-first shape.
+    return [Path(n) for n in names if handler_for(Path(n)) != IGNORE]
 
 
 def scan_staged(path: Path) -> list[str]:
@@ -352,6 +593,13 @@ def scan_staged(path: Path) -> list[str]:
     stripped version, and a check that reads disk passes while the commit carries the
     prompts. The staged blob is the thing that gets published.
     """
+    kind = handler_for(path)
+    if kind == IGNORE:
+        return []
+    if kind == UNRECORDED:
+        # Answered before the blob is read, for the same reason `scan_file` does: the verdict
+        # does not depend on the bytes, and an unrecorded kind may be enormous.
+        return unrecorded_finding(path)
     try:
         out = subprocess.run(
             ["git", "cat-file", "blob", f":{path.as_posix()}"],
@@ -362,7 +610,7 @@ def scan_staged(path: Path) -> list[str]:
         return [f"{path}: staged content could not be read from the index ({why}), so it cannot be cleared"]
     except (OSError, subprocess.SubprocessError) as e:
         return [f"{path}: staged content could not be read from the index ({e}), so it cannot be cleared"]
-    return scan_bytes(path, out.stdout)
+    return scan_bytes(path, out.stdout, kind=kind)
 
 
 #: Directories holding somebody else's files. This tool exists to stop OUR harmful prompts and
@@ -396,7 +644,7 @@ def _is_vendored(path: Path) -> bool:
 
 
 def tracked_under(directory: Path) -> list[Path] | None:
-    """Version-controlled JSON and JSONL under a directory, or None if git cannot say."""
+    """Version-controlled files under a directory that this gate reads, or None if git cannot say."""
     # -C, so git is asked about the repository that CONTAINS the directory. Without it
     # git answers for the current working directory, which for any target outside it
     # errors and falls back to walking, silently: the fallback then looks like a
@@ -409,13 +657,11 @@ def tracked_under(directory: Path) -> list[Path] | None:
     except (OSError, subprocess.SubprocessError):
         return None
     names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
-    return [directory / n for n in names
-            if Path(n).suffix in SUFFIXES or Path(n).suffix in BINARY_DATASET_SUFFIXES
-               or is_results_markdown(directory / n)]
+    return [directory / n for n in names if handler_for(directory / n) != IGNORE]
 
 
 def collect(paths: list[str]) -> list[Path]:
-    """Expand the given paths, keeping only JSON and JSONL.
+    """Expand the given paths, keeping everything the dispatcher has a reading for.
 
     A directory expands to what git TRACKS under it, not to what the filesystem holds.
     Walking the filesystem was wrong in both directions: it descended into .venv, so a
@@ -440,11 +686,10 @@ def collect(paths: list[str]) -> list[Path]:
             if tracked is None:
                 found.extend(sorted(
                     q for q in p.rglob("*")
-                    if q.is_file() and (q.suffix in SUFFIXES or q.suffix in BINARY_DATASET_SUFFIXES)
-                    and not _is_vendored(q)))
+                    if q.is_file() and handler_for(q) != IGNORE and not _is_vendored(q)))
             else:
                 found.extend(sorted(tracked))
-        elif p.suffix in SUFFIXES or p.suffix in BINARY_DATASET_SUFFIXES:
+        elif handler_for(p) != IGNORE:
             found.append(p)
     return found
 
@@ -452,7 +697,7 @@ def collect(paths: list[str]) -> list[Path]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="check_prompt_artefacts",
-        description="Refuse JSON or JSONL carrying prompts or generations.")
+        description="Refuse a committed artefact that still carries prompts or generations.")
     ap.add_argument("paths", nargs="*", help="files or directories to scan")
     ap.add_argument("--staged", action="store_true",
                     help="scan what is staged for commit instead of the given paths")

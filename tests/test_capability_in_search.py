@@ -33,6 +33,7 @@ import pytest
 from senbonzakura import cli
 from senbonzakura.metrics import KNEE_W_CAPABILITY, knee_scalar
 from senbonzakura.parser import build_parser
+from senbonzakura.resources import ResourceGovernor
 
 # ── the selection rule ───────────────────────────────────────────────────────────────
 
@@ -72,12 +73,29 @@ def test_the_exchange_rate_is_one_for_one_and_stated():
 # ── the probe itself ─────────────────────────────────────────────────────────────────
 
 def _abl(**over):
+    """A part-built abliterator, carrying exactly what the probe path reads.
+
+    A REAL GOVERNOR, DISABLED, not a stand-in. `_capability_score` drives its generation through
+    `self.gov` since 2026-09-25, because it was the one generation in the class with no
+    out-of-memory retry and no pause, sitting where a crash cost the whole search. A disabled
+    `ResourceGovernor` calls the worker once with every item, which is exactly what the old direct
+    call did, so these tests measure the same thing through the path the run now takes.
+
+    Handing it a fake would defeat the point twice over. This file's own subject is a defect where
+    the code read `batch_size` and the test invented `batch_size` to match, so the two agreed with
+    each other and neither matched the parser. A stub governor would be that again.
+    """
     obj = cli.Abliterator.__new__(cli.Abliterator)
     args = dict(capability_eval="", capability_n=0, capability_task="numeric",
-                capability_max_new=32, hf_token=None, gen_batch=2)
+                capability_max_new=32, hf_token=None, gen_batch=2, slow_probe_ok=False)
     args.update(over)
     obj.args = types.SimpleNamespace(**args)
     obj.log = lambda _m: None
+    obj.gov = ResourceGovernor("cpu", enabled=False)
+    # False, not True: the offload refusal should get its chance to fire. A tiny test model carries
+    # no `hf_device_map`, so it reads as fully resident and returns immediately, which is the
+    # behaviour worth asserting rather than skipping.
+    obj._slow_probe_checked = False
     return obj
 
 

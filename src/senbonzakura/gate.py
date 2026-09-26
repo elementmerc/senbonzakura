@@ -87,9 +87,22 @@ def run(argv=None, log=print):
     # reading exit 1 would report a regression that was never measured, and the docstring above
     # argues that conflating those two teaches its reader to ignore the difference. `verdict`
     # itself can also raise on an inverted interval, which was outside both try blocks.
+    #
+    # `BaselineError` IS IN THIS TUPLE, since 2026-09-25, and its absence was the same defect at
+    # one remove. It subclasses `Exception`, not `ValueError`, so the two refusals `verdict` raises
+    # for a determinism mismatch went straight past this handler and out of `run` as a traceback,
+    # which the shell reports as exit 1. Exit 1 is this command's code for REGRESSED. So a CI job
+    # upgrading `coherence` to the `deterministic=True` stamp this release introduces, against a
+    # baseline recorded a fortnight earlier, would have reported a regression that was never
+    # measured: exactly the conflation the docstring above argues teaches a reader to ignore the
+    # difference. The comment was written about `KeyError` and the fix stopped at the exception
+    # families that existed that day.
     try:
         ok, headline, detail = baseline.verdict(
             recorded, current["point"], baseline.interval_of(current))
+    except baseline.BaselineError as e:
+        log(f"gate REFUSED: {e}")
+        return REFUSED
     except (KeyError, TypeError, ValueError, IndexError) as e:
         log(f"gate REFUSED: {a.measurement} is not a measurement this gate can read: "
             f"{type(e).__name__}: {e}")

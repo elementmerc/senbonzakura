@@ -7,7 +7,11 @@ blank_issues_enabled: true
 
 contact_links:
   - name: Reporting a security issue
-    url: https://github.com/elementmerc/senbonzakura/blob/main/CONTRIBUTING.md#reporting-a-security-issue
+    # `dev`, not `main`, and for the same reason every install instruction names it: `main` is a
+    # long way behind and does not carry CONTRIBUTING.md at all, so this menu entry sent somebody
+    # with a security finding to a 404. `tools/ci/readme_links_resolve.py` now resolves this link
+    # against the published ref rather than the local one.
+    url: https://github.com/elementmerc/senbonzakura/blob/dev/CONTRIBUTING.md#reporting-a-security-issue
     about: Do NOT open a public issue. CONTRIBUTING.md has the address to email.
   - name: Questions and support
     url: https://github.com/elementmerc/senbonzakura/discussions

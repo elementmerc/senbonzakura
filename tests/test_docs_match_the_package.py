@@ -167,6 +167,73 @@ def test_the_reference_documents_every_command_that_does_exist():
     assert not missing, f"docs/reference/cli.md is missing: {sorted(missing)}"
 
 
+# ── and no OTHER page invents one either ─────────────────────────────────────────────
+#
+# `_documented_commands` reads `docs/reference/cli.md` and nothing else, which is right for the
+# two tests above: that page is the map, so the second of them asks whether the map is complete,
+# and widening its input would make a command documented anywhere count as mapped. The guard
+# below is the other half, over every Markdown surface: a command NAMED anywhere must exist.
+#
+# It was needed. `REPRODUCING.md` told a reader checking the benchmark to run
+# `senbonzakura bench --help` until 2026-09-25, on the one page whose whole job is letting a
+# stranger re-take the numbers, and the reader got the abliterator's help and exit 0.
+
+#: Markdown that is shipped or published. Fixture and note trees under `private/` are excluded
+#: because they are not a surface a reader meets.
+def _prose_markdown():
+    import subprocess
+    listed = subprocess.run(["git", "ls-files", "*.md"],
+                            capture_output=True, text=True, cwd=ROOT, check=True).stdout.split()
+    return [p for p in listed if not p.startswith("private/")]
+
+
+_FENCE = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+_INLINE = re.compile(r"`([^`\n]+)`")
+# An INVOCATION, not the word. `senbonzakura wins`, `senbonzakura is` and `senbonzakura on` all
+# appear in prose, so only fenced blocks and inline code spans are read. The `from ` lookbehind
+# keeps `from senbonzakura import trackio` out; the character class keeps `.../senbonzakura track`
+# style paths from matching a second time at the wrong offset.
+_INVOKE = re.compile(r"(?<![\w./-])(?<!from )senbonzakura\s+([a-z][a-z0-9-]*)")
+
+
+def _invoked_commands():
+    """Every `senbonzakura <word>` that appears as a command, mapped to the pages showing it."""
+    found = {}
+    for rel in _prose_markdown():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        chunks = [m.group(0) for m in _FENCE.finditer(text)]
+        chunks += [m.group(1) for m in _INLINE.finditer(_FENCE.sub("", text))]
+        for chunk in chunks:
+            for m in _INVOKE.finditer(chunk):
+                found.setdefault(m.group(1), set()).add(rel)
+    return found
+
+
+def test_no_markdown_surface_invokes_a_command_that_does_not_exist():
+    """The widened guard. The parser will not say no, so a page saying it wrong is the only signal.
+
+    An unknown first word is taken as the model positional and falls through to the abliterator,
+    which prints its help and exits 0 for `--help`, and starts fetching a model of that name
+    without it. Until the parser refuses, this test is what stands between a reader and a
+    plausible wrong screen.
+    """
+    real = _real_commands()
+    offenders = {name: sorted(pages) for name, pages in _invoked_commands().items()
+                 if name not in real}
+    assert not offenders, (
+        "these pages show a `senbonzakura <command>` that the parser does not register, and the "
+        "parser does not refuse it either: it falls through to the abliterator and exits 0:\n  "
+        + "\n  ".join(f"{name}: {', '.join(pages)}" for name, pages in sorted(offenders.items())))
+
+
+def test_the_invocation_scan_reads_something():
+    """A scan that matches nothing passes, which is how a check goes quiet after a rename."""
+    found = _invoked_commands()
+    assert len(found) >= 10, (
+        f"only {len(found)} distinct commands were found across the Markdown surfaces, which "
+        f"means the pattern stopped matching rather than that the docs stopped showing commands")
+
+
 def test_the_pinned_set_states_the_python_it_needs():
     """The numpy release pinned in `constraints.txt` needs Python 3.12; the tool itself supports 3.10.
 

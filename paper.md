@@ -23,29 +23,29 @@ Abliteration removes a language model's refusal behaviour by editing its weights
 talking it into cooperating. It rests on @arditi2024: refusal is carried by a direction in
 activation space, and projecting it out of the weights that write to the residual stream removes
 the behaviour for good. Several tools do this well, and the better ones report what else changed.
-The gap is not measuring the cost; it is that nothing validates the instrument.
+What none of them do is validate the instrument.
 
-Taking refusal out is the easy part. The hard part is knowing whether you also took out the
-model's judgement, its reasoning or its grip on the language, and a tool reporting only the
-refusal rate cannot tell success from damage.
+Taking refusal out is easy. The hard part is knowing whether you also took out the model's
+judgement, its reasoning or its grip on the language, and a tool reporting only the refusal rate
+cannot tell success from damage.
 
 So Senbonzakura ships the instruments beside the edit: refusal on two rulers, its own and a
 competitor's; capability graded by code rather than by another model; coherence as perplexity on a
 fixed passage; distributional cost as KL divergence; and whether the model still *recognises* harm
 although it will now discuss it. Every figure carries its conditions and a null control. The
-control is why a number means anything: this project's compass was once matched, on the same exam,
-by a ruler reading nothing but sentence length.
+control is why a number means anything: this compass was once matched, on the same exam, by a
+ruler reading only sentence length.
 
 # Statement of need
 
 Three things make such a number hard to trust, and this project met all three.
 
 A refusal rate is a property of the corpus, the prompt format and the token budget, not only of
-the model: a refusal cut off before it is emitted counts as compliance. Reporting a configuration
+the model: a refusal cut off before it's emitted counts as compliance. Reporting a configuration
 on the rows it was selected on is not a measurement, since a search returns the best of N draws,
 so the corpus splits into fitting, selection, and unseen rows. Two numbers are comparable only if
 made the same way, so each figure records its metric, estimator, units, input, precision and code
-version. Figures here have been withdrawn for each of these faults, after they had travelled.
+version. Figures here have been withdrawn for each fault, after they had travelled.
 
 A companion package, `senbonzakura-check`, reads those records back and checks them, and reads
 other harnesses' result files [@gao2024; @inspect2024] too, so it can be pointed at somebody
@@ -66,23 +66,24 @@ so both tools read on one ruler. `abliterix` [@abliterix2025] is ahead on method
 mixture-of-experts handling and prebuilt configurations.
 
 The multi-direction idea is neither mine nor new. Wollschläger et al. [@wollschlager2025] show
-refusal is a cone, and Piras et al. [@piras2025] report large gains over a single direction. A
-five-seed comparison here on Qwen3-1.7B did not reproduce it, at 1.5 to 1.9 times the divergence
-for no measurable refusal gain: one model, one search, so a disagreement to resolve rather than a
-refutation.
+refusal is a cone, and Piras et al. [@piras2025] report large gains over a single direction. Five
+seeds here on Qwen3-1.7B went the other way, at 1.4 to 1.9 times the divergence (means) for no
+refusal gain. Those arms predate this package's held-out selection and took whatever an
+unselective filter passed, so they price an *arbitrary* second direction where both papers choose
+theirs deliberately, and the question stays open.
 
 What this package adds is narrow: it validates the instrument before reporting the number.
 
 # Ethics and dual use
 
-The models this produces will answer requests the original refused, including harmful ones. That
-is the point, and it is permanent in the weights. No abliterated weights ship with it; the base
+The models this produces will answer requests the original refused, including harmful ones. That's
+the point, and it's permanent in the weights. No abliterated weights ship with it; the base
 model's licence still governs anything made with it, and the documentation says plainly not to put
 one in front of others without saying what it is.
 
-**The installed package is not prompt-free.** The held-out track is gated, but the wheel carries
-roughly 6,200 harmful prompts, obfuscated against scraping with the key beside them: a speed bump,
-not a protection. A corpus-free build is documented.
+**A release is not prompt-free.** The held-out track is gated, but a released wheel carries
+roughly 6,200 harmful prompts, obfuscated with the key beside them: a speed bump. A corpus-free
+build is documented.
 
 # Availability
 

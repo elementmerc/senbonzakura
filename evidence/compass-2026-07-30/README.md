@@ -110,9 +110,19 @@ Both files carry it inline: package versions, python, platform, the card, the se
 recorded skips, and the decoded token ids that were scored. Two things to note about it.
 
 - `git.source` is `"declared"`, not `"git"`. The run executed from a shipped tarball rather
-  than a checkout, so git could not answer and the commit (`558a237`) was declared by the run.
+  than a checkout, so git could not answer and the commit (`d5a16e0`) was declared by the run.
   That is a claim rather than a measurement, and `dirty` is `null` because nothing could check
   the tree against it.
+
+  **This line said `558a237` until 2026-09-25**, which is a docs commit about the holst specs and
+  not the code that produced these numbers. Both artefacts declare `d5a16e0`, "fix(compass): the
+  verdict was read where the model puts `<think>`", which is the fix this whole evidence set
+  exists to record, so the artefacts are right and the prose was wrong. The two commits are four
+  apart and one of them straddles the defect that moved the headline figure from 0.9636 to 0.9887,
+  so a reader checking out the wrong one would have been comparing against the withdrawn reading.
+  Found by the 2026-09-25 review panel. Since `git.source` is `"declared"`, neither value was
+  measured and nothing in the run can adjudicate between them: the artefact is preferred because
+  it is what the run itself wrote down, and prose retyped from memory is how the two diverged.
 - The card is an RTX 3060 Laptop (6 GB). A version list without the hardware is not
   provenance: the same code on a different card is a different measurement.
 

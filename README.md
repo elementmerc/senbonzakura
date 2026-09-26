@@ -63,25 +63,22 @@ sounds.
 
 ## Install
 
-```sh
-pip install senbonzakura
-senbonzakura setup
-```
-
-> **PyPI serves 0.3.0, from July 2026, and you do not want it.** Its numbers are withdrawn, and
-> `senbonzakura-check` is not on PyPI yet, so this version cannot resolve from the index.
-> Until it is published, install from the repository, in one command:
->
-> ```sh
-> pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
->             "git+https://github.com/elementmerc/senbonzakura@dev"
-> ```
+> **`pip install senbonzakura` is not the command, not yet.** PyPI serves 0.3.0, from July 2026,
+> and you do not want it: its numbers are withdrawn, and `senbonzakura-check` is not on PyPI yet,
+> so the current version cannot resolve from the index at all. Until the checker is published,
+> the repository is the only route, and it is the command below.
 >
 > **`@dev` is load-bearing, not decoration.** Without it pip takes the default branch, which is
 > `main`, and `main` is a long way behind: it predates the checker entirely, so the first URL
 > fails with "does not appear to be a Python project" and the second installs something close to
 > the withdrawn 0.3.0 you came here to avoid.
->
+
+```sh
+pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
+            "git+https://github.com/elementmerc/senbonzakura@dev"
+senbonzakura setup
+```
+
 > **`--track default` will not work from that install.** The bundled corpora and the packed
 > track are generated artefacts kept out of git, because they are harmful prompts.
 >
@@ -186,9 +183,12 @@ By design, this is methods and results, not a loaded weapon:
   **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under
   CC BY-NC 4.0. It holds prompts only: no completions, no answers.
 
-  **The installed wheel is a different matter.** It carries roughly 6,200 harmful prompts,
-  wrapped so a scraper does not find them in plaintext. The wrapping is a speed bump, not
-  protection: the key ships beside them and `bundled.py` says so. An install is not prompt-free.
+  **A released wheel is a different matter.** It carries roughly 6,200 harmful prompts, wrapped so
+  a scraper does not find them in plaintext. The wrapping is a speed bump, not protection: the key
+  ships beside them and `bundled.py` says so. Neither install you can run today carries them,
+  because 0.3.0 on PyPI predates the bundled track and a `git+...` build from this repository
+  generates the blobs rather than committing them; the disclosure is about what a release puts on
+  your disk. [The dataset card](docs/evaluation-track-card.md) has the channel-by-channel table.
 
   Where that number comes from, since a figure nobody can derive is a figure nobody can check:
   4,895 in the packed evaluation track (259 fitting rows plus 4,636 evaluation rows) and 1,333

@@ -55,10 +55,19 @@ def _track(tmp_path, **manifest):
 
 def test_score_skips_the_search_rows_the_manifest_declares(tmp_path):
     argv = measure.stage_argv("score", _args(_track(tmp_path, skip_harmful=128)), tmp_path)
-    assert "--skip" in argv, (
-        "score was given bad_eval_ds with no --skip, so it reads the rows the search selected on "
-        "while the table calls them held out")
-    assert argv[argv.index("--skip") + 1] == "128"
+    # THE BOUNDARY IS HANDED OVER, NOT RESOLVED HERE, since 2026-09-25. This asserted
+    # `--skip 128`, which `measure` computed with its own copy of the manifest reader. That
+    # copy did not know about the bundled alias, so on the DEFAULT track it returned 0 and
+    # the front-door command scored the selection rows under a caption promising held-out
+    # ones. There is one resolver now, in `track`, and `score` is given what it needs to
+    # call it: the flags, not the answer.
+    assert "--skip" not in argv, (
+        "measure must not resolve the boundary itself; a second manifest reader is what "
+        "produced the in-sample refusal rate this test was written about")
+    assert "--track" in argv and "--track-arm" in argv, (
+        "score needs both to resolve the boundary and to stamp a verified partition")
+    assert argv[argv.index("--track-arm") + 1] == "harmful", (
+        "bad_eval_ds is the harmful arm; the wrong arm reads the wrong recorded boundary")
 
 
 def test_a_track_that_declares_no_skip_gets_none(tmp_path):

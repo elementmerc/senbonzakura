@@ -195,10 +195,22 @@ def report(p):
             f"they agree."
             + (f" {len(p['tie_votes'])} could not resolve a difference: "
                f"{', '.join(sorted(p['tie_votes']))}." if p["tie_votes"] else ""))
-        lines.append(
-            f"  The size of the win is NOT agreed: across the judges that decided, the gap runs "
-            f"{p['gap_min']:.4g} to {p['gap_max']:.4g}, a spread of {p['gap_spread']:.4g}. Quote "
-            f"the range rather than one judge's figure, and only where those judges share units.")
+        # CONDITIONAL, since 2026-09-25. This asserted a disagreement unconditionally, so two
+        # judges reporting an identical gap produced "the size of the win is NOT agreed: the gap
+        # runs 0.12 to 0.12, a spread of 0". A sentence that states a disagreement the numbers
+        # beside it deny is a small defect in most modules and a serious one here, because this
+        # module's job is to stop exactly that.
+        if p["gap_spread"]:
+            lines.append(
+                f"  The size of the win is NOT agreed: across the judges that decided, the gap "
+                f"runs {p['gap_min']:.4g} to {p['gap_max']:.4g}, a spread of "
+                f"{p['gap_spread']:.4g}. Quote the range rather than one judge's figure, and only "
+                f"where those judges share units.")
+        else:
+            lines.append(
+                f"  The judges that decided agree on the size too: the gap is "
+                f"{p['gap_min']:.4g} on each of them. Quote it only where those judges share "
+                f"units.")
     if p["resolving_power_unknown"]:
         lines.append(
             f"  NOT CHECKED: {', '.join(sorted(p['resolving_power_unknown']))} reported no "

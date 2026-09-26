@@ -161,6 +161,6 @@ produce it, which is deliberate: reading the source answers "what does this tool
 without either project's benchmark harness getting a say in the answer.
 
 If something here is out of date, or if I have read one of these wrongly, please open an
-issue. Four claims in the first draft of this page were wrong in the other tools' favour and
-were found by someone reading it adversarially rather than by me. I would rather find the fifth
+issue. Four claims in the first draft of this page were wrong in our own favour and were found by
+someone reading it adversarially rather than by me. I would rather find the fifth
 that way than not at all.

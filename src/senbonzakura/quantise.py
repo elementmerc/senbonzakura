@@ -457,6 +457,48 @@ def convert_record_suffix():
     return RECORD_SUFFIX
 
 
+def preflight_output(source, out, *, force):
+    """The checks that need only the two paths and the flag, so they can run before a conversion.
+
+    SPLIT OUT OF `preflight` ON 2026-09-25, and the two-step path is the reason. A checkpoint
+    reaches `preflight` only after `_quantise_a_checkpoint` has converted it: tens of minutes and
+    tens of gigabytes through a temporary directory, and only then "the output exists, pass
+    --force". The commit that moved `_preflight_arguments` ahead of the conversion made exactly
+    this argument in its own comment and stopped one function short of the refusal a user is most
+    likely to meet.
+
+    The source-side checks stay where they are because they genuinely need the converted file: a
+    header cannot be read before the file exists. These do not need it, and anything that does not
+    need the expensive step belongs in front of it.
+    """
+    # BEFORE the exists check, because it is the more specific and the more destructive of the
+    # two. Ordered the other way, the only case that reaches it is `--force` on the same path,
+    # where "it exists, pass --force" has already been printed and taken.
+    if Path(out).resolve() == Path(source).resolve():
+        raise SystemExit(
+            f"the output path is the source path ({source}), so the run would read a file it is "
+            f"overwriting. Name a different --out.")
+
+    if Path(out).exists() and not force:
+        raise SystemExit(f"{out} exists. Pass --force to overwrite it, or choose another path.")
+
+
+def refuse_without_room(out, need, *, describing):
+    """Refuse when the volume the output goes to cannot hold `need` bytes.
+
+    One place, because the two-step path asks the same question about a total it works out
+    differently: a checkpoint run writes an intermediate GGUF and THEN the quantised file, and
+    sizing only the second of those is how a run converts for half an hour into a volume that was
+    never going to hold both.
+    """
+    free = free_bytes_for(out)
+    if free is not None and free < need:
+        raise SystemExit(
+            f"only {free / 1e9:.1f} GB free where the output goes and {describing} needs about "
+            f"{need / 1e9:.1f} GB. Quantising shrinks a model, but not before it has written it, "
+            f"so free space or choose an output path on a larger volume.")
+
+
 def preflight(source, out, quant, *, allow_requantize, force):
     """Everything checkable before a long job starts, because none of it is worth finding halfway.
 
@@ -472,13 +514,9 @@ def preflight(source, out, quant, *, allow_requantize, force):
             f"  If you want the intermediate GGUF kept, make it yourself:\n"
             f"    senbonzakura convert <model directory> {src}")
 
-    # BEFORE the exists check, because it is the more specific and the more destructive of the
-    # two. Ordered the other way, the only case that reaches it is `--force` on the same path,
-    # where "it exists, pass --force" has already been printed and taken.
-    if Path(out).resolve() == src.resolve():
-        raise SystemExit(
-            f"the output path is the source path ({src}), so the run would read a file it is "
-            f"overwriting. Name a different --out.")
+    # Both output-side refusals BEFORE the header read, and the same-path one first within them:
+    # a run that is about to overwrite its own source should not have read it first.
+    preflight_output(src, out, force=force)
 
     # Translated rather than propagated. A GGUFError is a readable sentence already, and a
     # traceback in front of it is not the plain-language failure a user is owed.
@@ -493,16 +531,8 @@ def preflight(source, out, quant, *, allow_requantize, force):
             f"lossy step on another. Convert from the original weights instead, or pass "
             f"--allow-requantize if you genuinely want that and will label the result.")
 
-    if Path(out).exists() and not force:
-        raise SystemExit(f"{out} exists. Pass --force to overwrite it, or choose another path.")
-
-    need = int(src.stat().st_size * SIZE_HEADROOM)
-    free = free_bytes_for(out)
-    if free is not None and free < need:
-        raise SystemExit(
-            f"only {free / 1e9:.1f} GB free where the output goes and the source is "
-            f"{src.stat().st_size / 1e9:.1f} GB. Quantising shrinks a model, but not before it has "
-            f"written it, so free space or choose an --out on a larger volume.")
+    refuse_without_room(out, int(src.stat().st_size * SIZE_HEADROOM),
+                        describing=f"the output of a {src.stat().st_size / 1e9:.1f} GB source")
     return head
 
 
@@ -512,6 +542,91 @@ def preflight(source, out, quant, *, allow_requantize, force):
 def looks_like_a_checkpoint(path):
     p = Path(path)
     return p.is_dir() and (p / "config.json").is_file()
+
+
+def checkpoint_bytes(directory):
+    """How much a checkpoint weighs on disk, for sizing the two files this route writes.
+
+    Symlinks are FOLLOWED rather than skipped: a Hub snapshot directory is a tree of links into
+    the blob store, and counting those as nothing would report a 60 GB model as a few kilobytes,
+    which is an under-estimate in the one direction a disk check must never be wrong in. A tree
+    that cannot be walked to the end yields the partial total rather than raising, and the caller
+    reads zero as "cannot say" rather than as "nothing there": this feeds a pre-flight, not a
+    correctness claim.
+    """
+    total = 0
+    # One try around the WALK rather than one per entry: `rglob` itself can raise on a directory
+    # that disappears underneath it, and a per-entry guard is both slower and blind to that.
+    try:
+        for path in Path(directory).rglob("*"):
+            if path.is_file():
+                total += path.stat().st_size
+    except OSError:
+        # A partial total is still worth more than none: it can only under-estimate, and the
+        # caller treats zero as "cannot say" rather than as "nothing there".
+        pass
+    return total
+
+
+#: Roughly how many bits per weight each recipe spends, so the two-step route can size the file
+#: it has not written yet. Upstream's own published figures, rounded: they are used to decide
+#: whether a volume can hold the conversion and the quantised file at once, not to promise a size.
+#:
+#: A SINGLE PESSIMISTIC FRACTION WAS TRIED FIRST AND REJECTED. Taking Q8_0's share for every
+#: recipe refuses a Q4_K_M run on a volume that would have held it comfortably, and a pre-flight
+#: that refuses work which would have succeeded is a worse failure than the one it prevents: it
+#: teaches people to reach for the flag that turns it off.
+_BITS_PER_WEIGHT = {
+    "Q2_K": 2.6, "Q3_K_S": 3.4, "Q3_K_M": 3.7, "Q3_K_L": 3.9,
+    "Q4_K_S": 4.6, "Q4_K_M": 4.9, "Q4_0": 4.6, "IQ4_XS": 4.3, "IQ4_NL": 4.5,
+    "Q5_K_S": 5.5, "Q5_K_M": 5.7, "Q5_0": 5.5, "Q6_K": 6.6, "Q8_0": 8.5,
+    "F16": 16.0, "BF16": 16.0,
+}
+
+def checkpoint_output_path(a):
+    """Where `quantise <checkpoint>` writes, computed in one place because two callers need it.
+
+    BESIDE THE SOURCE, like the GGUF route, and until 2026-09-25 it was not: this read
+    `Path(a.source).name`, which drops the directory, so a checkpoint at `/models/X` wrote
+    `X-Q4_K_M.gguf` into whatever directory the command happened to be run from. It was logged,
+    so it was not silent, but one command that puts a file in two different places depending on
+    the shape of its input is a command nobody can script against.
+    """
+    if a.out:
+        return Path(a.out)
+    return default_output(str(Path(a.source)) + GGUF_SUFFIX, a.type)
+
+
+def preflight_a_checkpoint(a, log=print):
+    """The output-side refusals for the two-step route, before a byte is converted.
+
+    Both halves are sized here rather than one: this route writes an intermediate GGUF the size of
+    the checkpoint and then a quantised file beside it, and a volume that can hold the second but
+    not the first refuses halfway through, with the conversion already paid for.
+
+    The intermediate's size is an estimate from the checkpoint's bytes on disk, which is exact for
+    a 16-bit checkpoint and generous for a 32-bit one. Where the free space cannot be read, the
+    check reports nothing rather than guessing, which is `free_bytes_for`'s own contract.
+    """
+    out = checkpoint_output_path(a)
+    preflight_output(a.source, out, force=a.force)
+
+    weights = checkpoint_bytes(a.source)
+    if not weights:
+        return out
+    # The intermediate is 16-bit, so it weighs what the checkpoint does when the checkpoint is
+    # already 16-bit and less when it is 32-bit. Taking the checkpoint's own size for it errs
+    # towards asking for more room than the run needs, which is the safe direction here.
+    share = _BITS_PER_WEIGHT.get(a.type, 16.0) / 16.0
+    need = int(weights * (1 + share) * SIZE_HEADROOM)
+    if not a.keep_source:
+        # The intermediate is deleted once the quantised file is written, so the PEAK is both
+        # files at once and that is what has to fit. Stated rather than left implicit: somebody
+        # reading the refusal with `df` in the other window should be able to reconcile it.
+        log(f"  this route writes about {weights / 1e9:.1f} GB of intermediate GGUF and then the "
+            f"quantised file, so about {need / 1e9:.1f} GB has to be free at once.")
+    refuse_without_room(out, need, describing="the conversion and the quantised file together")
+    return out
 
 
 def _quantise_a_checkpoint(a, *, log=print):
@@ -532,7 +647,7 @@ def _quantise_a_checkpoint(a, *, log=print):
 
     from . import convert
 
-    out = Path(a.out) if a.out else default_output(Path(a.source).name + ".gguf", a.type)
+    out = checkpoint_output_path(a)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     log(f"{a.source} is a transformers checkpoint rather than a GGUF, so it is converted first, "
@@ -543,10 +658,15 @@ def _quantise_a_checkpoint(a, *, log=print):
     # cache, and the output directory is the one the user has just said they can write to.
     tmp_dir = tempfile.mkdtemp(prefix=".senbonzakura-convert-", dir=str(out.parent))
     intermediate = Path(tmp_dir) / (Path(a.source).name + "-bf16.gguf")
+    converted = quantised = False
     try:
         rc = convert.run([str(a.source), str(intermediate)], log=log)
         if rc != 0:
             return rc
+        # A conversion that FAILED leaves something that is not a GGUF, and keeping that would be
+        # offering the user a resume point that cannot be resumed from. Only a finished
+        # conversion is worth rescuing.
+        converted = True
         # EVERY QUANTISATION FLAG IS FORWARDED, not the four somebody remembered.
         #
         # This rebuilt the inner command line by hand and carried `--type`, `--imatrix`,
@@ -563,15 +683,33 @@ def _quantise_a_checkpoint(a, *, log=print):
         q_argv = [str(intermediate), str(out), "--type", a.type]
         for flag, value in _forwardable_quantiser_flags(a):
             q_argv += [flag] if value is True else [flag, str(value)]
-        return run(q_argv, log=log)
+        rc = run(q_argv, log=log)
+        quantised = rc == 0
+        return rc
     finally:
-        # The intermediate is scaffolding, not a result. `--keep-source` asks for it, and then it
-        # moves next to the output where the user can find it rather than staying in a temporary
-        # directory named after this function.
-        if a.keep_source and intermediate.is_file():
+        # The intermediate is scaffolding when the run SUCCEEDED and is the expensive half of the
+        # work when it did not, and this deleted it either way.
+        #
+        # THE RUN THAT PRODUCED THIS. A 30B checkpoint converts for tens of minutes into about
+        # 60 GB, the quantisation's own pre-flight then finds the volume short for the output,
+        # and this `finally` deleted the conversion on the way out. The user frees space and
+        # starts again from the checkpoint, paying the conversion a second time for a failure
+        # that happened AFTER it. A failed step must never destroy a completed one.
+        #
+        # `--keep-source` still asks for it on a successful run, and either way it moves next to
+        # the output where the user can find it rather than staying in a temporary directory
+        # named after this function.
+        if converted and (a.keep_source or not quantised) and intermediate.is_file():
             kept = out.parent / intermediate.name
             intermediate.replace(kept)
-            log(f"  kept the intermediate GGUF at {kept}")
+            if quantised:
+                log(f"  kept the intermediate GGUF at {kept}")
+            else:
+                log(f"  the quantisation did not finish, and the conversion it needed is kept at "
+                    f"{kept} rather than deleted with it.")
+                log("  Resume from there once the reason is dealt with, and the conversion is "
+                    "not paid for twice:")
+                log(f"    senbonzakura quantise {kept} {out} --type {a.type}")
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -622,6 +760,10 @@ def run(argv=None, log=print):
         # from the command line before anything started. That is precisely what this function's
         # own docstring says it exists to prevent.
         _preflight_arguments(a, log=log)
+        # AND THE OUTPUT-SIDE CHECKS, which the same argument reaches: `quantise <checkpoint>
+        # <a file that is already there>` converted first and refused afterwards, having spent
+        # tens of minutes and tens of gigabytes on a fault visible from the command line.
+        preflight_a_checkpoint(a, log=log)
         return _quantise_a_checkpoint(a, log=log)
 
     _preflight_arguments(a, log=log)

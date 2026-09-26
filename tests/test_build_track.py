@@ -157,76 +157,260 @@ def test_skipping_the_check_makes_no_requests_and_says_so(monkeypatch):
     assert any("skipped" in s for s in said)
 
 
+# ── which shards a split lives in ────────────────────────────────────────────────
+@pytest.mark.parametrize(("files", "want"), [
+    # What the Hub's own converter writes, which is what both sources in SOURCES use.
+    (["data/train-00000-of-00002.parquet", "data/train-00001-of-00002.parquet",
+      "data/test-00000-of-00001.parquet", "README.md"],
+     ["data/train-00000-of-00002.parquet", "data/train-00001-of-00002.parquet"]),
+    (["train/0000.parquet", "test/0000.parquet"], ["train/0000.parquet"]),
+    (["train-00000-of-00001.parquet"], ["train-00000-of-00001.parquet"]),
+    (["train.parquet", "test.parquet"], ["train.parquet"]),
+])
+def test_the_split_shards_are_found_in_every_layout_this_reads(files, want):
+    assert bt._split_shards(files, "train") == want
+
+
+def test_shards_come_back_in_name_order_whatever_order_the_listing_was_in():
+    # Name order is the order `datasets` reads them in, and the shard index is in the name, so
+    # a listing that arrives shuffled must not become a corpus in a different order from the one
+    # every published digest was measured on.
+    files = ["data/train-00002-of-00003.parquet", "data/train-00000-of-00003.parquet",
+             "data/train-00001-of-00003.parquet"]
+    assert bt._split_shards(files, "train") == sorted(files)
+
+
+def test_an_unmodelled_layout_is_declined_rather_than_guessed_at():
+    # None means "hand it to `datasets`", never "there are no rows". A silent empty split here
+    # would write a corpus nobody could account for.
+    assert bt._split_shards(["data/train.json", "README.md"], "train") is None
+
+
+def test_a_split_that_is_not_there_is_declined_rather_than_matched_by_prefix():
+    assert bt._split_shards(["data/train-00000-of-00001.parquet"], "validation") is None
+
+
 # ── fetch ────────────────────────────────────────────────────────────────────────
-class _FakeDS:
-    def __init__(self, rows, column="text"):
-        self._rows = rows
-        self.column_names = [column]
-        self._column = column
-
-    def __getitem__(self, key):
-        assert key == self._column
-        return self._rows
+def _write_parquet(path, rows, column="text"):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    pq.write_table(pa.table({column: pa.array(rows, type=pa.string())}), str(path))
+    return str(path)
 
 
-def _with_loader(monkeypatch, loader):
-    mod = type(sys)("datasets")
-    mod.load_dataset = loader
-    monkeypatch.setitem(sys.modules, "datasets", mod)
+def _with_hub(monkeypatch, tmp_path, shards, *, on_list=None, on_download=None):
+    """A `huggingface_hub` holding `shards`, a mapping of repo filename to rows.
+
+    Stubbed at the module rather than at this file's own helpers, so `_repo_files` and
+    `_download` are the code under test rather than the code being replaced.
+    """
+    written = {}
+    for i, (name, rows) in enumerate(shards.items()):
+        written[name] = _write_parquet(tmp_path / f"shard{i}.parquet", rows) \
+            if isinstance(rows, list) else rows
+    seen = {}
+
+    def _list(repo, repo_type=None, revision=None):
+        seen.update(list_repo=repo, list_type=repo_type, list_revision=revision)
+        if on_list is not None:
+            on_list()
+        return list(shards)
+
+    def _download(repo_id=None, filename=None, repo_type=None, revision=None):
+        seen.update(repo=repo_id, filename=filename, type=repo_type, revision=revision)
+        if on_download is not None:
+            on_download()
+        return written[filename]
+
+    mod = type(sys)("huggingface_hub")
+    mod.list_repo_files = _list
+    mod.hf_hub_download = _download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", mod)
+    return seen
 
 
-def test_fetch_returns_rows_in_upstream_order(monkeypatch):
-    _with_loader(monkeypatch, lambda *a, **k: _FakeDS(["b", "a", "c"]))
+def test_fetch_returns_rows_in_upstream_order(monkeypatch, tmp_path):
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["b", "a", "c"]})
     assert bt.fetch(_src(), log=lambda *a: None) == ["b", "a", "c"]
 
 
-def test_fetch_drops_blank_rows_without_dropping_content(monkeypatch):
-    _with_loader(monkeypatch, lambda *a, **k: _FakeDS(["a", "   ", "", "b"]))
+def test_fetch_reads_every_shard_and_keeps_them_in_shard_order(monkeypatch, tmp_path):
+    # Two shards concatenated the wrong way round is a corpus that loads, splits and scores, and
+    # is not the corpus the manifest describes. It is the one failure this reader must not have.
+    _with_hub(monkeypatch, tmp_path, {
+        "data/train-00001-of-00002.parquet": ["c", "d"],
+        "data/train-00000-of-00002.parquet": ["a", "b"],
+    })
+    assert bt.fetch(_src(), log=lambda *a: None) == ["a", "b", "c", "d"]
+
+
+def test_fetch_drops_blank_rows_without_dropping_content(monkeypatch, tmp_path):
+    _with_hub(monkeypatch, tmp_path,
+              {"data/train-00000-of-00001.parquet": ["a", "   ", "", "b"]})
     assert bt.fetch(_src(), log=lambda *a: None) == ["a", "b"]
 
 
-def test_fetch_passes_the_pinned_revision_through(monkeypatch):
-    seen = {}
-
-    def _load(repo, split=None, revision=None):
-        seen.update(repo=repo, split=split, revision=revision)
-        return _FakeDS(["a"])
-
-    _with_loader(monkeypatch, _load)
+def test_fetch_passes_the_pinned_revision_through(monkeypatch, tmp_path):
+    seen = _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["a"]})
     bt.fetch(_src(), log=lambda *a: None)
+    # Both calls, not one: a listing read at the pin and a download taken from the tip would
+    # produce rows nobody could trace to a commit.
+    assert seen["list_revision"] == "0" * 40
     assert seen["revision"] == "0" * 40
-    assert seen["split"] == "train"
+    assert seen["list_type"] == seen["type"] == "dataset"
 
 
-def test_fetch_refuses_a_changed_upstream_schema(monkeypatch):
-    _with_loader(monkeypatch, lambda *a, **k: _FakeDS(["a"], column="prompt"))
+def test_fetch_refuses_a_changed_upstream_schema(monkeypatch, tmp_path):
+    path = _write_parquet(tmp_path / "s.parquet", ["a"], column="prompt")
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": path})
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
     assert "no 'text' column" in str(e.value)
 
 
-def test_fetch_refuses_an_empty_upstream(monkeypatch):
-    _with_loader(monkeypatch, lambda *a, **k: _FakeDS(["", "  "]))
+def test_fetch_refuses_an_empty_upstream(monkeypatch, tmp_path):
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["", "  "]})
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
     assert "no non-empty prompts" in str(e.value)
 
 
-def test_fetch_explains_a_deleted_revision_rather_than_raising_a_library_error(monkeypatch):
-    def _load(*a, **k):
+def test_fetch_explains_a_deleted_revision_rather_than_raising_a_library_error(
+        monkeypatch, tmp_path):
+    def _boom():
         raise ValueError("Revision not found")
 
-    _with_loader(monkeypatch, _load)
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["a"]}, on_list=_boom)
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
     assert "re-pinning" in str(e.value)
 
 
-def test_fetch_says_what_to_install_when_datasets_is_absent(monkeypatch):
-    monkeypatch.setitem(sys.modules, "datasets", None)
+def test_a_failed_download_names_the_file_rather_than_raising_a_library_error(
+        monkeypatch, tmp_path):
+    def _boom():
+        raise OSError("connection reset")
+
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["a"]},
+              on_download=_boom)
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
-    assert "pip install datasets" in str(e.value)
+    assert "could not download data/train-00000-of-00001.parquet" in str(e.value)
+
+
+def test_a_shard_that_stops_partway_through_is_refused_rather_than_counted(
+        monkeypatch, tmp_path):
+    # A shard that opens and then dies mid-read is the worst of the three failures here: the rows
+    # already collected look like a pool, and a pool shorter than the one the manifest describes
+    # is a corpus nobody can account for afterwards.
+    import pyarrow.parquet as pq
+
+    class _Dies:
+        def __init__(self, *a, **k):
+            self.schema_arrow = type("S", (), {"names": ["text"]})()
+
+        def iter_batches(self, columns=None):
+            raise OSError("input/output error")
+            yield
+
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["a"]})
+    monkeypatch.setattr(pq, "ParquetFile", _Dies)
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "could not be read to the end" in str(e.value)
+
+
+def test_a_shard_that_is_not_parquet_is_a_sentence_rather_than_a_stack_trace(
+        monkeypatch, tmp_path):
+    half = tmp_path / "half.parquet"
+    half.write_bytes(b"PAR1 and then nothing")
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": str(half)})
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "not a readable parquet file" in str(e.value)
+
+
+def test_a_layout_this_reader_declines_says_which_source_needed_datasets(monkeypatch, tmp_path):
+    _with_hub(monkeypatch, tmp_path, {"data/train.json": ["a"]})
+    monkeypatch.setitem(sys.modules, "datasets", None)
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(repo="odd/layout"), log=lambda *a: None)
+    assert "odd/layout" in str(e.value)
+    assert "senbonzakura[hub]" in str(e.value)
+
+
+def test_a_layout_this_reader_declines_is_read_by_datasets_when_it_is_there(monkeypatch, tmp_path):
+    class _FakeDS:
+        column_names = ("text",)
+
+        def __getitem__(self, key):
+            return ["a", "b"]
+
+    mod = type(sys)("datasets")
+    mod.load_dataset = lambda *a, **k: _FakeDS()
+    monkeypatch.setitem(sys.modules, "datasets", mod)
+    _with_hub(monkeypatch, tmp_path, {"data/train.json": ["a"]})
+    assert bt.fetch(_src(), log=lambda *a: None) == ["a", "b"]
+
+
+def test_the_datasets_fallback_still_refuses_a_changed_schema(monkeypatch, tmp_path):
+    class _FakeDS:
+        column_names = ("prompt",)
+
+        def __getitem__(self, key):
+            return ["a"]
+
+    mod = type(sys)("datasets")
+    mod.load_dataset = lambda *a, **k: _FakeDS()
+    monkeypatch.setitem(sys.modules, "datasets", mod)
+    _with_hub(monkeypatch, tmp_path, {"data/train.json": ["a"]})
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "no 'text' column" in str(e.value)
+
+
+def test_the_datasets_fallback_explains_a_deleted_revision(monkeypatch, tmp_path):
+    def _boom(*a, **k):
+        raise ValueError("Revision not found")
+
+    mod = type(sys)("datasets")
+    mod.load_dataset = _boom
+    monkeypatch.setitem(sys.modules, "datasets", mod)
+    _with_hub(monkeypatch, tmp_path, {"data/train.json": ["a"]})
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "re-pinning" in str(e.value)
+
+
+def test_a_missing_huggingface_hub_reads_as_a_damaged_install_not_a_missing_extra(monkeypatch):
+    # It is a base dependency. Sending this person to an optional extra sends them somewhere
+    # that cannot help, which is the mistake `trackio.py` had to correct in its own reader.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "install is damaged" in str(e.value)
+
+
+def test_a_missing_pyarrow_reads_as_a_damaged_install_too(monkeypatch, tmp_path):
+    _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": ["a"]})
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+    with pytest.raises(SystemExit) as e:
+        bt.fetch(_src(), log=lambda *a: None)
+    assert "install is damaged" in str(e.value)
+
+
+def test_fetch_needs_no_datasets_for_the_sources_this_recipe_actually_pins(monkeypatch, tmp_path):
+    # THE DEFECT THIS WHOLE PATH WAS REWRITTEN FOR. `datasets` is the `hub` extra and every
+    # documented install string is the bare package, so the second command of the documented
+    # first run died on an import. It must stay dead: with `datasets` unimportable, every source
+    # in SOURCES still reads.
+    monkeypatch.setitem(sys.modules, "datasets", None)
+    for i, src in enumerate(bt.SOURCES):
+        shard = f"data/{src['split']}-00000-of-00001.parquet"
+        here = tmp_path / f"s{i}"
+        here.mkdir()
+        _with_hub(monkeypatch, here, {shard: ["a", "b"]})
+        assert bt.fetch(src, log=lambda *a: None) == ["a", "b"]
 
 
 # ── write_atomic ─────────────────────────────────────────────────────────────────

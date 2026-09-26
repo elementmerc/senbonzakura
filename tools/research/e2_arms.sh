@@ -230,7 +230,12 @@ arm_flags() {
     searched-one-direction)
                       printf -- '--method searched-one-direction --trials %s' "$TRIALS" ;;
     searched-rounds4) printf -- '--method searched --trials %s --ablation-rounds 4' "$TRIALS" ;;
-    searched-capgate) printf -- '--method searched --trials %s --capability-eval %s --capability-n %s --capability-task %s' \
+    # `--slow-probe-ok` because this arm is a deliberate long run on whatever hardware it is
+    # given. The probe guard learned to refuse a capability pass it estimates in hours, which is
+    # right for somebody who typed the command and wrong for a research script that means it. On
+    # `--device cuda` it changes nothing; on a CPU box it is the difference between running and
+    # being refused.
+    searched-capgate) printf -- '--method searched --trials %s --capability-eval %s --capability-n %s --capability-task %s --slow-probe-ok' \
                         "$TRIALS" "$EVAL_SET" "$PROBE_N" "$TASK" ;;
     *) return 1 ;;
   esac

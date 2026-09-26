@@ -8,9 +8,11 @@ out from the appendix.
 
 ::: warning The short version
 **We tested it, and on the one model we can measure properly the claim is false.** Two
-directions cost roughly 1.5 to 1.9 times the collateral damage of one at the same refusal rate, across five
-seeds a side. The feature had also never worked at all until it was rewritten on 2026-08-03,
-which is why the question could not be asked before then.
+directions cost roughly 1.4 to 1.9 times the collateral damage of one at the same refusal rate,
+on the mean over five seeds a side. The feature had also never worked at all until it was
+rewritten on 2026-08-03, which is why the question could not be asked before then, and those
+arms predate the held-out direction selection, so what they price is an *arbitrary* second
+direction rather than a chosen one.
 :::
 
 The rest of this page is how we got there, because the failures are more instructive than
@@ -181,8 +183,9 @@ The column is struck through rather than deleted because it was published.
 
 Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
 at matched refusal, where the only thing left to differ is the price paid for it. Two directions
-did roughly **1.5 to 1.9 times the collateral damage and bought nothing**, and they were less
-predictable seed to seed (the spread is nearly three times as wide).
+did roughly **1.4 to 1.9 times the collateral damage and bought nothing**, and they were less
+predictable seed to seed (the spread is nearly three times as wide). Both ends of that range are
+means over the five seeds: 1.9 with every seed, 1.4 dropping the outlying two-direction seed.
 
 The gap is 0.0435, and an exact permutation test over all 252 ways of splitting these ten
 seeds puts it at **p = 0.016**. That is a real difference, and stronger than the way this
@@ -190,8 +193,10 @@ paragraph used to describe it.
 
 ::: tip You can recompute this yourself
 The ten per-seed drift values are committed at
-[`evidence/k-sweep-2026-08-13/drift-per-seed.json`](https://github.com/elementmerc/senbonzakura/blob/main/evidence/k-sweep-2026-08-13/drift-per-seed.json),
-and `tests/test_published_k_sweep.py` recomputes both figures on this page from that file through
+[`evidence/k-sweep-2026-08-13/drift-per-seed.json`](https://github.com/elementmerc/senbonzakura/blob/dev/evidence/k-sweep-2026-08-13/drift-per-seed.json),
+and so are the ten per-seed hard refusal fractions behind the 0.1% and 0.3% column, recovered from
+the run's own database on 2026-09-25 after a review found that column had no artefact behind it.
+`tests/test_published_k_sweep.py` recomputes every figure on this page from that file through
 the project's own estimator. Until 2026-09-10 those numbers lived only in a working note that is
 not in this repository, so the most-quoted figure here traced to nothing a reader could open.
 :::

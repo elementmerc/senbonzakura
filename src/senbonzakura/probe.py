@@ -47,6 +47,22 @@ import json
 import pathlib
 from dataclasses import dataclass, field
 
+# THE SAME TWO BOUNDS THE CHECKER'S INGESTION POINT TOOK, imported rather than restated.
+#
+# The checker got `MAX_ARTEFACT_BYTES` and `MAX_ARTEFACT_DEPTH` on 2026-09-25 because it reads
+# other people's result files. This module is the OTHER ingestion point, it exists specifically to
+# load files somebody else wrote, and it had neither: `_check_items` read an entire
+# caller-supplied file into memory before anything looked at it, and a line of `[[[[...]]]]` is a
+# few kilobytes that raises RecursionError, which is neither a ValueError nor an OSError and so
+# escaped as a traceback. `tools/ci/check_probes.py` calls `problems_with` as its only gate, so a
+# crafted probe crashed CI rather than being refused by it.
+#
+# Two numbers in two places drift, and this project has paid for that already, so these are the
+# checker's own and the reasoning for the values lives beside them in
+# `senbonzakura_check/registry.py`. `senbonzakura-check` is a hard dependency of this package, so
+# the import costs nothing and the two bounds cannot disagree.
+from senbonzakura_check.registry import MAX_ARTEFACT_BYTES, MAX_ARTEFACT_DEPTH, too_deep
+
 try:
     import tomllib
 except ModuleNotFoundError:   # Python 3.10, where `tomllib` is not yet in the standard library.
@@ -63,6 +79,7 @@ except ModuleNotFoundError:   # Python 3.10, where `tomllib` is not yet in the s
 
 #: The manifest's filename. One name, so a directory either is a probe or is not.
 MANIFEST = "probe.toml"
+
 
 #: Field names a probe's items may not use, because they are how prompts and model outputs are
 #: spelled everywhere in this ecosystem. A probe naming its column `prompt` is either careless or
@@ -118,16 +135,69 @@ def is_probe(path):
     return pathlib.Path(path).is_dir() and (pathlib.Path(path) / MANIFEST).is_file()
 
 
+def _read_bounded(path, problems, *, what):
+    """A file's text, or None with the reason appended, never an exception.
+
+    The size is read with `stat` BEFORE the read, so an over-large file is never held in memory
+    even briefly. That ordering is the whole point: a cap applied after `read_text` is a cap on
+    nothing.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        problems.append(f"{what} cannot be read: {exc}")
+        return None
+    if size > MAX_ARTEFACT_BYTES:
+        problems.append(
+            f"{what} is {size:,} bytes and this reads at most {MAX_ARTEFACT_BYTES:,}. A probe is "
+            f"a manifest and a list of short items; a file this large is something else, and "
+            f"reading it to find that out is the part being refused")
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        problems.append(f"{what} cannot be read: {exc}")
+        return None
+
+
+#: THE CHECKER'S OWN WALKER, not a copy of it, since 2026-09-25.
+#:
+#: This was a near-copy of `registry._depth`, with the limit imported and the walk duplicated,
+#: because the walk was private over there. Importing the number and copying the code is the worse
+#: half of both options: it looks shared and is not, and two guards that disagree about what "too
+#: deep" means is precisely the class of defect the whole 2026-09-25 panel kept finding. The
+#: checker grew a public `too_deep` instead, so both ingestion points ask one question of one
+#: implementation. `senbonzakura_check` is a hard dependency, so there is nothing to fall back to.
+_too_deep = too_deep
+
+
+# What a document that nests too deep is told, wherever it is met. One sentence, because a
+# contributor meeting it from the manifest and from the items should read the same thing.
+def _too_deep_message(what):
+    return (f"{what} nests deeper than {MAX_ARTEFACT_DEPTH} levels. A probe is a flat list of "
+            f"short records, so nothing legitimate reaches that depth, and a document that does "
+            f"is aimed at the parser rather than at this tool")
+
+
 def _read_manifest(directory, problems):
     manifest = directory / MANIFEST
+    text = _read_bounded(manifest, problems, what=MANIFEST)
+    if text is None:
+        return None
     try:
-        with open(manifest, "rb") as fh:
-            return tomllib.load(fh)
-    except OSError as exc:
-        problems.append(f"{MANIFEST} cannot be read: {exc}")
+        doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         problems.append(f"{MANIFEST} is not valid TOML: {exc}")
-    return None
+        return None
+    except RecursionError:
+        # NOT a TOMLDecodeError and not an OSError, so it escaped both arms above as a traceback.
+        # A nested array is the cheapest way to write one: a few kilobytes of `[[[[`.
+        problems.append(_too_deep_message(MANIFEST))
+        return None
+    if _too_deep(doc):
+        problems.append(_too_deep_message(MANIFEST))
+        return None
+    return doc
 
 
 def _check_declaration(doc, problems):
@@ -207,14 +277,26 @@ def _check_items(directory, probe_decl, problems):
         problems.append(f"[probe] items {name!r} is not in the probe directory")
         return []
 
+    text = _read_bounded(path, problems, what=name)
+    if text is None:
+        return []
+
     rows, bad_keys = [], set()
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
         try:
             row = json.loads(line)
         except ValueError as exc:
             problems.append(f"{name}:{number} is not valid JSON: {exc}")
+            continue
+        except RecursionError:
+            # `[[[[...]]]]` on one line. RecursionError is not a ValueError, so this arm did not
+            # exist and the traceback escaped `problems_with`, which is the one function CI calls.
+            problems.append(_too_deep_message(f"{name}:{number}"))
+            continue
+        if _too_deep(row):
+            problems.append(_too_deep_message(f"{name}:{number}"))
             continue
         if not isinstance(row, dict):
             problems.append(f"{name}:{number} is not an object")
@@ -302,8 +384,14 @@ def load(path):
             f"{path} is not a probe this tool will run:\n"
             + "\n".join(f"  - {p}" for p in problems))
     directory = pathlib.Path(path)
-    with open(directory / MANIFEST, "rb") as fh:
-        doc = tomllib.load(fh)
+    # Through the same bounded reader the checks went through, rather than a second unbounded
+    # `tomllib.load` beside it. The file passed a moment ago, so this can only differ if it
+    # changed underneath us, and a re-read that skips the bounds is where that would land.
+    doc = _read_manifest(directory, problems)
+    if doc is None:
+        raise ProbeError(
+            f"{path} passed its checks and its {MANIFEST} could not be read a moment later:\n"
+            + "\n".join(f"  - {p}" for p in problems))
     decl = doc["probe"]
     # `_check_items` pairs each row with its line number for the gradeability message. A loaded
     # probe is the items themselves, so the numbers are dropped here rather than carried into

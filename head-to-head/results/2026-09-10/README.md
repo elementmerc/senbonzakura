@@ -29,6 +29,35 @@ files in this directory, so the page and the run cannot drift apart again withou
 | drift, median | 0.0510 | 0.0573 |
 | hard refusal | 0.0% ×4, 0.5% ×1 | 0.0% ×5 |
 
+## What direction budget the senbonzakura arms actually applied
+
+**This run did not pin K, and until 2026-09-25 nothing recorded what it chose.** The `senbon` arm
+lets the search pick its own direction budget, so "senbonzakura" in the table above is whatever
+each seed's search settled on. A reader taking this table as evidence about multi-direction
+ablation, which is this project's distinguishing claim, is taking it as evidence of something it
+was not built to test. The 2026-09-25 review panel raised it, and it was right to.
+
+Recovered from the run's own job database, since the artefacts do not carry it:
+
+| seed | applied K | mode |
+|---|---|---|
+| three of five arms | 2, 1, 2 | single |
+| the other two | **not recoverable** | |
+
+Two things follow, and they point in opposite directions, so both are stated.
+
+The arms were **not** uniformly one direction, so this is not a comparison of two implementations
+of the same single-direction method, which was the sharper version of the criticism. But a mixture
+of K=1 and K=2 chosen per seed says nothing either way about whether more directions help: it is
+the same shape as the 2026-08-12 run, whose own note records that the five arms "chose K=1 three
+times and K=2 twice, which is a mixture and says nothing either way". This table compares two
+tools. It does not test the direction budget, and it should not be read as though it does.
+
+The two unrecoverable arms are unrecoverable because the job runner keeps roughly the first 64 KB
+of a job's output and this run exceeded it, which is the same truncation that cost this project a
+benchmark in August. The per-arm direction count is recorded in the arm artefacts from now on, so
+this cannot need recovering again.
+
 Exact permutation test over the ten seeds: **p = 0.238**. There is no detectable coherence
 difference on this model at this size. One Heretic seed (43, at 0.3591 against siblings of 0.0439
 to 0.1075) carries the whole mean gap; without it Heretic's mean is 0.0636 against our 0.0545.

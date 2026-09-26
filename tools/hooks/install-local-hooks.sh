@@ -12,6 +12,30 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
+# STRIP NOTEBOOK OUTPUTS BEFORE THEY ARE STAGED, not after they are caught.
+#
+# `notebooks/senbonzakura_colab.ipynb` is tracked, the README's first call to action is to open it
+# in Colab, and a notebook stores what a cell printed inside the file. Run it against an
+# abliterated model and commit the result, and the repository carries verbatim generations. The
+# leak gate refuses that at commit time as of 2026-09-25, which is the control; this is the
+# convenience that means nobody meets the refusal. A clean filter rewrites the outputs away as git
+# reads the file into the index, so the working copy keeps them and the commit does not.
+#
+# NOT FATAL WHEN nbstripout IS ABSENT, deliberately. On 2026-09-21 this installer refused to run
+# at all in a fresh clone, so the one control CONTRIBUTING.md promises could not be switched on by
+# the people the documentation was addressed to. Hard-failing here on an optional convenience
+# would recreate that exactly. The gate below is the thing that must be installed, and it refuses
+# a notebook carrying outputs whether or not this step worked.
+if command -v nbstripout >/dev/null 2>&1; then
+    nbstripout --install
+    echo "wired: nbstripout, so notebook outputs are stripped on the way into the index"
+else
+    echo "note: nbstripout is not installed, so notebook outputs are not stripped automatically." >&2
+    echo "      install it with 'pip install nbstripout' and run this script again." >&2
+    echo "      until then the commit gate REFUSES a notebook carrying saved outputs, and the" >&2
+    echo "      fix is to run 'nbstripout notebooks/<name>.ipynb' by hand." >&2
+fi
+
 # TWO CLONES, TWO WIRINGS, ONE GATE.
 #
 # This used to exit 1 here, and that made the one control CONTRIBUTING.md promises impossible

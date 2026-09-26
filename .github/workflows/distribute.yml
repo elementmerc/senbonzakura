@@ -179,6 +179,39 @@ jobs:
             exit 1
           fi
 
+      - name: The MIT notice ships beside the object code, read from the image itself
+        # WHAT THIS GUARDS. `vendor/bin/` holds roughly 35 MB of ggml and llama.cpp object code
+        # under MIT, and MIT requires the copyright notice travel with "all copies or substantial
+        # portions". Until 2026-09-25 the vendoring tool copied that notice only if it happened to
+        # already be on disk, and on a clean checkout it never was, because the step that fetches
+        # it ran afterwards. Every image pushed to ghcr from this workflow carried the binaries
+        # and no notice.
+        #
+        # WHY IT IS ASSERTED HERE AND NOT ONLY IN THE TOOL. The tool now refuses, which is the
+        # real fix, and a gate that reads the tool's intent rather than the artefact is the shape
+        # that let this escape in the first place: a comment in vendor_llama.py claimed a
+        # re-vendor could not drop the notice while it was dropping it on every run. This reads
+        # the image that is about to be pushed. It runs BEFORE the push for the same reason the
+        # doctor smoke test does: a check that can only report what the public already has is not
+        # a gate.
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh senbonzakura:smoke -c '
+            set -eu
+            bin=/usr/local/lib/python3.13/site-packages/senbonzakura/vendor/bin
+            [ -d "$bin" ] || { echo "no vendored binary tree at $bin"; exit 1; }
+            found=0
+            for d in "$bin"/*/; do
+              [ -d "$d" ] || continue
+              found=$((found + 1))
+              [ -s "$d/LICENSE" ] || { echo "no MIT notice beside the binaries in $d"; exit 1; }
+              grep -qi "MIT License" "$d/LICENSE" || {
+                echo "$d/LICENSE is present but is not the MIT notice"; exit 1; }
+              echo "ok: ${d}LICENSE"
+            done
+            [ "$found" -gt 0 ] || { echo "no platform directory under $bin"; exit 1; }
+          ' || { echo "::error::the image ships vendored binaries without their MIT notice"; exit 1; }
+
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
         # The same layers, now that something has actually run them.
         with:

@@ -700,6 +700,73 @@ def refuse_a_slow_probe(device, n, max_new, *, spec="bundled", allowed=False, lo
         f"    if you meant it and will leave it running, add --slow-probe-ok")
 
 
+#: Device strings in a `hf_device_map` that mean "not on an accelerator". `disk` is worse than
+#: `cpu` rather than better: a layer paged off an SSD every forward pass is slower than one in
+#: host RAM, so counting it as host speed under-estimates rather than over-estimates.
+_HOST_DEVICES = ("cpu", "disk", "meta")
+
+
+def offloaded_share(model):
+    """The fraction of a loaded model's entries that are NOT on an accelerator, or None.
+
+    Read from `hf_device_map`, which is what accelerate actually built, rather than from the
+    `--device` string, which is what the user asked for. The two are different facts and the
+    guard above only had the second one.
+    """
+    dmap = getattr(model, "hf_device_map", None) or {}
+    if not dmap:
+        return None
+    host = sum(1 for d in dmap.values() if str(d).lower().split(":")[0] in _HOST_DEVICES)
+    return host / len(dmap)
+
+
+def refuse_a_slow_probe_after_load(model, n, max_new, *, spec="bundled", allowed=False,
+                                   log=print):
+    """The same refusal again, decided from where the weights ended up rather than from a flag.
+
+    WHY BOTH HALVES EXIST. The command-line check above reads `--device`, and `--device cuda` is
+    not a statement about where the weights are: the loader passes `device_map="auto"`, and
+    accelerate dispatches whatever will not fit in VRAM to host RAM or to disk. Generation then
+    runs at host speed on a run that never looked like a CPU run, so the guard written for
+    exactly that wait never fired.
+
+    The layering is `preflight_snapshot_ram`'s: estimate from what can be read cheaply, then check
+    once for real when the thing being estimated is actually resident. A model fully on an
+    accelerator returns immediately and costs a dictionary walk.
+
+    The offloaded fraction is the multiplier on the CPU constant, which is deliberately crude. It
+    treats an offloaded layer as costing CPU time and a resident one as costing nothing, and the
+    true figure is worse than that, because a partly offloaded forward pass also pays to move
+    activations across the bus. Under-estimating is the right direction for a guard that refuses:
+    it fires late rather than wrongly.
+    """
+    if not spec or int(n or 0) <= 0:
+        return
+    share = offloaded_share(model)
+    if not share:
+        return
+    seconds = cpu_probe_estimate(n, max_new) * share
+    if seconds <= CPU_REFUSE_AFTER_SECONDS:
+        return
+    hours = seconds / 3600
+    placed = f"{share * 100:.0f}% of this model's layers are on the CPU or on disk, not on the GPU"
+    if allowed:
+        log(f"WARNING: {placed}, so the capability probe will generate at host speed: roughly "
+            f"{hours:.1f} hours for {int(n)} items at {int(max_new)} tokens. --slow-probe-ok was "
+            f"given, so it is running. It reports progress every 30 seconds.")
+        return
+    raise SystemExit(
+        f"senbonzakura: {placed}, so the capability probe would generate at host speed and take "
+        f"roughly {hours:.1f} hours ({int(n)} items at {int(max_new)} tokens each).\n"
+        f"  The card has less free memory than this model needs, so accelerate put the rest in "
+        f"host RAM. That is a working model and a very slow one, and --device cuda does not make "
+        f"it a GPU run.\n"
+        f"  What to do:\n"
+        f"    free the card, or use one with more memory, or load smaller with --load-in-4bit\n"
+        f"    measure less of it:  --n 40 --max-new 256\n"
+        f"    if you meant it and will leave it running, add --slow-probe-ok")
+
+
 def generate_with_truncation(model, tok, prompts, device, batch=8, max_new=320, *, log=None,
                              heartbeat=30.0):
     """Generate, and say for each item whether it finished or ran out of budget.
@@ -787,6 +854,7 @@ def build_parser():
     # transformers at module scope, so reaching `loader_parser` through it made BUILDING THE
     # PARSER need the whole abliteration stack, and `capability --help` raised ImportError on
     # exactly the install where a person is trying to find out what to install.
+    from .argresolve import whole_number
     from .parser import loader_parser
 
     ap = argparse.ArgumentParser(
@@ -825,15 +893,17 @@ def build_parser():
                          f"than replaced, because two runs' numbers in one filename are "
                          f"indistinguishable afterwards")
     ap.add_argument("--label", default="", help="a name for this arm, recorded in the output")
-    ap.add_argument("--n", type=int, default=200,
+    ap.add_argument("--n", type=whole_number("--n"), default=200,
                     help="how many items (default 200). A FIXED subset, taken from the head, so "
                          "two arms are compared on the same questions")
-    ap.add_argument("--skip", type=int, default=0, help="drop this many items from the head first")
-    ap.add_argument("--max-new", dest="max_new", type=int, default=512,
+    ap.add_argument("--skip", type=whole_number("--skip"), default=0,
+                    help="drop this many items from the head first")
+    ap.add_argument("--max-new", dest="max_new", type=whole_number("--max-new", minimum=1),
+                    default=512,
                     help="token budget per answer (default 512). A worked solution is long, and "
                          "a budget that truncates most of them measures the budget rather than "
                          "the model. Truncated items are reported as indeterminate, never wrong")
-    ap.add_argument("--batch", type=int, default=8,
+    ap.add_argument("--batch", type=whole_number("--batch", minimum=1), default=8,
                     help="prompts per generation batch (default: 8). Lower than the other "
                          "commands because graded answers are longer; lower it further if the "
                          "card runs out of memory")
@@ -845,11 +915,19 @@ def build_parser():
                     help="seed for the bootstrap resampling behind the reported interval "
                          "(default: 0). Generation itself is greedy, so this changes the "
                          "interval, not the answers")
-    ap.add_argument("--bootstrap", type=int, default=2000,
+    ap.add_argument("--bootstrap", type=whole_number("--bootstrap"), default=2000,
                     help="resamples for the interval on the change (0 disables it)")
     ap.add_argument("--save-generations", dest="save_generations", default="",
                     help="write every question, answer and verdict, so a disputed grade can be "
                          "checked without the GPU back")
+    # THE SAME FLAG THE ABLITERATE PATH CARRIES, because this command reaches the same generation
+    # loop with the same defaults and the refusal has to be answerable from here too. Without it,
+    # the only way past the guard on this command would be to measure less than you meant to.
+    ap.add_argument("--slow-probe-ok", dest="slow_probe_ok", action="store_true",
+                    help="run the probe even when it will take hours: on a CPU, or on a model "
+                         "the card could not hold and accelerate put in host RAM. It is refused "
+                         "by default because a run that looks identical to a hung one for four "
+                         "hours is how somebody kills work that was fine")
     return ap
 
 
@@ -933,9 +1011,26 @@ def main(argv=None):
             f"1 and report it as a change in capability. Re-run both arms with the same --eval, "
             f"--task, --n and --skip.")
 
+    # THE SLOW-PROBE GUARD, ON THIS COMMAND TOO, and until 2026-09-25 it was not. It was written
+    # for a generation loop that three doors lead into, and it was called from one of them: the
+    # abliterate path. `senbonzakura capability Qwen/Qwen3-1.7B --device cpu` takes the same 200
+    # items at 512 tokens, which this guard's own constant puts at about four hours, and it
+    # started without a word. A guard that covers one caller of a shared loop is a guard the next
+    # caller does not have.
+    #
+    # Here rather than at the top of `main` because the item count is only known once the eval set
+    # is resolved and sliced: estimating from `--n` alone would invent a cost for items a smaller
+    # set does not have.
+    refuse_a_slow_probe(a.device, len(questions), a.max_new, spec=a.eval,
+                        allowed=a.slow_probe_ok)
+
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+    # AND AGAIN FROM WHERE THE WEIGHTS ACTUALLY LANDED. The check above reads `--device`, which is
+    # a request; this reads the map accelerate built, which is the fact.
+    refuse_a_slow_probe_after_load(model, len(questions), a.max_new, spec=a.eval,
+                                   allowed=a.slow_probe_ok)
 
     task = get_task(a.task)
     prompts = [task.prompt.format(q) for q in questions]

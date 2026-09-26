@@ -35,6 +35,23 @@ ds/
 *_ds/
 data/
 *.arrow
+# THE NAMES THE GUIDE ACTUALLY TEACHES. README.md tells you to run
+# `senbonzakura track --harmful harmful.txt --harmless harmless.txt`, and until 2026-09-25
+# `git check-ignore -v harmful.txt harmless.txt` matched nothing: a contributor who followed the
+# guide and ran `git add .` staged a plaintext harmful corpus, and the heading at the top of this
+# file claimed that could not happen. Found by the review panel.
+#
+# These patterns are the first line and are not the control. An ignore rule does nothing about
+# `git add -f`, and it cannot know what somebody called their own file. The control is
+# `tools/ci/check_prompt_artefacts.py`, which now refuses any .txt, .csv or .tsv it does not
+# already know by name, whatever it is called.
+harmful*.txt
+harmless*.txt
+harmful*.csv
+harmless*.csv
+harmful*.tsv
+harmless*.tsv
+harmful_behaviors.csv
 # THE PACKAGE'S OWN data directory was collateral damage from the line above. `data/` has no
 # leading slash, so git matches it at any depth, and `src/senbonzakura/data/` was therefore in
 # nobody's clone. That is not a tidiness problem: it made `--chat-template plain` fail on a

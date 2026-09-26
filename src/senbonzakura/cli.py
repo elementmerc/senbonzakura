@@ -2071,6 +2071,10 @@ class Abliterator:
                 attn_impl=args.attn_impl, log=log)
         self.tok = tok
         self.model = model
+        # Whether the offload check has run. See `_capability_score`: it fires there, once, rather
+        # than here, because a constructor that refuses is a constructor every caller has to work
+        # around.
+        self._slow_probe_checked = False
         self.layers = _decoder_layers(model)             # the decoder blocks, resolved defensively
         self.H = model.config.hidden_size
         self.NL = model.config.num_hidden_layers
@@ -3492,25 +3496,62 @@ class Abliterator:
         if not items:
             return None
         from . import capability
+
+        # THE THIRD DOOR INTO THE SLOW PROBE, and the one a command-line check cannot see.
+        # `refuse_a_slow_probe` runs before the load, off `--device`, and returns immediately for
+        # anything that is not the CPU. But `device_map="auto"` lets accelerate dispatch layers to
+        # host RAM when VRAM is short, so a legitimate `--device cuda` run generates at close to
+        # host speed having already passed that check. Only the loaded model knows.
+        #
+        # HERE RATHER THAN IN `__init__`, which is where it went first and was wrong. A refusal in a
+        # constructor fires for every caller, including the ones that never probe and the tests that
+        # build an offloaded model on purpose to check something else. Here it fires exactly once,
+        # the first time the probe is actually about to generate, which on a `--capability-eval` run
+        # is the baseline probe BEFORE the search: early enough to save the hours the guard exists
+        # for, and it covers every caller rather than only the abliterate path.
+        if not self._slow_probe_checked:
+            self._slow_probe_checked = True
+            capability.refuse_a_slow_probe_after_load(
+                self.model,
+                len(items),
+                getattr(self.args, "capability_max_new", 512),
+                spec=getattr(self.args, "capability_eval", "bundled"),
+                allowed=getattr(self.args, "slow_probe_ok", False),
+                log=self.log)
+
         task = capability.get_task(getattr(self.args, "capability_task", "numeric"))
         prompts = [task.prompt.format(q) for q, _a in items]
-        gens, truncated = capability.generate_with_truncation(
-            self.model, self.tok, prompts, self.dev,
-            # `gen_batch`, which is the flag that exists. This read `batch_size` from the day it
-            # was written, so `--capability-eval` raised AttributeError the moment it was asked to
-            # score anything and the in-search capability gate has NEVER RUN. It survived a green
+        # THROUGH THE GOVERNOR, like every other generation in this class, since 2026-09-25. This
+        # called `generate_with_truncation` directly, so it was the one path with no OOM retry, no
+        # shrink and no pause, while being the longest sequence the run ever generates. The
+        # governor drives the chunking: it picks the batch from live free VRAM, shrinks on an
+        # out-of-memory instead of crashing, and pauses when another app takes the card.
+        #
+        # The governor hands `_do` a chunk and expects a list back, so the truncation flags are
+        # carried alongside the text and unzipped after. Paying one tuple per item is cheaper than
+        # a second side channel, and a side channel is what `_last_capability_summary` already had
+        # to add a paragraph of warning about.
+        def _do(chunk):
+            # `gen_batch` is the flag that exists. This read `batch_size` from the day it was
+            # written, so `--capability-eval` raised AttributeError the moment it was asked to
+            # score anything and the in-search capability gate had NEVER RUN. It survived a green
             # suite because the test built its namespace by hand and invented `batch_size=2` in
             # it, so the code and the test agreed with each other and neither matched the parser.
-            batch=max(1, int(self.args.gen_batch)),
-            # 512 IS THE PARSER'S DEFAULT AND THIS FALLBACK MUST MATCH IT. It read 320, while the
+            #
+            # 512 is the parser's default and this fallback must match it. It read 320, while the
             # refusal that estimates how long this will take reads 512, so a hand-built namespace
             # would be sized at one budget and run at the other, and the hours the guard quoted
-            # would not be the hours the run took. Only reachable without the parser, which is
-            # exactly where the two copies of a default stop being checked against each other.
-            max_new=int(getattr(self.args, "capability_max_new", 512)),
-            # THE LONGEST SILENT STRETCH IN THE WHOLE RUN, now that the probe is on by default:
-            # 200 items at up to 512 new tokens each, and on a CPU that is measured in hours.
-            log=self.log)
+            # would not be the hours the run took.
+            g, t = capability.generate_with_truncation(
+                self.model, self.tok, list(chunk), self.dev,
+                batch=max(1, int(self.args.gen_batch)),
+                max_new=int(getattr(self.args, "capability_max_new", 512)),
+                log=self.log)
+            return list(zip(g, t, strict=True))
+
+        scored = self.gov.run(_do, prompts)
+        gens = [g for g, _t in scored]
+        truncated = [t for _g, t in scored]
         verdicts = capability.grade(gens, [a for _q, a in items], truncated,
                                     task=getattr(self.args, "capability_task", "numeric"))
         s = capability.summarise(verdicts)
@@ -3972,10 +4013,27 @@ class Abliterator:
         post_brk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))
         log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% heretic={post_heretic*100:.1f}% "
             f"broken={post_brk*100:.0f}% KL={post_kl:.4f}")
-        # What the edit cost, on the weights being written. `_capability_score` returns None when
-        # nothing graded, and that stays None rather than becoming a zero: a model that answered
-        # nothing gradeable has not scored zero, it has not been measured, and the two must not
-        # read alike in a file whose whole purpose is that somebody else can check it.
+        self.free_before_save()
+        log(f"saving to {args.out}")
+        self.events.emit("phase", phase="phase_saving")
+        self._save_weights()
+
+        # THE PROBE RUNS AFTER THE WEIGHTS ARE ON DISK, since 2026-09-25, and the order is the
+        # whole point. It used to sit between the bake and the save, and it is the single most
+        # memory-hungry generation in the run: `--capability-n 200` at `--capability-max-new 512`
+        # against a search budget of 192, at `--gen-batch 16`. It was also the one generation in
+        # this class that did not go through the governor, so it had no OOM retry, no shrink and
+        # no pause. An OOM there propagated out of `_bake_and_save` and `_save_weights` was never
+        # reached: hours of search and a baked model, lost to a measurement ABOUT that model.
+        #
+        # A measurement of the shipped weights is still a measurement of the shipped weights when
+        # it is taken after the write. `abliteration.json` is written last regardless, so the
+        # capability fields land in the same file they always did. Found by the 2026-09-25 panel.
+        #
+        # `_capability_score` returns None when nothing graded, and that stays None rather than
+        # becoming a zero: a model that answered nothing gradeable has not scored zero, it has not
+        # been measured, and the two must not read alike in a file whose whole purpose is that
+        # somebody else can check it.
         post_cap = self._capability_score(cap_items) if cap_items else None
         cap_after_summary = getattr(self, "_last_capability_summary", None) if cap_items else None
         if cap_items:
@@ -3984,11 +4042,6 @@ class Abliterator:
                 f" against a baseline of "
                 f"{'not gradeable' if cap_baseline is None else f'{cap_baseline:.3f}'}"
                 + ("" if drop is None else f", so the edit cost {drop:+.3f}"))
-
-        self.free_before_save()
-        log(f"saving to {args.out}")
-        self.events.emit("phase", phase="phase_saving")
-        self._save_weights()
         # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
         # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a
         # model that must never pass for the second, and the second losing a provenance line is

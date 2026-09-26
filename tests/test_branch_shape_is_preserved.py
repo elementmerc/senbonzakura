@@ -88,3 +88,54 @@ def test_the_badge_job_names_dev_specifically():
     assert "github.ref_name == 'dev'" in condition_block, (
         "tests-badge holds a write token and pushes the branch it was triggered on. Without the "
         "`dev` condition, promoting `main` leaves a badge commit on `main` alone.")
+
+
+class TestThePublishedSiteCannotSilentlyFallBehind:
+    """The docs deploy is triggered by a push to `main`, and a push to `main` can be skipped.
+
+    WHAT HAPPENED, 2026-09-26
+
+    `main` moves by fast-forward from `dev`, so its tip is whatever `dev` ended on, and the
+    tests-badge job ends `dev` on a one-line README commit marked `[skip ci]`. That marker is right
+    for `dev`: the tree it describes was tested by the run that measured it. GitHub applies the
+    marker to the whole push, so when the promotion landed on that commit, NOTHING ran. No failed
+    job, no red tick, no notification. The published site went on serving the previous release
+    while the branch it is built from had moved.
+
+    That is the worst shape in this project's collection, worse than a wrong number: a published
+    artefact disagreeing with its source with no signal that it does. Every other instance here was
+    found because something printed a wrong figure. This one printed nothing at all.
+
+    `[skip ci]` suppresses `push` and does not suppress `schedule`, so the daily trigger is what
+    makes the site converge on its own, whatever happened to the push.
+    """
+
+    DOCS = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "docs.yml"
+
+    def test_the_site_has_a_trigger_that_skip_ci_cannot_suppress(self):
+        text = self.DOCS.read_text(encoding="utf-8")
+        assert "schedule:" in text and "cron:" in text, (
+            "docs.yml is triggered only by events `[skip ci]` can suppress. A promotion onto a "
+            "badge commit then deploys nothing, silently, and the published site keeps serving an "
+            "older release. Keep the scheduled trigger.")
+
+    def test_it_still_publishes_on_a_push_to_main(self):
+        """The schedule is a safety net and not a replacement: a release should publish at once."""
+        text = self.DOCS.read_text(encoding="utf-8")
+        head = text.split("jobs:", 1)[0]
+        assert "branches: [main]" in head, (
+            "the push trigger on `main` has gone; the scheduled run would delay every "
+            "documentation change by up to a day")
+
+    def test_it_never_publishes_dev(self):
+        """A scheduled run checks out the DEFAULT branch, so the default branch is the guard.
+
+        This asserts the workflow does not name `dev` as something it publishes. The other half,
+        that the repository default stays `main`, cannot be read from the tree, so the reason is
+        recorded in the workflow beside the trigger.
+        """
+        text = self.DOCS.read_text(encoding="utf-8")
+        head = text.split("jobs:", 1)[0]
+        assert "branches: [dev]" not in head and "[main, dev]" not in head, (
+            "docs.yml would publish `dev` to the public site, which puts pages for unreleased work "
+            "at a public URL")

@@ -27,6 +27,30 @@ name: Documentation site
 on:
   push:
     branches: [main]
+  # A DAILY DEPLOY, because a push to `main` is not reliably a trigger.
+  #
+  # `main` moves by fast-forward from `dev`, so its tip is whatever commit `dev` ended on. The
+  # tests-badge job commits a one-line README correction marked `[skip ci]`, correctly, since the
+  # tree it describes was just tested. When a promotion lands on that commit, GitHub honours the
+  # marker for the WHOLE push and skips every workflow, this one included.
+  #
+  # Measured 2026-09-26: `main` was promoted to a badge commit and NOTHING ran. No failed job, no
+  # red tick, no notification. The site went on serving the previous release while the branch it
+  # is built from had moved, which is the worst shape of failure in this project's list: a
+  # published artefact quietly disagreeing with its source, with no signal that it does.
+  #
+  # `[skip ci]` suppresses `push`. It does not suppress `schedule`. So the site converges on its
+  # own within a day whatever happened to the trigger, and that also covers the deploy that failed
+  # for some unrelated reason and the Pages setting somebody changed. `workflow_dispatch` below is
+  # still the way to publish a correction immediately.
+  #
+  # The cost is one 40-second build a day against a repository that is pushed to most days.
+  #
+  # LOAD-BEARING: a scheduled run checks out the DEFAULT branch, which is `main` here. Were the
+  # default ever changed to `dev`, this trigger would start publishing unreleased documentation to
+  # the public URL, which is the thing baseline section 16 exists to prevent. A test pins it.
+  schedule:
+    - cron: "17 5 * * *"
   workflow_dispatch:
 
 permissions:

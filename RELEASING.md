@@ -305,6 +305,20 @@ and `testpypi`.
    404 until `main` moves. The deploy workflow now fetches four of those URLs from the published
    site and fails if any is not a 200, so a wrong order is caught rather than met by a reader.
    The banner no longer depends on this step: it is pinned to a commit, per the section above.
+4b. **Check that the deploy actually ran**, and dispatch it if it did not:
+
+   ```sh
+   gh run list --workflow docs.yml --limit 3
+   gh workflow run docs.yml --ref main      # only if the promotion triggered nothing
+   ```
+
+   `main` is a fast-forward of `dev`, so its tip is whatever commit `dev` ended on, and that is
+   often the tests-badge job's one-line README correction, which is marked `[skip ci]`. GitHub
+   applies the marker to the whole push, so a promotion landing on it skips **every** workflow
+   including this deploy: no failed job, no red tick, nothing to notice. Measured on 2026-09-26,
+   when the site went on serving the previous release while `main` had moved. A daily scheduled
+   run now makes the site converge on its own, because `[skip ci]` does not suppress a schedule,
+   but a release should not wait up to a day, so check it here.
 5. CHANGELOG entry, with the codename in the header.
 6. Panel artefact covering the range.
 7. Annotated tag with the `Codename:` line.

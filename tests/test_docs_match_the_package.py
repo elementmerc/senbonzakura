@@ -222,7 +222,12 @@ _INLINE = re.compile(r"`([^`\n]+)`")
 # appear in prose, so only fenced blocks and inline code spans are read. The `from ` lookbehind
 # keeps `from senbonzakura import trackio` out; the character class keeps `.../senbonzakura track`
 # style paths from matching a second time at the wrong offset.
-_INVOKE = re.compile(r"(?<![\w./-])(?<!from )senbonzakura\s+([a-z][a-z0-9-]*)")
+#
+# `install ` joined them on 2026-09-26, when the docs started saying `pip install senbonzakura`
+# on the line above `senbonzakura setup`. `\s+` spans newlines, so the pair read as the command
+# `senbonzakura senbonzakura` and this guard failed on correct documentation. A pip install line
+# names a distribution, not a subcommand, so excluding it narrows nothing this check is for.
+_INVOKE = re.compile(r"(?<![\w./-])(?<!from )(?<!install )senbonzakura\s+([a-z][a-z0-9-]*)")
 
 
 def _invoked_commands():
@@ -283,43 +288,35 @@ def test_the_pinned_set_states_the_python_it_needs():
         "3.12 or newer, so a reader on a supported 3.10 meets an unresolvable pin with no reason")
 
 
-def test_the_install_surfaces_say_the_release_is_not_on_pypi_yet():
-    """PANEL FINDING, and it lived in a CI comment until 2026-09-22.
+def test_the_install_surfaces_give_the_pip_command_and_carry_no_stale_warning():
+    """REPLACES the "not on PyPI yet" guard, which its own docstring said to delete on publication.
 
-    `senbonzakura` names `senbonzakura-check` as a dependency and that name is not on PyPI
-    (verified 2026-09-22: the JSON endpoint returns 404), so the next release cannot be installed
-    by anybody. Meanwhile `pip install senbonzakura` resolves to 0.3.0, from July, which the
-    CHANGELOG says not to trust. A reader following the front page therefore gets an old version
-    silently, and a reader following it after the next release gets a resolver error.
+    That test required every install surface to warn that `pip install senbonzakura` could not
+    work, and to offer a pair of `git+` URLs instead. Both were true from July 2026 until 0.4.0
+    reached PyPI on 2026-09-26, and both became false the moment the upload succeeded. Its
+    docstring said so: "when the checker is published this test should be deleted along with the
+    warnings", because a stale warning about installability is worse than none.
 
-    Our own CI comment stated the problem verbatim, where no user will ever read it. These two
-    pages are where a user meets it.
-
-    WHEN THE CHECKER IS PUBLISHED this test should be deleted along with the warnings, and that
-    is a deliberate cost: the warnings are wrong the moment the upload succeeds, and a stale
-    warning about installability is worse than none.
+    Deleting it outright would leave nothing watching the same surfaces, and the drift it guarded
+    against runs in both directions: a page that still tells a reader not to use pip sends them
+    down a `git+` route that now installs a worse artefact than the index does. So the guard is
+    inverted rather than removed. It asserts what is true now, and it fails if the old text comes
+    back.
     """
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
-    # EVERY install surface, not the two somebody happened to think of. `INSTALL_SURFACES`
-    # has listed `quickstart.md` all along while this loop named two pages by hand, so the
-    # quickstart offered a bare `pip install senbonzakura` with no warning at all until
-    # 2026-09-23. Of the three that was the worst one to miss, because it is the page a
-    # newcomer lands on, and the list it should have been read from is at the top of this
-    # file.
     for name in INSTALL_SURFACES:
         text = " ".join((root / name).read_text(encoding="utf-8").split())
-        assert "senbonzakura-check` is not on PyPI yet" in text, (
-            f"{name} offers `pip install senbonzakura` without saying the current version cannot "
-            f"be installed that way")
-        assert "subdirectory=checker" in text, (
-            f"{name} says the install is blocked and does not say what to do instead")
-        # A COMMAND A STRANGER CAN RUN, which is what the sibling test above is about. The first
-        # version of this warning said `pip install ./checker` and that test caught it: a reader
-        # who has not cloned cannot follow it, and "the release is broken" is the worst moment to
-        # hand somebody a contributor-shaped instruction.
-        assert "pip install ./" not in text, (
-            f"{name} offers a checkout-only command in the interim install block")
+        assert "pip install senbonzakura" in text, (
+            f"{name} is an install surface and does not give `pip install senbonzakura`, which "
+            f"has been the whole install since 0.4.0")
+        assert "is not on PyPI yet" not in text, (
+            f"{name} still says the checker is not on PyPI. It has been since 0.4.0, and a reader "
+            f"who believes it will avoid the command that works")
+        assert "subdirectory=checker" not in text, (
+            f"{name} still offers the `git+` install that existed only while the index could not "
+            f"serve this project. It resolves to `dev`, which is not a release, so a reader "
+            f"following it gets something nobody has tested as an artefact")
 
 
 def test_the_readme_leads_with_an_example_a_reader_can_actually_run():
@@ -372,9 +369,15 @@ def test_the_interim_install_says_the_bundled_track_is_not_in_it():
     for name in INSTALL_SURFACES:
         text = " ".join((root / name).read_text(encoding="utf-8").split())
         assert "track default" in text, f"{name} does not mention --track default at all"
-        assert "senbonzakura corpora" in text, (
-            f"{name} tells a reader to install from the repository without saying the bundled "
-            f"corpora are not in it, or how to build them")
+        # INVERTED ON 2026-09-26, for the same reason as the guard above it. This used to require
+        # every install surface to say the corpora were ABSENT and to name `senbonzakura corpora`
+        # for building them, which was true of a `git+` build and is false of the published wheel:
+        # it carries both blobs, so `--track default` works and roughly 6,200 harmful prompts land
+        # on the reader's disk. That is a disclosure, and it has to be on the page where they
+        # decide to install rather than somewhere they meet it afterwards.
+        assert "harmful prompts" in text, (
+            f"{name} tells a reader to install a wheel that writes roughly 6,200 harmful prompts "
+            f"to their disk and does not say so on the page where they decide")
 
     # The premise, asserted rather than assumed: if these ever become tracked, this warning is
     # wrong and should go with them.

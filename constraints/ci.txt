@@ -23,6 +23,7 @@ colorlog==6.12.0
 coverage==7.15.2
 datasets==5.0.1
 dill==0.4.1
+execnet==2.1.2
 filelock==3.29.0
 frozenlist==1.8.0
 fsspec==2026.4.0
@@ -55,6 +56,7 @@ Pygments==2.20.0
 pyproject_hooks==1.2.0
 pytest==9.1.1
 pytest-cov==7.1.0
+pytest-xdist==3.8.0
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 regex==2026.7.19

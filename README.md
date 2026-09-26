@@ -63,36 +63,30 @@ sounds.
 
 ## Install
 
-> **`pip install senbonzakura` is not the command, not yet.** PyPI serves 0.3.0, from July 2026,
-> and you do not want it: its numbers are withdrawn, and `senbonzakura-check` is not on PyPI yet,
-> so the current version cannot resolve from the index at all. Until the checker is published,
-> the repository is the only route, and it is the command below.
->
-> **`@dev` is load-bearing, not decoration.** Without it pip takes the default branch, which is
-> `main`, and `main` is a long way behind: it predates the checker entirely, so the first URL
-> fails with "does not appear to be a Python project" and the second installs something close to
-> the withdrawn 0.3.0 you came here to avoid.
-
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
-            "git+https://github.com/elementmerc/senbonzakura@dev"
+pip install senbonzakura
 senbonzakura setup
 ```
 
-> **`--track default` will not work from that install.** The bundled corpora and the packed
-> track are generated artefacts kept out of git, because they are harmful prompts.
->
-> From a clone you can restore both: `senbonzakura corpora` fetches the corpora from public
-> sources at pinned commits, and `tools/packaging/pack_track.py` writes the packed track. From a
-> `pip install git+...` you get neither, because `tools/` ships in no wheel; build a track with
-> `senbonzakura track build` and pass it by name with `--track track`, which works everywhere.
-> This said "build them from a clone (`senbonzakura corpora`)" until 2026-09-25, and that command
-> alone does not produce the packed track, so following it exactly left `--track default` still
-> broken. [The track page](https://elementmerc.github.io/senbonzakura/guide/the-track) has both
-> routes.
+That brings torch, transformers, accelerate and optuna with it: **69 packages, 5.9 GB**, fifteen
+of them CUDA wheels. There is nothing to choose.
 
-That brings torch, transformers, accelerate and optuna: **68 packages, 5.8 GB**, nineteen of them
-CUDA wheels. There is nothing to choose.
+> **This paragraph used to tell you not to run that command**, because 0.3.0 was the newest thing
+> on PyPI, its numbers are withdrawn, and `senbonzakura-check` was not published at all, so the
+> dependency resolved to nothing and the install failed for a reason that read like something
+> else. It was true from July 2026 until 0.4.0 went out, and the route it offered instead was a
+> pair of `git+` URLs. Both packages are now on PyPI and the command above is the whole install.
+
+**`--track default` works from it.** The wheel carries the packed evaluation track and six
+research corpora, so the commands below run straight after installing, with no corpus to fetch
+and nothing to build. That is also roughly 6,200 harmful prompts written to your disk, which is
+the thing to know before you install rather than after;
+[the detail](#what-this-repository-does-not-contain) is below.
+
+**On Linux you get the quantiser too.** pip picks the most specific wheel that fits, so a glibc
+2.35 or newer machine receives one carrying llama.cpp's binaries and `convert` and `quantise`
+work immediately. Everywhere else, and on older Linux, the universal wheel installs and works
+without them. `senbonzakura doctor` says which you got.
 
 `senbonzakura setup` exists because **pip picks by platform, not by hardware**. On Windows, PyPI's
 torch is CPU-only, so **a card there sits idle** and nothing warns you. It says what it found and

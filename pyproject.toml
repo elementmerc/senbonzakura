@@ -249,6 +249,11 @@ hub = ["datasets>=2.15"]
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.
 dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=7", "pytest-cov>=4",
+       # `-n 4` in CI, measured: 13:16 to 9:38 on four CPUs, with the coverage figure and the
+       # pass and skip counts identical. It is a dev dependency rather than a CI-only install so
+       # that `pytest -n 4` is available to anyone working on this locally, and so CI is not the
+       # only place the parallel path is ever exercised.
+       "pytest-xdist>=3.2",
        "build>=1.0", "ruff==0.16.0",
        # `tomllib` is stdlib from 3.11 and this project supports 3.10, where the suite could not
        # be collected at all. Test-only, and only on the versions that lack it, so nothing a user

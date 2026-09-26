@@ -13,23 +13,16 @@ You need a GPU with 6 GB or more, and Python 3.10 or newer. No card? Jump to
 
 ## Install
 
-::: warning Not from PyPI, not yet
-PyPI serves 0.3.0 from July 2026. Its numbers are withdrawn, and `senbonzakura-check` is not on
-PyPI yet, so the current version cannot resolve from the index at all. Install from the repository
-instead:
-
 ```sh
-pip install "git+https://github.com/elementmerc/senbonzakura@dev#subdirectory=checker" \
-            "git+https://github.com/elementmerc/senbonzakura@dev"
+pip install senbonzakura
 ```
 
-Both URLs, one command: given separately, the big package goes looking for the small one on PyPI
-and does not find it. `@dev` is load-bearing too, or pip takes the default branch and hands you
-something close to the version this box is warning you about.
+That pulls `senbonzakura-check` with it, because the abliterator depends on it by name.
 
-**That install has no prompts in it.** The corpora and the bundled track are generated artefacts
-kept out of git, because they are harmful prompts and a public repository is not where those
-belong. So `--track default` will not work from it.
+**The prompts come with it.** The wheel carries six research corpora and the packed evaluation
+track, so `--track default` works with nothing else to fetch or build. That is roughly 6,200
+harmful prompts written to your disk, which is worth knowing before you install rather than
+after.
 
 **What follows builds a track you pass by name, and does NOT restore `--track default`.** That
 one needs the packed blob, which is written by `tools/packaging/pack_track.py`, and `tools/`

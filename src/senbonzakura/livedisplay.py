@@ -133,7 +133,7 @@ def why_not(args, stream=None):
     return None
 
 
-def attach(events, args, *, total_trials=None, log=None, stream=None):
+def attach(events, args, *, total_trials=None, log=None, stream=None, console=None):
     """A live panel over this run's event stream, or a `NullPanel`.
 
     `events` is an `EventLog`. The panel registers as an observer and unregisters on exit. Nothing
@@ -143,7 +143,8 @@ def attach(events, args, *, total_trials=None, log=None, stream=None):
     if reason is not None:
         return NullPanel()
     try:
-        return _RichPanel(events, total_trials=total_trials, log=log, stream=stream or sys.stdout)
+        return _RichPanel(events, total_trials=total_trials, log=log,
+                          stream=stream or sys.stdout, console=console)
     except Exception as e:
         # A panel that cannot be built is not a failed run. Said once, then forgotten.
         if log:
@@ -156,14 +157,18 @@ class _RichPanel:
 
     active = True
 
-    def __init__(self, events, *, total_trials=None, log=None, stream=None):
+    def __init__(self, events, *, total_trials=None, log=None, stream=None, console=None):
         from rich.console import Console
         from rich.live import Live
 
         self._events = events
         self._log = log or (lambda _m: None)
         self._total = int(total_trials) if total_trials else None
-        self._console = Console(file=stream or sys.stdout)
+        # `console` is accepted so this class can be driven without a terminal. rich decides colour
+        # and width from the file it is given, and a StringIO has no file descriptor, so a test
+        # cannot otherwise make it render: `Console.is_terminal` is a read-only property. Everything
+        # in here was therefore unexercised, at 43% coverage, until a coverage floor caught it.
+        self._console = console or Console(file=stream or sys.stdout)
         # The best row so far, which is the only thing a watcher actually wants.
         self._best = None
         self._last = None

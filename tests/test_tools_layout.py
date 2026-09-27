@@ -225,3 +225,109 @@ def test_every_tools_script_named_from_outside_still_exists(where, named):
         f"{where} names tools/{named}, which does not exist. Moving a script and leaving a "
         f"caller behind fails where the caller runs, which for a container mount is inside the "
         f"image and a long way from this repository.")
+
+
+# ── the half of the `ci` definition that nothing enforced ─────────────────────────────────────────
+
+#: Where a `tools/ci` script can legitimately be invoked from. A script in that directory claims, by
+#: the `GROUPS` table above, to be "run by CI or a release". These are the places that can make that
+#: claim true. Being imported by a test is NOT one of them: a test proves the script works, not that
+#: anything runs it.
+_INVOKERS = (
+    Path(".github") / "workflows",       # CI
+    Path("RELEASING.md"),                # the release checklist a human follows
+    Path(".githooks"),                   # a git hook, which is a gate like any other
+    Path("tools") / "ci",                # another ci script, e.g. clean_room.sh calling its checks
+    Path("tools") / "hooks",             # a hook body
+    # A PROVISIONING BOOTSTRAP COUNTS, and leaving it out was this list being incomplete rather
+    # than the script being misfiled. `scripts/runpod/seed-sweep-bootstrap.sh` runs
+    # `artefact_ok.py` on a rented box as a fail-fast gate before an unattended job spends money.
+    # That is automated, unattended and gating, which is what the `ci` definition is about; it is
+    # not somebody running a diagnostic by hand. Found because the guard flagged it the moment the
+    # guard started working.
+    Path("scripts") / "runpod",
+)
+
+
+def _text_of(rel, *, excluding=None):
+    """Every file under `rel`, or the file itself, as one blob. Missing paths contribute nothing.
+
+    `excluding` drops one file from the blob, and it is load-bearing rather than tidy. `tools/ci` is
+    itself an invoker, because one ci script legitimately calls another (`clean_room.sh` runs
+    `clean_room_checks.py`). Without this, a script sitting in `tools/ci` VOUCHES FOR ITSELF: its own
+    usage lines mention its own filename, the blob includes its own text, and the check passes.
+
+    That is not hypothetical. The first version of this guard was written to catch a specific
+    misfiled script, was mutation-tested by putting that script back, and PASSED. A guard that
+    cannot fail on the case it was written for is worse than no guard, because the green tick is now
+    evidence of something untrue.
+    """
+    target = ROOT / rel
+    if target.is_file():
+        return "" if target == excluding else target.read_text(encoding="utf-8", errors="replace")
+    if not target.is_dir():
+        return ""
+    # `__pycache__` IS EXCLUDED AND THAT IS NOT HOUSEKEEPING. A stale
+    # `tools/ci/__pycache__/leak_sweep.cpython-314.pyc`, left behind from when a test imported the
+    # script from that directory, contains the module name in its bytecode. So the compiled remains
+    # of the very file being judged vouched for it, and this guard passed its own mutation test
+    # twice for two different reasons before that was found. The candidate enumeration below always
+    # skipped `__pycache__`; the evidence enumeration did not, which is the two-spellings problem
+    # inside one test.
+    return "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                     for p in sorted(target.rglob("*"))
+                     if p.is_file() and p != excluding
+                     and "__pycache__" not in p.parts
+                     and p.suffix not in (".pyc", ".pyo", ".so"))
+
+
+def test_every_ci_script_is_actually_run_by_ci_or_a_release():
+    """`ci` means "checks an artefact or a tree, AND is run by CI or a release". Both halves.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    The `GROUPS` table defines each directory, and this file checked several properties of the
+    scripts in them: that none sits loose at the top level, that the groups on disk match the
+    documented ones, that root resolution is right in both Python and shell. It never checked the
+    defining property of `ci` itself, which is the clause about being run.
+
+    `tools/ci/leak_sweep.py` was the violation. It measures how much of an ablated direction the
+    norm restore puts back: a model diagnostic, belonging in `research`, invoked by no workflow and
+    named nowhere in `RELEASING.md`.
+
+    It mattered more than filing usually does, because in this project "the leak gate" means the one
+    control between a harmful prompt and a public push. Somebody auditing whether that gate runs in
+    CI finds a `tools/ci/leak_sweep.py` that no workflow invokes, and draws a conclusion. Both
+    available conclusions are wrong.
+
+    A guard that checks three properties of a thing and not its definition is the same shape as a
+    guard that covers one spelling of a defect: it reports clean, confidently, on the case that
+    matters.
+    """
+    ci_dir = TOOLS / "ci"
+    if not ci_dir.is_dir():
+        pytest.skip("there is no tools/ci in this checkout")
+
+    assert any(_text_of(rel).strip() for rel in _INVOKERS), (
+        "none of the places that could invoke a ci script could be read, so this test would pass "
+        f"whatever is in tools/ci. Looked for: {[str(r) for r in _INVOKERS]}")
+
+    # Matched on the bare filename rather than the path, because workflows invoke these several
+    # ways: `python tools/ci/x.py`, `./tools/ci/x.sh`, and from inside another ci script with a
+    # relative path. The filenames here are distinctive enough that a bare match is safe.
+    orphans = []
+    for script in sorted(p for p in ci_dir.rglob("*")
+                         if p.is_file() and p.suffix in (".py", ".sh")
+                         and "__pycache__" not in p.parts):
+        # Rebuilt per script, with that script's own text excluded, so it cannot cite itself.
+        invokers = "\n".join(_text_of(rel, excluding=script) for rel in _INVOKERS)
+        if script.name not in invokers:
+            orphans.append(script.relative_to(ROOT).as_posix())
+
+    assert not orphans, (
+        f"these live in tools/ci and nothing in CI, RELEASING.md or a hook invokes them: "
+        f"{orphans}.\n"
+        f'  tools/ci means "checks an artefact or a tree, AND is run by CI or a release". A '
+        f"script nothing runs is not a check, it is a file that looks like one.\n"
+        f"  Either wire it in, or move it: `research` for a diagnostic or experiment, `dev` for a "
+        f"convenience run by hand.")

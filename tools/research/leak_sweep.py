@@ -37,8 +37,8 @@ TWO MEASUREMENTS, AND THE SECOND IS THE ONE THAT BOUNDS THE ANSWER
 
 USAGE
 
-  tools/ci/leak_sweep.py --out leak.json                     # the synthetic sweep
-  tools/ci/leak_sweep.py --model path/to/weights --out m.json # a real model's row-length spread
+  tools/research/leak_sweep.py --out leak.json                     # the synthetic sweep
+  tools/research/leak_sweep.py --model path/to/weights --out m.json # a real model's row-length spread
 """
 from __future__ import annotations
 

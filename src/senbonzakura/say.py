@@ -49,11 +49,24 @@ import textwrap
 #: terminals and produces a blank line on others.
 CEILING = 79
 
-#: A machine marker: SHOUTED, at the start of a line, at least four characters. Deliberately matched
-#: on shape rather than on a list of known names, so a marker added later is exempt without anybody
-#: having to remember this file. `DONE`, `MARGIN_DONE`, `SCORE_DONE`, `MARGIN_NULLS_DOMINATE` and
-#: `MARGIN_READOUT_SUSPECT` all match; an ordinary sentence starting with a capital does not.
-MARKER = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|^[A-Z]{4,}\b")
+#: A machine marker: a SHOUTED first token CARRYING AN UNDERSCORE. Matched on shape rather than
+#: against a list of names, so `COHERENCE_DONE` or whatever is added next year is exempt without
+#: anybody having to remember this file.
+#:
+#: THE UNDERSCORE IS THE WHOLE RULE, and the first version of it did not have one. It read
+#: `^[A-Z]{4,}` on the theory that shouting was enough, which made `NOTE:` a machine marker. The
+#: longest single message in the tool, an 808-character explanation of a filter that rejected
+#: nothing, opens with `NOTE:` and was therefore passed through unwrapped by the very function
+#: written to wrap it. `WARNING:`, `BROKEN FILTER:` and `MATCHING ACHIEVED NOTHING:` are the same
+#: shape: they are emphasis, which is prose, and they were the reason this module was written.
+#:
+#: Every real marker in this project contains an underscore except the two below, so the rule is
+#: cheap and the exceptions are named rather than inferred.
+MARKER = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+
+#: The markers with no underscore in them. Short, closed, and worth stating: `DONE` is the needle the
+#: end-to-end smoke greps for to decide an abliteration finished.
+BARE_MARKERS = frozenset({"DONE", "REFUSED", "OK", "FAIL"})
 
 
 def width(fallback=80):
@@ -75,7 +88,11 @@ def width(fallback=80):
 
 def is_marker(line):
     """Whether this line is a machine marker and must be left exactly as it is."""
-    return bool(MARKER.match(line.lstrip()))
+    stripped = line.lstrip()
+    if MARKER.match(stripped):
+        return True
+    first = stripped.split(" ", 1)[0] if stripped else ""
+    return first in BARE_MARKERS
 
 
 def is_verbatim(line):

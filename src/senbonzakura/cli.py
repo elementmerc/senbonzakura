@@ -59,6 +59,7 @@ from . import (
     dataset,  # every accepted way of saying "the prompts are here"
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
+    say,  # wrapping for every long message, leaving markers and pasteable commands alone
     separation,  # the candidate statistics for "does this axis carry refusal?" (Q-14)
     stamps,  # how a measuring command fills the fields `baseline.PINNED` decides comparability on
 )
@@ -5667,7 +5668,29 @@ def run_parsed(args, bankai, argv):
         allowed=getattr(args, "slow_probe_ok", False))
 
     t0 = time.time()
-    def log(m): print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
+
+    # WRAPPED AT THE FUNNEL, not at 109 call sites. Every message the abliterate run prints goes
+    # through this one function, so the audit's finding that hand-written bodies ignore the terminal
+    # is fixed here rather than by editing each `log(...)` in turn. Doing it per call site would have
+    # meant 109 edits and the 110th message written next week would be unwrapped again.
+    #
+    # Continuations are indented by the width of the timestamp so the message stays a visual block
+    # under its own stamp rather than colliding with the next stamp.
+    #
+    # `say` leaves machine markers and indented commands alone, which is the whole reason it exists:
+    # CI greps nine markers out of this output, head-to-head parses fields off them, and a wrapped
+    # command cannot be pasted.
+    _STAMP = 10                                       # len("[   0.0s] ")
+
+    def log(m):
+        stamp = f"[{time.time() - t0:6.1f}s] "
+        body = say.lines(m, columns=max(40, say.width() - _STAMP))
+        if not body:
+            print(stamp.rstrip(), flush=True)
+            return
+        print(stamp + body[0], flush=True)
+        for line in body[1:]:
+            print(" " * _STAMP + line, flush=True)
 
     # Before the model, because the conflict it can raise is visible from the command line alone
     # and finding it after a download costs a rented card an hour.

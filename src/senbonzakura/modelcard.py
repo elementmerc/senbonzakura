@@ -30,6 +30,7 @@ import json
 import re
 from pathlib import Path
 
+from . import say
 from ._version import __version__
 
 #: Sections a complete card carries. Missing ones are declared rather than dropped, because the
@@ -39,18 +40,76 @@ SECTIONS = ("what was done", "refusal", "capability", "corpus", "licence and use
 
 NOT_MEASURED = "**NOT MEASURED.** Nothing in the supplied artefacts covers this."
 
+#: Decimal places for a divergence figure. Four, because the measurement behind it rests on a few
+#: hundred prompts and anything past the fourth decimal is noise being published as precision.
+KL_PLACES = 4
+
+
+def _refusal(head, *body):
+    """A refusal string, wrapped, for `raise SystemExit(...)`.
+
+    Wrapped here rather than left to the terminal: these sentences run to 300 characters and the
+    audit that prompted the rewrite found that the CONTENT of this tool's refusals is its best
+    writing and the LINE LENGTH is what makes them unreadable. `say` leaves indented commands and
+    machine markers alone, so an example inside one of these stays pasteable.
+    """
+    out = list(say.lines(head))
+    for para in body:
+        # A BLANK LINE BETWEEN PARAGRAPHS. The audit complained about missing whitespace as often as
+        # about line length, and a refusal is usually three separate thoughts: what is wrong, why it
+        # matters, what to type. Run together they read as one paragraph nobody finishes.
+        out.append("")
+        out.extend(say.lines(para, indent="  "))
+    return "\n".join(out)
+
+
+def _number(value, kind):
+    """One figure, rendered for a reader of the published card rather than for a debugger.
+
+    `rate` is a proportion in 0..1 and comes out as a percentage, because every other surface in
+    this tool calls that quantity a proportion and prints a percentage. `kl` keeps its own units and
+    is rounded. Anything that is not a number at all is passed through untouched, so a string
+    already formatted upstream is not mangled here.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    if kind == "rate":
+        return f"{value * 100:.1f}%" if 0.0 <= float(value) <= 1.0 else value
+    if kind == "kl":
+        return f"{round(float(value), KL_PLACES):g}"
+    return value
+
 
 def load(path):
-    """One artefact, or None when it was not supplied. A missing file is a gap, not an error."""
+    """One artefact, or None when it was NOT SUPPLIED. A supplied one that cannot be read refuses.
+
+    THE THREE CASES WERE ONE, and that is what a surface audit caught on 2026-09-27. This returned
+    None for "no path given", "the path is not a file" and "the bytes are not JSON" alike, and the
+    caller renders None as "NOT MEASURED". So `--abliteration notjson.txt` produced a complete,
+    publishable model card, said the evidence was absent, and exited 0. The user concludes their
+    run wrote an empty artefact; the truth is the card never read it.
+
+    Not supplied is genuinely a gap and still returns None. Supplied and unreadable is the user
+    naming a file they believe in, and the only honest answer is to stop.
+    """
     if not path:
         return None
     p = Path(path)
     if not p.is_file():
-        return None
+        raise SystemExit(_refusal(
+            "senbonzakura report: that artefact is not a file.",
+            f"{path}",
+            "A card reports what the artefacts say. Naming one that is not there and writing the "
+            "card anyway would publish 'NOT MEASURED' for evidence that exists somewhere else."))
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
+    except (ValueError, UnicodeDecodeError) as e:
+        raise SystemExit(_refusal(
+            "senbonzakura report: that artefact is not readable JSON.",
+            f"{path}: {e}",
+            "It was given as an artefact to report on, so the card is not written. Reporting "
+            "'NOT MEASURED' here would say the run measured nothing, when what happened is that "
+            "this file could not be read.")) from e
 
 
 def _rate_line(count, n, label):
@@ -136,13 +195,24 @@ def refusal_section(abl):
     if not abl:
         return [NOT_MEASURED]
     lines = []
-    for keys, label in ((("baseline_refusals", "baseline_refusal"), "refusal before"),
-                        (("post_bake_refusals", "post_bake_refusal"), "after"),
-                        (("post_bake_kl",), "KL drift"),
-                        (("post_bake_broken",), "broken output")):
+    # RENDERED FOR A READER, which is what a model card is for. A surface audit on 2026-09-27 found
+    # this publishing `refusal before: **0.5625**` and `KL drift: **0.4076494872570038**`: a
+    # proportion with no unit beside a number carrying sixteen significant figures, in an artefact
+    # meant for strangers on the Hub.
+    #
+    # Sixteen figures is not precision, it is a float's repr. The measurement behind it comes from a
+    # few hundred prompts, so the fourth decimal is already noise, and quoting all of them invites a
+    # reader to compare two cards on digits that mean nothing. Rates become percentages because the
+    # rest of this tool calls them proportions and prints them as percentages, and a card that
+    # spells the same quantity differently is one more thing for a reader to reconcile.
+    for keys, label, kind in (
+            (("baseline_refusals", "baseline_refusal"), "refusal before", "rate"),
+            (("post_bake_refusals", "post_bake_refusal"), "after", "rate"),
+            (("post_bake_kl",), "KL drift", "kl"),
+            (("post_bake_broken",), "broken output", "rate")):
         value = _reading(abl, *keys)
         if value is not None:
-            lines.append(f"- {label}: **{value}**")
+            lines.append(f"- {label}: **{_number(value, kind)}**")
     if not lines:
         return [NOT_MEASURED]
     lines.append("")
@@ -177,7 +247,17 @@ def corpus_section(abl):
                         (("corpus_sha256", "track_digest"), "corpus digest"),
                         (("dir_prompts",), "prompts used to find directions")):
         value = _reading(abl, *keys)
-        if value:
+        if not value:
+            continue
+        # A DIGEST IS THREE FACTS, NOT A PYTHON LITERAL. This published
+        # `corpus digest: {'bad_ds': '39cc...', 'good_ds': '6b2b...', 'bad_eval_ds': 'c5db...'}`,
+        # single quotes and all, into Markdown for the Hub. A dict repr in a published artefact is a
+        # debugger's output that escaped, and a reader cannot copy one split out of it.
+        if isinstance(value, dict):
+            lines.append(f"- {label}:")
+            for split, digest in sorted(value.items()):
+                lines.append(f"  - `{split}`: `{digest}`")
+        else:
             lines.append(f"- {label}: `{value}`")
     return lines or [NOT_MEASURED]
 
@@ -200,7 +280,10 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
     out += ["## Capability, which is what the edit cost", "", *capability_section(cap), ""]
     out += ["## Corpus", "", *corpus_section(abl), ""]
     out += ["## Licence, and what this model is", "",
-            *licence_section(abl, licence, licence_link), ""]
+            # `measured` is what the evidence sections actually resolved to, not what was asked
+            # for: a capability artefact that exists but says nothing still leaves the dual-use
+            # paragraph unable to point at numbers.
+            *licence_section(abl, licence, licence_link, measured=bool(cap)), ""]
     out += ["## Reproducing it", ""]
     if command:
         out += ["```sh", command, "```", ""]
@@ -220,16 +303,49 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
 #: written straight through into the YAML and publishing weights the Hub reports as unlicensed.
 _LICENCE_ID = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
 
+#: The identifiers the HuggingFace Hub actually renders. Not exhaustive of SPDX, deliberately: this
+#: is the list the Hub's own licence picker offers, and an identifier outside it renders as no
+#: licence at all.
+#:
+#: WHY MEMBERSHIP AND NOT SHAPE, 2026-09-27. This check used to be `^[a-z0-9][a-z0-9.-]*$`, which
+#: asks whether a string LOOKS like an identifier. `--base-licence banana` looks exactly like one,
+#: so a surface audit passed it straight into the YAML front matter, where `license: banana` is what
+#: the Hub reads to decide what these weights may be used for. A shape check on a field whose whole
+#: job is to be one of a known set answers a narrower question than the one being asked.
+KNOWN_LICENCES = frozenset({
+    "apache-2.0", "mit", "openrail", "bigscience-openrail-m", "creativeml-openrail-m",
+    "bigscience-bloom-rail-1.0", "bigcode-openrail-m", "afl-3.0", "artistic-2.0", "bsl-1.0",
+    "bsd", "bsd-2-clause", "bsd-3-clause", "bsd-3-clause-clear", "c-uda", "cc", "cc0-1.0",
+    "cc-by-2.0", "cc-by-2.5", "cc-by-3.0", "cc-by-4.0", "cc-by-sa-3.0", "cc-by-sa-4.0",
+    "cc-by-nc-2.0", "cc-by-nc-3.0", "cc-by-nc-4.0", "cc-by-nd-4.0", "cc-by-nc-nd-3.0",
+    "cc-by-nc-nd-4.0", "cc-by-nc-sa-2.0", "cc-by-nc-sa-3.0", "cc-by-nc-sa-4.0", "cdla-sharing-1.0",
+    "cdla-permissive-1.0", "cdla-permissive-2.0", "epl-1.0", "epl-2.0", "etalab-2.0", "eupl-1.1",
+    "agpl-3.0", "gfdl", "gpl", "gpl-2.0", "gpl-3.0", "lgpl", "lgpl-2.1", "lgpl-3.0", "isc",
+    "lppl-1.3c", "ms-pl", "mpl-2.0", "odc-by", "odbl", "openrail++", "osl-3.0", "postgresql",
+    "ofl-1.1", "ncsa", "unlicense", "zlib", "pddl", "wtfpl", "ecl-2.0", "gemma", "llama2",
+    "llama3", "llama3.1", "llama3.2", "llama3.3", "llama4", "deepfloyd-if-license",
+    "intel-research", "apple-ascl", "apple-amlr", "fair-noncommercial-research-license",
+    "other", "unknown",
+})
+
 
 def licence_complaint(value):
     """Why the Hub would not render this identifier, or None."""
-    if not value or _LICENCE_ID.match(value):
+    if not value or value in KNOWN_LICENCES:
         return None
-    return (f"--base-licence {value!r} is not a shape the HuggingFace Hub accepts: it wants a "
-            f"lowercase SPDX-style identifier such as `apache-2.0`, `mit`, `gemma` or "
-            f"`llama3.2`, and renders no licence at all for anything else. Writing it through "
-            f"would publish weights the Hub reports as unlicensed, which is the fault this card "
-            f"exists to prevent.")
+    shaped = bool(_LICENCE_ID.match(value))
+    near = sorted(k for k in KNOWN_LICENCES if k.startswith(value[:3].lower()))[:4]
+    return _refusal(
+        f"--base-licence {value!r} is not an identifier the HuggingFace Hub renders"
+        + (", even though it is shaped like one." if shaped else "."),
+        "That string goes into the card's YAML front matter as `license:`, which is what the Hub "
+        "reads to decide what these weights may be used for, and it renders nothing at all for an "
+        "identifier it does not know. Publishing that is weights the Hub reports as unlicensed, "
+        "which is the fault this card exists to prevent.",
+        *([f"Did you mean: {', '.join(near)}?"] if near else []),
+        "Common ones here: apache-2.0, mit, gemma, llama3.2, agpl-3.0, cc-by-nc-4.0. Use `other` "
+        "when the terms are bespoke, and `--licence-unknown` for a card marked UNRESOLVED rather "
+        "than guessing.")
 
 
 def front_matter(abl, licence, licence_link):
@@ -258,7 +374,7 @@ def front_matter(abl, licence, licence_link):
     return out
 
 
-def licence_section(abl=None, licence=None, licence_link=None):
+def licence_section(abl=None, licence=None, licence_link=None, *, measured=True):
     """What travels with the weights, said on the page that travels with the weights.
 
     THE GAP THIS CLOSES. The repository says all of this carefully: that a base model's licence
@@ -305,10 +421,26 @@ def licence_section(abl=None, licence=None, licence_link=None):
          "tool does not know which of those apply to your base model and does not guess. Read the "
          "licence named above and satisfy it before you publish."),
         "",
+        # CONDITIONAL, because the unmeasured version of this paragraph was a lie the card told
+        # about itself. It said "That is what the numbers above measure" and "the capability section
+        # is the honest account of what that cost" on cards whose capability section read NOT
+        # MEASURED and whose refusal section carried no figures at all. Same failure as the
+        # evaluation track card whose dual-use disclosure inverted at the tag: static prose that
+        # does not know what the evidence sections resolved to.
+        #
+        # The warning is not weakened in the unmeasured case. It is strengthened: nobody knows what
+        # this edit cost, which is a worse position to deploy from than knowing it was expensive.
         ("**Its refusal behaviour has been removed on purpose.** That is what the numbers above "
          "measure. It will answer requests the original declined, including harmful ones, and "
          "the capability section is the honest account of what that cost. Deploy it "
-         "accordingly, and do not put it somewhere the original's refusals were load-bearing."),
+         "accordingly, and do not put it somewhere the original's refusals were load-bearing."
+         if measured else
+         "**Its refusal behaviour has been removed on purpose.** It will answer requests the "
+         "original declined, including harmful ones. **What that cost has not been measured**, so "
+         "this card cannot tell you what else changed: whether it still reasons as well, whether "
+         "it still recognises harm it now complies with, or whether anything else went with the "
+         "refusals. Deploy it accordingly, and do not put it somewhere the original's refusals "
+         "were load-bearing."),
         "",
         ("Card generated by [senbonzakura](https://github.com/elementmerc/senbonzakura) "
          f"{__version__}."),

@@ -144,3 +144,41 @@ def test_the_module_stays_cheap_to_import():
     for heavy in ("import torch", "import transformers", "import optuna", "import datasets",
                   "import numpy"):
         assert heavy not in source, f"say.py imports {heavy}, which every refusal would now pay for"
+
+
+# ── the bug the first version of the marker rule had ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("prefix", [
+    "NOTE: the refusal-separation filter rejected NONE of 40 candidate axes, so the filter is not "
+    "filtering and the search had nothing to choose between",
+    "WARNING: none of 64 scored trials was intact, so the knee was picked from trials that were all "
+    "broken and the number means nothing",
+    "BROKEN FILTER: all 40 candidate axes scored a refusal separation of zero, which cannot happen "
+    "unless the statistic is being read off the wrong tensor",
+    "MATCHING ACHIEVED NOTHING: the harmless prompts chosen as nearest neighbours were no nearer "
+    "than the harmless set at large",
+])
+def test_a_shouted_prose_prefix_is_not_a_marker(prefix):
+    """The bug the first marker rule had, and it disabled the module on its own worst case.
+
+    The rule was `^[A-Z]{4,}`, on the theory that shouting was enough. That makes `NOTE:` a machine
+    marker, and the longest single message in the whole tool, an 808-character explanation of a
+    filter that rejected nothing, opens with `NOTE:`. So the function written to wrap it passed it
+    through untouched, and the very worst line in the audit would have survived the fix intact.
+
+    These four prefixes are emphasis. Emphasis is prose.
+    """
+    assert not say.is_marker(prefix), f"{prefix.split(':')[0]!r} is emphasis, not a machine marker"
+    out = say.lines(prefix, columns=79)
+    assert len(out) > 1, "a shouted prose prefix stopped the line wrapping"
+    assert all(len(ln) <= 79 for ln in out)
+
+
+def test_the_bare_markers_are_a_named_set_rather_than_a_pattern():
+    """`DONE` has no underscore and is the needle the end-to-end smoke greps for."""
+    assert "DONE" in say.BARE_MARKERS
+    for bare in say.BARE_MARKERS:
+        assert say.is_marker(bare)
+        assert "_" not in bare, (
+            f"{bare} contains an underscore, so the pattern already covers it and listing it here "
+            f"is a second copy of the same rule")

@@ -134,15 +134,48 @@ def test_a_high_indeterminate_count_is_surfaced_beside_the_accuracy():
 
 # ── loading, and refusing to make something up ───────────────────────────────────────
 
-def test_a_missing_artefact_is_a_gap_rather_than_an_error(tmp_path):
-    assert modelcard.load(tmp_path / "nope.json") is None
+def test_an_artefact_that_was_not_supplied_is_a_gap(tmp_path):
+    """The one case that is genuinely a gap: nobody named a file, so nothing is missing."""
     assert modelcard.load("") is None
+    assert modelcard.load(None) is None
 
 
-def test_an_unreadable_artefact_is_a_gap_rather_than_a_crash(tmp_path):
+def test_an_artefact_that_was_named_and_is_absent_refuses(tmp_path):
+    """REPLACES `test_a_missing_artefact_is_a_gap_rather_than_an_error`, 2026-09-27.
+
+    That test asserted `load(tmp_path / "nope.json") is None`, and nothing recorded why beyond a
+    one-line docstring saying a missing file is a gap. A surface audit against a built wheel showed
+    what it cost: `--abliteration notjson.txt` produced a complete, publishable model card that said
+    the evidence was NOT MEASURED, and exited 0. A reader concludes the run wrote an empty artefact.
+
+    The distinction the old test flattened is between "no path was given", which is a gap, and "a
+    path was given and cannot be used", which is the user naming a file they believe in. The first
+    still returns None, above. The second stops.
+    """
+    with pytest.raises(SystemExit) as e:
+        modelcard.load(tmp_path / "nope.json")
+    # NORMALISED, because these messages are wrapped now and a substring can straddle a line break.
+    # This assertion first read `match="is not a file"` and failed on "is\nnot a file", which is the
+    # same trap any consumer grepping this output can fall into.
+    assert "is not a file" in " ".join(str(e.value).split())
+
+
+def test_an_unreadable_artefact_refuses_rather_than_reporting_nothing_measured(tmp_path):
+    """REPLACES `test_an_unreadable_artefact_is_a_gap_rather_than_a_crash`, same reason.
+
+    "Rather than a crash" was the right instinct and None was the wrong destination: reporting NOT
+    MEASURED says the run measured nothing, when what happened is that this file could not be read.
+    Those are different sentences and only one of them is true.
+    """
     p = tmp_path / "bad.json"
     p.write_text("{not json", encoding="utf-8")
-    assert modelcard.load(p) is None
+    with pytest.raises(SystemExit) as e:
+        modelcard.load(p)
+    flat = " ".join(str(e.value).split())
+    assert "not readable JSON" in flat
+    assert "NOT MEASURED" in flat, (
+        "the refusal should say what it is NOT doing, because the old behaviour is what the reader "
+        "is expecting to see")
 
 
 def test_the_command_refuses_to_build_a_card_from_nothing():
@@ -308,4 +341,4 @@ def test_the_refusal_reaches_the_shell(tmp_path):
     abl.write_text('{"model": "Qwen/Qwen3-1.7B", "post_bake_refusals": 0.0}', encoding="utf-8")
     with pytest.raises(SystemExit) as e:
         modelcard.main(["--abliteration", str(abl), "--base-licence", "Apache 2.0"])
-    assert "HuggingFace Hub accepts" in str(e.value)
+    assert "not an identifier the HuggingFace Hub renders" in " ".join(str(e.value).split())

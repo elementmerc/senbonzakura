@@ -241,7 +241,13 @@ other people is a decision with consequences that belong to whoever makes it.
 Note on licences, and there are three separate ones in play:
 
 - **The code** is **AGPL-3.0-or-later** (it embeds a keyword metric copied from Heretic, which is
-  AGPL).
+  AGPL). **If you run a modified version of this code as a network service, the AGPL's section 13
+  obliges you to offer your modified source to the people using it over that network.** That is
+  the clause that distinguishes the AGPL from the GPL, and it is the one that bites an
+  abliteration-as-a-service business rather than an internal user: running it privately, however
+  commercially, triggers nothing. Two readers with no knowledge of this project went looking for
+  this in 2026-09 and found it stated nowhere but the licence file itself, which is the wrong place
+  for the one licence fact a commercial reader most needs.
 - **The bundled evaluation track** under `senbonzakura/data/` is a separate work aggregated into
   the same wheel, and it is **CC BY-NC 4.0: non-commercial**. The package metadata carries one
   licence expression and that expression describes the code, so if you are using this

@@ -68,6 +68,13 @@ class TestGateSaysHowToGetABaseline:
         assert "senbonzakura baseline" in text, (
             f"the refusal does not name the command that produces the file it wants: {text}")
         assert "is not there" in text
+        # AND THE EXPLANATION, not only the command. A mutation pass removed the sentence saying a
+        # baseline is a file this tool writes and this test still passed, because the command line
+        # below it survived. Somebody meeting this on a first run does not know a baseline is
+        # something they produce rather than something they were supposed to have, and a bare command
+        # with no sentence around it is a thing to copy rather than a thing to understand.
+        assert "a file this tool writes" in text, (
+            f"the refusal gives a command and never says what the file is: {text}")
 
     def test_a_directory_given_as_a_baseline_is_named_as_one(self, tmp_path):
         said = []

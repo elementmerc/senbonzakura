@@ -143,3 +143,56 @@ class TestTheRefusalQuotesWhatTheToolSaid:
         assert "unsupported tensor layout" in said, (
             f"the converter's own diagnostic was swallowed by the summarising: {said}")
         assert "--verbose" in said, "nothing tells the reader how to see the rest"
+
+
+class TestAWarningIsNeverSummarisedAway:
+    """The half of the trade that the recorded decision got wrong about mechanism.
+
+    The decision was "suppress by default, stderr always through", and that rests on a false premise:
+    `convert_hf_to_gguf.py` calls `logging.basicConfig` with no stream, so its 350 lines ARE stderr,
+    and llama-quantize's fallback warning is on stderr too and has to be scanned. Passing the stream
+    through untouched would have left the defect in place and made the warning unreadable at the same
+    time. So what reaches the reader is decided by what a line SAYS.
+    """
+
+    def test_a_warning_reaches_the_reader_in_a_quiet_run(self, capsys):
+        vendored.relay(_stream("[1/272] blk.0", "WARNING: 180 of 272 required fallback",
+                               "[2/272] blk.1"),
+                       verbose=False, log=lambda _m: None)
+        said = capsys.readouterr()
+        assert "180 of 272" in said.err, "the warning was summarised away"
+        assert "blk.0" not in said.err + said.out, "the chatter came through as well"
+
+    @pytest.mark.parametrize("line", [
+        "ERROR: unsupported tensor layout",
+        "warning: tied embeddings ignored",
+        "conversion failed at blk.3",
+        "cannot open file",
+        "llama_model_quantize_impl: WARNING: 4 of 272 tensor(s) required fallback",
+    ])
+    def test_every_shape_of_bad_news_gets_through(self, line, capsys):
+        vendored.relay(_stream("[1/2] fine", line), verbose=False, log=lambda _m: None)
+        assert line in capsys.readouterr().err, f"this never reached the reader: {line!r}"
+
+    def test_an_ordinary_line_does_not(self):
+        """Otherwise the exemption swallows the summarising it sits inside."""
+        assert not any(p.search("[137/272] blk.4.attn_k.weight - converting to q4_K")
+                       for p in vendored.LOUD_LINES)
+
+    def test_it_goes_to_stderr_rather_than_stdout(self, capsys):
+        """Where it came from, so a pipeline that separates the streams keeps getting it there."""
+        vendored.relay(_stream("ERROR: boom"), verbose=False, log=lambda _m: None)
+        said = capsys.readouterr()
+        assert "ERROR: boom" in said.err and "ERROR: boom" not in said.out
+
+    def test_it_is_still_kept_in_the_tail(self, capsys):
+        """Passing a line through must not stop it counting toward the failure report."""
+        _matches, tail = vendored.relay(_stream("ERROR: boom"), verbose=False, log=lambda _m: None)
+        capsys.readouterr()
+        assert tail == ["ERROR: boom"]
+
+    def test_a_verbose_run_prints_it_once_and_not_twice(self, capsys):
+        """The loud branch must not double up with the pass-everything branch."""
+        vendored.relay(_stream("ERROR: boom"), verbose=True, log=lambda _m: None)
+        said = capsys.readouterr()
+        assert (said.out + said.err).count("ERROR: boom") == 1

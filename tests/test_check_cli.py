@@ -703,3 +703,57 @@ class TestTheExitCodeTable:
         out = io.StringIO()
         cli.main([self._outcome(tmp_path, "findings")], out=out)
         assert "NOTHING WAS CHECKED" not in out.getvalue()
+
+
+class TestTheEmptyFooterSaysWhichOutcomeThisIs:
+    """"NOTHING WAS CHECKED" read identically whether it was about to exit 0 or fail.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit found the same footer on both outcomes, so a reader could not tell from the
+    output whether their CI step had just failed, and the one who exits 0 was not told that the
+    behaviour they almost certainly want is one flag away. An empty sweep is legitimately fine from a
+    shell and almost never fine in CI.
+
+    Written after a mutation pass found the branch unguarded: the behaviour shipped with no test at
+    all, which is the same gap as the footer itself had.
+    """
+
+    def test_an_empty_sweep_that_exits_zero_names_the_flag(self, tmp_path, capsys):
+        assert cli.main([str(tmp_path)]) == 0
+        said = capsys.readouterr().out
+        assert "NOTHING WAS CHECKED" in said
+        assert "--fail-on-empty" in said, (
+            f"exit 0 and no mention of the flag that would have made this a failure: {said}")
+        assert "This run exits 0" in said
+
+    def test_an_empty_sweep_that_fails_says_that_is_why(self, tmp_path, capsys):
+        assert cli.main([str(tmp_path), "--fail-on-empty"]) == 1
+        said = capsys.readouterr().out
+        assert "NOTHING WAS CHECKED" in said
+        assert "Exiting non-zero because --fail-on-empty was given" in said
+        assert "This run exits 0" not in said, "it claims to exit 0 while exiting 1"
+
+    def test_the_two_outcomes_do_not_read_the_same(self, tmp_path, capsys):
+        """The defect, stated as the property: the reader can tell which happened."""
+        cli.main([str(tmp_path)])
+        quiet = capsys.readouterr().out
+        cli.main([str(tmp_path), "--fail-on-empty"])
+        loud = capsys.readouterr().out
+        assert quiet != loud, "the footer is identical on exit 0 and on failure"
+
+    def test_a_sweep_that_checked_something_gets_no_footer(self, tmp_path):
+        """The branch must not fire on a run that did work.
+
+        `GOOD` rather than a hand-made object, for the reason recorded above
+        `test_fail_on_empty_does_not_fire_when_something_was_checked`: a plausible-looking document
+        that no adapter recognises is swept, reported as not a result and never checked, so a test
+        built on one asserts the defect. My first version of this used `{"schema": "x", "metrics":
+        {}}` and failed, correctly, on the same mistake that file already carries a comment about.
+        """
+        import io
+
+        _write(tmp_path, "r.json", GOOD)
+        out = io.StringIO()
+        cli.main([str(tmp_path)], out=out)
+        assert "NOTHING WAS CHECKED" not in out.getvalue()

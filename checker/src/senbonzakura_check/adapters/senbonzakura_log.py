@@ -396,9 +396,28 @@ def _agreed(metrics, field):
     it never asked. That is the failure shape this project keeps finding, so it is refused here
     rather than rediscovered downstream.
     """
-    seen = {block.get(field) for block in metrics.values()
-            if isinstance(block, dict) and block.get(field) is not None}
-    return seen.pop() if len(seen) == 1 else None
+    # COMPARED BY EQUALITY, NOT BY HASH, and the difference is a crash.
+    #
+    # This was a set comprehension. It guarded that the BLOCK was a dict and never that the block's
+    # VALUE was hashable, so a `prompt_format` recorded as an object rather than a string raised
+    # `TypeError: unhashable type: 'dict'` out of a set literal. On 2026-09-26 a first-time user
+    # finished a run, pointed this checker at the output directory, and got a twelve-frame
+    # traceback; `--skip-unknown`, the documented escape hatch, could not help, because the failure
+    # was in the sweep rather than in any one file. Every single file in that directory checked
+    # cleanly on its own.
+    #
+    # A stack trace is the worst possible failure for THIS program. Its entire value is that it
+    # never reports a clean result it cannot stand behind, and a reader who meets a traceback
+    # cannot tell a bug from a finding.
+    #
+    # Nothing here needed a set: the question is whether every stamped metric agrees, which is
+    # equality, and equality works for dicts, lists and strings alike.
+    values = [block[field] for block in metrics.values()
+              if isinstance(block, dict) and block.get(field) is not None]
+    if not values:
+        return None
+    first = values[0]
+    return first if all(other == first for other in values) else None
 
 
 def _older_shapes(doc) -> dict:

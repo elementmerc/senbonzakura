@@ -260,14 +260,23 @@ def test_an_unknown_dtype_reaches_the_caller_as_a_reason(monkeypatch):
 def test_a_raising_hub_becomes_a_reason_not_a_traceback(monkeypatch):
     """Auth, network, a repo with no safetensors at all. A pre-flight is not allowed to be the
     thing that ends a run it was added to protect.
+
+    IT USED TO ASSERT THE CLASS NAME, 2026-09-27. This test read
+    `why.startswith("OSError:")`, which locked in audit finding 10: the reason handed to the reader
+    opened with the name of a Python exception class, the one fact in it they could not act on. The
+    reason still has to reach them, which is what the second half checks; what it is spelled as is
+    no longer a Python identifier. The Hub is stubbed as reachable-and-having-the-repo so this stays
+    a test of the wording rather than a test of the network.
     """
     def boom(model, token=None):
         raise OSError("401 Client Error: gated repo")
 
     _fns(monkeypatch, remote=boom)
+    monkeypatch.setattr(cli.hubmessage, "repo_is_missing", lambda *a, **k: False)
     got, why = cli.estimate_snapshot_bytes("some/gated")
     assert got is None
-    assert why.startswith("OSError:") and "gated" in why
+    assert "OSError" not in why, "a class name is not something a reader can do anything with"
+    assert "gated" in why, "the reason still has to reach the reader"
 
 
 def test_the_token_is_passed_through(monkeypatch):

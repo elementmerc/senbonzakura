@@ -36,7 +36,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import gguf_io
+from . import gguf_io, hubmessage, say
 
 #: Hosts where plain HTTP is acceptable. Loopback only, and this is a security model rather than a
 #: convenience: the guard exists because anything on the network path can substitute weights in
@@ -213,6 +213,44 @@ def verify(path, *, expect_size=None, expect_sha256=None, expect_quant=None, exp
     return head
 
 
+def _the_hub_said_no(ref, filename, error, *, token=None):
+    """A Hub refusal as a few short lines, with the likeliest cause first.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit ran this against a repository that does not exist and got five paragraphs of
+    `huggingface_hub` back: a request id, a url, the `repo_id` and `repo_type` keyword arguments of
+    a function nobody here is calling, a link to the authentication documentation, and then
+    "Invalid username or password." for an id that was simply mistyped. Our own sentence about
+    tokens came after all of it, so the reader met four wrong explanations before the right one, and
+    the loudest of them was about credentials they had never supplied.
+
+    A repository that is not there and a private one you cannot see both answer 401, so the Hub is
+    asked which it was rather than guessed at. When it says the repository is missing, that is the
+    whole message: a token cannot help, and offering one is the same mistake in a quieter voice.
+    """
+    if hubmessage.repo_is_missing(ref, token=token):
+        return say.refusal_text("senbonzakura fetch: nothing was downloaded.",
+                                hubmessage.no_such_model(ref, "repository"))
+    if "Entry Not Found" in str(error):
+        # A TOKEN CANNOT HELP HERE, so it is not offered. The repository answered, which means it
+        # was read; what it does not have is this file, and the reader needs the list of names
+        # rather than a second theory about their credentials.
+        return say.refusal_text(
+            "senbonzakura fetch: nothing was downloaded.",
+            f"{ref} is there, and on the revision asked for it has no file called {filename}. "
+            f"Check the name against the repository's Files tab: they are case sensitive, and a "
+            f"quantisation suffix such as Q4_K_M against Q4_0 is the easiest part to get wrong.")
+    theirs = " ".join(hubmessage.useful_lines(error)).rstrip(".")
+    return say.refusal_text(
+        f"senbonzakura fetch: the Hub would not give up {filename}.",
+        f"It refused {ref}: {theirs}." if theirs else f"It refused {ref} without saying why.",
+        # THE ADVICE AGAINST AN ARGUMENT IS LOAD BEARING and had a test on it before this rewrite:
+        # a token on a command line is in the shell history and in every process listing on the box.
+        "If the repository is gated or private, set $HF_TOKEN or run `hf auth login` rather than "
+        "passing one as an argument: an argument is visible in `ps` and in your shell history.")
+
+
 def download(kind, ref, filename, out_dir, *, revision=None, token=None, log=print):
     """Place the file in `out_dir` and return its path. Resumable, and never leaves a partial."""
     out_dir = Path(out_dir)
@@ -228,10 +266,7 @@ def download(kind, ref, filename, out_dir, *, revision=None, token=None, log=pri
             got = hf_hub_download(repo_id=ref, filename=filename, revision=revision,
                                   local_dir=str(out_dir), token=token)
         except HfHubHTTPError as e:
-            raise FetchError(
-                f"the Hub refused {ref}:{filename}: {e}. A gated or private repository needs a "
-                f"token; set $HF_TOKEN or run `hf auth login` rather than passing one as an "
-                f"argument.") from e
+            raise FetchError(_the_hub_said_no(ref, filename, e, token=token)) from e
         except (OSError, ValueError) as e:
             raise FetchError(f"could not fetch {ref}:{filename}: {e}") from e
         return Path(got)

@@ -35,6 +35,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import say
 from .crashsafe import atomic_write
 
 #: Bumped only for a change that makes an older file mean something different. Adding a field is
@@ -229,6 +230,30 @@ def write(path, baseline):
 #: other artefacts' nested blocks, so a one-key test would claim files it cannot describe. A guard
 #: that covers one spelling of a shape reports confidently on the others.
 _PRE_METRICS_COMPASS_KEYS = ("auc", "controls", "n_harmful", "n_harmless")
+
+
+#: What `senbonzakura measure` writes: a summary of several stages, each with its own artefact
+#: beside it. Matched on the `stages` mapping rather than on a filename, because a renamed file is
+#: still the same document.
+_MEASURE_STAGE_KEYS = ("stages", "measured", "table")
+
+
+def _is_measure_summary(doc):
+    """Whether this is a `measure` summary rather than a single measurement.
+
+    `measure` runs four instruments and writes one document describing all of them, plus a per-stage
+    artefact for each. It carries no `metrics` block, because it is not itself a measurement of
+    anything: it is an index of four.
+    """
+    for key in _MEASURE_STAGE_KEYS:
+        value = doc.get(key)
+        if isinstance(value, dict) and value:
+            # `measure` writes {stage: filename}, so the values ARE the files to point at. Derived
+            # from the document rather than rebuilt as f"{name}.json", because a reader is being
+            # told which file to open and that has to be the name the run actually wrote.
+            files = sorted(v for v in value.values() if isinstance(v, str) and v.endswith(".json"))
+            return key, files or sorted(f"{n}.json" for n in value)
+    return None
 
 
 def _pre_metrics_compass(doc):
@@ -551,6 +576,34 @@ def from_artefact(doc, metric_key, *, seeds):
     """
     metrics = doc.get("metrics")
     if not isinstance(metrics, dict) or not metrics:
+        # A `measure` SUMMARY IS NOT AN OLD ARTEFACT, and saying so was this refusal's worst
+        # property. A surface audit fed it a `measure.json` written ninety seconds earlier by the
+        # same build and was told the file predated a stamp introduced in September: advice that is
+        # false and cannot be followed, about the headline command's own output, in the next step of
+        # the documented CI chain. The reader then has to work out unaided that the per-stage files
+        # beside it do work.
+        found = _is_measure_summary(doc)
+        if found:
+            key, stages = found
+            listed = ", ".join(stages) or "the per-stage files beside it"
+            # BLANK LINES BETWEEN PARAGRAPHS, and FOUR SPACES before the command. `say.reflow`
+            # joins consecutive two-space lines into one paragraph, which is what a continuation
+            # indent means, and passes four-space lines through verbatim so a command stays
+            # pasteable. Written with a two-space indent throughout, this whole refusal reflowed
+            # into one block with the example command wrapped in the middle of it.
+            raise BaselineError(
+                f"this looks like a `senbonzakura measure` summary rather than a single "
+                f"measurement: it carries `{key}` and no `metrics` block.\n"
+                f"\n"
+                f"That is correct for what it is. `measure` runs several instruments and writes one "
+                f"document describing all of them, so there is no single figure in it to record. "
+                f"Each instrument's own artefact is written beside it, and each of those does "
+                f"carry a stamped figure.\n"
+                f"\n"
+                f"Record one of those instead: {listed}\n"
+                f"\n"
+                f"    senbonzakura baseline {stages[0] if stages else '<stage>.json'} "
+                f"--seeds <n> --out b.json")
         raise BaselineError(
             "this artefact carries no `metrics` block, so there is no stamped figure to build a "
             "baseline from. Artefacts written before 2026-09-12 predate the stamp; re-run the "
@@ -632,6 +685,34 @@ def only_metric(doc):
     """
     metrics = doc.get("metrics")
     if not isinstance(metrics, dict) or not metrics:
+        # A `measure` SUMMARY IS NOT AN OLD ARTEFACT, and saying so was this refusal's worst
+        # property. A surface audit fed it a `measure.json` written ninety seconds earlier by the
+        # same build and was told the file predated a stamp introduced in September: advice that is
+        # false and cannot be followed, about the headline command's own output, in the next step of
+        # the documented CI chain. The reader then has to work out unaided that the per-stage files
+        # beside it do work.
+        found = _is_measure_summary(doc)
+        if found:
+            key, stages = found
+            listed = ", ".join(stages) or "the per-stage files beside it"
+            # BLANK LINES BETWEEN PARAGRAPHS, and FOUR SPACES before the command. `say.reflow`
+            # joins consecutive two-space lines into one paragraph, which is what a continuation
+            # indent means, and passes four-space lines through verbatim so a command stays
+            # pasteable. Written with a two-space indent throughout, this whole refusal reflowed
+            # into one block with the example command wrapped in the middle of it.
+            raise BaselineError(
+                f"this looks like a `senbonzakura measure` summary rather than a single "
+                f"measurement: it carries `{key}` and no `metrics` block.\n"
+                f"\n"
+                f"That is correct for what it is. `measure` runs several instruments and writes one "
+                f"document describing all of them, so there is no single figure in it to record. "
+                f"Each instrument's own artefact is written beside it, and each of those does "
+                f"carry a stamped figure.\n"
+                f"\n"
+                f"Record one of those instead: {listed}\n"
+                f"\n"
+                f"    senbonzakura baseline {stages[0] if stages else '<stage>.json'} "
+                f"--seeds <n> --out b.json")
         raise BaselineError(
             "this artefact carries no `metrics` block, so there is nothing to record and nothing "
             "to name with --metric either. Artefacts written before 2026-09-12 predate the stamp; "
@@ -700,7 +781,8 @@ def main(argv=None):
         print(f"cannot read {a.measurement}: {e}", file=sys.stderr)
         return 2
     except BaselineError as e:
-        print(f"refused: {e}", file=sys.stderr)
+        # Wrapped: these refusals are three paragraphs and were printed as three long lines.
+        print("\n".join(["refused:", *say.reflow(str(e))]), file=sys.stderr)
         return 2
     print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f} "
           f"{written['interval']} on n={written['n']}, seeds {written['seeds']}")

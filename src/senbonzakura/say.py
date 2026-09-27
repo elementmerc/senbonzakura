@@ -140,6 +140,48 @@ def say(text, *, indent="", first=None, log=print, columns=None):
         log(line)
 
 
+#: How deep an indent has to be before it means "verbatim" rather than "this is a continuation".
+#: Messages in this tool are written with two-space continuation indents for prose and four or more
+#: for a command or an example, so that is where the line sits.
+VERBATIM_INDENT = 4
+
+
+def reflow(text, *, columns=None):
+    """A message written with two-space continuation indents, rewrapped, commands left alone.
+
+    WHY THIS IS NEEDED ON TOP OF `lines`, 2026-09-27
+
+    `is_verbatim` treats ANY indented line as something to pass through, which is right for a command
+    and wrong for the way these messages are actually written: most of them are one logical paragraph
+    per sentence with two-space continuation indents already baked into the string literal. Handed
+    straight to `lines`, every one of those is "indented", so nothing wraps.
+
+    A blast-radius pass predicted this before it happened, and the first attempt at rewrapping
+    `baseline`'s refusals then printed a 261-character line to prove it.
+
+    So a two-space indent is treated as prose to be rewrapped, and four or more as verbatim. Blank
+    lines separate paragraphs.
+    """
+    out, para = [], []
+
+    def flush():
+        if para:
+            out.extend(lines(" ".join(para), indent="  ", columns=columns))
+            para.clear()
+
+    for raw in str(text).split("\n"):
+        if not raw.strip():
+            flush()
+            out.append("")
+        elif raw.startswith(" " * VERBATIM_INDENT) or is_marker(raw):
+            flush()
+            out.append(raw)
+        else:
+            para.append(raw.strip())
+    flush()
+    return out
+
+
 def refusal_text(head, *paragraphs, columns=None):
     """A refusal as a STRING, wrapped, for `raise SystemExit(...)`.
 

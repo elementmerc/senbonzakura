@@ -23,6 +23,18 @@ export default {
     + 'language models, and the instruments to tell whether it worked.',
   lang: 'en-GB',
   base: BASE,
+  // WHAT `cleanUrls` DOES AND DOES NOT BUY, recorded because a reader hit the gap in 2026-09.
+  //
+  // It makes the build emit `guide/what-we-know.html` and link to it as `guide/what-we-know`.
+  // GitHub Pages then serves that path, and serves NOTHING for `guide/what-we-know/`: a trailing
+  // slash makes it look for `guide/what-we-know/index.html`, which does not exist, so it 404s with
+  // no redirect. There is no VitePress option that emits both spellings and no server-side rule
+  // available on Pages (no rewrites, no .htaccess), so this cannot be fixed from here. Turning
+  // `cleanUrls` off would only move the 404 onto the extensionless spelling, which is the one
+  // every internal link and every search result uses.
+  //
+  // What WAS fixable is the directory root: `/guide/` 404ed because there was no `guide/index.md`.
+  // There is one now. `/reference/` still has no index and 404s the same way.
   cleanUrls: true,
   lastUpdated: true,
 
@@ -95,6 +107,10 @@ export default {
             { text: 'Quickstart', link: '/guide/quickstart' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first run', link: '/guide/first-run' },
+            // The contents page at the guide root. It sits last on purpose: the ordering above is
+            // a deliberate decision recorded in the comment, and a contents link is not worth
+            // displacing it.
+            { text: 'All guide pages', link: '/guide/' },
           ],
         },
         {

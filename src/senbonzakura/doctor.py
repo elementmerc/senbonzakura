@@ -360,8 +360,18 @@ def check_torch():
                                   f"{torch.cuda.get_device_name(0)}, {free / 1e9:.1f} GB free")
         except Exception:
             return _pass("torch", f"{torch.__version__}, cuda")
+    # WHAT THIS LINE USED TO SAY AND WHY IT WAS WRONG, found by a reader 2026-09-27. It read
+    # "editing a model on CPU works and is slow", which describes the wrong outcome: on the default
+    # flags an edit on CPU does not start at all. `capability.refuse_slow_cpu_probe` prices the
+    # default 200-item, 512-token probe at roughly four hours of host generation and exits rather
+    # than spending it. An advisory that promises a slow success where the tool delivers a refusal
+    # sends the reader looking for a fault in their install.
     return _warn("torch", f"{torch.__version__}, no cuda device",
-                 "editing a model on CPU works and is slow; scoring is fine")
+                 "scoring is fine on CPU. An edit is not, on the default flags: the capability "
+                 "probe costs about four hours at host speed, so the run refuses rather than "
+                 "starting, and names the ways past it. They are --capability-n 0 for no "
+                 "capability number, or --slow-probe-ok to spend the hours. The edit itself "
+                 "works on CPU, slowly.")
 
 
 #: Steps for the page-locked probe. Big enough that the per-allocation overhead does not dominate,

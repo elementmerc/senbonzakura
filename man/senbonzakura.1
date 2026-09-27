@@ -15,6 +15,8 @@ instruments to measure what the edit cost
 .IR N ]
 .RB [ \-\-max\-directions
 .IR K ]
+.RB [ \-\-method
+.IR searched | searched\-one\-direction | single\-pass | single\-pass\-raw ]
 .RB [ \-\-search
 .IR pareto | scalar ]
 .RI [ options ]
@@ -97,6 +99,20 @@ Number of Optuna search trials (default 60).
 .BI \-\-max\-directions " K"
 Upper bound on refusal directions ablated per layer. 1 is the original single
 direction method; greater than 1 enables the multi\-direction subspace ablation.
+.TP
+.BI \-\-method " searched|searched\-one\-direction|single\-pass|single\-pass\-raw"
+Which ablation recipe to run.
+.B searched
+(the default) optimises how much to ablate and where.
+.B single\-pass
+fixes it at full strength on one direction with no search, which is how the tools
+that retain capability best are described as working;
+.B single\-pass\-raw
+additionally drops the norm restoration and exists as a control. The recipe is
+recorded in
+.IR abliteration.json ,
+so two runs are comparable arms rather than two runs whose flags a reader has to
+diff.
 .TP
 .BI \-\-search " pareto|scalar"
 .B pareto

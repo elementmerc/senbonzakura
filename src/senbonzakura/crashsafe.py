@@ -559,6 +559,19 @@ def git_commit(repo_root=None, env=None):
 
     None stays the honest answer when neither source knows. A result that cannot say which
     code produced it should say so, not guess.
+
+    A RULE FOR WHOEVER WRITES THE NEXT ARTEFACT SPEC, and the reason this fix waited.
+
+    `tools/ci/artefact_ok.py` takes specs of the form `field.path=value`, and `scripts/runpod/
+    seed-sweep-bootstrap.sh` uses one to decide whether an arm is finished or has to be run again.
+    Before this change, every artefact from an installed wheel carried
+    `provenance.senbonzakura.git = null`, so a spec asserting exactly that would have passed. It
+    would then have become permanently unsatisfiable the moment this was fixed, and an arm that had
+    genuinely finished would read as stale and burn its GPU hours a second time.
+
+    So: **never write a spec that asserts a provenance field IS null.** Absence records what a
+    machine could not tell us, which is a property of the environment rather than of the result, and
+    it is the kind of thing that legitimately improves. Assert on what a result contains.
     """
     import os
     import subprocess
@@ -571,6 +584,23 @@ def git_commit(repo_root=None, env=None):
         return {"commit": rev, "dirty": bool(dirty), "source": "git"}
     except (OSError, subprocess.SubprocessError):
         pass
+    # THE WHEEL'S OWN STAMP, read since 2026-09-27. `setup.py` writes `_build.py` at build time
+    # from the build box's commit, `tools/ci/check_wheel.py` refuses a release wheel that lacks it
+    # or carries a placeholder, and until now nothing read it. So the one artefact where git cannot
+    # answer, an installed wheel, recorded `"git": null` on every result it produced, while the
+    # commit sat in a module beside it. A stamp that is generated, gated on and never read is a
+    # provenance field that costs a release check and buys nothing.
+    #
+    # Ahead of the tarball stamp and the environment variable because it is the narrowest claim of
+    # the three: it describes THIS package rather than a directory the package happens to sit in.
+    try:
+        from ._build import COMMIT
+    except ImportError:
+        COMMIT = None
+    if COMMIT and str(COMMIT).strip():
+        # `dirty` is None rather than False on purpose. The build box's tree may well have been
+        # clean, but nothing here measured it, and "not checked" is not "checked and clean".
+        return {"commit": str(COMMIT).strip(), "dirty": None, "source": "build"}
     for base in (Path(root), *COMMIT_STAMP_DIRS):
         try:
             # First line only, and stripped: the obvious way to write this file is a shell

@@ -26,6 +26,21 @@ spec never has to care whether a value was written as 42 or "42".
 
 The point is not the hashing. It is that the expectation is written down next to the command it
 guards, where a reader can check it against the flags on the line below.
+
+NEVER ASSERT THAT A PROVENANCE FIELD IS ABSENT OR NULL. Written down 2026-09-27, before it cost
+anything, after a blast-radius pass found the trap while a related fix was being held for it.
+
+Until that day every artefact produced by an installed wheel carried
+`provenance.senbonzakura.git = null`, because the commit stamp the release gate insists on was
+generated, shipped, and read by nothing. A spec saying `provenance.senbonzakura.git.commit=null`
+would have passed every time and looked like a working guard. The moment the stamp started being
+read, that spec became unsatisfiable for ever: `scripts/runpod/seed-sweep-bootstrap.sh` decides with
+one of these whether an arm is finished, so a completed arm would have read as stale and spent its
+GPU hours again, on a pod, silently, for as long as nobody looked.
+
+The general form is that an absence records what a machine could not tell us. That is a fact about
+the environment rather than about the result, and it is exactly the sort of thing that legitimately
+improves later. Assert on what a result CONTAINS, never on what it lacks.
 """
 import argparse
 import json
@@ -84,6 +99,22 @@ def mismatches(doc, expectations):
     return bad
 
 
+#: Spellings of "this field has no value". See the module docstring for what the trap cost nobody,
+#: and would have cost a pod full of GPU hours.
+AN_ABSENCE = frozenset({"null", "none", "nil", ""})
+
+#: Where an absence means "nothing here could tell us", which is the dangerous kind: it is a fact
+#: about the machine rather than about the run, and it is what changes when a gap gets filled in.
+#:
+#: SCOPED, AND THE FIRST VERSION OF THIS WAS NOT. It refused every absence assertion, and the live
+#: spec in `scripts/runpod/seed-sweep-bootstrap.sh` includes `directions_from=None`, which is
+#: legitimate and permanent: the baseline arm is DEFINED by having no directions file, so that field
+#: will never acquire a value and the assertion cannot rot. Refusing it would have made a finished
+#: arm re-run on every check, which is precisely the cost this guard exists to prevent, arriving by
+#: the guard itself. A check answering a broader question than the one being asked.
+WHERE_AN_ABSENCE_ROTS = ("provenance.",)
+
+
 def parse_expectations(pairs):
     out = []
     for p in pairs:
@@ -92,6 +123,20 @@ def parse_expectations(pairs):
         key, _, value = p.partition("=")
         if not key:
             raise ValueError(f"empty key in {p!r}")
+        # A SPEC THAT ASSERTS AN ABSENCE IS REFUSED, not merely discouraged in prose above. It
+        # passes for as long as the tool cannot fill the field in and becomes unsatisfiable for ever
+        # the day it can, which turns a finished arm into a stale one and re-runs the work. The
+        # failure is silent and expensive and arrives long after the spec was written, so the guard
+        # is here rather than in a comment the author has already scrolled past.
+        if (value.strip().lower() in AN_ABSENCE
+                and key.startswith(WHERE_AN_ABSENCE_ROTS)):
+            raise ValueError(
+                f"{p!r} expects {key} to be absent, and that is a provenance field. An absence "
+                f"there records what the machine could not tell us, which is a fact about the "
+                f"environment rather than about the run, and it is exactly what changes when a gap "
+                f"gets filled in. The spec would pass until then and be unsatisfiable afterwards, "
+                f"so a finished run would read as stale and be done again, on a pod, silently. "
+                f"Assert on what the artefact contains.")
         out.append((key, value))
     return out
 

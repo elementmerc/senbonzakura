@@ -663,10 +663,22 @@ def test_the_delegation_table_resolves_for_real():
 
 @pytest.mark.parametrize(("argv", "expect_preset"), [
     (["kageyoshi", "--model", "m"], True),
+    (["auto", "--model", "m"], True),
+    # THE BARE FORM IS THE PRESET NOW, and this row asserted the opposite until 2026-09-27.
+    #
+    # Operator decision that day: the shortest command anybody types should give the best result the
+    # tool can produce. It used to run the flat defaults, so `senbonzakura <model>` was the worst of
+    # the three spellings and nothing on either command line said so. The change is safe to make
+    # because the preset honours anything set by hand, which it did not when it was written.
+    #
+    # Updated rather than deleted: the contract moved, and a test that no longer describes the
+    # contract is worth more corrected than removed, because this pair is what stops the two
+    # spellings drifting apart again.
+    (["--model", "m"], True),
+    # Naming it out loud is the opt out, and is the only route to the flat defaults.
     (["abliterate", "--model", "m"], False),
-    (["--model", "m"], False),
 ])
-def test_kageyoshi_is_a_real_subcommand_and_abliterate_names_the_default(
+def test_the_bare_form_and_kageyoshi_both_preset_while_abliterate_opts_out(
         monkeypatch, argv, expect_preset, past_the_environment_preflights):
     applied = {}
     monkeypatch.setattr(cli, "torch_version_ok", lambda *a: True)

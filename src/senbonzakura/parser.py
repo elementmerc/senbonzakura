@@ -54,16 +54,35 @@ def split_mode(argv):
     the auto-scaled best-effort preset, resolved after the model loads once the architecture and
     parameter count are known. `auto` is a plain-English alias for it, not a second mode; someone
     meeting this tool for the first time should not have to know a Japanese sword release to get
-    the setting that thinks for them. `abliterate` names the default explicitly.
+    the setting that thinks for them.
+
+    THE BARE FORM IS THE PRESET TOO, since 2026-09-27. `senbonzakura <model>` and
+    `senbonzakura kageyoshi <model>` now do the same thing, because the shortest command anybody
+    types should give the best result the tool can produce. It used to run the flat defaults, so the
+    shortest command was the worst one and nothing about either command line said so.
+
+    `abliterate`, named out loud, is the opt out: the flat defaults, for a run somebody is driving
+    by hand. That leaves a route to full manual control without making the short form the booby
+    trap.
 
     Here rather than in `cli` because the entry point has to know which words are modes before it
     can parse, and it must reach that answer without importing torch.
     """
     if argv and argv[0] in ("kageyoshi", "auto"):
         return True, argv[1:]
+    # `abliterate` NAMED EXPLICITLY IS THE OPT OUT, and the bare form is not.
+    #
+    # Operator decision 2026-09-27: `senbonzakura <model>` should give the best result the tool can
+    # produce, because that is what somebody typing the shortest thing means. It used to run the
+    # flat defaults, so the shortest command was the worst one, and the difference was invisible:
+    # two commands that look like the same request produced different searches and nothing said so.
+    #
+    # Saying `abliterate` out loud still means "the defaults, and I will set what I want myself",
+    # which keeps a route to a fully hand-driven run. Anything set by hand wins in either mode, so
+    # the preset is no longer a reason to avoid the short form.
     if argv and argv[0] == "abliterate":
         return False, argv[1:]
-    return False, list(argv)
+    return True, list(argv)
 
 
 def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
@@ -161,8 +180,9 @@ def build_parser(full=False):
                     "over windowed, per-component, multi-directional weight ablations.",
         epilog=(
             "commands:\n"
-            "  abliterate   remove refusal directions and save the model (the default: the flags "
-            "below work with or without the word)\n"
+            "  abliterate   remove refusal directions at the FLAT DEFAULTS, for a fully hand-driven "
+            "run. Naming it opts OUT of the auto-scaled preset that the bare form and kageyoshi "
+            "both use\n"
             # THIS USED TO SAY THE OPPOSITE OF WHAT THE CODE DOES. It read "manual --trials /
             # --max-directions and the rest are ignored in this mode", which described the preset
             # before `_kageyoshi_explicit` was added to stop it discarding a hand-set `--trials 200`.
@@ -429,6 +449,18 @@ def build_parser(full=False):
                          "truncated answers are counted as ungradeable, never as wrong. 512 is "
                          "measured rather than guessed: on a model that reasons before answering, "
                          "256 tokens left 11 of 24 items ungradeable and 512 left 1.")
+    ap.add_argument("--low-refusal-ok", dest="low_refusal_ok", action="store_true",
+                    help="edit a model that hardly refuses anything to begin with. The run measures "
+                         # `%%` because argparse runs this through percent formatting, and a bare
+                         # `%` raises "badly formed help string" from `add_argument`, which breaks
+                         # every command rather than only this flag.
+                         "the baseline refusal rate about a minute in, and below 5%% it stops: there "
+                         "is too little refusal to find a direction for, so the search would spend "
+                         "its whole budget and hand back a model refusing about as often as it "
+                         "started, having paid the coherence cost anyway. That is the measured "
+                         "outcome on such a model rather than a guess. Same shape as "
+                         "--slow-probe-ok: the honest default stays and the waste has to be asked "
+                         "for.")
     ap.add_argument("--slow-probe-ok", dest="slow_probe_ok", action="store_true",
                     help="run the capability probe on a CPU even when it will take hours. The "
                          "defaults above are sized for a GPU, where they are minutes; measured on "

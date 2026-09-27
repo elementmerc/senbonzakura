@@ -213,6 +213,20 @@ STRUCTURAL_ZERO_FRACTION = 1e-3
 #: and ablating it would strip whatever they happen to be about.
 MIN_CLUSTER_ROWS = 8
 
+#: Below this baseline refusal rate the run stops rather than starts: there is not enough refusal
+#: in the model to find a direction for, so the search would spend its full budget and return a
+#: model refusing about as often as it started while still paying the coherence cost.
+#:
+#: MEASURED RATHER THAN CHOSEN, on 2026-09-27, over six stock models from three families on the
+#: bundled corpus at n=128. The distribution is bimodal, not continuous: Qwen2.5-1.5B-Instruct
+#: refuses 80.5%, and TinyLlama-1.1B, Qwen3-0.6B and SmolLM2-135M sit at 0.8%, 4.7% and 6.2%.
+#: Seventy points of daylight means the exact figure carries almost no weight, so this is a round
+#: number near the bottom of the low cluster: low enough to leave any model with real refusal
+#: alone, high enough to catch the 108-minute run on Qwen3-0.6B that returned what it started with.
+#:
+#: `--low-refusal-ok` spends the hours anyway. See `refuse_if_there_is_nothing_to_remove`.
+LOW_REFUSAL_FLOOR = 0.05
+
 #: Each side of the held-out split needs at least this many rows before a Cohen's d computed over
 #: it means anything. A cluster at MIN_CLUSTER_ROWS splits into exactly two halves of this size,
 #: so the two constants are deliberately in step: raising MIN_CLUSTER_ROWS without raising this
@@ -3453,6 +3467,7 @@ class Abliterator:
         self.orig_lp = self.first_token_logprobs(self.kl_eval)
         base_ref = self.refusal_rate(self.bad_eval)
         log(f"BASELINE refusals: {base_ref*100:.1f}%  on {len(self.bad_eval)} bad-eval prompts")
+        self.refuse_if_there_is_nothing_to_remove(base_ref)
 
         # Disk, before the search rather than after it. The save is the last thing a run does
         # and the most expensive thing to lose: a 57 GB base plus a 61 GB output on a 120 GB
@@ -3463,6 +3478,84 @@ class Abliterator:
         # pristine copy taken now, on the untouched model; enables reversible search/inspect/bench
         self.snapshot_weights()
         return base_ref
+
+    def refuse_if_there_is_nothing_to_remove(self, base_ref):
+        """Stop before the search when the model barely refuses anything to begin with.
+
+        WHAT THIS IS FOR, measured 2026-09-27
+
+        A reader with a 6 GB card ran the documented one-command form on Qwen3-0.6B and waited 108
+        minutes. The model refused 3 of 64 prompts before the edit and 3 of 64 after it, and the run
+        paid 12.5% coherence drift for that. It had measured the 4.7% baseline at the 51-second mark
+        and said nothing, then searched for another 107 minutes. Their words: the wasted time is the
+        symptom, and the real cost is finishing unable to tell whether the tool works, because the
+        one run they could afford had no room to show them anything.
+
+        The tool already does exactly this for the other metric. `capability.headroom` is a recorded
+        object with `sufficient` and `why`, and it gates the capability probe. There was no
+        equivalent for refusal, which is the thing this tool exists to remove.
+
+        THE THRESHOLD, AND WHY IT IS NOT TUNED
+
+        Baseline refusal was measured on six stock models across three families on one corpus at
+        n=128. The result is bimodal rather than continuous: Qwen2.5-1.5B-Instruct refuses 80.5%,
+        while TinyLlama-1.1B sits at 0.8%, Qwen3-0.6B at 4.7% and SmolLM2-135M at 6.2%. With that
+        much daylight the exact figure carries almost no weight, so 5% is deliberately a round
+        number near the bottom of the low cluster: low enough to leave every model with real refusal
+        alone, high enough to catch the case that prompted it.
+
+        COUNTS, NOT A PERCENTAGE, in the message. At n=64 that reader's "4.7%" was three prompts,
+        and a rate over 64 rows reads as precision this project's own reporting floor says it has
+        not got. "3 of 64" is a fact somebody can act on; "4.7% is below 5%" invites an argument
+        with the threshold instead.
+        """
+        args = self.args
+        n = len(self.bad_eval)
+        refused = round(base_ref * n)
+        if base_ref >= LOW_REFUSAL_FLOOR:
+            return
+        if n < MIN_REPORTABLE_N:
+            # NOT ENOUGH ROWS TO MAKE THE CLAIM, so the claim is not made.
+            #
+            # Refusing a run because a rate is low, when the rate rests on fewer rows than this
+            # project's own reporting floor, would be the exact defect its checker refuses artefacts
+            # for: `rate-reported-on-a-sample-too-small-to-carry-it`. On four prompts every possible
+            # answer is 0%, 25%, 50%, 75% or 100%, and none of them says anything about the model.
+            #
+            # `MIN_REPORTABLE_N` is shared with the reporting floor rather than chosen again here, so
+            # the number a run refuses on and the number a card prints counts below cannot drift.
+            #
+            # Said out loud rather than skipped silently, because a gate that quietly does not apply
+            # is indistinguishable from a gate that passed.
+            self.log(f"  not checking refusal headroom: {n} eval prompts is below the {MIN_REPORTABLE_N} "
+                     f"this project will quote a rate on, so {refused} of {n} says nothing yet")
+            return
+        if getattr(args, "low_refusal_ok", False):
+            self.log(f"  proceeding on {refused} of {n} refused prompts because "
+                     f"--low-refusal-ok was passed")
+            return
+
+        pct = LOW_REFUSAL_FLOOR * 100
+        raise SystemExit(
+            f"\nsenbonzakura: this model refused {refused} of {n} prompts, which is too few to "
+            f"work with.\n\n"
+            f"What this tool does is remove refusals. To find the refusal direction it needs "
+            f"examples\nof the model refusing, and there are almost none here. Below "
+            f"{pct:.0f}% it stops rather than\nstarts.\n\n"
+            f"What would happen if it carried on: the search would run for its full budget, which "
+            f"is\nusually one to two hours, and the model would very likely come out refusing "
+            f"about as\noften as it does now, while still paying the coherence cost of being "
+            f"edited. That is\nthe measured outcome on a model like this one, not a guess.\n\n"
+            f"What to do instead:\n"
+            f"  Pick a model that refuses more, and measure before you commit hours to it. Size is\n"
+            f"  no guide: of the models measured for this check, one at 1.1B refused 1 prompt in 128\n"
+            f"  and one at 1.5B refused 103 of them. This tells you in a few minutes, with no\n"
+            f"  editing and no card needed:\n"
+            f"  `senbonzakura score --model <model> --eval default/bad_eval_ds --n 128 --out r.json`\n\n"
+            f"  Or use your own corpus with --track, if this one does not provoke the refusals you\n"
+            f"  care about. The prompts here are general harm; a model tuned for one domain may\n"
+            f"  refuse a different set.\n\n"
+            f"  Or run it anyway, if you know why you want to: add --low-refusal-ok.\n")
 
     def _inspect(self):
         """`--inspect`: what one ablation window does to real generations, before and after.

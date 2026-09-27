@@ -22,7 +22,15 @@ senbonzakura kageyoshi \
     --device cuda
 ```
 
-Then go and make a cup of tea. On a 6 GB card a 1.7B model takes about an hour.
+Then go and do something else for the afternoon. A 0.6B model on a 6 GB card, on the defaults and
+with the weights already in the local cache, took **108 minutes from the command to `DONE`** when
+somebody timed the whole thing. A bigger model takes longer, and a cold cache adds the download on
+top.
+
+That figure is end to end: it covers everything the command does, not just the search. This page
+used to say "about an hour", which is roughly what the search alone costs, and about half of the
+wall clock falls *after* the search's progress line reaches `ETA 0s`. The next section breaks that
+down. Plan for a couple of hours and be pleased if it's less.
 
 That's genuinely it. No configuration file, no tuning, no eight knobs to guess at.
 
@@ -51,6 +59,44 @@ trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% heretic=12.5%
 Left to right: which attempt, the shape of the cut it tried, how many directions, then the four
 numbers that decide whether it was any good. `refusals` is the one you came for. `KL` is what it
 cost you.
+
+### The phases, and what the ETA actually covers
+
+::: warning The ETA is the search's ETA, not the run's
+The `progress` line counts search trials, and its ETA is an estimate of when the trials will be
+done. When it reaches zero the run is not finished; it has finished **step 3 of 7**. On the measured
+0.6B run the search reached its last trial at 3166 seconds and the command printed `DONE` at 6507
+seconds, so there were another 56 minutes to go with no ETA to describe them.
+:::
+
+In order. The counts are the `abliterate` defaults; `kageyoshi` sizes the search and the
+measurement levers itself, so its numbers differ, but the phases and their order are the same.
+
+| # | Phase | What it costs |
+|---|---|---|
+| 1 | Load the model, cache the original first-token distribution (the KL reference) and measure the baseline refusal rate | Minutes on a GPU, and see the note below if you're on CPU |
+| 2 | Baseline capability probe on the unedited model | 200 graded items at up to 512 new tokens each |
+| 3 | **The search.** `--trials` attempts, each one baked, scored and rolled back | This is the part the progress line and the ETA describe |
+| 4 | Re-score the top `--top-rescore` candidates (6) on `--eval-refusal-final` prompts (128) held out from the search | Six full generation passes, each one comparable to a chunk of the search |
+| 5 | Bake the winner into the weights for real | Fast |
+| 6 | Post-bake measurement: refusals, the Heretic keyword rate, KL, and the capability probe again | Another 200-item probe, so roughly what phase 2 cost |
+| 7 | Save the model directory and write `abliteration.json` | Disk-bound; minutes for a small model, longer for a large one |
+
+Phases 4 and 6 are the ones that surprise people, and neither is optional padding: phase 4 is what
+stops the winner being overfit to the small in-search eval, and phase 6 is the only measurement
+taken on the weights you are actually going to ship rather than on a hooked model.
+
+If you want the tail shorter, the two flags that matter are `--capability-n` (phases 2 and 6) and
+`--top-rescore` (phase 4). Both of them buy time by measuring less, so lower them knowing what you
+are giving up.
+
+::: tip The quiet bit in phase 1
+On CPU, the line `caching original first-token distribution (KL reference) + baseline refusals` can
+sit there for several minutes with nothing after it. A measured CPU run went 7 minutes 15 seconds
+without printing anything at that point. It isn't stuck; it's working through its evaluation
+prompts a batch at a time, and that loop doesn't report progress. Everything either side of it
+does.
+:::
 
 ## It picks the knobs itself, and it means it
 

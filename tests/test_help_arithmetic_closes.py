@@ -56,7 +56,7 @@ def test_the_epilog_and_the_total_agree(parsers):
     """Shown + hidden == total, read out of the strings a user actually sees."""
     short, full = parsers
     shown, hidden = (int(n) for n in re.search(
-        r"shows the (\d+) flags a run needs, and the model it edits\. (\d+) more",
+        r"shows the (\d+) flags a run needs, and the model it edits\.\s+(\d+) more",
         short.epilog).groups())
 
     help_all = next(a for a in _flags(full) if a.dest == "help_all")
@@ -78,7 +78,7 @@ def test_those_numbers_are_the_measured_ones(parsers):
     core = sum(1 for a in flags if a.dest in CORE_FLAGS)
 
     shown, hidden = (int(n) for n in re.search(
-        r"shows the (\d+) flags a run needs, and the model it edits\. (\d+) more",
+        r"shows the (\d+) flags a run needs, and the model it edits\.\s+(\d+) more",
         short.epilog).groups())
     help_all = next(a for a in flags if a.dest == "help_all")
     total = int(re.search(r"there are (\d+) in total", help_all.help).group(1))

@@ -578,7 +578,10 @@ def build_parser():
                         "`refusal_rate.senbonzakura-ruler`. Left out, it is read from the "
                         "artefact when the artefact stamped exactly one metric, and refused "
                         "naming every candidate when it stamped several")
-    p.add_argument("--seeds", required=True,
+    # NOT `required=True`, so the refusal can name a next step. argparse's own
+    # "the following arguments are required: --seeds" says what is missing and nothing about what to
+    # type, and a reader who has not met this command does not know what shape a seed list takes.
+    p.add_argument("--seeds", default=None,
                    help="the seeds this figure rests on, comma separated. Stated rather than "
                         "inferred: one artefact is one run, and a baseline claiming a spread it "
                         "does not have is worse than none")
@@ -624,6 +627,15 @@ def default_out(metric):
 def main(argv=None):
     a = build_parser().parse_args(argv)
     measurement = a.measurement or a.measurement_positional
+    if not a.seeds:
+        given = measurement or "<result.json>"
+        print(f"--seeds is missing. It records which seeds this figure rests on, and a baseline "
+              f"that claims a spread it has not got is worse than no baseline.\n"
+              f"  For a single run:\n"
+              f"    senbonzakura baseline {given} --seeds 42\n"
+              f"  For several, comma separated:\n"
+              f"    senbonzakura baseline {given} --seeds 42,43,44", file=sys.stderr)
+        return 2
     if a.measurement and a.measurement_positional and a.measurement != a.measurement_positional:
         print(f"two different artefacts were given: {a.measurement_positional!r} as a positional "
               f"and {a.measurement!r} with --measurement. Pass one.", file=sys.stderr)
@@ -664,8 +676,8 @@ def main(argv=None):
     # run's result artefact, because that is what `--measurement` means on THIS command. `gate`
     # wanted a recorded measurement, so it exited 2 on a schema message. Both steps are named now,
     # and the flag is the one `gate` actually documents.
-    print(f"  gate a later run with, once you have recorded it the same way:")
-    print(f"    senbonzakura baseline <the later run's result> --seeds <n> --out later.json")
+    print("  gate a later run with, once you have recorded it the same way:")
+    print("    senbonzakura baseline <the later run's result> --seeds <n> --out later.json")
     print(f"    senbonzakura gate --baseline {a.out} --current later.json")
     return 0
 

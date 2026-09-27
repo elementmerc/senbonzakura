@@ -152,7 +152,11 @@ def build_parser():
                     help="jsonl of every per-prompt margin (default: alongside --out, as "
                          "<out>.margins.jsonl). These rows hold the prompts, so they belong in "
                          "the ignored results/ tree, not in committed evidence.")
-    ap.add_argument("--no-margins", dest="margins", action="store_const", const="",
+    # ITS OWN DEST, so a contradiction can be SEEN. Both flags shared `dest="margins"`, so
+    # `--margins out.jsonl --no-margins` resolved by argv order and the loser vanished without a
+    # word, in either order. The value `""` still means "write none", and `main` distinguishes it
+    # from `None`, which means "nobody said", so the resolution below keeps that difference.
+    ap.add_argument("--no-margins", dest="no_margins", action="store_true",
                     help="do not retain the per-prompt margins")
     ap.add_argument("--label", default="",
                     help="a name for this run, copied into the results json. Nothing reads it: "
@@ -956,6 +960,16 @@ def _stamp_compass(res, pinned=None):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    # BEFORE THE MODEL LOADS, for the reason the next comment gives about a different check. This
+    # one was written after `margins_path` was resolved, which is a hundred lines and one
+    # multi-gigabyte model load too late: both orders reported "could not load the model" and never
+    # mentioned the contradiction at all.
+    if a.no_margins and a.margins is not None:
+        raise SystemExit(
+            "--margins and --no-margins contradict each other: one says where to write the "
+            "per-prompt rows and the other says not to write them.\n"
+            "  Drop whichever you did not mean. Those rows hold the prompts, so they belong in an "
+            "ignored results/ tree rather than in committed evidence.")
     # Before the model loads, deliberately. A contradicted boundary is a mistake about which rows
     # this number describes, and finding that out after a multi-gigabyte load wastes the minutes
     # that make an operator skip the check next time.
@@ -1023,7 +1037,7 @@ def main(argv=None):
 
     # None means "not asked either way", so it takes the default beside --out. An
     # explicit empty string is --no-margins, and must not be overwritten by the default.
-    margins_path = a.margins
+    margins_path = "" if a.no_margins else a.margins
     if margins_path is None:
         margins_path = str(Path(a.out).with_suffix("")) + ".margins.jsonl"
 

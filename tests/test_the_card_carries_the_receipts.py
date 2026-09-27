@@ -68,7 +68,14 @@ def card():
 class TestTheNumbersTheCardExistsToCarry:
 
     def test_the_refusal_before_reaches_the_card(self, card):
-        assert "0.094" in card, (
+        """The FIGURE, not its float repr. Rates are rendered as percentages since 2026-09-27.
+
+        This asserted `"0.094" in card`. The card now prints `9.4%`, because a surface audit found it
+        publishing bare proportions with no unit while the rest of the tool prints the same quantity
+        as a percentage. The figure still has to reach the card; how it is spelled is the card's
+        business and not this test's.
+        """
+        assert "9.4%" in card, (
             "the refusal rate before the edit is missing from the card. It is in the artefact "
             "under 'baseline_refusals'.")
 
@@ -94,7 +101,9 @@ class TestTheNumbersTheCardExistsToCarry:
         """Cards are generated from artefacts already on disk. A rename must not blank them."""
         old = {"model": "m", "baseline_refusal": 0.5, "post_bake_refusal": 0.1}
         card = "\n".join(modelcard.build(abl=old, licence="other"))
-        assert "0.5" in card and "0.1" in card
+        # Percentages since 2026-09-27; the point of this test is the SPELLING OF THE KEY being
+        # read, not the formatting of the value.
+        assert "50.0%" in card and "10.0%" in card
 
 
 class TestTheTwoEndsOfTheContractStillAgree:

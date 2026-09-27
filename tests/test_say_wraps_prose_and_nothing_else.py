@@ -182,3 +182,90 @@ def test_the_bare_markers_are_a_named_set_rather_than_a_pattern():
         assert "_" not in bare, (
             f"{bare} contains an underscore, so the pattern already covers it and listing it here "
             f"is a second copy of the same rule")
+
+
+# ── reflow, refusal_text and the printing helpers ─────────────────────────────────────────────────
+
+REFLOWABLE = (
+    "this looks like a summary rather than a single measurement: it carries `stages` and no "
+    "`metrics` block.\n"
+    "\n"
+    "That is correct for what it is. It runs several instruments and writes one document describing "
+    "all of them, so there is no single figure in it to record.\n"
+    "\n"
+    "    senbonzakura baseline coherence.json --seeds 42 --out b.json"
+)
+
+
+def test_reflow_wraps_prose_paragraphs_and_keeps_the_command():
+    out = say.reflow(REFLOWABLE, columns=79)
+    assert all(len(ln) <= 79 for ln in out), [ln for ln in out if len(ln) > 79]
+    assert "    senbonzakura baseline coherence.json --seeds 42 --out b.json" in out, (
+        "the four-space-indented command was altered, so it can no longer be pasted")
+    assert "" in out, "the blank lines between paragraphs were lost"
+
+
+def test_reflow_joins_a_two_space_continuation_into_one_paragraph():
+    """A two-space indent means "this sentence continues", which is how these messages are written.
+
+    Handed to `lines` directly, every such line counts as indented and nothing wraps at all. That is
+    the defect this function exists for, and a 261-character line proved it in `baseline`.
+    """
+    out = say.reflow("first sentence here\n  and its continuation\n  and more of it", columns=79)
+    assert len(out) == 1, f"a continuation was not joined into its paragraph: {out}"
+    assert "first sentence here and its continuation and more of it" in out[0]
+    assert out[0].startswith("  "), "reflow gives prose the two-space body indent"
+
+
+def test_reflow_keeps_a_four_space_line_apart_from_the_paragraph_before_it():
+    """Prose gets the two-space body indent; the command keeps its own four and nothing else."""
+    out = say.reflow("a sentence\n    a command --flag", columns=79)
+    assert out == ["  a sentence", "    a command --flag"]
+
+
+def test_reflow_leaves_a_marker_alone_even_unindented():
+    out = say.reflow("prose before\nMARGIN_DONE auc=0.8 ci=[0.7,0.9]\nprose after", columns=40)
+    assert "MARGIN_DONE auc=0.8 ci=[0.7,0.9]" in out
+
+
+def test_refusal_text_is_a_head_then_indented_paragraphs():
+    text = say.refusal_text("senbonzakura: no.", "because of this reason which is fairly long and "
+                            "will need to be wrapped at any sensible width at all", columns=60)
+    got = text.split("\n")
+    assert got[0] == "senbonzakura: no."
+    assert got[1] == "", "there is no blank line between the head and the reason"
+    assert all(len(ln) <= 60 for ln in got)
+    assert all(ln.startswith("  ") for ln in got[2:] if ln)
+
+
+def test_refusal_text_with_no_paragraphs_is_just_the_head():
+    assert say.refusal_text("senbonzakura: no.") == "senbonzakura: no."
+
+
+def test_say_prints_through_the_log_it_is_given():
+    got = []
+    say.say(LONG, indent="  ", log=got.append, columns=60)
+    assert len(got) > 1 and all(len(ln) <= 60 for ln in got)
+
+
+def test_say_defaults_to_print(capsys):
+    say.say("a short line", columns=79)
+    assert capsys.readouterr().out.strip() == "a short line"
+
+
+def test_is_verbatim_covers_both_reasons():
+    assert say.is_verbatim("    indented")
+    assert say.is_verbatim("MARGIN_DONE x=1")
+    assert not say.is_verbatim("ordinary prose")
+
+
+def test_width_falls_back_when_the_terminal_cannot_be_measured(monkeypatch):
+    """`shutil.get_terminal_size` raising must not take a refusal path down with it."""
+    import shutil as _shutil
+    monkeypatch.delenv("COLUMNS", raising=False)
+
+    def _boom(fallback=(80, 24)):
+        raise OSError("no terminal here")
+
+    monkeypatch.setattr(_shutil, "get_terminal_size", _boom)
+    assert 40 <= say.width() <= say.CEILING

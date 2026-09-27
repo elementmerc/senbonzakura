@@ -260,7 +260,17 @@ def test_a_gated_corpus_is_not_the_default_and_says_it_is_gated():
     assert harmful[0]["key"] != "advbench"
     advbench = next(e for e in harmful if e["key"] == "advbench")
     assert "GATED" in advbench["note"]
-    assert "huggingface-cli login" in advbench["note"]
+    # `hf auth login`, NOT `huggingface-cli login`, since 2026-09-27. The newer client replaced the
+    # old command, and this menu was the last place in the tool still handing a reader the old
+    # spelling: `hubmessage` strips that exact line out of UPSTREAM's advice for being stale, so the
+    # tool was treating one sentence as wrong from somebody else and right from itself.
+    #
+    # Asserted in both directions. What matters is that the reader is told how to authenticate, and
+    # that they are not told to run a command that no longer exists.
+    assert "hf auth login" in advbench["note"]
+    assert "huggingface-cli login" not in advbench["note"], (
+        "the superseded login command is back in the menu; see SUPERSEDED_COMMANDS in "
+        "test_output_never_names_a_file_the_wheel_lacks.py")
 
 
 def test_picking_your_own_asks_for_the_path():

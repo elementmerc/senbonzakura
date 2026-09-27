@@ -10,8 +10,9 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 - `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser
   print. Both are summarised by default now, because a real model produces one line per tensor and
-  several hundred of them arrived ahead of this tool's own summary. A long run says it is still
-  working every thirty seconds, and a failure quotes the tool's last lines either way.
+  several hundred of them arrived ahead of this tool's own summary. A warning or an error is never
+  summarised away, a long run says it is still working every thirty seconds, and a failure quotes the
+  tool's last lines either way.
 
 ### Fixed
 

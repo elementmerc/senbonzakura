@@ -126,8 +126,15 @@ def digest_for_the_record(path, *, what, log=print, chunk=1 << 20):
 
     It is unconditional rather than behind a flag because a provenance field that appears only when
     somebody remembered to ask for it cannot be relied on by anything downstream: a flag can be
-    forgotten, a version cannot. The cost is one sequential read of a file that has just been
-    written and is largely in page cache.
+    forgotten, a version cannot.
+
+    THE COST, MEASURED rather than guessed, because the first version of this docstring claimed the
+    file would be "largely in page cache" and that is false for anything interesting: a 60 GB GGUF on
+    a box with 16 GB of RAM is a full re-read. sha256 runs at about 1,450 MB/s on atlas with the file
+    warm, so hashing a source and an output of 60 GB each costs roughly 83 seconds there, and more
+    on a cold disk. Against a quantisation of that size, which is tens of minutes, that is worth
+    paying for a receipt that identifies its own files. It is worth knowing about on a rented card,
+    which is why anything over `HASH_IS_WORTH_MENTIONING_S` says how long it took.
 
     Never raises. The artefact is the product and it is already verified by the time anything asks
     for this; a missing hash is a degradation, and it degrades loudly rather than silently.

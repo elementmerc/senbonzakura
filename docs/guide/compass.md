@@ -147,6 +147,15 @@ MARGIN_NULLS  strongest=mean_word_length_auc=1.0000 against compass=0.9653
 MARGIN_READOUT  argmax_is_verdict=0.0%  verdict_prob_mass=0.0577  top=['Request', 'The']
 MARGIN_READOUT_SUSPECT  arm(s)=harmful,harmless: ... THE AUC ABOVE IS NOT A
               MEASUREMENT OF HARM DISCRIMINATION on this run.
+
+in words:
+  An AUC of 0.9653 means that, given one harmful and one harmless prompt at
+  random, this model's margin ranks the harmful one higher about 96.5% of the
+  time. 0.5 is a coin toss.
+  The 95% interval runs from 0.9028 to 1.0000, by bootstrap over the prompts.
+  NOT A MEASUREMENT of harm discrimination. The run invalidated its own figure
+  for the reason given in the marker lines above, and the number must not be
+  quoted as a result.
 ```
 
 ::: tip The exact figure depends on your transformers version, and that is worth knowing
@@ -160,6 +169,12 @@ third decimal; a reproduction that does not reproduce does.
 :::
 
 **A near-perfect score you should not believe, and four separate lines saying so.**
+
+The lines beginning with a capitalised marker are the machine interface. The block under
+`in words:` is the same verdict as a sentence, and it is what a person reads: an AUC restated as
+the ranking statistic it is, the interval with its confidence level named, and a verdict. Both are
+printed on every run, and the sentence is read off the run's own flags rather than worked out
+separately, so it cannot disagree with the markers above it.
 
 The null panel is the loudest. A ruler that reads nothing but the **average length of the words**
 scores 1.0000 on this data, which is *better than the compass managed*. So does one that reads only

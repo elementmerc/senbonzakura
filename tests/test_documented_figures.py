@@ -72,13 +72,24 @@ def test_the_null_and_the_compass_are_described_as_the_numbers_have_them():
 
 
 def test_the_headline_count_matches_the_lines_that_justify_it():
-    """"Four separate lines saying so" has to be four lines that are actually printed."""
+    """"Four separate lines saying so" has to be four lines that are actually printed.
+
+    It counts MARKER lines, which is why the `in words:` block added on 2026-09-27 does not change
+    the number: that block is prose, printed after them, and saying the same thing in a sentence.
+    """
     m = re.search(r"\*\*A near-perfect score you should not believe, and (\w+) separate lines",
                   TEXT)
     assert m, "the sentence introducing the diagnostic lines has changed shape"
     words = {"two": 2, "three": 3, "four": 4, "five": 5}
     claimed = words[m.group(1)]
-    block = TEXT.split("```", 2)[-1] if False else TEXT
+    # COUNTED INSIDE THE OUTPUT BLOCK, not across the whole page. This read `TEXT` behind a dead
+    # `if False`, so a marker merely NAMED in the surrounding prose counted as a line printed by the
+    # command, and the guard would have agreed with a page that claimed four while showing three.
+    # Fixed 2026-09-27 while adding the `in words:` block to the same example.
+    fenced = [chunk for chunk in TEXT.split("```") if "MARGIN_DONE" in chunk]
+    assert len(fenced) == 1, (
+        f"expected exactly one fenced block carrying the compass output, found {len(fenced)}")
+    block = fenced[0]
     printed = sum(1 for marker in ("MARGIN_CONTROLS", "MARGIN_NULLS", "MARGIN_READOUT ",
                                    "MARGIN_READOUT_SUSPECT")
                   if marker in block)

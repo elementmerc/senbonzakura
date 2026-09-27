@@ -86,9 +86,17 @@ This is not hypothetical. A comparison next door was once run with the abliterat
 experiment. It was caught by someone reading the filenames.
 
 Because of that, `senbonzakura quantise` writes a `.provenance.json` beside every file it makes,
-recording the quantiser build, the type, and the importance matrix if there was one. `senbonzakura
-imatrix` writes a `.calibration.json` recording what text the matrix was built from. If you are
-comparing two files, read those two sidecars before you read the numbers.
+recording the quantiser build, the type, the importance matrix if there was one, and the sha256 of
+both the file it read and the file it wrote. `senbonzakura imatrix` writes a `.calibration.json`
+recording what text the matrix was built from. If you are comparing two files, read those two
+sidecars before you read the numbers.
+
+The two hashes are what let you check that the file in your hand is the file the receipt describes,
+which is the question a receipt exists to answer. They matter most when the source is gone:
+`--prune-source` deletes the halfway file once the output verifies, and without a recorded hash the
+pairing cannot be reconstructed afterwards. They are always recorded, never behind a flag, because a
+field that appears only when somebody remembered to ask for it is a field nothing downstream can
+rely on.
 
 ## Where next
 

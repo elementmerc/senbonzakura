@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import stat
 import sys
@@ -185,6 +186,18 @@ def status(log=print):
     return out
 
 
+#: Lines a quiet run passes through anyway, because they are the reason somebody would have wanted
+#: the output. Matched case-insensitively against each line.
+#:
+#: THIS IS WHAT "STDERR ALWAYS THROUGH" MEANT. The operator's decision on the chatter (2026-09-27)
+#: was to summarise by default with stderr passing through untouched, and that decision rested on a
+#: premise that turned out to be false: the vendored converter calls `logging.basicConfig` with no
+#: stream, so ITS 350 LINES ARE STDERR. Letting stderr through would have left the defect exactly
+#: where it was, and llama-quantize's fallback warning is on stderr too, so the stream cannot be
+#: passed through untouched AND scanned. Separating by stream was never going to work here; the
+#: distinction that matters is what a line SAYS.
+LOUD_LINES = (re.compile(r"\b(error|warning|failed|failure|cannot|unsupported|refus)", re.IGNORECASE),)
+
 #: How often a suppressed run says it is still alive. A conversion of a large model runs for many
 #: minutes; silence for that long is indistinguishable from a hang, and the reason people reach for
 #: Ctrl+C on a job that was working.
@@ -196,8 +209,8 @@ HEARTBEAT_S = 30
 KEEP_LINES = 25
 
 
-def relay(stream, *, verbose, log, watch=(), heartbeat_s=HEARTBEAT_S, keep=KEEP_LINES,
-          now=None):
+def relay(stream, *, verbose, log, watch=(), always=LOUD_LINES,
+          heartbeat_s=HEARTBEAT_S, keep=KEEP_LINES, now=None):
     """Pass a vendored tool's output through, or summarise it, and never lose what matters.
 
     WHY THIS EXISTS, 2026-09-27
@@ -238,6 +251,12 @@ def relay(stream, *, verbose, log, watch=(), heartbeat_s=HEARTBEAT_S, keep=KEEP_
                 matches.append((pattern, found))
         if verbose:
             sys.stdout.write(line)
+            continue
+        # A WARNING OR AN ERROR IS NEVER SUMMARISED AWAY. See LOUD_LINES for why this is decided by
+        # what the line says rather than by which stream it arrived on. To stderr, because that is
+        # where it came from and a pipeline that separates the streams should keep getting it there.
+        if any(pattern.search(line) for pattern in always):
+            sys.stderr.write(line)
             continue
         # The clock is read ONCE per line, into a variable. Three separate calls per heartbeat is
         # three syscalls on every line of a run with thousands of them, and it made the interval

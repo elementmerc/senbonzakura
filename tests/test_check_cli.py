@@ -21,10 +21,17 @@ from typing import ClassVar
 import pytest
 from senbonzakura_check import cli
 
+#: An artefact with nothing wrong with it, which is what every test below means by "clean".
+#:
+#: THE SAMPLE SIZE IS LOAD BEARING AND USED TO BE 10. A rate over 10 rows genuinely trips
+#: `rate-reported-on-a-sample-too-small-to-carry-it`, whose floor is 30, so this fixture was never
+#: clean; it only read as clean because the Inspect adapter reported no units and the check is gated
+#: on them. Fixing that on 2026-09-27 turned the check on and this fixture started failing its own
+#: description. Raised to 200 rather than the expectations being relaxed: the finding was correct.
 GOOD = {"version": 2, "status": "success",
         "eval": {"task": "t", "model": "m"},
-        "results": {"total_samples": 10, "completed_samples": 10,
-                    "scores": [{"name": "s", "scorer": "choice", "scored_samples": 10,
+        "results": {"total_samples": 200, "completed_samples": 200,
+                    "scores": [{"name": "s", "scorer": "choice", "scored_samples": 200,
                                 "metrics": {"accuracy": {"name": "accuracy", "value": 0.5}}}]}}
 
 BAD = json.loads(json.dumps(GOOD))

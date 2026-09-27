@@ -37,6 +37,8 @@ and this is the field that tells them apart.
 """
 from __future__ import annotations
 
+from ._units import units_for
+
 
 class InspectAdapter:
     name = "inspect"
@@ -79,7 +81,11 @@ class InspectAdapter:
                     # THE FIELD THAT MAKES THIS FORMAT WORTH READING. `scorer` names the function
                     # that produced the number, which is the provenance a bare `kl` lacks.
                     "estimator": scorer,
-                    "units": None,
+                    # INFERRED FROM THE NAME, for the reason given in `_units.py`. This adapter had
+                    # the same dead `None` as the lm-eval one, so the same two value checks could
+                    # never fire here either. The reader who found it only tested lm-eval; this half
+                    # was found by looking for the other spelling rather than waiting for it.
+                    "units": units_for(metric.get("name", metric_name)),
                     "task": spec.get("task"),
                     "n": score.get("scored_samples"),
                     "unscored": score.get("unscored_samples"),

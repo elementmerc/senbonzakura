@@ -58,6 +58,7 @@ import json
 import sys
 from pathlib import Path
 
+from ._version import __version__
 from .adapters import UnknownArtefactError, normalise
 from .registry import (
     ArtefactTooLargeError,
@@ -77,10 +78,33 @@ _SEVERITY_SENTENCE = {
 }
 
 
+def _invoked_as():
+    """The name this was actually reached by, because there are two and only one of them exists.
+
+    `senbonzakura check` and `senbonzakura-check` are the same command reached two ways, and the
+    usage line said the first unconditionally. Somebody who installed only this distribution, which
+    the documentation recommends for exactly the sceptic who wants no PyTorch, got a usage block
+    naming a command their machine does not have; copying it fails. Found 2026-09-26 by a reader who
+    did copy it.
+
+    Deliberately not a hardcoded swap in the other direction either: when both are installed both
+    are true, and the honest answer is whichever one the reader typed.
+    """
+    name = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
+    return "senbonzakura-check" if name.startswith("senbonzakura-check") else "senbonzakura check"
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="senbonzakura check",
+        prog=_invoked_as(),
         description="Read an evaluation result file and report how the number could be wrong.")
+    # A BUILD THAT CANNOT SAY WHICH BUILD IT IS CANNOT GATE ANYTHING.
+    #
+    # This is documented for continuous integration, where the point is to record what gated a
+    # build. `--version` raised argparse's "unrecognised arguments" and exited 2, so a pipeline
+    # asking which checker ran got a usage block and a failure. Found 2026-09-26; the abliterator
+    # has carried `--version` throughout, which is how the gap survived in the smaller package.
+    ap.add_argument("--version", action="version", version=f"senbonzakura-check {__version__}")
     ap.add_argument("paths", nargs="+",
                     help="result files, or directories to search for .json files")
     ap.add_argument("--json", action="store_true",

@@ -590,9 +590,27 @@ def build_parser(full=False):
                          "config directly. Recovers a crashed save in minutes instead of re-searching.")
     ap.add_argument("--version", action="version", version=f"senbonzakura {__version__}")
     ap.add_argument("--help-all", action=_HelpAll, dest="help_all",
-                    help="show every flag, with the full description of each. This page shows the "
-                         "ones a run needs; there are 69 in total, and the rest are the search, "
-                         "the scoring and the measurement knobs.")
+                    # Filled in below, once every flag has been declared and can be counted. It
+                    # used to say "there are 69 in total" as a literal, while the numbers in the
+                    # epilog beside it were computed, so the two drifted apart: by 2026-09-27 the
+                    # computed pair read 16 and 56 against a typed 69. A reader who adds them up
+                    # finds the disagreement, which is how a first-time reader found this one.
+                    help=argparse.SUPPRESS)
+
+    # COUNTED, NOT TYPED, and counted over FLAGS rather than over argparse actions.
+    #
+    # `len(ap._actions)` includes the model positional, which is not a flag, so the old arithmetic
+    # reported 16 flags where 15 flags and one positional were shown. Two numbers were wrong in the
+    # same sentence: one because it was stale and one because it counted the wrong things.
+    flags = [a for a in ap._actions if a.option_strings]   # noqa: SLF001 - no public accessor
+    core = sum(1 for a in flags if a.dest in CORE_FLAGS)
+    for action in flags:
+        if action.dest == "help_all":
+            action.help = (
+                "show every flag, with the full description of each. This page shows the ones a "
+                f"run needs; there are {len(flags)} in total, and the rest are the search, the "
+                "scoring and the measurement knobs.")
+
     if not full:
         # AT THE END, ON WHAT WAS ACTUALLY DECLARED, so a flag added later cannot escape the
         # split by being added somewhere this function does not look.
@@ -601,9 +619,8 @@ def build_parser(full=False):
             if action.dest not in CORE_FLAGS and action.help is not argparse.SUPPRESS:
                 action.help = argparse.SUPPRESS
                 hidden += 1
-        shown = len(ap._actions) - hidden   # noqa: SLF001 - argparse exposes no public accessor
         ap.epilog += (
-            f"\n\nThis page shows the {shown} flags a run needs. "
+            f"\n\nThis page shows the {core} flags a run needs, and the model it edits. "
             f"{hidden} more control the search, the scoring and the measurement:\n"
             f"  senbonzakura --help-all\n")
     return ap

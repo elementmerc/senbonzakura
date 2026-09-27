@@ -1227,3 +1227,25 @@ def test_a_small_arm_is_warned_about_rather_than_refused(loaded, tmp_path, capsy
                  "--out", str(tmp_path / "r.json"), "--device", "cpu",
                  "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
     assert "below 30" in capsys.readouterr().out
+
+
+def test_the_compass_prints_its_reading_in_words_as_well_as_markers(loaded, tmp_path, capsys):
+    """THE WIRING for `in_words`, and the reason it is here is that its absence was invisible.
+
+    A mutation pass on 2026-09-27 deleted the two lines in `main` that call `in_words` and print it,
+    and every test in `test_the_compass_says_what_its_number_means.py` still passed, because they all
+    exercise the function directly. A correct function wired to nothing is the defect this project
+    keeps finding in its own work: the compass had a null-panel diagnostic computed, recorded,
+    printed and gated on nothing, and `_build.py` was generated, shipped and read by nothing.
+
+    It lives in this file because the `loaded` fixture that stands a tiny model up lives here.
+    """
+    bad, good = _track(tmp_path)
+    margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                 "--out", str(tmp_path / "r.json"), "--n", "3", "--device", "cpu",
+                 "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0"])
+    said = capsys.readouterr().out
+    assert "in words:" in said, (
+        "the command no longer prints the sentences, so the figure arrives as markers alone again")
+    assert "0.5 is a coin toss" in said
+    assert "MARGIN_DONE" in said, "the markers have to survive alongside the prose"

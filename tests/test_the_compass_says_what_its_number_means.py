@@ -127,3 +127,12 @@ def test_every_line_fits_a_terminal(res):
 
     for line in margin.in_words(res, 0.8062):
         assert len(line) <= say.CEILING, f"{len(line)} columns: {line!r}"
+
+
+
+# The test that the command ACTUALLY PRINTS this lives in `test_margin.py`, beside the `loaded`
+# fixture that stands a tiny model up. It is called
+# `test_the_compass_prints_its_reading_in_words_as_well_as_markers`, and it exists because a
+# mutation pass found that deleting the call from `main` broke nothing in this file: everything here
+# exercises `in_words` directly. A correct function wired to nothing is the defect this project
+# keeps finding in its own work.

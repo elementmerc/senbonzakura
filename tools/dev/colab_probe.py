@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
@@ -122,8 +123,7 @@ def environment():
         "torch_says_bf16_supported": bool(torch.cuda.is_bf16_supported()),
     })
 
-    total, used, free = shutil.disk_usage("/")
-    env["disk_free_gb"] = round(free / 1024**3, 1)
+    env["disk_free_gb"] = round(shutil.disk_usage("/").free / 1024**3, 1)
     try:
         with open("/proc/meminfo") as fh:
             for line in fh:
@@ -133,6 +133,38 @@ def environment():
     except OSError:
         pass
     return env
+
+
+#: Square matmul side length. Large enough that kernel launch overhead is not what is being timed.
+MATMUL_SIZE = 4096
+
+
+def _time_one_matmul(torch, dtype):
+    """One dtype, timed, or the reason it could not be. Isolated per dtype on purpose.
+
+    A card that cannot do bf16 at all, or has no room for two 4096-square matrices, must still
+    report the dtypes it can do: the comparison is the measurement, and a single OOM taking the
+    whole table with it would leave nothing to compare.
+    """
+    size = MATMUL_SIZE
+    try:
+        a = torch.randn(size, size, device="cuda", dtype=dtype)
+        b = torch.randn(size, size, device="cuda", dtype=dtype)
+        for _ in range(3):                          # warm the kernels and the clocks
+            a @ b
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        for _ in range(20):
+            a @ b
+        torch.cuda.synchronize()
+        per = (time.perf_counter() - t0) / 20
+        del a, b
+        torch.cuda.empty_cache()
+        # 2 * n^3 flops per matmul, reported in TFLOP/s so the figure is comparable to a spec sheet
+        # rather than only to itself.
+        return {"ms": round(per * 1000, 2), "tflops": round(2 * size**3 / per / 1e12, 1)}
+    except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+        return {"error": str(e)[:200]}
 
 
 def dtype_penalty(env):
@@ -147,26 +179,8 @@ def dtype_penalty(env):
         return None
 
     out = {}
-    size = 4096
     for name, dt in (("fp32", torch.float32), ("fp16", torch.float16), ("bf16", torch.bfloat16)):
-        try:
-            a = torch.randn(size, size, device="cuda", dtype=dt)
-            b = torch.randn(size, size, device="cuda", dtype=dt)
-            for _ in range(3):                      # warm the kernels and the clocks
-                a @ b
-            torch.cuda.synchronize()
-            t0 = time.perf_counter()
-            for _ in range(20):
-                a @ b
-            torch.cuda.synchronize()
-            per = (time.perf_counter() - t0) / 20
-            # 2 * n^3 flops per matmul, reported in TFLOP/s so the figure is comparable to a spec
-            # sheet rather than only to itself.
-            out[name] = {"ms": round(per * 1000, 2), "tflops": round(2 * size**3 / per / 1e12, 1)}
-            del a, b
-            torch.cuda.empty_cache()
-        except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
-            out[name] = {"error": str(e)[:200]}
+        out[name] = _time_one_matmul(torch, dt)
 
     if "ms" in out.get("bf16", {}) and "ms" in out.get("fp16", {}):
         out["bf16_over_fp16"] = round(out["bf16"]["ms"] / out["fp16"]["ms"], 2)

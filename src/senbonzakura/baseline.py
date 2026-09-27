@@ -223,6 +223,19 @@ def write(path, baseline):
     return path
 
 
+#: What a compass result carried before the canonical `metrics` block existed, as committed under
+#: `evidence/compass-2026-07-30/`. Matched on THREE of the four rather than on any single key:
+#: `model` and `seed` are on nearly everything this project writes, and a bare `auc` appears inside
+#: other artefacts' nested blocks, so a one-key test would claim files it cannot describe. A guard
+#: that covers one spelling of a shape reports confidently on the others.
+_PRE_METRICS_COMPASS_KEYS = ("auc", "controls", "n_harmful", "n_harmless")
+
+
+def _pre_metrics_compass(doc):
+    """Whether this is a compass result from before the metrics block, by its own field names."""
+    return sum(k in doc for k in _PRE_METRICS_COMPASS_KEYS) >= 3
+
+
 def read(path):
     """Load a baseline, or say which of the several different problems it is."""
     path = Path(path)
@@ -251,6 +264,25 @@ def read(path):
             f"record this one first:\n"
             f"    senbonzakura baseline {path} --seeds <n> --out recorded.json\n"
             f"then pass `recorded.json`. The command prints the flag to use next when it succeeds.")
+    if got is None and _pre_metrics_compass(loaded):
+        # THE SAME DEFECT AS THE BLOCK ABOVE, ONE GENERATION OF ARTEFACT EARLIER. That one was
+        # shipped knowing this case was open: it detects a result artefact by its `metrics` block,
+        # and compass only started stamping one later, so this project's OWN published evidence
+        # under `evidence/compass-2026-07-30/` still got "declares schema None". A checker that
+        # cannot read its author's published figures is the exact shape this repository criticises
+        # in other tools.
+        #
+        # It does NOT tell the reader to run `senbonzakura baseline` on it, because that command
+        # reads the `metrics` block too and would refuse with a second, different sentence. A
+        # correct diagnostic wired to a next step that also fails is worse than no hint at all.
+        raise BaselineError(
+            f"{path} is a compass result from before this tool stamped a `metrics` block, so "
+            f"there is no figure in it this gate knows how to read.\n"
+            f"  It holds an AUC of {loaded.get('auc')} and its own controls, which you can read "
+            f"directly, but nothing records which metric that figure IS.\n"
+            f"  To gate on a compass figure, re-run `senbonzakura compass` with this build: it "
+            f"stamps the block, and the run is then recordable with `senbonzakura baseline`.\n"
+            f"  Archived evidence from before the block cannot be converted, only re-measured.")
     if got != SCHEMA:
         raise BaselineError(
             f"{path} declares schema {got!r} and this build understands {SCHEMA!r}. A schema "

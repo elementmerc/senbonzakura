@@ -140,9 +140,24 @@ measured on prompts kept back for exactly that reason, and the 2026-07-14 table 
 that isn't, which is why it says so.
 :::
 
-**Why it hasn't simply been re-measured:** Qwen3-4B doesn't fit the 6 GB card this project
-is built around, so a corrected run needs hardware we don't own. That's the actual reason,
-not an oversight, and it's the same 6 GB ceiling behind everything else on this page.
+**Why it hasn't simply been re-measured:** Qwen3-4B needs more memory than the 6 GB card this
+project is built around, and it's the same 6 GB ceiling behind everything else on this page.
+
+That used to say the model "doesn't fit, so a corrected run needs hardware we don't own", which
+overstated it. **The model does load.** What won't fit in the card goes into host RAM, so the run
+works; it just generates at host speed for whatever share ended up there, and the search is the
+long part. The blocker is time, not capability, and the honest version is that nobody has been
+willing to spend a day of wall clock on one table.
+
+The tool now says this out loud at the start of a run rather than leaving you to infer it from
+how slowly the progress line moves. It prints what fraction of the layers are off the card and
+projects what the search will cost, and it says the figure is a projection from a per-token
+measurement of a 1.7B model rather than a measurement of yours. It reports instead of refusing,
+because a 6 GB card is the hardware this project is aimed at.
+
+The trap it exists to close: `--device cuda` is a request, not a placement. It doesn't mean the
+weights are on the card, and a run that is quietly half on the CPU looks exactly like a run that
+is simply slow.
 
 Every cell of it was produced by the shipped tools
 (`senbonzakura score --load-in-4bit` for the refusal columns,

@@ -71,11 +71,9 @@ senbonzakura setup
 That brings torch, transformers, accelerate and optuna with it: **69 packages, 5.9 GB**, fifteen
 of them CUDA wheels. There is nothing to choose.
 
-> **This paragraph used to tell you not to run that command**, because 0.3.0 was the newest thing
-> on PyPI, its numbers are withdrawn, and `senbonzakura-check` was not published at all, so the
-> dependency resolved to nothing and the install failed for a reason that read like something
-> else. It was true from July 2026 until 0.4.0 went out, and the route it offered instead was a
-> pair of `git+` URLs. Both packages are now on PyPI and the command above is the whole install.
+> This paragraph used to tell you *not* to run that command, and it was right to until 0.4.0 went
+> out. [What we got wrong](https://elementmerc.github.io/senbonzakura/guide/what-we-got-wrong) has
+> that one and every other correction, kept rather than deleted.
 
 **`--track default` works from it.** The wheel carries the packed evaluation track and six
 research corpora, so the commands below run straight after installing, with no corpus to fetch
@@ -198,12 +196,11 @@ Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measuremen
 
 By design, this is methods and results, not a loaded weapon:
 
-- **No model weights in this git tree, and none published yet.** This sentence used to say that
-  abliterated checkpoints from this work were published separately on HuggingFace, which was a
-  statement of intent written in the present tense: none are up, and the sentence gave no link
-  because there was none to give. When any are published they go up separately, each under its
-  base model's own licence, which travels with the weights and is not ours to loosen. Until then
-  the way to get one is to run the tool.
+- **No model weights in this git tree, and none published yet.** When any are published they go up
+  separately, each under its base model's own licence, which travels with the weights and is not
+  ours to loosen. Until then the way to get one is to run the tool. (This sentence used to claim
+  they were already up; see
+  [what we got wrong](https://elementmerc.github.io/senbonzakura/guide/what-we-got-wrong).)
 - **No harmful prompt sets in this git tree, and this is the bullet that needs the most care.**
   The evaluation track is published separately as a
   **[gated dataset](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset)** under

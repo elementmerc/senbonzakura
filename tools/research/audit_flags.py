@@ -48,6 +48,11 @@ SELF_HANDLED = {"version", "help"}
 # would hide.
 SELF_HANDLED_DESTS = {
     "help_all",   # parser._HelpAll prints the long help and exits, like --version
+    # parser._CompletionNotInstalled refuses and exits when the completion extra is absent. The
+    # flag exists on such an install precisely so the reader is told it is one install away rather
+    # than meeting argparse's "unrecognized arguments", which reads as "there is no such flag". On
+    # an install that HAS shtab the same dest is added by shtab and handled by shtab.
+    "print_completion",
 }
 
 # The names an argparse Namespace travels under in this codebase. `own` is the one that matters:
@@ -92,7 +97,13 @@ def dest_of(call):
         return None
     longs = [o for o in opts if o.startswith("--")]
     pick = longs[0] if longs else opts[0]
-    return pick.lstrip("-").replace("-", "_")
+    derived = pick.lstrip("-").replace("-", "_")
+    # THE EXEMPTION APPLIES TO A DERIVED DEST TOO, fixed 2026-09-27. It was consulted only in the
+    # branch above, which needs an explicit `dest=`, so a self-handled flag that lets argparse derive
+    # its dest was still reported dead. `help_all` happens to be written with `dest=` and
+    # `--print-completion` is not, which is the whole difference: a guard covering one spelling of a
+    # case and reporting on the other.
+    return None if derived in SELF_HANDLED_DESTS else derived
 
 
 class _Walk(ast.NodeVisitor):

@@ -34,6 +34,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import say
+
 #: Exit codes. Distinguished so a CI job can treat a warning differently from a failure.
 OK, WARN, FAIL = 0, 1, 2
 
@@ -210,7 +212,7 @@ def check_converter(timeout=300):
         return out
     if broken:
         out.append(_fail(
-            "architecture modules", f"{len(broken)} failed to import: {', '.join(broken[:6])}",
+            "architecture modules", f"{len(broken)} failed to import: {say.some_of(broken, 6)}",
             "these architectures are ADVERTISED AND ABSENT. Usually a `gguf` package mismatch; "
             "re-run `python tools/packaging/vendor_llama.py` so gguf-py comes from the pinned tag"))
     else:

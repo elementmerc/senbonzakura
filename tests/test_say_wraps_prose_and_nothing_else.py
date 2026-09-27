@@ -312,3 +312,42 @@ class TestShortenSaysItShortened:
     def test_a_non_string_is_shortened_rather_than_raising(self):
         """Callers pass whatever a check produced, and a crash in the formatter loses the report."""
         assert say.shorten(1234567890, 6) == "123" + say.CUT
+
+
+# ── some_of: a cut list never contradicts its own count ────────────────────────────────────────────
+
+class TestSomeOfNamesWhatItLeftOut:
+    """A count in one clause and a shorter list in the next leaves the reader to guess which lies.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    `doctor` reported "7 failed to import:" and then named six of them. `convert` did the same with
+    five. A JSON object with twenty keys was described by eight of them with no sign of the rest.
+    Five other places in the package already said "and N more" by hand, so this is the ninth site
+    and the first shared one.
+    """
+
+    def test_a_short_list_is_named_in_full_with_no_suffix(self):
+        assert say.some_of(["a", "b"], 6) == "a, b"
+
+    def test_a_list_exactly_at_the_limit_is_not_described_as_truncated(self):
+        assert say.some_of(list("abcdef"), 6) == "a, b, c, d, e, f"
+
+    def test_a_longer_list_names_the_limit_and_counts_the_rest(self):
+        assert say.some_of(list("abcdefghij"), 6) == "a, b, c, d, e, f, and 4 more"
+
+    def test_the_count_comes_from_the_items_rather_than_the_caller(self):
+        """The half that was getting lost: the total and the list came from different expressions."""
+        got = say.some_of(list(range(20)), 3)
+        assert got.endswith("and 17 more"), got
+        assert len([p for p in got.split(", ") if p.isdigit()]) == 3
+
+    def test_an_empty_list_is_empty_rather_than_a_claim_about_nothing(self):
+        assert say.some_of([], 6) == ""
+
+    def test_items_that_are_not_strings_are_named_rather_than_crashing(self):
+        """Callers pass whatever a check collected, and a formatter that raises loses the report."""
+        assert say.some_of([1, None, 2.5], 6) == "1, None, 2.5"
+
+    def test_the_joiner_can_be_changed_without_losing_the_count(self):
+        assert say.some_of(list("abcd"), 2, joiner=" | ") == "a | b, and 2 more"

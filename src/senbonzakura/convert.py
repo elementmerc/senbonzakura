@@ -47,7 +47,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import argresolve, checkpoint, gguf_io, vendored
+from . import argresolve, checkpoint, gguf_io, say, vendored
 from ._version import __version__
 from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for, provenance
 from .vendored import VendorError, find_script
@@ -467,7 +467,7 @@ def preflight(model_dir, out, *, force, skip_arch_check, outtype="bf16", log=pri
             # its architectures stayed on the advertised list.
             raise ConvertError(
                 f"the vendored converter could not import {len(broken)} of its architecture "
-                f"modules ({', '.join(broken[:5])}), so the architectures they provide are "
+                f"modules ({say.some_of(broken, 5)}), so the architectures they provide are "
                 f"advertised and absent. This is a broken vendoring rather than anything about "
                 f"your model: re-run `python tools/packaging/vendor_llama.py`.")
         if names and arch not in names:

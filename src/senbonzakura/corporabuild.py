@@ -45,7 +45,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import bundled, corpora
+from . import bundled, corpora, say
 
 #: The installed package's own directory. Everything written below lands inside it, which is where
 #: the loader reads from, so this works the same from a checkout and from an install.
@@ -129,7 +129,7 @@ def fetch(repo, commit, path, *, timeout=120):
     if r.returncode != 0 or not r.stdout:
         raise BuildError(
             f"could not fetch {repo}@{commit[:12]}:{path}: "
-            f"{r.stderr.decode('utf-8', 'replace').strip()[:200]}")
+            f"{say.shorten(r.stderr.decode('utf-8', 'replace').strip(), 200)}")
     return r.stdout
 
 

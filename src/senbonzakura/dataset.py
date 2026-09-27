@@ -40,6 +40,8 @@ import os
 import re
 from pathlib import Path
 
+from . import say
+
 #: Columns that hold a prompt, in the order they are tried when none is named. `text` stays first
 #: because it is this project's own convention and every track ever built uses it. The rest are the
 #: names the well-known refusal corpora actually use, so pointing the tool at one of them works
@@ -267,7 +269,8 @@ def _read_table(path, spec):
                     return doc[key]
             raise DatasetError(
                 f"{spec}: a JSON object was found where a list of rows was expected. Keys: "
-                f"{sorted(doc)[:8]}. Wrap the rows in a list, or use one of data/rows/prompts.")
+                f"{say.some_of(sorted(doc), 8)}. Wrap the rows in a list, or use one of "
+                f"data/rows/prompts.")
         if not isinstance(doc, list):
             raise DatasetError(f"{spec}: JSON held {type(doc).__name__}, expected a list of rows.")
         return [r if isinstance(r, dict) else {"text": r} for r in doc]

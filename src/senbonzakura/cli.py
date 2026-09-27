@@ -57,6 +57,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from . import (
     checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
+    hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     say,  # wrapping for every long message, leaving markers and pasteable commands alone
@@ -1992,11 +1993,11 @@ def _track_digests(track):
 #: So the useful half is kept verbatim and the advice is dropped, because the line under it already
 #: says the same thing in the two spellings that work here. Leaving both in gave a reader two
 #: instructions where one was impossible to follow, and the impossible one came first.
-_THEIR_ADVICE_IS_FOR_THE_PYTHON_API = (
-    "token=<your_token>", "use_auth_token", "huggingface-cli login",
-    "If this is a private repository", "If this is a private repo",
-    "make sure to pass a token",
-)
+#:
+#: THE LIST ITSELF NOW LIVES IN `hubmessage`, because this was the only one of three surfaces that
+#: consulted it: `fetch` and the snapshot pre-flight printed the same advice unfiltered. The name is
+#: kept here because it is what this file's readers and its tests already look for.
+_THEIR_ADVICE_IS_FOR_THE_PYTHON_API = hubmessage.ADVICE_FOR_THE_PYTHON_API
 
 
 def _could_not_load(model_id, error):
@@ -2005,12 +2006,10 @@ def _could_not_load(model_id, error):
     Two identical copies of this message had already drifted apart once elsewhere in this file, and
     a refusal is a user-facing string like any other.
     """
-    theirs = [ln for ln in str(error).splitlines()
-              if not any(p in ln for p in _THEIR_ADVICE_IS_FOR_THE_PYTHON_API)]
     # JOINED ONLY IF THERE IS SOMETHING TO JOIN. An OSError with an empty message, or one whose
     # every line was advice, left a blank line where the detail should be, which reads as output
     # that got cut off.
-    detail = "".join(f"  {ln.strip()}\n" for ln in theirs if ln.strip())
+    detail = "".join(f"  {ln}\n" for ln in hubmessage.useful_lines(error))
     return (f"senbonzakura: could not load the model '{model_id}'.\n"
             f"{detail}"
             f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.")
@@ -2123,6 +2122,34 @@ def _weights_live_on(model):
     if not kinds:
         return None
     return next(iter(kinds))
+
+
+#: How much of a prompt, and of a generation, `--inspect` shows. Long enough to read what the edit
+#: did, short enough that a screen holds several of them.
+INSPECT_PROMPT_CHARS = 110
+INSPECT_TEXT_CHARS = 220
+
+
+def inspect_lines(tag, prompts, pre, post):
+    """`--inspect`'s before-and-after block, as lines, with every cut value marked as cut.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    These three lines used to slice with `p[:110]` and `a[:220]`, so a generation longer than the
+    budget was shown ending wherever the budget ran out, with nothing to say so. Reading that text
+    is the entire purpose of `--inspect`: it exists because a KL number cannot tell "wrecked" from
+    "a few benign first tokens flipped", and a generation that appears to stop mid-word is exactly
+    what "wrecked" looks like. So the surface built to judge coherence was manufacturing the
+    evidence of incoherence.
+
+    Lifted out of the closure it lived in so the property can be asserted without a model on a card.
+    """
+    out = []
+    for p, a, b in zip(prompts, pre, post, strict=True):
+        out.append(f"\n### {tag}: {say.shorten(p.strip(), INSPECT_PROMPT_CHARS)}")
+        out.append(f"  PRE : {say.shorten(a.strip(), INSPECT_TEXT_CHARS)!r}")
+        out.append(f"  POST: {say.shorten(b.strip(), INSPECT_TEXT_CHARS)!r}")
+    return out
 
 
 class Abliterator:
@@ -3626,10 +3653,8 @@ class Abliterator:
         post_h = self.gen_batch(hprompts); post_g = self.gen_batch(gprompts)
         kl = self.kl_vs_orig(self.kl_eval); self.restore_weights()
         def show(tag, prompts, pre, post):
-            for p, a, b in zip(prompts, pre, post, strict=True):
-                print(f"\n### {tag}: {p[:110].strip()}")
-                print(f"  PRE : {a[:220].strip()!r}")
-                print(f"  POST: {b[:220].strip()!r}")
+            for line in inspect_lines(tag, prompts, pre, post):
+                print(line)
         show("HARMFUL", hprompts, pre_h, post_h)
         show("HARMLESS", gprompts, pre_g, post_g)
         def pct(xs, f):
@@ -5131,6 +5156,32 @@ def _hub_metadata_fns():
     return get_safetensors_metadata, get_local_safetensors_metadata, None
 
 
+def _why_the_headers_could_not_be_read(model, error, *, token=None, local=False):
+    """Why a checkpoint's headers could not be read, as a phrase a person can act on.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    This used to be `f"{type(e).__name__}: {e}"`, so a model id with a character missing was
+    reported to the reader as `NotASafetensorsRepoError: '<id>' is not a safetensors repo. Couldn't
+    find 'model.safetensors.index.json' or 'model.safetensors' files.` in one 325-character line.
+    Every word of that is true and none of it is the problem: the repository is not missing its
+    safetensors, the repository is not there at all. The Hub cannot tell the library which it was,
+    because a repository that does not exist and a private one you cannot see both answer 401, so
+    the question is asked here instead, once, and only when something has already failed.
+
+    A class name is never shown. It told the reader which Python class was raised, which is the one
+    fact in the sentence they could do nothing with.
+    """
+    if local:
+        return f"{model} is a folder, and its safetensors headers could not be read"
+    if hubmessage.repo_is_missing(model, token=token):
+        return hubmessage.no_such_model(model)
+    # Their sentence, minus advice for a Python caller, folded to one phrase. The trailing full stop
+    # goes because the caller supplies one, and two in a row was the audit's other complaint here.
+    detail = " ".join(hubmessage.useful_lines(error)).rstrip(".")
+    return detail or "the Hub would not say what this repository holds"
+
+
 def estimate_snapshot_bytes(model, token=None, ablate_conv=True):
     """`(bytes, how)` when it could be measured, `(None, why)` when it could not.
 
@@ -5164,7 +5215,7 @@ def estimate_snapshot_bytes(model, token=None, ablate_conv=True):
         meta = (get_local_safetensors_metadata(model) if local
                 else get_safetensors_metadata(model, token=token))
     except Exception as e:                   # network, auth, a repo with no safetensors
-        return None, f"{type(e).__name__}: {e}"
+        return None, _why_the_headers_could_not_be_read(model, e, token=token, local=local)
     tensors = {}
     for fmeta in getattr(meta, "files_metadata", {}).values():
         for name, info in getattr(fmeta, "tensors", {}).items():
@@ -5194,9 +5245,11 @@ def preflight_snapshot_ram(args, log=print):
         token=getattr(args, "hf_token", None) or None,
         ablate_conv=not getattr(args, "skip_conv_ablation", False))
     if need is None:
-        log(f"  snapshot pre-flight SKIPPED, not passed: {how}. The host-RAM check still runs "
-            f"once the model is loaded, which on rented hardware is after you have paid for the "
-            f"download.")
+        # WRAPPED, and the reason's own full stop removed before ours is added. Unwrapped this ran
+        # to 325 characters with `files.. ` in the middle of it, which is where a reader stops.
+        say.say(f"snapshot pre-flight SKIPPED, not passed: {str(how).rstrip('.')}. The host-RAM "
+                f"check still runs once the model is loaded, which on rented hardware is after "
+                f"you have paid for the download.", indent="  ", log=log)
         return None
     avail = _available_ram_bytes()
     if avail is None:

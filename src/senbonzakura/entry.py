@@ -82,6 +82,15 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # applied to no property this tool measures. Same weight class as the other two: it reads one
     # JSON file and writes another.
     "baseline": ("baseline", "main"),
+    # THE FOURTH THAT NEEDS NOTHING, and it was shipping unreachable. `prereg.py` implements this
+    # project's pre-registration format, with 32 tests, and until 2026-09-27 nothing imported it:
+    # a complete library, inside the wheel, that no user could reach and no command could call.
+    #
+    # It is registered here rather than left as a library because the format's whole argument is
+    # that a pre-registration should be checkable by somebody other than its author. A checker
+    # nobody can run is the same claim made by assertion, which is what the format exists to
+    # replace.
+    "prereg": ("prereg", "main"),
 }
 
 

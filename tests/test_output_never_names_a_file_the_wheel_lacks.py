@@ -108,3 +108,49 @@ def test_the_sweep_would_fail_on_the_string_it_was_written_for():
     assert A_DOCS_PATH.search(
         "None of this is a pass or a fail. See docs/guide/what-we-know before quoting any of it.")
     assert not A_DOCS_PATH.search(bundled.doc_url("guide/what-we-know").replace("docs/", "d/"))
+
+
+#: Commands this project used to recommend and no longer should. Each entry is a thing a reader would
+#: type and get an error or a deprecation from, which is worse than no advice: they followed us.
+SUPERSEDED_COMMANDS = {
+    # `hf auth login` replaced it. `hubmessage.ADVICE_FOR_THE_PYTHON_API` strips this very line out
+    # of upstream's messages for being stale, and on 2026-09-27 the guided mode was still handing it
+    # to a reader as our own advice, so the tool treated the same sentence as wrong from somebody
+    # else and right from itself.
+    "huggingface-cli login",
+}
+
+
+def test_no_user_facing_string_recommends_a_superseded_command():
+    """Found by reading today's diff for hyphens and noticing two spellings of one instruction.
+
+    The scan skips docstrings for the reason given above, and `hubmessage` is skipped entirely
+    because its whole job is to hold the stale spellings so it can RECOGNISE them in somebody else's
+    output. A list of what to filter is not a recommendation.
+    """
+    offenders = [(p.name, line, text) for p, line, text in _user_facing_strings()
+                 if p.name != "hubmessage.py"
+                 and any(bad in text for bad in SUPERSEDED_COMMANDS)]
+    listing = "\n".join(f"  {name}:{line}  {text[:110]}" for name, line, text in offenders)
+    assert not offenders, (
+        "these strings tell a reader to run a command this project no longer recommends:\n"
+        + listing + "\n  See SUPERSEDED_COMMANDS for what replaced it.")
+
+
+def test_the_scan_would_catch_it_if_it_came_back():
+    """Mutation test: the list is only worth reading if a match would be found."""
+    assert any(bad in "needs a Hugging Face account and `huggingface-cli login` before it fetches"
+               for bad in SUPERSEDED_COMMANDS)
+
+
+def test_the_filter_that_recognises_the_stale_advice_still_holds_it():
+    """The exemption above is load bearing: `hubmessage` must keep the string it strips.
+
+    If this ever stops being true, the exemption is hiding nothing and should go, and upstream's
+    stale advice is reaching readers again.
+    """
+    from senbonzakura import hubmessage
+
+    assert any("huggingface-cli login" in phrase
+               for phrase in hubmessage.ADVICE_FOR_THE_PYTHON_API), (
+        "hubmessage no longer filters the superseded login command out of upstream messages")

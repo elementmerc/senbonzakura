@@ -8,6 +8,10 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 ### Added
 
+- `senbonzakura compass` now says what its number means. The three marker lines it printed are
+  unchanged, and under them it reports the AUC as the ranking statistic it is, the interval with its
+  confidence level named, and a verdict: usable on this corpus, no finding, no verdict without an
+  interval, or not a measurement at all.
 - `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser
   print. Both are summarised by default now, because a real model produces one line per tensor and
   several hundred of them arrived ahead of this tool's own summary. A warning or an error is never
@@ -44,6 +48,26 @@ All notable changes to Senbonzakura are recorded here. The format follows
   wheel, and explained a stage's refusal with its exit status instead of its reason.
 - The standalone checker's "nothing was checked" footer read identically whether it was about to
   exit zero or fail.
+- A model id that does not exist was reported as a missing file format, in one long line ending in a
+  Python exception name. `senbonzakura fetch` was worse: five paragraphs of library output, including
+  "Invalid username or password" for an id that was simply mistyped. A repository that is absent and
+  a private one you cannot see look the same from outside, so the Hub is asked which it was.
+- A mistyped flag was invisible whenever a required flag was also missing, so the fix for one left
+  the other silently ignored. Both are reported now.
+- `--inspect` cut its prompts and generations to fit a column with nothing to show the cut, which
+  made a healthy generation look as though the model had stopped mid-word. Reading that text is the
+  whole point of the flag.
+- `senbonzakura doctor` reported "7 failed to import" and then named six of them. Every message that
+  states a total and lists some of it now says how many it left out.
+- `--out` refused a directory holding a previous run or a model and not one holding a tokeniser,
+  where the files a save writes were silently overwritable.
+- `senbonzakura track` with no arguments named two flags where `senbonzakura report` answers the same
+  mistake with a command you can run.
+- `senbonzakura gate` refused a missing baseline without saying that a baseline is a file this tool
+  writes, or which command writes it.
+- `--print-completion` on an install without the completion extra reported that the flag did not
+  exist, rather than that it needed one more install.
+- The guided mode told readers to run `huggingface-cli login`, which `hf auth login` replaced.
 
 ### Other
 

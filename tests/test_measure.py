@@ -374,6 +374,13 @@ def test_a_refusal_from_a_stage_becomes_one_failed_stage(monkeypatch):
 
 
 def test_a_bare_exit_status_still_produces_a_readable_reason(monkeypatch):
+    """And says where the reason IS, which is the part the audit found missing on 2026-09-27.
+
+    A stage that refuses prints its own sentence, wrapped and with a next step, then exits with a
+    status. The summary table reported "exited 3", which is the one fact a reader cannot act on,
+    while the sentence they needed sat a few lines above it with nothing connecting the two. The
+    status is kept, because a script reads it; it is no longer offered as the explanation.
+    """
     import sys
     import types as _types
 
@@ -384,8 +391,12 @@ def test_a_bare_exit_status_still_produces_a_readable_reason(monkeypatch):
 
     fake.main = _exit
     monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
-    with pytest.raises(measure.StageError, match="exited 3"):
+    with pytest.raises(measure.StageError) as e:
         measure.run_stage("score", [], log=lambda _m: None)
+    said = " ".join(str(e.value).split())
+    assert "3" in said, f"the status a script reads was dropped: {said}"
+    assert "log above" in said, (
+        f"the row reports a status and never says where the stage's own reason is: {said}")
 
 
 def test_any_other_exception_is_named_by_its_type(monkeypatch):

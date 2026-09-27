@@ -68,6 +68,21 @@ LICENCE = "CC BY-NC 4.0"
 #: packaging fault" and gives nowhere to say so leaves them exactly as stuck as no message.
 ISSUES = "https://github.com/elementmerc/senbonzakura/issues"
 
+#: Where the guide actually is for somebody who installed the wheel. `docs/` is in the repository
+#: and in no wheel, so output that names a page by its repository path sends an installed user
+#: looking for a file they do not have. Pinned to `main` rather than `dev`: a reader following a
+#: link out of a released build should land on the released prose, not on whatever is in flight.
+DOCS = "https://github.com/elementmerc/senbonzakura/blob/main/docs"
+
+
+def doc_url(page):
+    """A followable link to one guide page, given its name without the extension.
+
+    Takes the name rather than the path so a caller cannot half-write the URL, and so the one place
+    that knows the layout is this one. `doc_url("guide/what-we-know")` is the shape.
+    """
+    return f"{DOCS}/{str(page).strip('/')}.md"
+
 
 def _installed_version():
     """The version string to quote in a bug report, or a placeholder that cannot be mistaken."""

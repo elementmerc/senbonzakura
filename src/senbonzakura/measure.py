@@ -46,7 +46,7 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from . import stamps
+from . import bundled, say, stamps
 from .crashsafe import atomic_write
 
 #: Stage name -> (module, output filename). The module is looked up through `entry.DELEGATED`
@@ -178,8 +178,19 @@ def run_stage(name, argv, *, log=print):
         # stringifies to "3", which is truthy, so a naive `str(e) or ...` reports a bare "3" as
         # the reason a stage produced no number, and the table then carries a status code where a
         # sentence belongs. An int is a status; anything else is something a person wrote.
+        # AND WHERE THE ACTIONABLE SENTENCE IS, when all we have is a number. A stage that refuses
+        # prints its own reason, wrapped and with a next step, and then exits with a status. Putting
+        # "exited 2" in the summary table gave the reader the one fact they cannot act on while the
+        # sentence they need sat a few lines above it, unreferenced. The status is kept, because it
+        # is what a script reads; it is no longer offered as the explanation.
         code = e.code
-        reason = f"exited {code}" if isinstance(code, int) else (str(code) if code else "exited 1")
+        if isinstance(code, int):
+            reason = (f"refused, exit status {code}. Its own reason is in this run's log above, "
+                      f"under the command line for this stage.")
+        else:
+            reason = str(code) if code else ("refused, exit status 1. Its own reason is in this "
+                                             "run's log above, under the command line for this "
+                                             "stage.")
         raise StageError(reason) from e
     except Exception as e:
         # DELIBERATELY BROAD. Whatever one instrument does wrong, the other four still have
@@ -583,8 +594,14 @@ def main(argv=None):
     for line in format_table(verdict_rows(results)):
         print(line)
     print()
-    print("None of this is a pass or a fail. Each figure is comparable only against the same "
-          "instrument on the same track; see docs/guide/what-we-know before quoting any of it.")
+    # A URL RATHER THAN A REPOSITORY PATH. `docs/` ships in the repository and in no wheel, so
+    # "see docs/guide/what-we-know" sent every installed user looking for a file they do not have,
+    # at the exact moment they were being told not to quote a number without reading it.
+    for line in say.lines(
+            "None of this is a pass or a fail. Each figure is comparable only against the same "
+            "instrument on the same track. Before quoting any of it, read "
+            f"{bundled.doc_url('guide/what-we-know')}"):
+        print(line)
 
     # ATOMIC, like every other result this project writes. `write_text` truncates and then writes,
     # so a kill during it leaves a file that exists, is not empty, and is not a result. This is the

@@ -6,6 +6,13 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser
+  print. Both are summarised by default now, because a real model produces one line per tensor and
+  several hundred of them arrived ahead of this tool's own summary. A long run says it is still
+  working every thirty seconds, and a failure quotes the tool's last lines either way.
+
 ### Fixed
 
 - `pip install senbonzakura` is the documented install everywhere. Several pages still told readers
@@ -20,6 +27,22 @@ All notable changes to Senbonzakura are recorded here. The format follows
   code where the refusal is the point.
 - `senbonzakura corpora` needs the GitHub CLI, and neither page that introduced it said so.
 - The reference page told readers the GitHub Action and the pre-commit hook could not work yet.
+- `convert --out x` and `quantise --out x` complained about a precision flag nobody typed. Both take
+  the output path as a positional, and argparse was abbreviating `--out` into a longer flag. No
+  command abbreviates its flags now, so what is accepted is what the help page lists.
+- A quantisation receipt recorded the hash of the quantiser and of neither file it named, so nobody
+  holding the result could tell it was the file the receipt described.
+- A result produced by an installed wheel could not say which commit built it.
+- `senbonzakura corpora --check` refused for want of the GitHub CLI even when every source it reads
+  was already on the machine.
+- `senbonzakura baseline` reported a deterministic metric as "at 2.7486 None", and left out the units
+  that were sitting in the artefact beside the value.
+- `senbonzakura doctor` printed ten lines of corpus attribution before naming itself, with the
+  sentence covering all six corpora indented under the first one.
+- `senbonzakura measure` pointed readers at a documentation path that is in the repository and in no
+  wheel, and explained a stage's refusal with its exit status instead of its reason.
+- The standalone checker's "nothing was checked" footer read identically whether it was about to
+  exit zero or fail.
 
 ### Other
 

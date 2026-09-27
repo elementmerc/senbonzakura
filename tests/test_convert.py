@@ -213,20 +213,26 @@ class _Ran:
     """A stand-in for the converter subprocess that writes whatever the test wants it to.
 
     IT STANDS IN FOR THE CONVERTER AND NOTHING ELSE, which it did not until 2026-09-21.
-    `monkeypatch.setattr(convert.subprocess, "run", ...)` reaches the `subprocess` MODULE, not a
+    `monkeypatch.setattr(convert.subprocess, "Popen", ...)` reaches the `subprocess` MODULE, not a
     copy of it, so every other caller in the process got this object too. That was invisible
     while `convert.run` made exactly one subprocess call, and it stopped being invisible the
     moment the conversion record started stamping provenance: `crashsafe.git_commit` ran `git
     rev-parse` into a fake expecting `--outfile` and seven tests died inside a helper none of
     them had anything to do with.
 
-    Anything that is not the converter is handed to the real `subprocess.run`, so a test that
+    Anything that is not the converter is handed to the real `subprocess.Popen`, so a test that
     fakes the converter is faking the converter.
+
+    IT STANDS IN FOR `Popen` SINCE 2026-09-27, not for `run`. The converter's output is streamed
+    now rather than inherited, so that several hundred lines of per-tensor chatter stop arriving
+    ahead of this command's own summary, and a stream is what the code under test reads. `prints`
+    is what the fake converter says; the default is the shape of a quiet success.
     """
 
-    def __init__(self, rc=0, write=None):
+    def __init__(self, rc=0, write=None, prints=()):
         self.rc, self.write, self.calls = rc, write, []
-        self._real = subprocess.run
+        self.prints = list(prints)
+        self._real = subprocess.Popen
 
     def __call__(self, argv, **kw):
         if "--outfile" not in argv:
@@ -234,7 +240,21 @@ class _Ran:
         self.calls.append(argv)
         if self.write is not None:
             Path(argv[argv.index("--outfile") + 1]).write_bytes(self.write)
-        return type("R", (), {"returncode": self.rc})()
+        return _FakeProc(self.rc, self.prints)
+
+
+class _FakeProc:
+    """The Popen surface `convert.run` actually uses: a context manager, a stream, a return code."""
+
+    def __init__(self, rc, prints):
+        self.returncode = rc
+        self.stdout = iter([f"{line}\n" for line in prints])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
 
 
 def _ok_header(**over):
@@ -251,7 +271,7 @@ def test_a_failed_conversion_removes_the_partial_file(tmp_path, monkeypatch, cap
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=1, write=b"partial"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=1, write=b"partial"))
     with pytest.raises(SystemExit, match="exited 1"):
         convert.run([str(d), str(out)], log=lambda _m: None)
     assert not out.exists(), "the partial output was left behind"
@@ -265,7 +285,7 @@ def test_an_output_that_does_not_verify_is_kept_for_inspection(tmp_path, monkeyp
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"not a gguf"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"not a gguf"))
 
     def _boom(*a, **k):
         raise convert.gguf_io.GGUFError("bad magic")
@@ -282,7 +302,7 @@ def test_a_successful_conversion_verifies_and_reports(tmp_path, monkeypatch):
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     ran = _Ran(rc=0, write=b"GGUF" + b"\0" * 64)
-    monkeypatch.setattr(convert.subprocess, "run", ran)
+    monkeypatch.setattr(convert.subprocess, "Popen", ran)
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     msgs = []
     assert convert.run([str(d), str(out)], log=msgs.append) == 0
@@ -296,7 +316,7 @@ def test_the_requested_precision_is_what_gets_checked(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
     seen = {}
 
     def _verify(path, *, expect_quant=None, **k):
@@ -312,7 +332,7 @@ def test_auto_precision_asserts_nothing_because_there_is_nothing_to_assert(tmp_p
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
     seen = {}
 
     def _verify(path, *, expect_quant=None, **k):
@@ -328,7 +348,7 @@ def test_quantise_is_chained_and_the_intermediate_is_pruned_by_default(tmp_path,
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
     seen = {}
@@ -347,7 +367,7 @@ def test_keeping_the_intermediate_is_honoured(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
     seen = {}
@@ -362,7 +382,7 @@ def test_a_failing_quantise_step_propagates_its_code(tmp_path, monkeypatch):
     d = _checkpoint(tmp_path / "m")
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-    monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+    monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     from senbonzakura import quantise
     monkeypatch.setattr(quantise, "run", lambda argv, log=print: 3)
@@ -376,7 +396,7 @@ def test_use_temp_file_reaches_the_converter(tmp_path, monkeypatch):
     out = tmp_path / "o.gguf"
     monkeypatch.setattr(convert, "supported_architectures", lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
     ran = _Ran(rc=0, write=b"GGUF")
-    monkeypatch.setattr(convert.subprocess, "run", ran)
+    monkeypatch.setattr(convert.subprocess, "Popen", ran)
     monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header())
     convert.run([str(d), str(out), "--use-temp-file"], log=lambda _m: None)
     assert "--use-temp-file" in ran.calls[0]
@@ -511,7 +531,7 @@ class TestTheTemplateSurvivedTheExport:
         out = tmp_path / "o.gguf"
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
         monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
         lines = []
         convert.run([str(d), str(out)], log=lines.append)
@@ -523,7 +543,7 @@ class TestTheTemplateSurvivedTheExport:
         d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
         monkeypatch.setattr(convert.gguf_io, "verify",
                             lambda *a, **k: _ok_header(metadata={convert.GGUF_CHAT_TEMPLATE_KEY: "t"}))
         lines = []
@@ -549,7 +569,7 @@ class TestTheConversionRecord:
         out = tmp_path / "o.gguf"
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF" + b"\0" * 32))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF" + b"\0" * 32))
         meta = {convert.GGUF_CHAT_TEMPLATE_KEY: "t"} if target_template else {}
         monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata=meta))
         rc = convert.run([str(d), str(out), *kw.get("argv", [])], log=lambda _m: None)
@@ -606,7 +626,7 @@ class TestTheConversionRecord:
         out = tmp_path / "o.gguf"
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
         monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
         convert.run([str(d), str(out)], log=lambda _m: None)
         rec = json.loads(convert.record_path(out).read_text(encoding="utf-8"))
@@ -649,7 +669,7 @@ class TestTheConversionRecord:
         out = tmp_path / "o.gguf"
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
-        monkeypatch.setattr(convert.subprocess, "run", _Ran(rc=0, write=b"GGUF"))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF"))
         monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
         assert convert.run([str(d), str(out)], log=lines.append) == 0
         assert any("could not be written" in ln for ln in lines), lines

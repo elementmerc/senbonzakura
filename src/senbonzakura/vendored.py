@@ -183,3 +183,67 @@ def status(log=print):
         log(f"  llama-quantize: {lq['source']} at {lq['path']}" if lq else
             "  llama-quantize: NOT AVAILABLE (quantisation will refuse)")
     return out
+
+
+#: How often a suppressed run says it is still alive. A conversion of a large model runs for many
+#: minutes; silence for that long is indistinguishable from a hang, and the reason people reach for
+#: Ctrl+C on a job that was working.
+HEARTBEAT_S = 30
+
+#: How many of the tool's last lines are kept for a failure report. A refusal that says "the
+#: converter exited 1" and nothing else makes suppression a downgrade, which is the trap in hiding
+#: output at all: the chatter is noise right up until it is the only evidence.
+KEEP_LINES = 25
+
+
+def relay(stream, *, verbose, log, watch=(), heartbeat_s=HEARTBEAT_S, keep=KEEP_LINES,
+          now=None):
+    """Pass a vendored tool's output through, or summarise it, and never lose what matters.
+
+    WHY THIS EXISTS, 2026-09-27
+
+    `convert` handed the vendored converter the terminal, so about 350 lines of per-tensor chatter
+    arrived ahead of this tool's own five-line summary. A surface audit found the summary buried:
+    every word of the output was true and the reader still had to scroll for the part written for
+    them.
+
+    Suppressing output is not free, and this function is mostly about the two ways it goes wrong.
+    A long job that prints nothing looks hung, so a heartbeat names the tool's most recent line
+    every `heartbeat_s`. A failure whose diagnostic was swallowed is worse than noise, so the last
+    `keep` lines are always retained and handed back for the refusal to quote.
+
+    `watch` is a sequence of compiled patterns whose matches are collected and returned. `quantise`
+    reads the fallback warning that way: buried once, and it turned out to be the one line that
+    contradicted this tool's own verdict.
+
+    Returns (matches, tail): matches is a list of (pattern, match) in the order they were seen, tail
+    is the last lines as a list.
+    """
+    import collections
+    import time as _time
+
+    clock = now or _time.monotonic
+    tail = collections.deque(maxlen=keep)
+    matches = []
+    started = clock()
+    last_beat = started
+    lines = 0
+
+    for line in stream:
+        lines += 1
+        tail.append(line.rstrip("\n"))
+        for pattern in watch:
+            found = pattern.search(line)
+            if found:
+                matches.append((pattern, found))
+        if verbose:
+            sys.stdout.write(line)
+            continue
+        if clock() - last_beat >= heartbeat_s:
+            last_beat = clock()
+            from . import say
+            log(f"  still working, {lines} lines in, {clock() - started:.0f}s: "
+                f"{say.shorten(line.strip(), 60)}")
+    if verbose:
+        sys.stdout.flush()
+    return matches, list(tail)

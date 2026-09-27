@@ -30,6 +30,8 @@ clean-room job. It checks that every page telling a reader the same fact tells t
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Every page that quotes the size of a full install. Adding one here is the point: a new page that
@@ -101,3 +103,71 @@ def test_the_canonical_page_dates_its_measurement():
         "the install guide states a package count with no date near it. Give the date and the "
         "Python version it was measured on, because this figure goes out of date without anybody "
         "editing the file it is in.")
+
+
+# ── the accelerator-wheel count, which this file's own preamble names and never checked ──────────
+
+#: Word numerals, because both pages spell this one out. `_COUNT` and `_SIZE` above match digits and
+#: would never have seen either of these, which is how a guard ends up covering two spellings of a
+#: fact and reporting clean on the third.
+_WORDS = {
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+}
+
+#: "fifteen of them CUDA wheels". The count of `nvidia-*` rows, and Triton is NOT one of them.
+_CUDA_WORDS = re.compile(
+    r"\b(" + "|".join(_WORDS) + r")\b(?![^.]*\bTriton\b)[^.]*?\bCUDA wheels\b", re.IGNORECASE)
+
+#: "Sixteen CUDA and Triton wheels". The same rows PLUS triton, so it is one larger by definition.
+_CUDA_AND_TRITON_WORDS = re.compile(
+    r"\b(" + "|".join(_WORDS) + r")\b[^.]*?\bCUDA and Triton wheels\b", re.IGNORECASE)
+
+#: The breakdown table on the canonical page, which is where both prose figures come from.
+_TABLE_NVIDIA = re.compile(r"`nvidia-\*` wheels\s*\|\s*(\d+)")
+_TABLE_TRITON = re.compile(r"Plus `triton`\s*\|\s*(\d+)")
+
+
+def _table_counts():
+    text = (ROOT / "docs" / "guide" / "install.md").read_text(encoding="utf-8")
+    nvidia = _TABLE_NVIDIA.search(text)
+    triton = _TABLE_TRITON.search(text)
+    assert nvidia and triton, (
+        "the install guide's breakdown table no longer states the `nvidia-*` and `triton` row "
+        "counts, which are what every prose figure on these pages is derived from")
+    return int(nvidia.group(1)), int(triton.group(1))
+
+
+def test_the_prose_cuda_count_matches_the_table():
+    """"fifteen of them CUDA wheels" has to be the `nvidia-*` row count and nothing else."""
+    nvidia, _ = _table_counts()
+    found = {}
+    for page in PAGES:
+        for word in _CUDA_WORDS.findall(page.read_text(encoding="utf-8")):
+            found.setdefault(page.relative_to(ROOT).as_posix(), set()).add(_WORDS[word.lower()])
+    if not found:
+        pytest.skip("no page states a CUDA wheel count in words any more")
+    wrong = {p: sorted(v) for p, v in found.items() if v != {nvidia}}
+    assert not wrong, (
+        f"these pages state a CUDA wheel count that is not the {nvidia} `nvidia-*` rows the "
+        f"install guide's own table gives: {wrong}")
+
+
+def test_the_prose_cuda_and_triton_count_is_one_larger():
+    """"Sixteen CUDA and Triton wheels" is the same rows plus triton, so it must be nvidia + triton.
+
+    These two sentences look contradictory side by side, fifteen on one page and sixteen on another,
+    and they are both right. That is exactly why they need pinning: the next person to notice the
+    mismatch will "fix" one of them.
+    """
+    nvidia, triton = _table_counts()
+    found = {}
+    for page in PAGES:
+        for word in _CUDA_AND_TRITON_WORDS.findall(page.read_text(encoding="utf-8")):
+            found.setdefault(page.relative_to(ROOT).as_posix(), set()).add(_WORDS[word.lower()])
+    if not found:
+        pytest.skip("no page states a combined CUDA and Triton count in words any more")
+    wrong = {p: sorted(v) for p, v in found.items() if v != {nvidia + triton}}
+    assert not wrong, (
+        f"these pages give a CUDA-and-Triton total that is not {nvidia} + {triton} = "
+        f"{nvidia + triton}: {wrong}")

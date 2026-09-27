@@ -117,18 +117,30 @@ def test_a_finding_carries_everything_needed_to_judge_it(tmp_path):
     """
     code, text = _run([str(_write(tmp_path, "bad.json", BAD))])
     assert code == 1
-    for label in ("what it is:", "seen before:", "what to do:",
-                  "when this check is wrong:"):
+    # THE LABELS ARE HEADINGS NOW, capitalised and on their own line, with the body wrapped
+    # underneath at a fixed indent. That was 2026-09-27: each section used to print as one
+    # unwrapped line, and a single finding measured 5,435 characters across lines of up to 1,646
+    # with no blank line anywhere. All four are still required, and this test is why a first attempt
+    # to put `seen before` behind a flag was abandoned: the docstring above is right that the
+    # incident is the citation without which a finding is an opinion.
+    for label in ("What it is", "Seen before", "What to do",
+                  "When this check is wrong"):
         assert label in text, f"a finding printed without {label!r}"
     assert "2026-08-05" in text, "the incident has to be quoted, not just referenced"
 
 
-def test_the_summary_says_how_many_checks_did_not_apply(tmp_path):
+def test_the_summary_says_how_many_checks_applied(tmp_path):
     """SKIPPED IS NOT PASSED. "No findings" over a set of checks that mostly could not run is a
     different statement from "no findings", and the reader is entitled to tell them apart.
+
+    THE WORDING TURNED ROUND ON 2026-09-27, and the property did not. It said "13 checks did not
+    apply" beside a summary line saying "16 checks available", and `--min-applied` then printed
+    "3 of 13 applied", reusing the count that did NOT apply as the denominator of those that did.
+    Three numbers on one screen and one of them meaning two things. "3 of 16 checks applied" says
+    the same thing and reconciles with the line below it.
     """
     _, text = _run([str(_write(tmp_path, "ok.json", GOOD))])
-    assert "did not apply" in text
+    assert "of 16 checks applied" in text
 
 
 def test_a_clean_report_refuses_to_read_as_a_certificate(tmp_path):
@@ -354,7 +366,7 @@ def test_a_pair_check_is_not_reported_as_passing_on_a_single_file(tmp_path):
     one = str(_write(tmp_path, "a.json", _arm("0.7.1")))
     code, text = _run([one])
     assert code == 0
-    assert "checks did not apply" in text
+    assert "checks applied" in text
     entry = json.loads(_run(["--json", one])[1])[0]
     assert not entry["findings"]
     assert "a-figure-compared-across-an-instrument-change" in entry["skipped"]

@@ -75,7 +75,7 @@ import math
 
 import torch
 
-from . import cli
+from . import argresolve, cli
 
 #: The page `--help` prints, which is NOT the module docstring above.
 #:
@@ -122,7 +122,7 @@ def build_args(argv=None):
     # `prog` is set because argparse otherwise reads it off sys.argv[0], which is `python -m
     # senbonzakura` on the delegated path: the usage line then printed a command that does not
     # include the word `validate`, so copying it ran the abliterator.
-    ap = argparse.ArgumentParser(allow_abbrev=False, prog="senbonzakura validate", description=HELP,
+    ap = argresolve.ParserThatNamesUnknownFlags(allow_abbrev=False, prog="senbonzakura validate", description=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True,
                     help="HF model id or local path. The BASE model, not an abliterated one: "

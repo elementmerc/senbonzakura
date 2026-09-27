@@ -39,7 +39,6 @@ answer that cannot change. The cache records which base, which prompts and which
 was built from, and is refused if any of those differ: a cache keyed on nothing is how you score
 ten models against the wrong reference and never find out.
 """
-import argparse
 import hashlib
 import json
 import os
@@ -52,7 +51,7 @@ import torch
 # direction allowed: `senbonzakura_check` may never import `senbonzakura`.
 from senbonzakura_check import measurement
 
-from . import stamps
+from . import argresolve, stamps
 from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
@@ -64,7 +63,7 @@ CACHE_SCHEMA = "senbonzakura-drift-base/1"
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura drift",
         description="Measure how far an edited model's predictions have drifted from its base.",

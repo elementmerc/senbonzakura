@@ -32,7 +32,6 @@ and the quantisation actually written, which must be the one that was asked for.
 """
 from __future__ import annotations
 
-import argparse
 import datetime as _dt
 import hashlib
 import json
@@ -174,7 +173,7 @@ def quantiser_identity(exe, source_of, log=print):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         prog="senbonzakura quantise",
         # See the note in convert.build_parser: `--out` prefix-matches `--output-tensor-type` here,
         # so an abbreviation turns a plausible typo into a complaint about an unrelated flag.

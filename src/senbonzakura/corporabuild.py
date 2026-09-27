@@ -37,7 +37,6 @@ users have to run was the one command their install did not contain.
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import shutil
@@ -45,7 +44,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import bundled, corpora, say
+from . import argresolve, bundled, corpora, say
 
 #: The installed package's own directory. Everything written below lands inside it, which is where
 #: the loader reads from, so this works the same from a checkout and from an install.
@@ -241,7 +240,7 @@ def build(*, check_only=False, log=print):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(allow_abbrev=False, prog="senbonzakura corpora",
+    ap = argresolve.ParserThatNamesUnknownFlags(allow_abbrev=False, prog="senbonzakura corpora",
                                  description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true",
                     help="verify the pins and the counts, write nothing")

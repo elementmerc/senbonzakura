@@ -47,6 +47,8 @@ from senbonzakura.cli import kl_eval_slice, rescore_eval_slice
 from senbonzakura.metrics import MIN_REPORTABLE_N
 from senbonzakura.track import flag_violations, read_manifest
 
+from . import argresolve
+
 
 def _resolve_track(spec):
     """`default` means the track packed inside the wheel, here as everywhere else.
@@ -121,7 +123,7 @@ def write_slice(path, prompts, label):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(allow_abbrev=False, description=__doc__,
+    ap = argresolve.ParserThatNamesUnknownFlags(allow_abbrev=False, description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--track", required=True, help="the track holding bad_ds / good_ds / bad_eval_ds")
     ap.add_argument("--out", required=True, help="directory to write the slices into")

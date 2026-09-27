@@ -39,6 +39,8 @@ import re
 import time
 from dataclasses import dataclass
 
+from . import argresolve
+
 #: A number as a model writes one: optional sign, digits with optional thousands separators, an
 #: optional decimal part. Deliberately does not accept a bare `.5`, because the things that look
 #: like that in a worked solution are usually sentence-ending full stops.
@@ -896,7 +898,6 @@ DEFAULT_OUT = "capability.json"
 
 
 def build_parser():
-    import argparse
 
     # FROM `.parser`, NOT FROM `.cli`, which re-exports it. `.cli` imports torch, optuna and
     # transformers at module scope, so reaching `loader_parser` through it made BUILDING THE
@@ -905,7 +906,7 @@ def build_parser():
     from .argresolve import whole_number
     from .parser import loader_parser
 
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura capability",
         description="Measure what an edit cost, on a task the model either gets right or does "

@@ -28,7 +28,6 @@ the flag exists because some environments have no other route, and its help says
 """
 from __future__ import annotations
 
-import argparse
 import contextlib
 import hashlib
 import os
@@ -36,7 +35,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import gguf_io, hubmessage, say
+from . import argresolve, gguf_io, hubmessage, say
 
 #: Hosts where plain HTTP is acceptable. Loopback only, and this is a security model rather than a
 #: convenience: the guard exists because anything on the network path can substitute weights in
@@ -62,7 +61,7 @@ class FetchError(Exception):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura fetch",
         description="Download a model file and verify it is what was asked for.")

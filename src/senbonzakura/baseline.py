@@ -35,7 +35,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import say
+from . import argresolve, say
 from .crashsafe import atomic_write
 
 #: Bumped only for a change that makes an older file mean something different. Adding a field is
@@ -668,8 +668,7 @@ def from_artefact(doc, metric_key, *, seeds):
 
 
 def build_parser():
-    import argparse
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura baseline",
         description="Record a measurement as the baseline a later run is gated against.")

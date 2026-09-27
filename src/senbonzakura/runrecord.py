@@ -49,8 +49,31 @@ PINNED = {
 
 #: What a finished or half-finished run leaves in `--out`. Presence of any of these means the
 #: directory is not empty in the way that matters: something already used it as a destination.
-RUN_ARTEFACTS = ("abliteration.json", "best-config.json", "trials.json", "model.safetensors",
-                 "model.safetensors.index.json", "config.json")
+#:
+#: EVERYTHING A SAVE WRITES, not only the interesting half, since 2026-09-27. A surface audit
+#: recorded this as "`--out <an existing non-empty directory>` is not pre-flighted", and that framing
+#: is wrong: the guard exists and catches a previous run or an existing model. What it missed is the
+#: files `tok.save_pretrained` writes, which are not on the list above and were therefore silently
+#: overwritable. So the exposure was never "any non-empty directory", it was the narrow and real case
+#: of a directory holding tokenizer files and no weights.
+#:
+#: Refusing every non-empty directory was considered and rejected (operator, 2026-09-27): it would
+#: refuse a prepared directory with a README in it, a mounted volume carrying `lost+found`, and a git
+#: checkout, and it would need a `--force` whose only purpose is to undo a rule we invented. The
+#: question this list answers is "would writing here destroy something", and that is answered by
+#: naming what a write produces.
+RUN_ARTEFACTS = (
+    # The search and its record.
+    "abliteration.json", "best-config.json", "trials.json",
+    # `model.save_pretrained`.
+    "model.safetensors", "model.safetensors.index.json", "config.json", "generation_config.json",
+    # `tok.save_pretrained`. The vocabulary file's name depends on the tokeniser: a BPE pair for
+    # GPT-2 descendants, a sentencepiece model for Llama and Gemma descendants, and `tokenizer.json`
+    # for anything with a fast tokeniser. All of them are listed because which one appears is a
+    # property of the model somebody is about to edit, not something knowable here.
+    "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "added_tokens.json",
+    "vocab.json", "merges.txt", "tokenizer.model", "spiece.model", "chat_template.jinja",
+)
 
 
 def occupied_by(out):

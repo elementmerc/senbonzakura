@@ -27,7 +27,7 @@ import types
 
 import pytest
 
-from senbonzakura import cli, interactive, lengthsweep
+from senbonzakura import cli, interactive, lengthsweep, runrecord
 
 
 def _previous_run(d, *names):
@@ -597,3 +597,60 @@ class TestWritabilityIsCheckedEarly:
 
     def test_a_writable_out_passes(self, tmp_path):
         cli._preflight_output(_args(tmp_path / "fresh"))
+
+
+# ── what a save writes, all of it ─────────────────────────────────────────────────────────────────
+
+class TestTheGuardKnowsEverythingASaveWrites:
+    """A tokenizer in `--out` and no weights was silently overwritable.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit recorded this as "`--out <an existing non-empty directory>` is not pre-flighted",
+    and that framing is wrong in a way worth keeping written down. The guard exists and catches a
+    previous run or an existing model, because `RUN_ARTEFACTS` already listed `config.json`,
+    `model.safetensors` and the sharded weights. What it missed was everything
+    `tok.save_pretrained` writes, so the real exposure was never "any non-empty directory": it was a
+    directory holding tokenizer files and no weights.
+
+    Refusing every non-empty directory was considered and rejected by the operator, because it would
+    refuse a prepared directory with a README, a mounted volume carrying `lost+found`, and a git
+    checkout, and would need a `--force` whose only job is to undo a rule we invented. The question
+    the list answers is "would writing here destroy something", which is answered by naming what a
+    write produces.
+    """
+
+    def test_a_directory_holding_only_a_tokenizer_is_reported_as_occupied(self, tmp_path):
+        (tmp_path / "tokenizer.json").write_text("{}", encoding="utf-8")
+        assert runrecord.occupied_by(tmp_path) == ["tokenizer.json"]
+
+    @pytest.mark.parametrize("name", [
+        "tokenizer_config.json", "special_tokens_map.json", "added_tokens.json",
+        "vocab.json", "merges.txt", "tokenizer.model", "spiece.model", "chat_template.jinja",
+        "generation_config.json",
+    ])
+    def test_every_file_a_save_produces_counts(self, tmp_path, name):
+        """Each is listed because which one appears is a property of the model being edited.
+
+        A BPE pair for GPT-2 descendants, a sentencepiece model for Llama and Gemma descendants,
+        `tokenizer.json` for anything with a fast tokeniser. Nothing here can know in advance.
+        """
+        (tmp_path / name).write_text("x", encoding="utf-8")
+        assert runrecord.occupied_by(tmp_path) == [name]
+
+    def test_an_unrelated_directory_is_still_free_to_write_into(self, tmp_path):
+        """The deliberate limit of the rule, asserted so nobody tightens it by accident."""
+        (tmp_path / "README.md").write_text("notes", encoding="utf-8")
+        (tmp_path / "lost+found").mkdir()
+        assert runrecord.occupied_by(tmp_path) == []
+
+    def test_run_json_is_still_excluded(self, tmp_path):
+        """It is written by this module BEFORE the search, so counting it would make every run
+        report its own directory as occupied by a previous one.
+        """
+        (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+        assert runrecord.occupied_by(tmp_path) == []
+
+    def test_the_list_has_no_duplicates(self):
+        """A repeated name would be reported twice in a refusal that names what it found."""
+        assert len(runrecord.RUN_ARTEFACTS) == len(set(runrecord.RUN_ARTEFACTS))

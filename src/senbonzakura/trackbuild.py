@@ -40,13 +40,14 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
 import random
 import urllib.error
 import urllib.request
+
+from . import argresolve
 
 API = "https://huggingface.co/api/datasets/{repo}"
 
@@ -486,7 +487,7 @@ def build(out, *, skip_licence_check=False, balance_sides=True, log=print):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura track build",
         description="Fetch the upstream corpora this project measures on and write the two "

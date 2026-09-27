@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 
 def whole_number(what, *, minimum=0):
@@ -137,3 +138,64 @@ def explain_that_the_output_is_positional(ap, *, takes):
 
     ap.error = error
     return ap
+
+
+def unknown_long_flags(parser, argv):
+    """Every `--flag` in `argv` that this parser does not declare.
+
+    Only `--` prefixed tokens, which is what makes the check safe. A single dash could be a negative
+    number (`--threads -1` is fine and `-1` is its value), and a value that merely CONTAINS a double
+    dash (`--tensor-type attn_v=--x`) does not start with one. A token that starts with `--` and is
+    not a declared option is what argparse itself would reject, so this agrees with argparse rather
+    than second-guessing it.
+    """
+    known = {opt for action in parser._actions for opt in action.option_strings}  # noqa: SLF001
+    return [tok for tok in argv
+            if tok.startswith("--") and tok.split("=", 1)[0] not in known]
+
+
+class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
+    """An `ArgumentParser` that mentions a mistyped flag even when a required one is also missing.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    `senbonzakura baseline /tmp --sedes 42` reported only `the following arguments are required:
+    --seeds`. The typo was never mentioned, so the obvious next move is to add `--seeds` and run
+    again, which now carries a correct flag AND a silently ignored one. A surface audit found this on
+    every subcommand that has a required flag.
+
+    The ordering is inside argparse: `parse_known_args` raises the required-argument error before it
+    returns anything about unrecognised tokens, so there is nothing to reorder at the call site.
+
+    STRICTLY ADDITIVE, which is the whole design. It never rejects anything that parses today; it
+    only adds a sentence to a refusal that was already happening. The operator chose this over a
+    pre-parse pass that refuses the unknown flag first (2026-09-27), because a scan that refuses can
+    be wrong about a legitimate value and this cannot. The stronger version is noted for v0.5.
+
+    IT DECLINES ON A PARSER WITH SUBCOMMANDS, deliberately. There, `argv` holds the subcommand's own
+    flags, which the top-level parser does not declare and must not report as typos. argparse hands
+    the subparser its own slice of argv, so the subparser still gets this behaviour where it counts.
+    """
+
+    def parse_known_args(self, args=None, namespace=None):
+        # The only way to know what was parsed: argparse keeps no record, and `error` needs one.
+        self._argv_as_given = list(sys.argv[1:] if args is None else args)
+        return super().parse_known_args(args, namespace)
+
+    def error(self, message):
+        if "required" in message and not self._has_subcommands():
+            unknown = unknown_long_flags(self, getattr(self, "_argv_as_given", []))
+            if unknown:
+                from . import say
+
+                named = ", ".join(unknown)
+                verb = "is not a flag" if len(unknown) == 1 else "are not flags"
+                message += "\n" + "\n".join(say.lines(
+                    f"Also, {named} {verb} this command has, so adding the missing one above would "
+                    f"leave it silently ignored. Check the spelling against --help.",
+                    indent="  ", first="  "))
+        super().error(message)
+
+    def _has_subcommands(self):
+        return any(isinstance(a, argparse._SubParsersAction)  # noqa: SLF001
+                   for a in self._actions)

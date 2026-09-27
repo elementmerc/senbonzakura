@@ -121,7 +121,7 @@ def write_slice(path, prompts, label):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap = argparse.ArgumentParser(allow_abbrev=False, description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--track", required=True, help="the track holding bad_ds / good_ds / bad_eval_ds")
     ap.add_argument("--out", required=True, help="directory to write the slices into")

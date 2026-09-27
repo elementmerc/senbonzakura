@@ -63,6 +63,7 @@ class FetchError(Exception):
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura fetch",
         description="Download a model file and verify it is what was asked for.")
     ap.add_argument("source",

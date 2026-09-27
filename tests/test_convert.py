@@ -15,6 +15,7 @@ that actually shipped: the converter's supported-architecture list is a static r
 architecture whose module raises on import stays on the list. Support claimed, support absent, exit
 code zero.
 """
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -567,6 +568,10 @@ class TestTheConversionRecord:
         assert rec["target"]["name"] == "o.gguf"
         assert rec["chat_template_warning"] is None
         assert rec["tool_version"] and rec["provenance"]
+        # The GGUF is identified, not just described. Recomputed rather than asserted present,
+        # because a field holding the wrong digest reads as verification and is worse than a gap.
+        assert rec["target"]["sha256"] == hashlib.sha256(out.read_bytes()).hexdigest(), (
+            "the conversion record does not identify the file it produced")
 
     @needs_converter
     def test_the_record_carries_the_warning_the_log_used_to_carry_alone(self, tmp_path,

@@ -649,6 +649,7 @@ def from_artefact(doc, metric_key, *, seeds):
 def build_parser():
     import argparse
     p = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura baseline",
         description="Record a measurement as the baseline a later run is gated against.")
     # THE ARTEFACT WITHOUT A FLAG. It is the one thing this command cannot work out, so it is the
@@ -784,8 +785,17 @@ def main(argv=None):
         # Wrapped: these refusals are three paragraphs and were printed as three long lines.
         print("\n".join(["refused:", *say.reflow(str(e))]), file=sys.stderr)
         return 2
-    print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f} "
-          f"{written['interval']} on n={written['n']}, seeds {written['seeds']}")
+    # THE UNITS AND THE MISSING INTERVAL, BOTH SAID RATHER THAN PRINTED RAW. This line used to read
+    # "at 2.7486 None on n=1": `interval` is legitimately None on a metric stamped deterministic,
+    # and interpolating it put the word None where a reader looks for a spread. The units were in
+    # the artefact the whole time, one field away, so the summary of a measurement was the one
+    # place its units did not appear.
+    units = (written.get("extra") or {}).get("units")
+    spread = ("no interval, because the metric is stamped deterministic"
+              if written["interval"] is None else f"interval {written['interval']}")
+    print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f}"
+          f"{f' {units}' if units else ''} ({spread}) on n={written['n']}, "
+          f"seeds {written['seeds']}")
     # THE HINT USED TO BE UNFOLLOWABLE. It read `--measurement <new>`, and a reader passed the new
     # run's result artefact, because that is what `--measurement` means on THIS command. `gate`
     # wanted a recorded measurement, so it exited 2 on a schema message. Both steps are named now,

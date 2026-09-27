@@ -149,14 +149,14 @@ def test_the_module_stays_cheap_to_import():
 # ── the bug the first version of the marker rule had ─────────────────────────────────────────────
 
 @pytest.mark.parametrize("prefix", [
-    "NOTE: the refusal-separation filter rejected NONE of 40 candidate axes, so the filter is not "
-    "filtering and the search had nothing to choose between",
-    "WARNING: none of 64 scored trials was intact, so the knee was picked from trials that were all "
-    "broken and the number means nothing",
-    "BROKEN FILTER: all 40 candidate axes scored a refusal separation of zero, which cannot happen "
-    "unless the statistic is being read off the wrong tensor",
-    "MATCHING ACHIEVED NOTHING: the harmless prompts chosen as nearest neighbours were no nearer "
-    "than the harmless set at large",
+    ("NOTE: the refusal-separation filter rejected NONE of 40 candidate axes, so the filter is not "
+     "filtering and the search had nothing to choose between"),
+    ("WARNING: none of 64 scored trials was intact, so the knee was picked from trials that were "
+     "all broken and the number means nothing"),
+    ("BROKEN FILTER: all 40 candidate axes scored a refusal separation of zero, which cannot "
+     "happen unless the statistic is being read off the wrong tensor"),
+    ("MATCHING ACHIEVED NOTHING: the harmless prompts chosen as nearest neighbours were no nearer "
+     "than the harmless set at large"),
 ])
 def test_a_shouted_prose_prefix_is_not_a_marker(prefix):
     """The bug the first marker rule had, and it disabled the module on its own worst case.
@@ -269,3 +269,46 @@ def test_width_falls_back_when_the_terminal_cannot_be_measured(monkeypatch):
 
     monkeypatch.setattr(_shutil, "get_terminal_size", _boom)
     assert 40 <= say.width() <= say.CEILING
+
+
+# ── shorten: a cut value says it was cut ───────────────────────────────────────────────────────────
+
+class TestShortenSaysItShortened:
+    """A value trimmed to fit a column read as complete, which is how a path loses a component.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit found values cut to a column budget with nothing to mark the cut: a path ended
+    mid-component and a GPU's identifier ended mid-string, and both looked like the whole value. A
+    reader copies a cut path. Worse, two cards whose names agree for sixty characters become one
+    card to anybody shown neither the difference nor a sign that something was removed.
+    """
+
+    def test_a_value_that_fits_is_returned_unchanged(self):
+        assert say.shorten("short", 20) == "short"
+
+    def test_a_value_exactly_at_the_limit_is_not_cut(self):
+        """The off-by-one that would put an ellipsis on a value that fitted."""
+        assert say.shorten("abcde", 5) == "abcde"
+
+    def test_a_longer_value_is_cut_to_the_limit_and_marked(self):
+        got = say.shorten("abcdefghij", 8)
+        assert got == "abcde" + say.CUT
+        assert len(got) == 8, "the result overflows the budget it was given"
+
+    def test_the_marker_is_ascii_because_this_goes_through_logs(self):
+        """A single ellipsis character breaks in a terminal whose encoding we do not choose."""
+        assert say.CUT.isascii() and say.CUT == "..."
+
+    def test_a_limit_too_small_to_mark_returns_the_value_whole(self):
+        """At that width there is nothing to report, so the layout gives rather than the truth.
+
+        The alternative is returning two dots and no content, which tells the reader a value
+        exists and nothing about it.
+        """
+        assert say.shorten("abcdefghij", 3) == "abcdefghij"
+        assert say.shorten("abcdefghij", 0) == "abcdefghij"
+
+    def test_a_non_string_is_shortened_rather_than_raising(self):
+        """Callers pass whatever a check produced, and a crash in the formatter loses the report."""
+        assert say.shorten(1234567890, 6) == "123" + say.CUT

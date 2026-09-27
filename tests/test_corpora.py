@@ -11,6 +11,7 @@ rows selected out of a file that parses fine, and two sets merged that measure o
 import csv
 import io
 import json
+import pathlib
 
 import pytest
 from artefacts import needs_corpora
@@ -286,11 +287,18 @@ def test_fetch_itself_also_refuses_rather_than_raising_oserror(monkeypatch):
     assert "gh" in str(e.value)
 
 
-def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys):
-    """Behavioural, so that deleting the preflight() call from main() fails this rather than
-    leaving three green tests that only ever exercised the function directly.
+def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys, tmp_path):
+    """Behavioural, so that deleting the preflight() call fails this rather than leaving three
+    green tests that only ever exercised the function directly.
+
+    THE EMPTY CACHE IS NOW EXPLICIT, 2026-09-27. The prerequisite moved from `main` into `fetch`,
+    so whether a run needs `gh` at all depends on whether anything has to be downloaded. Stating
+    that here rather than inheriting it from the machine is the difference between a test and a coin
+    toss: on a box with warm corpora the previous version of this test would have gone green
+    through the very path it was written to forbid.
     """
     mod = _build_corpora_module()
+    monkeypatch.setattr(mod, "CACHE", tmp_path / "cold")
     monkeypatch.setattr(mod.shutil, "which", lambda _name: None)
 
     def _should_not_run(*_a, **_k):
@@ -299,6 +307,42 @@ def test_the_runner_refuses_and_says_why_end_to_end(monkeypatch, capsys):
     monkeypatch.setattr(mod.subprocess, "run", _should_not_run)
     assert mod.main([]) == 1
     assert "cli.github.com" in capsys.readouterr().err
+
+
+def test_a_check_with_every_source_cached_never_asks_for_the_github_cli(monkeypatch, tmp_path):
+    """The audit's finding: `--check` refused for want of a tool it was never going to invoke.
+
+    `doctor` verifies the same prompt counts with no `gh` and no network, so a reader told to run
+    `corpora --check` on a machine holding every source already met a prerequisite that the work in
+    front of it did not have. A check that demands more than it needs is one people route around.
+
+    Extraction and counting are stubbed because the question here is only which prerequisites the
+    run asks for; what the corpora contain is `test_the_attribution_notice` and friends' business.
+    """
+    mod = _build_corpora_module()
+    from senbonzakura import corpora as corpora_mod
+
+    cache = tmp_path / "warm"
+    cache.mkdir()
+    for c in corpora_mod.CORPORA.values():
+        (cache / f"{c.commit[:12]}-{pathlib.Path(c.path).name}").write_bytes(b"cached")
+    monkeypatch.setattr(mod, "CACHE", cache)
+    monkeypatch.setattr(mod, "read_pins", lambda: {"files": {}})
+    monkeypatch.setattr(corpora_mod, "extract", lambda _raw, _c: ["a prompt"])
+    monkeypatch.setattr(corpora_mod, "check_count", lambda _c, _p: None)
+
+    def _no_gh_here(_name):
+        return None
+
+    def _should_not_run(*_a, **_k):
+        raise AssertionError("a download was attempted although every source was cached")
+
+    monkeypatch.setattr(mod.shutil, "which", _no_gh_here)
+    monkeypatch.setattr(mod.subprocess, "run", _should_not_run)
+
+    payload = mod.build(check_only=True, log=lambda _m: None)
+    assert set(payload) == set(corpora_mod.CORPORA), (
+        "the check did not read every corpus, so it verified less than it reported")
 
 
 def test_the_attribution_notice_prints_once_per_corpus():
@@ -371,18 +415,27 @@ def test_the_shared_sentence_appears_once_however_many_corpora_load():
 
 
 def test_every_corpus_still_carries_its_own_licence_and_upstream():
-    """The obligation is untouched: the licences ask for the notice to travel with the work, not
+    r"""The obligation is untouched: the licences ask for the notice to travel with the work, not
     for the pointer to be repeated once per file.
+
+    WHITESPACE IS NORMALISED, 2026-09-27, and the reason is worth keeping. The notice is now wrapped
+    to the terminal, because an output review found it arriving as ten lines running off the screen.
+    A citation long enough to need wrapping therefore contains a newline, and the raw `in` this test
+    used failed on prose that was entirely correct. This project has hit that exact seam before, on
+    a refusal that read "is not a file" until wrapping made it "is\\nnot a file".
+
+    What is being asserted is that the attribution reached the reader, and that is a question about
+    the words, not about where the lines happen to break.
     """
     corpora._reset_notice_for_tests()
     said = []
     key = min(corpora.CORPORA)
     corpora.notice(key, log=said.append)
-    text = "\n".join(said)
+    text = " ".join(" ".join(said).split())
     c = corpora.CORPORA[key]
     assert c.licence in text
     assert c.upstream in text
-    assert c.attribution in text
+    assert " ".join(c.attribution.split()) in text
 
 
 def test_the_licence_pointer_names_a_path_rather_than_the_inside_of_the_package():

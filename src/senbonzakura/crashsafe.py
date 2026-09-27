@@ -13,9 +13,11 @@ the download" fixes. They import nothing heavy on purpose, so they are unit-test
 
 import contextlib
 import difflib
+import hashlib
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DTensor (torch >= 2.5)
@@ -104,6 +106,45 @@ def free_bytes_for(path):
         # Includes the exists()-then-removed race. An unmeasurable disk is reported as
         # unmeasurable, not as full.
         return None
+
+
+#: Above this many seconds, hashing is long enough that a silent pause needs explaining. Below it,
+#: a line about it is noise in a log a person is reading for the quantisation.
+HASH_IS_WORTH_MENTIONING_S = 5
+
+
+def digest_for_the_record(path, *, what, log=print, chunk=1 << 20):
+    """The sha256 of an artefact we produced, or None with a loud warning.
+
+    WHY EVERY ARTEFACT RECORD CARRIES ONE, decided 2026-09-27
+
+    A quantisation receipt used to hash `llama-quantize` and nothing else, so it stated exactly
+    which tool ran and nothing whatever about what went in or came out. Somebody holding the GGUF
+    could not tell it was the file the receipt describes, which is the one question a receipt exists
+    to answer; and `quantise --prune-source` then deletes the input, so the pairing cannot be
+    reconstructed after the fact either.
+
+    It is unconditional rather than behind a flag because a provenance field that appears only when
+    somebody remembered to ask for it cannot be relied on by anything downstream: a flag can be
+    forgotten, a version cannot. The cost is one sequential read of a file that has just been
+    written and is largely in page cache.
+
+    Never raises. The artefact is the product and it is already verified by the time anything asks
+    for this; a missing hash is a degradation, and it degrades loudly rather than silently.
+    """
+    started = time.monotonic()
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(chunk), b""):
+                digest.update(block)
+    except OSError as e:
+        log(f"  WARNING: could not hash the {what} ({e}). Its sha256 is unrecorded.")
+        return None
+    took = time.monotonic() - started
+    if took > HASH_IS_WORTH_MENTIONING_S:
+        log(f"  hashed the {what} in {took:.0f}s")
+    return digest.hexdigest()
 
 
 def disk_verdict(need_bytes, free_bytes, *, headroom_frac=SAVE_HEADROOM_FRAC):

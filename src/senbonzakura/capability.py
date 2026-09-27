@@ -906,6 +906,7 @@ def build_parser():
     from .parser import loader_parser
 
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura capability",
         description="Measure what an edit cost, on a task the model either gets right or does "
                     "not. Refusal rates and KL cannot see capability loss; this can.",

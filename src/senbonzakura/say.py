@@ -104,6 +104,32 @@ def is_verbatim(line):
     return line != line.lstrip() or is_marker(line)
 
 
+#: What a cut value ends with, so a reader can tell a shortened string from a short one. Three
+#: ASCII dots rather than the single ellipsis character, because this travels through logs and
+#: terminals whose encoding we do not control.
+CUT = "..."
+
+
+def shorten(text, limit):
+    """`text` cut to `limit` characters, saying so, or unchanged when it already fits.
+
+    WHY THE MARKER IS NOT OPTIONAL, 2026-09-27
+
+    A surface audit found values cut to a column budget with nothing to show it: a path lost its
+    last component and a GPU's identifier lost its tail, and both still read as complete. A cut
+    path is worse than a long one, because a reader copies it, and a cut identifier is worse still,
+    because two cards whose names share a prefix become one card.
+
+    A limit too small to hold the marker is a caller error rather than a case to handle: at that
+    width there is nothing to report, so the value is returned whole and the caller's layout is
+    the thing that gives, not the truth of what is shown.
+    """
+    text = str(text)
+    if len(text) <= limit or limit <= len(CUT):
+        return text
+    return text[:limit - len(CUT)] + CUT
+
+
 def lines(text, *, indent="", first=None, columns=None):
     """`text` as a list of lines, none wider than the terminal, commands and markers intact.
 

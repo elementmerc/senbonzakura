@@ -47,6 +47,8 @@ import subprocess
 import sys
 import textwrap
 
+from . import say
+
 #: PyTorch's own channels, newest first. A build for a given CUDA version needs a driver that
 #: supports at least that version, so the pick is the newest channel the driver can carry.
 #: Read from download.pytorch.org rather than invented; `cu132` is the newest at time of writing.
@@ -445,7 +447,10 @@ def _describe(system, machine, gpus, driver, torch_version, variant, log, comput
     elif not gpus:
         log("  NVIDIA driver  present, and it reports no GPU")
     else:
-        log(f"  NVIDIA driver  {len(gpus)} GPU(s): {'; '.join(g[:60] for g in gpus)}")
+        # A card's name is cut WITH A MARKER. Two cards whose names agree for sixty characters are
+        # one card to a reader shown neither difference nor a sign that anything was removed.
+        log(f"  NVIDIA driver  {len(gpus)} GPU(s): "
+            f"{'; '.join(say.shorten(g, 60) for g in gpus)}")
     if driver:
         log(f"  driver CUDA    up to {driver[0]}.{driver[1]}")
     if compute:
@@ -456,6 +461,7 @@ def _describe(system, machine, gpus, driver, torch_version, variant, log, comput
 
 def main(argv=None):
     p = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura setup",
         description="Put the right build of torch on this machine. pip cannot do this itself: "
                     "there is no environment marker for a GPU, and PyPI cannot depend on "

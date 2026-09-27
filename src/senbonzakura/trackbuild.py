@@ -487,6 +487,7 @@ def build(out, *, skip_licence_check=False, balance_sides=True, log=print):
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura track build",
         description="Fetch the upstream corpora this project measures on and write the two "
                     "prompt files `senbonzakura track` splits.")

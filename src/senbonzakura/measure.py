@@ -422,6 +422,7 @@ def verdict_rows(results):
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura measure",
         description="Run every instrument against one model and print one table. The same "
                     "commands, the same numbers, one command line.")

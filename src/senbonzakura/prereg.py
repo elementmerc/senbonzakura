@@ -316,6 +316,7 @@ def build_parser():
     import argparse
 
     p = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura prereg",
         description="Check a pre-registration, and whether a run did what it promised.",
         epilog="""\

@@ -40,6 +40,7 @@ REFUSED = 2
 
 def build_parser():
     p = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura gate",
         description="Compare a measurement against a recorded baseline and fail on a regression.")
     p.add_argument("--baseline", required=True,

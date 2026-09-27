@@ -47,7 +47,12 @@ LM_EVAL = {
         "hellaswag": {"alias": "hellaswag", "acc,none": 0.5712, "acc_stderr,none": 0.0049},
     },
     "group_subtasks": {},
-    "configs": {"gsm8k": {"task": "gsm8k"}, "hellaswag": {"task": "hellaswag"}},
+    # `test_split` is part of what a real lm-eval task config carries, and it was missing here.
+    # While the adapter reported no units, the check that reads it could not fire, so the gap was
+    # invisible: this fixture claimed to be a well-formed log and named no rows for its figures.
+    # Added 2026-09-27 with the units fix, so "well formed" means what it says.
+    "configs": {"gsm8k": {"task": "gsm8k", "test_split": "test"},
+                "hellaswag": {"task": "hellaswag", "validation_split": "validation"}},
     "versions": {"gsm8k": 3.0, "hellaswag": 1.0},
     "n-shot": {"gsm8k": 5, "hellaswag": 0},
     "higher_is_better": {"gsm8k": {"exact_match": True}, "hellaswag": {"acc": True}},

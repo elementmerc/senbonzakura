@@ -94,8 +94,23 @@ def run(name, argv, *, expect_marker=None, expect_text=None, expect_fail=False,
         print("  exited 1 with MARGIN_READOUT_SUSPECT, which is this model saying its own AUC is "
               "not a measurement. Allowed here; the figure below is a plumbing check.")
 
+    # WHITESPACE-NORMALISED BEFORE MATCHING, 2026-09-27, and this is a release gate so it is worth
+    # the paragraph. This tool now wraps its long messages to the terminal, which means any needle
+    # of more than one word can be split across a line break by a wrap point that MOVES with
+    # runtime values: an install path five characters longer shifts every following word.
+    #
+    # A blast-radius pass measured the actual exposure. `harmful rows for selection` survives today
+    # with fourteen columns of margin, and survives only because the toy track's
+    # `counts.harmful.search` is 4 against an auto `--eval-refusal` of 64, so the message takes its
+    # SHORTER branch. The other branch breaks the same phrase in 64 of 64 combinations tested. So
+    # this gate holds by luck and one number away from not holding, and it would fail on a correct
+    # refusal, which is the worst way for a release gate to go red.
+    #
+    # Normalising here immunises all six `expect_text` values at once and costs nothing. Markers are
+    # single tokens and cannot straddle, so they were never at risk; this is for the phrases.
+    flat = " ".join(out.split())
     for needle in filter(None, [expect_marker, expect_text]):
-        if needle not in out:
+        if " ".join(needle.split()) not in flat:
             raise SmokeError(f"{name}: exited {p.returncode} without ever printing {needle!r}, so "
                          f"nothing here shows the work was done.\n{out[-2000:]}")
 

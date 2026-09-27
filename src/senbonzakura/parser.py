@@ -522,12 +522,17 @@ def build_parser(full=False):
                          "prompts proposes one candidate direction, and the best separators are "
                          "kept up to --max-directions. Independent of that ceiling, so the "
                          "candidate set does not move when the budget does.")
+    # `metavar` so argparse's generated usage line does not carry the four choices inline. It was
+    # 86 columns on an 80-column terminal, which wraps into something unreadable on the one surface
+    # a reader meets before anything else. The choices are named in the help text instead, where
+    # there is room to say what each one means. Same treatment as `--method`.
     ap.add_argument("--separation-statistic", dest="separation_statistic",
                     choices=_separation.CHOICES, default=_separation.DEFAULT_STATISTIC,
+                    metavar="STATISTIC",
                     help="which statistic decides whether a candidate axis carries refusal rather "
-                         "than topic. 'cohens-d' (default) has a threshold that means a different "
-                         "thing at every cluster size; 'variance-ratio' is the ANOVA F, whose null "
-                         "is 1.0 at any size.")
+                         "than topic. One of: " + ", ".join(_separation.CHOICES) + ". 'cohens-d' "
+                         "(default) has a threshold that means a different thing at every cluster "
+                         "size; 'variance-ratio' is the ANOVA F, whose null is 1.0 at any size.")
     ap.add_argument("--matched-scoring", dest="matched_scoring", action="store_true", default=True,
                     help="judge each candidate direction against the harmless prompts nearest it "
                          "in content rather than against the harmless set at large, so that "
@@ -548,9 +553,12 @@ def build_parser(full=False):
                          "and after are scored on the same items, so the comparison is paired. "
                          "Much below 200 the error bar covers the effect this edit is expected to "
                          "have, which reads like a measurement and is not one.")
+    # Same reason as `--separation-statistic` above: five choices inline made this 93 columns.
     ap.add_argument("--capability-task", dest="capability_task",
-                    choices=_capability_tasks(), default="numeric",
-                    help="how the probe grades: see `senbonzakura capability --help`.")
+                    choices=_capability_tasks(), default="numeric", metavar="TASK",
+                    help="how the probe grades. One of: " + ", ".join(_capability_tasks())
+                         + " (default: numeric). `senbonzakura capability --help` says what each "
+                           "one measures.")
     ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=512,
                     help="token budget per probe answer (default: 512). A worked solution is long, "
                          "and a budget that cuts it off measures the budget rather than the model. "

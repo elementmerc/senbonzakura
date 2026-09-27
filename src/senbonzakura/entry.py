@@ -316,6 +316,41 @@ def _not_a_command(word):
             f"be mistaken for a command.")
 
 
+def _read_as_a_model(word):
+    """A notice that a bare word is being taken as a model id, or None when nothing needs saying.
+
+    WHY THIS IS A NOTICE AND NOT A REFUSAL, 2026-09-27
+
+    `_not_a_command` above fires on a near miss and on a retired name, and deliberately lets every
+    other bare word through, because a Hub id is a positional and refusing unknown words to catch
+    typos would break real invocations. That reasoning is sound and its consequence was not:
+    `senbonzakura frobnicate` was SILENTLY read as `--model frobnicate` and then failed on something
+    unrelated, so a surface audit saw it exit 1 complaining about CUDA. On a machine with a card it
+    goes on to try to fetch a model called `frobnicate`.
+
+    Refusing it was considered and rejected: canonical Hub ids with no organisation are real, so
+    `senbonzakura gpt2` and `senbonzakura bert-base-uncased` must keep working, and a rule about
+    slashes would break them. The fix is therefore to say out loud what interpretation was chosen,
+    before anything expensive happens, so the one word of feedback the user needed is there.
+
+    The operator chose this over refusing, on 2026-09-27.
+    """
+    import os
+
+    if not word or word.startswith("-"):
+        return None
+    if word in DELEGATED or word in ALIASES or word in RETIRED or word == "abliterate":
+        return None
+    # A slash or an existing path is unambiguous: nobody mistypes a command into either.
+    if "/" in word or os.sep in word or os.path.exists(word):
+        return None
+    from . import say
+    return say.refusal_text(
+        f"senbonzakura: reading `{word}` as a model id, since it is not a command.",
+        "If you meant a command, `senbonzakura --help` lists them. If you meant a model, this is "
+        "right and the next line will be the download.")
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -347,6 +382,11 @@ def main(argv=None):
         if mistake:
             print(mistake, file=sys.stderr)
             return 2
+        # Said BEFORE the model loads, on stderr so a captured stdout is unchanged. The interpretation
+        # was always this; the only new thing is that the user is told which one was chosen.
+        notice = _read_as_a_model(argv[0])
+        if notice:
+            print(notice, file=sys.stderr)
 
     if argv and argv[0] in DELEGATED:
         name = argv[0]

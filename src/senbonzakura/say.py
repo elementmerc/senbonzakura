@@ -140,6 +140,24 @@ def say(text, *, indent="", first=None, log=print, columns=None):
         log(line)
 
 
+def refusal_text(head, *paragraphs, columns=None):
+    """A refusal as a STRING, wrapped, for `raise SystemExit(...)`.
+
+    The shape every good refusal in this tool already had: a short head, then the reason, then what
+    to type, each its own paragraph with a blank line between. Blank lines matter as much as the
+    width; the audit that prompted this module complained about their absence just as often.
+
+    The head is wrapped too, so keep it short: a head long enough to wrap leaves the
+    `senbonzakura:` prefix alone on the first line, which reads like a crash. Put interpolated paths
+    in a paragraph of their own rather than in the head, for that reason.
+    """
+    out = list(lines(head, columns=columns))
+    for para in paragraphs:
+        out.append("")
+        out.extend(lines(para, indent="  ", columns=columns))
+    return "\n".join(out)
+
+
 def refusal(head, body, *, log=print, columns=None):
     """A refusal: one shouted line, then the reason and the next step, indented and wrapped.
 

@@ -5346,7 +5346,33 @@ def _preflight_device(args, log=print):
             "senbonzakura: --device is 'mps' and this build of torch reports no MPS device.\n"
             "  Use --device cpu, or install a torch built with MPS support.\n"
             "  `senbonzakura doctor` reports what this install can and cannot do.")
+    # AND FINALLY, WHETHER IT IS A DEVICE AT ALL. Everything above asks whether a KNOWN device is
+    # usable; nothing asked whether the string names a device, so `--device banana` fell straight
+    # through to `model.to("banana")` and reached the user as fourteen frames of traceback out of
+    # torch, AFTER the model had downloaded and loaded. Found by a surface audit on 2026-09-27, and
+    # it is the one flag in this pre-flight block that was not checked here: `--track`, `--out`,
+    # `--trials`, the direction budget and CUDA availability all are.
+    #
+    # The accepted set is what `--help` documents, plus the accelerators torch names that somebody
+    # may legitimately have. An unknown one is refused with the list rather than passed on, because
+    # torch's own message is a comma-separated dump of twenty backend names with no advice in it.
+    if kind not in _KNOWN_DEVICES:
+        raise SystemExit(say.refusal_text(
+            f"senbonzakura: --device {device!r} is not a device this tool knows.",
+            "Checked here rather than at load time, because torch raises on it only after the model "
+            "has been downloaded and placed, and then says so in twenty frames.",
+            "What to pass:\n"
+            "    --device cpu       every machine, correct and slow\n"
+            "    --device cuda      an NVIDIA card\n"
+            "    --device cuda:1    a specific card when there are several",
+            "`senbonzakura doctor` says what this machine actually has."))
     return device
+
+
+#: Device kinds this tool accepts. `cpu` and `cuda` are what the documentation offers; the rest are
+#: accelerators torch names, accepted because somebody with one should not be told their hardware is
+#: a typo. Anything else is a typo, and saying so before a download is the whole point.
+_KNOWN_DEVICES = frozenset({"cpu", "cuda", "mps", "xpu", "hpu", "npu", "mtia", "meta"})
 
 
 def _budget_warning(budget):

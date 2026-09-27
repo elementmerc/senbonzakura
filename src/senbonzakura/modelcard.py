@@ -45,22 +45,10 @@ NOT_MEASURED = "**NOT MEASURED.** Nothing in the supplied artefacts covers this.
 KL_PLACES = 4
 
 
-def _refusal(head, *body):
-    """A refusal string, wrapped, for `raise SystemExit(...)`.
-
-    Wrapped here rather than left to the terminal: these sentences run to 300 characters and the
-    audit that prompted the rewrite found that the CONTENT of this tool's refusals is its best
-    writing and the LINE LENGTH is what makes them unreadable. `say` leaves indented commands and
-    machine markers alone, so an example inside one of these stays pasteable.
-    """
-    out = list(say.lines(head))
-    for para in body:
-        # A BLANK LINE BETWEEN PARAGRAPHS. The audit complained about missing whitespace as often as
-        # about line length, and a refusal is usually three separate thoughts: what is wrong, why it
-        # matters, what to type. Run together they read as one paragraph nobody finishes.
-        out.append("")
-        out.extend(say.lines(para, indent="  "))
-    return "\n".join(out)
+#: MOVED TO `say.refusal_text`, 2026-09-27, rather than kept here. This function existed in this
+#: module for about an hour before the same shape was needed for `--device` and for the entry
+#: point's notices, which is exactly how two hand-kept copies of a fact begin.
+_refusal = say.refusal_text
 
 
 def _number(value, kind):

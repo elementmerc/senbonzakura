@@ -168,20 +168,28 @@ def notice(log=print):
     if _state["notified"]:
         return
     _state["notified"] = True
-    log(f"Using the bundled Senbonzakura evaluation track ({LICENCE}).")
-    log("  Attribution is required, and use is NON-COMMERCIAL. The prompts are HARMFUL requests")
-    log("  and matched harmless ones, from AdvBench (Zou et al. 2023), Alpaca (Taori et al. 2023)")
-    log("  and two HuggingFace datasets: Bahushruth/abliteration-harmful-enriched (Apache-2.0)")
-    log("  and mlabonne/harmless_alpaca.")
-    # NOT docs/evaluation-track-card.md. That is not installed: `docs/` is in neither
-    # package-data nor license-files, so the notice pointed the reader at a file their install
-    # does not contain, which is the whole of the 2026-09-10 attribution finding. What ships is
-    # THIRD-PARTY-NOTICES.md, under dist-info/licenses/, and it now carries the chain.
-    log("  Full attribution and the licence chain: THIRD-PARTY-NOTICES.md, installed beside the")
-    log("  package under its dist-info/licenses/ directory.")
-    log("  It is wrapped in the package to keep it out of automated scrapes, not to keep it")
-    log("  secret: the key ships beside it and this is a speed bump rather than protection.")
-    log("  Pass --track to use your own corpus instead.")
+    # THREE LINES, DOWN FROM ELEVEN. Operator instruction 2026-09-27, after an output review found
+    # this project explaining itself at the reader rather than telling them what they need.
+    #
+    # What went, and why none of it was the obligation. The list of upstream sources and the licence
+    # chain are in THIRD-PARTY-NOTICES.md, which ships beside the package and is named here; the
+    # licences ask for the notice to travel with the work, not to be reprinted per run. The
+    # dist-info path was detail nobody needs to find a file by name. And four of the eleven lines
+    # explained WHY the corpus is obfuscated, which is a design decision, not something a user
+    # running a command has to be told.
+    #
+    # What stayed, deliberately: the licence, because this IS the licence notice; NON-COMMERCIAL,
+    # because it is a restriction on what the reader may do and the one thing here they could get
+    # wrong; that the prompts are harmful, because somebody should know what is about to load; and
+    # the flag for using their own corpus.
+    #
+    # NOT docs/evaluation-track-card.md: `docs/` is in neither package-data nor license-files, so
+    # naming it pointed readers at a file their install does not contain. That was the whole of the
+    # 2026-09-10 attribution finding.
+    log(f"Using the bundled evaluation track ({LICENCE}: attribution required, NON-COMMERCIAL).")
+    log("  It holds harmful prompts and matched harmless ones. They are obfuscated as a speed bump,")
+    log("  not protection: the key ships beside it.")
+    log("  Full attribution: THIRD-PARTY-NOTICES.md, beside this install. Your own: --track.")
 
 
 def _reset_notice_for_tests():

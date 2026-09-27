@@ -229,9 +229,22 @@ def notice(key, log=print):
         return
     _notified.add(key)
     c = CORPORA[key]
-    log(f"Using the bundled corpus {c.name} ({c.licence}).")
-    log(f"  {c.attribution}")
-    log(f"  From {c.upstream} @ {c.commit}. Attribution travels with any figure you publish.")
+    # ONE LINE PER CORPUS, not three, and the citation moved to the file that ships beside the
+    # package. Operator instruction 2026-09-27, after an output review found `doctor` opening with
+    # twenty-two lines of this and repeating one sentence six times, so the report the user asked for
+    # started a screen and a half down.
+    #
+    # The obligation is unchanged and the paragraph below already says why: the licences ask for the
+    # notice to travel with the work, not to be reprinted at the reader. `THIRD-PARTY-CORPORA.md`
+    # carries every citation, every upstream and every pinned commit, it is installed beside the
+    # package, and the tail line names it. `senbonzakura doctor` lists all six with their licences.
+    # TWO LINES PER CORPUS, down from three, and the first draft of this cut was ONE line and was
+    # wrong. It dropped the citation and the upstream, and `test_every_corpus_still_carries_its_own_
+    # licence_and_upstream` failed, correctly: those two are the attribution the licences actually
+    # ask for, so they are the part that cannot be moved to a file the reader has not opened. The
+    # shared pointer and the repeated sentence were the padding, and they are what went.
+    log(f"Bundled corpus: {c.name} ({c.licence}). {c.attribution}")
+    log(f"  {c.upstream} @ {c.commit}")
     # THE SHARED SENTENCE, ONCE PER PROCESS RATHER THAN ONCE PER CORPUS.
     #
     # The per-corpus lines above are the obligation and are per corpus because they differ. The two
@@ -245,9 +258,11 @@ def notice(key, log=print):
     # work, not for it to be repeated once per file.
     if not _tail_shown:
         _tail_shown.append(True)
-        where = _notices_path()
-        log(f"  Terms for every bundled corpus: {where}")
-        log("  The default capability probe is listed in THIRD-PARTY-NOTICES.md beside it.")
+        # ONE SENTENCE, and a filename rather than an absolute path. The path was the full
+        # site-packages location, 167 characters on the review box, which wrapped on every terminal
+        # and told the reader nothing they could not get from the name.
+        log("  Citations and terms: THIRD-PARTY-CORPORA.md, beside this install. Attribution "
+            "travels with any figure you publish.")
 
 
 #: Whether the shared tail of the notice has been printed in this process. A list rather than a

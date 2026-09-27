@@ -5410,8 +5410,7 @@ def _preflight_datasets(args):
         from . import bundled
         if bundled.is_available():
             remedy = ("  Quickest fix, no network and no download:\n"
-                      "    --track default   (the evaluation track bundled in this install;\n"
-                      "                       CC BY-NC 4.0, attribution required, non-commercial)\n"
+                      "    --track default   (the bundled evaluation track)\n"
                       "  Or build your own from prompt files:\n"
                       "    senbonzakura track --out my-track --harmful <file> --harmless <file>")
         else:
@@ -5701,8 +5700,7 @@ def resolve_track(args, *, log=print):
     from .bundled import is_available
     if is_available():
         args.track = _dataset.BUNDLED_ALIAS
-        log("track: using the evaluation track bundled in this install (CC BY-NC 4.0, "
-            "attribution required, non-commercial). Build your own with `senbonzakura track`.")
+        log("track: using the bundled evaluation track.")
         return args.track
 
     # NOT A REFUSAL HERE. Resolution runs at the top, before every other pre-flight, and a

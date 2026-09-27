@@ -77,12 +77,52 @@ import torch
 
 from . import cli
 
+#: The page `--help` prints, which is NOT the module docstring above.
+#:
+#: WHY THEY ARE SEPARATE. `description=__doc__` put the whole docstring on the screen: 158 lines
+#: opening with two paragraphs about a filter bug and its fix date, then a literature review with
+#: an arXiv number, before a single flag appeared. All of that is worth keeping for somebody
+#: reading the module and none of it answers "what does this command do", which is the question
+#: `--help` is asked. Internal docs get length; a help page gets the answer.
+HELP = """\
+Do the extra refusal directions carry refusal, or do they carry topic?
+
+The extractor finds several directions per layer. That it finds them is not
+evidence that they are refusal directions: a cluster of harmful prompts about
+one subject differs from harmless prompts partly because of the subject. These
+experiments are what tells the two apart.
+
+  e1        leave one cluster out. Do the directions still separate a topic
+            they were never fitted on? A topic direction cannot; a refusal
+            one can.
+  e2        random-direction control. Do fitted extra directions beat random
+            orthogonal ones at the same K, or is the gain just cutting more?
+  e3        K sweep from one fixed configuration, at one ablation strength.
+  e4        the K sweep across several strengths, compared at matched refusal
+            removal, so a K that merely cuts harder cannot look better.
+  transfer  forward hook against weight bake. These are supposed to be the
+            same operation, and anything tuned against the hook assumes so.
+  reach     does the edit arrive in the residual stream, per layer type?
+
+`--experiment all` runs them in that order. On an architecture nobody has
+tried, run reach first; otherwise run e1. Both are cheap and either can
+invalidate the rest.
+
+The track comes from `senbonzakura track` and must carry the fit / search /
+measure split. A bare directory of prompts will not do, because every control
+here depends on measuring on rows the directions were not fitted on.
+
+example:
+  senbonzakura validate --model Qwen/Qwen3-1.7B --track mytrack \\
+      --experiment e1 --out validation.json
+"""
+
 
 def build_args(argv=None):
     # `prog` is set because argparse otherwise reads it off sys.argv[0], which is `python -m
     # senbonzakura` on the delegated path: the usage line then printed a command that does not
     # include the word `validate`, so copying it ran the abliterator.
-    ap = argparse.ArgumentParser(prog="senbonzakura validate", description=__doc__,
+    ap = argparse.ArgumentParser(prog="senbonzakura validate", description=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True,
                     help="HF model id or local path. The BASE model, not an abliterated one: "
@@ -95,39 +135,26 @@ def build_args(argv=None):
                          "on rows the directions were not fitted on")
     ap.add_argument("--experiment", default="all",
                     choices=["e1", "e2", "e3", "e4", "transfer", "reach", "all"],
-                    help="which experiment to run (default: all). e1 leave-one-cluster-out, e2 "
-                         "random-direction control, e3 K sweep at one strength, e4 K sweep "
-                         "compared at matched refusal removal, transfer hook-versus-bake "
-                         "agreement, reach whether the edit lands per layer type. Start with "
-                         "reach on an unfamiliar architecture and e1 otherwise; both are cheap "
-                         "and either can invalidate the rest")
+                    help="which experiment to run (default: all). They are described above.")
     ap.add_argument("--strengths", default="0.3,0.5,0.7,0.85,1.0",
-                    help="ablation strengths for the E4 grid. The weakest must leave refusal "
-                         "partly standing or the grid has no room for K to show an effect, "
-                         "which is how the first run of this sweep measured nothing.")
+                    help="ablation strengths for the e4 grid. The weakest must leave refusal partly "
+                         "standing, or the grid has no room for K to show an effect at all.")
     ap.add_argument("--out", required=True,
                     help="where to write the results json. One file holds every experiment that "
                          "ran, keyed by name, so a later `--experiment` on the same path replaces "
                          "the file rather than merging into it")
     ap.add_argument("--device", default="cuda",
-                    help="cuda, cuda:N, or cpu (default: cuda). THE DEFAULT IS STATED "
-                         "because it decides whether the command runs at all: on a machine "
-                         "with no card the default fails, and until 2026-09-26 the only way "
-                         "to learn what it was was to trigger that failure. `senbonzakura "
-                         "doctor` reports what this machine has, without a card and without "
-                         "a download")
+                    help="cuda, cuda:N, or cpu (default: cuda). A machine with no card needs "
+                         "--device cpu; `senbonzakura doctor` says what this one has.")
     ap.add_argument("--chat-template", dest="chat_template", default="",
-                    help="a Jinja chat template for a model that ships none: a path, or the name "
-                         "of one this tool bundles ('plain'). Every experiment here loads a model "
-                         "and renders prompts through it, so a base model with no template of its "
-                         "own is refused without this. `reach` on Bamba-9B and "
-                         "Nemotron-H-4B-Base-8K both need it, and both failed with "
-                         "'unrecognized arguments' until this flag existed here")
+                    help="a Jinja chat template for a model that ships none: a path to one, or a "
+                         "bundled name ('plain'). Every experiment here renders prompts, so a base "
+                         "model with no template of its own is refused without this.")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="some architectures ship their modelling code with the weights")
     ap.add_argument("--max-directions", type=int, default=8,
                     help="the largest K the sweeps go up to (default: 8). A CEILING, not a pin: "
-                         "E3 and E4 measure every K from 1 up to it, which is the whole point of "
+                         "e3 and e4 measure every K from 1 up to it, which is the whole point of "
                          "a sweep. Setting it to 2 does not run a K=2 arm, it runs K=1 and K=2")
     ap.add_argument("--direction-clusters", type=int, default=8,
                     help="how many clusters the extractor splits the harmful prompts into before "

@@ -161,9 +161,15 @@ def test_the_command_exits_zero_for_a_good_judge(tmp_path):
 
 
 def test_an_unreadable_file_is_a_clear_refusal(tmp_path):
-    with pytest.raises(SystemExit, match="could not read"):
+    # THE WORDING CHANGED ON 2026-09-27 and the property did not. This matched "could not read",
+    # which was the opening of a message whose remainder was the JSON decoder's own text: an
+    # absent file and a malformed one produced the same sentence with a different exception
+    # stapled to it. The refusals are now separate and each names its own next step, so the match
+    # is on the one that fires here.
+    with pytest.raises(SystemExit, match="there is no file at") as e:
         judge.main(["--judge", str(tmp_path / "nope.jsonl"),
                     "--reference", str(tmp_path / "also-nope.jsonl")])
+    assert "nope.jsonl" in str(e.value), "the refusal has to name the file it could not open"
 
 
 def test_the_verdict_can_be_written_for_a_run_to_record(tmp_path):

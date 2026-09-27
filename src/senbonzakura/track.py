@@ -614,8 +614,27 @@ def write_track(out: Path, harmful: dict[str, list[str]], harmless: dict[str, li
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura track",
-        description="Build an evaluation track with a fit / search / measure split that is "
-                    "checked before it is written.")
+        # THE SUBCOMMANDS ARE NAMED HERE because they are dispatched on argv[0] before this parser
+        # runs, so argparse cannot list them and a reader of this page could not learn they exist.
+        # `build` has a good page of its own and the top-level help lists it; `track --help`, which
+        # is where somebody looking for it would go, did not mention it at all.
+        # Hard-wrapped, because `RawDescriptionHelpFormatter` below prints this verbatim so that
+        # the subcommand table in the epilog keeps its columns.
+        description="Build an evaluation track with a fit / search / measure split that is\n"
+                    "checked before it is written.",
+        epilog="subcommands, each with a --help of its own:\n"
+               "  senbonzakura track build         fetch the public prompt pools and write the\n"
+               "                                  two text files this command splits\n"
+               "  senbonzakura track promote DIR   stamp a track that passes its checks, as one\n"
+               "                                  measurements may come from\n"
+               "  senbonzakura track verify DIR    re-check a stamped track, changing nothing\n"
+               "\n"
+               "the sequence, from nothing to a track a run can use:\n"
+               "  senbonzakura track build --out corpus\n"
+               "  senbonzakura track --out mytrack \\\n"
+               "      --harmful corpus/harmful.txt --harmless corpus/harmless.txt\n"
+               "  senbonzakura track promote mytrack\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     # Not required, because --audit reads an existing track and has no use for them; making
     # them mandatory forced anyone checking a track to invent two paths that are never read.
     ap.add_argument("--harmful", default="", help="text file of harmful prompts, one per line")
@@ -673,10 +692,45 @@ def load_partitions(track: Path) -> tuple[dict[str, list[str]], dict[str, list[s
     the prompt renderer disagreed and put the compass's read-out on the wrong token.
     """
     from . import trackio
+    manifest = Path(track) / "track.json"
+    # THREE FAULTS, THREE MESSAGES, because they need three different next steps: there is no
+    # track there, there is a track with no manifest, or the manifest is not valid JSON. The one
+    # message this replaced handed the reader whichever OSError or JSONDecodeError arrived,
+    # verbatim, so `--audit` on a missing directory printed "[Errno 2] No such file or directory:
+    # 'track/track.json'" and said nothing about how to get one.
     try:
-        m = json.loads((track / "track.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise SystemExit(f"{track} has no readable track.json, so its split cannot be checked: {e}") from e
+        m = json.loads(manifest.read_text(encoding="utf-8"))
+    except FileNotFoundError as e:
+        if not Path(track).is_dir():
+            raise SystemExit(
+                f"there is no track at {track}.\n"
+                f"  Pass --out with the directory your track is in, or build one:\n"
+                f"    senbonzakura track build --out corpus\n"
+                f"    senbonzakura track --out {track} \\\n"
+                f"        --harmful corpus/harmful.txt --harmless corpus/harmless.txt") from e
+        raise SystemExit(
+            f"{track} holds no track.json, so nothing records where its\n"
+            f"  fit / search / measure boundaries fell. A directory of prompt files is\n"
+            f"  not a track: only `senbonzakura track` writes that file.\n"
+            f"  Rebuild it:\n"
+            f"    senbonzakura track --out {track} \\\n"
+            f"        --harmful <harmful.txt> --harmless <harmless.txt>") from e
+    except json.JSONDecodeError as e:
+        raise SystemExit(
+            f"{manifest} is not valid JSON, so its boundaries cannot be read.\n"
+            # `removesuffix(" at")`: the decoder appends the position to some of its own reasons
+            # ("Invalid control character at"), and the position is already in the line above.
+            f"  It breaks at line {e.lineno}, column {e.colno}: "
+            f"{e.msg.removesuffix(' at')}.\n"
+            f"  Something has edited or truncated it. Rebuild the track rather than\n"
+            f"  repairing the file by hand, because the boundaries have to match the\n"
+            f"  prompt files beside it:\n"
+            f"    senbonzakura track --out {track} \\\n"
+            f"        --harmful <harmful.txt> --harmless <harmless.txt>") from e
+    except OSError as e:
+        raise SystemExit(
+            f"{manifest} could not be read: {e.strerror or e}.\n"
+            f"  Check the permissions on it, and that the disk holding {track} is mounted.") from e
 
     counts = m["counts"]
     bad_fit = trackio.read_text_column(track / "bad_ds")

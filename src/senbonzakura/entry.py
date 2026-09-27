@@ -319,6 +319,18 @@ def main(argv=None):
     # A plain-English second name resolves to the command it stands for, before anything else
     # looks at it, so every downstream error message names the real command.
     if argv and argv[0] in ALIASES:
+        # AND `--help` SAYS SO, in one line, before the page. `harm-recognition --help` printed
+        # `compass --help` byte for byte: a page whose usage line, examples and artefact names are
+        # all `compass`, handed to somebody who typed a different word. The resolution is the right
+        # behaviour and it was silent, which leaves the reader to work out whether they ran the
+        # thing they asked for.
+        #
+        # Only on the help path. Every other invocation stays byte-identical, so a redirected run,
+        # a captured log and every `stdout-contains` check see what they saw before.
+        if {"-h", "--help"} & set(argv[1:]):
+            print(f"`{argv[0]}` is another name for `{ALIASES[argv[0]]}`. "
+                  f"Its own help follows,\nand every artefact it writes says "
+                  f"`{ALIASES[argv[0]]}`.\n")
         argv[0] = ALIASES[argv[0]]
 
     if argv:

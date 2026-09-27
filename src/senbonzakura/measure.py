@@ -434,12 +434,8 @@ def build_parser():
                          "bundled in this install; otherwise a directory `senbonzakura track` "
                          "built")
     ap.add_argument("--device", default="cuda",
-                    help="cuda, cuda:N, or cpu (default: cuda). THE DEFAULT IS STATED "
-                         "because it decides whether the command runs at all: on a machine "
-                         "with no card the default fails, and until 2026-09-26 the only way "
-                         "to learn what it was was to trigger that failure. `senbonzakura "
-                         "doctor` reports what this machine has, without a card and without "
-                         "a download")
+                    help="cuda, cuda:N, or cpu (default: cuda). A machine with no card needs "
+                         "--device cpu; `senbonzakura doctor` says what this one has.")
     ap.add_argument("--baseline", default=None,
                     help="the model this one was edited from. Given, the coherence cost is also "
                          "measured against it on one ruler, which is the comparable number; "

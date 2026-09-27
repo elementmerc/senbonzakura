@@ -873,14 +873,16 @@ def build_parser():
                          "benchmark with a question column and an answer column, such as "
                          "openai/gsm8k:main::test, or a contributed probe directory. A plain "
                          "prompt list will not do: marking needs the reference answer")
-    ap.add_argument("--task", choices=TASK_CHOICES, default=DEFAULT_TASK,
-                    help="how the answers are graded. 'numeric' (default) reads the last number, "
-                         "for arithmetic sets like GSM8K; 'multiple-choice' reads the last option "
-                         "letter; 'exact' compares the last line as text after normalising case "
-                         "and articles. Every one is graded by code against a reference answer, "
-                         "so no judge model is involved and none has to be validated first. The "
-                         "task is recorded in the output, because an accuracy means nothing "
-                         "without knowing what was asked.")
+    # `metavar` so the usage line reads `[--task TASK]`. Spelling the five choices there pushed it
+    # past 80 columns, and the choices are listed in the help below, where there is room to say
+    # what each one means.
+    ap.add_argument("--task", choices=TASK_CHOICES, default=DEFAULT_TASK, metavar="TASK",
+                    help="how the answers are graded, and it is recorded in the output. 'numeric' "
+                         "(default) reads the last number; 'multiple-choice' reads the last option "
+                         "letter; 'exact' compares the last line as text, ignoring case and "
+                         "articles; 'tool-call' compares a JSON tool name and its arguments; "
+                         "'constraints' checks a format instruction was followed. All grade by "
+                         "code against a reference answer, so no judge model is involved.")
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--question-column", dest="question_column", default=None,

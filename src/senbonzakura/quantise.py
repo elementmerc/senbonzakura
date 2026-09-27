@@ -184,8 +184,13 @@ def build_parser():
                          "directory, which is converted to GGUF first with the pinned converter")
     ap.add_argument("out", nargs="?", default=None,
                     help="output path (default: the source with its quant name substituted)")
-    ap.add_argument("--type", default="Q4_K_M", choices=QUANT_TYPES,
-                    help="target quantisation (default: Q4_K_M)")
+    # `metavar` so the usage line reads `[--type TYPE]`. Spelling all sixteen choices there made it
+    # 136 columns wide, which wraps into four lines of quantisation names on any real terminal and
+    # buries the two positional arguments a reader is actually looking for. The choices are still
+    # enforced, and listed in the help below where there is room for them.
+    ap.add_argument("--type", default="Q4_K_M", choices=QUANT_TYPES, metavar="TYPE",
+                    help="target quantisation (default: Q4_K_M). One of: "
+                         + ", ".join(QUANT_TYPES))
     ap.add_argument("--threads", type=int, default=0,
                     help="worker threads; 0 lets llama-quantize choose")
     ap.add_argument("--allow-requantize", action="store_true",
@@ -199,11 +204,9 @@ def build_parser():
     ap.add_argument("--output-tensor-type", dest="output_tensor_type", default=None,
                     choices=gguf_io.OVERRIDE_TYPES, metavar="TYPE",
                     help="keep the output head at this precision instead of whatever the recipe "
-                         "chose. The head reads out over the whole vocabulary and is where "
-                         "quantisation damage shows first, so Q8_0 or F16 here costs little size "
-                         "and buys back most of it. A model with TIED embeddings has no separate "
-                         "head at all, and this run says so rather than reporting a silent "
-                         "no-op as success")
+                         "chose. Quantisation damage shows there first, so Q8_0 or F16 costs little "
+                         "size and buys back most of it. Refused on a model with tied embeddings, "
+                         "which has no separate head")
     ap.add_argument("--token-embedding-type", dest="token_embedding_type", default=None,
                     choices=gguf_io.OVERRIDE_TYPES, metavar="TYPE",
                     help="the same for the token embedding table")

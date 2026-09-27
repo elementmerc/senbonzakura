@@ -366,9 +366,13 @@ def test_audit_refuses_when_the_manifest_disagrees_with_the_files(tmp_path):
 
 
 def test_audit_without_a_manifest_says_so(tmp_path):
+    # THE WORDING CHANGED ON 2026-09-27. "no readable track.json" covered three faults at once and
+    # appended whichever exception arrived, so a missing directory printed "[Errno 2] No such file
+    # or directory". The three now have three messages; this is the one for a directory that is
+    # there and holds no manifest.
     out = tmp_path / "bare"
     out.mkdir()
-    with pytest.raises(SystemExit, match=r"no readable track\.json"):
+    with pytest.raises(SystemExit, match=r"holds no track\.json"):
         track.main(["--out", str(out), "--audit"])
 
 
@@ -976,9 +980,14 @@ def test_blank_lines_in_the_benchmark_file_are_not_counted_as_rows(tmp_path):
 
 
 def test_a_contamination_check_against_a_track_that_is_not_there_refuses(tmp_path):
+    # `track.json` USED TO BE THE ASSERTION and since 2026-09-27 it is not the right one. An absent
+    # directory now gets its own message, because naming the manifest to somebody who has no track
+    # sends them looking for a file inside a directory that is not there. What the refusal owes is
+    # the path it looked at and the command that makes one.
     with pytest.raises(SystemExit) as e:
         track.load_partitions(tmp_path / "nowhere")
-    assert "track.json" in str(e.value)
+    assert "nowhere" in str(e.value)
+    assert "senbonzakura track build" in str(e.value)
 
 
 def test_the_audit_and_the_contamination_check_read_the_same_boundaries(tmp_path):

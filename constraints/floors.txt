@@ -38,6 +38,16 @@ optuna==4.0.0
 # this job runs.
 gguf==0.19.0
 sentencepiece==0.1.98
+# The live display's dependency. Pure Python, so it installs on every runner this job uses.
+#
+# VERIFIED AT THIS EXACT VERSION on 2026-09-27, not assumed: 13.0.0 in a clean virtualenv, driving
+# every API `livedisplay.py` touches (`Console(file=...)`, `Live` with `refresh_per_second` and
+# `transient`, `Panel(title=, border_style=)`, `Table.grid` with `padding`, `add_column(justify=,
+# style=)`, and `[dim]` markup). The panel rendered with its box and title.
+#
+# Worth knowing if anything here ever reads it: rich 13.0.0 has no `rich.__version__` attribute, so
+# a version check has to go through `importlib.metadata`. Nothing in this project does one.
+rich==13.0.0
 
 # The dev extra, because `pip install -e '.[dev]'` at the floors is a real
 # thing a contributor does, and the suite has to pass there too.

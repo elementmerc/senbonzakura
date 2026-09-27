@@ -54,7 +54,7 @@ import unicodedata
 from itertools import zip_longest
 from pathlib import Path
 
-from . import dataset  # every accepted way of saying "the prompts are here"
+from . import dataset, say  # every accepted way of saying "the prompts are here"
 from .crashsafe import atomic_write, provenance
 
 # Rows shorter than this after normalisation are dropped as noise rather than prompts.
@@ -1064,7 +1064,20 @@ def main(argv=None):
 
     missing = [f for f, v in (("--harmful", a.harmful), ("--harmless", a.harmless)) if not v]
     if missing:
-        raise SystemExit(f"building a track needs {' and '.join(missing)}")
+        # A WORKED COMMAND, the way `report` answers the same mistake. This said only which flags
+        # were absent, which tells somebody who typed `senbonzakura track` and expected the bundled
+        # track nothing about what those flags take or that a track is two files of prompts.
+        raise SystemExit(
+            f"building a track needs {' and '.join(missing)}.\n"
+            f"  --harmful FILE    one prompt per line, the prompts a model should refuse\n"
+            f"  --harmless FILE   one prompt per line, matched prompts it should answer\n"
+            f"\n"
+            f"    senbonzakura track --harmful harmful.txt --harmless harmless.txt \\\n"
+            f"        --out mytrack\n"
+            f"\n"
+            + "\n".join(say.lines(
+                "To USE the track that ships with this install, pass `--track default` to a command "
+                "that reads one; this command builds a new one.", indent="  ", first="  ")))
 
     labels = read_labels(a.labels) if a.labels else None
     if labels:

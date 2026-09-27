@@ -130,6 +130,25 @@ def shorten(text, limit):
     return text[:limit - len(CUT)] + CUT
 
 
+def some_of(items, limit, *, joiner=", "):
+    """`limit` of `items` and a count of the rest, so a cut list cannot read as a whole one.
+
+    WHY THIS IS SHARED, 2026-09-27
+
+    Five places in this package already said "and N more" by hand, and four others cut a list with
+    nothing at all: `doctor` reported "7 failed to import" and then named six, `convert` named five,
+    and a JSON object with twenty keys was described by eight of them. A reader who counts the names
+    and gets a different number than the count they were given has to work out which one is lying.
+
+    The count comes from the items rather than from the caller, which is the half that was getting
+    lost: `f"{len(broken)} failed: {', '.join(broken[:6])}"` states the total in one clause and
+    contradicts it in the next.
+    """
+    shown = [str(i) for i in items][:limit]
+    rest = len(items) - len(shown)
+    return joiner.join(shown) + (f", and {rest} more" if rest > 0 else "")
+
+
 def lines(text, *, indent="", first=None, columns=None):
     """`text` as a list of lines, none wider than the terminal, commands and markers intact.
 

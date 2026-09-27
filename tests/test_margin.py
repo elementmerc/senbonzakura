@@ -1113,9 +1113,26 @@ def test_both_arms_are_checked_not_just_the_harmful_one():
 
     The first version printed the harmful arm and stored the harmless one in the JSON where
     nothing looked at it, which is half a check wearing the shape of a whole one.
+
+    IT READS FROM THE `def` LINE ONWARDS, 2026-09-27, and the reason is a near miss worth keeping.
+    `inspect.getsource` includes the comment block immediately above a function, so when a constant
+    and its two comment lines were added just above `def main` this test failed with the whole of
+    `src` being that comment. Removing one blank line elsewhere made it pass again. A source-reading
+    check whose window depends on blank lines can as easily pass while reading the wrong region as
+    fail while reading the right one, and the passing direction is the one nobody investigates.
+
+    The narrow fix is below. The broader point stands in the ledger: what this wants to assert is
+    that both arms REACH the output, which is a property of a run rather than of a source file.
     """
     import inspect
-    src = inspect.getsource(margin.main)
+
+    lines, _start = inspect.getsourcelines(margin.main)
+    body = [line for line in lines if not line.lstrip().startswith("#")]
+    first_def = next(i for i, line in enumerate(body) if line.lstrip().startswith("def main"))
+    src = "".join(body[first_def:])
+
+    assert src.lstrip().startswith("def main"), (
+        "the window this test reads does not begin at the function it names")
     assert 'for arm in ("harmful", "harmless")' in src, "only one arm is reported"
     assert "suspect_arms" in src, "the suspect check does not consider both arms"
 

@@ -239,10 +239,14 @@ def relay(stream, *, verbose, log, watch=(), heartbeat_s=HEARTBEAT_S, keep=KEEP_
         if verbose:
             sys.stdout.write(line)
             continue
-        if clock() - last_beat >= heartbeat_s:
-            last_beat = clock()
+        # The clock is read ONCE per line, into a variable. Three separate calls per heartbeat is
+        # three syscalls on every line of a run with thousands of them, and it made the interval
+        # untestable without stubbing a clock that answers the same question three times.
+        at = clock()
+        if at - last_beat >= heartbeat_s:
+            last_beat = at
             from . import say
-            log(f"  still working, {lines} lines in, {clock() - started:.0f}s: "
+            log(f"  still working, {lines} lines in, {at - started:.0f}s: "
                 f"{say.shorten(line.strip(), 60)}")
     if verbose:
         sys.stdout.flush()

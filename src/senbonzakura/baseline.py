@@ -265,7 +265,15 @@ def read(path):
     """Load a baseline, or say which of the several different problems it is."""
     path = Path(path)
     if not path.is_file():
-        raise BaselineError(f"no baseline at {path}.")
+        # AND WHAT TO DO ABOUT IT. "no baseline at X." is true, and a reader meeting it on a first
+        # run has no way to know that a baseline is a file this tool writes rather than one they
+        # were supposed to have, or which command writes it.
+        what = "is a directory" if path.is_dir() else "is not there"
+        raise BaselineError(
+            f"no baseline at {path}: it {what}.\n"
+            f"  A baseline is a file this tool writes, from a measurement you have already taken:\n"
+            f"    senbonzakura baseline <a result artefact> --seeds <n> --out {path}\n"
+            f"  then gate a later run against it.")
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, UnicodeDecodeError, OSError) as e:
@@ -308,6 +316,19 @@ def read(path):
             f"  To gate on a compass figure, re-run `senbonzakura compass` with this build: it "
             f"stamps the block, and the run is then recordable with `senbonzakura baseline`.\n"
             f"  Archived evidence from before the block cannot be converted, only re-measured.")
+    if got is None:
+        # NOT "declares schema None", WHICH READS AS A VERSION PROBLEM. The two branches above catch
+        # the shapes this tool recognises; anything left carrying no `schema` at all was most likely
+        # never a baseline, and telling somebody their file declares None sends them looking for a
+        # migration that does not exist. Same defect as the one those branches were written for, on
+        # the case they do not match.
+        raise BaselineError(
+            f"{path} carries no `schema` field, so nothing in it says what kind of file it is. A "
+            f"baseline written by this tool always declares {SCHEMA!r}.\n"
+            f"  If this is a run's result artefact, record it first:\n"
+            f"    senbonzakura baseline {path} --seeds <n> --out recorded.json\n"
+            f"  If it is something else, this gate cannot read it: it compares two recorded "
+            f"measurements and nothing else.")
     if got != SCHEMA:
         raise BaselineError(
             f"{path} declares schema {got!r} and this build understands {SCHEMA!r}. A schema "
@@ -779,7 +800,17 @@ def main(argv=None):
         written = from_artefact(doc, metric, seeds=seeds)
         write(a.out, written)
     except (OSError, json.JSONDecodeError) as e:
-        print(f"cannot read {a.measurement}: {e}", file=sys.stderr)
+        # A DIRECTORY IS THE COMMON CASE and it used to arrive as a bare errno. Somebody passes the
+        # run's output directory, which is what every other command here takes, and "[Errno 21] Is a
+        # directory" names the mistake in a dialect nobody thinks in.
+        where = Path(a.measurement)
+        if where.is_dir():
+            print("\n".join(say.reflow(
+                f"{where} is a directory. This takes the result artefact itself, which is the json "
+                f"file a measurement wrote, not the directory holding it. Look for a file such as "
+                f"coherence.json or compass.json inside it.")), file=sys.stderr)
+        else:
+            print(f"cannot read {a.measurement}: {e}", file=sys.stderr)
         return 2
     except BaselineError as e:
         # Wrapped: these refusals are three paragraphs and were printed as three long lines.

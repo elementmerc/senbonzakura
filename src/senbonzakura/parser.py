@@ -311,6 +311,31 @@ def _file_flags_under_headings(ap):
         groups[title]._group_actions.append(action)     # noqa: SLF001
 
 
+class _CompletionNotInstalled(argparse.Action):
+    """Answer `--print-completion` on an install that cannot honour it, rather than denying the flag.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    Shell completion is an optional extra, and the flag was added only when `shtab` imported. So a
+    reader who had found `--print-completion` in the documentation and typed it on a plain install
+    got argparse's "unrecognized arguments", which says there is no such flag when the truth is that
+    it is one install away. An optional feature that degrades into a denial of its own existence is
+    not graceful degradation.
+
+    An action rather than a plain flag read later, so there is nothing to forget to check and no
+    knob that parses and does nothing.
+    """
+
+    def __init__(self, option_strings, dest, **kw):
+        kw.pop("nargs", None)
+        super().__init__(option_strings, dest, nargs="?", default=argparse.SUPPRESS, **kw)
+
+    def __call__(self, parser, _namespace, _values, _option_string=None):
+        parser.exit(2, 'shell completion needs an extra this install does not have.\n'
+                       '  pip install "senbonzakura[completion]"\n'
+                       "  then run the same command again.\n")
+
+
 class _HelpAll(argparse.Action):
     """Print the full help, which is what `--help` printed before the split.
 
@@ -435,7 +460,13 @@ def build_parser(full=False):
         shtab.add_argument_to(ap, ["--print-completion"],
                               help="print a bash/zsh/tcsh shell completion script and exit")
     except ImportError:
-        pass
+        # THE FLAG STILL EXISTS AND SAYS WHY IT CANNOT WORK. Skipping it entirely meant a reader who
+        # had found `--print-completion` in the documentation got argparse's "unrecognized
+        # arguments", which reads as "there is no such flag" rather than "one install away". An
+        # optional feature that degrades into a denial of its own existence is not graceful.
+        ap.add_argument("--print-completion", action=_CompletionNotInstalled,
+                        help='print a shell completion script and exit. Needs the '
+                             'completion extra: pip install "senbonzakura[completion]"')
     ap.add_argument("--out", default="abliterated", help="directory to write the abliterated model to")
     ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")
     ap.add_argument("--eval-refusal", type=int, default=64, help="bad-eval prompts for the refusal score")

@@ -346,7 +346,7 @@ class TestTheWarningTheSummaryUsedToSwallow:
         import re as _re
 
         said = []
-        clock = iter([0, 0, 31, 62, 93, 124, 155, 186]).__next__
+        clock = iter([0, 31, 62, 93]).__next__
         matches, tail = vendored.relay(
             iter(["[  1/272] one\n", "[  2/272] two\n", "[  3/272] three\n"]),
             verbose=False, log=said.append, watch=(), now=clock)

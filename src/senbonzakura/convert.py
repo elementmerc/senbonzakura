@@ -47,7 +47,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import argresolve, checkpoint, gguf_io
+from . import argresolve, checkpoint, gguf_io, vendored
 from ._version import __version__
 from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for, provenance
 from .vendored import VendorError, find_script
@@ -125,6 +125,10 @@ def build_parser():
                          "embeddings and the head is byte-identical to them. Dropping it, which is "
                          "the default, gives a smaller file whose embedding quantises more "
                          "accurately.")
+    ap.add_argument("--verbose", action="store_true",
+                    help="show everything the vendored converter prints. It is about 350 lines per "
+                         "run, which is why it is summarised by default; this is the flag for when "
+                         "a conversion is behaving oddly and you want to watch it")
     ap.add_argument("--skip-arch-check", action="store_true",
                     help="skip the pre-flight architecture check. For an architecture the pinned "
                          "converter supports under a name this cannot read from config.json")
@@ -768,8 +772,17 @@ def run(argv=None, log=print):
     started = time.monotonic()
     # No timeout, for the same reason `quantise` has none: converting a large model is genuinely
     # long, and a ceiling here would kill a job with its work nearly done.
+    #
+    # STREAMED RATHER THAN INHERITED, so the roughly 350 lines the converter prints per run do not
+    # arrive ahead of this command's own summary. `--verbose` passes every line through unchanged.
+    # Either way the last lines are kept, because a suppressed diagnostic is worse than noise.
+    tail = []
     try:
-        r = subprocess.run(argv_c, check=False)
+        proc = subprocess.Popen(argv_c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", bufsize=1)
+        with proc:
+            _matched, tail = vendored.relay(proc.stdout, verbose=a.verbose, log=log)
+        r = proc
     finally:
         if tmp_view is not None:
             # Symlinks and one rewritten shard. Removed on every path, including a converter crash,
@@ -782,8 +795,14 @@ def run(argv=None, log=print):
         if out.exists():
             out.unlink()
             log(f"  removed the partial {out.name}")
+        # THE TOOL'S OWN LAST WORDS, because suppressing its output must not cost the diagnostic.
+        # Without this, hiding the chatter would turn a readable failure into "exited 1", which is
+        # the trade that makes quiet-by-default a bad idea everywhere it is done carelessly.
+        said = "\n".join(f"    {line}" for line in tail)
         raise SystemExit(
-            f"the converter exited {r.returncode} after {took:.0f}s. Nothing usable was written.")
+            f"the converter exited {r.returncode} after {took:.0f}s. Nothing usable was written.\n"
+            + (f"  Its last {len(tail)} line(s):\n{said}\n" if tail else "")
+            + "  Re-run with --verbose to see everything it printed.")
 
     # READ IT BACK. An exit code is a statement about a process; everything that matters here is a
     # statement about a file.

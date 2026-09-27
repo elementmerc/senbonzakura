@@ -23,7 +23,7 @@ ids were rejected outright.
 """
 import pytest
 
-from senbonzakura import fetch, quantise
+from senbonzakura import fetch, quantise, vendored
 from senbonzakura.fetch import FetchError
 
 
@@ -296,7 +296,7 @@ class TestTheWarningTheSummaryUsedToSwallow:
         return [_sys.executable, "-c", body]
 
     def test_the_fallback_count_is_picked_out_of_the_stream(self):
-        proc, fallback = quantise._run_quantiser(self._echo(
+        proc, fallback, _tail = quantise._run_quantiser(self._echo(
             "[  1/272] blk.0.attn_k.weight - converting to q4_K",
             "llama_model_quantize_impl: WARNING: 180 of 272 tensor(s) required fallback quantization",
             "llama_quantize: total time = 564.38 ms"))
@@ -307,21 +307,58 @@ class TestTheWarningTheSummaryUsedToSwallow:
         """None and 0 are different claims. One is "no tensor fell back", the other is "we did
         not see". A reader comparing two files has to be able to tell them apart.
         """
-        proc, fallback = quantise._run_quantiser(self._echo("all good", "done"))
+        proc, fallback, _tail = quantise._run_quantiser(self._echo("all good", "done"))
         assert proc.returncode == 0
         assert fallback is None
 
-    def test_the_binarys_output_still_reaches_the_terminal(self, capsys):
+    def test_every_line_reaches_the_terminal_when_asked_for(self, capsys):
         """A large quantisation is long and its per-tensor progress is the only sign of life it
         gives. Capturing it to read one line must not swallow the rest.
+
+        REPOINTED 2026-09-27, and the original concern is why the heartbeat below exists. A surface
+        audit found that several hundred per-tensor lines arrive ahead of this tool's own five-line
+        summary, so the chatter is summarised by default and `--verbose` is the flag that restores
+        it. This test now holds down the restoring half; the sign-of-life half is the next one.
         """
-        quantise._run_quantiser(self._echo("[  1/272] first", "[272/272] last"))
+        quantise._run_quantiser(self._echo("[  1/272] first", "[272/272] last"), verbose=True)
         out = capsys.readouterr().out
         assert "[  1/272] first" in out and "[272/272] last" in out
 
+    def test_a_quiet_run_keeps_the_summary_clear_and_still_says_it_is_alive(self, capsys):
+        """The other half of the trade: quiet must not mean indistinguishable from hung.
+
+        The clock is injected rather than waited on. A test that sleeps for the heartbeat interval
+        is a test nobody runs, and one that asserts the interval by sleeping less than it is a
+        flaky test pretending to be a fast one.
+        """
+        said = []
+        proc, _fallback, tail = quantise._run_quantiser(
+            self._echo("[  1/272] first", "[136/272] middle", "[272/272] last"),
+            log=said.append, verbose=False)
+        assert proc.returncode == 0
+        assert "[  1/272] first" not in capsys.readouterr().out, (
+            "the chatter is still going to the terminal, so the summary is still buried")
+        assert tail, "nothing was kept, so a failure would have no diagnostic to quote"
+        assert "[272/272] last" in tail[-1]
+
+    def test_a_long_quiet_run_reports_that_it_is_still_working(self):
+        """The heartbeat, driven off an injected clock. Silence for minutes reads as a hang."""
+        import re as _re
+
+        said = []
+        clock = iter([0, 0, 31, 62, 93, 124, 155, 186]).__next__
+        matches, tail = vendored.relay(
+            iter(["[  1/272] one\n", "[  2/272] two\n", "[  3/272] three\n"]),
+            verbose=False, log=said.append, watch=(), now=clock)
+        assert not matches
+        assert tail == ["[  1/272] one", "[  2/272] two", "[  3/272] three"]
+        assert said, "a long run said nothing at all, which is indistinguishable from a hang"
+        assert all(_re.search(r"still working, \d+ lines in", m) for m in said), said
+
     def test_a_non_zero_exit_is_still_a_non_zero_exit(self):
         import sys as _sys
-        proc, _ = quantise._run_quantiser([_sys.executable, "-c", "raise SystemExit(3)"])
+        proc, _fallback, _tail = quantise._run_quantiser(
+            [_sys.executable, "-c", "raise SystemExit(3)"])
         assert proc.returncode == 3
 
 

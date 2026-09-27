@@ -44,7 +44,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve, gguf_io
+from . import argresolve, gguf_io, vendored
 from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for
 from .vendored import VendorError, find_binary
 
@@ -218,6 +218,10 @@ def build_parser():
                     help="pin any tensor whose name matches NAME to TYPE. Repeatable. NAME is "
                          "matched by llama-quantize as a pattern, so `attn_v=Q6_K` reaches every "
                          "layer's value projection")
+    ap.add_argument("--verbose", action="store_true",
+                    help="show every line the quantiser and the vendored converter print. Both are "
+                         "summarised by default, one line per tensor being hundreds of lines on a "
+                         "real model; this is the flag for watching a run that is behaving oddly")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")
     ap.add_argument("--keep-source", action="store_true",
                     help="do not offer to remove the source afterwards (it never removes it "
@@ -328,7 +332,7 @@ def _preflight_arguments(a, log=print):
 _FALLBACK = re.compile(r"WARNING:\s*(\d+)\s+of\s+(\d+)\s+tensor\(s\)\s+required fallback")
 
 
-def _run_quantiser(argv_q):
+def _run_quantiser(argv_q, *, verbose=False, log=print):
     """Run llama-quantize, pass its output through, and keep the one line that matters.
 
     FOUND BY ADVERSARIAL USER TESTING, 2026-09-17. The binary printed
@@ -344,16 +348,15 @@ def _run_quantiser(argv_q):
     per-tensor progress is the only sign of life it gives.
     """
     hit = None
+    tail = []
     proc = subprocess.Popen(argv_q, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors="replace", bufsize=1)
     with proc:
-        for line in proc.stdout:
-            sys.stdout.write(line)
-            found = _FALLBACK.search(line)
-            if found:
-                hit = (int(found.group(1)), int(found.group(2)))
-        sys.stdout.flush()
-    return proc, hit
+        matches, tail = vendored.relay(proc.stdout, verbose=verbose, log=log,
+                                       watch=(_FALLBACK,))
+    for _pattern, found in matches:
+        hit = (int(found.group(1)), int(found.group(2)))
+    return proc, hit, tail
 
 
 def _preflight_overrides(src, a, log):
@@ -666,7 +669,12 @@ def _quantise_a_checkpoint(a, *, log=print):
     intermediate = Path(tmp_dir) / (Path(a.source).name + "-bf16.gguf")
     converted = quantised = False
     try:
-        rc = convert.run([str(a.source), str(intermediate)], log=log)
+        # `--verbose` reaches the converter too: somebody who asked to see the work means all
+        # of it, and the checkpoint path runs two vendored tools rather than one.
+        convert_argv = [str(a.source), str(intermediate)]
+        if a.verbose:
+            convert_argv.append("--verbose")
+        rc = convert.run(convert_argv, log=log)
         if rc != 0:
             return rc
         # A conversion that FAILED leaves something that is not a GGUF, and keeping that would be
@@ -829,7 +837,7 @@ def run(argv=None, log=print):
     # No timeout: quantising a large model is genuinely long and a ceiling here would kill a job
     # with its work nearly done, which is the failure that cost a completed head-to-head on
     # 2026-08-06. Interrupting it is the operator's call, and the partial output is cleaned below.
-    r, fallback = _run_quantiser(argv_q)
+    r, fallback, tail = _run_quantiser(argv_q, verbose=a.verbose, log=log)
     took = time.monotonic() - started
 
     if r.returncode != 0:
@@ -837,8 +845,13 @@ def run(argv=None, log=print):
         if out.exists():
             out.unlink()
             log(f"  removed the partial {out.name}")
+        # ITS LAST WORDS, because summarising the output must not cost the diagnostic. Hiding
+        # hundreds of per-tensor lines is only an improvement while a failure still explains itself.
+        said = "\n".join(f"    {line}" for line in tail)
         raise SystemExit(
-            f"llama-quantize exited {r.returncode} after {took:.0f}s. Nothing usable was written.")
+            f"llama-quantize exited {r.returncode} after {took:.0f}s. Nothing usable was written.\n"
+            + (f"  Its last {len(tail)} line(s):\n{said}\n" if tail else "")
+            + "  Re-run with --verbose to see everything it printed.")
 
     # THE OUTPUT IS READ BACK. An exit code is a statement about a process; every claim that
     # matters here is a statement about a file, and the two came apart on a 987 MB fragment of a

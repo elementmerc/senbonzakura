@@ -282,7 +282,7 @@ FLAG_GROUPS = {
         "external_pressure_mb", "attn_impl",
     ),
     "the output": (
-        "base_licence", "base_licence_link", "free_base_model", "json_events",
+        "base_licence", "base_licence_link", "free_base_model", "json_events", "no_panel",
     ),
 }
 
@@ -648,6 +648,11 @@ def build_parser(full=False):
                          "without it. Every skipped layer is warned about and recorded.")
     from . import events as _events
     _events.add_argument(ap)
+    # Imported here beside the events flag, for the same reason: both modules define their own flag
+    # next to the behaviour it controls, and neither is heavy (`panel` imports rich lazily, so
+    # `--help` does not pay for it).
+    from . import livedisplay as _livedisplay
+    _livedisplay.add_argument(ap)
     ap.add_argument("--seed", type=int, default=42,
                     help="seed for the Optuna sampler (default 42). Vary it to measure run-to-run "
                          "spread: a single run tells you nothing about whether a gap between two "

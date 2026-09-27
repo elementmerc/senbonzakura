@@ -11,19 +11,18 @@ incomparable. Reports the full breakdown (hard refusal / soft refusal / noncompl
 broken / heretic-keyword) so we can see WHICH axis a lever moves. Getting hard-refusal down
 is easy; the residual is usually soft refusal + evasion (noncompliance), the real wall.
 """
-import argparse
 import json
 
 import torch
 
-from . import lengthsweep, metrics, stamps, track
+from . import argresolve, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura score",
         description="Score a model's refusal / coherence on a fixed eval set.",

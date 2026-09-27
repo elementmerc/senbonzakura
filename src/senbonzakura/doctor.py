@@ -29,12 +29,11 @@ test.
 """
 from __future__ import annotations
 
-import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-from . import say
+from . import argresolve, say
 
 #: Exit codes. Distinguished so a CI job can treat a warning differently from a failure.
 OK, WARN, FAIL = 0, 1, 2
@@ -586,7 +585,7 @@ def report(checks, log=print, *, advisories_ok=False, header=True):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura doctor",
         description="Check that this install can actually convert, quantise and measure.")

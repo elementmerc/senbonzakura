@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import argparse
 
-from . import methods as _methods  # constants only; imports nothing heavy
+from . import argresolve  # constants only; imports nothing heavy
+from . import methods as _methods
 from . import separation as _separation  # constants only; imports nothing heavy, see its head
 from ._version import __version__
 from .lengthsweep import DEFAULT_BUDGET as _DEFAULT_BUDGET  # constants only; pulls only .metrics
@@ -199,7 +200,7 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     `four_bit_help` lets the abliterator say that it REJECTS the flag while still accepting it,
     which is what turns an obscure failure at bake time into a sentence at startup.
     """
-    ap = argparse.ArgumentParser(allow_abbrev=False, add_help=False)
+    ap = argresolve.ParserThatNamesUnknownFlags(allow_abbrev=False, add_help=False)
     # `model_required=False` ONLY for the abliterate parser, which also takes the model as a
     # positional so that `senbonzakura Qwen/Qwen2.5-0.5B-Instruct` works. It still refuses a run with no
     # model at all; the check just moves from argparse to `resolve_model`, where it can say which
@@ -360,7 +361,7 @@ def build_parser(full=False):
     never what is accepted, and `tools/research/audit_flags.py` and the documentation guards read
     the full form for exactly that reason.
     """
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura",
         # WRAPPED BY HAND, because RawDescriptionHelpFormatter does not wrap. This was one

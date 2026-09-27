@@ -38,6 +38,8 @@ from dataclasses import dataclass
 
 import torch
 
+from . import argresolve
+
 #: A direction whose norm is below this is not a direction. `dirs_multi` is padded with exact zeros
 #: for the slots a layer did not fill, and those must be dropped before anything is orthonormalised
 #: or the padding becomes part of the answer.
@@ -196,8 +198,7 @@ def _reference_pair(control, seed=0):
 
 
 def main(argv=None):
-    import argparse
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="python -m senbonzakura.subspace",
         description="Check the subspace-comparison instrument on cases whose answer is known.")

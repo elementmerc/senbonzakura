@@ -39,7 +39,6 @@ make it blind to the only fault it was written for. The driver is asked instead,
 """
 from __future__ import annotations
 
-import argparse
 import platform
 import re
 import shutil
@@ -47,7 +46,7 @@ import subprocess
 import sys
 import textwrap
 
-from . import say
+from . import argresolve, say
 
 #: PyTorch's own channels, newest first. A build for a given CUDA version needs a driver that
 #: supports at least that version, so the pick is the newest channel the driver can carry.
@@ -460,7 +459,7 @@ def _describe(system, machine, gpus, driver, torch_version, variant, log, comput
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura setup",
         description="Put the right build of torch on this machine. pip cannot do this itself: "

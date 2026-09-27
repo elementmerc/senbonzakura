@@ -40,13 +40,12 @@ rather than repeating an hour of generation. `--force` re-runs everything.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import time
 from pathlib import Path
 from typing import NamedTuple
 
-from . import bundled, say, stamps
+from . import argresolve, bundled, say, stamps
 from .crashsafe import atomic_write
 
 #: Stage name -> (module, output filename). The module is looked up through `entry.DELEGATED`
@@ -432,7 +431,7 @@ def verdict_rows(results):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura measure",
         description="Run every instrument against one model and print one table. The same "

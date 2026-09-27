@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import argresolve
 from .metrics import MIN_REPORTABLE_N, wilson_interval
 
 #: Agreement above chance, below which a judge is not usable for grading. 0.6 is the conventional
@@ -201,7 +202,7 @@ def report(v):
 def build_parser():
     import argparse
 
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura judge",
         description="Check a judge against reference labels before letting it grade anything.\n"

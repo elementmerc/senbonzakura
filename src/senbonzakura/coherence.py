@@ -18,14 +18,13 @@ and no caller can trip an unknown-argument error that masquerades as a coherence
 failure. Lower perplexity is better; compare a bake against its own stock model,
 not against an absolute threshold.
 """
-import argparse
 import hashlib
 import json
 import math
 
 import torch
 
-from . import stamps
+from . import argresolve, stamps
 from .cli import load_model_and_tokenizer, loader_parser
 from .crashsafe import atomic_write
 
@@ -149,7 +148,7 @@ def _stamp_coherence(res, precision="unknown"):
 def build_parser():
     # No --chat-template, deliberately: this measures the perplexity of a fixed passage and
     # never renders a chat prompt, so there is no prompt format for one to specify.
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura coherence",
         description="Measure a model's coherence as neutral-passage perplexity.",

@@ -38,7 +38,6 @@ exactly the shape of a real one, and this project has already recorded a 987 MB 
 """
 from __future__ import annotations
 
-import argparse
 import json
 import shutil
 import subprocess
@@ -94,7 +93,7 @@ class ConvertError(Exception):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         prog="senbonzakura convert",
         # The output path is a positional here, so `--out x` is a natural thing to type. With
         # abbreviation on, argparse prefix-matches it to `--outtype` and complains about a flag the

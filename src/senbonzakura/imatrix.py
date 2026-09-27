@@ -37,14 +37,13 @@ a sidecar file so a later reader can tell what a given `i1-` file was calibrated
 """
 from __future__ import annotations
 
-import argparse
 import json
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from . import gguf_io
+from . import argresolve, gguf_io
 from .crashsafe import free_bytes_for
 from .vendored import VendorError, find_binary
 
@@ -62,7 +61,7 @@ class ImatrixError(Exception):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura imatrix",
         description="Compute an importance matrix for a GGUF, for a fairer quantisation.",

@@ -63,6 +63,7 @@ import os
 import re
 import sys
 
+from . import argresolve
 from .metrics import min_achievable_p, permutation_p
 
 #: Recognises `senbon-seed42` / `heretic-seed42`, the pinned-budget arms of the multi-direction
@@ -623,7 +624,7 @@ def render(arms):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(allow_abbrev=False, description=__doc__,
+    ap = argresolve.ParserThatNamesUnknownFlags(allow_abbrev=False, description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", help="the directory holding scored-*.json and the arm directories")
     ap.add_argument("--allow-unreadable", action="store_true",

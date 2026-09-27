@@ -28,13 +28,12 @@ blocks to strip, no verdict-absent fallback, no token budget, no truncation. Bot
 scoring errors found in the 2026-07 sweep were parsing errors that only existed
 because the pipeline read prose.
 """
-import argparse
 import json
 from pathlib import Path
 
 import torch
 
-from . import say, stamps
+from . import argresolve, say, stamps
 from .cli import (
     accelerator_name,
     last_token_logits,
@@ -138,7 +137,7 @@ def resolve_skips(track, skip_harmful, skip_harmless, log=None):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura compass",
         description="Criterion-free harm discrimination via the HARMFUL/BENIGN logit margin.",

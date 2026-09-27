@@ -66,6 +66,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from . import argresolve
+
 #: The fenced block the machine reads. One per file: two would mean two documents disagreeing
 #: about what was promised, which is the ambiguity this whole format exists to remove.
 BLOCK = re.compile(r"^```prereg[ \t]*\r?\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
@@ -315,7 +317,7 @@ _EXIT_FOR = {REFUSED: REFUSED_EXIT, FINDING: FAILED, NOTE: OK}
 def build_parser():
     import argparse
 
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura prereg",
         description="Check a pre-registration, and whether a run did what it promised.",

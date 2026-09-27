@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import lengthsweep
+from . import argresolve, lengthsweep
 from ._version import __version__
 from .metrics import min_achievable_p
 
@@ -1435,7 +1435,7 @@ def summarise(results) -> dict:
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura head-to-head",
         description="Run a head-to-head between abliteration tools on one machine.")

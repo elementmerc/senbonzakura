@@ -30,7 +30,7 @@ import json
 import re
 from pathlib import Path
 
-from . import say
+from . import argresolve, say
 from ._version import __version__
 
 #: Sections a complete card carries. Missing ones are declared rather than dropped, because the
@@ -436,9 +436,8 @@ def licence_section(abl=None, licence=None, licence_link=None, *, measured=True)
 
 
 def build_parser():
-    import argparse
 
-    ap = argparse.ArgumentParser(
+    ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura report",
         description="Assemble a run's artefacts into a model card that states only what they "

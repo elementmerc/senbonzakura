@@ -27,10 +27,9 @@ Two and one are distinct on purpose. A refusal is not a regression: nothing has 
 the model, and a build that treats "I could not compare these" as "this got worse" teaches its
 reader to ignore the difference.
 """
-import argparse
 import sys
 
-from . import baseline
+from . import argresolve, baseline
 
 #: Exit statuses, named so the tests and the docs cannot drift from the code.
 OK = 0
@@ -39,7 +38,7 @@ REFUSED = 2
 
 
 def build_parser():
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura gate",
         description="Compare a measurement against a recorded baseline and fail on a regression.")

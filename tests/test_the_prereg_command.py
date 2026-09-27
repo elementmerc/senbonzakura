@@ -192,3 +192,72 @@ def test_findings_are_readable_either_way(tmp_path, flag):
     over = [ln for ln in done.stdout.splitlines() if len(ln) > 79]
     assert not over, f"these lines assume a wide terminal: {over}"
     assert "finding" in done.stdout.lower()
+
+
+# ── the same command, called in process ───────────────────────────────────────────────────────────
+#
+# WHY BOTH, 2026-09-27
+#
+# The subprocess tests above are the ones that would have caught the original defect: the module was
+# unreachable, and a test that imported `main` directly would have passed throughout. That property
+# is worth keeping, so they stay.
+#
+# But a subprocess is invisible to coverage, so `prereg.py` sat at 76.62% with its whole command
+# untested as far as the gate could tell, and a coverage floor is how this project noticed that a
+# class nobody had exercised was shipping. These call `main` in process, so the gate can see them.
+# Same command, two reasons.
+
+def test_main_returns_zero_on_a_complete_document(tmp_path, capsys):
+    assert prereg.main([str(_doc(tmp_path, COMPLETE))]) == prereg.OK
+    assert "OK" in capsys.readouterr().out
+
+
+def test_main_returns_two_when_the_document_is_not_one(tmp_path, capsys):
+    plain = tmp_path / "prose.md"
+    plain.write_text("# no block here\n", encoding="utf-8")
+    assert prereg.main([str(plain)]) == prereg.REFUSED_EXIT
+    assert "prereg" in capsys.readouterr().err
+
+
+def test_main_returns_one_on_a_flawed_document(tmp_path, capsys):
+    assert prereg.main([str(_doc(tmp_path, dict(COMPLETE, date="last Tuesday")))]) == prereg.FAILED
+    assert "ISO 8601" in " ".join(capsys.readouterr().out.split())
+
+
+def test_main_quiet_still_names_the_severity(tmp_path, capsys):
+    assert prereg.main([str(_doc(tmp_path, dict(COMPLETE, date="nope"))), "--quiet"]) == prereg.FAILED
+    out = capsys.readouterr().out
+    assert out.startswith(prereg.FINDING), "the severity is no longer at the head of the line"
+
+
+def test_main_refuses_an_unreadable_document(tmp_path, capsys):
+    assert prereg.main([str(tmp_path / "missing.md")]) == prereg.REFUSED_EXIT
+    assert "cannot read" in " ".join(capsys.readouterr().err.split())
+
+
+def test_main_checks_against_a_run_when_asked(tmp_path, capsys):
+    doc = _doc(tmp_path, COMPLETE)
+    run = tmp_path / "run.json"
+    run.write_text(json.dumps({"metrics": {"post_bake_kl": {"value": 0.4}}}), encoding="utf-8")
+    code = prereg.main([str(doc), "--run", str(run)])
+    assert code in (prereg.OK, prereg.FAILED, prereg.REFUSED_EXIT)
+    # The point is that the comparison RAN and said something, not which verdict it reached: what
+    # `compare_to_run` decides is `test_prereg.py`'s subject, not this file's.
+    assert capsys.readouterr().out.strip(), "the comparison produced no output at all"
+
+
+def test_main_refuses_a_run_artefact_that_is_not_json(tmp_path, capsys):
+    doc = _doc(tmp_path, COMPLETE)
+    bad = tmp_path / "run.json"
+    bad.write_text("not json", encoding="utf-8")
+    assert prereg.main([str(doc), "--run", str(bad)]) == prereg.REFUSED_EXIT
+    assert "run artefact" in " ".join(capsys.readouterr().err.split())
+
+
+def test_every_finding_line_fits_a_narrow_terminal(tmp_path, capsys, monkeypatch):
+    """The whole point of the wrapping work, asserted on this command's own output."""
+    monkeypatch.setenv("COLUMNS", "80")
+    prereg.main([str(_doc(tmp_path, {k: v for k, v in COMPLETE.items() if k != "threats"}))])
+    printed = capsys.readouterr().out.splitlines()
+    over = [ln for ln in printed if len(ln) > 79]
+    assert not over, f"these lines assume a wide terminal: {over}"

@@ -63,6 +63,10 @@ class EventLog:
         self._fh = None
         self._own = False
         self._broken = False
+        # In-process views of the same stream, e.g. the live panel. Separate from the file sink
+        # because a panel is wanted on runs that write no JSONL at all, which is most of them, and
+        # `enabled` is about the sink rather than about whether anybody is watching.
+        self._observers = []
         if dest is None:
             return
         if dest == "-":
@@ -87,7 +91,7 @@ class EventLog:
         from inside the one class whose whole promise is that it cannot. With it, the collision
         becomes an ordinary field name that the envelope guard below drops.
         """
-        if not self.enabled:
+        if not self.enabled and not self._observers:
             return
         self._seq += 1
         rec = {"schema": SCHEMA, "kind": kind, "seq": self._seq,
@@ -95,12 +99,50 @@ class EventLog:
         # Call-site fields never overwrite the envelope: an event claiming its own `kind` or `seq`
         # would make the stream unorderable, and that is worth refusing rather than accepting.
         rec.update({k: v for k, v in fields.items() if k not in _ALWAYS})
+        # OBSERVERS FIRST, and each one isolated. Same rule as the sink and for the same reason: a
+        # view of the work must not be able to end the work. A panel that throws is dropped and the
+        # run carries on without it, reported once. `Exception` rather than a named family because
+        # anything a renderer can raise on a resized terminal is in scope, and none of it is worth
+        # a held model.
+        for fn in list(self._observers):
+            self._notify(fn, rec)
+        if not self.enabled:
+            return
         try:
             self._fh.write(json.dumps(rec, default=_stringify) + "\n")
         except (OSError, ValueError) as e:
             self._broken = True
             self._log(f"  json-events: the destination stopped accepting writes ({e}); "
                       f"the run continues without them")
+
+    def _notify(self, fn, rec):
+        """One observer, isolated. A view of the work must not be able to end the work.
+
+        `Exception` rather than a named family: anything a terminal renderer can raise on a resized
+        window is in scope, and none of it is worth a run that is twenty minutes in and holding a
+        model. A function rather than a `try` inside the loop so the isolation reads as the point
+        rather than as an accident of loop structure.
+        """
+        try:
+            fn(rec)
+        except Exception as e:
+            if fn in self._observers:
+                self._observers.remove(fn)
+            self._log(f"  the live view raised ({type(e).__name__}: {e}) and was dropped; "
+                      f"the run continues without it")
+
+    def observe(self, fn):
+        """Watch this stream in-process. Returns a callable that stops watching.
+
+        Used by the live panel. Deliberately not a general plugin surface: the caller holds the
+        handle and is expected to let go of it, and `emit` drops any observer that raises.
+        """
+        self._observers.append(fn)
+
+        def stop():
+            if fn in self._observers:
+                self._observers.remove(fn)
+        return stop
 
     def close(self):
         if self._own and self._fh is not None:

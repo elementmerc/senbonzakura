@@ -4030,11 +4030,21 @@ class Abliterator:
                         f"(P={pos}, wmax=1.0, K={seed['num_directions']})")
                 except Exception as e:
                     log(f"warm-start seed skipped ({e}); searching cold")
-            try:
-                study.optimize(self.objective, n_trials=trial_budget, callbacks=[_patience_cb, _progress_cb],
-                               catch=(RuntimeError,))
-            finally:
-                self.restore_weights()
+            # THE LIVE PANEL WRAPS THE SEARCH AND NOTHING ELSE, because the search is the part that
+            # takes an hour. It reads the event stream and writes to the terminal beside this log;
+            # it does not capture, wrap or replace a single line of it. On anything that is not an
+            # interactive terminal, including every CI run and every pipe, `attach` returns a null
+            # object and the output is byte-identical to a run from before it existed. That matters
+            # concretely: CI decides whether a release ships by grepping this output for nine
+            # markers, and a panel that redrew stdout would turn all nine green by absence.
+            from . import livedisplay as _livedisplay
+            with _livedisplay.attach(self.events, args, total_trials=trial_budget, log=log):
+                try:
+                    study.optimize(self.objective, n_trials=trial_budget,
+                                   callbacks=[_patience_cb, _progress_cb],
+                                   catch=(RuntimeError,))
+                finally:
+                    self.restore_weights()
             # Mark the search finished (budget spent or early-stopped) so a later --resume skips it
             # instead of re-searching. Persisted with the study, so it survives a crash after the search.
             study.set_user_attr("search_done", True)

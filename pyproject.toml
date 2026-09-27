@@ -165,6 +165,18 @@ dependencies = [
   # first on the path, so the converter and its library are consistent by construction. This
   # dependency now only matters if the vendored package is absent.
   "gguf>=0.19",
+  # The live panel (`panel.py`), drawn beside the log on an interactive terminal only.
+  #
+  # ALREADY PRESENT WHATEVER WE DECLARE: both `transformers` and `accelerate` name it as an
+  # install-time dependency, so it is in every environment this tool can run in and adds nothing to
+  # the measured 5.9 GB. It is declared anyway because the floors job installs the declared
+  # MINIMUMS, where an older transformers may not have pulled it, and a dependency that is present
+  # by luck is not a dependency.
+  #
+  # The floor is deliberately far below what anybody has: 13.0 is from January 2023, so the 7-day
+  # cooldown (baseline Section 5) is not a question. `panel.py` imports it inside functions and
+  # falls back to the plain log if the import fails, so an environment without it still works.
+  "rich>=13.0",
   # Required by the vendored converter's vocabulary path, which several architectures reach,
   # including both of the families this tool is currently pointed at: llama.cpp's own
   # requirements-convert_legacy_llama.txt lists it, and a conversion without it dies at

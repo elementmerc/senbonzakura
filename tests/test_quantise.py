@@ -420,7 +420,7 @@ def test_the_sidecar_lands_beside_the_output_and_names_the_toolchain(tmp_path):
     sidecar = Path(str(out) + quantise.SIDECAR_SUFFIX)
     assert sidecar.is_file(), "the quantisation recorded nothing about what produced it"
     rec = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert rec["schema"] == "senbonzakura-quantisation/1"
+    assert rec["schema"] == "senbonzakura-quantisation/2"
     assert rec["quant_type"] == "Q4_K_M"
     assert rec["quantiser"]["tool"] == "llama-quantize"
     assert rec["quantiser"]["reported_build"]["build"] > 0
@@ -429,6 +429,54 @@ def test_the_sidecar_lands_beside_the_output_and_names_the_toolchain(tmp_path):
     assert rec["output"]["name"] == out.name and rec["output"]["bytes"] > 0
     assert rec["source"]["name"] == src.name
     assert rec["created"].endswith("+00:00")
+
+
+@needs_binary
+def test_the_sidecar_hashes_both_files_and_the_hashes_are_of_those_files(tmp_path):
+    """A receipt that names a file without identifying it cannot answer the question it exists for.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit found the only sha256 in a quantisation record was of `llama-quantize` itself.
+    The record stated exactly which tool ran and nothing whatever about what went in or came out, so
+    somebody holding the GGUF could not tell it was the file the receipt describes. `--prune-source`
+    then deletes the input, which makes the pairing unreconstructable afterwards as well.
+
+    The hashes are RECOMPUTED here from the files on disk rather than merely asserted to be present,
+    because a field holding the wrong digest is worse than an absent one: it reads as verification.
+    This project has recorded a hash it then discarded before, which is why the check is this shape.
+    """
+    import hashlib
+    import json
+
+    src = tmp_path / "m.gguf"
+    _tiny_gguf(src)
+    out = tmp_path / "m-Q4_K_M.gguf"
+    assert quantise.run([str(src), str(out), "--type", "Q4_K_M"], log=lambda _m: None) == 0
+    rec = json.loads(Path(str(out) + quantise.SIDECAR_SUFFIX).read_text(encoding="utf-8"))
+
+    for side, path in (("source", src), ("output", out)):
+        recorded = rec[side]["sha256"]
+        assert recorded, f"the record does not identify the {side} it names"
+        assert recorded == hashlib.sha256(path.read_bytes()).hexdigest(), (
+            f"the recorded {side} sha256 is not the sha256 of {path.name}")
+    assert rec["source"]["sha256"] != rec["output"]["sha256"], (
+        "both sides carry the same digest, so one of them is hashing the wrong file")
+
+
+def test_a_hash_that_cannot_be_taken_leaves_the_field_empty_and_says_so(tmp_path):
+    """The GGUF is the product. An unrecorded hash is a degradation, and it degrades loudly.
+
+    Asserted through the shared helper rather than a whole quantisation, because the failure being
+    described is an unreadable file at hash time and that is what is simulated.
+    """
+    from senbonzakura import crashsafe
+
+    said = []
+    assert crashsafe.digest_for_the_record(tmp_path / "not-there.gguf", what="output",
+                                          log=said.append) is None
+    assert any("could not hash the output" in m for m in said), (
+        f"a failed hash was silent, which leaves a gap in the record nobody is told about: {said}")
 
 
 @needs_binary

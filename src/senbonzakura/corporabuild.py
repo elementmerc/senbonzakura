@@ -95,6 +95,16 @@ def preflight():
     a stranger runs on a fresh machine on the strength of that instruction. Without `gh` it used
     to die on a raw `FileNotFoundError: 'gh'` from deep inside subprocess, which names the
     program that is missing and nothing about what to do next.
+
+    CALLED FROM `fetch` RATHER THAN FROM `main`, since 2026-09-27, and the route matters. It used
+    to run unconditionally before anything looked at the cache, so `--check` refused on a machine
+    holding every source already, for want of a tool that run would never have invoked. A check
+    that demands more than the work it is checking needs is a check people learn to route around.
+
+    Asking here keeps the guarantee the old placement bought, because `fetch` is the only thing
+    that downloads and this is the first statement in it: nothing is half-fetched. It also makes
+    the prerequisite follow the work rather than the command, so a caller that supplies its own
+    `fetch` needs no `gh`, which is the honest rule and is what the tests around this rely on.
     """
     if shutil.which("gh") is None:
         raise BuildError(
@@ -105,6 +115,7 @@ def preflight():
 
 def fetch(repo, commit, path, *, timeout=120):
     """Raw bytes of one file at one commit, through `gh` so the credential never enters here."""
+    preflight()
     try:
         r = subprocess.run(
             ["gh", "api", f"repos/{repo}/contents/{path}?ref={commit}",
@@ -230,7 +241,7 @@ def build(*, check_only=False, log=print):
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="senbonzakura corpora",
+    ap = argparse.ArgumentParser(allow_abbrev=False, prog="senbonzakura corpora",
                                  description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true",
                     help="verify the pins and the counts, write nothing")
@@ -240,7 +251,7 @@ def build_parser():
 def main(argv=None):
     a = build_parser().parse_args(argv)
     try:
-        preflight()
+        # No preflight here: `build` asks for `gh` only if it is about to fetch something.
         payload = build(check_only=a.check)
     except (BuildError, corpora.CorpusError) as e:
         print(f"corpora: {e}", file=sys.stderr)

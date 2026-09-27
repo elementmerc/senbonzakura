@@ -374,6 +374,55 @@ def test_the_command_writes_a_file_the_gate_accepts(tmp_path, capsys):
     assert gate.run(["--baseline", str(out), "--measurement", str(bad)]) == gate.REGRESSED
 
 
+class TestTheSummaryLineSaysWhatItMeasured:
+    """The one line a reader keeps from this command, and it printed the word None in it.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit ran `senbonzakura baseline` on a deterministic metric and got
+
+        baseline written to base.json: coherence at 2.7486 None on n=1, seeds [42]
+
+    `interval` is legitimately None there, because a metric stamped deterministic has no spread for
+    an interval to describe, and interpolating it dropped the literal word None where a reader looks
+    for one. The units were in the artefact the whole time, one field away from the value, so the
+    summary of a measurement was the only place its units did not appear.
+    """
+
+    def _written(self, tmp_path, capsys, block):
+        art = tmp_path / "m.json"
+        art.write_text(json.dumps(_artefact(**block)), encoding="utf-8")
+        out = tmp_path / "base.json"
+        assert b.main(["--measurement", str(art), "--metric", "coherence",
+                       "--seeds", "42", "--out", str(out)]) == 0
+        return " ".join(capsys.readouterr().out.split())
+
+    def test_a_deterministic_metric_says_so_instead_of_printing_none(self, tmp_path, capsys):
+        said = self._written(tmp_path, capsys, {"deterministic": True, "interval": None})
+        assert "None" not in said, f"the word None reached the reader:\n  {said}"
+        assert "deterministic" in said, (
+            f"the line does not say why there is no interval, which leaves a reader to guess "
+            f"whether one was lost:\n  {said}")
+
+    def test_the_units_reach_the_line_that_reports_the_value(self, tmp_path, capsys):
+        said = self._written(tmp_path, capsys, {"deterministic": True, "interval": None})
+        assert "nats-per-token" in said, (
+            f"the value is reported with no units, and the artefact beside it has them:\n  {said}")
+
+    def test_a_metric_with_an_interval_still_reports_it(self, tmp_path, capsys):
+        """The fix must not swallow the ordinary case, which is the one every gate uses."""
+        said = self._written(tmp_path, capsys, {})
+        assert "2.9" in said and "3.1" in said, f"the interval is no longer reported:\n  {said}"
+        assert "nats-per-token" in said
+        assert "deterministic" not in said, (
+            f"a metric measured with a spread is described as deterministic:\n  {said}")
+
+    def test_units_absent_from_the_artefact_are_absent_from_the_line(self, tmp_path, capsys):
+        """Not "None", and not the word "units" either: an absent field is reported by omission."""
+        said = self._written(tmp_path, capsys, {"units": None})
+        assert "None" not in said, f"a missing units field printed as None:\n  {said}"
+
+
 def test_an_artefact_with_no_sample_size_is_refused():
     """A point estimate with no n behind it cannot be gated: the interval could be anything, and
     the failure the gate exists to catch is exactly a number whose sample collapsed underneath it.

@@ -202,6 +202,7 @@ def build_parser():
     import argparse
 
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura judge",
         description="Check a judge against reference labels before letting it grade anything.\n"
                     "Reports agreement above chance, and exits non-zero when the judge is\n"

@@ -199,7 +199,7 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     `four_bit_help` lets the abliterator say that it REJECTS the flag while still accepting it,
     which is what turns an obscure failure at bake time into a sentence at startup.
     """
-    ap = argparse.ArgumentParser(add_help=False)
+    ap = argparse.ArgumentParser(allow_abbrev=False, add_help=False)
     # `model_required=False` ONLY for the abliterate parser, which also takes the model as a
     # positional so that `senbonzakura Qwen/Qwen2.5-0.5B-Instruct` works. It still refuses a run with no
     # model at all; the check just moves from argparse to `resolve_model`, where it can say which
@@ -336,6 +336,7 @@ def build_parser(full=False):
     the full form for exactly that reason.
     """
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura",
         # WRAPPED BY HAND, because RawDescriptionHelpFormatter does not wrap. This was one
         # 213-column line on the first page anybody sees.

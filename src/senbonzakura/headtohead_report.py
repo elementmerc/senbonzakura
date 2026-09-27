@@ -623,7 +623,7 @@ def render(arms):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap = argparse.ArgumentParser(allow_abbrev=False, description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", help="the directory holding scored-*.json and the arm directories")
     ap.add_argument("--allow-unreadable", action="store_true",

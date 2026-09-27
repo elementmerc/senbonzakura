@@ -44,8 +44,8 @@ import sys
 import time
 from pathlib import Path
 
-from . import gguf_io
-from .crashsafe import atomic_write, free_bytes_for
+from . import argresolve, gguf_io
+from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for
 from .vendored import VendorError, find_binary
 
 #: Types this command will produce. Deliberately not "whatever the binary accepts": every entry
@@ -176,6 +176,9 @@ def quantiser_identity(exe, source_of, log=print):
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura quantise",
+        # See the note in convert.build_parser: `--out` prefix-matches `--output-tensor-type` here,
+        # so an abbreviation turns a plausible typo into a complaint about an unrelated flag.
+        allow_abbrev=False,
         description="Quantise a model with the pinned llama-quantize, then verify what was "
                     "written. A transformers checkpoint is converted to GGUF on the way in, so "
                     "edited weights reach something llama.cpp will serve in one command.")
@@ -222,7 +225,7 @@ def build_parser():
     ap.add_argument("--prune-source", action="store_true",
                     help="delete the source once the output has been verified. The f16 halfway "
                          "file is usually the largest thing on the disk and is reproducible")
-    return ap
+    return argresolve.explain_that_the_output_is_positional(ap, takes="<source>")
 
 
 #: The only suffix that is an EXTENSION here. Anything else after a dot is part of the name.
@@ -882,7 +885,11 @@ def run(argv=None, log=print):
 
     sidecar = Path(str(out) + SIDECAR_SUFFIX)
     record = {
-        "schema": "senbonzakura-quantisation/1",
+        # /2 CARRIES THE sha256 OF THE SOURCE AND THE OUTPUT; /1 did not, and a reader cannot tell
+        # a /1 record from a /2 one where the hash happened to fail unless the version says so. The
+        # field is additive, so a /1 reader loses nothing, and the bump is what lets anything
+        # downstream REQUIRE the hash rather than hope for it.
+        "schema": "senbonzakura-quantisation/2",
         "created": _now(),
         "quantiser": identity,
         "quant_type": a.type,
@@ -902,12 +909,15 @@ def run(argv=None, log=print):
         # the file, so the fact goes here where a downstream reader can act on it, and the
         # comparison below is made only where it is provable.
         "source": {"name": Path(a.source).name, "bytes": src_size,
+                   "sha256": digest_for_the_record(a.source, what="source", log=log),
                    "file_type": head["file_type"], "architecture": head["architecture"],
                    "chat_template": gguf_io.has_chat_template(head)},
         # Carried forward so the kept file still names the checkpoint it came from after
         # --prune-source removes the file this receipt describes.
         "source_conversion": source_conversion_record(a.source),
-        "output": {"name": out.name, "bytes": out_size, "file_type": got["file_type"],
+        "output": {"name": out.name, "bytes": out_size,
+                   "sha256": digest_for_the_record(out, what="output", log=log),
+                   "file_type": got["file_type"],
                    "architecture": got["architecture"], "tensor_count": got["tensor_count"],
                    "chat_template": gguf_io.has_chat_template(got)},
         "seconds": round(took, 1),

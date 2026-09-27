@@ -39,6 +39,8 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import say
+
 
 @dataclass(frozen=True)
 class Corpus:
@@ -243,8 +245,22 @@ def notice(key, log=print):
     # licence_and_upstream` failed, correctly: those two are the attribution the licences actually
     # ask for, so they are the part that cannot be moved to a file the reader has not opened. The
     # shared pointer and the repeated sentence were the padding, and they are what went.
-    log(f"Bundled corpus: {c.name} ({c.licence}). {c.attribution}")
-    log(f"  {c.upstream} @ {c.commit}")
+    # THE SHARED SENTENCE IS A HEADING, NOT A FOOTNOTE, since 2026-09-27. It used to print after
+    # the FIRST corpus's two lines and indented to match them, so it read as that corpus's citation
+    # note when it covers all six. A sentence about every entry cannot sit inside one of them.
+    if not _tail_shown:
+        _tail_shown.append(True)
+        # The phrase "Citations and terms:" is load-bearing and stays word for word: it is what
+        # `test_the_shared_sentence_appears_once_however_many_corpora_load` counts, and the point of
+        # counting it is that this sentence is printed once rather than once per corpus.
+        for line in say.lines("Bundled corpora. Citations and terms: THIRD-PARTY-CORPORA.md, "
+                              "beside this install. Attribution travels with any figure you "
+                              "publish."):
+            log(line)
+    for line in say.lines(f"Bundled corpus: {c.name} ({c.licence}). {c.attribution}",
+                          indent="  ", first=""):
+        log(line)
+    log(f"    {c.upstream} @ {c.commit}")
     # THE SHARED SENTENCE, ONCE PER PROCESS RATHER THAN ONCE PER CORPUS.
     #
     # The per-corpus lines above are the obligation and are per corpus because they differ. The two
@@ -256,13 +272,10 @@ def notice(key, log=print):
     #
     # Nothing about the obligation is weakened. The licences ask for the notice to travel with the
     # work, not for it to be repeated once per file.
-    if not _tail_shown:
-        _tail_shown.append(True)
-        # ONE SENTENCE, and a filename rather than an absolute path. The path was the full
-        # site-packages location, 167 characters on the review box, which wrapped on every terminal
-        # and told the reader nothing they could not get from the name.
-        log("  Citations and terms: THIRD-PARTY-CORPORA.md, beside this install. Attribution "
-            "travels with any figure you publish.")
+    # The shared sentence is printed above, as a heading, for the reason given there. A filename
+    # rather than an absolute path, because the path was the full site-packages location: 167
+    # characters on the review box, wrapping on every terminal, telling the reader nothing the name
+    # does not.
 
 
 #: Whether the shared tail of the notice has been printed in this process. A list rather than a

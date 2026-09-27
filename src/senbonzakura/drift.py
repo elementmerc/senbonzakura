@@ -65,6 +65,7 @@ CACHE_SCHEMA = "senbonzakura-drift-base/1"
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura drift",
         description="Measure how far an edited model's predictions have drifted from its base.",
         parents=[loader_parser()])

@@ -47,9 +47,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import checkpoint, gguf_io
+from . import argresolve, checkpoint, gguf_io
 from ._version import __version__
-from .crashsafe import atomic_write, free_bytes_for, provenance
+from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for, provenance
 from .vendored import VendorError, find_script
 
 #: What the vendored converter can be asked to write. Deliberately not every value it accepts:
@@ -96,6 +96,10 @@ class ConvertError(Exception):
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="senbonzakura convert",
+        # The output path is a positional here, so `--out x` is a natural thing to type. With
+        # abbreviation on, argparse prefix-matches it to `--outtype` and complains about a flag the
+        # user never typed, naming a value that is not a precision.
+        allow_abbrev=False,
         description="Convert a transformers checkpoint to GGUF with the pinned converter, then "
                     "verify what was written.")
     ap.add_argument("model", help="a directory of safetensors, such as an --out from a run")
@@ -124,7 +128,7 @@ def build_parser():
     ap.add_argument("--skip-arch-check", action="store_true",
                     help="skip the pre-flight architecture check. For an architecture the pinned "
                          "converter supports under a name this cannot read from config.json")
-    return ap
+    return argresolve.explain_that_the_output_is_positional(ap, takes="<model>")
 
 
 def read_config(model_dir):
@@ -303,6 +307,11 @@ def build_conversion_record(model_dir, out, pre, got, *, outtype, quantise_to, t
             "file_type": got.get("file_type"),
             "tensor_count": got.get("tensor_count"),
             "bytes": Path(out).stat().st_size if Path(out).exists() else None,
+            # The GGUF this conversion produced, identified rather than described. The source side
+            # has no equivalent because it is a checkpoint directory of many shards, whose identity
+            # is its path, shard count and size here; hashing a multi-shard checkpoint is a
+            # different job and belongs where the checkpoint is read, not to a converter.
+            "sha256": digest_for_the_record(out, what="GGUF") if Path(out).exists() else None,
             "carries_chat_template": gguf_io.has_chat_template(got),
         },
         "converter": {

@@ -63,6 +63,7 @@ class ImatrixError(Exception):
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura imatrix",
         description="Compute an importance matrix for a GGUF, for a fairer quantisation.",
         epilog="The calibration text decides which weights keep their precision, so it is part of "

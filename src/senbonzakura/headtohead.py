@@ -1436,10 +1436,12 @@ def summarise(results) -> dict:
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura head-to-head",
         description="Run a head-to-head between abliteration tools on one machine.")
     sub = ap.add_subparsers(dest="operation", required=True)
-    h = sub.add_parser("run", help="run every tool over every seed, then report")
+    h = sub.add_parser("run", allow_abbrev=False,
+                       help="run every tool over every seed, then report")
     h.add_argument("--tools", default="senbon,heretic",
                    help=f"comma-separated, from: {', '.join(sorted(ADAPTERS))}")
     h.add_argument("--seeds", default="42,43,44,45,46",
@@ -1500,7 +1502,8 @@ def build_parser():
                         "first arm either way, so check that line rather than assuming")
 
     st = sub.add_parser(
-        "stage", help="cut the prompt slices every tool is scored on. RUN THIS FIRST",
+        "stage", allow_abbrev=False,
+        help="cut the prompt slices every tool is scored on. RUN THIS FIRST",
         description="Cut the prompt slices every tool is scored on. This runs BEFORE `run`: it "
                     "produces the directory that `run --eval-slices` consumes, and `run` refuses "
                     "to start without it. Re-cut it whenever the track changes, or after an "
@@ -1532,7 +1535,8 @@ def build_parser():
                     help="how many harmless prompts to stage for the KL divergence score "
                          "(default: 64)")
 
-    r = sub.add_parser("report", help="read a finished head-to-head and say what it found")
+    r = sub.add_parser("report", allow_abbrev=False,
+                       help="read a finished head-to-head and say what it found")
     r.add_argument("run_dir", help="the directory the arms and their scores were written to")
     r.add_argument("--allow-unreadable", action="store_true",
                    help="report over the arms that are readable instead of refusing. An "

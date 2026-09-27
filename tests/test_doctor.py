@@ -548,7 +548,11 @@ def test_the_flag_reaches_report_from_the_command_line(monkeypatch):
 
     seen = {}
 
-    def _fake_report(checks, log=print, *, advisories_ok=False):
+    # `**_rest` so this stands in for `report` without restating its signature. `main` also passes
+    # `header=False`, because it prints the title itself to keep the corpora's licence notice from
+    # landing above it, and a stub that has to be edited every time an unrelated argument is added
+    # is a stub that makes the real change look like a break.
+    def _fake_report(checks, log=print, *, advisories_ok=False, **_rest):
         seen["advisories_ok"] = advisories_ok
         return 0
 

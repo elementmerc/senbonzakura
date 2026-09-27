@@ -24,6 +24,7 @@ from .crashsafe import atomic_write, provenance
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura score",
         description="Score a model's refusal / coherence on a fixed eval set.",
         parents=[loader_parser()])

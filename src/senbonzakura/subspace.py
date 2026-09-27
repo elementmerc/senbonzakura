@@ -198,6 +198,7 @@ def _reference_pair(control, seed=0):
 def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="python -m senbonzakura.subspace",
         description="Check the subspace-comparison instrument on cases whose answer is known.")
     p.add_argument("--control", choices=["replace", "drop", "noise"], default=None,

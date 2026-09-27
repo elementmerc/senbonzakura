@@ -139,6 +139,7 @@ def resolve_skips(track, skip_harmful, skip_harmless, log=None):
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura compass",
         description="Criterion-free harm discrimination via the HARMFUL/BENIGN logit margin.",
         parents=[loader_parser()])

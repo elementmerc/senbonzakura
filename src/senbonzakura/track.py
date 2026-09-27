@@ -613,6 +613,7 @@ def write_track(out: Path, harmful: dict[str, list[str]], harmless: dict[str, li
 
 def build_parser():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura track",
         # THE SUBCOMMANDS ARE NAMED HERE because they are dispatched on argv[0] before this parser
         # runs, so argparse cannot list them and a reader of this page could not learn they exist.
@@ -1097,6 +1098,7 @@ def main(argv=None):
 def _promote_main(argv):
     sub = argv[0]
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog=f"senbonzakura track {sub}",
         description=("Re-verify a track and stamp it as one measurements may come from."
                      if sub == "promote" else

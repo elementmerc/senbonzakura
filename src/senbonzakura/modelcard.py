@@ -439,6 +439,7 @@ def build_parser():
     import argparse
 
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura report",
         description="Assemble a run's artefacts into a model card that states only what they "
                     "support.")

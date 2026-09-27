@@ -536,9 +536,13 @@ def run_checks(*, deep=False, log=print):
     return checks
 
 
-def report(checks, log=print, *, advisories_ok=False):
-    log("senbonzakura doctor")
-    log("")
+def report(checks, log=print, *, advisories_ok=False, header=True):
+    # `header=False` when the caller has already printed the title, which `main` does so that the
+    # corpora's licence notice cannot land above it. Default True so every other caller, and every
+    # test that renders a report on its own, is unchanged.
+    if header:
+        log("senbonzakura doctor")
+        log("")
     width = max(len(c.name) for c in checks) + 2
     for c in checks:
         log(f"  {c.mark}  {c.name:<{width}} {c.detail}")
@@ -581,6 +585,7 @@ def report(checks, log=print, *, advisories_ok=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="senbonzakura doctor",
         description="Check that this install can actually convert, quantise and measure.")
     ap.add_argument("--deep", action="store_true",
@@ -592,7 +597,13 @@ def main(argv=None):
                          "install exits 1, because an advisory means this install cannot do "
                          "something. A genuine failure still exits 2 either way")
     a = ap.parse_args(argv)
-    return report(run_checks(deep=a.deep), advisories_ok=a.advisories_ok)
+    # THE HEADER GOES FIRST, before any check runs. Loading the bundled corpora prints their
+    # licence notice, which is an obligation and stays, and it used to arrive above this command's
+    # own title because the checks run before the report renders. A reader met ten lines about other
+    # people's datasets before anything told them which command they were looking at.
+    print("senbonzakura doctor")
+    print()
+    return report(run_checks(deep=a.deep), advisories_ok=a.advisories_ok, header=False)
 
 
 if __name__ == "__main__":   # pragma: no cover

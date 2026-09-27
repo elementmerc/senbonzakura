@@ -407,6 +407,16 @@ def main(argv=None, out=None):
         if not n_checked:
             print("NOTHING WAS CHECKED: no result artefacts were found at the path(s) given. "
                   "That is not the same as a clean result.", file=out)
+            # AND WHICH OF THE TWO OUTCOMES THIS IS, added 2026-09-27. The sentence above was
+            # printed identically whether the command was about to exit 0 or non-zero, so a reader
+            # could not tell from the output whether their CI step had just failed, and the reader
+            # who exits 0 is not told that the behaviour they almost certainly want is one flag
+            # away. An empty sweep is legitimately fine from a shell and almost never fine in CI.
+            if args.fail_on_empty:
+                print("  Exiting non-zero because --fail-on-empty was given.", file=out)
+            elif not n_unchecked:
+                print("  This run exits 0. Pass --fail-on-empty to make an empty sweep a "
+                      "failure, which is what a CI step usually wants.", file=out)
         # LOOPHOLE 7, IN THE OUTPUT RATHER THAN THE README. Somebody will otherwise quote a
         # clean report as a claim of correctness, and it is not one.
         print("This looks for known failure modes. It cannot tell you a number is right.",

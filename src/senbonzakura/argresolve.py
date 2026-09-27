@@ -111,3 +111,29 @@ def refuse_to_overwrite(path, *, what="result", flag="--out"):
             f"  Replacing it would leave two runs' numbers indistinguishable.\n"
             f"  Pass {flag} <path> to say where this run's {what} goes, or move the old one.")
     return path
+
+
+def explain_that_the_output_is_positional(ap, *, takes):
+    """Answer `--out` on the two commands where the output path is a positional instead.
+
+    Nine commands in this tool spell the output `--out`; `convert` and `quantise` take it as their
+    second positional, because both of them also carry flags that begin with those letters. Those
+    two parsers therefore run with `allow_abbrev=False`, without which argparse prefix-matches
+    `--out` to `--outtype` or `--output-tensor-type` and reports a flag the user never typed.
+
+    Turning abbreviation off fixes the misattribution but leaves the reader with "unrecognized
+    arguments: --out", which is true and tells them nothing about what to type instead. Somebody
+    who learned `--out` on `senbonzakura run` is the likeliest person to meet this message, so it
+    names the form that works.
+    """
+    refuse = ap.error
+
+    def error(message):
+        typed_it = any(word == "--out" or word.startswith("--out=") for word in message.split())
+        if typed_it:
+            message += (f"\n  On this command the output path is the second positional argument, "
+                        f"not a flag:\n    {ap.prog} {takes} <output>")
+        refuse(message)
+
+    ap.error = error
+    return ap

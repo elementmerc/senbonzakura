@@ -51,6 +51,22 @@ import pytest
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "src" / "senbonzakura"
 
 
+#: Every name this package builds a parser with. A list rather than a literal in the walk, because
+#: this check went BLIND once before and its own sanity assertion is what caught it.
+#:
+#: WHAT HAPPENED, 2026-09-27. Every `argparse.ArgumentParser(` became
+#: `argresolve.ParserThatNamesUnknownFlags(` so a mistyped flag would be named alongside a missing
+#: one. The `allow_abbrev=False` arguments were all still there and the behaviour never changed, but
+#: this scan matched on the constructor's NAME, so it found 3 sites out of 28 and would have reported
+#: clean for ever on the other 25. `test_no_parser_in_this_tool_abbreviates_at_all` failed only
+#: because it asserts how many sites it found before asserting anything about them.
+#:
+#: The lesson is the one this file already contains twice over: **a guard that can stop looking is
+#: worse than no guard**, because the silence reads identically to a pass. Any future parser base
+#: class goes here on the same day it is written.
+BUILDS_A_PARSER = ("ArgumentParser", "ParserThatNamesUnknownFlags", "add_parser")
+
+
 def _long_flags(node):
     """Every `--flag` string declared by an `add_argument` call inside this function."""
     flags = []
@@ -104,8 +120,7 @@ def _parser_constructions():
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            builds = (isinstance(func, ast.Attribute)
-                      and func.attr in ("ArgumentParser", "add_parser"))
+            builds = (isinstance(func, ast.Attribute) and func.attr in BUILDS_A_PARSER)
             if not builds:
                 continue
             off = any(kw.arg == "allow_abbrev" and isinstance(kw.value, ast.Constant)
@@ -258,3 +273,23 @@ def test_the_collision_check_would_fail_on_the_defect_it_was_written_for():
         "`--out` is no longer used anywhere in this tool, so this test's premise has moved")
     matches = [n for n in declared if n.startswith("--out")]
     assert matches == ["--outtype"], "the defect is a single silent match, and it is not reported"
+
+
+def test_the_constructor_names_are_read_from_the_code_rather_than_remembered():
+    """The list above must contain whatever `argresolve` actually exports as its parser class.
+
+    This is the guard on the guard. The scan went blind once because a rename moved the constructor
+    out from under a hardcoded name, and a comment asking the next person to remember is not a
+    control. Renaming the class again fails here, on the same day, rather than silently halving what
+    the sweep above examines.
+    """
+    from senbonzakura import argresolve
+
+    exported = [name for name, value in vars(argresolve).items()
+                if isinstance(value, type) and issubclass(value, argparse.ArgumentParser)
+                and value is not argparse.ArgumentParser]
+    assert exported, "argresolve exports no parser class, so this test's premise has moved"
+    for name in exported:
+        assert name in BUILDS_A_PARSER, (
+            f"{name} builds parsers in this package and the scan above does not look for it, so "
+            f"every parser built with it is unchecked. Add it to BUILDS_A_PARSER.")

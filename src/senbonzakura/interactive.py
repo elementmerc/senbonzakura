@@ -77,8 +77,12 @@ KNOWN_DATASETS = [
         # OFFERED SECOND, AND SAYING SO, because it is gated. It was the first harmful choice and
         # therefore the default, and taking the default gave a newcomer with no Hugging Face
         # account an authentication error from a menu that had promised them a yardstick.
+        # `hf auth login`, NOT `huggingface-cli login`. The newer client replaced it, and this was
+        # the only place in the tool still handing a reader the old spelling: `hubmessage` strips
+        # exactly that line out of upstream's own advice for being stale, so our own menu was giving
+        # the command we treat as wrong when somebody else says it. Found 2026-09-27.
         "note": "520 harmful behaviours, the field's common yardstick. GATED on the Hub: it "
-                "needs a Hugging Face account and `huggingface-cli login` before it will fetch.",
+                "needs a Hugging Face account and `hf auth login` before it will fetch.",
     },
     {
         "key": "harmless-alpaca",

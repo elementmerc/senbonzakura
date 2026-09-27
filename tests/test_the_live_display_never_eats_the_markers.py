@@ -211,3 +211,155 @@ def test_the_envelope_still_cannot_be_overwritten_by_a_call_site():
     log.emit("trial", kind="lies", seq=999, number=3)
     assert seen[0]["kind"] == "trial"
     assert seen[0]["seq"] == 1
+
+
+# ── the panel itself, driven without a terminal ───────────────────────────────────────────────────
+#
+# WHY THIS SECTION EXISTS, 2026-09-27
+#
+# Everything above checks that the display stays OUT of the way, which is the property that protects
+# CI. None of it exercised the panel, because the panel needs a terminal, so `livedisplay.py` sat at
+# 43% coverage: 74 of 131 statements, the whole `_RichPanel` class. That took the project's total
+# from 94.06% to 93.98% against a 94% floor, and CI went red on a two-hundredth of a percent with
+# every one of 5,802 tests passing.
+#
+# The floor was not the problem. Shipping a class nobody had automated a single line of was, and the
+# only reason it was known to work at all is that it had been driven by hand through a pty once.
+#
+# `rich` will render into any file object if told to force terminal mode, so none of this needs a
+# pty: the point is to exercise the rendering, the event handling and the teardown.
+
+class _Recording(io.StringIO):
+    """A stream rich will draw into, and which reports itself as a terminal."""
+
+    def isatty(self):
+        return True
+
+
+def _panel(total=3, stream=None):
+    """A panel rendering into a string, with a forced width so the output is machine-independent."""
+    from rich.console import Console
+
+    from senbonzakura.livedisplay import _RichPanel
+    log = events.EventLog(None)
+    sink = stream or _Recording()
+    console = Console(file=sink, force_terminal=True, width=100, legacy_windows=False)
+    p = _RichPanel(log, total_trials=total, log=lambda _m: None, console=console)
+    p._sink = sink
+    return log, p
+
+
+def _trial(number, refusals, kl, objective=None):
+    return {"kind": "trial", "number": number, "refusals": refusals, "soft": 0.05,
+            "broken": 0.0, "kl": kl, "objective": objective if objective is not None else refusals + kl}
+
+
+def test_the_panel_draws_a_box_with_its_title():
+    log, p = _panel()
+    with p:
+        log.emit("trial", **{k: v for k, v in _trial(0, 0.58, 0.02).items() if k != "kind"})
+    drawn = p._sink.getvalue()
+    assert "senbonzakura" in drawn
+    assert any(glyph in drawn for glyph in "─━╭│"), "no box was drawn at all"
+
+
+def test_the_panel_shows_the_trial_count_against_the_budget():
+    log, p = _panel(total=7)
+    with p:
+        for i in range(3):
+            log.emit("trial", **{k: v for k, v in _trial(i, 0.5, 0.1).items() if k != "kind"})
+    assert "3 of 7" in p._sink.getvalue()
+
+
+def test_the_best_row_tracks_the_lowest_objective_not_the_latest():
+    """Read from the event rather than recomputed, so the panel cannot disagree with the search."""
+    log, p = _panel()
+    with p:
+        log.emit("trial", number=0, refusals=0.58, soft=0.05, broken=0.0, kl=0.02, objective=0.60)
+        log.emit("trial", number=1, refusals=0.31, soft=0.05, broken=0.0, kl=0.11, objective=0.42)
+        log.emit("trial", number=2, refusals=0.28, soft=0.05, broken=0.0, kl=0.20, objective=0.48)
+    assert p._best["number"] == 1, "the best row is not the lowest objective"
+    assert p._last["number"] == 2, "the latest row is not the most recent trial"
+
+
+def test_a_trial_with_an_unusable_objective_does_not_become_the_best():
+    """A malformed event must not win, and must not raise either."""
+    log, p = _panel()
+    with p:
+        log.emit("trial", number=0, refusals=0.5, soft=0.0, broken=0.0, kl=0.1, objective=0.6)
+        log.emit("trial", number=1, refusals=0.1, soft=0.0, broken=0.0, kl=0.1, objective=None)
+    assert p._best["number"] == 0
+
+
+def test_rates_are_shown_as_percentages_and_kl_as_itself():
+    log, p = _panel()
+    with p:
+        log.emit("trial", number=4, refusals=0.3125, soft=0.05, broken=0.0, kl=0.1234, objective=0.4)
+    drawn = " ".join(p._sink.getvalue().split())
+    assert "31.2%" in drawn, "a refusal rate is not shown as a percentage"
+    assert "0.1234" in drawn, "KL is not shown in its own units"
+
+
+def test_a_field_that_is_missing_or_unparseable_renders_as_a_question_mark():
+    """A panel must never be the reason a twenty-minute run dies."""
+    log, p = _panel()
+    with p:
+        log.emit("trial", number=1, refusals="not a number", kl=None)
+    drawn = p._sink.getvalue()
+    assert "?" in drawn
+
+
+def test_events_that_are_not_trials_are_ignored():
+    log, p = _panel()
+    with p:
+        log.emit("stage", name="bake")
+        log.emit("saved", path="x")
+    assert p._trials == 0
+    assert "waiting for the first trial" in p._sink.getvalue()
+
+
+def test_a_note_is_shown_and_only_the_last_few_are_kept():
+    log, p = _panel()
+    with p:
+        for i in range(6):
+            p.note(f"note number {i}")
+    drawn = p._sink.getvalue()
+    assert "note number 5" in drawn, "the most recent note is not shown"
+    assert len(p._notes) <= 3, "notes accumulate without bound, so the panel grows all run"
+
+
+def test_the_panel_unsubscribes_on_exit_so_a_later_event_cannot_reach_a_closed_display():
+    """Unsubscribing BEFORE teardown is deliberate: see the comment in `__exit__`."""
+    log, p = _panel()
+    with p:
+        log.emit("trial", number=0, refusals=0.5, soft=0.0, broken=0.0, kl=0.1, objective=0.6)
+    before = p._trials
+    log.emit("trial", number=1, refusals=0.4, soft=0.0, broken=0.0, kl=0.1, objective=0.5)
+    assert p._trials == before, "the panel was still receiving events after it closed"
+
+
+def test_attach_returns_a_real_panel_when_the_stream_looks_like_a_terminal(monkeypatch):
+    """The success path of `attach`, which nothing reached before."""
+    from senbonzakura import livedisplay
+    monkeypatch.setattr(livedisplay, "_a_terminal_we_can_draw_in", lambda _s: True)
+    log = events.EventLog(None)
+    p = livedisplay.attach(log, _args(), total_trials=2, stream=_Recording())
+    assert p.active is True
+    with p:
+        log.emit("trial", number=0, refusals=0.5, soft=0.0, broken=0.0, kl=0.1, objective=0.6)
+
+
+def test_attach_degrades_to_the_null_panel_when_construction_fails(monkeypatch):
+    """A panel that cannot be built is not a failed run, and the reason is said once."""
+    from senbonzakura import livedisplay
+    monkeypatch.setattr(livedisplay, "_a_terminal_we_can_draw_in", lambda _s: True)
+
+    class _Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("no terminal after all")
+
+    monkeypatch.setattr(livedisplay, "_RichPanel", _Boom)
+    said = []
+    p = livedisplay.attach(events.EventLog(None), _args(), log=said.append, stream=_Recording())
+    assert isinstance(p, livedisplay.NullPanel)
+    assert any("could not start" in m for m in said), "the fallback happened silently"

@@ -72,7 +72,7 @@ instead of an hour.
 ## Edit a model
 
 ```sh
-senbonzakura Qwen/Qwen3-1.7B
+senbonzakura Qwen/Qwen2.5-0.5B-Instruct
 ```
 
 That is the whole command. The model is the only thing it cannot guess.
@@ -92,7 +92,7 @@ says what is in it and how to build a wheel without it.
 Everything is still a flag when you want it:
 
 ```sh
-senbonzakura Qwen/Qwen3-1.7B --track mytrack --out my-model --device cuda
+senbonzakura Qwen/Qwen2.5-0.5B-Instruct --track mytrack --out my-model --device cuda
 ```
 
 ## What you get

@@ -16,16 +16,21 @@ couple of minutes to build.
 
 ```sh
 senbonzakura kageyoshi \
-    --model Qwen/Qwen3-1.7B \
+    --model Qwen/Qwen2.5-0.5B-Instruct \
     --track mytrack \
     --out my-abliterated-model \
     --device cuda
 ```
 
-Then go and do something else for the afternoon. A 0.6B model on a 6 GB card, on the defaults and
+Then go and do something else for the afternoon. **Qwen3-0.6B** on a 6 GB card, on the defaults and
 with the weights already in the local cache, took **108 minutes from the command to `DONE`** when
 somebody timed the whole thing. A bigger model takes longer, and a cold cache adds the download on
 top.
+
+The model in the command above is a different one of about the same size, and it has not been
+timed at the default budget. It is there because it refuses 58.6% of the bundled evaluation set,
+measured at n=128, so you can actually see the thing change; a model that barely refuses gives you
+nothing to watch. The timing figure stays attached to the model it was measured on.
 
 That figure is end to end: it covers everything the command does, not just the search. This page
 used to say "about an hour", which is roughly what the search alone costs, and about half of the
@@ -113,7 +118,7 @@ If you want the knobs, use the manual mode below.
 
 ```sh
 senbonzakura abliterate \
-    --model Qwen/Qwen3-1.7B \
+    --model Qwen/Qwen2.5-0.5B-Instruct \
     --track mytrack \
     --out my-abliterated-model \
     --device cuda \

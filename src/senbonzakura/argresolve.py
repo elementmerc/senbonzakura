@@ -89,9 +89,9 @@ def pick_model(positional, flag, *, command="senbonzakura", long_form=None):
         raise SystemExit(
             f"{command}: no model given.\n"
             f"  The short form is the model on its own:\n"
-            f"    {command} Qwen/Qwen3-1.7B\n"
+            f"    {command} Qwen/Qwen2.5-0.5B-Instruct\n"
             f"  The long form still works and is what a script should use:\n"
-            f"    {long_form or f'{command} --model Qwen/Qwen3-1.7B'}")
+            f"    {long_form or f'{command} --model Qwen/Qwen2.5-0.5B-Instruct'}")
     return model
 
 

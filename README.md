@@ -145,8 +145,9 @@ measurement, it is not one at all.
 # A corpus with a split that stops you marking your own homework.
 senbonzakura track --harmful harmful.txt --harmless harmless.txt --out mytrack
 
-# Search for a configuration and apply it. About an hour for a 1.7B on a 6 GB card.
-senbonzakura kageyoshi --model Qwen/Qwen3-1.7B --track mytrack --out abliterated --device cuda
+# Search for a configuration and apply it. Timed at 108 minutes end to end for Qwen3-0.6B
+# on a 6 GB card, at the defaults, with the weights already cached.
+senbonzakura kageyoshi --model Qwen/Qwen2.5-0.5B-Instruct --track mytrack --out abliterated --device cuda
 
 # Ask what the edit cost.
 senbonzakura compass --model abliterated \

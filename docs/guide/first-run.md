@@ -22,20 +22,23 @@ senbonzakura kageyoshi \
     --device cuda
 ```
 
-Then go and do something else for the afternoon. **Qwen3-0.6B** on a 6 GB card, on the defaults and
-with the weights already in the local cache, took **108 minutes from the command to `DONE`** when
-somebody timed the whole thing. A bigger model takes longer, and a cold cache adds the download on
-top.
+Then go and do something else for the afternoon. Plan for a couple of hours.
 
-The model in the command above is a different one of about the same size, and it has not been
-timed at the default budget. It is there because it refuses 58.6% of the bundled evaluation set,
-measured at n=128, so you can actually see the thing change; a model that barely refuses gives you
-nothing to watch. The timing figure stays attached to the model it was measured on.
+The nearest thing to a measured expectation: **108 minutes from the command to `DONE`**, end to
+end, for **Qwen3-0.6B** on a 6 GB card at the defaults with the weights already cached. That is a
+different model from the one above, of about the same size, so treat it as the right order of
+magnitude rather than a promise; the model in the command has not been timed at the default budget.
+A bigger model takes longer, and a cold cache adds the download on top.
 
-That figure is end to end: it covers everything the command does, not just the search. This page
-used to say "about an hour", which is roughly what the search alone costs, and about half of the
-wall clock falls *after* the search's progress line reaches `ETA 0s`. The next section breaks that
-down. Plan for a couple of hours and be pleased if it's less.
+::: tip Why this model
+It refuses 58.6% of the bundled evaluation set, measured at n=128, so you can actually watch the
+thing change. A model that hardly refuses to begin with gives you nothing to see, and the tool now
+declines to edit one below 5% rather than let you draw a conclusion from noise.
+:::
+
+"End to end" is doing real work in that sentence. This page used to say "about an hour", which is
+roughly what the *search* alone costs, and about half of the wall clock falls **after** the search's
+progress line reaches `ETA 0s`. The next section breaks that down. Be pleased if it's less.
 
 That's genuinely it. No configuration file, no tuning, no eight knobs to guess at.
 

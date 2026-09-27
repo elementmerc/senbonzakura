@@ -1,0 +1,50 @@
+# Why this file exists, 2026-09-27.
+#
+# This repository pushes `dev` to two remotes: a public GitHub one and a private Forgejo one. Only
+# GitHub was ever meant to run CI. Forgejo Actions discovers workflows from `.forgejo/workflows`,
+# then `.gitea/workflows`, then `.github/workflows`, and uses the FIRST of those that exists. With
+# no `.forgejo` directory here, every push to the private remote made Forgejo execute this
+# project's GitHub workflows a second time, including the job that loads a model into memory. That
+# ran on a shared build box and took it out of service; CI was dead for ten days from 2026-09-17
+# before anybody traced it, because the jobs looked like they belonged to GitHub.
+#
+# So this directory is the fix, and this workflow is the smallest real thing that can live in it.
+# An empty directory does not survive git, and a directory with nothing that runs would leave the
+# precedence unobservable: the point is to be able to look at the Forgejo Actions tab and see THIS
+# job and none of the GitHub ones.
+#
+# It deliberately does no work. It checks out nothing, installs nothing, downloads no model and
+# touches no cache. The private mirror is a mirror; the tests, the wheel and the abliteration job
+# belong to GitHub, where they already run.
+#
+# GitHub ignores `.forgejo/` entirely, so nothing here changes the public side.
+#
+# If the GitHub jobs still appear in the Forgejo Actions tab after this lands, the precedence is
+# not what the documentation says and this file is not sufficient. The fallback is a condition on
+# the heavy job itself so it no-ops anywhere but GitHub. That would put a workaround for one
+# runner into the public workflow files, which is why it is the second choice and not the first.
+
+name: mirror
+run-name: mirror received ${{ github.sha }}
+
+on:
+  push:
+    branches: [dev, main]
+
+jobs:
+  acknowledge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say what this mirror does and does not do
+        run: |
+          echo "This is the private mirror. It runs no tests and builds nothing."
+          echo "CI for this project runs on GitHub. If you are looking for a test"
+          echo "result, a wheel or an abliteration run, it is there and not here."
+          echo
+          echo "commit:  ${{ github.sha }}"
+          echo "ref:     ${{ github.ref }}"
+          echo
+          echo "This job existing at all is the check: it means Forgejo is reading"
+          echo ".forgejo/workflows and has stopped reading .github/workflows. If any"
+          echo "job from .github/workflows also appears in this run list, that"
+          echo "precedence is not holding and the duplicate execution is still live."

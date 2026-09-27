@@ -109,8 +109,11 @@ def build_parser():
                     help="result files, or directories to search for .json files")
     ap.add_argument("--json", action="store_true",
                     help="machine-readable output, one object per file")
+    # `--quiet` MEANT ALMOST NOTHING. It dropped the two closing lines, 134 bytes of 5,435, and left
+    # the whole finding in place, while `gate --quiet` in the same tool meant "the verdict line only".
+    # One flag name, two behaviours, and the one a reader expects was the other command's.
     ap.add_argument("--quiet", action="store_true",
-                    help="print findings only, no summary and no reassurance")
+                    help="one line per finding, and nothing else. For a build log or a grep")
     ap.add_argument("--fail-on-empty", action="store_true",
                     help="exit non-zero when NOTHING was checked. A directory that exists and "
                          "holds no result artefacts otherwise exits 0, which in CI is a green "
@@ -215,7 +218,38 @@ def inspect_pair(path_a, path_b, checks):
     return findings, skipped, None
 
 
-def _render(path, findings, skipped, problem, out, *, named=True):
+#: Where the text wraps. 76 leaves room for the 3-space indent inside an 80-column terminal.
+_WIDTH = 76
+
+#: The indent every wrapped section body sits at.
+_BODY = "     "
+
+
+def _section(label, text, out):
+    """A labelled section: the label on its own line, the body wrapped under it, a blank line after.
+
+    WHY THIS EXISTS, 2026-09-27
+
+    Each section used to be printed as ONE `print` of the whole string on a single line. An output
+    review measured a single finding at 5,435 characters across lines of 879, 1646, 1022 and 1458,
+    with not one blank line in the output, which is 64 unbroken rows on an 80-column terminal. The
+    hanging indent after `what it is:` was lost the moment the terminal soft-wrapped it, so the
+    labels stopped marking anything.
+
+    Nothing here is about the words. This is the whitespace, and on its own it turns four walls into
+    four paragraphs.
+    """
+    import textwrap
+
+    print(f"   {label}", file=out)
+    for line in textwrap.wrap(" ".join(text.split()), width=_WIDTH,
+                              initial_indent=_BODY, subsequent_indent=_BODY,
+                              break_long_words=False, break_on_hyphens=False):
+        print(line, file=out)
+    print(file=out)
+
+
+def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, total=None):
     if problem:
         if named:
             print(f"?  {path}\n   UNCHECKED: {problem}", file=out)
@@ -223,27 +257,64 @@ def _render(path, findings, skipped, problem, out, *, named=True):
             # Swept out of a directory rather than named, so the user never claimed it was a
             # result. Reported, because silence about a file that was read would be its own
             # small dishonesty, but not counted against the run.
-            print(f"-  {path}: not a result artefact, skipped", file=out)
+            print(f"-  {path}\n   not a result artefact, skipped", file=out)
         return
     for f in findings:
+        if quiet:
+            # ONE LINE PER FINDING, which is what `--quiet` was advertised as and was not. It used
+            # to drop only the two closing lines, 134 bytes of 5,435, leaving the whole wall in
+            # place, while `gate --quiet` in the same tool meant what a reader expects.
+            print(f"!  {path}  [{f.check_id}]  "
+                  f"{_SEVERITY_SENTENCE.get(f.severity, f.severity)}", file=out)
+            continue
         print(f"\n!  {path}", file=out)
-        print(f"   {f.title}  [{f.check_id}]", file=out)
+        # The check id on its own line, and the title wrapped. Titles run past 100 characters and
+        # used to trail the id off the right-hand edge, so the one string a reader needs in order to
+        # look the check up was the one most likely to be wrapped away from the eye.
+        print(f"   [{f.check_id}]", file=out)
+        for line in __import__("textwrap").wrap(" ".join(f.title.split()), width=_WIDTH,
+                                                initial_indent="   ", subsequent_indent="   "):
+            print(line, file=out)
         # BOTH AXES, NAMED, because they are routinely read as one. Severity is what this costs
         # if the finding is right; confidence is how likely it is to be right. A high-confidence
         # note and a medium-confidence withdrawal are not the same news.
-        print(f"   {_SEVERITY_SENTENCE.get(f.severity, f.severity)}  "
-              f"({f.confidence} confidence this finding is right)", file=out)
-        print(f"   what it is:   {f.detects}", file=out)
-        print(f"   seen before:  {f.incident}", file=out)
-        print(f"   what to do:   {f.remedy}", file=out)
-        # PRINTED WITH THE FINDING, not kept in the documentation. A linter with a bad
-        # false-positive rate is uninstalled once and never again, so the reader has to be able
-        # to judge this one without going and reading the source.
-        print(f"   when this check is wrong: {f.false_positive}", file=out)
+        # Two short lines rather than one 95-column line. Both axes still named, because they are
+        # routinely read as one: severity is what this costs if the finding is right, confidence is
+        # how likely it is to be right, and a high-confidence note is not a medium-confidence
+        # withdrawal.
+        print(f"   {_SEVERITY_SENTENCE.get(f.severity, f.severity)}", file=out)
+        print(f"   {f.confidence} confidence this finding is right.", file=out)
+        print(file=out)
+        _section("What it is", f.detects, out)
+        _section("What to do", f.remedy, out)
+        # ALL FOUR SECTIONS, ALWAYS. An output review called the incident the least useful thing on
+        # the screen, and a first attempt at this put it behind a flag on that advice.
+        # `test_a_finding_carries_everything_needed_to_judge_it` refused, and its docstring says why
+        # in terms: "the incident is the citation without which a finding is an opinion". It asserts
+        # the date is QUOTED rather than referenced. That is a commitment from the v0.8 plan, not
+        # decoration, and hiding it would have turned every finding back into an assertion the reader
+        # has to take on faith.
+        #
+        # So the fix was never deletion. It was the WRAPPING above, which turns a 1,646-character
+        # line into a paragraph, plus shortening the incident text itself where it had grown to
+        # recount three separate fixes.
+        _section("Seen before", f.incident, out)
+        # A linter with a bad false-positive rate is uninstalled once and never again, so the reader
+        # has to be able to judge this one without going and reading the source.
+        _section("When this check is wrong", f.false_positive, out)
+    if quiet:
+        return
     if not findings and skipped:
-        print(f"   {path}: nothing found ({len(skipped)} checks did not apply)", file=out)
+        # COUNTED THE WAY A READER READS IT. This said "(13 checks did not apply)" beside a summary
+        # line saying "16 checks available", and `--min-applied` then printed "3 of 13 applied",
+        # reusing the count of checks that did NOT apply as the denominator of the ones that did.
+        # Three numbers on one screen, one of them used two ways.
+        applied = (total - len(skipped)) if total is not None else None
+        detail = (f"{applied} of {total} checks applied" if applied is not None
+                  else f"{len(skipped)} checks did not apply")
+        print(f"✓  {path}\n   nothing found ({detail})", file=out)
     elif not findings:
-        print(f"   {path}: nothing found", file=out)
+        print(f"✓  {path}\n   nothing found", file=out)
 
 
 def main(argv=None, out=None):
@@ -306,7 +377,8 @@ def main(argv=None, out=None):
         for path, findings, skipped, problem, named, _applied in results:
             if args.quiet and not findings and not (problem and named):
                 continue
-            _render(path, findings, skipped, problem, out, named=named)
+            _render(path, findings, skipped, problem, out, named=named,
+                    quiet=args.quiet, total=len(checks))
 
     n_findings = sum(len(fs) for _, fs, _, _, _, _ in results)
     n_unchecked = sum(1 for _, _, _, problem, named, _ in results if problem and named)

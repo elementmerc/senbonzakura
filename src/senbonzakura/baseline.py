@@ -235,6 +235,22 @@ def read(path):
     if not isinstance(loaded, dict):
         raise BaselineError(f"{path} holds {type(loaded).__name__}, not a baseline object.")
     got = loaded.get("schema")
+    if got is None and ("metrics" in loaded or "measurement" in loaded):
+        # THE COMMONEST WAY TO GET HERE IS NOT A SCHEMA CHANGE, it is handing this a raw run output.
+        #
+        # A reader followed the hint `baseline` prints on success, passed the new run's result
+        # artefact, and got "declares schema None" (2026-09-26). That sentence is about versioning
+        # and their file had no version because it was never a baseline; nothing told them the file
+        # was the wrong KIND, or that one command turns the one they have into the one wanted.
+        #
+        # Detected on `metrics`, which is the block every result artefact in this project stamps and
+        # no baseline carries, so this cannot fire on a genuinely old baseline.
+        raise BaselineError(
+            f"{path} looks like a result artefact rather than a recorded measurement: it carries a "
+            f"`metrics` block and no baseline `schema`. This compares two RECORDED measurements, so "
+            f"record this one first:\n"
+            f"    senbonzakura baseline {path} --seeds <n> --out recorded.json\n"
+            f"then pass `recorded.json`. The command prints the flag to use next when it succeeds.")
     if got != SCHEMA:
         raise BaselineError(
             f"{path} declares schema {got!r} and this build understands {SCHEMA!r}. A schema "
@@ -644,7 +660,13 @@ def main(argv=None):
         return 2
     print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f} "
           f"{written['interval']} on n={written['n']}, seeds {written['seeds']}")
-    print(f"  gate a later run with: senbonzakura gate --baseline {a.out} --measurement <new>")
+    # THE HINT USED TO BE UNFOLLOWABLE. It read `--measurement <new>`, and a reader passed the new
+    # run's result artefact, because that is what `--measurement` means on THIS command. `gate`
+    # wanted a recorded measurement, so it exited 2 on a schema message. Both steps are named now,
+    # and the flag is the one `gate` actually documents.
+    print(f"  gate a later run with, once you have recorded it the same way:")
+    print(f"    senbonzakura baseline <the later run's result> --seeds <n> --out later.json")
+    print(f"    senbonzakura gate --baseline {a.out} --current later.json")
     return 0
 
 

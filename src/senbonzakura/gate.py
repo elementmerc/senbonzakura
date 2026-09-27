@@ -44,8 +44,23 @@ def build_parser():
         description="Compare a measurement against a recorded baseline and fail on a regression.")
     p.add_argument("--baseline", required=True,
                    help="the recorded measurement to judge against, written by an earlier run")
-    p.add_argument("--measurement", required=True,
-                   help="this run's measurement, in the same shape as a baseline")
+    # `--current`, NOT `--measurement`, and the old name still works.
+    #
+    # `senbonzakura baseline --measurement <file>` takes a RESULT ARTEFACT, straight out of a run.
+    # This command's `--measurement` took a BASELINE-SHAPED file, which is what `baseline` writes.
+    # One flag name, two incompatible meanings, in two commands people use together, and `baseline`
+    # printed `gate --baseline ... --measurement <new>` on success, so following the hint exited 2 on
+    # a schema error. A reader met exactly that on 2026-09-26 and could not tell which of the two
+    # files was wrong.
+    #
+    # Operator decision 2026-09-27: rename here and keep the old spelling as an alias, so nothing
+    # anybody has scripted stops working. `--current` rather than `--against`, which was the name
+    # first proposed and reads like the thing being compared TO, which is the baseline.
+    p.add_argument("--current", "--measurement", dest="current", required=True,
+                   help="THIS run's measurement, recorded in baseline shape. That means run "
+                        "`senbonzakura baseline` on the new run's result artefact first: this gate "
+                        "compares two recorded measurements, not a recorded one against a raw "
+                        "artefact. `--measurement` is accepted as the old name for this flag.")
     p.add_argument("--quiet", action="store_true",
                    help="print only the verdict line, for a build log that already has enough in "
                         "it. The refusal path ignores this and always says why")
@@ -62,7 +77,7 @@ def run(argv=None, log=print):
 
     try:
         recorded = baseline.read(a.baseline)
-        current = baseline.read(a.measurement)
+        current = baseline.read(a.current)
     except baseline.BaselineError as e:
         log(f"gate REFUSED: {e}")
         return REFUSED
@@ -104,7 +119,7 @@ def run(argv=None, log=print):
         log(f"gate REFUSED: {e}")
         return REFUSED
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        log(f"gate REFUSED: {a.measurement} is not a measurement this gate can read: "
+        log(f"gate REFUSED: {a.current} is not a measurement this gate can read: "
             f"{type(e).__name__}: {e}")
         return REFUSED
     log(f"gate {'OK' if ok else 'FAIL'}: {headline}")

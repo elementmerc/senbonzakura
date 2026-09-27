@@ -128,12 +128,17 @@ class TestEveryCorpusCarriesItsOwnAttribution:
         yield
         corpora._reset_notice_for_tests()
 
+    # THE PREFIX CHANGED, NOT THE PROPERTY. The banner was three lines per corpus and read
+    # "Using the bundled corpus X (LICENCE)."; on 2026-09-27 it became one line reading
+    # "Bundled corpus: X (LICENCE)." after an output review found `doctor` opening with
+    # twenty-two lines of it. What these tests assert is unchanged: one notice per corpus, once
+    # per corpus, so every corpus a run touches is attributed somewhere the user can see.
     def test_a_second_corpus_is_not_silenced_by_the_first(self):
         keys = list(corpora.CORPORA)[:3]
         said = []
         for key in keys:
             corpora.notice(key, log=said.append)
-        headers = [s for s in said if s.startswith("Using the bundled corpus")]
+        headers = [s for s in said if s.startswith("Bundled corpus:")]
         assert len(headers) == len(keys), (
             f"{len(keys)} corpora were loaded and {len(headers)} attributions printed. The others "
             f"were used with their attribution nowhere in what the user has.")
@@ -144,13 +149,13 @@ class TestEveryCorpusCarriesItsOwnAttribution:
         said = []
         corpora.notice(key, log=said.append)
         corpora.notice(key, log=said.append)
-        assert len([s for s in said if s.startswith("Using the bundled corpus")]) == 1
+        assert len([s for s in said if s.startswith("Bundled corpus:")]) == 1
 
     def test_every_bundled_corpus_can_state_its_own_terms(self):
         said = []
         for key in corpora.CORPORA:
             corpora.notice(key, log=said.append)
-        headers = [s for s in said if s.startswith("Using the bundled corpus")]
+        headers = [s for s in said if s.startswith("Bundled corpus:")]
         assert len(headers) == len(corpora.CORPORA)
         for header in headers:
             assert "(" in header and ")" in header, f"no licence named in {header!r}"

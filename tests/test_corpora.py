@@ -363,8 +363,8 @@ def test_the_shared_sentence_appears_once_however_many_corpora_load():
     for key in keys:
         corpora.notice(key, log=said.append)
     text = "\n".join(said)
-    assert text.count("Terms for every bundled corpus:") == 1, (
-        f"the shared pointer is printed {text.count('Terms for every bundled corpus:')} times for "
+    assert text.count("Citations and terms:") == 1, (
+        f"the shared pointer is printed {text.count('Citations and terms:')} times for "
         f"{len(keys)} corpora")
     for key in keys:
         assert corpora.CORPORA[key].name in text, f"{key} lost its own attribution line"

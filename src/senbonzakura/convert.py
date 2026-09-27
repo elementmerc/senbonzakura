@@ -118,12 +118,9 @@ def build_parser():
                          "larger than memory")
     ap.add_argument("--keep-tied-head", action="store_true",
                     help="keep a separate output head even when the config declares tied "
-                         "embeddings and the head is byte-identical to them. The default drops it, "
-                         "because a lone embedding is also the output projection and is quantised "
-                         "accurately as a result: measured at Q3_K_L, dropping the duplicate moves "
-                         "the embedding from Q3_K to Q6_K, which is 8.5x closer to the original, "
-                         "in a smaller file. Use this to reproduce a file made before that "
-                         "behaviour, or to compare the two")
+                         "embeddings and the head is byte-identical to them. Dropping it, which is "
+                         "the default, gives a smaller file whose embedding quantises more "
+                         "accurately.")
     ap.add_argument("--skip-arch-check", action="store_true",
                     help="skip the pre-flight architecture check. For an architecture the pinned "
                          "converter supports under a name this cannot read from config.json")

@@ -328,10 +328,8 @@ def build_parser():
                          "can state what the edit cost rather than only an absolute score")
     ap.add_argument("--base-licence", dest="base_licence", default="",
                     help="the base model's licence, as an SPDX identifier where one exists "
-                         "(apache-2.0, mit, gemma, llama3.2, other). REQUIRED, because the card "
-                         "states that this licence governs the weights and a card that says so "
-                         "without naming it tells a reader they are bound by something unnamed. "
-                         "It is not inferred: a model's terms are not derivable from its weights.")
+                         "(apache-2.0, mit, gemma, llama3.2, other). Required, and not inferred: a "
+                         "model's terms are not derivable from its weights.")
     ap.add_argument("--base-licence-link", dest="base_licence_link", default="",
                     help="URL of the base model's licence text, rendered on the Hub beside it")
     ap.add_argument("--licence-unknown", dest="licence_unknown", action="store_true",
@@ -346,21 +344,26 @@ def build_parser():
 def main(argv=None):
     a = build_parser().parse_args(argv)
     if not a.abliteration and not a.capability:
+        # SHAPE, NOT REASONING. This said "A card with no artefacts behind it would be a template,
+        # and this exists to stop those being published", which explains the refusal to somebody
+        # who has not asked why and never shows them what to type.
         raise SystemExit(
-            "nothing to report on: pass --abliteration, --capability, or both. A card with no "
-            "artefacts behind it would be a template, and this exists to stop those being "
-            "published.")
+            "nothing to report on: a card needs at least one artefact behind it.\n"
+            "  --abliteration FILE   an abliteration.json from a run\n"
+            "  --capability FILE     a capability run's output\n"
+            "  --base-licence NAME   the base model's licence, which is not inferred\n"
+            "\n"
+            "  senbonzakura report --abliteration edited/abliteration.json \\\n"
+            "      --base-licence apache-2.0 --out edited/README.md")
     if not a.base_licence and not a.licence_unknown:
         raise SystemExit(
-            "--base-licence is required. This card states that the base model's licence governs "
-            "the weights, and it used to say that without naming the licence, linking it, or "
-            "reproducing a term of it, which tells a reader they are bound by something unnamed.\n"
-            "  * Pass --base-licence with the base model's licence (apache-2.0, mit, gemma, "
-            "llama3.2, other), and --base-licence-link where there is a URL for the text.\n"
-            "  * Or pass --licence-unknown to generate a card marked UNRESOLVED, which is for "
-            "reading rather than for publishing weights beside.\n"
-            "It is not inferred from the model, deliberately: a model's terms are not derivable "
-            "from its weights and a wrong guess is worse than a blank one.")
+            "--base-licence is required. The card states that the base model's licence\n"
+            "governs these weights, so it has to name which licence that is.\n"
+            "  * Pass --base-licence apache-2.0 (or mit, gemma, llama3.2, other), and\n"
+            "    --base-licence-link where there is a URL for the text.\n"
+            "  * Or pass --licence-unknown for a card marked UNRESOLVED, which is for\n"
+            "    reading rather than for publishing weights beside.\n"
+            "It is not inferred: a model's terms are not derivable from its weights.")
     bad = licence_complaint(a.base_licence)
     if bad:
         raise SystemExit(bad)

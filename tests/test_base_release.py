@@ -173,8 +173,11 @@ def test_the_flag_help_says_what_it_refuses():
     # THE FULL HELP. This is not a flag a first run needs, so it sits behind `--help-all` since
     # the page was split; the sentence still has to be there for whoever goes looking.
     action, = [a for a in build_parser(full=True)._actions if a.dest == "free_base_model"]
+    # CASE-INSENSITIVE for "irreversible". The 2026-09-27 output review cut the history out of this
+    # flag's help and the word moved to the start of a sentence, so a case-sensitive check was
+    # asserting the sentence order rather than the property. The property is that the word is there.
     for word in ("irreversible", "cache", "--out"):
-        assert word in action.help
+        assert word in action.help.lower()
 
 
 # ── the method on the abliterator, which is where the deletion actually happens ────

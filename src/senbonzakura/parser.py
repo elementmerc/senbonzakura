@@ -47,8 +47,101 @@ def _capability_tasks():
     return TASK_CHOICES
 
 
+#: The words that select a mode rather than a subcommand. `split_mode` peels them off, so argparse
+#: never sees them and they cannot be given a subparser with a help page of its own.
+MODES = ("abliterate", "kageyoshi", "auto")
+
+#: The flags the kageyoshi preset resolves from the model, and therefore the ones it stands down
+#: from when the caller sets them by hand.
+#:
+#: DUPLICATED FROM `cli._KAGEYOSHI_BUDGET_FLAGS` because this module may not import `cli`: that
+#: costs torch and 2.8 seconds, which is the whole reason this file exists. So the list is pinned
+#: by a test instead of by an import, the same way the flag counts in the help text are counted
+#: rather than typed.
+KAGEYOSHI_PRESET_FLAGS = (
+    "--trials", "--patience", "--max-directions", "--kl-scale", "--search", "--per-component",
+    "--mlp-off", "--dir-prompts", "--eval-refusal", "--eval-kl", "--eval-refusal-final",
+    "--top-rescore",
+)
+
+#: Every line in the two pages below stays inside 79 columns, so an 80-column terminal does not
+#: re-wrap them into something the author never laid out.
+_ABLITERATE_HELP = """\
+usage: senbonzakura abliterate MODEL [flags]
+
+Abliterate at the flat defaults, for a run you are driving yourself.
+
+Naming `abliterate` opts out of the auto-scaled preset that `senbonzakura
+MODEL` and `senbonzakura kageyoshi MODEL` both use. Nothing is read off the
+model: every flag stays at its documented default until you set it.
+
+Use it to hold one setting still across several models, or to reproduce a run
+whose flags you already have. For a first run, use `kageyoshi` instead.
+
+example:
+  senbonzakura abliterate Qwen/Qwen3-1.7B --track default --out edited \\
+      --trials 120 --min-directions 2 --max-directions 2
+
+every flag:  senbonzakura --help-all
+"""
+
+_KAGEYOSHI_HELP = """\
+usage: senbonzakura {word} MODEL [flags]
+
+Abliterate with the auto-scaled preset. This is the recommended way to run it.
+
+It loads the model once, reads the architecture (dense, fused MoE or expert
+list) and the parameter count, then sizes the search and turns on the quality
+levers from what it found. You choose the model and where the output goes.
+
+Anything you set yourself wins: the preset keeps your value, skips its own, and
+says which in the log. These are the flags it would otherwise choose for you.
+
+{preset}
+
+example:
+  senbonzakura {word} Qwen/Qwen3-1.7B --track default --out edited
+
+`senbonzakura Qwen/Qwen3-1.7B`, with no mode word, does the same thing.
+`auto` and `kageyoshi` are the same mode under two names.
+
+every flag:  senbonzakura --help-all
+"""
+
+
+def mode_help(word):
+    """The page a named mode prints for `--help`.
+
+    WHAT THIS FIXES. `abliterate --help`, `kageyoshi --help` and `auto --help` printed the
+    top-level page byte for byte, identical to `senbonzakura --help`: a usage line reading
+    `senbonzakura [-h] ...`, no mention of the word that was typed, and the whole command list
+    underneath. So asking what `kageyoshi` does answered with a page that names it once, in a list
+    of everything else.
+
+    A page rather than a subparser, because these words are modes: `split_mode` removes them before
+    argparse runs, and the flag surface behind all three is the same parser.
+    """
+    if word == "abliterate":
+        return _ABLITERATE_HELP
+    import textwrap
+
+    return _KAGEYOSHI_HELP.format(
+        word=word,
+        # `break_on_hyphens=False` or the filler splits `--top-rescore` across two lines and
+        # prints a flag nobody can type.
+        preset=textwrap.fill("  ".join(KAGEYOSHI_PRESET_FLAGS), width=79,
+                             break_on_hyphens=False,
+                             initial_indent="  ", subsequent_indent="  "))
+
+
 def split_mode(argv):
     """Peel off the mode word, returning (bankai, remaining argv).
+
+    IT ALSO ANSWERS `--help` FOR THE MODE WORD, and does so here rather than in `entry` because
+    there are two doors into the abliterator: the console script through `entry.main`, and `python
+    -m senbonzakura.cli` through `cli.main`. Both call this function and nothing else in common
+    before the parse. Two doors into one command disagreeing about what it prints is this project's
+    most-repeated defect shape, so the answer lives in the one place both of them pass through.
 
     `kageyoshi` is a real subcommand rather than an argv[0] trick: it runs the abliterator with
     the auto-scaled best-effort preset, resolved after the model loads once the architecture and
@@ -68,6 +161,10 @@ def split_mode(argv):
     Here rather than in `cli` because the entry point has to know which words are modes before it
     can parse, and it must reach that answer without importing torch.
     """
+    if argv and argv[0] in MODES and {"-h", "--help"} & set(argv[1:]):
+        # Not `--help-all`: that is a real action on the flag parser and still prints every flag.
+        print(mode_help(argv[0]))
+        raise SystemExit(0)
     if argv and argv[0] in ("kageyoshi", "auto"):
         return True, argv[1:]
     # `abliterate` NAMED EXPLICITLY IS THE OPT OUT, and the bare form is not.
@@ -106,12 +203,8 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     # of the two ways to give it you meant to use. Every other command keeps the flag required.
     ap.add_argument("--model", required=model_required, default=None, help=model_help)
     ap.add_argument("--device", default="cuda",
-                    help="cuda, cuda:N, or cpu (default: cuda). THE DEFAULT IS STATED "
-                         "because it decides whether the command runs at all: on a machine "
-                         "with no card the default fails, and until 2026-09-26 the only way "
-                         "to learn what it was was to trigger that failure. `senbonzakura "
-                         "doctor` reports what this machine has, without a card and without "
-                         "a download")
+                    help="cuda, cuda:N, or cpu (default: cuda). A machine with no card needs "
+                         "--device cpu; `senbonzakura doctor` says what this one has.")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="allow models that ship custom modelling code (some Hub models need "
                          "it); off by default.")
@@ -119,13 +212,9 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     # offer a knob that would change nothing.
     if chat_template:
         ap.add_argument("--chat-template", dest="chat_template", default="",
-                        help="a Jinja chat template for a model that ships none: either a path "
-                             "to one, or the name of one this tool bundles ('plain'). Prompt "
-                             "format drives every measurement here, so a missing template is an "
-                             "input you supply and the run records, not something the tool "
-                             "invents. A bundled one is recorded by NAME, so two runs under it "
-                             "are comparable and a reader can see which format produced the "
-                             "numbers.")
+                        help="a Jinja chat template for a model that ships none: a path to one, "
+                             "or a bundled name ('plain'). Prompt format decides every "
+                             "measurement here, so the run records which template it used.")
     ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
                     help=four_bit_help or ("load in 4-bit (bitsandbytes nf4) to measure a large "
                                            "model on low VRAM. Safe on the forward-only paths; "
@@ -147,6 +236,76 @@ CORE_FLAGS = frozenset({
     "load_in_4bit", "hf_token", "trust_remote_code", "resume", "seed", "help", "help_all",
     "version",
 })
+
+
+#: Flags that are not in `CORE_FLAGS` and still belong under `options:` beside the model: the rest
+#: of the loading surface, and the completion script when shtab is installed.
+_STAYS_IN_OPTIONS = frozenset({"chat_template", "print_completion"})
+
+#: Which heading each remaining flag sits under, by `dest`, and the order the headings print in.
+#:
+#: WHY THIS EXISTS. `--help-all` ran 417 lines of flags under one `options:` heading, with nothing
+#: between the VRAM throttle and the capability probe to say a reader had moved from one subject to
+#: another. The footer on the short page already promised groups that existed nowhere, so the page
+#: described a structure it did not have.
+#:
+#: Keyed by `dest` rather than by flag, so a pair like `--matched-scoring` and
+#: `--no-matched-scoring` cannot land under two different headings.
+FLAG_GROUPS = {
+    # NO CORE FLAG IS FILED HERE, deliberately. A core flag stays visible on the short page, so
+    # filing one under a heading put a `the search:` section holding a single flag at the bottom of
+    # `--help`, which reads as a page that lost the rest of its content. Groups therefore cover
+    # exactly the flags the short page hides, which is also what its footer claims.
+    "the search": (
+        "patience", "search", "kl_scale", "max_kl", "layer_lo", "layer_hi",
+        "warm_start", "top_rescore", "eval_refusal_final", "study_db", "no_persist_study",
+        "bake_config", "bench_only",
+    ),
+    "the directions": (
+        "min_directions", "direction_clusters", "separation_statistic", "matched_scoring",
+        "harmless_matched", "hedge_ds", "clean_ds", "no_good_orth", "no_norm_restore",
+        "skip_conv_ablation", "per_component", "mlp_off", "sparsity", "ablation_rounds",
+    ),
+    "the prompts and the scoring": (
+        "dir_prompts", "good_ds", "text_column", "eval_refusal", "eval_kl", "gen_tokens",
+        "short_budget_ok", "low_refusal_ok", "inspect", "inspect_n",
+    ),
+    "the capability probe": (
+        "capability_eval", "capability_n", "capability_task", "capability_max_new",
+        "slow_probe_ok",
+    ),
+    "the machine": (
+        "gen_batch", "gpu_min_free_frac", "max_pause_s", "no_throttle", "background_mode",
+        "external_pressure_mb", "attn_impl",
+    ),
+    "the output": (
+        "base_licence", "base_licence_link", "free_base_model", "json_events",
+    ),
+}
+
+
+def _file_flags_under_headings(ap):
+    """Move every flag `FLAG_GROUPS` names out of `options:` and under its heading.
+
+    A move after the fact rather than an argument group per flag at declaration time, for the same
+    reason the suppression below happens at the end: one table that can be read against the parser
+    is checkable, and fifty scattered group names are not.
+    `tests/test_the_full_help_has_headings.py` asserts that every flag is either core or filed.
+
+    A flag nobody has filed stays where it is. The heading is presentation, and a missing entry
+    should show up as a test failure rather than as a command that will not start.
+    """
+    where = {dest: title for title, dests in FLAG_GROUPS.items() for dest in dests}
+    # `_action_groups[1]` is argparse's own optionals group, which is where every flag declared on
+    # `ap` and every flag inherited from `loader_parser` has landed.
+    options = ap._action_groups[1]                       # noqa: SLF001 - no public accessor
+    groups = {title: ap.add_argument_group(title) for title in FLAG_GROUPS}
+    for action in list(options._group_actions):          # noqa: SLF001
+        title = where.get(action.dest)
+        if title is None:
+            continue
+        options._group_actions.remove(action)           # noqa: SLF001
+        groups[title]._group_actions.append(action)     # noqa: SLF001
 
 
 class _HelpAll(argparse.Action):
@@ -304,39 +463,26 @@ def build_parser(full=False):
                          "rather than a better single answer; see --patience to stop early when "
                          "it has stopped improving")
     ap.add_argument("--kl-scale", type=float, default=4.0,
-                    help="weight on KL in the SCALAR objective (higher = protect quality more). "
-                         "Two things about it that the old one-line help did not say and a user "
-                         "could not find out by trying. It does nothing under the default "
-                         "`--search pareto`, which carries KL as its own frontier axis and never "
-                         "evaluates the weighted sum, so under pareto this changes only the "
-                         "`obj=` figure printed per trial and never which configuration wins. And "
-                         "even under `--search scalar` the term is gated at a KL ceiling, so it "
-                         "contributes nothing at all while KL stays under that ceiling. A run "
-                         "that sets it and sees no difference is not being ignored by accident")
+                    help="weight on KL in the SCALAR objective (higher = protect quality more). It "
+                         "does nothing under the default --search pareto, which carries KL as its "
+                         "own axis, and nothing under --search scalar while KL stays below the "
+                         "ceiling. Setting it and seeing no change is expected, not a fault")
     ap.add_argument("--layer-lo", type=float, default=0.3, help="search layers from this fraction of depth")
     ap.add_argument("--layer-hi", type=float, default=0.8,
                     help="search layers up to this fraction of depth (default: 0.8). The window is "
                          "a fraction rather than a layer number so the same setting means the same "
                          "thing on models of different depths")
     ap.add_argument("--gen-tokens", type=int, default=_DEFAULT_BUDGET,
-                    help=f"how many tokens each reply gets while the search is scoring it "
-                         f"(default: {_DEFAULT_BUDGET}). THIS IS THE SETTING MOST LIKELY TO MAKE A "
-                         f"REFUSAL RATE READ LOW, and lowering it does more damage than "
-                         f"misreporting a number: the search then SELECTS for configurations "
-                         f"whose refusal simply arrives after the cutoff. A refusal is only "
-                         f"counted if the model gets far enough to say it, and this project "
-                         f"measured its own refusal markers at a median of character 306, roughly "
-                         f"token 77. The default is the point its length sweep measured the rate "
-                         f"as settling on Qwen3-1.7B; that is one model, so measure yours with "
-                         f"`senbonzakura score --length-sweep` rather than assuming it transfers. "
-                         f"Below {_VISIBILITY_FLOOR} this command refuses unless you also pass "
-                         f"--short-budget-ok")
+                    help=f"how many tokens each reply gets while the search scores it (default: "
+                         f"{_DEFAULT_BUDGET}). THE SETTING MOST LIKELY TO MAKE A REFUSAL RATE READ "
+                         f"LOW: a refusal the model never reaches is not counted, and the search "
+                         f"then picks configurations whose refusal lands after the cutoff. Find "
+                         f"the budget your model needs with `senbonzakura score --length-sweep`. "
+                         f"Below {_VISIBILITY_FLOOR} the run refuses without --short-budget-ok")
     ap.add_argument("--short-budget-ok", dest="short_budget_ok", action="store_true",
                     help=f"allow --gen-tokens below {_VISIBILITY_FLOOR}, which is otherwise "
-                         f"refused. For a smoke test or a plumbing check, where the run is not "
-                         f"going to be quoted: a search at that budget selects for models whose "
-                         f"refusal simply arrives after the cutoff, so the resulting numbers are "
-                         f"about the budget and not about the model")
+                         f"refused. For a smoke test, not for a number you will quote: at that "
+                         f"budget the result is about the budget and not about the model")
     ap.add_argument("--gen-batch", type=int, default=16, dest="gen_batch",
                     help="max prompts per generation batch (the ceiling the adaptive VRAM throttle "
                          "ramps up to; it shrinks below this automatically when the card is busy).")
@@ -365,11 +511,10 @@ def build_parser(full=False):
     # run working, so it belongs in the one place a user looks first.
     ap.add_argument("--track", default=TRACK_AUTO,
                     help="a directory holding bad_ds / good_ds / bad_eval_ds, as built by "
-                         "`senbonzakura track`. Pass the word 'default' to use the evaluation "
-                         "track bundled in this install, which needs no network and no download "
-                         "and is the quickest way to a first run (CC BY-NC 4.0, attribution "
-                         "required, non-commercial). Left out, it takes ./track when that exists "
-                         "and the bundled one otherwise, and says in the log which it chose.")
+                         "`senbonzakura track`. Pass 'default' for the bundled evaluation track, "
+                         "which needs no network and is the quickest way to a first run. Left out, "
+                         "it takes ./track when that exists and the bundled one otherwise, and says "
+                         "in the log which it chose.")
     ap.add_argument("--good-ds", default=None, help="override the harmless dataset dir (for a matched-form contrast)")
     # Every dataset argument above accepts a save_to_disk directory, a .txt/.csv/.json/.jsonl/
     # .parquet file, or a Hub id, optionally with `::split[:N]`. These two are the knobs the
@@ -388,120 +533,84 @@ def build_parser(full=False):
                          "ablation, then exit")
     ap.add_argument("--inspect-n", type=int, default=8, help="prompts per side to print in --inspect")
     ap.add_argument("--max-directions", type=int, default=3,
-                    help="CEILING on refusal directions per layer, not a setting for how many to "
-                         "use. Each trial draws its own count between --min-directions and this, "
-                         "so the search decides whether a second direction earns its place and "
-                         "reports what it chose as `num_directions` in the artefact. Left alone "
-                         "it picks one more often than not. Set this and --min-directions to the "
-                         "same number to pin the budget, which is what turns a ceiling into an "
-                         "experiment")
+                    help="CEILING on refusal directions per layer, not a count. Each trial draws "
+                         "its own number between --min-directions and this, and records what it "
+                         "chose as `num_directions`. Set both to the same number to pin it, which "
+                         "is what turns a ceiling into an experiment")
     ap.add_argument("--direction-clusters", type=int, default=8,
-                    help="how many refusal modes to look for per layer. The harmful prompts are "
-                         "clustered and each cluster proposes one candidate direction; the ones "
-                         "that separate harmful from harmless best are kept, up to "
-                         "--max-directions. Deliberately independent of --max-directions so the "
-                         "candidate set does not change when the budget does, which is what makes "
-                         "a K=1 against K=3 comparison a comparison of K.")
+                    help="how many refusal modes to look for per layer. Each cluster of harmful "
+                         "prompts proposes one candidate direction, and the best separators are "
+                         "kept up to --max-directions. Independent of that ceiling, so the "
+                         "candidate set does not move when the budget does.")
     ap.add_argument("--separation-statistic", dest="separation_statistic",
                     choices=_separation.CHOICES, default=_separation.DEFAULT_STATISTIC,
                     help="which statistic decides whether a candidate axis carries refusal rather "
-                         "than topic. 'cohens-d' (default) is the incumbent and its threshold "
-                         "means a different thing at every cluster size; 'variance-ratio' is the "
-                         "ANOVA F, whose null is 1.0 at any size. Under measurement (Q-14): the "
-                         "default does not change until that measurement says it should.")
+                         "than topic. 'cohens-d' (default) has a threshold that means a different "
+                         "thing at every cluster size; 'variance-ratio' is the ANOVA F, whose null "
+                         "is 1.0 at any size.")
     ap.add_argument("--matched-scoring", dest="matched_scoring", action="store_true", default=True,
                     help="judge each candidate direction against the harmless prompts nearest it "
-                         "in content, instead of against the harmless set at large. ON BY "
-                         "DEFAULT since 2026-09-17. A cluster about explosives stands out from "
-                         "harmless prompts in general whether or not the model refuses it, so the "
-                         "unmatched comparison cannot tell refusal from subject matter; holding "
-                         "the subject still leaves refusal as the only thing that varies. This "
-                         "was off pending Q-14, which has since reported: under the unmatched "
-                         "comparison no statistic could tell a world containing refusal from one "
-                         "containing none, and the matched one separates them by 40 to 60 points")
+                         "in content rather than against the harmless set at large, so that "
+                         "refusal is the only thing left varying and not the subject matter. On by "
+                         "default, and the only setting that separates the two.")
     ap.add_argument("--no-matched-scoring", dest="matched_scoring", action="store_false",
-                    help="score candidates against the harmless set at large, as runs before "
-                         "2026-09-17 did. For reproducing an older run, and for nothing else: "
-                         "the comparison it restores is the one Q-14 showed cannot distinguish "
-                         "refusal from subject matter")
+                    help="score candidates against the harmless set at large. For reproducing an "
+                         "older run and nothing else: that comparison cannot tell refusal from "
+                         "subject matter.")
     ap.add_argument("--capability-eval", dest="capability_eval", default="bundled",
-                    help="what the capability probe measures against. 'bundled' (the default) is "
-                         "256 grade-school arithmetic questions that ship with the package, so "
-                         "this works offline. Give a graded benchmark instead (a question column "
-                         "and an answer column, e.g. openai/gsm8k:main::test) to use your own, or "
-                         "an empty string to turn the probe off. Refusal rates, the keyword rate, "
-                         "drift and brokenness cannot see reasoning loss: a model can hold a low "
-                         "KL with nothing broken and have lost multi-step arithmetic, because "
-                         "none of them asks it to reason.")
+                    help="what the capability probe measures against. 'bundled' (default) is 256 "
+                         "grade-school arithmetic questions that ship with the package, so it "
+                         "works offline. Give a graded benchmark (a question column and an answer "
+                         "column, e.g. openai/gsm8k:main::test) for your own, or an empty string "
+                         "to turn the probe off. No other metric here can see reasoning loss.")
     ap.add_argument("--capability-n", dest="capability_n", type=int, default=200,
-                    help="how many items the capability probe uses (0 = off). 200 by default, and "
-                         "the number is chosen rather than round: before and after are scored on "
-                         "the SAME items, so the comparison is paired, and 200 resolves the "
-                         "several-point drop this class of edit is reported to cause. A much "
-                         "smaller sample produces a figure whose error bar covers the effect, "
-                         "which reads like a measurement and is not one.")
+                    help="how many items the capability probe uses (default: 200, 0 = off). Before "
+                         "and after are scored on the same items, so the comparison is paired. "
+                         "Much below 200 the error bar covers the effect this edit is expected to "
+                         "have, which reads like a measurement and is not one.")
     ap.add_argument("--capability-task", dest="capability_task",
                     choices=_capability_tasks(), default="numeric",
                     help="how the probe grades: see `senbonzakura capability --help`.")
     ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=512,
-                    help="token budget per probe answer. A worked solution is long, and a budget "
-                         "that truncates them measures the budget rather than the model; "
-                         "truncated answers are counted as ungradeable, never as wrong. 512 is "
-                         "measured rather than guessed: on a model that reasons before answering, "
-                         "256 tokens left 11 of 24 items ungradeable and 512 left 1.")
+                    help="token budget per probe answer (default: 512). A worked solution is long, "
+                         "and a budget that cuts it off measures the budget rather than the model. "
+                         "A truncated answer is counted as ungradeable, never as wrong.")
     ap.add_argument("--low-refusal-ok", dest="low_refusal_ok", action="store_true",
                     help="edit a model that hardly refuses anything to begin with. The run measures "
                          # `%%` because argparse runs this through percent formatting, and a bare
                          # `%` raises "badly formed help string" from `add_argument`, which breaks
                          # every command rather than only this flag.
-                         "the baseline refusal rate about a minute in, and below 5%% it stops: there "
-                         "is too little refusal to find a direction for, so the search would spend "
-                         "its whole budget and hand back a model refusing about as often as it "
-                         "started, having paid the coherence cost anyway. That is the measured "
-                         "outcome on such a model rather than a guess. Same shape as "
-                         "--slow-probe-ok: the honest default stays and the waste has to be asked "
-                         "for.")
+                         "the baseline refusal rate about a minute in, and below 5%% it stops: "
+                         "there is too little refusal to find a direction for, so the search "
+                         "would spend its whole budget, pay the coherence cost and hand back a "
+                         "model refusing about as often as it started.")
     ap.add_argument("--slow-probe-ok", dest="slow_probe_ok", action="store_true",
-                    help="run the capability probe on a CPU even when it will take hours. The "
-                         "defaults above are sized for a GPU, where they are minutes; measured on "
-                         "a CPU with a 1.7B model they are about four hours, so the run stops and "
-                         "says so rather than looking identical to a hung one for an afternoon. "
-                         "Same shape as --short-budget-ok: the honest default stays, and spending "
-                         "that long has to be asked for.")
+                    help="run the capability probe on a CPU even when it will take hours. The probe "
+                         "defaults are sized for a GPU, where they are minutes; on a CPU with a "
+                         "1.7B model they are about four hours, so the run stops and says so "
+                         "rather than looking like a hung one all afternoon.")
     ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
                     help="how many times to alternate restoring the row lengths and removing the "
-                         "direction again. 0 (default) is the single pass this tool has always "
-                         "done, which MEASURABLY leaves part of the direction behind: restoring "
-                         "the lengths undoes some of the ablation, by 5%% to 46%% depending on how "
-                         "uneven the lengths are. 4 rounds removes it fully AND keeps the lengths. "
-                         "Off by default because whether a cleaner cut makes a better model is an "
-                         "open question and turning it on changes every number a run produces.")
+                         "direction again (default: 0, a single pass). A single pass leaves 5%% to "
+                         "46%% of the direction behind, because restoring the lengths undoes part "
+                         "of the cut; 4 rounds removes it and keeps the lengths. Off by default "
+                         "because turning it on moves every number a run produces.")
     ap.add_argument("--method", choices=_methods.CHOICES, default=_methods.DEFAULT_METHOD,
-                    help="which ablation recipe to run. 'searched' (default) optimises how much "
-                         "to ablate and where; 'single-pass' fixes it at full strength on one "
-                         "direction with no search, which is how the tools that retain capability "
-                         "best are described as working; 'single-pass-raw' additionally drops the "
-                         "norm restoration and exists as a control. The recipe is recorded in "
-                         "abliteration.json, so two runs are comparable arms rather than two runs "
-                         "whose flags a reader has to diff.")
+                    help="which ablation recipe to run. 'searched' (default) optimises how much to "
+                         "ablate and where; 'single-pass' fixes full strength on one direction with "
+                         "no search; 'single-pass-raw' also drops the norm restoration, as a "
+                         "control. The recipe is recorded in abliteration.json.")
     ap.add_argument("--free-base-model", dest="free_base_model", action="store_true",
                     help="delete the local base model directory just before writing the output, "
-                         "when there is not room for both. Off by default and it always will be: "
-                         "it is irreversible, it happens at the end of a long run when nobody is "
-                         "watching, and the model is re-downloadable while the run is not. "
-                         "Refused outright when the source is a shared Hugging Face cache, when "
-                         "--out is the same directory or sits inside it, and when there is "
-                         "already room. Until now this existed only as a sentence inside a disk "
-                         "error, which does not help a volume that is already full.")
+                         "when there is not room for both. Irreversible, and off by default. "
+                         "Refused when the source is a shared Hugging Face cache, when --out is "
+                         "that directory or sits inside it, and when there is already room.")
     ap.add_argument("--harmless-matched", dest="harmless_matched", default="",
-                    help="a second harmless set, written on the SAME subjects as the harmful one, "
-                         "used as the pool that --matched-scoring draws its controls from. Without "
-                         "it the controls are the nearest rows of the ordinary harmless set, which "
-                         "is only as good as whatever that set happens to contain on the subject. "
-                         "Requires --matched-scoring, and the run refuses rather than accepting a "
-                         "corpus it would not use. Whether the matching then worked is reported as "
-                         "matching_quality in abliteration.json, and a value near 1.0 means it did "
-                         "not.")
+                    help="a second harmless set on the SAME subjects as the harmful one, used as "
+                         "the pool --matched-scoring draws its controls from. Without it the "
+                         "controls are the nearest rows of the ordinary harmless set. Requires "
+                         "--matched-scoring. How well it matched is reported as matching_quality "
+                         "in abliteration.json, where a value near 1.0 means it did not.")
     # DECISION Q-37. Without this the run saves weights and writes no card, because `modelcard`
     # refuses to infer the base model's licence: a model's terms are not derivable from its
     # weights and a wrong guess is worse than a blank one. Asking here is asking at the moment
@@ -517,42 +626,29 @@ def build_parser(full=False):
                     help="URL for the base model's licence text, where one exists. It travels "
                          "into the card so a reader can go and read the terms they are bound by.")
     ap.add_argument("--sparsity", type=float, default=0.0,
-                    help="sparse surgery: fraction of output-rows to LEAVE untouched per weight, "
-                         "editing only the top-magnitude (most refusal-writing) rows. 0.0 (default) "
-                         "edits every row as before; e.g. 0.3 leaves the quietest 30%% of rows pristine "
-                         "for less collateral. A/B against 0.0 per model to see if coherence improves "
-                         "at equal refusal removal. Composes with --ablation-rounds: the rounds "
-                         "honour the same mask, so the rows left out stay pristine.")
+                    help="sparse surgery: the fraction of output rows to LEAVE untouched per "
+                         "weight, editing only the most refusal-writing ones. 0.0 (default) edits "
+                         "every row; 0.3 leaves the quietest 30%% alone, for less collateral. "
+                         "--ablation-rounds honours the same mask.")
     ap.add_argument("--warm-start", action=argparse.BooleanOptionalAction, default=True,
-                    help="seed the search with one sane diff-of-means config (mid-late window, full "
-                         "projection, single direction) so NSGA-II/TPE begin from a known-decent point "
-                         "instead of cold random sampling. On by default; --no-warm-start to A/B the "
-                         "cold search.")
+                    help="seed the search with one sane difference-of-means configuration so it "
+                         "starts from a known-decent point rather than cold random sampling. On by "
+                         "default; --no-warm-start runs the cold search.")
     ap.add_argument("--no-good-orth", action="store_true", dest="no_good_orth",
-                    help="ablation study: do NOT orthogonalise the refusal direction against the "
-                         "harmless mean (Refinement 3). Uses the raw difference-of-means instead. This "
-                         "toggles off the projection grimjim calls 'projected abliteration'; on by "
-                         "default. For measuring whether the projection helps or hurts the search.")
+                    help="do NOT orthogonalise the refusal direction against the harmless mean; use "
+                         "the raw difference of means instead. Turns off the projection grimjim "
+                         "calls 'projected abliteration', which is on by default. A control arm.")
     ap.add_argument("--no-norm-restore", dest="no_norm_restore", action="store_true",
                     help="CONTROL ARM ONLY, and it makes a worse model on purpose. Remove the "
-                         "refusal directions WITHOUT putting each weight row's original length "
-                         "back. That restore is what keeps an edited model coherent, and it also "
-                         "undoes part of the ablation because scaling rows does not commute with "
-                         "a projection across them. This flag is the naive formulation the "
-                         "restore is supposed to beat, so the difference can be measured instead "
-                         "of asserted. NOT the same thing as --no-good-orth, which changes how "
-                         "the directions are found rather than how they are applied.")
+                         "directions without putting each weight row's original length back. That "
+                         "restore is what keeps an edited model coherent. Not the same as "
+                         "--no-good-orth, which changes how the directions are found.")
     ap.add_argument("--skip-conv-ablation", dest="skip_conv_ablation", action="store_true",
-                    help="CONTROL ARM ONLY. Leave the output projections of non-attention "
-                         "sequence mixers untouched on a hybrid architecture: a short convolution "
-                         "on LFM2, a gated delta net on Qwen3.5. Those layers carry no attention "
-                         "and write the residual stream through the mixer instead, and on some "
-                         "models they are most of the stack (30 of 40 on Qwen3.6-35B-A3B, 18 of "
-                         "24 on LFM2.5-8B-A1B). The resulting model is a PARTIAL abliteration by "
-                         "construction: it exists to answer whether refusal travels through the "
-                         "convolution path at all, by comparison against a run without this flag. "
-                         "Every skipped layer is warned about and the choice is recorded in the "
-                         "result file, so the model cannot later be mistaken for a whole one.")
+                    help="CONTROL ARM ONLY, and it makes a PARTIAL abliteration by construction. "
+                         "Leave the output projections of non-attention sequence mixers untouched "
+                         "on a hybrid architecture, which on some models is most of the stack. "
+                         "Answers whether refusal travels that path, by comparison against a run "
+                         "without it. Every skipped layer is warned about and recorded.")
     from . import events as _events
     _events.add_argument(ap)
     ap.add_argument("--seed", type=int, default=42,
@@ -561,14 +657,16 @@ def build_parser(full=False):
                          "configurations is real. Note GPU kernels are not bit-deterministic, so a "
                          "fixed seed reproduces the search path, not the last decimal of a score.")
     ap.add_argument("--search", choices=["pareto", "scalar"], default="pareto",
-                    help="pareto: NSGA-II maps the whole refusals-vs-KL frontier, we pick the knee "
-                         "(intact + most uncensored). scalar: the old single weighted objective (TPE).")
+                    help="pareto (default): NSGA-II maps the whole refusal-against-KL frontier and "
+                         "the knee is picked, the most uncensored point that is still intact. "
+                         "scalar: one weighted objective, searched with TPE.")
     ap.add_argument("--per-component", dest="per_component", action="store_true", default=True,
                     help="tune attn.o_proj and mlp.down_proj SEPARATELY (Heretic-style). The MLP "
                          "profile may go to zero (leave the MLP untouched), which often preserves "
                          "intelligence. This is the default.")
     ap.add_argument("--uniform", dest="per_component", action="store_false",
-                    help="apply ONE strength profile to both components (the pre-decouple behaviour).")
+                    help="apply ONE strength profile to both components instead of tuning them "
+                         "separately.")
     ap.add_argument("--mlp-off", dest="mlp_off", action="store_true",
                     help="pin mlp.down_proj ablation to zero (attention-only). Tests the "
                          "'attention carries refusal, MLP carries capability' hypothesis and "
@@ -582,34 +680,25 @@ def build_parser(full=False):
                     help="dir of CLEAN (disclaimer-free) compliance for the hedged contrast; "
                          "defaults to --good-ds / <track>/good_ds.")
     ap.add_argument("--min-directions", dest="min_directions", type=int, default=1,
-                    help="the FEWEST directions a trial may use. --max-directions is a ceiling "
-                         "and the search picks anywhere beneath it, so 'up to two' is not 'two': "
-                         "set both to the same number to pin the budget. That is what turns a "
-                         "K comparison into an experiment rather than a mixture, and a run on "
-                         "2026-08-12 chose one direction on three seeds of five when left free.")
+                    help="the FEWEST directions a trial may use. --max-directions is only a "
+                         "ceiling, so 'up to two' is not 'two': set both to the same number to pin "
+                         "the budget, which is what turns a K comparison into an experiment rather "
+                         "than a mixture.")
     ap.add_argument("--max-kl", dest="max_kl", type=float, default=None,
-                    help="the most coherence drift you will accept, as KL. Sets both the hard "
-                         "intactness filter and where the knee's coherence surcharge begins, so "
-                         "the search returns the biggest refusal reduction it can manage UNDER "
-                         "this figure rather than wherever the frontier's knee happens to sit "
-                         f"(default: filter at {KL_CEIL}, surcharge above {KL_TARGET}). If no "
-                         "configuration meets it the run refuses rather than quietly returning "
-                         "one that does not. Heretic's comparable setting defaults far tighter, "
-                         "so this is the flag that puts the two tools at one operating point.")
+                    help="the most coherence drift you will accept, as KL (default: filter at "
+                         f"{KL_CEIL}, surcharge above {KL_TARGET}). The search then returns the "
+                         "biggest refusal reduction it can manage under this figure, and refuses "
+                         "rather than returning a configuration that misses it. This is the flag "
+                         "that puts this tool and Heretic at one operating point.")
     ap.add_argument("--patience", type=int, default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
     ap.add_argument("--eval-refusal-final", type=int, default=128,
-                    help="re-score the top frontier candidates on this many bad-eval prompts, "
-                         "held out from the ones the search scored against, before picking the "
-                         "knee. ON BY DEFAULT since 2026-09-17, at 128. Without it the winner is "
-                         "chosen on the same small set every trial was scored on, so it is the "
-                         "best of N draws over those particular prompts rather than a "
-                         "measurement, and the figure the run reports describes the rows it was "
-                         "selected on. The cost is one extra scoring pass over --top-rescore "
-                         "candidates, which is minutes against a search measured in hours. Pass 0 "
-                         "to skip it and use the search-eval numbers, which is what runs before "
-                         "this date did")
+                    help="re-score the top frontier candidates on this many held-out bad-eval "
+                         "prompts before picking the knee (default: 128, 0 = off). Without it the "
+                         "winner is the best of N draws over the same small set every trial was "
+                         "scored on, so its refusal figure describes the rows it was selected on. "
+                         "Costs one scoring pass, against a search measured in hours")
     ap.add_argument("--top-rescore", type=int, default=6,
                     help="how many frontier candidates to re-score with --eval-refusal-final.")
     ap.add_argument("--study-db", default=None,
@@ -644,9 +733,10 @@ def build_parser(full=False):
     for action in flags:
         if action.dest == "help_all":
             action.help = (
-                "show every flag, with the full description of each. This page shows the ones a "
-                f"run needs; there are {len(flags)} in total, and the rest are the search, the "
-                "scoring and the measurement knobs.")
+                "show every flag, grouped by what it controls. This page shows the ones a run "
+                f"needs; there are {len(flags)} in total.")
+
+    _file_flags_under_headings(ap)
 
     if not full:
         # AT THE END, ON WHAT WAS ACTUALLY DECLARED, so a flag added later cannot escape the
@@ -658,7 +748,8 @@ def build_parser(full=False):
                 hidden += 1
         ap.epilog += (
             f"\n\nThis page shows the {core} flags a run needs, and the model it edits. "
-            f"{hidden} more control the search, the scoring and the measurement:\n"
+            f"{hidden} more cover the search, the directions, the prompts and the scoring, the "
+            f"capability probe, the machine and the output:\n"
             f"  senbonzakura --help-all\n")
     return ap
 

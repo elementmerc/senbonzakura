@@ -712,19 +712,27 @@ def _argv_for(plan):
 #: flag list was the only one that would not say what it was. In a pipe it was worse, refusing
 #: with the not-a-terminal message, so `senbonzakura interactive --help | less` told a reader
 #: nothing at all.
-HELP = """usage: senbonzakura interactive
+#: Hand-wrapped at 79 columns, because it is printed rather than formatted by argparse. It used to
+#: run to 93, which re-wraps into ragged half-lines on an 80-column terminal. The usage line names
+#: `[-h]` because this command accepts it, and a usage line that omits a flag the command takes is
+#: wrong in the one place a reader trusts it.
+HELP = """usage: senbonzakura interactive [-h]
 
-A guided walk through the few choices that decide whether a run means anything.
+A guided walk through the few choices that decide whether a run means
+anything.
 
-`senbonzakura kageyoshi` has dozens of flags. Most have sensible defaults; a handful decide
-whether the numbers answer the question you meant to ask, and `--help` cannot tell you which.
-This asks those, in order, with a default on every one.
+`senbonzakura kageyoshi` has dozens of flags. Most have sensible defaults; a
+handful decide whether the numbers answer the question you meant to ask, and
+`--help` cannot tell you which. This asks those, in order, with a default on
+every one.
 
-It never runs anything without first printing the exact command it is equivalent to, so the
-run is reproducible and the second time you can type that command instead.
+It never runs anything without first printing the exact command it is
+equivalent to, so the run is reproducible and the second time you can type
+that command instead.
 
-This command takes no options. It needs a terminal, because it reads answers; a script wants
-the flags rather than the menu, and `senbonzakura --help` lists them."""
+It takes no options beyond -h, and it needs a terminal, because it reads
+answers. A script wants the flags rather than the menu; `senbonzakura --help`
+lists them."""
 
 
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):

@@ -203,7 +203,15 @@ def build_parser():
 
     ap = argparse.ArgumentParser(
         prog="senbonzakura judge",
-        description="Check a judge against reference labels before letting it grade anything.")
+        description="Check a judge against reference labels before letting it grade anything.\n"
+                    "Reports agreement above chance, and exits non-zero when the judge is\n"
+                    "not certified.",
+        epilog="both files are jsonl, one object per line, in the same order:\n"
+               '  {"verdict": "HARMFUL"}\n'
+               "\n"
+               "example:\n"
+               "  senbonzakura judge --judge verdicts.jsonl --reference labels.jsonl\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--judge", required=True,
                     help="a jsonl of the judge's verdicts, one object per line, with a 'verdict' "
                          "field")
@@ -214,22 +222,63 @@ def build_parser():
     return ap
 
 
-def _labels(path, field):
+def _labels(path, field, flag):
+    """The labels in one jsonl file, or a refusal that names the line that broke.
+
+    THE MESSAGE THIS REPLACES. A malformed file printed `could not read the verdicts: Expecting
+    property name enclosed in double quotes: line 1 column 3 (char 2)`, which is the JSON decoder's
+    own words for a file it will not name, at a line number counted inside a single line rather
+    than inside the file. So a reader learned that something was wrong somewhere, and nothing else.
+
+    The decoder is called per line, so its `lineno` is always 1 and its `colno` is the column
+    within that line. The file's own line number is the loop counter, and both are what a person
+    needs to open the file and look.
+    """
     rows = []
-    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+    for n, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
-        if line:
-            rows.append(json.loads(line).get(field))
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise SystemExit(
+                f"{path} is not readable as jsonl, so it cannot be graded.\n"
+                f"  Line {n} is not valid JSON: it breaks at character {e.colno},\n"
+                # `removesuffix(" at")`: the decoder appends its own position to some reasons,
+                # and the position is already on the line above.
+                f"  {e.msg.removesuffix(' at')}.\n"
+                f"  This file wants one JSON object per line, each carrying a "
+                f"{field!r} field:\n"
+                f'    {{"{field}": "HARMFUL"}}\n'
+                f"  Open line {n} of {path}, or point {flag} at another file.") from e
+        if not isinstance(row, dict):
+            raise SystemExit(
+                f"{path} is not readable as jsonl, so it cannot be graded.\n"
+                f"  Line {n} is valid JSON but not an object, so it carries no "
+                f"{field!r} field.\n"
+                f"  This file wants one JSON object per line:\n"
+                f'    {{"{field}": "HARMFUL"}}\n'
+                f"  Open line {n} of {path}, or point {flag} at another file.")
+        rows.append(row.get(field))
     return rows
 
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
     try:
-        judge = _labels(a.judge, a.field)
-        reference = _labels(a.reference, a.field)
-    except (OSError, ValueError) as e:
-        raise SystemExit(f"could not read the verdicts: {e}") from e
+        judge = _labels(a.judge, a.field, "--judge")
+        reference = _labels(a.reference, a.field, "--reference")
+    except FileNotFoundError as e:
+        raise SystemExit(
+            f"there is no file at {e.filename}.\n"
+            f"  --judge and --reference each want a jsonl file: one JSON object per\n"
+            f"  line, in the same order, carrying the judge's label and the label\n"
+            f"  believed correct under the same {a.field!r} key.") from e
+    except OSError as e:
+        raise SystemExit(
+            f"{e.filename or 'that file'} could not be read: {e.strerror or e}.\n"
+            f"  Check the path and the permissions on it.") from e
     v = validate(judge, reference)
     for line in report(v):
         print(line)

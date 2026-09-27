@@ -56,48 +56,37 @@ def build_parser():
     # selection rows, and it has to be refused as a contradiction rather than read as silence.
     # Every existing caller passes a number or nothing, and None is falsy where 0 was.
     ap.add_argument("--skip", type=whole_number("--skip"), default=None,
-                    help="drop the first N prompts before taking --n. Needed to score a model on "
-                         "prompts its own surgery was NOT fitted on: direction extraction consumes "
-                         "the head of the harmless set and the KL check the slice after it, so "
-                         "measuring false positives on the head would be measuring the training "
-                         "data. Read from --track when that is given instead.")
+                    help="drop the first N prompts before taking --n, so the score lands on rows "
+                         "the surgery was NOT fitted on. Extraction and the KL check consume the "
+                         "head of the harmless set, and scoring there measures the fit. Read from "
+                         "--track when that is given instead.")
     ap.add_argument("--max-new", type=whole_number("--max-new", minimum=1),
                     default=lengthsweep.DEFAULT_BUDGET,
                     help=f"how many tokens each reply may run to (default: "
                          f"{lengthsweep.DEFAULT_BUDGET}). A refusal the model never gets far "
-                         f"enough to state is not counted, so a short budget reports a low "
-                         f"refusal rate. The default is where this project's length sweep "
-                         f"measured the rate settling on Qwen3-1.7B; that is one model, so use "
-                         f"--length-sweep to find out what yours needs rather than assuming it "
-                         f"transfers")
+                         f"enough to state is not counted, so a short budget reports a low refusal "
+                         f"rate. Use --length-sweep to find the budget your model needs")
     ap.add_argument("--batch", type=whole_number("--batch", minimum=1), default=16,
                     help="prompts per generation batch (default: 16). Lower it if the card runs out of memory")
     ap.add_argument("--save-generations", dest="save_generations", default="",
-                    help="write every prompt and its raw generation to this JSONL path. "
-                         "Aggregates alone cannot answer a question you did not think to ask "
-                         "before the GPU was released: the 2026-07 sweep kept only percentages, "
-                         "so re-deriving a single metric later meant renting hardware again. "
-                         "With the generations kept, any new metric is a local computation.")
+                    help="write every prompt and its raw generation to this JSONL path. Keep them, "
+                         "and any metric you think of later is a local computation rather than the "
+                         "GPU hired again.")
     ap.add_argument("--length-sweep", dest="length_sweep", action="store_true",
-                    help="measure how the refusal rate depends on how long the model is allowed "
-                         "to talk, instead of reporting one number at one budget. A safety-tuned "
-                         "model can open with 50 to 100 tokens of helpful-sounding framing and "
-                         "only then refuse, so a short budget cuts the refusal off before it is "
-                         "emitted and the rate reads low. Generates ONCE at --length-max and "
-                         "reads the answer back at every shorter budget, which is exact under "
-                         "greedy decoding and costs one pass rather than one per budget. Exits "
-                         "non-zero when the curve has not settled")
+                    help="report the refusal rate as a curve against reply length, rather than one "
+                         "number at one budget. A model can open with 50 to 100 tokens of framing "
+                         "and only then refuse, so a short budget reads low. Costs one pass, not "
+                         "one per budget. Exits non-zero when the curve has not settled")
     ap.add_argument("--length-max", dest="length_max",
                     type=whole_number("--length-max", minimum=1), default=256,
                     help="the longest budget in the sweep (default 256). If the rate is still "
                          "climbing here, the sweep says so and refuses to call the last row the "
                          "answer")
     ap.add_argument("--harm-recognition", dest="harm_recognition", action="store_true",
-                    help="the compass axis: instead of asking the model to CARRY OUT each eval "
-                         "request, ask it to JUDGE whether the request is harmful (HARMFUL/BENIGN). "
-                         "Reports harm_recognition (the fraction it still flags as harmful). Pair "
-                         "with a normal run on the same eval to read 'knows and complies anyway' "
-                         "(low refusal + high recognition) vs a scrambled compass (both low).")
+                    help="the compass axis: ask the model to JUDGE each request as HARMFUL or "
+                         "BENIGN rather than to carry it out, and report the fraction it still "
+                         "flags. Run it beside an ordinary score to tell a model that knows and "
+                         "complies from one that no longer knows.")
     return ap
 
 
@@ -258,10 +247,12 @@ def main(argv=None):
     # the check next time.
     if a.track and not a.track_arm:
         raise SystemExit(
-            "--track needs --track-arm, which says whether --eval holds the harmful arm or the "
-            "harmless one. The two have different recorded boundaries, so there is nothing safe "
-            "to default to: guessing wrong would skip the wrong rows and stamp the figure with a "
-            "partition it does not have.")
+            "--track needs --track-arm, which says whether --eval holds the harmful\n"
+            "arm or the harmless one. The two have different recorded boundaries, so\n"
+            "there is nothing safe to default to.\n"
+            f"  Add --track-arm harmful, or --track-arm harmless:\n"
+            f"  senbonzakura score --model {a.model} --eval {a.eval} \\\n"
+            f"      --track {a.track} --track-arm harmful --out {a.out}")
     if a.track_arm and not a.track:
         raise SystemExit(
             f"--track-arm {a.track_arm} says which arm this is, but without --track there is no "

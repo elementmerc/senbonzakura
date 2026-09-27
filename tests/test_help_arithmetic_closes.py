@@ -25,10 +25,13 @@ wrong has learned something true about how carefully the rest was checked, and t
 argument is that its numbers can be checked.
 """
 import re
+from pathlib import Path
 
 import pytest
 
 from senbonzakura.parser import CORE_FLAGS, build_parser
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module")
@@ -104,3 +107,29 @@ def test_no_count_is_hardcoded_in_the_help_strings():
         f"the footer should carry exactly the two computed counts and no third number: {footer!r}")
     assert len(re.findall(r"\b\d{2,}\b", help_all.help)) == 1, (
         f"the --help-all description should carry exactly the computed total: {help_all.help!r}")
+
+
+def test_the_reference_pages_quote_the_measured_flag_count():
+    """The same number, in prose, on two pages that went stale together.
+
+    `docs/reference/cli.md` said "the default command has 69 flags" and
+    `docs/reference/flags.md` said "there are 69 flags", while the parser declared 71. Same shape as
+    the help text's own hardcoded total and as the install size that three pages disagreed about: a
+    measured fact copied into prose, where nothing can notice it drifting.
+
+    A reader who counts is the person who finds these, and this project's whole argument is that its
+    numbers can be counted.
+    """
+    pages = [ROOT / "docs" / "reference" / "cli.md", ROOT / "docs" / "reference" / "flags.md"]
+    total = len(_flags(build_parser(full=True)))
+
+    wrong = {}
+    for page in pages:
+        if not page.is_file():
+            continue
+        for stated in re.findall(r"\b(\d{2,3})\s+flags\b", page.read_text(encoding="utf-8")):
+            if int(stated) != total:
+                wrong.setdefault(page.name, set()).add(stated)
+    assert not wrong, (
+        f"these pages state a flag count that is not the {total} the parser declares: "
+        f"{ {k: sorted(v) for k, v in wrong.items()} }")

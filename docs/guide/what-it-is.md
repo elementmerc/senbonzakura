@@ -8,6 +8,9 @@ Senbonzakura takes a different route: it goes into the model and removes the ref
 
 Then it measures whether it worked, which turns out to be the much harder half. 🙃
 
+> Looking for something specific? [**All guide pages**](/guide/) lists the lot. This page stays the
+> way in, because what the tool makes is the thing to know before how to run it.
+
 ## Hold on. "Goes into the model"?
 
 A language model is a very large pile of numbers. Billions of them. You type a question, those

@@ -2123,6 +2123,28 @@ class Abliterator:
                 attn_impl=args.attn_impl, log=log)
         self.tok = tok
         self.model = model
+        # WHERE THE WEIGHTS ACTUALLY WENT, said once, before the long part starts. `--device cuda`
+        # is a request; accelerate decides, and it puts whatever will not fit into host RAM or onto
+        # disk. Until 2026-09-27 the only thing that noticed was the capability probe, so a run on
+        # an undersized card got a careful warning about the four-minute probe and silence about the
+        # four-hour search it was about to start.
+        #
+        # This REPORTS rather than refuses, unlike the probe: an offloaded search is slow, while an
+        # offloaded probe spends hours on a number the edit does not need. Refusing here would leave
+        # somebody with a 6 GB card unable to run the tool this project is aimed at.
+        # Imported here rather than at module scope, like every other use of it in this file: the
+        # module is heavy, and `--help` paying for it is a regression this project has already
+        # fixed once.
+        from . import capability as _cap
+        _cap.report_offload_cost_for_a_search(
+            model,
+            trials=getattr(args, "trials", 1),
+            # Both generating stages, because both pay the placement. `eval_refusal` is the larger
+            # of the two on the defaults and neither is negligible.
+            prompts_per_trial=(getattr(args, "dir_prompts", 0) or 0)
+            + (getattr(args, "eval_refusal", 0) or 0),
+            gen_tokens=getattr(args, "gen_tokens", 0) or 0,
+            log=log)
         # Whether the offload check has run. See `_capability_score`: it fires there, once, rather
         # than here, because a constructor that refuses is a constructor every caller has to work
         # around.

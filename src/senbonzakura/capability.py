@@ -720,6 +720,54 @@ def offloaded_share(model):
     return host / len(dmap)
 
 
+def report_offload_cost_for_a_search(model, *, trials, prompts_per_trial, gen_tokens, log=print):
+    """Say that the SEARCH is running partly on the host, and roughly what that costs.
+
+    WHY THE SEARCH AND NOT JUST THE PROBE. `offloaded_share` had exactly one caller: the capability
+    probe, which refuses when placement makes it slow. The search is the same fact applied to a job
+    one to two orders of magnitude longer, and it said nothing at all. So a run on a card too small
+    for its model got a careful warning about the four-minute probe and silence about the four-hour
+    search, which is this project's recurring shape: a guard that covers one spelling of a defect
+    reports clean on the others.
+
+    IT REPORTS, IT DOES NOT REFUSE. Decided by the operator on 2026-09-27, and it is the right call
+    for this path: an offloaded search is slow, whereas an offloaded capability probe buys a number
+    nobody needs in order to finish an edit. Refusing the long job would leave somebody with a 6 GB
+    card unable to run the tool at all, and a tool that refuses the hardware it is aimed at has
+    chosen purity over use.
+
+    THE RATE IS A PROJECTION, and crude in a stated direction. It multiplies the same measured
+    per-token CPU constant the probe uses by the offloaded fraction, so it treats an offloaded layer
+    as costing host time and a resident one as costing nothing. The true figure is worse, because a
+    partly offloaded forward pass also moves activations across the bus every step, and the constant
+    was measured on a 1.7B model so a larger one is worse again. Under-stating is the right
+    direction here for the opposite reason to the probe's: this number is advice, not a gate, and an
+    over-stated one gets dismissed.
+    """
+    share = offloaded_share(model)
+    if not share:
+        return
+    # EVERY BUDGET IS COERCED, because this runs on the way into the longest job the tool has and
+    # must never be the reason a run fails to start. `gen_tokens` arrives as None on the paths that
+    # inject a model, and an unguarded `int(None)` here crashed a real search in a test written for
+    # exactly that. A notice is not worth a traceback.
+    tokens = int(gen_tokens or 0)
+    generations = max(1, int(trials or 1)) * max(1, int(prompts_per_trial or 1))
+    if tokens <= 0:
+        return
+    seconds = cpu_probe_estimate(generations, tokens) * share
+    hours = seconds / 3600
+    log(f"NOTE: {share * 100:.0f}% of this model's layers are in host RAM or on disk, not on the "
+        f"GPU, because the card has less free memory than the model needs.")
+    log(f"  The run works. It generates at host speed for that share, and the search is the long "
+        f"part: roughly {hours:.1f} hours for about {generations} generations at {int(gen_tokens)} "
+        f"tokens, on top of the bake.")
+    log("  That is a projection from a per-token CPU measurement of a 1.7B model, not a "
+        "measurement of this one, and it under-states rather than over-states.")
+    log("  To make it a GPU run: free the card, use one with more memory, or load smaller with "
+        "--load-in-4bit on the measurement paths. --device cuda alone does not do it.")
+
+
 def refuse_a_slow_probe_after_load(model, n, max_new, *, spec="bundled", allowed=False,
                                    log=print):
     """The same refusal again, decided from where the weights ended up rather than from a flag.

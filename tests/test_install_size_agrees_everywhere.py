@@ -45,16 +45,38 @@ PAGES = [
 #: "69 packages", "68 packages". Not "packages" alone, which appears in plenty of other sentences.
 _COUNT = re.compile(r"\b(\d{2,3})\s+packages\b")
 
-#: "5.9 GB", "5.8 GB". Restricted to one decimal place so a table of quantisation sizes elsewhere
-#: cannot be mistaken for this claim.
-_SIZE = re.compile(r"\b(\d\.\d)\s*GB\b")
+#: "5.9 GB", "5.8 GB", and ONLY where the sentence is about the install.
+#:
+#: WHY THIS IS CONTEXT-ANCHORED, 2026-09-27. It used to be a bare `\b(\d\.\d)\s*GB\b`, on the theory
+#: that one decimal place was specific enough to tell an install size from a table of quantisation
+#: sizes. It was not. Adding a VRAM sizing table to the install guide, whose first row is "1.7B,
+#: 3.4 GB of weights", made this test report that the pages disagreed about the install size. They
+#: did not; the guard was answering a broader question than the one it was asked, which is the same
+#: failure as the future-version gate reading a measured percentage as a version number.
+#:
+#: So a figure counts only if it sits beside the words that make it this claim: within the same
+#: sentence as a package count, or in the "On disk" row of the breakdown table. Every one of the
+#: three real claims is one of those two shapes.
+_SIZE = re.compile(
+    r"(?:packages[^.|\n]{0,40}?\b(\d\.\d)\s*GB\b"          # "69 packages, 5.9 GB"
+    r"|\b(\d\.\d)\s*GB\b[^.|\n]{0,40}?packages"            # "5.9 GB across 69 packages"
+    r"|On disk\s*\|\s*\**(\d\.\d)\s*GB)",                  # the breakdown table row
+    re.IGNORECASE)
 
 
 def _figures(pattern):
+    """Every value `pattern` finds, per page.
+
+    Flattens alternation groups: `_SIZE` has three branches, so `findall` yields tuples with two
+    empty strings in each. Dropping the empties here keeps both patterns usable through one helper.
+    """
     found = {}
     for page in PAGES:
         text = page.read_text(encoding="utf-8")
-        values = set(pattern.findall(text))
+        values = set()
+        for hit in pattern.findall(text):
+            parts = hit if isinstance(hit, tuple) else (hit,)
+            values.update(p for p in parts if p)
         if values:
             found[page.relative_to(ROOT).as_posix()] = values
     return found
@@ -171,3 +193,21 @@ def test_the_prose_cuda_and_triton_count_is_one_larger():
     assert not wrong, (
         f"these pages give a CUDA-and-Triton total that is not {nvidia} + {triton} = "
         f"{nvidia + triton}: {wrong}")
+
+
+def test_a_vram_table_is_not_mistaken_for_an_install_size():
+    """The regression that made `_SIZE` context-anchored, kept as a test rather than a comment.
+
+    `docs/guide/install.md` carries a card-sizing table whose rows are weight sizes in GB: 3.4 for a
+    1.7B model, 60 for a 30B. None of those is the install size, and a guard that counted them
+    reported the pages disagreeing about a figure they agree on. A false alarm from a consistency
+    check is expensive in a specific way: the next person to see it edits the prose to silence it.
+    """
+    text = (ROOT / "docs" / "guide" / "install.md").read_text(encoding="utf-8")
+    assert "Weights at 16-bit" in text, (
+        "the card-sizing table has gone; if it moved, point this test at its new home rather than "
+        "deleting it, because the collision it guards against will come back with the next table")
+    values = _figures(_SIZE).get("docs/guide/install.md", set())
+    assert values == {"5.9"}, (
+        f"the install guide should yield exactly the install size and nothing from the sizing "
+        f"table, and it yielded {sorted(values)}")

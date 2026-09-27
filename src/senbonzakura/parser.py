@@ -163,10 +163,15 @@ def build_parser(full=False):
             "commands:\n"
             "  abliterate   remove refusal directions and save the model (the default: the flags "
             "below work with or without the word)\n"
+            # THIS USED TO SAY THE OPPOSITE OF WHAT THE CODE DOES. It read "manual --trials /
+            # --max-directions and the rest are ignored in this mode", which described the preset
+            # before `_kageyoshi_explicit` was added to stop it discarding a hand-set `--trials 200`.
+            # The code has honoured them since; the sentence went on telling people not to bother,
+            # and on 2026-09-27 the operator read it and believed the flags did nothing.
             "  kageyoshi    abliterate with the auto-scaled best-effort preset. It detects the "
             "architecture (dense / fused MoE / expert-list) and parameter count, scales the search "
-            "budget and turns on every quality lever, so you set only the paths. It owns the search "
-            "knobs; manual --trials / --max-directions and the rest are ignored in this mode\n"
+            "budget and turns on every quality lever, so you set only the paths. Anything you set "
+            "by hand WINS: the preset skips that knob and says so in the log\n"
             "  measure      every instrument against one model, into one directory, as one "
             "table: refusal, harm recognition, fluency and capability, plus the coherence cost "
             "when --baseline names the model it was edited from. It measures nothing itself; "

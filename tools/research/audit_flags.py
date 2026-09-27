@@ -182,7 +182,24 @@ def analyse(root):
     # (`parser.py` declares the surface and runs nothing) or a pure forwarder (`entry.py` hands
     # the whole Namespace to `run_parsed`). `cli` is neither: it forwards AND reads dozens, so it
     # stays answerable and the original `--chat-template` catch survives.
-    reads_by_module = {m for readers in read.values() for m, _fn in readers}
+    # COUNTED OVER DECLARED FLAGS ONLY, which is what the sentence above already says.
+    #
+    # `read` is keyed by ATTRIBUTE NAME, and the walker records every attribute access it sees, not
+    # only those naming a flag. So this set used to include names like `dest` and `option_strings`,
+    # and any module that touched an unrelated attribute lost its exemption.
+    #
+    # Measured 2026-09-27. `parser.py` gained a loop over `ap._actions` reading `a.dest` and
+    # `a.option_strings`, to count flags rather than leave a hardcoded total in the help text. The
+    # audit then recorded parser.py as reading two "flags", dropped it out of `exempt`, and reported
+    # all 70 flags it declares as dropped by the module that declares them. Nothing was dropped; the
+    # exemption had been computed from a set polluted by attribute names that are not flags.
+    #
+    # This is a correction rather than a loosening: reading an attribute that is not a flag is not
+    # reading a flag, and a name that no parser declares cannot be dropped by anybody. A module that
+    # reads one real flag is still answerable for every flag it declares, so the `--chat-template`
+    # catch this file exists for is untouched.
+    reads_by_module = {m for dest, readers in read.items() if dest in declared
+                       for m, _fn in readers}
     exempt = {m for m in (forwards | {mod for mod, _fn in parser_defs})
               if m not in reads_by_module}
     for sites in declared.values():

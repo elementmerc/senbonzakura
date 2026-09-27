@@ -247,3 +247,68 @@ def test_the_runner_exits_non_zero_on_a_finding(tmp_path, capsys):
 def test_the_runner_exits_zero_on_the_real_package(capsys):
     assert audit_flags.main([PACKAGE]) == 0
     assert "all reached" in capsys.readouterr().out
+
+
+def test_a_pure_declarer_keeps_its_exemption_when_it_touches_a_non_flag_attribute(tmp_path):
+    """Reading `action.dest` is not reading a flag, and used to cost parser.py its exemption.
+
+    WHAT HAPPENED, 2026-09-27
+
+    The exemption in `analyse` says a module that reads no flag at all cannot drop one, which is
+    what makes `parser.py` answerable for nothing: it declares the surface and runs nothing.
+
+    `read` is keyed by ATTRIBUTE NAME and the walker records every attribute access, not only those
+    naming a flag. So the set the exemption was computed from held names like `dest` and
+    `option_strings`. When `parser.py` gained a loop over `ap._actions` to COUNT its flags, rather
+    than leave a hardcoded total in the help text, the audit recorded it as reading two flags,
+    dropped its exemption, and reported all seventy flags it declares as dropped by the module that
+    declares them. Nothing was dropped.
+
+    The failure mode is the expensive kind: a gate going red for a reason unrelated to the defect it
+    guards, which is how a gate earns a bypass. The fix counted the exemption over declared flags
+    only, which is what its own comment already claimed it did.
+    """
+    dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+        def build_parser():
+            ap.add_argument("--trials", dest="trials")
+            ap.add_argument("--device", dest="device")
+            # Counting its own flags, touching attributes that are not flags.
+            flags = [a for a in ap._actions if a.option_strings]
+            return len([a for a in flags if a.dest])
+        """,
+        runner="""
+        def run(args):
+            return args.trials, args.device
+        """)
+    assert not dead, f"both flags are read in runner.py, so neither is dead: {dead}"
+    assert not unkept, (
+        "parser.py declares these and reads no FLAG, so it keeps its exemption. It touched "
+        f"`option_strings` and `dest`, which are attributes and not flags: {unkept}")
+
+
+def test_a_module_that_reads_one_real_flag_is_still_answerable(tmp_path):
+    """The other half, so the fix above cannot have bought quiet by exempting everybody.
+
+    A declaring module that genuinely reads a flag stays on the hook for every flag it declares,
+    which is the property that caught `--chat-template` shipping dead.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+        def build_parser():
+            ap.add_argument("--trials", dest="trials")
+            ap.add_argument("--device", dest="device")
+
+        def resolve(args):
+            return args.trials
+        """,
+        runner="""
+        def run(args):
+            return args.device
+        """)
+    dropped = {dest for dest, module, *_rest in unkept if module == "parser.py"}
+    assert "device" in dropped, (
+        "parser.py reads `trials`, so it is not a pure declarer and must answer for `device`, "
+        f"which it declares and never reads. Got: {unkept}")

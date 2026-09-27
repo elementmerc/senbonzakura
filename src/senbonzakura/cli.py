@@ -1571,6 +1571,13 @@ _KAGEYOSHI_BUDGET_FLAGS = {
     "top_rescore": ("--top-rescore",),
     "patience": ("--patience",),
     "kl_scale": ("--kl-scale",),
+    # THE QUALITY LEVERS, added 2026-09-27. They were plain assignments in `_apply_kageyoshi`, so
+    # they were forced whatever the caller asked for, while the budget knobs above were honoured.
+    # `tests/test_the_preset_never_overrides_a_typed_flag.py` now asserts that every flag the preset
+    # sets appears here, by reading the function rather than by anybody remembering to add one.
+    "search": ("--search",),
+    "per_component": ("--per-component",),
+    "mlp_off": ("--mlp-off",),
 }
 
 
@@ -1685,9 +1692,15 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=(), composition=No
     for dest, value in zip(("trials", "dir_prompts", "eval_refusal", "eval_kl",
                             "eval_refusal_final"), budget, strict=True):
         preset(dest, value)
-    args.search = "pareto"          # map the whole refusals/keyword/KL front, pick the balanced knee
-    args.per_component = True        # tune attn.o_proj and mlp.down_proj apart (the MLP may stay untouched)
-    args.mlp_off = False             # let the search decide, don't force attention-only
+    # THROUGH `preset` LIKE EVERYTHING ELSE, since 2026-09-27. These three were plain assignments,
+    # so the preset honoured a hand-set `--trials` and silently overrode a hand-set `--search`,
+    # `--per-component` or `--mlp-off`. That is the same defect the `explicit` mechanism was built
+    # for in the first place, one flag family along, and it is this project's recurring shape: the
+    # guard covered one spelling and reported clean on the others. A flag the caller typed now wins
+    # wherever the preset has an opinion, and the run says so in its log.
+    preset("search", "pareto")       # map the whole refusals/keyword/KL front, pick the balanced knee
+    preset("per_component", True)    # tune attn.o_proj and mlp.down_proj apart (the MLP may stay untouched)
+    preset("mlp_off", False)         # let the search decide, don't force attention-only
     preset("max_directions", 3)      # ablate the refusal SUBSPACE, not just the difference-of-means
     preset("kl_scale", 4.0)          # the coherence guard that makes it balanced
     preset("top_rescore", 6)

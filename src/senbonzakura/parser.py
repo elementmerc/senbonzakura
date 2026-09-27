@@ -79,7 +79,8 @@ Use it to hold one setting still across several models, or to reproduce a run
 whose flags you already have. For a first run, use `kageyoshi` instead.
 
 example:
-  senbonzakura abliterate Qwen/Qwen3-1.7B --track default --out edited \\
+  senbonzakura abliterate Qwen/Qwen2.5-0.5B-Instruct \\
+      --track default --out edited \\
       --trials 120 --min-directions 2 --max-directions 2
 
 every flag:  senbonzakura --help-all
@@ -100,9 +101,11 @@ says which in the log. These are the flags it would otherwise choose for you.
 {preset}
 
 example:
-  senbonzakura {word} Qwen/Qwen3-1.7B --track default --out edited
+  senbonzakura {word} Qwen/Qwen2.5-0.5B-Instruct \\
+      --track default --out edited
 
-`senbonzakura Qwen/Qwen3-1.7B`, with no mode word, does the same thing.
+`senbonzakura Qwen/Qwen2.5-0.5B-Instruct`, with no mode word, does the
+same thing.
 `auto` and `kageyoshi` are the same mode under two names.
 
 every flag:  senbonzakura --help-all
@@ -198,7 +201,7 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     """
     ap = argparse.ArgumentParser(add_help=False)
     # `model_required=False` ONLY for the abliterate parser, which also takes the model as a
-    # positional so that `senbonzakura Qwen/Qwen3-1.7B` works. It still refuses a run with no
+    # positional so that `senbonzakura Qwen/Qwen2.5-0.5B-Instruct` works. It still refuses a run with no
     # model at all; the check just moves from argparse to `resolve_model`, where it can say which
     # of the two ways to give it you meant to use. Every other command keeps the flag required.
     ap.add_argument("--model", required=model_required, default=None, help=model_help)
@@ -410,7 +413,7 @@ def build_parser(full=False):
                           "(python -m senbonzakura.score --load-in-4bit) to measure a model "
                           "on low VRAM.",
             model_required=False)])
-    # THE ONE-COMMAND FORM: `senbonzakura Qwen/Qwen3-1.7B`, with everything else defaulted.
+    # THE ONE-COMMAND FORM: `senbonzakura Qwen/Qwen2.5-0.5B-Instruct`, with everything else defaulted.
     #
     # `--model` still works and is what every run spec, every README example and every holst job
     # already passes, so nothing that exists breaks. This is an additional way to say the same
@@ -422,7 +425,7 @@ def build_parser(full=False):
     # `metavar` so the usage line reads MODEL rather than the dest name.
     ap.add_argument("model_positional", nargs="?", default=None, metavar="MODEL",
                     help="the model to abliterate, given without a flag. `senbonzakura "
-                         "Qwen/Qwen3-1.7B` is the whole command: the track, the output directory "
+                         "Qwen/Qwen2.5-0.5B-Instruct` is the whole command: the track, the output directory "
                          "and the search are all defaulted. Equivalent to --model.")
     try:   # optional shell completion; degrade gracefully if shtab is not installed
         import shtab

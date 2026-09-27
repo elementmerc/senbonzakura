@@ -105,15 +105,41 @@ def test_an_artefact_with_no_stamp_says_that_rather_than_naming_a_flag():
         baseline.only_metric({})
 
 
-def test_the_seeds_are_still_required():
-    """A baseline claiming a spread it does not have is worse than no baseline, and nothing about
-    the flags beside it changed that.
+def test_no_flag_is_required_by_argparse_so_every_refusal_can_name_a_next_step():
+    """None of these carry `required=True`, and that is the design rather than an omission.
+
+    argparse's "the following arguments are required: --seeds" says what is missing and nothing
+    about what to type, and a reader who has not met this command does not know what shape a seed
+    list takes. Every one of these is refused in `main` instead, which is what the tests below
+    check. This assertion exists so that reverting to `required=True` fails here, beside the
+    reason, rather than silently replacing a useful refusal with argparse's.
     """
     from senbonzakura.baseline import build_parser
 
-    required = {a.dest for a in build_parser()._actions if a.required}
-    assert "seeds" in required
-    assert "out" not in required and "metric" not in required and "measurement" not in required
+    assert not {a.dest for a in build_parser()._actions if a.required}
+
+
+def test_the_seeds_are_still_required(capsys, tmp_path):
+    """A baseline claiming a spread it does not have is worse than no baseline, and nothing about
+    the flags beside it changed that.
+
+    WHAT PROMPTED THE REWRITE, 2026-09-27
+
+    This asserted `"seeds" in {a.dest for a in build_parser()._actions if a.required}`, which is
+    argparse's mechanism and not the property in this test's own name. When `--seeds` stopped
+    carrying `required=True` so its refusal could name a next step, the requirement itself was
+    intact and this test went red on every runner: it was measuring how the rule was enforced
+    rather than whether it held. It now drives the command.
+    """
+    artefact = tmp_path / "result.json"
+    artefact.write_text(json.dumps({"metrics": {"coherence": {"value": 1.0}}}), encoding="utf-8")
+
+    assert baseline.main([str(artefact)]) == 2, "a baseline with no seeds behind it must refuse"
+    err = capsys.readouterr().err
+    assert "--seeds" in err
+    assert "--seeds 42" in err, (
+        "the refusal has to show the shape of a seed list; a reader who has not met this command "
+        "cannot tell whether it wants 42, [42] or 42 43")
 
 
 def test_the_default_baseline_path_is_one_file_per_metric():

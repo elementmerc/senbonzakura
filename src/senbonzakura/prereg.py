@@ -62,6 +62,8 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+import textwrap
 from pathlib import Path
 
 #: The fenced block the machine reads. One per file: two would mean two documents disagreeing
@@ -296,3 +298,119 @@ def compare_to_run(doc, run):
             f"{len(amended)} amendment(s) were made after a result existed. Whatever rests on "
             f"them is exploratory.")))
     return findings
+
+
+# ── the command ──────────────────────────────────────────────────────────────────
+
+#: Exit codes, matching `gate`'s convention rather than inventing a second one: 0 clean, 1 the
+#: thing being checked is wrong, 2 the check could not be performed. A CI job wiring this in reads
+#: the same numbers it already reads from `gate`.
+OK, FAILED, REFUSED_EXIT = 0, 1, 2
+
+#: How a severity maps to an exit code. A NOTE is worth printing and is not worth failing a build
+#: over, which is the whole distinction between the three levels.
+_EXIT_FOR = {REFUSED: REFUSED_EXIT, FINDING: FAILED, NOTE: OK}
+
+
+def build_parser():
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="senbonzakura prereg",
+        description="Check a pre-registration, and whether a run did what it promised.",
+        epilog="""\
+examples:
+  senbonzakura prereg design.md
+      read the ```prereg block and report what is missing or questionable
+
+  senbonzakura prereg design.md --run abliteration.json
+      the same, plus whether the run actually did what the document promised
+
+A pre-registration here is ordinary Markdown prose carrying ONE fenced block tagged
+`prereg`. The prose is the pre-registration and does the real work; the block is the
+handle a machine can hold it by. This reads the block and never the prose.
+
+Needs no model, no GPU and no network, like `check` and `gate`.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("document", help="the pre-registration, a Markdown file with a ```prereg block")
+    p.add_argument("--run", default=None,
+                   help="a run's result artefact, to check against what was promised")
+    p.add_argument("--quiet", action="store_true",
+                   help="one compact entry per finding, led by its severity, rather than the "
+                        "spaced-out form. Still wrapped: a finding here can be a long sentence "
+                        "and this project does not print lines that need a wide terminal.")
+    return p
+
+
+def _refuse(sentence):
+    """Print one refusal, wrapped, on stderr, and hand back the exit code that goes with it.
+
+    Wrapped because these sentences are long by design: they say what the file is, why it cannot be
+    checked and what the format actually is. Unwrapped, a terminal turns a 300-character paragraph
+    into a wall, and a wall is the thing a reader skips.
+
+    Returning the code lets a caller write `return _refuse(...)`, so the message and the exit status
+    cannot drift apart into two statements that disagree.
+    """
+    print("senbonzakura prereg:", file=sys.stderr)
+    for line in textwrap.wrap(str(sentence), 76, initial_indent="  ", subsequent_indent="  "):
+        print(line, file=sys.stderr)
+    return REFUSED_EXIT
+
+
+def main(argv=None):
+    a = build_parser().parse_args(argv)
+
+    try:
+        doc = load(a.document)
+    except PreregError as e:
+        # NOT a traceback. "This file has no block" is an ordinary answer to a reasonable question,
+        # and the reader needs the sentence rather than the frames around it.
+        return _refuse(e)
+    except OSError as e:
+        return _refuse(f"cannot read {a.document}: {e}")
+
+    findings = list(validate(doc))
+
+    if a.run:
+        try:
+            run = json.loads(Path(a.run).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return _refuse(f"cannot read the run artefact {a.run}: {e}")
+        findings += compare_to_run(doc, run)
+
+    if not findings:
+        print(f"prereg OK: {a.document} carries a complete pre-registration"
+              + (f", and {a.run} did what it promised" if a.run else ""))
+        return OK
+
+    for severity, sentence in findings:
+        if a.quiet:
+            # WRAPPED EVEN HERE, with a hanging indent so the entry still reads as one item. The
+            # first version printed `f"{severity}: {sentence}"` unwrapped, which produced lines of
+            # 150 characters: the same defect as the refusal above, in the branch meant to be the
+            # tidy one. The severity stays at the head of the first line so the output is still
+            # greppable.
+            for line in textwrap.wrap(f"{severity}: {sentence}", 76,
+                                      subsequent_indent="  " + " " * len(severity)):
+                print(line)
+        else:
+            print(f"\n{severity.upper()}")
+            for line in textwrap.wrap(sentence, 76, initial_indent="  ",
+                                      subsequent_indent="  "):
+                print(line)
+
+    level = worst(findings)
+    counts = {s: sum(1 for x, _ in findings if x == s) for s in (REFUSED, FINDING, NOTE)}
+    print(f"\n{len(findings)} finding(s): "
+          + ", ".join(f"{n} {s}" for s, n in counts.items() if n))
+    # A NOTE alone exits 0, so a document with an amendment recorded honestly is not a build
+    # failure. That is the point of having three levels rather than two.
+    return _EXIT_FOR.get(level, OK)
+
+
+if __name__ == "__main__":
+    # The guard eight modules once lacked, so `python -m senbonzakura.<module>` executed nothing
+    # and exited 0 while the documentation said otherwise.
+    sys.exit(main())

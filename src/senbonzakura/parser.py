@@ -400,6 +400,8 @@ def build_parser(full=False):
             "  gate             compare a measurement against a recorded baseline and fail\n"
             "                   a build on a regression. Refuses when the two are not\n"
             "                   comparable.\n"
+            "  prereg           check a pre-registration, and whether a run did what it\n"
+            "                   promised. Needs no model, corpus or card.\n"
             "  setup            put the right build of torch on this machine: pip picks by\n"
             "                   platform, not by hardware.\n"
             "  doctor           check this install can do the job: pins, the binary, every\n"

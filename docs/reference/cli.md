@@ -34,6 +34,7 @@ exactly the same arguments.
 |---|---|
 | `check` | Read an evaluation result file, from this tool or from another one, and report how the number could be wrong. Each finding names the incident behind it, what to do about it, and what would make the finding itself wrong. |
 | `baseline` | Turn one measurement into the baseline file `gate` compares against. It carries the conditions the number was measured under, the interval, the sample size, the seeds, the estimator and the precision, and it refuses rather than guessing when any of those is missing, naming all of them at once so you fix them in one pass. |
+| `prereg` | Check a pre-registration: read the one fenced `prereg` block out of its Markdown and report what is missing or will not do what it is for. With `--run`, also check whether the run that claims to satisfy it actually did what it promised. Exits 0 when clean, 1 when the document is flawed, and 2 when it is not a pre-registration at all, because those are three different answers. |
 | `gate` | Compare a measurement against a recorded baseline and fail the build when a property moved outside its interval. It refuses, rather than comparing, when the two were measured under different conditions: a green tick on two numbers that never matched is worse than no gate at all. Exits 0 when steady, 1 on a regression, and 2 when it refused, because a refusal says nothing about the model. |
 
 `check` is the one command that needs nothing: no model, no corpus, no card, no network. It

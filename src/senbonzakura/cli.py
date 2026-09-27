@@ -1982,6 +1982,39 @@ def _track_digests(track):
     return out or None
 
 
+#: Phrases in `transformers`' load failure that give advice for the PYTHON API, to somebody who is
+#: holding a command line. Its message is otherwise the best part of the refusal: it names the id
+#: and says whether it was a local folder or a listed model, which is exactly what the reader needs.
+#: But it closes by telling them to pass `token=<your_token>`, a keyword argument to a function they
+#: are not calling, and to use `huggingface-cli login`, which `hf auth login` replaced.
+#:
+#: So the useful half is kept verbatim and the advice is dropped, because the line under it already
+#: says the same thing in the two spellings that work here. Leaving both in gave a reader two
+#: instructions where one was impossible to follow, and the impossible one came first.
+_THEIR_ADVICE_IS_FOR_THE_PYTHON_API = (
+    "token=<your_token>", "use_auth_token", "huggingface-cli login",
+    "If this is a private repository", "If this is a private repo",
+    "make sure to pass a token",
+)
+
+
+def _could_not_load(model_id, error):
+    """One refusal for a model that will not load, shared by both loaders.
+
+    Two identical copies of this message had already drifted apart once elsewhere in this file, and
+    a refusal is a user-facing string like any other.
+    """
+    theirs = [ln for ln in str(error).splitlines()
+              if not any(p in ln for p in _THEIR_ADVICE_IS_FOR_THE_PYTHON_API)]
+    # JOINED ONLY IF THERE IS SOMETHING TO JOIN. An OSError with an empty message, or one whose
+    # every line was advice, left a blank line where the detail should be, which reads as output
+    # that got cut off.
+    detail = "".join(f"  {ln.strip()}\n" for ln in theirs if ln.strip())
+    return (f"senbonzakura: could not load the model '{model_id}'.\n"
+            f"{detail}"
+            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.")
+
+
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
                    needs_chat_template=True):
     """The tokenizer half of the loader, on its own.
@@ -2002,10 +2035,7 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     try:
         tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
     except OSError as e:
-        raise SystemExit(
-            f"senbonzakura: could not load the model '{model_id}'.\n"
-            f"  {e}\n"
-            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.") from e
+        raise SystemExit(_could_not_load(model_id, e)) from e
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -2062,10 +2092,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     except OSError as e:
-        raise SystemExit(
-            f"senbonzakura: could not load the model '{model_id}'.\n"
-            f"  {e}\n"
-            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.") from e
+        raise SystemExit(_could_not_load(model_id, e)) from e
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
     model.eval()

@@ -5390,12 +5390,56 @@ def _apply_method_args(args, log):
         setattr(args, name, value)
 
 
+def _progress_bars_use_a_thread_lock():
+    """Stop Ctrl+C reporting a leaked semaphore that nothing leaked.
+
+    `tqdm` builds a global write lock the first time any progress bar is created, and it builds a
+    `multiprocessing.RLock`, which on Linux is one POSIX semaphore registered with the resource
+    tracker. It is a class attribute, so it is never released. On a clean exit interpreter shutdown
+    tidies it; on SIGINT the tracker prints
+
+        resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+
+    The bars are `transformers` and `huggingface_hub` loading shards and downloading files, so
+    nothing in this package creates them, and the warning is cosmetic: the tracker says it cleaned up
+    and it did. Traced 2026-09-27 by instrumenting `resource_tracker.register`, after a reader
+    interrupted a two-hour run and met it.
+
+    It is worth two lines anyway. This project's claim is that an interrupted run leaves the dataset
+    recoverable and the temp directories wiped, and that claim HOLDS: the same reader checked, and
+    found no partial weights and no `.part` files. A message about leaked resources at the moment
+    somebody kills a long run undercuts a property that is actually true, and the person reading it
+    has no way to tell which.
+
+    A thread lock is the correct primitive rather than a workaround: this is a single process, the
+    bars are written from one, and `set_lock` is tqdm's public API for saying so. Called from here
+    rather than from `main` so `--help` does not import tqdm: that path was taken from 2.80s to
+    0.06s by keeping imports out of it, and a help page does not draw progress bars.
+    """
+    import threading
+
+    try:
+        import tqdm
+    except ImportError:          # pragma: no cover - tqdm arrives with transformers
+        return
+    try:
+        tqdm.tqdm.set_lock(threading.RLock())
+    except Exception:
+        # DELIBERATELY SWALLOWED, and this is the one place in this package where that is right.
+        # The entire benefit is suppressing a cosmetic warning, so a tqdm that renames `set_lock`
+        # must not stop a two-hour abliteration from starting. `tests/test_progress_bar_lock.py`
+        # fails loudly when the API moves, so the breakage is found at test time rather than
+        # swallowed silently forever.
+        return
+
+
 def run_parsed(args, bankai, argv):
     """Everything after parsing. Split out so the entry point can parse without importing torch.
 
     `entry.main` does the parse against the light parser and calls straight in here, so a person
     who typed a bad flag has already been told so before this module is imported at all.
     """
+    _progress_bars_use_a_thread_lock()
     # The mode word is not a flag, so it never reaches `args`, and the run record needs it: a
     # resume of a `kageyoshi` run typed as `abliterate` is a different search.
     args.bankai = bool(bankai)

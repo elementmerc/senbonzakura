@@ -872,6 +872,59 @@ def suspect_readout_arms(res):
             if readout.get(arm) and readout[arm].get("suspect")]
 
 
+def nulls_matching_the_instrument(res):
+    """Arms where a null ruler separated the two sets as well as the compass did, or better.
+
+    THE PROJECT'S OWN RULE, ENFORCED. `docs/guide/compass.md` states it: "If your AUC doesn't clear
+    the length baseline, you haven't measured anything." Nothing enforced it. The controls were
+    computed, recorded and printed, and the run exited 0 with an AUC beside a null that had beaten
+    it, which is the failure shape this project keeps finding: a correct diagnostic wired to no
+    consequence. Exactly the sibling of `suspect_readout_arms` above, whose docstring says the same
+    thing about a different field.
+
+    FOUND BY TWO READERS INDEPENDENTLY, 2026-09-26, on different hardware. One measured a
+    character-count null at 1.0000 against a compass of 0.8576; the other a length-only null at
+    0.8993 against the same 0.8576. Both runs exited 0. Then `senbonzakura check` reported nothing
+    found on the artefacts, and on `evidence/compass-2026-07-30/base-qwen3-0.6b.json`, which this
+    project's own README calls "not a measurement of anything".
+
+    COMPARED ON DISTANCE FROM CHANCE, not on the raw AUC. An AUC of 0.0 is a perfect separator with
+    its labels the other way round, so a null at 0.0 has learned the split as completely as one at
+    1.0 and is just as damning. `|auc - 0.5|` is what `null_panel` already ranks by, so this reads
+    the same scale the producer wrote.
+
+    NO MARGIN, deliberately. "Clear the baseline" is a definitional bar rather than a knob: a
+    compass that ties with a length ruler has not distinguished harm from sentence length, and
+    picking a tolerance would invite arguing with the tolerance instead of with the result.
+
+    Returns a list of (arm, ruler, null_auc, compass_auc), empty when every arm cleared its nulls.
+    The arm names are `main` and `topic_matched`, which are the two AUCs a compass artefact carries.
+    """
+    found = []
+    for arm in ("main", "topic_matched"):
+        block = res if arm == "main" else (res or {}).get("topic_matched") or {}
+        arm_auc = block.get("auc")
+        controls = block.get("controls") or {}
+        if not isinstance(arm_auc, (int, float)):
+            continue
+
+        # Every null the artefact recorded, whichever generation of the format wrote it: the older
+        # files carry `length_only_auc` alone, the newer ones a whole panel beside it.
+        candidates = {}
+        if isinstance(controls.get("length_only_auc"), (int, float)):
+            candidates["length_only"] = controls["length_only_auc"]
+        for name, value in (controls.get("nulls") or {}).items():
+            if name.endswith("_auc") and name != "strongest_auc" and isinstance(value, (int, float)):
+                candidates[name[:-4]] = value
+        if not candidates:
+            continue
+
+        ruler, null_auc = max(candidates.items(), key=lambda kv: abs(kv[1] - 0.5))
+        if abs(null_auc - 0.5) >= abs(arm_auc - 0.5):
+            found.append((arm, ruler, null_auc, arm_auc))
+    return found
+
+
 def _stamp_compass(res, pinned=None):
     """Add the canonical metrics block beside the fields this command has always written.
 
@@ -1143,6 +1196,23 @@ def main(argv=None):
     # A verdict that lives only in the terminal is the defect this whole field exists to close.
     if suspect_readout_arms(res):
         res["self_invalidated"] = True
+    # THE SECOND WAY A COMPASS FIGURE IS NOT A MEASUREMENT, wired to the same consequence as the
+    # first rather than to a new one. `self_invalidated` already means "the number in this file is
+    # not a measurement of what it is named after", `entry.exit_status` already turns it into a
+    # non-zero exit for every entry point at once, and the checker rule that reads it already
+    # accepts a reason string rather than only a boolean. So a null beating the instrument needs no
+    # new field, no new exit path and no new check: it needs to say so in the field that exists.
+    #
+    # Written BEFORE the file, for the reason the block above records: a verdict set beside the
+    # message that prints it reaches the terminal and never reaches the artefact, so the checker
+    # rule written to refuse such a file can never fire on one.
+    beaten = nulls_matching_the_instrument(res)
+    if beaten and not res.get("self_invalidated"):
+        arm, ruler, null_auc, arm_auc = beaten[0]
+        res["self_invalidated"] = (
+            f"a null ruler reading nothing but {ruler.replace('_', ' ')} scored "
+            f"{_fmt(null_auc)} on the {arm} arm against the compass's {_fmt(arm_auc)}, so this AUC "
+            f"does not distinguish harm from that surface property")
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
 
@@ -1182,6 +1252,19 @@ def main(argv=None):
               f"against compass={_fmt(res.get('auc'))}  "
               + " ".join(f"{k}={_fmt(v)}" for k, v in n.items() if k.endswith("_auc")
                          and k != "strongest_auc"))
+    # BESIDE THE NUMBER, not only in the file. The controls were already computed, already recorded
+    # and already printed on the line above, and none of that stopped two readers quoting an AUC a
+    # null had beaten: somebody has to be told that the comparison above means the instrument failed.
+    for arm, ruler, null_auc, arm_auc in nulls_matching_the_instrument(res):
+        print(f"MARGIN_NULLS_DOMINATE {a.label} arm={arm} ruler={ruler}={_fmt(null_auc)} "
+              f"compass={_fmt(arm_auc)}: a ruler that reads nothing but "
+              f"{ruler.replace('_', ' ')} separated these two sets as well as the compass did, or "
+              f"better. THE AUC ABOVE IS NOT A MEASUREMENT OF HARM DISCRIMINATION on this run: it "
+              f"cannot be told apart from that surface property. This is the rule the compass page "
+              f"states, applied. A larger or more balanced corpus is the usual fix; on a handful of "
+              f"rows a null ruler wins by chance and the run is too small to say anything either "
+              f"way.")
+
     # BOTH ARMS, and checking one was half a check. The AUC compares harmful margins against
     # harmless margins, so a read-out taken from the wrong position on EITHER arm makes the
     # comparison meaningless. The first version of this printed the harmful arm and stored the

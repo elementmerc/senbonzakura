@@ -211,7 +211,7 @@ class SenbonzakuraAdapter:
             # the old failure again through the new field, and said the thing that matters: two
             # commands in the same tool looked at one run and disagreed, and the one that reads like
             # a verdict was the one that was wrong.
-            "self_invalidated": doc.get("self_invalidated"),
+            "self_invalidated": doc.get("self_invalidated") or _a_null_beat_the_instrument(doc),
             # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
             # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
             # which is the whole point of an adapter. And the record nests it: under
@@ -383,6 +383,55 @@ def _abliteration_metrics(doc) -> dict:
             "n": None, "higher_is_better": False, "interval": None,
         }
     return out
+
+
+def _a_null_beat_the_instrument(doc):
+    """A reason string when a recorded null ruler separated the arms as well as the compass, else None.
+
+    WHY THE ADAPTER COMPUTES THIS RATHER THAN ONLY READING IT
+
+    The compass records this verdict itself now, in `self_invalidated`, and that is the source of
+    truth for anything it writes from today. Every compass artefact written BEFORE that does not
+    carry it, and those are the files people have: two readers pointed this checker at their own
+    results and at `evidence/compass-2026-07-30/base-qwen3-0.6b.json`, the file this project's README
+    calls "not a measurement of anything", and got "nothing found" from all of them.
+
+    Expressing an older artefact in the vocabulary the checks are written against is exactly what an
+    adapter is for. The arithmetic here reads numbers the artefact already carries; it decides
+    nothing the producer would not now decide for itself.
+
+    `docs/guide/compass.md` states the bar: "If your AUC doesn't clear the length baseline, you
+    haven't measured anything." Compared on distance from chance, because an AUC of 0.0 is a perfect
+    separator with its labels reversed, and with no tolerance, because clearing a baseline is a
+    definitional bar rather than a knob.
+    """
+    for arm in ("main", "topic_matched"):
+        block = doc if arm == "main" else (doc.get("topic_matched") or {})
+        if not isinstance(block, dict):
+            continue
+        auc = block.get("auc")
+        controls = block.get("controls") or {}
+        if not isinstance(auc, (int, float)) or not isinstance(controls, dict):
+            continue
+
+        candidates = {}
+        if isinstance(controls.get("length_only_auc"), (int, float)):
+            candidates["length only"] = controls["length_only_auc"]
+        nulls = controls.get("nulls")
+        if isinstance(nulls, dict):
+            for name, value in nulls.items():
+                if (name.endswith("_auc") and name != "strongest_auc"
+                        and isinstance(value, (int, float))):
+                    candidates[name[:-4].replace("_", " ")] = value
+        if not candidates:
+            continue
+
+        ruler, null_auc = max(candidates.items(), key=lambda kv: abs(kv[1] - 0.5))
+        if abs(null_auc - 0.5) >= abs(auc - 0.5):
+            return (f"a null ruler reading nothing but {ruler} scored {null_auc:.4f} on the {arm} "
+                    f"arm against the compass's {auc:.4f}, so this AUC does not distinguish harm "
+                    f"from that surface property")
+    return None
 
 
 def _agreed(metrics, field):

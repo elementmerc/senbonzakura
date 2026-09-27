@@ -120,3 +120,65 @@ def test_the_recogniser_needs_more_than_one_matching_key():
     assert not baseline._pre_metrics_compass({"auc": 0.9})
     assert not baseline._pre_metrics_compass({"auc": 0.9, "controls": {}})
     assert baseline._pre_metrics_compass({"auc": 0.9, "controls": {}, "n_harmful": 10})
+
+
+# ── a `measure` summary is not an old artefact ────────────────────────────────────────────────────
+
+def test_a_measure_summary_is_recognised_and_not_blamed_for_being_old():
+    """The headline command's own output, refused by the next step with advice that was false.
+
+    WHAT PROMPTED IT, 2026-09-27
+
+    A surface audit ran `senbonzakura measure`, then fed its `measure.json` to `senbonzakura
+    baseline`, which is the next command in the documented CI chain. It was told the artefact carried
+    no `metrics` block and that "artefacts written before 2026-09-12 predate the stamp; re-run the
+    measurement with a current build". The file had been written ninety seconds earlier by that
+    build.
+
+    The advice was false and unfollowable, and the user then has to work out unaided that the
+    per-stage files beside it do work. `measure` writes a summary of several instruments, so it
+    correctly has no single figure to record; the refusal simply did not know that shape.
+
+    It still refuses. The operator chose this over stamping a `metrics` block into the summary,
+    because deciding what a four-stage aggregate's partition and precision ARE is a
+    measurement-semantics question rather than a message fix; see the v0.5 plan.
+    """
+    doc = {"schema": "senbonzakura-measure/1", "model": "m", "track": "t",
+           "stages": {"coherence": "coherence.json", "compass": "compass.json"},
+           "failed": [], "commands": {}}
+    with pytest.raises(baseline.BaselineError) as e:
+        baseline.from_artefact(doc, None, seeds=[42])
+    msg = " ".join(str(e.value).split())
+
+    assert "predate the stamp" not in msg, "the false advice about the artefact's age is back"
+    assert "measure" in msg, "the refusal does not say what kind of document this is"
+    assert "coherence.json" in msg and "compass.json" in msg, (
+        "the refusal has to name the per-stage files, which is the thing that actually works")
+
+
+def test_the_measure_refusal_names_files_the_run_wrote_rather_than_rebuilding_them():
+    """`stages` maps a stage name to the filename the run chose, so use the value, not the key.
+
+    The first version rebuilt `f"{name}.json"` from the keys and produced `coherence.json.json`,
+    which is a filename nobody can open.
+    """
+    doc = {"stages": {"coherence": "coh-renamed.json"}}
+    with pytest.raises(baseline.BaselineError) as e:
+        baseline.from_artefact(doc, None, seeds=[42])
+    msg = str(e.value)
+    assert "coh-renamed.json" in msg
+    assert ".json.json" not in msg
+
+
+def test_an_ordinary_artefact_with_no_metrics_still_gets_the_plain_refusal():
+    """The measure branch must not swallow the general case.
+
+    Asserted on the branch's own distinctive phrase rather than on the word "measure", which the
+    general refusal also contains inside "measurement". The first version of this assertion did grep
+    for the bare word and failed on it, which is a small lesson about matching on something specific
+    enough to mean what it says.
+    """
+    with pytest.raises(baseline.BaselineError) as e:
+        baseline.from_artefact({"model": "m"}, None, seeds=[42])
+    assert "summary rather than a single measurement" not in " ".join(str(e.value).split()), (
+        "the measure-summary branch fired on an artefact that is not one")

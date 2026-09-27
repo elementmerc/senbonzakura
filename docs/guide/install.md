@@ -204,6 +204,46 @@ around one 6 GB laptop card, which is exactly why every model it's ever been run
 under 3B parameters. [Limits](/guide/limits) is blunt about what that means for the
 numbers.
 
+## What size card {#what-size-card}
+
+Abliteration rewrites real weight matrices in place, so **the weights have to be resident and in
+full precision**. That fixes the floor by arithmetic rather than by preference: 16-bit weights are
+two bytes per parameter, and you need headroom on top for activations and for the reference copy
+the divergence measurement compares against.
+
+| Model size | Weights at 16-bit | Card that will do it |
+|---|---|---|
+| 1.7B | 3.4 GB | 6 GB. Measured |
+| 3B | 6 GB | 8 to 12 GB |
+| 8B | 16 GB | 24 GB |
+| 30B | 60 GB | 80 GB |
+
+Only the first row is measured. The rest is the arithmetic plus headroom, and it is the honest
+shape of the answer rather than a benchmark.
+
+::: warning A mixture-of-experts model needs room for every expert, not the active ones
+This is the one that catches people, because the headline number invites the opposite reading. A
+model described as "30B total, 3B active" routes each token through a small fraction of itself, so
+it *runs* like a 3B model. Abliteration is not inference: it edits the weights, and it has to edit
+**all** of them, because refusal does not politely confine itself to the experts that happen to be
+active. Size the card for the total, 30B, not the 3B it advertises.
+:::
+
+**`--load-in-4bit` does not help here and the tool refuses it on the editing path.** A 4-bit
+tensor cannot be rewritten in place, which is the same reason a GGUF cannot be abliterated. It is
+accepted on the measuring commands, where nothing is being rewritten.
+
+**What happens if you try it anyway on too small a card:** `accelerate` will place what fits and
+push the rest to host RAM or to disk. Host RAM is slow and works. Disk **does not work**, and the
+tool refuses rather than pretending: a disk-offloaded tensor hands back a fresh copy on every read,
+so the edit would be written into something discarded before the next forward pass and the model
+would come out unabliterated with nothing reporting it. The refusal names the weight and tells you
+to load with more VRAM or more host-RAM headroom.
+
+Worth knowing about *when* that refusal arrives: it fires as the first edit is applied, which is
+after the download and the load. On a large model that is a long wait before being told the card is
+too small, so do this arithmetic first.
+
 ## Converting and quantising needs one system library
 
 If you install a platform wheel (one whose filename ends in something other than `py3-none-any`),

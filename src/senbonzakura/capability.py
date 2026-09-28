@@ -1241,7 +1241,8 @@ def probe_notice(log=print, used=None):
     have = len(load_probe())
     scope = f"{used} of {have}" if used is not None and used != have else f"{have}"
     log(f"Capability probe: {scope} bundled items from {PROBE_SOURCE}.")
-    log("  Attribution travels with it. See THIRD-PARTY-CORPORA.md.")
+    log('  Attribution travels with it: THIRD-PARTY-NOTICES.md, under "The bundled capability '
+        'probe".')
 
 
 def load_probe(limit=None):

@@ -47,7 +47,7 @@ import random
 import urllib.error
 import urllib.request
 
-from . import argresolve
+from . import argresolve, bundled
 
 API = "https://huggingface.co/api/datasets/{repo}"
 
@@ -147,7 +147,8 @@ def check_licences(sources, *, skip=False, log=print):
             "build-track: an upstream licence has changed since this recipe was written:\n"
             + "\n".join(lines)
             + "\nThat decides what a track built from it may be used for, so the build stops "
-              "here. Update SOURCES and docs/evaluation-track-card.md together, then re-run.")
+              "here. Update SOURCES and the evaluation track card together, then re-run: "
+            + bundled.doc_url("evaluation-track-card"))
 
 
 def _repo_files(src):
@@ -476,7 +477,7 @@ def build(out, *, skip_licence_check=False, balance_sides=True, log=print):
     log("")
     log("This is NOT the corpus this project's published numbers were measured on. That one had "
         "harmless top-ups added by hand which were never recorded, so it cannot be rebuilt by "
-        "anybody, including us. See docs/evaluation-track-card.md.")
+        "anybody, including us. See " + bundled.doc_url("evaluation-track-card") + ".")
     log("")
     log("Next, split it so you cannot mark your own homework:")
     log(f"  senbonzakura track --harmful {written['harmful']['path']} "

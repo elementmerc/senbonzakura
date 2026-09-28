@@ -36,7 +36,30 @@ PACKAGE = pathlib.Path(bundled.__file__).resolve().parent
 #: A repository path under `docs/`, as it would appear inside a string a user reads. Deliberately
 #: not a bare "docs" match: `docs_commands_run.py` and a docstring mentioning the directory are not
 #: defects, and a check that flags them would be routed around within a week.
-A_DOCS_PATH = re.compile(r"docs/(guide|reference)/[a-z0-9-]+")
+#:
+#: WIDENED 2026-09-28. It used to be `docs/(guide|reference)/[a-z0-9-]+`, which reads only the two
+#: subdirectories and misses a page sitting at the top of `docs/`. `trackbuild` named
+#: `docs/evaluation-track-card.md` at an installed user in two places, one of them the refusal that
+#: stops a build, and that page is the very one the 2026-09-10 attribution finding was about. So the
+#: guard descended from that finding could not see the file that prompted it.
+#:
+#: The lookbehind is what keeps `bundled.doc_url`'s own output clean: in a link the segment is
+#: preceded by a slash (`.../blob/main/docs/guide/x.md`), and in a repository path it is not.
+A_DOCS_PATH = re.compile(r"(?<![/\w])docs/[a-z0-9][a-z0-9._/-]*")
+
+#: Literal strings whose `docs/` mention is legitimate, each with the reason. Nothing in the package
+#: needs one today, and the list exists so that the next legitimate case is written down here rather
+#: than answered by loosening the pattern again. `tools/ci/docs_commands_run.py` is the shape of a
+#: legitimate mention: it drives the commands printed in the guide and names pages by repository
+#: path on purpose. It lives outside `PACKAGE`, so this scan never reads it.
+ALLOWED_DOCS_MENTIONS: dict[str, str] = {}
+
+
+def _names_a_docs_path(text):
+    """Whether `text` sends a reader to a repository path under `docs/` they may not have."""
+    if any(allowed in text for allowed in ALLOWED_DOCS_MENTIONS):
+        return False
+    return bool(A_DOCS_PATH.search(text))
 
 
 def _user_facing_strings():
@@ -70,12 +93,41 @@ def test_the_scan_reads_the_package_it_is_meant_to():
 
 def test_no_user_facing_string_names_a_documentation_path():
     offenders = [(p.name, line, text) for p, line, text in _user_facing_strings()
-                 if A_DOCS_PATH.search(text)]
+                 if _names_a_docs_path(text)]
     listing = "\n".join(f"  {name}:{line}  {text[:100]}" for name, line, text in offenders)
     assert not offenders, (
         "these strings name a documentation path that is in the repository and in no wheel, so an "
         "installed reader cannot follow them:\n" + listing +
-        "\n  Use bundled.doc_url('guide/<page>') instead.")
+        "\n  Use bundled.doc_url('<page>') instead, and ALLOWED_DOCS_MENTIONS if the mention is "
+        "genuinely right.")
+
+
+def test_the_widened_pattern_catches_a_page_at_the_top_of_the_docs_tree():
+    """Mutation test for the widening: the narrow pattern passed on both of these.
+
+    `trackbuild` printed the first of them at the end of every corpus build and raised the second
+    when an upstream licence changed, and the old `docs/(guide|reference)/...` pattern read neither.
+    """
+    assert _names_a_docs_path("anybody, including us. See docs/evaluation-track-card.md.")
+    assert _names_a_docs_path("Update SOURCES and docs/evaluation-track-card.md together")
+
+
+def test_the_widened_pattern_leaves_a_real_link_alone():
+    """A link is the fix, so flagging one would make the guard unsatisfiable."""
+    assert not _names_a_docs_path(
+        "See " + bundled.doc_url("evaluation-track-card") + " for what the track may be used for.")
+    assert not _names_a_docs_path("See " + bundled.doc_url("guide/what-we-know") + ".")
+
+
+def test_the_allowlist_can_excuse_a_string_and_only_that_string():
+    """The escape hatch has to work, or the next legitimate mention loosens the pattern instead."""
+    allowed = "docs/evaluation-track-card.md"
+    ALLOWED_DOCS_MENTIONS[allowed] = "test only"
+    try:
+        assert not _names_a_docs_path(f"See {allowed}.")
+        assert _names_a_docs_path("See docs/guide/limits.md.")
+    finally:
+        del ALLOWED_DOCS_MENTIONS[allowed]
 
 
 def test_the_helper_builds_a_link_and_not_a_path():
@@ -154,3 +206,102 @@ def test_the_filter_that_recognises_the_stale_advice_still_holds_it():
     assert any("huggingface-cli login" in phrase
                for phrase in hubmessage.ADVICE_FOR_THE_PYTHON_API), (
         "hubmessage no longer filters the superseded login command out of upstream messages")
+
+
+# ── a notice pointer has to resolve to the NOTICE, not merely to a file that ships ────────────────
+#
+# WHAT PROMPTED IT, 2026-09-28
+#
+# Every capability run printed "Attribution travels with it. See THIRD-PARTY-CORPORA.md." GSM8K is
+# not in that file and cannot be: `corporabuild` regenerates it wholesale from the six-entry corpus
+# table, so nothing a person adds by hand survives. The GSM8K attribution is in
+# THIRD-PARTY-NOTICES.md, under "The bundled capability probe", and `bundled` gets the same
+# distinction right for the evaluation track.
+#
+# Every guard in this file passed on it. The string named a file that ships, is spelled correctly
+# and is in `license-files`, and the reader following it still found no attribution. So the check is
+# the whole claim: the file ships AND it contains something identifying the thing being attributed.
+
+#: Module in the package → the notice file it points a reader at, and a token that has to be in that
+#: file for the pointer to have led anywhere. Lower-cased on both sides before comparing.
+NOTICE_POINTERS = {
+    "bundled.py": ("THIRD-PARTY-NOTICES.md", ("bundled evaluation track",)),
+    "capability.py": ("THIRD-PARTY-NOTICES.md", ("gsm8k",)),
+    "corpora.py": ("THIRD-PARTY-CORPORA.md", ("advbench", "harmbench")),
+    "corporabuild.py": ("THIRD-PARTY-CORPORA.md", ("advbench", "harmbench")),
+}
+
+#: A third-party notice file as a user-facing string would spell it.
+A_NOTICE_FILE = re.compile(r"\bTHIRD-PARTY-[A-Z]+\.md\b")
+
+ROOT = PACKAGE.parent.parent
+
+
+def _modules_that_name_a_notice_file():
+    """(module name, set of notice files it names) for every module in the package that names one."""
+    named = {}
+    for path, _line, text in _user_facing_strings():
+        for hit in A_NOTICE_FILE.findall(text):
+            named.setdefault(path.name, set()).add(hit)
+    return named
+
+
+def test_every_module_naming_a_notice_file_is_declared_here():
+    """A new pointer has to say what it is pointing at, or this guard grows a blind spot silently."""
+    named = _modules_that_name_a_notice_file()
+    assert named, (
+        "no module names a third-party notice file any more. If the pointers were removed "
+        "deliberately, remove this guard with them; otherwise the attribution has gone.")
+    undeclared = sorted(set(named) - set(NOTICE_POINTERS))
+    assert not undeclared, (
+        f"these modules point a reader at a notice file and are not in NOTICE_POINTERS: "
+        f"{undeclared}. Add the file it names and a token that proves the notice is in it.")
+
+
+def test_each_module_names_the_notice_file_that_holds_its_attribution():
+    wrong = {}
+    for module, files in _modules_that_name_a_notice_file().items():
+        expected = NOTICE_POINTERS[module][0]
+        if files != {expected}:
+            wrong[module] = sorted(files)
+    assert not wrong, (
+        f"these modules name a notice file that is not the one holding their attribution: {wrong}. "
+        f"Expected, per module: "
+        f"{ {m: f for m, (f, _) in NOTICE_POINTERS.items()} }")
+
+
+def test_every_named_notice_file_ships():
+    """`license-files` in pyproject is what puts these in the wheel, so that is what is read."""
+    from tomlread import tomllib
+
+    with (ROOT / "pyproject.toml").open("rb") as f:
+        shipped = set(tomllib.load(f)["project"]["license-files"])
+    for module, (notice, _tokens) in NOTICE_POINTERS.items():
+        assert (ROOT / notice).is_file(), f"{module} names {notice}, which is not in the tree"
+        assert notice in shipped, (
+            f"{module} names {notice}, which is in the repository and not in `license-files`, so an "
+            f"installed reader has no copy of it")
+
+
+def test_every_notice_pointer_resolves_to_the_notice_and_not_just_to_the_file():
+    """The finding itself: a pointer to the wrong notice file resolves and still leads nowhere."""
+    missing = {}
+    for module, (notice, tokens) in NOTICE_POINTERS.items():
+        text = (ROOT / notice).read_text(encoding="utf-8").lower()
+        absent = [t for t in tokens if t.lower() not in text]
+        if absent:
+            missing[module] = (notice, absent)
+    assert not missing, (
+        f"these pointers name a file that ships and does not carry the attribution they promise: "
+        f"{missing}. A reader who follows one finds a notice about something else.")
+
+
+def test_the_pointer_check_would_fail_on_the_string_it_was_written_for():
+    """Mutation test: swapping capability's notice file for the wrong one has to be caught.
+
+    Both files ship and both are spelled correctly, which is why nothing else here sees it.
+    """
+    corpora = (ROOT / "THIRD-PARTY-CORPORA.md").read_text(encoding="utf-8").lower()
+    assert "gsm8k" not in corpora, (
+        "THIRD-PARTY-CORPORA.md now mentions gsm8k, so the mutation this test relies on no longer "
+        "fails. It is generated from the six-entry corpus table, so check what put it there.")

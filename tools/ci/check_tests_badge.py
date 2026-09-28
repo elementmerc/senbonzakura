@@ -59,7 +59,14 @@ BADGE = re.compile(r"img\.shields\.io/badge/tests-(?P<count>\d+)-")
 ALT = re.compile(r'alt="(?P<count>\d+) tests?"')
 
 #: pytest's final collection line: `3172 tests collected in 4.21s`, or `1 test collected`.
-COLLECTED = re.compile(r"^(?P<count>\d+) tests? collected", re.MULTILINE)
+#:
+#: THE SECOND SHAPE, `6626/6641 tests collected (15 deselected)`, is what pytest prints the moment
+#: anything is deselected, and the project's addopts began deselecting the journeys on 2026-09-28.
+#: This pattern matched neither half of that line, so the checker reported "collection failed" and
+#: exited 2 about a suite that had just collected 6,641 tests perfectly well. The badge states how
+#: many tests EXIST, so the number wanted is the total on the right of the slash, never the
+#: selected count on the left: a marker filter must not be able to quietly shrink a public figure.
+COLLECTED = re.compile(r"^(?:\d+/)?(?P<count>\d+) tests? collected", re.MULTILINE)
 
 
 def collected_count():

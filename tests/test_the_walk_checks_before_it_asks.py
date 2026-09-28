@@ -18,6 +18,17 @@ import pytest
 from senbonzakura import interactive
 
 
+#: THE CONVERSION TOOLS ARE PRESENT, because the closing screen reads the machine for them and
+#: these tests are about what it says, not about what happens to be built here. The converter and
+#: `llama-quantize` are build-time artefacts, so a source checkout has neither: the "convert it to
+#: GGUF" row then vanishes, an answer meant for the row below it selects nothing, and the walk
+#: loops on a number that is no longer in range. That is this suite's most repeated defect wearing
+#: another coat, a test reading the machine it runs on rather than saying what it means.
+@pytest.fixture(autouse=True)
+def _an_install_that_can_convert(monkeypatch):
+    monkeypatch.setattr(interactive, "missing_conversion_tools", list)
+
+
 def _plan(tmp_path, **options):
     opts = {"--model": "Qwen/Qwen3-1.7B", "--track": "default",
             "--out": str(tmp_path / "abliterated"), "--trials": "200", "--device": "cpu"}

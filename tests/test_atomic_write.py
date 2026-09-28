@@ -166,10 +166,17 @@ def test_a_process_killed_mid_write_leaves_the_previous_result_intact(tmp_path):
 def test_a_losing_concurrent_writer_says_what_happened(tmp_path):
     """Two writers of one path is a race, and the loser must diagnose it, not just fail.
 
-    The fixed `.part` name means the writer that finishes second finds its temporary file
-    already renamed away by the first. The bare error is a FileNotFoundError naming a file
-    the caller never created, which reads like a missing-output bug. It is a race, and the
-    message says so.
+    The bare error is an OS error naming a temporary file the caller never created, which
+    reads like a missing-output bug. It is a race, and the message has to say so.
+
+    Which writer loses, and at which step, is a property of the platform, so this asserts the
+    diagnosis rather than one platform's sentence. On POSIX the writer that finishes second
+    finds its `.part` already renamed away by the first, so its rename raises
+    FileNotFoundError and the message is the lost-race one. On Windows a rename of a file
+    another handle still holds open is refused with PermissionError, so the writer that
+    finishes FIRST is the one that fails, its `.part` is still on disk, and the message is the
+    held-open one. Both are correct readings of the disk at that instant; pinning the POSIX
+    wording made this a test of the runner rather than of the behaviour.
     """
     import threading
     import time
@@ -193,9 +200,16 @@ def test_a_losing_concurrent_writer_says_what_happened(tmp_path):
     fast.join()
 
     assert len(errors) == 1, f"exactly one writer should lose, got {errors}"
+    assert isinstance(errors[0], RuntimeError), (
+        f"the loser must get the diagnosed failure, not a raw {type(errors[0]).__name__}"
+    )
     msg = str(errors[0])
-    assert "two processes writing the same path" in msg
-    assert "separate output paths" in msg
+    assert str(target) in msg, "the message must name the file that was being written"
+    # The diagnosis has to blame concurrent access and offer the remedy that goes with it,
+    # in whichever of the two shapes the platform produced.
+    lost_the_race = "two processes writing the same path" in msg and "separate output paths" in msg
+    held_open = "another process holding" in msg and "run it again" in msg
+    assert lost_the_race or held_open, f"the loser did not diagnose a concurrent write: {msg}"
 
     # The surviving file is still one writer's complete output, never a mixture.
     content = target.read_text()

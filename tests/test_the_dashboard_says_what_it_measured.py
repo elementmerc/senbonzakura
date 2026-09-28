@@ -396,6 +396,13 @@ class TestNothingBleedsPastTheFrame:
     trial count are composed into one title, and the frontier row carrying `← best, trial N`, which
     is the only row whose content is not bounded by the plot. Both are covered by sweeping widths
     rather than by naming them, because the next one added will not be named here.
+
+    WHY THE EXPECTED WIDTH COMES FROM THE CONSOLE AND NOT FROM THE NUMBER WE ASKED FOR. On a legacy
+    Windows console, which is any Windows terminal without virtual-terminal sequences, writing into
+    the last cell of a row wraps the cursor, so `rich` reserves that column: `Console.size` returns
+    `self._width - self.legacy_windows`, and the frame is drawn one narrower than the terminal on
+    purpose. The panel already composes itself against `console.width`, so comparing the drawn line
+    against the constructor's number instead reported a bleed on Windows where there was none.
     """
 
     @staticmethod
@@ -406,10 +413,15 @@ class TestNothingBleedsPastTheFrame:
         plain = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
         return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in plain)
 
-    def _lines(self, width, height, trials):
+    def _lines(self, width, height, trials, legacy_windows=False):
+        """The drawn rows, and the width `rich` believes it had to fill them to.
+
+        `legacy_windows` is passed explicitly rather than detected, so the Windows geometry is
+        reproducible on every machine instead of only on the one runner that has it.
+        """
         rich_console = pytest.importorskip("rich.console")
         console = rich_console.Console(file=io.StringIO(), width=width, height=height,
-                                       force_terminal=True)
+                                       force_terminal=True, legacy_windows=legacy_windows)
         p = livedisplay._RichPanel(
             events.EventLog(None), total_trials=200, log=None, stream=io.StringIO(),
             console=console, args=_args(gen_batch_requested=24), baseline=0.578, layout="full")
@@ -419,22 +431,27 @@ class TestNothingBleedsPastTheFrame:
                      "objective": 0.5 - i * 0.002})
         console.file = io.StringIO()
         console.print(p._render())
-        return console.file.getvalue().rstrip("\n").split("\n")
+        return console.width, console.file.getvalue().rstrip("\n").split("\n")
 
+    @pytest.mark.parametrize("legacy_windows", [False, True])
     @pytest.mark.parametrize("width", [40, 60, 72, 80, 94, 120, 200])
-    def test_no_line_is_wider_or_narrower_than_the_terminal(self, width):
-        for line in self._lines(width, 30, 48):
-            assert self._columns(line) == width, (
-                f"a line renders at {self._columns(line)} columns in a {width}-column terminal, so "
-                f"it bleeds past the frame or falls short of it: {line!r}")
+    def test_no_line_is_wider_or_narrower_than_the_terminal(self, width, legacy_windows):
+        drawable, lines = self._lines(width, 30, 48, legacy_windows=legacy_windows)
+        for line in lines:
+            assert self._columns(line) == drawable, (
+                f"a line renders at {self._columns(line)} columns where {drawable} are drawable in "
+                f"a {width}-column terminal (legacy windows: {legacy_windows}), so it bleeds past "
+                f"the frame or falls short of it: {line!r}")
 
+    @pytest.mark.parametrize("legacy_windows", [False, True])
     @pytest.mark.parametrize("trials", [0, 1, 48])
-    def test_it_holds_before_during_and_after_the_search_fills_up(self, trials):
-        for line in self._lines(94, 30, trials):
-            assert self._columns(line) == 94, f"{trials} trial(s): {line!r}"
+    def test_it_holds_before_during_and_after_the_search_fills_up(self, trials, legacy_windows):
+        drawable, lines = self._lines(94, 30, trials, legacy_windows=legacy_windows)
+        for line in lines:
+            assert self._columns(line) == drawable, f"{trials} trial(s): {line!r}"
 
     def test_a_terminal_shorter_than_the_content_does_not_overflow_it(self):
-        lines = self._lines(94, 12, 48)
+        _drawable, lines = self._lines(94, 12, 48)
         assert len(lines) == 12, (
             f"the panel drew {len(lines)} rows into a 12-row terminal, which scrolls the top of it "
             f"off the alternate screen where there is nothing to scroll back to")

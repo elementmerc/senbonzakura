@@ -252,17 +252,46 @@ jobs:
         # artefact is the cheap and correct half; giving the rolling build a local version of its own
         # (`0.4.0+rolling.<sha>`, which can never be mistaken for the release) is the better one, and
         # it is recorded in DEFERRED.md rather than improvised here.
+        #
+        # SO IT WEARS A VERSION OF ITS OWN, as of 2026-09-28. Standing the lane down was the cheap
+        # and correct half, and it left a public pre-release titled "Rolling development build"
+        # serving two-day-old wheels with nothing on the page saying why. A PEP 440 local segment
+        # fixes the actual problem: `0.4.0+rolling.<sha>` cannot be mistaken for `0.4.0` by a
+        # reader or by pip, it records which commit it came from in the version itself, and
+        # `check_wheel.is_release_artefact` already treats anything carrying a local segment as not
+        # a release, so the thin-wheel allowance applies without a special case. PyPI rejects local
+        # versions outright, which is a second guarantee that this artefact cannot reach the index.
         id: version
         run: |
           set -euo pipefail
-          v=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/senbonzakura/_version.py').read_text()).group(1))")
-          echo "declared=$v" >> "$GITHUB_OUTPUT"
-          if printf '%s' "$v" | grep -q '\.dev'; then
-            echo "rolling=yes" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::the tree declares $v, a release version, so the rolling pre-release is suppressed: it would publish a wheel calling itself $v without the packed track, which is indistinguishable from the real release and fails --track default"
-            echo "rolling=no" >> "$GITHUB_OUTPUT"
+          read_version() {
+            python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('$1').read_text()).group(1))"
+          }
+          main_v=$(read_version src/senbonzakura/_version.py)
+          echo "rolling=yes" >> "$GITHUB_OUTPUT"
+          if printf '%s' "$main_v" | grep -q '\.dev'; then
+            echo "declared=$main_v" >> "$GITHUB_OUTPUT"
+            echo "the tree declares $main_v, already a pre-release version, so it is published as it stands"
+            exit 0
           fi
+          # Both distributions, because the wheel job builds both and two artefacts from one commit
+          # disagreeing about their version is how a bug gets filed against a build nobody can name.
+          local_v="${main_v}+rolling.$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          for f in src/senbonzakura/_version.py checker/src/senbonzakura_check/_version.py; do
+            python - "$f" "$local_v" <<'STAMP'
+          import pathlib, re, sys
+          path, want = pathlib.Path(sys.argv[1]), sys.argv[2]
+          text = path.read_text(encoding="utf-8")
+          stamped = re.sub(r'^__version__ = "[^"]+"$', f'__version__ = "{want}"',
+                           text, count=1, flags=re.M)
+          if stamped == text:
+              raise SystemExit(f"{path}: the version anchor did not match, so nothing was stamped")
+          path.write_text(stamped, encoding="utf-8")
+          print(f"{path} stamped {want}")
+          STAMP
+          done
+          echo "declared=$local_v" >> "$GITHUB_OUTPUT"
+          echo "::notice::the tree declares $main_v, a release version, so this lane publishes ${local_v} instead. A local segment can never be mistaken for the release and PyPI will not accept it."
 
       - name: Build the bundled data, because a checkout does not carry it
         if: steps.version.outputs.rolling == 'yes'
@@ -382,7 +411,38 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
         with:
+          # `main` rather than the tag, because this job COMMITS the rewritten manifests and a tag
+          # is not a branch. The check below is what makes that safe.
           ref: main
+          fetch-depth: 0
+
+      - name: The tag has to be on main before its manifests can be rewritten
+        env:
+          VERSION: ${{ needs.lane.outputs.version }}
+        # WHY THIS EXISTS. On 2026-09-26 this job died on the v0.4.0 tag with
+        # `FileNotFoundError: packaging/senbonzakura-check.rb`, and the formula and the manifest
+        # carried placeholder URLs and a zeroed hash for two days as a result. The file was added
+        # on `dev` three days before the tag and `main` had not been promoted yet, so the job
+        # checked out a branch that genuinely did not have it.
+        #
+        # A traceback naming a missing file sends the reader looking for a packaging bug. The cause
+        # was an ORDERING one: the release was tagged before `main` was moved. So this states the
+        # real condition and refuses on it, rather than discovering it three steps later as an
+        # exception. Promote first, then tag, which is what the branch discipline says anyway.
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "v${VERSION}" HEAD; then
+            echo "::error::v${VERSION} is not an ancestor of main, so main does not carry what was tagged. Promote main to the released commit, then re-run this job. Rewriting the manifests now would point them at a tarball built from code main does not have."
+            exit 1
+          fi
+          missing=""
+          for f in packaging/senbonzakura-check.rb bucket/senbonzakura-check.json; do
+            [ -f "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::main is missing:$missing. These are the files this job rewrites, so there is nothing to point at a release. If they were renamed, this job needs teaching; if main is behind, promote it."
+            exit 1
+          fi
 
       - name: Rewrite the version and the hashes
         env:

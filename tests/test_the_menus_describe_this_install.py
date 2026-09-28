@@ -19,6 +19,11 @@ Two of them did.
 import pytest
 
 from senbonzakura import corpora, interactive
+from tests.conftest import prose
+
+#: THE MACHINE IS PINNED, once, in `tests/conftest.py`. See `MACHINE_READS` there for what
+#: that covers and why; `tests/test_the_walk_never_reads_the_machine.py` keeps it honest.
+pytestmark = pytest.mark.usefixtures("a_machine_with_nothing_on_it")
 
 
 def test_the_bundled_corpora_are_offered_as_bundled():
@@ -81,7 +86,7 @@ def test_what_is_on_this_machine_is_offered_first(tmp_path, monkeypatch):
     said = []
     got = interactive.pick_model(ask_fn=lambda _p: "1", log=said.append, root=str(tmp_path))
     assert got == "here/one"
-    text = "\n".join(said)
+    text = prose(*said)
     assert "2.34 GB" in text, "the size is the fact that decides whether it will fit"
     assert "nothing is downloaded" in text
 

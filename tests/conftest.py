@@ -313,3 +313,100 @@ def abl(base_args, tiny_model, tiny_tok):
         dm[li] = q.T[:K]
     a.dirs_multi = dm.to(torch.bfloat16)
     return a
+
+
+# ── the machine the guided walk is allowed to see ────────────────────────────────────
+#
+# WHY THIS IS ONE FIXTURE AND NOT FIVE COPIES OF ONE. On 2026-09-28 six tests failed because they
+# read the machine they ran on rather than saying what they meant: a stray `abliterated/` left by
+# an earlier run, the Hugging Face cache's contents, the pre-flight board running the real checks,
+# the packed evaluation track (in a wheel, absent from a checkout), and the vendored converter and
+# `llama-quantize` (present on one CI platform by accident and on none of the others). Each was
+# fixed where it was found, which left the same fact pinned in two files and unpinned in three.
+#
+# The walk is a SEQUENCE OF QUESTIONS, which is why these matter more here than elsewhere. A probe
+# that answers differently does not change one assertion, it inserts or removes a question, so
+# every canned answer after it lines up against the wrong prompt and the test dies somewhere far
+# from the cause with `StopIteration`.
+#
+# `tests/test_the_walk_never_reads_the_machine.py` holds this honest: it refuses a probe nobody
+# has classified, and it refuses a test file that drives the walk without asking for this fixture.
+#: Probe name in `senbonzakura.interactive` -> what it answers while a walk is under test, AS
+#: SOURCE.
+#:
+#: Source rather than callables because one of these walks runs in a SUBPROCESS, to prove the
+#: guided mode works on an install with no torch, and no fixture reaches inside a subprocess. That
+#: probe hand-wrote its own pins, got two of the six, and was the last place the machine could
+#: still be read. Written once here, it is applied by the fixture in this process and by
+#: `machine_pins()` in that one.
+#:
+#: Adding a probe here is half the job; the other half is the guard file named above.
+MACHINE_READS = {
+    "models_on_this_machine": "lambda root='.': []",
+    "resumable_runs": "lambda root='.': []",
+    "missing_conversion_tools": "list",
+    # Only cpu works, which is the commonest runner and the least surprising default.
+    "device_available": "lambda name: name == 'cpu'",
+    "_checked_rows": "lambda plan: []",
+}
+
+#: The packed evaluation track, which lives on `bundled` rather than in `interactive`. Present,
+#: because that is what a released wheel carries; the unbundled path has its own tests.
+BUNDLED_TRACK_IS_THERE = "lambda: True"
+
+
+def machine_pins(module="it"):
+    """Python source pinning every probe, for a subprocess probe no fixture can reach."""
+    lines = [f"{module}.{name} = {source}" for name, source in MACHINE_READS.items()]
+    lines.append(f"{module}.bundled.is_available = {BUNDLED_TRACK_IS_THERE}")
+    return "\n".join(lines)
+
+
+@pytest.fixture
+def a_machine_with_nothing_on_it(monkeypatch, request):
+    """Pin every probe in `interactive` that reads the machine, so a walk asks a fixed set of
+    questions wherever it runs.
+
+    A test that is ABOUT one of these probes marks itself `reads_the_real_install` and gets that
+    one back, because pinning it there would let the test pass by measuring the stand-in. The
+    marker names the probes to leave alone, and naming none leaves them all alone:
+
+        @pytest.mark.reads_the_real_install("resumable_runs")
+
+    PER PROBE, AND NOT ALL OR NOTHING, because the tests that need one real still need the rest
+    pinned. The resume tests want a genuine `resumable_runs` reading a tmp_path they built, and
+    would still break on a runner without the packed track if that pin went with it.
+    """
+    from senbonzakura import interactive
+
+    everything = set(MACHINE_READS) | {"is_available"}
+    marker = request.node.get_closest_marker("reads_the_real_install")
+    if marker is None:
+        real = set()
+    elif marker.args:
+        real = set(marker.args)
+    else:
+        real = everything
+
+    unknown = real - everything
+    assert not unknown, (
+        f"reads_the_real_install names {sorted(unknown)}, which is not pinned here. A marker that "
+        f"unpins nothing reads as cover it does not give.")
+    for name, source in MACHINE_READS.items():
+        if name not in real:
+            monkeypatch.setattr(interactive, name, eval(source))  # noqa: S307 - our own literals
+    if "is_available" not in real:
+        monkeypatch.setattr(interactive.bundled, "is_available",
+                            eval(BUNDLED_TRACK_IS_THERE))  # noqa: S307 - our own literal
+
+
+def prose(*chunks):
+    """What was said, read as sentences rather than as a screen.
+
+    Every screen in the guided mode is folded to the terminal it is drawn in, so a phrase a test
+    looks for is one line wide on an eighty column terminal and split across two on a narrow one.
+    Four assertions searched the drawn text for a phrase and therefore passed or failed on the
+    width of whatever terminal ran them, which is the same defect as reading the machine: they
+    meant "the sentence says this", and asked "are these bytes adjacent".
+    """
+    return " ".join(" ".join(chunks).split())

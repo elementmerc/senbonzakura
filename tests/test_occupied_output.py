@@ -29,28 +29,11 @@ import pytest
 
 from senbonzakura import cli, interactive, lengthsweep, runrecord
 
-
 #: A MACHINE WITH NOTHING ON IT, and every walk below runs on one.
 #:
-#: Two screens in this walk read the machine rather than the answers: the model question offers
-#: what is already in the Hub cache, and the pre-flight board runs the real checks. Left alone,
-#: both make these tests depend on whatever is cached and writable on the box running them, which
-#: is how `test_occupied_output.py` once passed on a build box holding a stray `abliterated/` and
-#: would have failed on a clean runner. The screens themselves are covered by
-#: `test_the_menus_describe_this_install.py` and `test_the_walk_checks_before_it_asks.py`, where
-#: the machine is made explicitly rather than inherited.
-@pytest.fixture(autouse=True)
-def _a_machine_with_nothing_on_it(monkeypatch):
-    monkeypatch.setattr(interactive, "models_on_this_machine", lambda root=".": [])
-    monkeypatch.setattr(interactive, "_checked_rows", lambda plan: [])
-    # AND THE BUNDLED TRACK IS PRESENT, which is the third thing these walks read off the machine.
-    # A release wheel carries the packed track and a source checkout does not, so on CI the track
-    # menu asks an extra question ("Ask for it anyway?") that it does not ask on a dev box, every
-    # canned answer after it lines up against the wrong prompt, and the walk ends in StopIteration.
-    # That is the same defect as the two above wearing different clothes: a test reading the
-    # machine rather than saying what it means. The unbundled path has its own tests, which
-    # monkeypatch this deliberately.
-    monkeypatch.setattr(interactive.bundled, "is_available", lambda: True)
+#: THE MACHINE IS PINNED, once, in `tests/conftest.py`. See `MACHINE_READS` there for what
+#: that covers and why; `tests/test_the_walk_never_reads_the_machine.py` keeps it honest.
+pytestmark = pytest.mark.usefixtures("a_machine_with_nothing_on_it")
 
 
 def _previous_run(d, *names):
@@ -348,6 +331,7 @@ def test_an_interrupt_gets_the_screen_too(monkeypatch):
 # says to resume with a flag, and scenes 1 and 2 never mention it, so the person who paused
 # yesterday is sent back to the flag list. That is the single outcome the mode exists to avoid.
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_directory_with_a_study_is_resumable(tmp_path):
     (tmp_path / "brain").mkdir()
     (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
@@ -356,6 +340,7 @@ def test_a_directory_with_a_study_is_resumable(tmp_path):
     assert "completed trials" in found[0][1]
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_directory_with_only_a_winning_config_is_still_resumable(tmp_path):
     """The cheaper artefact and the more valuable one: it turns hours of re-searching into
     minutes of re-baking, and the design mentions it in none of its ten scenes.
@@ -366,6 +351,7 @@ def test_a_directory_with_only_a_winning_config_is_still_resumable(tmp_path):
     assert "re-bakes in minutes" in found[0][1]
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_directory_with_both_says_so(tmp_path):
     (tmp_path / "brain").mkdir()
     (tmp_path / "brain" / interactive.STUDY_DB).write_text("", encoding="utf-8")
@@ -373,6 +359,7 @@ def test_a_directory_with_both_says_so(tmp_path):
     assert "already picked" in interactive.resumable_runs(tmp_path)[0][1]
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_an_ordinary_directory_is_not_offered(tmp_path):
     """A saved model with no study and no config cannot be carried on with, only overwritten."""
     (tmp_path / "plain").mkdir()
@@ -380,6 +367,7 @@ def test_an_ordinary_directory_is_not_offered(tmp_path):
     assert interactive.resumable_runs(tmp_path) == []
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_the_search_does_not_descend(tmp_path):
     """One level down on purpose: walking a home directory to fill a menu is slow and surprising,
     and would list runs from projects the person is not in.
@@ -390,10 +378,12 @@ def test_the_search_does_not_descend(tmp_path):
     assert interactive.resumable_runs(tmp_path) == []
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_an_unreadable_root_is_not_a_crash(tmp_path):
     assert interactive.resumable_runs(tmp_path / "nope") == []
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_nothing_is_offered_when_there_is_nothing_to_offer(tmp_path):
     """A menu row that is empty most of the time trains people to skip the first question, and
     the first question is the one that saves them hours.
@@ -403,6 +393,7 @@ def test_nothing_is_offered_when_there_is_nothing_to_offer(tmp_path):
     assert lines == []
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_choosing_a_found_run_produces_a_resume_command_that_can_actually_run(tmp_path):
     """THE TEST THAT ENCODED THE DEFECT. It asserted the printed line character for character,
     and the line it asserted was `senbonzakura kageyoshi --out <dir> --resume`, which argparse

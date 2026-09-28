@@ -16,17 +16,11 @@ import json
 import pytest
 
 from senbonzakura import interactive
+from tests.conftest import prose
 
-
-#: THE CONVERSION TOOLS ARE PRESENT, because the closing screen reads the machine for them and
-#: these tests are about what it says, not about what happens to be built here. The converter and
-#: `llama-quantize` are build-time artefacts, so a source checkout has neither: the "convert it to
-#: GGUF" row then vanishes, an answer meant for the row below it selects nothing, and the walk
-#: loops on a number that is no longer in range. That is this suite's most repeated defect wearing
-#: another coat, a test reading the machine it runs on rather than saying what it means.
-@pytest.fixture(autouse=True)
-def _an_install_that_can_convert(monkeypatch):
-    monkeypatch.setattr(interactive, "missing_conversion_tools", list)
+#: THE MACHINE IS PINNED, once, in `tests/conftest.py`. See `MACHINE_READS` there for what
+#: that covers and why; `tests/test_the_walk_never_reads_the_machine.py` keeps it honest.
+pytestmark = pytest.mark.usefixtures("a_machine_with_nothing_on_it")
 
 
 def _plan(tmp_path, **options):
@@ -100,6 +94,7 @@ def test_a_failing_check_changes_the_question(tmp_path, monkeypatch):
     assert any("anyway" in p for p in asked), asked
 
 
+@pytest.mark.reads_the_real_install("_checked_rows")
 def test_a_refusal_from_a_real_preflight_becomes_a_row(tmp_path, monkeypatch):
     """The board CALLS the checks rather than reimplementing them, so this proves the wiring.
 
@@ -119,6 +114,7 @@ def test_a_refusal_from_a_real_preflight_becomes_a_row(tmp_path, monkeypatch):
     assert any("this device is not usable here" in r[2] for r in failing)
 
 
+@pytest.mark.reads_the_real_install("_checked_rows")
 def test_a_check_that_crashes_is_a_finding_and_not_a_pass(tmp_path, monkeypatch):
     """Fail loud. A check that raises something other than a refusal used to take the run with it
     or, worse in a board, could have been counted as a tick.
@@ -140,7 +136,7 @@ def test_a_base_install_says_so_rather_than_claiming_a_clean_board(tmp_path, mon
     monkeypatch.setattr(interactive, "_checked_rows", lambda plan: None)
     said = []
     assert interactive._board(_plan(tmp_path), log=said.append) is True
-    text = "\n".join(said)
+    text = prose(*said)
     assert "not installed here" in text
     assert "all clear" not in text, "nothing was checked, so nothing may be declared clear"
 
@@ -260,6 +256,7 @@ def test_the_machine_does_not_report_the_card_twice(tmp_path, monkeypatch):
     assert "1 failing" in "\n".join(said)
 
 
+@pytest.mark.reads_the_real_install("_checked_rows")
 def test_the_probe_budget_is_on_the_board(tmp_path, monkeypatch):
     """FOUND BY A REAL RUN, 2026-09-28, which is the only way this class of gap gets found.
 
@@ -303,6 +300,7 @@ BOARD_LEAVES_TO_THE_RUN = {
 }
 
 
+@pytest.mark.reads_the_real_install("_checked_rows")
 def test_every_check_the_run_makes_is_a_check_the_board_makes():
     """THE GUARD FOR THE NEXT ONE, rather than for the one that was found.
 

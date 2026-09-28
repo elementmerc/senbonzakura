@@ -541,7 +541,7 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs -m 'not journey'"
 markers = [
   "journey: a scripted session through a real terminal, run with `pytest -m journey`. See tests/journeys/harness.py.",
-  "reads_the_real_install: this test is about what the machine actually has, so the fixtures that pin the machine away leave it alone.",
+  "reads_the_real_install(*probes): this test is about what the machine actually has, so `a_machine_with_nothing_on_it` leaves the named probes real. Naming none leaves them all real.",
 ]
 # THE REPO ROOT ON sys.path, EXPLICITLY, because the two ways of starting pytest do not agree.
 # `python -m pytest` puts the working directory on sys.path and the `pytest` console script does

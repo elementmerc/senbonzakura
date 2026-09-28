@@ -13,6 +13,7 @@ import sys
 import pytest
 
 from senbonzakura import interactive as it
+from tests.conftest import machine_pins, prose
 
 
 class _Tty:
@@ -37,35 +38,9 @@ def _row_number(side, key):
 
 #: A MACHINE WITH NOTHING ON IT, and every walk below runs on one.
 #:
-#: Two screens in this walk read the machine rather than the answers: the model question offers
-#: what is already in the Hub cache, and the pre-flight board runs the real checks. Left alone,
-#: both make these tests depend on whatever is cached and writable on the box running them, which
-#: is how `test_occupied_output.py` once passed on a build box holding a stray `abliterated/` and
-#: would have failed on a clean runner. The screens themselves are covered by
-#: `test_the_menus_describe_this_install.py` and `test_the_walk_checks_before_it_asks.py`, where
-#: the machine is made explicitly rather than inherited.
-@pytest.fixture(autouse=True)
-def _a_machine_with_nothing_on_it(monkeypatch, request):
-    monkeypatch.setattr(it, "models_on_this_machine", lambda root=".": [])
-    monkeypatch.setattr(it, "_checked_rows", lambda plan: [])
-    # AND THE BUNDLED TRACK IS PRESENT, which is the third thing these walks read off the machine.
-    # A release wheel carries the packed track and a source checkout does not, so on CI the track
-    # menu asks an extra question ("Ask for it anyway?") that it does not ask on a dev box, every
-    # canned answer after it lines up against the wrong prompt, and the walk ends in StopIteration.
-    # That is the same defect as the two above wearing different clothes: a test reading the
-    # machine rather than saying what it means. The unbundled path has its own tests, which
-    # monkeypatch this deliberately.
-    monkeypatch.setattr(it.bundled, "is_available", lambda: True)
-    # AND THE CONVERSION TOOLS ARE PRESENT, the fourth of these and found the same way as the
-    # third: the "Build a local brain" recipe asks an extra question when the vendored converter
-    # and `llama-quantize` are absent, and they are build-time artefacts, so macOS and Windows CI
-    # answered that question with an answer meant for the one after it. The missing-tools branch
-    # has its own tests, below, which monkeypatch this deliberately.
-    #
-    # A test that is ABOUT the probe rather than about the walk marks itself and gets the real one
-    # back, because pinning it there would let it pass by measuring the stand-in.
-    if request.node.get_closest_marker("reads_the_real_install") is None:
-        monkeypatch.setattr(it, "missing_conversion_tools", list)
+#: THE MACHINE IS PINNED, once, in `tests/conftest.py`. See `MACHINE_READS` there for what
+#: that covers and why; `tests/test_the_walk_never_reads_the_machine.py` keeps it honest.
+pytestmark = pytest.mark.usefixtures("a_machine_with_nothing_on_it")
 
 
 # ── quoting ──────────────────────────────────────────────────────────────────────
@@ -282,10 +257,13 @@ def test_every_corpus_is_offered_for_the_side_it_actually_holds():
 
 
 def test_a_side_menu_shows_the_licence_before_the_choice_is_made():
+    """`prose`, not the drawn lines: every description here is folded to the terminal, so on a
+    narrow one "undeclared upstream" arrives with a line break through the middle of it.
+    """
     said = []
     it.pick_side("harmful", "which?", ask_fn=_answers("1"), log=said.append)
-    assert "MIT" in "\n".join(said)
-    assert "undeclared upstream" in "\n".join(said)
+    assert "MIT" in prose(*said)
+    assert "undeclared upstream" in prose(*said)
 
 
 def test_picking_a_known_corpus_returns_its_spec():
@@ -493,6 +471,7 @@ def _paused_run(tmp_path, name="run1", record=None):
     return d
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_the_resume_command_carries_the_model_and_the_track(tmp_path):
     """THE SCREEN THAT PRINTED A COMMAND NOBODY COULD RUN.
 
@@ -509,6 +488,7 @@ def test_the_resume_command_carries_the_model_and_the_track(tmp_path):
     assert plan["options"]["--out"] == str(tmp_path / "run1")
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_run_from_before_the_record_asks_rather_than_guessing(tmp_path):
     _paused_run(tmp_path)
     said = []
@@ -519,6 +499,7 @@ def test_a_run_from_before_the_record_asks_rather_than_guessing(tmp_path):
     assert any("does not say which model" in s for s in said)
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_the_menu_row_says_which_model_the_paused_run_was_editing(tmp_path):
     _paused_run(tmp_path, record={"model": "Qwen/Qwen3-1.7B", "track": "default"})
     said = []
@@ -526,6 +507,7 @@ def test_the_menu_row_says_which_model_the_paused_run_was_editing(tmp_path):
     assert any("Qwen/Qwen3-1.7B" in s for s in said)
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_the_resume_command_uses_the_mode_word_the_run_used(tmp_path):
     _paused_run(tmp_path, record={"model": "M", "track": "T", "bankai": False})
     plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
@@ -661,7 +643,7 @@ def test_the_whole_walk_completes_on_an_install_with_no_deep_learning_stack():
     """
     import subprocess
     import sys
-    probe = r"""
+    probe = """
 import sys
 class Block:
     def find_spec(self, name, target=None, path=None):
@@ -670,14 +652,10 @@ class Block:
         return None
 sys.meta_path.insert(0, Block())
 from senbonzakura import interactive as it
-# A machine with nothing on it, for the reason the autouse fixture at the top of this file
-# gives: otherwise this subprocess asks a different question depending on what happens to be
-# in the Hub cache of whatever box is running the suite.
-it.models_on_this_machine = lambda root=".": []
-# AND A BUNDLED TRACK, for the same reason: without one the track menu asks an extra question
-# and every answer after it lines up against the wrong prompt. A release wheel carries the
-# packed track and a source checkout does not, so this differs between a dev box and CI.
-it.bundled.is_available = lambda: True
+# THE SAME PINS AS EVERY OTHER WALK, generated from the one list in conftest, because no fixture
+# reaches inside a subprocess. This probe used to hand-write two of the six and read the machine
+# for the rest.
+""" + machine_pins() + """
 answers = iter(["1", "M", "1", "2", "OUT", "5"])
 plan = it.plan_abliteration(ask_fn=lambda _p: next(answers), log=lambda *a: None)
 print(plan["options"]["--out"])
@@ -768,6 +746,7 @@ def _config_only_run(tmp_path, name="baked", record=None):
     return d
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_resume_carries_the_device_the_trials_and_the_search(tmp_path):
     """Three flags the record holds and the screen ignored.
 
@@ -785,6 +764,7 @@ def test_a_resume_carries_the_device_the_trials_and_the_search(tmp_path):
     assert plan["options"]["--search"] == "scalar"
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_resume_says_what_it_took_off_the_record_before_the_confirm(tmp_path):
     """Carried silently, a recorded value is a flag on a line nobody reads twice."""
     _paused_run(tmp_path, record={"model": "M", "track": "T", "device": "cpu",
@@ -797,6 +777,7 @@ def test_a_resume_says_what_it_took_off_the_record_before_the_confirm(tmp_path):
     assert "--search scalar" in text
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_recorded_device_this_machine_cannot_use_is_said_out_loud(tmp_path, monkeypatch):
     """The defect the operator actually met: a run copied to a box with no card."""
     monkeypatch.setattr(it, "device_available", lambda name: name != "cuda")
@@ -806,6 +787,7 @@ def test_a_recorded_device_this_machine_cannot_use_is_said_out_loud(tmp_path, mo
     assert "cannot use that device" in "\n".join(said)
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_winning_config_with_no_study_re_bakes_instead_of_re_searching(tmp_path):
     """THE PROMISE THE FLAG COULD NOT KEEP.
 
@@ -822,6 +804,7 @@ def test_a_winning_config_with_no_study_re_bakes_instead_of_re_searching(tmp_pat
     assert "--trials" not in plan["options"], "a direct bake runs no trials"
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_study_on_disk_still_resumes_rather_than_re_baking(tmp_path):
     """The other half of the same decision, so the fix cannot swing too far."""
     _paused_run(tmp_path, record={"model": "M", "track": "T"})
@@ -830,6 +813,7 @@ def test_a_study_on_disk_still_resumes_rather_than_re_baking(tmp_path):
     assert "--bake-config" not in plan["options"]
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_resume_does_not_claim_nothing_is_overwritten(tmp_path):
     """It said "Nothing there is overwritten", and a resume rewrites run.json, best-config.json
     and the saved weights in that directory. What survives is the completed trials.
@@ -842,6 +826,7 @@ def test_a_resume_does_not_claim_nothing_is_overwritten(tmp_path):
     assert "written over" in text
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_resuming_a_bundled_track_run_still_shows_the_corpus_licence(tmp_path):
     """The resume path hard-coded "yours", so the CC BY-NC notice the fresh walk prints for the
     bundled corpus vanished for the same corpus reached the other way.
@@ -854,12 +839,14 @@ def test_resuming_a_bundled_track_run_still_shows_the_corpus_licence(tmp_path):
     assert "CC BY-NC 4.0" in "\n".join(said)
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_resume_of_a_track_of_your_own_claims_no_licence(tmp_path):
     _paused_run(tmp_path, name="two", record={"model": "M", "track": "/srv/mytrack"})
     plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
     assert plan["licence"] == "yours"
 
 
+@pytest.mark.reads_the_real_install("resumable_runs")
 def test_a_resume_says_it_converts_nothing_and_names_the_second_command(tmp_path):
     """run.json records the abliteration's inputs and nothing about the recipe around it, so a
     person who chose "Build a local brain" and crashed gets the model re-baked and no GGUF. It
@@ -963,7 +950,7 @@ def test_a_brain_still_gets_its_convert_step_where_the_tools_exist(monkeypatch):
     assert plan["then"]["command"] == "convert"
 
 
-@pytest.mark.reads_the_real_install
+@pytest.mark.reads_the_real_install("missing_conversion_tools")
 def test_the_conversion_check_names_both_halves(monkeypatch):
     from senbonzakura import vendored
 
@@ -1024,15 +1011,19 @@ def test_the_trials_prompt_does_not_invent_a_convention():
     64 by model size. A number invented for a prompt and described as the convention is how a
     reader ends up believing the tool has one it has never had.
     """
-    asked = []
+    asked, said = [], []
 
     def _ask(prompt):
         asked.append(prompt)
         return "60"
 
-    it.ask_trials(ask_fn=_ask, log=lambda *a: None)
-    assert "200 is the usual" not in asked[0]
-    assert "60" in asked[0], "the number the tool actually defaults to belongs in the sentence"
+    it.ask_trials(ask_fn=_ask, log=said.append)
+    # THE WHOLE SENTENCE, wherever the fold put it. `ask` wraps its question and leaves only the
+    # last line as the prompt, so on a narrow terminal everything before that line is in the log
+    # and a test reading `asked[0]` alone is reading the terminal's width, not the tool.
+    whole = prose(*said, *asked)
+    assert "200 is the usual" not in whole
+    assert "60" in whole, "the number the tool actually defaults to belongs in the sentence"
 
 
 def test_the_device_default_is_cpu_when_torch_cannot_be_asked(monkeypatch):

@@ -84,8 +84,16 @@ def _write_build_stamp():
         return
     BUILD_STAMP.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    # THE COPYRIGHT LINE IS NOT DECORATION HERE. This file ships in every wheel, because
+    # `tools/ci/check_wheel.py` refuses a release artefact that lacks it, and it was the one source
+    # file in the distribution with no copyright notice, in a project that carries a tool whose whole
+    # purpose is that none is. `add_license_headers.py --check` flagged it and nothing ran that tool,
+    # so the gap was visible to anybody who asked and asked by nobody. Written the same shape as
+    # every other header in the tree so the checker recognises it rather than needing an exemption.
     BUILD_STAMP.write_text(
         "# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+        "# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>\n"
+        "# Author:  Daniel Iwugo\n"
         "# Generated at build time by setup.py. Not in git; see setup.py for why it exists.\n"
         f"COMMIT = {commit!r}\n"
         f"BUILT_AT = {now!r}\n",

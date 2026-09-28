@@ -174,7 +174,18 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check src/ tests/ tools/
+        run: ruff check src/ tests/ tools/ checker/src/
+
+      - name: Every shipped source file carries its licence header
+        # WIRED 2026-09-28, having been written months earlier and run by nothing. pyproject.toml
+        # points at this command as "the same assertion in a form CI and a pre-commit hook can
+        # run", and no workflow, hook or release step invoked it. It was failing, too: the build
+        # stamp `setup.py` writes into every wheel carried an SPDX line and no copyright line, so
+        # the one file in the distribution with no notice was the generated one, in a project that
+        # ships a tool to prevent exactly that.
+        #
+        # Cheap enough to run on every matrix row: it reads file heads and touches no dependency.
+        run: python tools/packaging/add_license_headers.py --check
 
       - name: Fetch the artefacts this row's tests need
         # ONE row, and the reason is not coverage. 61 tests skip on every runner because the
@@ -454,7 +465,9 @@ jobs:
           pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/ci.txt
       - name: Lint
-        run: ruff check src/ tests/ tools/
+        run: ruff check src/ tests/ tools/ checker/src/
+      - name: Every shipped source file carries its licence header
+        run: python tools/packaging/add_license_headers.py --check
       - name: Test, with the coverage gate
         # THE FLOOR IS EXPLICIT HERE FOR THE SAME REASON IT IS IN THE MATRIX ROWS.
         #

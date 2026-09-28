@@ -11,6 +11,21 @@ import pytest
 
 from senbonzakura import banner
 
+
+@pytest.fixture(autouse=True)
+def _one_banner_per_test():
+    """A RUN draws one banner; a TEST FILE draws dozens.
+
+    `banner.emit` refuses a second draw in the same process, because `entry.main`, `cli.main` and
+    `interactive.run` each ask for one and the randomised choice made those different designs in a
+    single session. That guard is per process, and a test process is many runs, so each test starts
+    from a clean slate here rather than every test remembering to.
+    """
+    banner.reset_for_tests()
+    yield
+    banner.reset_for_tests()
+
+
 # Needles a run spec greps for with `stdout-contains`. An escape code or a stray glyph in
 # any of these turns a finished run into a failed one.
 SENTINELS = (

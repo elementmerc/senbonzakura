@@ -1075,20 +1075,13 @@ def _machine_rows(plan):
     import shutil
 
     rows = []
+    # NO CARD ROW HERE, and that is the second version of this function. The first asked
+    # `device_available` and printed a card row beside the `_preflight_device` row below, so a
+    # machine with no card reported the same fact twice, in two wordings, from two mechanisms,
+    # and the counts line said "2 failing" over one problem. The check owns the question; this
+    # group carries what the check does not.
     device = str(plan["options"].get("--device", "") or "").strip().lower()
-    if device.startswith("cuda"):
-        # None rather than False when torch is absent, and the difference matters here: "no card"
-        # and "cannot tell yet" are different things to print to somebody about to spend an hour.
-        available = device_available("cuda")
-        if available is None:
-            rows.append((ADVISORY, "card",
-                         ("torch is not installed here, so this cannot be asked yet. "
-                          "`senbonzakura doctor` answers it.")))
-        else:
-            rows.append((PASS if available else FAIL, "card",
-                         "an NVIDIA card is available" if available else
-                         "no CUDA device on this machine, and --device cuda was chosen"))
-    elif device:
+    if device:
         rows.append((PASS, "device", device))
 
     out = plan["options"].get("--out")
@@ -1223,17 +1216,32 @@ def _board(plan, log=print):
         log(f"  {name}")
         log("")
         for mark, label, detail in group:
-            first, *rest = say.lines(detail, columns=max(40, say.width() - 22)) or [""]
+            # THE FIRST LINE ONLY, on the row. A refusal from a pre-flight is a formatted block
+            # with a "what to do" list and indented commands in it, and `say` leaves indented
+            # lines alone deliberately, so feeding the whole thing through here produced a
+            # hundred-column line inside a board. The rest of it is printed below, intact,
+            # because it is the part somebody acts on.
+            head = str(detail).strip().splitlines()[0] if str(detail).strip() else ""
+            first, *rest = say.lines(head, columns=max(40, say.width() - 22)) or [""]
             log(f"    {mark}  {label:<14} {first}".rstrip())
             for line in rest:
                 log(f"       {'':<14} {line}")
     log("")
     log(f"    {len(rows)} checks · {len(rows) - len(bad) - len(advisory)} pass · "
         f"{len(advisory)} advisory · {len(bad)} failing")
+    for _mark, label, detail in bad:
+        body = str(detail).strip().splitlines()
+        if len(body) > 1:
+            log("")
+            log(f"  {label}, in full:")
+            log("")
+            for line in body:
+                log(f"    {line}")
     if bad:
         log("")
-        log("  Nothing has run. A failing check is a run that cannot work, so the command below")
-        log("  is printed for the record and starting it would waste the time it asks for.")
+        _say("Nothing has run. A failing check is a run that cannot work, so the command below "
+             "is printed for the record and starting it would waste the time it asks for.",
+             log=log, indent="  ")
     return not bad
 
 

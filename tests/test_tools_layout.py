@@ -29,6 +29,7 @@ repository. It is checked by looking for `pyproject.toml`, because that is what 
 the root rather than a directory that happens to contain `src`.
 """
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -236,21 +237,48 @@ def test_every_tools_script_named_from_outside_still_exists(where, named):
 _INVOKERS = (
     Path(".github") / "workflows",       # CI
     Path("RELEASING.md"),                # the release checklist a human follows
-    Path(".githooks"),                   # a git hook, which is a gate like any other
+    # `.githooks` WAS HERE AND IS NOT TRACKED EITHER, found by the test below the moment it existed.
+    # It is the operator's local hook directory, excluded from this repository, so it vouched for
+    # scripts on one machine exactly as `scripts/runpod` did. `tools/hooks` stays, because the hook
+    # BODIES are tracked and a clone can read them; what is untracked is the wiring that installs
+    # them, which `tools/hooks/install-local-hooks.sh` does and which a clone can also read.
     Path("tools") / "ci",                # another ci script, e.g. clean_room.sh calling its checks
     Path("tools") / "hooks",             # a hook body
-    # A PROVISIONING BOOTSTRAP COUNTS, and leaving it out was this list being incomplete rather
-    # than the script being misfiled. `scripts/runpod/seed-sweep-bootstrap.sh` runs
-    # `artefact_ok.py` on a rented box as a fail-fast gate before an unattended job spends money.
-    # That is automated, unattended and gating, which is what the `ci` definition is about; it is
-    # not somebody running a diagnostic by hand. Found because the guard flagged it the moment the
-    # guard started working.
-    Path("scripts") / "runpod",
+    # `scripts/runpod` USED TO BE HERE AND HAD TO COME OUT, 2026-09-28. The reasoning was that a
+    # provisioning bootstrap gates an unattended job on a rented box, which is automated and
+    # gating and so within what `ci` means. The reasoning was fine and the entry was not, because
+    # `scripts/` is in `.git/info/exclude`: that bootstrap exists on one machine and in no clone.
+    # So the guard read evidence no runner has, `artefact_ok.py` looked invoked here and was an
+    # orphan everywhere else, and CI found it. An invoker nobody can fetch cannot make the claim
+    # "run by CI or a release" true, which is why every entry is now checked against the index.
 )
 
 
-def _text_of(rel, *, excluding=None):
+def _tracked_files():
+    """Every path git is tracking, as repo-relative posix strings, or None if git cannot answer.
+
+    THE EVIDENCE HAS TO BE EVIDENCE A CLONE HAS. This guard reads files to decide whether a script
+    is invoked, and an untracked file is a fact about one machine. `scripts/runpod` and `.githooks`
+    are both excluded from this repository, so both were contributing text that no runner, no
+    container and no reviewer could ever see, and the check reported clean on that basis.
+
+    That is the same defect the test below was written to catch, one level up in the machinery: the
+    `__pycache__` case was a file vouching for itself, and this is a file vouching for a script in a
+    tree nobody else has.
+    """
+    out = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"],
+                         capture_output=True, text=True, check=False, timeout=60)
+    if out.returncode != 0:
+        return None
+    return {p for p in out.stdout.split("\0") if p}
+
+
+def _text_of(rel, *, excluding=None, tracked=None):
     """Every file under `rel`, or the file itself, as one blob. Missing paths contribute nothing.
+
+    `tracked`, when given, is the set of paths git knows about, and a file outside it contributes
+    nothing either. See `_tracked_files` for why that is the difference between evidence and a fact
+    about one machine.
 
     `excluding` drops one file from the blob, and it is load-bearing rather than tidy. `tools/ci` is
     itself an invoker, because one ci script legitimately calls another (`clean_room.sh` runs
@@ -262,9 +290,14 @@ def _text_of(rel, *, excluding=None):
     cannot fail on the case it was written for is worse than no guard, because the green tick is now
     evidence of something untrue.
     """
+    def _readable(p):
+        if p == excluding:
+            return False
+        return tracked is None or p.relative_to(ROOT).as_posix() in tracked
+
     target = ROOT / rel
     if target.is_file():
-        return "" if target == excluding else target.read_text(encoding="utf-8", errors="replace")
+        return target.read_text(encoding="utf-8", errors="replace") if _readable(target) else ""
     if not target.is_dir():
         return ""
     # `__pycache__` IS EXCLUDED AND THAT IS NOT HOUSEKEEPING. A stale
@@ -276,9 +309,40 @@ def _text_of(rel, *, excluding=None):
     # inside one test.
     return "\n".join(p.read_text(encoding="utf-8", errors="replace")
                      for p in sorted(target.rglob("*"))
-                     if p.is_file() and p != excluding
+                     if p.is_file() and _readable(p)
                      and "__pycache__" not in p.parts
                      and p.suffix not in (".pyc", ".pyo", ".so"))
+
+
+def test_every_place_a_ci_script_may_be_invoked_from_is_one_a_clone_has():
+    """The list below is only as good as the weakest entry, and one entry was local-only.
+
+    WHAT PROMPTED IT, 2026-09-28
+
+    `scripts/runpod` was added to `_INVOKERS` on the argument that an unattended provisioning
+    bootstrap is a gate, which it is. What nobody checked is that `scripts/` sits in
+    `.git/info/exclude`, so that bootstrap is on one machine and in no clone. `artefact_ok.py` was
+    therefore invoked on this box and nowhere else, the orphan check read the local file and passed,
+    and CI failed on the same commit the suite had called green.
+
+    An untracked path cannot make "run by CI or a release" true for anybody but the person holding
+    it. So the list is checked against the index, and a local-only entry fails HERE, naming the
+    entry, rather than surfacing as a confusing orphan report about some other file.
+    """
+    tracked = _tracked_files()
+    if tracked is None:
+        pytest.skip("git cannot say what is tracked here, so this property is unobservable")
+
+    local_only = [str(rel) for rel in _INVOKERS
+                  if not any(p == str(rel).replace("\\", "/")
+                             or p.startswith(str(rel).replace("\\", "/") + "/")
+                             for p in tracked)]
+    assert not local_only, (
+        f"these are listed as places a tools/ci script may be invoked from, and git tracks nothing "
+        f"under them: {local_only}.\n"
+        f"  A file no clone has cannot make the `ci` claim true, and reading one makes this suite "
+        f"green on a machine and red on every runner.\n"
+        f"  Either the path is wrong, or the invocation belongs somewhere a clone can see.")
 
 
 def test_every_ci_script_is_actually_run_by_ci_or_a_release():
@@ -308,7 +372,11 @@ def test_every_ci_script_is_actually_run_by_ci_or_a_release():
     if not ci_dir.is_dir():
         pytest.skip("there is no tools/ci in this checkout")
 
-    assert any(_text_of(rel).strip() for rel in _INVOKERS), (
+    tracked = _tracked_files()
+    if tracked is None:
+        pytest.skip("git cannot say what is tracked here, and untracked evidence is not evidence")
+
+    assert any(_text_of(rel, tracked=tracked).strip() for rel in _INVOKERS), (
         "none of the places that could invoke a ci script could be read, so this test would pass "
         f"whatever is in tools/ci. Looked for: {[str(r) for r in _INVOKERS]}")
 
@@ -320,7 +388,8 @@ def test_every_ci_script_is_actually_run_by_ci_or_a_release():
                          if p.is_file() and p.suffix in (".py", ".sh")
                          and "__pycache__" not in p.parts):
         # Rebuilt per script, with that script's own text excluded, so it cannot cite itself.
-        invokers = "\n".join(_text_of(rel, excluding=script) for rel in _INVOKERS)
+        invokers = "\n".join(_text_of(rel, excluding=script, tracked=tracked)
+                             for rel in _INVOKERS)
         if script.name not in invokers:
             orphans.append(script.relative_to(ROOT).as_posix())
 

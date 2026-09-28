@@ -295,6 +295,23 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python -m senbonzakura check head-to-head/results/ --min-applied 2
 
+      - name: The resume guard, run against evidence whose configuration is known
+        # WHY THIS STEP EXISTS, 2026-09-28. `artefact_ok.py` decides whether an arm on a rented box
+        # has already finished, so a fault in it either re-runs a completed arm and spends GPU hours
+        # again, or skips one that never ran. It was invoked from a provisioning script that lives
+        # outside this repository, which means it was gated nowhere a clone could see: the guard that
+        # checks `tools/ci` scripts are actually run read that local file and passed, and this job
+        # failed on the same commit.
+        #
+        # So the invocation lives here, and it is a real check rather than a call made to satisfy a
+        # test. The four keys are the configuration the 2026-09-10 drift arm is published under, so
+        # this fails if the committed evidence stops carrying what it is quoted as, or if the dotted
+        # path lookup stops resolving. Both would otherwise surface on a pod, unattended, as a
+        # completed arm reading stale.
+        run: |
+          python tools/ci/artefact_ok.py head-to-head/results/2026-09-10/drift-heretic-seed42.json \
+            label=heretic-seed42 n_prompts=200 batch=16 logits_dtype=bfloat16
+
       - name: No committed prompts or generations
         # The hard gate. .gitignore stops an accidental `git add .`; it does nothing
         # about `git add -f`, a path that matches no pattern, or a file moved into a

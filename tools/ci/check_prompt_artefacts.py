@@ -347,6 +347,31 @@ IGNORED_KINDS = frozenset({
 RESULTS_MARKDOWN = "head-to-head/results"
 MARKDOWN_SUFFIXES = frozenset({".md"})
 
+#: Where a `.md` is documentation, measured from the tracked tree on 2026-09-28 and re-measurable
+#: with `git ls-files "*.md"`. Markdown ANYWHERE ELSE is refused rather than cleared.
+#:
+#: WHY THIS EXISTS. Until now every `.md` outside `head-to-head/results/` returned `ignore` and was
+#: never read, so a plaintext harmful corpus saved as `notes/corpus.md` passed this gate, and
+#: `.gitignore`'s `harmful*.txt` patterns do not match it either. `.md` was the one plaintext format
+#: left wide open, and a contributor does not have to be acting in bad faith to land there: they
+#: write notes, paste rows in, and the file is Markdown because everything else in the tree is.
+#:
+#: The shape rule that fits a results note (no fences, no blockquotes) genuinely cannot apply to
+#: documentation, and that reasoning was right. What was wrong is that "the shape rule does not fit"
+#: became "read nothing". The undecided case gets a refusal, which is the deny-first posture the rest
+#: of this dispatcher was given in September, and the decision it asks for is about LOCATION, which
+#: is the reviewable kind.
+DOCUMENTATION_DIRS = (
+    "docs/",            # the documentation site
+    ".github/",         # issue templates and the like
+    "checker/",         # the second distribution's own README
+    "probes/",          # contributed probes ship with a README
+    "constraints/",     # the pinned environments each carry a note
+    "evidence/",        # an evidence tree's README describes its artefacts
+    "head-to-head/",    # the results notes are handled above; the rest are READMEs
+    "tests/",           # a fixtures README
+)
+
 
 def markdown_findings(path: Path, text: str) -> list[str]:
     """Verbatim containers in a results Markdown file, as sentences. Empty means clean."""
@@ -365,12 +390,50 @@ def markdown_findings(path: Path, text: str) -> list[str]:
     return found
 
 
+def is_markdown(path: Path) -> bool:
+    """A Markdown file, by the same lowercased suffix the dispatcher uses.
+
+    `path.suffix` was compared raw here while `dispatch_kind` lowercased, so `NOTES.MD` under the
+    results tree returned False here and then hit the Markdown branch below and was cleared unread,
+    while `notes.md` got the shape check. One spelling, in one place.
+    """
+    return path.suffix.lower() in MARKDOWN_SUFFIXES
+
+
 def is_results_markdown(path: Path) -> bool:
     """Markdown inside the one directory whose Markdown `.gitignore` re-admits."""
-    if path.suffix not in MARKDOWN_SUFFIXES:
+    if not is_markdown(path):
         return False
-    parts = Path(path).as_posix()
-    return RESULTS_MARKDOWN in parts
+    return RESULTS_MARKDOWN in Path(path).as_posix().lower()
+
+
+def is_documentation_markdown(path: Path) -> bool:
+    """Markdown in a place this project has recorded as holding documentation.
+
+    Judged on the path AS THE REPOSITORY SEES IT, through `repo_relative`, for the same reason that
+    function exists: a caller may name an absolute path or a directory outside this one, and a
+    prefix match on whatever string it was handed is a guess. A repo-root `.md` counts, because
+    README, CHANGELOG and the licence notices live there and the root is as reviewable a location as
+    a named directory.
+
+    OUTSIDE A WORK TREE THIS CLEARS, which is the one place the location rule does not bind and the
+    boundary is worth stating. `repo_relative` returns None there, and everywhere else in this file
+    that means refuse, because a recorded path is a path in a repository. Here the question is
+    different: this rule protects a COMMIT, and the clean-room flow runs this gate over an extracted
+    artefact in a loose directory where nothing is being committed and every location is unrecorded
+    by construction. Refusing there would refuse an extracted README and teach somebody to pass
+    whatever turns the checking off. The paths that reach a public remote, the tracked tree and the
+    staged set, are inside a work tree by definition, so the control binds where the threat is.
+    """
+    if not is_markdown(path):
+        return False
+    relative = repo_relative(path)
+    if relative is None:
+        return True
+    posix = relative.lower()
+    if "/" not in posix:
+        return True
+    return any(posix.startswith(d.lower()) for d in DOCUMENTATION_DIRS)
 
 
 #: The readings this gate can apply. `IGNORE` is a recorded decision; `UNRECORDED` is a refusal.
@@ -396,9 +459,10 @@ def handler_for(path: Path) -> str:
         return RESULTS_NOTE
     kind = dispatch_kind(path)
     if kind in MARKDOWN_SUFFIXES:
-        # Markdown outside the results tree is documentation, and the shape rule that fits a
-        # results note (no fences, no blockquotes) would refuse every README in the repository.
-        return IGNORE
+        # Documentation is cleared without being read, because the shape rule that fits a results
+        # note would refuse every README in the repository. Markdown somewhere this project has not
+        # recorded as documentation is REFUSED: see DOCUMENTATION_DIRS for what that buys.
+        return IGNORE if is_documentation_markdown(path) else UNRECORDED
     if kind in SUFFIXES:
         return JSONL_KEYS if kind == ".jsonl" else JSON_KEYS
     if kind in BINARY_DATASET_SUFFIXES:

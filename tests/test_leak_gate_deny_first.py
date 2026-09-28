@@ -385,3 +385,126 @@ class TestZeroTargetsSaysWhichZeroItIs:
         assert guard.main(["results"]) == 0
         out = capsys.readouterr().out
         assert "untracked files are skipped" in out
+
+
+# ── markdown, the one plaintext format that was still cleared unread ──────────────────────────────
+
+class TestMarkdownOutsideDocumentation:
+    """WHAT PROMPTED IT, 2026-09-28.
+
+    Every `.md` outside `head-to-head/results/` returned `ignore` and was never read. The reasoning
+    for that was half right: the shape rule that fits a results note, no fences and no blockquotes,
+    genuinely would refuse every README in the repository. What was wrong is that "the shape rule
+    does not fit" became "read nothing", so a plaintext corpus saved as `notes/corpus.md` walked
+    through the one control between a harmful prompt and a public push, and `.gitignore`'s
+    `harmful*.txt` patterns do not match that name either.
+
+    Markdown was the last plaintext format left open after `.txt`, `.csv` and `.tsv` were closed.
+
+    NO HARMFUL CONTENT IN ANY FIXTURE HERE. What is being tested is which reading the dispatcher
+    picks for a PATH, so the files are either empty or hold an obviously inert placeholder row.
+    """
+
+    @staticmethod
+    def _in_a_repo(root, relative):
+        """Write an inert markdown file at `relative` inside a real work tree, and return its path.
+
+        A REAL REPOSITORY AND A REAL FILE, because the rule is judged on the path as the repository
+        sees it, through `repo_relative`, which asks git. A first version of these tests passed bare
+        strings for paths that do not exist; git cannot resolve a nonexistent directory, so
+        `repo_relative` returned None, every case cleared, and the test that was meant to prove the
+        hole was closed reported that it was closed while checking nothing.
+        """
+        subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=60)
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("INERT-PLACEHOLDER-ROW\n", encoding="utf-8")
+        return target
+
+    @pytest.mark.parametrize("name", [
+        "README.md", "CHANGELOG.md", "THIRD-PARTY-NOTICES.md",
+        "docs/guide/quickstart.md", "docs/reference/cli.md",
+        ".github/ISSUE_TEMPLATE/bug.md", "checker/README.md", "probes/README.md",
+        "constraints/README.md", "evidence/README.md", "tests/fixtures/README.md",
+    ])
+    def test_documentation_is_still_cleared_without_being_read(self, tmp_path, name):
+        """A gate that refuses the repository's own prose gets switched off within a week."""
+        path = self._in_a_repo(tmp_path, name)
+        assert guard.handler_for(path) == guard.IGNORE
+
+    @pytest.mark.parametrize("name", [
+        "notes/corpus.md", "scratch/deep/rows.md", "src/senbonzakura/data/corpus.md",
+        "private/corpus.md", "corpora/harmful.md",
+    ])
+    def test_markdown_somewhere_undecided_is_refused(self, tmp_path, name):
+        """The deny-first posture the rest of this dispatcher already had.
+
+        The decision this asks for is about LOCATION, which is the reviewable kind: either the
+        directory is documentation and goes in `DOCUMENTATION_DIRS`, or the file does not belong in
+        the tree.
+        """
+        path = self._in_a_repo(tmp_path, name)
+        assert guard.handler_for(path) == guard.UNRECORDED
+
+    def test_a_path_that_does_not_exist_is_not_silently_cleared_by_this_suite(self, tmp_path):
+        """The trap the fixture above exists for, pinned so nobody removes the fixture.
+
+        Outside a work tree the location rule clears, deliberately and for a reason written at
+        `is_documentation_markdown`. That makes a nonexistent path clear too, which is harmless for
+        the gate, whose inputs are files git listed, and fatal for a TEST that uses bare strings.
+        """
+        assert guard.handler_for(tmp_path / "notes" / "corpus.md") == guard.IGNORE, (
+            "the boundary has moved: re-read is_documentation_markdown and check whether the "
+            "fixture above is still needed")
+
+    def test_the_whole_tracked_tree_still_clears(self):
+        """The check that stops this being a widening that breaks the build.
+
+        Run against the real repository rather than a fixture, because the only thing that matters
+        is whether every `.md` this project actually has is in a recorded place.
+        """
+        root = REPO
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "*.md", "*.MD"],
+                                capture_output=True, text=True, check=False, timeout=60)
+        if listed.returncode != 0:
+            pytest.skip("git cannot list tracked files here")
+        tracked = [n for n in listed.stdout.split("\0") if n]
+        assert len(tracked) > 30, f"only {len(tracked)} markdown files tracked, so this checks little"
+        refused = [n for n in tracked if guard.handler_for(Path(n)) == guard.UNRECORDED]
+        assert not refused, (
+            "these markdown files are tracked in this repository and this gate now refuses them, so "
+            f"the widening would fail every push: {refused}\n"
+            "  Either add the directory to DOCUMENTATION_DIRS with its reason, or move the file.")
+
+    def test_an_uppercase_suffix_gets_the_same_reading_as_a_lowercase_one(self, tmp_path):
+        """`is_results_markdown` compared a raw suffix while the dispatcher lowercased.
+
+        So `NOTES.MD` under the results tree was not recognised as a results note, fell through to
+        the Markdown branch, and was cleared unread, while `notes.md` got the shape check. Two
+        spellings of one rule inside one file, which is the defect this whole file is named after.
+        """
+        for lower, upper in (("head-to-head/results/2026-09-10/notes.md",
+                              "head-to-head/results/2026-09-10/NOTES.MD"),
+                             ("docs/guide/a.md", "docs/guide/A.MD"),
+                             ("notes/corpus.md", "notes/CORPUS.MD")):
+            a = self._in_a_repo(tmp_path / "lower", lower)
+            b = self._in_a_repo(tmp_path / "upper", upper)
+            assert guard.handler_for(a) == guard.handler_for(b), (
+                f"{lower} and {upper} get different readings")
+
+    def test_a_refused_markdown_file_actually_fails_the_gate_end_to_end(self, tmp_path):
+        """The dispatcher saying UNRECORDED is worth nothing if the run still exits 0."""
+        # TRACKED, because a directory argument expands to what git tracks under it and an
+        # untracked file is skipped with a message saying so. The first version of this test wrote
+        # the file and nothing else, and the gate correctly reported "nothing to check", which would
+        # have read as the widening working.
+        self._in_a_repo(tmp_path, "notes/corpus.md")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "notes/corpus.md"],
+                       check=True, timeout=60)
+        gate = REPO / "tools" / "ci" / "check_prompt_artefacts.py"
+        done = subprocess.run(
+            [sys.executable, str(gate), str(tmp_path)],
+            capture_output=True, text=True, check=False, timeout=120)
+        assert done.returncode != 0, (
+            f"the gate cleared a markdown file in an undecided place:\n{done.stdout}{done.stderr}")
+        assert "corpus.md" in done.stdout + done.stderr

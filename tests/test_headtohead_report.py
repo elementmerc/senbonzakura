@@ -534,3 +534,47 @@ def test_an_arm_missing_its_figure_is_counted_rather_than_silently_dropped(tmp_p
         (tmp_path / f"drift-heretic-seed{seed}.json").unlink()
     out = rh.render(rh.collect(str(tmp_path)))[0]
     assert "3 arm(s) had no figure and are NOT in this mean" in out
+
+
+# ── the refusal must describe the directory it is looking at ────────────────────────
+def test_an_empty_directory_is_not_told_that_its_arms_are_on_disk(tmp_path):
+    """It asserted "--no-score ... leaves the arms on disk" having looked only for scored files.
+
+    Point it at an empty directory, or at the wrong path, and it stated that the arms were there
+    and told the operator to score them. That sends somebody hunting for a run that was never made.
+    """
+    with pytest.raises(SystemExit) as e:
+        rh.main([str(tmp_path)])
+    said = str(e.value)
+    assert "no arm directories" in said
+    assert "--no-score" not in said
+    assert "score the arms you have" not in said
+
+
+def test_unscored_arms_on_disk_are_counted_and_named(tmp_path):
+    for name in ("senbon-seed42", "heretic-seed42"):
+        (tmp_path / name).mkdir()
+    with pytest.raises(SystemExit) as e:
+        rh.main([str(tmp_path)])
+    said = str(e.value)
+    assert "--no-score" in said
+    assert "2 arm director" in said
+    assert "senbon-seed42" in said and "heretic-seed42" in said
+
+
+def test_a_file_named_like_an_arm_is_not_counted_as_one(tmp_path):
+    """A stray file is not an arm, and a count that includes it is a count that misleads."""
+    (tmp_path / "senbon-seed42").write_text("not a directory", encoding="utf-8")
+    assert rh.arm_directories(str(tmp_path)) == []
+    with pytest.raises(SystemExit) as e:
+        rh.main([str(tmp_path)])
+    assert "no arm directories" in str(e.value)
+
+
+def test_the_arm_directory_pattern_and_the_scored_file_pattern_stay_in_step(run_dir):
+    """One label, two readers. A drift between them is how a real run reads as an empty one."""
+    d = run_dir([0.9, 0.9], [0.8, 0.8])
+    found = rh.arm_directories(str(d))
+    assert found == ["heretic-seed42", "heretic-seed43", "senbon-seed42", "senbon-seed43"]
+    for name in found:
+        assert rh.ARM.match(f"scored-{name}"), f"{name} is an arm directory and not a scored name"

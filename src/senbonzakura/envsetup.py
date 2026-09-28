@@ -533,16 +533,20 @@ def main(argv=None):
         rc = subprocess.run([sys.executable, "-m", "pip", *args], check=False,
                             timeout=PIP_TIMEOUT).returncode
     except subprocess.TimeoutExpired:
+        # THE COMMAND, NOT A POINTER TO IT. This said "run the command above by hand", on stderr,
+        # about a line printed to stdout: redirect either stream and the instruction refers to
+        # something that is not there. A failure message carries what the reader has to type.
         print(f"\n  pip did not finish within {PIP_TIMEOUT}s and was stopped. torch may be "
-              f"half-installed: run the command above by hand to see where it gets stuck.",
+              f"half-installed. Run this by hand to see where it gets stuck:\n"
+              f"    {printable}",
               file=sys.stderr)
         return 2
     except (OSError, subprocess.SubprocessError) as e:
         print(f"\n  FAILED to run pip: {e}", file=sys.stderr)
         return 2
     if rc != 0:
-        print(f"\n  pip exited {rc}. Nothing here can fix that; the command above is the one to "
-              f"debug.", file=sys.stderr)
+        print(f"\n  pip exited {rc}. Nothing here can fix that; this is the command to debug:\n"
+              f"    {printable}", file=sys.stderr)
         return rc
     print("\n  done. `senbonzakura doctor` will confirm what this install can now do.")
     return 0

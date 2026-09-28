@@ -1031,3 +1031,46 @@ def test_a_probe_that_is_switched_off_costs_nothing_and_is_not_refused():
     # And it still fires when the probe really will run.
     with pytest.raises(SystemExit):
         capability.refuse_a_slow_probe("cpu", 200, 512, spec="bundled")
+
+
+# ── a caveat must not describe a figure that is not on the screen ────────────────────
+def test_the_budget_warning_does_not_invent_an_accuracy_that_was_never_printed():
+    """Everything indeterminate prints "nothing could be graded", then used to add a sentence
+    about "the accuracy above", which is a caveat on a number the reader cannot see. A caveat
+    attached to nothing reads as a number withheld rather than a run that measured nothing.
+    """
+    # The "nothing could be graded" line is the branch where no rate was withheld either: nothing
+    # was withheld because there was nothing to withhold. Built rather than sampled, because
+    # `summarise` reaches it only through a build where the floor rule has nothing to say.
+    s = dict(cap.summarise(_verdicts("i" * 20)), accuracy=None, accuracy_withheld_because=None)
+    text = "\n".join(cap.report(s))
+    assert s["budget_suspect"] is True
+    assert "nothing could be graded" in text
+    assert "the accuracy above" not in text
+    assert "no figure about this model to read" in text
+    # The instruction still has to be there: this is the loudest thing the module says.
+    assert "do not quote any figure from this run" in text
+
+
+def test_the_budget_warning_names_the_counts_when_the_rate_was_withheld():
+    """`reportable_rate` withholds a rate over too small a denominator, and the counts are what
+    is on the screen instead. The caveat has to be about those.
+    """
+    s = cap.summarise(_verdicts("c" + "i" * 9))
+    if s["accuracy"] is not None:            # the denominator was large enough after all
+        pytest.skip("this sample did not trip the withholding rule")
+    text = "\n".join(cap.report(s))
+    assert s["budget_suspect"] is True
+    assert "NOT REPORTED as a rate" in text
+    assert "the counts above is not a statement about this model" in text
+    assert "the accuracy above" not in text
+
+
+def test_a_withheld_rate_below_the_threshold_is_not_said_to_stand():
+    """The mirror bug: "so the accuracy above stands" over a rate that was never reported."""
+    s = cap.summarise(_verdicts("c" * 39 + "i"))
+    s = dict(s, accuracy=None, accuracy_withheld_because="too few graded to report a rate")
+    text = "\n".join(cap.report(s))
+    assert s["budget_suspect"] is False
+    assert "the accuracy above stands" not in text
+    assert "not why the rate above was withheld" in text

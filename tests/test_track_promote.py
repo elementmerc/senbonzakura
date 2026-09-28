@@ -235,3 +235,51 @@ def test_promote_through_the_subcommand_entry_point(tmp_path):
     t = _track(tmp_path)
     assert track.main(["promote", str(t)]) == 0
     assert (t / track.PROMOTED).is_file()
+
+
+# ── a failing verify has to read in the order it happened ─────────────────────────
+def _leaky(tmp_path):
+    """A track whose recorded boundaries slice measure rows into search, so `audit` complains."""
+    t = _track(tmp_path)
+    m = json.loads((t / "track.json").read_text(encoding="utf-8"))
+    m["counts"]["harmful"]["search"] = 0
+    m["counts"]["harmful"]["measure"] = 12
+    (t / "track.json").write_text(json.dumps(m), encoding="utf-8")
+    return t
+
+
+def test_a_failed_verify_names_its_failures_before_it_lists_them(tmp_path, capsys):
+    """The bullets printed first, then the promotion line on stdout, then the header last.
+
+    So the reader met a list of complaints with nothing yet saying what they were a list of, and
+    the line that names them arrived after everything, on the other stream from where it started.
+    """
+    t = _leaky(tmp_path)
+    with pytest.raises(SystemExit):
+        track.main(["verify", str(t)])
+    err = capsys.readouterr().err
+    header = err.index("TRACK_VERIFY_FAILED")
+    bullets = [i for i, line in enumerate(err.splitlines()) if line.startswith("  ")]
+    assert bullets, f"the failures themselves are not on stderr: {err}"
+    assert header < err.index(err.splitlines()[bullets[0]].strip()), (
+        f"the header arrives after the failures it names:\n{err}")
+
+
+def test_a_failed_verify_says_how_many_checks_failed(tmp_path, capsys):
+    t = _leaky(tmp_path)
+    with pytest.raises(SystemExit):
+        track.main(["verify", str(t)])
+    err = capsys.readouterr().err
+    line = next(ln for ln in err.splitlines() if "TRACK_VERIFY_FAILED" in ln)
+    assert "check(s) failed" in line
+    assert str(t) in line
+
+
+def test_the_failures_and_their_header_are_on_one_stream(tmp_path, capsys):
+    t = _leaky(tmp_path)
+    with pytest.raises(SystemExit):
+        track.main(["verify", str(t)])
+    captured = capsys.readouterr()
+    assert "TRACK_VERIFY_FAILED" not in captured.out
+    # The promotion verdict is the report, and it stays where a reader pipes the report.
+    assert "promotion:" in captured.out

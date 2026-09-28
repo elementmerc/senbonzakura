@@ -774,3 +774,55 @@ def test_converting_to_q8_0_is_not_refused_for_space_it_does_not_need(tmp_path, 
                             outtype="q8_0", log=lambda *_a: None)
     assert pre["estimated_bytes"] < 2000
     assert pre["outtype"] == "q8_0"
+
+
+class TestTheTemplateWarningPointsSomewhereReal:
+    """The warning said "check the converter's output above", and by default there is no above.
+
+    The converter's roughly 350 lines are relayed through `vendored.relay`, which writes them only
+    under `--verbose`. Without it the only survivors are warning and error lines, and those go to
+    stderr while this NOTE goes to stdout through `log`. So the single instruction attached to the
+    single warning that says a GGUF will answer badly sent the operator to output their terminal
+    had never been shown.
+    """
+
+    def _lost(self, tmp_path, monkeypatch, argv=()):
+        d = _with_tokenizer(_checkpoint(tmp_path / "m"), {"chat_template": "{{ x }}"})
+        monkeypatch.setattr(convert, "supported_architectures",
+                            lambda _s, **k: ({"Qwen3ForCausalLM"}, [], None))
+        monkeypatch.setattr(convert.subprocess, "Popen", _Ran(rc=0, write=b"GGUF" + b"\0" * 32))
+        monkeypatch.setattr(convert.gguf_io, "verify", lambda *a, **k: _ok_header(metadata={}))
+        lines = []
+        out = tmp_path / "o.gguf"
+        convert.run([str(d), str(out), *argv], log=lines.append)
+        note = [ln for ln in lines if convert.GGUF_CHAT_TEMPLATE_KEY in ln]
+        assert note, f"the lost template was not reported at all: {lines}"
+        return note[0]
+
+    @needs_converter
+    def test_the_quiet_run_does_not_claim_the_reason_is_above(self, tmp_path, monkeypatch):
+        note = self._lost(tmp_path, monkeypatch)
+        assert "--verbose" in note
+        assert "NOT above" in note
+        assert "output is above" not in note
+
+    @needs_converter
+    def test_the_verbose_run_says_the_output_is_above_and_on_which_stream(self, tmp_path,
+                                                                         monkeypatch):
+        note = self._lost(tmp_path, monkeypatch, argv=["--verbose"])
+        assert "above on stdout" in note
+        assert "Re-run this conversion with --verbose" not in note
+
+    @needs_converter
+    def test_the_record_keeps_the_claim_and_not_the_terminal_advice(self, tmp_path, monkeypatch):
+        """A display flag must not change what an artefact says happened.
+
+        The record is read weeks later by somebody who did not run the command, so a sentence
+        about which stream this terminal saw would be false there whichever way it was written.
+        """
+        self._lost(tmp_path, monkeypatch)
+        rec = json.loads(convert.record_path(tmp_path / "o.gguf").read_text(encoding="utf-8"))
+        warning = rec["chat_template_warning"]
+        assert convert.GGUF_CHAT_TEMPLATE_KEY in warning
+        assert "--verbose" not in warning
+        assert "above" not in warning

@@ -27,6 +27,52 @@ MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DT
 SAVE_HEADROOM_FRAC = 0.05
 
 
+def replace_failure_reason(path, tmp, exc):
+    """Why the final `os.replace` failed, decided by looking at the disk rather than by assuming.
+
+    `FileNotFoundError` and `PermissionError` out of a rename are three faults wearing two error
+    types, and until 2026-09-28 all of them were reported as one:
+
+      * the destination directory has gone (unmounted, or removed under the run). Nothing here can
+        recover the output and separate output paths would not have helped.
+      * a second writer of the same path won the race. On POSIX the loser's own `.part` has been
+        renamed away, so it is gone; that absence is the evidence, and it is what this checks.
+      * the rename itself was refused while the `.part` is still sitting there: a destination that
+        has become read-only, a permission change, or on Windows another process holding the
+        target open ([WinError 32]), which is also how the race looks there.
+
+    The third case is deliberately not narrowed further. A held-open target and a revoked
+    permission are indistinguishable from here, so both are named rather than one being guessed
+    at, and the sentence stops short of claiming this run lost a race it may well have won.
+
+    Path checks, not the errno: the fault is a property of the filesystem now, and `os.replace`
+    reports the same errno for a missing source and a missing destination directory.
+    """
+    path, tmp = Path(path), Path(tmp)
+    try:
+        parent_gone = not path.parent.is_dir()
+        tmp_gone = not tmp.exists()
+    except OSError:
+        # The filesystem cannot answer either, which is itself a fault worth saying plainly
+        # rather than resolving into a confident diagnosis.
+        parent_gone = tmp_gone = False
+    if parent_gone:
+        return (f"could not finish writing {path}: the directory {path.parent} it was being "
+                f"written into is no longer there ({exc}). Something removed or unmounted it "
+                f"while the write was in flight, so this output is lost and re-running into the "
+                f"same place will fail the same way. Write somewhere that stays mounted.")
+    if tmp_gone:
+        return (f"could not finish writing {path}: its temporary file {tmp.name} disappeared "
+                f"before it could be renamed. The usual cause is two processes writing the "
+                f"same path at once, which is not safe: one of them has already replaced it, "
+                f"and this one's output is lost. Give them separate output paths.")
+    return (f"could not finish writing {path}: {tmp.name} was written in full and then could not "
+            f"be renamed over {path.name} ({exc}). Its temporary file is still there, so nothing "
+            f"has raced this write away. The causes are a destination that has become read-only "
+            f"or had its permissions changed, and on Windows another process holding "
+            f"{path.name} open. Fix that and run it again.")
+
+
 @contextlib.contextmanager
 def atomic_write(path, encoding="utf-8", binary=False):
     """Open `path` for writing so that it is never observed half-written.
@@ -66,21 +112,11 @@ def atomic_write(path, encoding="utf-8", binary=False):
         try:
             os.replace(tmp, path)
         except (FileNotFoundError, PermissionError) as e:
-            # THE SAME RACE, WEARING TWO ERRORS. On POSIX the loser's own temp file has
-            # vanished, because the winner renamed it away: FileNotFoundError. On Windows a
-            # rename over a file another process holds open is refused outright, so the loser
-            # gets PermissionError ([WinError 32], "being used by another process") and never
-            # reaches the branch below.
-            #
-            # Both are the same event and the diagnosis is the same, so both get it. Left as it
-            # was, a Windows user met a raw permission error naming a `.part` file they never
-            # asked for, which reads like a missing-output bug rather than a race.
-            raise RuntimeError(
-                f"could not finish writing {path}: its temporary file {tmp.name} disappeared "
-                f"before it could be renamed. The usual cause is two processes writing the "
-                f"same path at once, which is not safe: one of them has already replaced it, "
-                f"and this one's output is lost. Give them separate output paths."
-            ) from e
+            # LOOKED AT, NOT ASSUMED. The message is built from what is on disk at this instant,
+            # because these two errors carry three different faults and the remedies do not
+            # overlap. Asserting the race for all of them sent an operator whose destination had
+            # been unmounted off to give two writers separate output paths.
+            raise RuntimeError(replace_failure_reason(path, tmp, e)) from e
     except BaseException:
         # BaseException, not Exception: a KeyboardInterrupt mid-write must not leave the
         # partial file behind either, and that is the likeliest way this is interrupted.
@@ -284,14 +320,26 @@ def is_space_exhaustion(exc):
     return any(m in text for m in _SPACE_MARKERS)
 
 
-def save_failure_report(exc, out, *, free_bytes, cuda_free=None, retried=False):
+def save_failure_report(exc, out, *, free_bytes, cuda_free=None, retried=False,
+                        space_related=None):
     """The message an operator meets when the save dies with the GPU work already spent.
 
     Pure, so every branch is testable without inducing a real disk failure. It has one job
     beyond naming the error: say that the run is NOT lost, and give the exact command that
     turns it back into a model. `best-config.json` is written before the save precisely so
     this recovery exists, and an operator who does not know that will re-run the search.
+
+    `space_related` SAYS WHICH REMEDY IS TRUE, and the caller is asked for it because the caller
+    already knows. Until 2026-09-28 every save failure closed with "Free space or point --out at a
+    larger volume first", including the ones the call site had just classified as NOT a space
+    problem: a safetensors "Some tensors share memory" or a `PermissionError` on a read-only
+    `--out` told the operator to free space and re-bake, and the re-bake died identically after
+    more GPU time.
+
+    Left unset it falls back to `is_space_exhaustion(exc)`, which is a measurement of the same
+    thing rather than a guess, so a caller that has not been updated still gets an honest report.
     """
+    ran_out_of_room = is_space_exhaustion(exc) if space_related is None else bool(space_related)
     lines = [f"saving the baked model to {out} failed: {exc}"]
     if free_bytes is not None:
         lines.append(f"free space where it was writing: {free_bytes / 1e9:.1f} GB")
@@ -306,9 +354,18 @@ def save_failure_report(exc, out, *, free_bytes, cuda_free=None, retried=False):
                  "was attempted, so re-baking it is minutes of work rather than another search:")
     lines.append("")
     lines.append(f"    senbonzakura kageyoshi --bake-config {out}/best-config.json \\")
-    lines.append("        --model <the same model> --out <somewhere with room>")
-    lines.append("")
-    lines.append("Free space or point --out at a larger volume first.")
+    if ran_out_of_room:
+        lines.append("        --model <the same model> --out <somewhere with room>")
+        lines.append("")
+        lines.append("Free space or point --out at a larger volume first.")
+    else:
+        lines.append("        --model <the same model> --out <a writable directory>")
+        lines.append("")
+        lines.append("THIS IS NOT A SPACE PROBLEM. The write failed for the reason at the top of "
+                     "this report, not for want of room, so freeing space changes nothing and a "
+                     "re-bake before that reason is fixed dies the same way after the same GPU "
+                     "time. Read that error, fix what it names (a read-only or missing --out, a "
+                     "permission, a model safetensors refuses to serialise), then re-bake.")
     return "\n".join(lines)
 
 

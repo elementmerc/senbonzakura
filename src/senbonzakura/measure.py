@@ -222,8 +222,14 @@ def run_stage(name, argv, *, log=print):
         # is what a script reads; it is no longer offered as the explanation.
         code = e.code
         if isinstance(code, int):
-            reason = (f"refused, exit status {code}. Its own reason is in this run's log above, "
-                      f"under the command line for this stage.")
+            # WHERE IT WENT, not where it would be convenient for it to be. This said "its own
+            # reason is in this run's log above", and an int exit code comes from argparse, which
+            # writes to stderr. This log is stdout, so `senbonzakura measure ... > run.log`
+            # produced a log saying the reason was above it with no reason anywhere in it.
+            reason = (f"refused, exit status {code}, and it printed nothing to this log. A stage "
+                      f"that exits with a status and no message wrote it to stderr, which this "
+                      f"log does not capture: run that one stage on its own, or keep stderr, to "
+                      f"read it.")
         else:
             reason = str(code) if code else ("refused, exit status 1. Its own reason is in this "
                                              "run's log above, under the command line for this "

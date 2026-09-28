@@ -1,0 +1,198 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
+"""A check that runs after the decision it should have informed is not a check.
+
+Every pre-flight in this tool already existed, and every one of them ran inside `run_parsed`,
+which the guided mode reaches only once somebody has answered "Run it? y". So the walk asked for
+a commitment and then went to find out whether the run was possible.
+
+These hold three things: the checks run before the confirm, the board collapses to one line when
+it has nothing to say, and a failing check changes the question rather than disappearing.
+"""
+import json
+
+import pytest
+
+from senbonzakura import interactive
+
+
+def _plan(tmp_path, **options):
+    opts = {"--model": "Qwen/Qwen3-1.7B", "--track": "default",
+            "--out": str(tmp_path / "abliterated"), "--trials": "200", "--device": "cpu"}
+    opts.update(options)
+    return {"command": "kageyoshi", "options": opts, "licence": None}
+
+
+@pytest.fixture
+def all_clear(monkeypatch):
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.PASS, "the device", "")])
+
+
+def test_a_clean_board_is_one_line(tmp_path, all_clear):
+    """NINE TICKS IS CEREMONY, and a reader learns to skip ceremony. The run this board protects
+    is the one where the tenth line says something, so a clean board has to stay small enough
+    that the day it is not clean is visible.
+    """
+    said = []
+    assert interactive._board(_plan(tmp_path), log=said.append) is True
+    body = [s for s in said if s.strip()]
+    assert len(body) == 1, f"a clean pre-flight printed {len(body)} lines: {body}"
+    assert "all clear" in body[0]
+    assert "PRE-FLIGHT" not in body[0], "the board is drawn only when it has something to say"
+
+
+def test_a_board_with_something_to_say_is_drawn_in_full(tmp_path, monkeypatch):
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "the device", "no CUDA device here")])
+    said = []
+    assert interactive._board(_plan(tmp_path), log=said.append) is False
+    text = "\n".join(said)
+    assert "PRE-FLIGHT" in text
+    assert "no CUDA device here" in text
+    assert "WHAT YOU CHOSE" in text and "YOUR MACHINE" in text and "WHAT WE CHECKED" in text
+    assert "Qwen/Qwen3-1.7B" in text, "the expensive mistake is the model, so it is in the first rows"
+
+
+def test_the_board_comes_before_the_question(tmp_path, all_clear):
+    """THE WHOLE POINT. An answer that arrives after the person has committed is a receipt."""
+    said = []
+    asked = []
+
+    def ask_fn(prompt):
+        asked.append((len(said), prompt))
+        return "n"
+
+    interactive.present(_plan(tmp_path), ask_fn=ask_fn, log=said.append)
+    board_at = next(i for i, s in enumerate(said) if "all clear" in s)
+    confirm_at = asked[0][0]
+    assert board_at < confirm_at, (
+        "the confirm was asked before the pre-flight had reported, which is the ordering this "
+        "whole change exists to invert")
+
+
+def test_a_failing_check_changes_the_question(tmp_path, monkeypatch):
+    """A SOFT GATE, in the words the rest of the tool uses. The person still decides, and the
+    warning is repeated in the one word they are about to answer.
+    """
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "the device", "no CUDA device here")])
+    asked = []
+
+    def ask_fn(prompt):
+        asked.append(prompt)
+        return "n"
+
+    interactive.present(_plan(tmp_path), ask_fn=ask_fn, log=lambda *_a: None)
+    assert any("anyway" in p for p in asked), asked
+
+
+def test_a_refusal_from_a_real_preflight_becomes_a_row(tmp_path, monkeypatch):
+    """The board CALLS the checks rather than reimplementing them, so this proves the wiring.
+
+    A second copy of "is this device usable" that agreed with the first until one of them was
+    edited is this project's most repeated defect.
+    """
+    from senbonzakura import cli
+
+    def refuse(args, log=print):
+        raise SystemExit("this device is not usable here")
+
+    monkeypatch.setattr(cli, "_preflight_device", refuse)
+    rows = interactive._checked_rows(_plan(tmp_path))
+    assert rows is not None
+    failing = [r for r in rows if r[0] == interactive.FAIL]
+    assert failing, rows
+    assert any("this device is not usable here" in r[2] for r in failing)
+
+
+def test_a_check_that_crashes_is_a_finding_and_not_a_pass(tmp_path, monkeypatch):
+    """Fail loud. A check that raises something other than a refusal used to take the run with it
+    or, worse in a board, could have been counted as a tick.
+    """
+    from senbonzakura import cli
+
+    def explode(args, log=print):
+        raise RuntimeError("the check itself is broken")
+
+    monkeypatch.setattr(cli, "_preflight_device", explode)
+    rows = interactive._checked_rows(_plan(tmp_path))
+    marks = {r[1]: r[0] for r in rows}
+    assert marks.get("the device") == interactive.ADVISORY
+    assert any("the check itself is broken" in r[2] for r in rows)
+
+
+def test_a_base_install_says_so_rather_than_claiming_a_clean_board(tmp_path, monkeypatch):
+    """The guided mode runs where torch does not. An unanswerable check must not read as a pass."""
+    monkeypatch.setattr(interactive, "_checked_rows", lambda plan: None)
+    said = []
+    assert interactive._board(_plan(tmp_path), log=said.append) is True
+    text = "\n".join(said)
+    assert "not installed here" in text
+    assert "all clear" not in text, "nothing was checked, so nothing may be declared clear"
+
+
+# ── Scene 10, the screen that was not there ──────────────────────────────────────────────
+
+def _finished_plan(tmp_path, **record):
+    out = tmp_path / "abliterated"
+    out.mkdir()
+    if record:
+        (out / "abliteration.json").write_text(json.dumps(record), encoding="utf-8")
+    return {"command": "kageyoshi", "licence": None,
+            "options": {"--model": "m", "--out": str(out), "--trials": "200"}}, out
+
+
+def test_a_finished_run_says_what_you_now_have(tmp_path):
+    """A successful guided run used to print NOTHING. Somebody waited twenty three minutes."""
+    plan, out = _finished_plan(tmp_path, baseline_refusals=0.391, post_bake_refusals=0.0,
+                               post_bake_kl=0.047)
+    said = []
+    interactive.finished(plan, seconds=1384, ask_fn=lambda _p: "1", log=said.append)
+    text = "\n".join(said)
+    assert str(out) in text, "where it is"
+    assert "200 trials" in text and "23m 04s" in text, "what it cost"
+    assert "39.1%" in text and "0.0%" in text, "what changed"
+    assert "0.047" in text and "held-out prompts" in text, (
+        "the drift line carries the caveat that says which of the two figures survives contact "
+        "with anything else, and it is not decoration")
+
+
+def test_the_numbers_are_read_back_out_of_the_artefact(tmp_path):
+    """READ, NOT REMEMBERED. A figure carried out of the run in a variable is a second account of
+    a measurement, and this project has withdrawn published numbers over exactly that.
+    """
+    plan, _out = _finished_plan(tmp_path, baseline_refusals=0.5, post_bake_refusals=0.25)
+    said = []
+    interactive.finished(plan, ask_fn=lambda _p: "1", log=said.append)
+    assert "50.0%" in "\n".join(said) and "25.0%" in "\n".join(said)
+
+
+def test_a_run_whose_artefact_is_unreadable_still_says_what_you_have(tmp_path):
+    plan, out = _finished_plan(tmp_path)
+    (out / "abliteration.json").write_text("{ this is not json", encoding="utf-8")
+    said = []
+    interactive.finished(plan, ask_fn=lambda _p: "1", log=said.append)
+    assert str(out) in "\n".join(said), "a damaged artefact costs the figures, not the screen"
+
+
+def test_pressing_enter_at_the_end_does_not_start_another_job(tmp_path):
+    """AGAINST THE DESIGN, deliberately: it highlighted the conversion. Somebody who reaches this
+    screen has what they came for, and a default keystroke that starts another job is the trap the
+    confirm before the run was rewritten to avoid.
+    """
+    plan, _out = _finished_plan(tmp_path, baseline_refusals=0.4, post_bake_refusals=0.0)
+    assert interactive.finished(plan, ask_fn=lambda _p: "", log=lambda *_a: None) is None
+
+
+def test_the_follow_on_is_a_command_the_reader_can_see(tmp_path):
+    """The rule this file keeps: anything it runs is printed first, and a follow-on is no
+    exception. So every row names its command rather than only a verb.
+    """
+    plan, out = _finished_plan(tmp_path, baseline_refusals=0.4, post_bake_refusals=0.0)
+    said = []
+    step = interactive.finished(plan, ask_fn=lambda _p: "3", log=said.append)
+    assert "senbonzakura score" in "\n".join(said) or "senbonzakura convert" in "\n".join(said)
+    assert step is not None and step["command"] in ("convert", "score")

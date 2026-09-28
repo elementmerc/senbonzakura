@@ -33,11 +33,17 @@ beats a job that hangs in CI until something kills it.
 import sys
 from pathlib import Path
 
-from . import bundled, runrecord
+from . import bundled, runrecord, say
 
-#: Datasets offered by name. Nothing here ships with the package except `default`: the rest are
-#: fetched on demand from the Hub, under the licence shown, so a user chooses with the terms in
-#: front of them rather than discovering them later.
+#: Datasets offered by name that are FETCHED FROM THE HUB. What ships inside the package is
+#: generated from `corpora.CORPORA` by `_bundled_entries` below and offered first.
+#:
+#: WHAT THIS TABLE USED TO GET WRONG. `advbench` was listed here, pointed at
+#: `walledai/AdvBench::train`, and told the reader it is "GATED on the Hub" and needs
+#: `hf auth login` before it will fetch. The package bundles AdvBench's 520 prompts, along with
+#: HarmBench, StrongREJECT and XSTest, and `--harmful advbench` reads them off the disk with the
+#: network unplugged. So the menu sent a newcomer to authenticate against a service for a file
+#: they had already installed, and a third of them would have given up there.
 #:
 #: The licence column is the reason this list is short. Every entry has to be one whose position
 #: has actually been checked, and a corpus nobody has traced does not go on a menu.
@@ -69,22 +75,6 @@ KNOWN_DATASETS = [
                 "with like. Declares no licence; see the dataset card.",
     },
     {
-        "key": "advbench",
-        "spec": "walledai/AdvBench::train",
-        "side": "harmful",
-        "title": "AdvBench (Zou et al. 2023)",
-        "licence": "MIT",
-        # OFFERED SECOND, AND SAYING SO, because it is gated. It was the first harmful choice and
-        # therefore the default, and taking the default gave a newcomer with no Hugging Face
-        # account an authentication error from a menu that had promised them a yardstick.
-        # `hf auth login`, NOT `huggingface-cli login`. The newer client replaced it, and this was
-        # the only place in the tool still handing a reader the old spelling: `hubmessage` strips
-        # exactly that line out of upstream's own advice for being stale, so our own menu was giving
-        # the command we treat as wrong when somebody else says it. Found 2026-09-27.
-        "note": "520 harmful behaviours, the field's common yardstick. GATED on the Hub: it "
-                "needs a Hugging Face account and `hf auth login` before it will fetch.",
-    },
-    {
         "key": "harmless-alpaca",
         "spec": "mlabonne/harmless_alpaca::train",
         "side": "harmless",
@@ -95,13 +85,53 @@ KNOWN_DATASETS = [
 ]
 
 
+#: The bundled corpora this menu offers, in the order the design put them. A curated subset rather
+#: than everything in `corpora.CORPORA`: the two halves of XSTest and HarmBench's copyright set are
+#: real and answer narrower questions, and a menu that lists six near-identical rows is how a
+#: person stops reading menus. The ones left off are still reachable, because `Something of my own`
+#: takes a bundled name as readily as a path.
+_BUNDLED_ON_THE_MENU = ("advbench", "strongreject", "harmbench", "xstest-safe")
+
+#: `corpora.arm` to the side of the contrast this file asks about.
+_ARM_SIDE = {"harmful": "harmful", "benign": "harmless"}
+
+
+def _bundled_entries(side):
+    """Menu rows for the corpora inside the package, generated from the table that defines them.
+
+    GENERATED, NOT TYPED. The row counts and licences on this menu are the ones the licences
+    themselves depend on, and this file already carried a copy of them that had gone wrong in the
+    worst available way: it named a bundled corpus as a gated Hub download. One source, so a
+    corpus repinned upstream cannot leave a stale number on a menu.
+    """
+    from . import corpora
+    rows = []
+    for key in _BUNDLED_ON_THE_MENU:
+        c = corpora.CORPORA[key]
+        if _ARM_SIDE.get(c.arm) != side:
+            continue
+        rows.append({
+            "key": key, "spec": key, "side": side, "licence": c.licence,
+            "title": c.name,
+            # FIRST SENTENCE ONLY. `corpora` writes for `doctor`, which has room for a paragraph;
+            # a menu row that runs to four lines is how a person stops reading the menu.
+            "note": f"{c.rows:,} prompts, inside the package. {c.note.split('. ')[0]}",
+        })
+    return rows
+
+
 def by_side(side):
-    """The corpora that hold `side`, plus a way to name one that is not on the list."""
-    entries = [e for e in KNOWN_DATASETS if e["side"] == side]
+    """The corpora that hold `side`, plus a way to name one that is not on the list.
+
+    Bundled first, because a set that is already on the disk cannot be gated, cannot need an
+    account, and works with the network unplugged.
+    """
+    entries = _bundled_entries(side) + [e for e in KNOWN_DATASETS if e["side"] == side]
     entries.append({
         "key": "own", "spec": None, "side": side, "licence": "yours",
         "title": "Something of my own",
-        "note": "a text file (one prompt per line), a CSV/JSON with a prompt column, or a Hub id",
+        "note": "a text file (one prompt per line), a CSV/JSON with a prompt column, a Hub id, "
+                "or the name of another bundled corpus",
     })
     return entries
 
@@ -180,9 +210,44 @@ def render_command(command, options):
     return " ".join(parts)
 
 
+def _wrap(text, *, indent="", reserve=0, log=print):
+    """Print all but the last line of `text`, wrapped, and return the last line.
+
+    WHY THE WHOLE FILE NEEDED THIS. Every question here was a hand-written literal handed straight
+    to `input`, so a question longer than the terminal was re-wrapped by the terminal itself, at
+    whatever character happened to land on the edge. `doctor` has gone through `say` for months
+    and reads correctly at 60 columns; the guided mode, which is the screen written for somebody
+    who has never used the tool, was the one that did not.
+
+    The last line comes back rather than being printed, because a question ends in the prompt the
+    person types on, and `[default]: ` has to stay on it.
+    """
+    lead = len(text) - len(text.lstrip("\n"))
+    for _ in range(lead):
+        log("")
+    body = say.lines(text.lstrip("\n"), indent=indent,
+                     columns=max(40, say.width() - reserve)) or [""]
+    for line in body[:-1]:
+        log(line)
+    return body[-1]
+
+
+def _say(text, log=print, indent=""):
+    """One paragraph, wrapped to this terminal.
+
+    The literals in this file were hand-wrapped at 79 columns, which reads correctly on a wide
+    terminal and raggedly on a narrow one, and the guided mode is the screen most likely to be
+    open in a half-width window beside something else. `say` already leaves machine markers and
+    indented commands alone, so a command a person has to paste is never folded.
+    """
+    for line in say.lines(text, indent=indent) or [""]:
+        log(line)
+
+
 def ask(question, *, default=None, ask_fn=input, log=print):
     """One free-text question with an optional default."""
     suffix = f" [{default}]" if default is not None else ""
+    question = _wrap(question, reserve=len(suffix) + 2, log=log)
     while True:
         try:
             answer = ask_fn(f"{question}{suffix}: ").strip()
@@ -198,12 +263,14 @@ def ask(question, *, default=None, ask_fn=input, log=print):
 def choose(question, options, *, default=0, ask_fn=input, log=print):
     """Pick one of `options`, a list of (label, description). Returns the index."""
     log("")
-    log(question)
+    log(_wrap(question, log=log))
     for i, (label, description) in enumerate(options, 1):
         marker = "*" if i - 1 == default else " "
         log(f"  {marker} {i}. {label}")
         if description:
-            log(f"       {description}")
+            for line in say.lines(description, indent="       ",
+                                  columns=max(40, say.width())):
+                log(line)
     while True:
         try:
             answer = ask_fn(f"Choose 1 to {len(options)} [{default + 1}]: ").strip()
@@ -269,6 +336,106 @@ def pick_side(side, question, ask_fn=input, log=print):
     return entry["spec"], entry["licence"]
 
 
+#: What makes a directory a model this can edit. Asked of the files rather than of the cache
+#: index, which is the distinction that decides this whole screen: see `cached_models`.
+WEIGHT_SUFFIXES = (".safetensors", ".bin")
+
+
+def cached_models():
+    """Hub models on this machine that actually hold weights, largest first.
+
+    IT IS NOT "IS IT CACHED", IT IS "DOES THE SNAPSHOT HOLD WEIGHTS". A repository lands in the
+    cache the moment anything reads its config, so a cache listing is full of entries that are one
+    `config.json` and nothing else. The cache on the development machine holds two such repos, and
+    a picker built on the index would have offered a 17 GB model as ready to go and been wrong
+    about both words: it is not 17 GB here and it is not ready.
+
+    Every failure is answered with an empty list. This screen is a convenience on top of typing a
+    model id, and a cache that cannot be read is a reason to ask the question rather than a reason
+    to stop.
+    """
+    try:
+        from huggingface_hub import scan_cache_dir
+        info = scan_cache_dir()
+    except Exception:       # see the docstring: no cache is not a failure here
+        return []
+    found = []
+    for repo in getattr(info, "repos", ()):
+        if getattr(repo, "repo_type", None) != "model":
+            continue
+        for revision in getattr(repo, "revisions", ()):
+            if any(str(f.file_name).endswith(WEIGHT_SUFFIXES) for f in revision.files):
+                found.append({"id": repo.repo_id, "bytes": repo.size_on_disk, "note": ""})
+                break
+    return sorted(found, key=lambda m: -m["bytes"])
+
+
+def edited_models(root="."):
+    """Directories under `root` holding a model, which on this machine means one you made.
+
+    One level down, for the reason `resumable_runs` gives: a recursive walk of somebody's home
+    directory to populate a menu is slow and lists runs from projects they are not in.
+    """
+    found = []
+    try:
+        entries = sorted(Path(root).iterdir())
+    except OSError:
+        return found
+    for d in entries:
+        if not d.is_dir() or not (d / "config.json").is_file():
+            continue
+        weights = [p for p in d.iterdir() if p.suffix in WEIGHT_SUFFIXES]
+        if not weights:
+            continue
+        found.append({"id": str(d), "bytes": sum(p.stat().st_size for p in weights),
+                      "note": "yours, already edited"})
+    return found
+
+
+def _size(n):
+    return f"{n / 1e9:.2f} GB" if n else "—"
+
+
+def models_on_this_machine(root="."):
+    """Everything a run could start from without downloading anything. Yours first."""
+    return edited_models(root) + cached_models()
+
+
+def pick_model(ask_fn=input, log=print, root="."):
+    """Which model to edit.
+
+    WHY THIS IS A LIST OF WHAT IS HERE AND NOT A LIST OF SUGGESTIONS. The question used to be one
+    free-text line with `Qwen/Qwen3-1.7B` as the default, so pressing Enter through the walk
+    started a download of a model nobody had chosen. A nominated model is a recommendation, and
+    this project has no measurement that would justify recommending one over another; a fixed list
+    also ages into naming whatever was fashionable the year it shipped.
+
+    What is on this machine is a fact rather than a recommendation, and it is the case where
+    nothing has to be downloaded and nothing can be gated. When there is nothing here, the screen
+    says so and asks, which is a better first screen than five names nobody chose.
+    """
+    found = models_on_this_machine(root)
+    if not found:
+        log("")
+        _say("Nothing on this machine holds weights this can edit, so this one has to be "
+             "fetched.", log=log)
+        return ask("Which model? (a Hub id, or a local directory)", ask_fn=ask_fn, log=log)
+
+    # Trimmed, because this is a menu rather than an inventory. `doctor` is the place that lists
+    # everything; a screen asking one question offers the plausible answers and a way to type any
+    # other. The cut is by size order, so the largest models on the machine are the ones shown.
+    shown = found[:6]
+    options = [(f"{m['id']}   {_size(m['bytes'])}", m["note"]) for m in shown]
+    options.append(("Something else", "a Hub id, or a folder on disk"))
+    log("")
+    _say("These are already on this machine, so nothing is downloaded and nothing can be gated.",
+         log=log)
+    index = choose("Which model?", options, default=0, ask_fn=ask_fn, log=log)
+    if index == len(shown):
+        return ask("  A Hub id, or a local directory", ask_fn=ask_fn, log=log)
+    return shown[index]["id"]
+
+
 def device_available(name):
     """Whether this machine can actually use a device, or None when it cannot be asked.
 
@@ -323,9 +490,16 @@ def pick_device(ask_fn=input, log=print):
         # person composing a command for a machine with a card must still be able to say so.
         first_usable = CPU_INDEX
         log("")
-        log("  NOTE: PyTorch is not installed here, so this cannot check what the machine has.")
-        log("        cpu is the default for that reason alone. Choose cuda if you know there is")
-        log("        a card, and `pip install senbonzakura[abliterate]` is what installs torch.")
+        # `pip install senbonzakura`, AND NOT AN EXTRA. This line said
+        # `pip install senbonzakura[abliterate]` until 2026-09-28, which was right before Q-27
+        # moved torch into the base install and has been advice that changes nothing ever since:
+        # the extra still resolves, to the package itself, so somebody following it watched pip
+        # do nothing and was no closer to a working card.
+        _say("NOTE: PyTorch is not installed here, so this cannot check what the machine has. "
+             "cpu is the default for that reason alone. Choose cuda if you know there is a card. "
+             "`pip install senbonzakura` brings torch, and `senbonzakura setup` fits it to this "
+             "machine.",
+             log=log, indent="        ")
     index = choose("Where should it run?", marked, default=first_usable,
                    ask_fn=ask_fn, log=log)
     return DEVICES[index][0]
@@ -718,8 +892,18 @@ def ask_trials(ask_fn=input, log=print):
     never had.
     """
     while True:
-        answer = ask("How many search trials? More is better and slower; the presets pick 60 to "
-                     "100 by model size, and 200 explores the frontier properly",
+        # THE PRESETS ARE IN THE PROMPT RATHER THAN IN A MENU, and this is the design's four-row
+        # screen collapsed to one line. Its estimate column reads `—` on every row, because
+        # nothing here can price a trial before a trial has run, and a menu of three numbers with
+        # no numbers beside them carries nothing the numbers do not. A typed answer also needs no
+        # `Custom…` row, which is the row that screen existed to justify.
+        #
+        # None of the three is called usual. The flat default is 60 and the preset picks 100, 80
+        # or 64 by model size, so naming one of these as the convention would invent a convention
+        # the tool does not have, which is the defect this prompt already carried once.
+        answer = ask("How many search trials? More is better and slower: 40 is a quick look, "
+                     "200 explores the frontier, 500 is thorough. Left alone, the auto preset "
+                     "picks 60 to 100 by model size",
                      default="200", ask_fn=ask_fn, log=log)
         try:
             count = int(str(answer).strip())
@@ -733,8 +917,8 @@ def ask_trials(ask_fn=input, log=print):
 def plan_abliteration(ask_fn=input, log=print):
     """Walk the questions that decide whether an abliteration run means anything."""
     log("")
-    log("Senbonzakura, guided mode. Ctrl+C stops at any point and changes nothing.")
-    log("Every answer has a default, shown in brackets; press Enter to take it.")
+    _say("Senbonzakura, guided mode. Ctrl+C stops at any point and changes nothing. Every "
+         "answer has a default, shown in brackets; press Enter to take it.", log=log)
 
     # Before any of the questions, because the cheapest run is the one already half done.
     carry_on = offer_resume(ask_fn=ask_fn, log=log)
@@ -780,8 +964,7 @@ def plan_abliteration(ask_fn=input, log=print):
                 raise AbandonedError
             recipe = "abliterate"
 
-    model = ask("\nWhich model? (a Hub id, or a local directory)",
-                default="Qwen/Qwen3-1.7B", ask_fn=ask_fn, log=log)
+    model = pick_model(ask_fn=ask_fn, log=log)
 
     if recipe == "measure":
         # Stops after the questions this recipe's command actually takes. The remaining abliterate
@@ -879,25 +1062,204 @@ def steps(plan):
     return ordered
 
 
+#: The commands whose pre-flights this board can run. The other recipes print a help page or score
+#: a model, and neither has an abliteration's pre-flight surface.
+_EDITS_A_MODEL = ("kageyoshi", "abliterate", "auto")
+
+#: What each mark means, and the order they sort in when the board has to lead with the worst.
+PASS, ADVISORY, FAIL = "✓", "!", "✗"
+
+
+def _machine_rows(plan):
+    """What is true of this machine, as (mark, label, detail)."""
+    import shutil
+
+    rows = []
+    device = str(plan["options"].get("--device", "") or "").strip().lower()
+    if device.startswith("cuda"):
+        # None rather than False when torch is absent, and the difference matters here: "no card"
+        # and "cannot tell yet" are different things to print to somebody about to spend an hour.
+        available = device_available("cuda")
+        if available is None:
+            rows.append((ADVISORY, "card",
+                         ("torch is not installed here, so this cannot be asked yet. "
+                          "`senbonzakura doctor` answers it.")))
+        else:
+            rows.append((PASS if available else FAIL, "card",
+                         "an NVIDIA card is available" if available else
+                         "no CUDA device on this machine, and --device cuda was chosen"))
+    elif device:
+        rows.append((PASS, "device", device))
+
+    out = plan["options"].get("--out")
+    if out:
+        try:
+            probe = Path(out)
+            probe = probe if probe.exists() else (probe.parent or Path("."))
+            free = shutil.disk_usage(probe).free
+        except OSError:
+            free = None
+        if free is not None:
+            # No threshold, because nothing here knows the model's size yet. A number the reader
+            # can judge beats a verdict this cannot support: `crashsafe` refuses on the real
+            # figure once the weights are resident, and that is where the arithmetic belongs.
+            rows.append((PASS, "disk", f"{free / 1e9:.1f} GB free where the output goes"))
+    return rows
+
+
+def _checked_rows(plan):
+    """The tool's own pre-flights, run BEFORE the confirm instead of after it.
+
+    WHY THIS IS THE REAL FIX AND THE BOARD IS THE DECORATION. Every check below already existed and
+    every one of them ran inside `run_parsed`, which the guided mode reaches only once the person
+    has answered "Run it? y". So the walk asked for a commitment and then went to find out whether
+    the run was possible, and a refusal that was decidable from the command line alone arrived
+    after the decision it should have informed.
+
+    The checks are CALLED rather than reimplemented, and their refusals are caught rather than
+    parsed. A second copy of "is this device usable" that agreed with the first until one of them
+    was edited is this project's most repeated defect; here the board is a different presentation
+    of the same function, so it cannot drift from what the run will do.
+
+    An empty list when `cli` will not import: the guided mode runs on a base install where torch
+    may be absent, and a board that cannot be built is a reason to say so rather than to stop.
+    """
+    from .parser import build_parser, split_mode
+
+    try:
+        from . import cli
+    except Exception:       # a base install with no torch. `_board` says so rather than lying.
+        return None
+
+    argv = _argv_for({"command": plan["command"], "options": plan["options"]})
+    try:
+        _bankai, rest = split_mode(argv)
+        args = build_parser().parse_args(rest)
+        cli.resolve_model(args)
+        cli.resolve_track(args, log=lambda *_a, **_k: None)
+    except SystemExit as e:
+        return [(FAIL, "the command", str(e))]
+
+    #: (label, check). Ordered cheapest and most local first, which is the order `run_parsed`
+    #: itself uses and the order a reader wants: a fault in what they typed before a fault in
+    #: what is on the disk.
+    checks = (
+        ("the numbers", cli._preflight_numbers),                    # noqa: SLF001
+        ("the model", cli._preflight_model),                        # noqa: SLF001
+        ("how much it generates", cli._preflight_generation_budget),  # noqa: SLF001
+        ("the device", cli._preflight_device),                      # noqa: SLF001
+        ("resuming", cli._preflight_recovery),                      # noqa: SLF001
+        ("every flag does something", cli._preflight_dead_knobs),   # noqa: SLF001
+        ("where it goes", cli._preflight_output),                   # noqa: SLF001
+        ("the prompts", cli.refuse_without_a_track),
+    )
+    rows = []
+    for label, check in checks:
+        said = []
+        try:
+            # Several of these take a log and use it for advisories rather than refusals. Those
+            # lines are the check's own words about a run that will work, so they become the row's
+            # detail rather than being printed over the board.
+            try:
+                check(args, log=said.append)
+            except TypeError:
+                check(args)
+        except SystemExit as e:
+            rows.append((FAIL, label, str(e.code if isinstance(e.code, str) else e)))
+            continue
+        except Exception as e:      # a check that crashes is a finding, not a silent pass
+            rows.append((ADVISORY, label,
+                         f"this check could not run: {type(e).__name__}: {e}"))
+            continue
+        detail = " ".join(s.strip() for s in said if str(s).strip())
+        rows.append((ADVISORY if detail else PASS, label, detail))
+    return rows
+
+
+def _board(plan, log=print):
+    """Print the pre-flight, and answer whether anything is wrong with the run.
+
+    COLLAPSED WHEN IT IS CLEAN, and this is the whole argument for the hybrid. A board that prints
+    nine ticks before every run is nine lines of ceremony, and a reader learns to skip it; the run
+    it is protecting is the one where the tenth line says something. So a clean board is one line
+    and a board with something to say is drawn in full.
+    """
+    if plan["command"] not in _EDITS_A_MODEL:
+        return True
+
+    chosen = [(PASS, label, str(value)) for label, value in (
+        ("model", plan["options"].get("--model")),
+        ("prompts", plan["options"].get("--track")),
+        ("output", plan["options"].get("--out")),
+        ("trials", plan["options"].get("--trials")),
+    ) if value not in (None, "")]
+    machine = _machine_rows(plan)
+    checked = _checked_rows(plan)
+
+    groups = [("WHAT YOU CHOSE", chosen), ("YOUR MACHINE", machine)]
+    if checked is None:
+        groups.append(("WHAT WE CHECKED",
+                       [(ADVISORY, "not run",
+                         ("the deep-learning stack is not installed here, so these cannot be "
+                          "checked until it is"))]))
+    else:
+        groups.append(("WHAT WE CHECKED", checked))
+
+    rows = [r for _name, group in groups for r in group]
+    bad = [r for r in rows if r[0] == FAIL]
+    advisory = [r for r in rows if r[0] == ADVISORY]
+
+    if not bad and not advisory:
+        log("")
+        log(f"Pre-flight: {len(rows)} checks, all clear.")
+        return True
+
+    log("")
+    log(f"  PRE-FLIGHT · {plan['options'].get('--model', '')}")
+    for name, group in groups:
+        if not group:
+            continue
+        log("")
+        log(f"  {name}")
+        log("")
+        for mark, label, detail in group:
+            first, *rest = say.lines(detail, columns=max(40, say.width() - 22)) or [""]
+            log(f"    {mark}  {label:<14} {first}".rstrip())
+            for line in rest:
+                log(f"       {'':<14} {line}")
+    log("")
+    log(f"    {len(rows)} checks · {len(rows) - len(bad) - len(advisory)} pass · "
+        f"{len(advisory)} advisory · {len(bad)} failing")
+    if bad:
+        log("")
+        log("  Nothing has run. A failing check is a run that cannot work, so the command below")
+        log("  is printed for the record and starting it would waste the time it asks for.")
+    return not bad
+
+
 def present(plan, *, ask_fn=input, log=print):
     """Show the commands, the licence, and ask. Returns the first command line, or None if declined."""
     ordered = steps(plan)
     lines = [render_command(s["command"], s["options"]) for s in ordered]
+    # BEFORE THE COMMAND AND BEFORE THE CONFIRM. The board answers whether the run can work, and
+    # an answer that arrives after the person has committed is not an answer, it is a receipt.
+    clean = _board(plan, log=log)
     log("")
     if len(ordered) > 1:
         count = _HOW_MANY.get(len(ordered), str(len(ordered)))
-        log(f"These are the {count} commands that will run, in order. They are also what goes in a")
-        log("method section, and what to type next time:")
+        _say(f"These are the {count} commands that will run, in order. They are also what goes "
+             f"in a method section, and what to type next time:", log=log)
     else:
-        log("This is the command that will run. It is also the one to put in a method section,")
-        log("and the one to type next time:")
+        _say("This is the command that will run. It is also the one to put in a method section, "
+             "and the one to type next time:", log=log)
     log("")
     for line in lines:
         log(f"    {line}")
     log("")
     if plan.get("licence") and plan["licence"] != "yours":
-        log(f"The prompts are under {plan['licence']}. Attribution is required, and if that")
-        log("includes a non-commercial term then commercial use of the corpus is not permitted.")
+        _say(f"The prompts are under {plan['licence']}. Attribution is required, and if that "
+             f"includes a non-commercial term then commercial use of the corpus is not "
+             f"permitted.", log=log)
         log("")
     # `[y/N]`, AND IT IS THE ONLY PROMPT IN THE WALK THAT DEFAULTS TO NO.
     #
@@ -917,10 +1279,116 @@ def present(plan, *, ask_fn=input, log=print):
     # prints a help page and stops costs nothing, so the safe-default reasoning above does not
     # apply to it, and applying it anyway made the one free entry on the recipe menu a dead end.
     # A bare Enter there answered "Nothing was run." to somebody who had asked to see the flags.
-    if not confirm("Run it?", default=bool(plan.get("prints_only")), ask_fn=ask_fn, log=log):
+    # A SOFT GATE, in the words the rest of the tool uses. A failing check means the run cannot
+    # work and the person is still the one who decides, so the question changes rather than
+    # disappearing: "anyway" is the whole of the warning a second time, in one word.
+    question = "Run it?" if clean else "Run it anyway?"
+    if not confirm(question, default=bool(plan.get("prints_only")), ask_fn=ask_fn, log=log):
         log("Nothing was run. The commands above still work if you want them later.")
         return None
     return lines[0]
+
+
+def _duration(seconds):
+    """`23m 04s`, or None when nothing timed it."""
+    if seconds is None:
+        return None
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+
+
+def _what_it_cost(out):
+    """The run's own numbers, read back out of the artefact it wrote, as printable lines.
+
+    READ, NOT REMEMBERED. The figures are in `abliteration.json`, which is the file a reader is
+    told to check and the one every other surface quotes. Recomputing them here, or carrying them
+    out of the run in a variable, would be a second account of the same measurement.
+    """
+    import json
+
+    try:
+        with open(Path(out) / "abliteration.json", encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return []
+
+    from .modelcard import _number
+
+    lines = []
+    before, after = record.get("baseline_refusals"), record.get("post_bake_refusals")
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+        lines.append(f"      refusals     {_number(before, 'rate')}  →  {_number(after, 'rate')}")
+    kl = record.get("post_bake_kl")
+    if isinstance(kl, (int, float)):
+        lines.append(f"      drift        {_number(kl, 'kl'):<12} "
+                     f"the cost of the edit, on held-out prompts")
+    return lines
+
+
+#: What can follow a finished abliteration, as (label, command, options builder). Commands rather
+#: than a menu of verbs, because the rule this file keeps is that anything it runs is printed
+#: first, and a follow-on is no exception.
+def _next_steps(plan, out):
+    steps_after = []
+    if not missing_conversion_tools():
+        steps_after.append(("Convert it for llama.cpp", "a single GGUF file, runs on CPU",
+                            {"command": "convert",
+                             "options": {out: True, "--quantise": "Q4_K_M"}}))
+    steps_after.append(("Check it against a second set",
+                        "does it hold up outside the prompts the search saw",
+                        {"command": "score",
+                         "options": {"--model": out, "--eval": "default/bad_eval_ds",
+                                     "--out": "scores.json"}}))
+    return steps_after
+
+
+def finished(plan, *, seconds=None, ask_fn=input, log=print):
+    """The screen at the end of a successful run. Returns a follow-on step, or None.
+
+    WHAT WAS THERE BEFORE: nothing. A guided run that worked printed the tool's own last line and
+    exited, so somebody who had waited twenty-three minutes for a thing they had never made before
+    got no statement of what they now had, where it was, or what it cost.
+
+    THE ONE RESTRAINT, and it is the reason the numbers are laid out the way they are. The
+    celebration belongs to finishing, never to the figures. The refusal pair is measured on this
+    run's own prompts; the drift line carries "on held-out prompts" precisely so a reader can see
+    which of the two survives contact with anything else. A screen that cheered the refusal number
+    would be teaching people to quote it.
+
+    `Nothing, I am done` is the highlighted default, against the design, which highlighted the
+    conversion. Somebody who reaches this screen has what they came for, and a menu whose default
+    keystroke starts another job is the same trap the confirm before the run was rewritten to
+    avoid.
+    """
+    out = plan["options"].get("--out")
+    if plan["command"] not in _EDITS_A_MODEL or not out:
+        return None
+
+    log("")
+    log("  Your model is ready.")
+    log("")
+    trials = plan["options"].get("--trials")
+    took = _duration(seconds)
+    detail = ", ".join(x for x in (f"{trials} trials" if trials else None, took) if x)
+    log(f"      {out}/{'    ' + detail if detail else ''}".rstrip())
+    cost = _what_it_cost(out)
+    if cost:
+        log("")
+        for line in cost:
+            log(line)
+
+    options = _next_steps(plan, out)
+    if not options:
+        return None
+    rows = [("Nothing, I am done", "")]
+    rows += [(label, f"{note}:  {render_command(s['command'], s['options'])}")
+             for label, note, s in options]
+    index = choose("What next?", rows, default=0, ask_fn=ask_fn, log=log)
+    return None if index == 0 else options[index - 1][2]
 
 
 #: What a resumable search leaves in `--out`, and the label for each. Checked on disk rather than
@@ -1095,8 +1563,9 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         return 0
     if not is_tty(stdin or sys.stdin):
         log("senbonzakura: guided mode needs a terminal, and this input is not one.")
-        log("  A script wants the flags rather than the menu. `senbonzakura --help` lists them,")
-        log("  and `senbonzakura interactive` on a terminal prints the command for any run.")
+        _say("A script wants the flags rather than the menu. `senbonzakura --help` lists them, "
+             "and `senbonzakura interactive` on a terminal prints the command for any run.",
+             log=log, indent="  ")
         return 2
     try:
         plan = plan_abliteration(ask_fn=ask_fn, log=log)
@@ -1106,9 +1575,12 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         return 130
     if line is None:
         return 0
+    import time
+
     from .cli import main as cli_main
     ordered = steps(plan)
     step = ordered[0]
+    started = time.time()
     try:
         code = 0
         for i, step in enumerate(ordered):
@@ -1159,7 +1631,21 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         if code:
             log("")
             log_failure(plan, None, step=step, log=log)
-        return code
+            return code
+        # THE RUN WORKED, AND THE WALK USED TO END HERE IN SILENCE. See `finished`.
+        try:
+            follow_on = finished(plan, seconds=time.time() - started, ask_fn=ask_fn, log=log)
+        except AbandonedError:
+            return 0
+        if follow_on is None:
+            return 0
+        log("")
+        log("This is the command, and it is the one to type next time:")
+        log("")
+        log(f"    {render_command(follow_on['command'], follow_on['options'])}")
+        log("")
+        from .entry import exit_status as _exit_status
+        return _exit_status(cli_main(_argv_for(follow_on)))
 
 
 if __name__ == "__main__":   # pragma: no cover

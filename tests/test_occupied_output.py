@@ -30,6 +30,21 @@ import pytest
 from senbonzakura import cli, interactive, lengthsweep, runrecord
 
 
+#: A MACHINE WITH NOTHING ON IT, and every walk below runs on one.
+#:
+#: Two screens in this walk read the machine rather than the answers: the model question offers
+#: what is already in the Hub cache, and the pre-flight board runs the real checks. Left alone,
+#: both make these tests depend on whatever is cached and writable on the box running them, which
+#: is how `test_occupied_output.py` once passed on a build box holding a stray `abliterated/` and
+#: would have failed on a clean runner. The screens themselves are covered by
+#: `test_the_menus_describe_this_install.py` and `test_the_walk_checks_before_it_asks.py`, where
+#: the machine is made explicitly rather than inherited.
+@pytest.fixture(autouse=True)
+def _a_machine_with_nothing_on_it(monkeypatch):
+    monkeypatch.setattr(interactive, "models_on_this_machine", lambda root=".": [])
+    monkeypatch.setattr(interactive, "_checked_rows", lambda plan: [])
+
+
 def _previous_run(d, *names):
     d.mkdir(parents=True, exist_ok=True)
     for name in names or ("abliteration.json",):

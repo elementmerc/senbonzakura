@@ -403,20 +403,72 @@ def _action():
         (Path(__file__).resolve().parents[1] / "action.yml").read_text(encoding="utf-8"))
 
 
-def test_the_action_installs_without_the_deep_learning_stack():
-    """`--no-deps` IS THE WHOLE DESIGN, not an optimisation.
+def test_the_action_installs_the_checker_distribution_and_not_the_big_one():
+    """STAYING TORCH-FREE IS THE DESIGN, and the way it is achieved changed at Q-29.
 
     `pip install senbonzakura` brings torch, transformers, accelerate and optuna: most of a
     gigabyte on every CI run of a repository that only wants its result files read. An action
     costing five minutes of install per run is an action nobody keeps, which loses exactly the
     property it was added for. `test_torch_free.py` is the evidence that the checker works that
     way; this is the assertion that the action actually does it.
+
+    WHAT THIS USED TO ASSERT, AND WHY THAT WAS NOT ENOUGH. It used to require `--no-deps` on every
+    install line, and it passed on 2026-09-28 against an action that could not run at all.
+    `--no-deps senbonzakura` installs the launcher WITHOUT the `senbonzakura_check` package it
+    dispatches to, so the only command the action runs exited 1 saying so. The test was asking
+    about a flag rather than about the package, and a flag is not the property: `senbonzakura-check`
+    declares `dependencies = []`, so naming the right distribution is what keeps the stack out,
+    and `--no-deps` on top of it would only hide the next break the same way.
+
+    THE FIRST VERSION OF THIS TEST DID NOT CATCH IT EITHER. It asked whether the STEP mentioned
+    `senbonzakura-check` anywhere, and the step also contains a comment and a `senbonzakura-check
+    --help` line proving the install, so restoring the broken `pip install --no-deps senbonzakura`
+    left the test green. Found by mutation rather than by reading. That is the same defect as the
+    one recorded at the top of `test_the_gates_are_actually_wired_into_ci.py`, where a check was
+    satisfied by a filename appearing somewhere in a file. So this reads the INSTALL LINE.
     """
     steps = _action()["runs"]["steps"]
-    install = [s for s in steps if "pip install" in (s.get("run") or "")]
-    assert install, "the action does not install the package"
-    assert all("--no-deps" in s["run"] for s in install), (
-        "the action installs the deep-learning stack into somebody else's CI")
+    lines = [ln.strip() for s in steps for ln in (s.get("run") or "").splitlines()
+             if "pip install" in ln and not ln.lstrip().startswith("#")]
+    assert lines, "the action does not install the package"
+    for line in lines:
+        assert re.search(r'"senbonzakura-check', line), (
+            f"the install line does not name the torch-free checker distribution: {line!r}")
+        assert not re.search(r'"senbonzakura(?!-check)', line), (
+            f"this line installs the big distribution, which brings the deep-learning stack into "
+            f"somebody else's CI, and under --no-deps brings a launcher that cannot run: {line!r}")
+
+
+def test_the_action_runs_the_checkers_own_entry_point():
+    """`senbonzakura check` needs BOTH distributions; `senbonzakura-check` needs only one.
+
+    The action installs one of them, so it has to call the command that one provides. Calling the
+    dispatching form is what broke it: the entry point resolved, the subcommand did not.
+    """
+    steps = _action()["runs"]["steps"]
+    body = "\n".join(s.get("run") or "" for s in steps)
+    assert "senbonzakura-check " in body, "the action never invokes the checker"
+    assert not re.search(r"senbonzakura check\b", body), (
+        "the action calls `senbonzakura check`, which is only available when the BIG distribution "
+        "is installed alongside the checker. This action installs the checker alone.")
+
+
+def test_an_unreadable_report_stops_the_action_rather_than_passing_it():
+    """The report is the only evidence the command ran, because `|| true` hides its exit code.
+
+    Findings are a normal non-zero exit, so the action cannot fail on the command's status and
+    must read the report instead. When the command could not run at all, the report was empty,
+    the count substitutions failed, the variables held empty strings, and every gate below is an
+    integer test that ERRORS on an empty string rather than returning false. A skipped gate is a
+    passed gate, so the step reached `exit 0` having checked nothing.
+    """
+    steps = _action()["runs"]["steps"]
+    body = "\n".join(s.get("run") or "" for s in steps)
+    assert re.search(r"if\s*!\s*counts=\$\(", body), (
+        "nothing in the action treats an unreadable report as fatal, so a checker that could not "
+        "run reports a clean sweep")
+    assert "exit 1" in body.split("counts=$(", 1)[1][:800], (
+        "the unreadable-report branch does not leave non-zero")
 
 
 def test_the_action_can_be_told_not_to_block_on_findings_but_defaults_to_blocking():
@@ -502,14 +554,23 @@ def test_the_pre_commit_hook_only_fires_on_plausible_results():
 
 
 def test_the_pre_commit_hook_needs_no_extra_dependencies():
-    """pre-commit builds an isolated environment from this repository, and a hook that pulls
-    torch into it is a hook people remove after a week. The checker imports nothing beyond the
-    standard library, which `test_torch_free.py` asserts by running it with the stack stripped.
+    """Nothing may be added to an environment the hook deliberately does not build.
+
+    THIS TEST USED TO ASSERT `language == "python"`, and its docstring gave the reason as "a hook
+    that pulls torch into it is a hook people remove after a week". The concern was exactly right
+    and the assertion pinned the configuration that causes it: pre-commit's python language runs
+    `pip install .` at this repository's root, which IS torch. The docstring reasoned about the
+    checker's imports; pip reads the root distribution's dependencies. So the test described the
+    risk and then required it. `test_the_pre_commit_hook_installs_nothing` now holds the language.
+
+    What remains here is still worth asserting. `additional_dependencies` is the one way to put
+    something back into a hook that installs nothing, and under `language: script` it would also be
+    silently ineffective, so a declaration here is either a mistake or a misunderstanding.
     """
     hook = _hooks()[0]
-    assert hook["language"] == "python"
     assert not hook.get("additional_dependencies"), (
-        "the hook declares extra dependencies, which defeats the point of a torch-free checker")
+        "the hook declares extra dependencies. It installs nothing by design, so these either do "
+        "nothing or reintroduce the weight the script language exists to avoid.")
 
 
 class TestNothingWasChecked:
@@ -757,3 +818,124 @@ class TestTheEmptyFooterSaysWhichOutcomeThisIs:
         out = io.StringIO()
         cli.main([str(tmp_path)], out=out)
         assert "NOTHING WAS CHECKED" not in out.getvalue()
+
+
+def test_the_pre_commit_hook_installs_nothing():
+    """pre-commit's `python` language would install this repository's ROOT, which is the big one.
+
+    Measured against pre-commit 4.6.2: `languages/python.py` runs `pip install .` in a clone of the
+    hook repository, and this repository's root distribution depends on torch, transformers,
+    accelerate, optuna, pyarrow and sentencepiece. There is no way to name a subdirectory. So a
+    `language: python` hook here puts roughly a gigabyte into somebody's commit hook, whatever the
+    manifest says about the checker importing nothing.
+
+    `script` installs nothing at all, which is correct rather than merely cheaper: the checker
+    declares `dependencies = []`, so there is no dependency for an isolated environment to hold.
+    """
+    hook = _hooks()[0]
+    assert hook["language"] == "script", (
+        f"the hook language is {hook['language']!r}. `python` installs this repository's root "
+        "distribution, and that is the deep-learning stack.")
+
+
+def test_the_pre_commit_entry_point_exists_and_can_be_executed():
+    """`language: script` runs a FILE out of the clone, so the file has to be there and runnable.
+
+    A path that does not resolve, or a file committed without its executable bit, fails at the
+    stranger's machine and nowhere else. Git tracks the mode, so this is checkable here.
+    """
+    import os
+    from pathlib import Path
+
+    hook = _hooks()[0]
+    entry = Path(hook["entry"].split()[0])
+    target = Path(__file__).resolve().parents[1] / entry
+    assert target.is_file(), (
+        f"the hook entry {entry} does not exist, so the hook cannot run from a clone")
+    assert os.access(target, os.X_OK), (
+        f"{entry} is not executable. `language: script` runs it directly, so a missing mode bit "
+        "breaks the hook for everyone who installs it and for nobody who develops it.")
+    assert target.read_text(encoding="utf-8").startswith("#!"), (
+        f"{entry} has no shebang. pre-commit parses it itself on Windows, so without one the hook "
+        "is POSIX-only at best.")
+
+
+def test_the_report_says_how_many_checks_actually_ran(tmp_path):
+    """`applied` is what separates a file that was examined from one that was merely opened.
+
+    It was computed and dropped, so every consumer had to infer "was this checked" from
+    `unchecked` and `not_a_result`, and a file that parsed with every check skipped came out
+    looking checked. The Action's `fail-on-empty` could not fire because of it.
+    """
+    out = io.StringIO()
+    cli.main(["--json", str(_write(tmp_path, "good.json", GOOD))], out=out)
+    entries = json.loads(out.getvalue())
+    assert entries, "no report was produced"
+    for entry in entries:
+        assert "applied" in entry, (
+            "the JSON report does not say how many checks ran, so a reader cannot reproduce the "
+            "command's own n_checked and has to keep a second definition of it")
+    assert entries[0]["applied"] >= 1, (
+        "a recognised artefact reports no checks applied, so nothing actually ran on it")
+
+
+def test_a_file_nobody_could_parse_reports_no_checks_applied(tmp_path):
+    """The other half: `applied` has to be falsy exactly where the command counts nothing.
+
+    Without this the field could be present, always non-zero, and the count built on it would be
+    the same over-report in a new costume.
+    """
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"ran": ["a"]}), encoding="utf-8")
+    out = io.StringIO()
+    cli.main(["--json", "--skip-unknown", str(p)], out=out)
+    entry = json.loads(out.getvalue())[0]
+    assert entry["not_a_result"], "the fixture was recognised as a result after all"
+    assert not entry["applied"], (
+        f"a file no adapter recognised reports applied={entry['applied']!r}, so counting it as "
+        "checked is still possible")
+
+
+class TestSweptIsNotAnExcuseForUnreadable:
+    """The same bytes must not exit 2 when named and 0 when swept.
+
+    FOUND BY RUNNING THE TOOL, 2026-09-28, not by reading it. `senbonzakura check dir/` exited 0
+    over a directory whose every file was malformed JSON, while naming those same files exited 2.
+    A CI step pointed at `results/` therefore went green on a directory of corrupt artefacts, and
+    the GitHub Action, whose default path is a directory, inherited it: `fail-on-unchecked` is on
+    by default and could never fire, because nothing was ever counted as unchecked.
+
+    The sweep discount is still right for what it was written for. Sweeping a directory is not a
+    claim that everything in it is a result, so a config file living in `results/` costs nothing.
+    Being unable to PARSE a file is not that: it is true of the file however it was reached.
+    """
+
+    def _swept(self, tmp_path, name, text):
+        (tmp_path / name).write_text(text, encoding="utf-8")
+        out = io.StringIO()
+        code = cli.main(["--json", str(tmp_path)], out=out)
+        return code, json.loads(out.getvalue())[0]
+
+    def test_malformed_json_swept_from_a_directory_is_unchecked(self, tmp_path):
+        code, entry = self._swept(tmp_path, "broken.json", '{"results": {broken')
+        assert entry["unchecked"], (
+            "a file that could not be parsed was reported as merely not-a-result because it was "
+            "swept rather than named, so nothing counted it and the run went green")
+        assert not entry["not_a_result"]
+        assert code == 2, f"a directory holding an unreadable artefact exited {code}, not 2"
+
+    def test_a_file_that_is_simply_not_a_result_still_costs_nothing_when_swept(self, tmp_path):
+        """The rule the discount exists for, asserted so the fix above cannot swallow it."""
+        code, entry = self._swept(tmp_path, "config.json", json.dumps({"ran": ["a"]}))
+        assert entry["not_a_result"], "a valid, unrecognised file stopped being discounted"
+        assert not entry["unchecked"]
+        assert code == 0, f"an unrecognised swept file now exits {code}; the discount is gone"
+
+    def test_naming_it_and_sweeping_it_agree_for_an_unreadable_file(self, tmp_path):
+        """The property in one line: the verdict is about the file, not about how it was reached."""
+        p = tmp_path / "broken.json"
+        p.write_text('{"results": {broken', encoding="utf-8")
+        named = cli.main([str(p)], out=io.StringIO())
+        swept = cli.main([str(tmp_path)], out=io.StringIO())
+        assert named == swept == 2, (
+            f"named exits {named} and swept exits {swept} for the same bytes")

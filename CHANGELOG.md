@@ -18,6 +18,19 @@ All notable changes to Senbonzakura are recorded here. The format follows
   summarised away, a long run says it is still working every thirty seconds, and a failure quotes the
   tool's last lines either way.
 
+### Changed
+
+- **`senbonzakura check` now exits 2 for a directory holding artefacts it could not read, where it
+  used to exit 0.** If you point a CI step at a results directory and every file in it is corrupt,
+  that step goes from green to red on this release. That is the fix rather than a side effect of it:
+  naming a broken file already exited 2, and sweeping the same file out of a directory exited 0, so
+  the same bytes got opposite verdicts depending on how you reached them. A file nobody could parse
+  is now reported as unchecked either way. A file that is simply not a result artefact, a config
+  living in `results/`, still costs nothing when it is swept, which is what the sweep discount was
+  always for.
+- The JSON report carries `applied`, the number of checks that actually ran on each file, so a
+  reader can tell a file that was examined from one that was only opened.
+
 ### Fixed
 
 - `pip install senbonzakura` is the documented install everywhere. Several pages still told readers

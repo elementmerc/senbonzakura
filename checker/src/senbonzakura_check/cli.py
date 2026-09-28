@@ -164,12 +164,37 @@ def _files(paths):
     return out
 
 
+class Unrecognised(str):
+    """A refusal meaning "I read this and no adapter knows the shape", as opposed to "I could not
+    read it at all".
+
+    A `str` subclass so every caller that treats a problem as a sentence keeps working untouched;
+    the type is carried alongside the words rather than in a second return value nobody would
+    thread through `--pair`.
+
+    WHY THE DIFFERENCE IS LOAD-BEARING, found 2026-09-28 by running the tool rather than reading
+    it. Sweeping a directory is not a claim that everything in it is a result, so an UNRECOGNISED
+    file swept from one costs nothing and the run stays green. That rule was applied to every
+    refusal alike, including "not valid JSON", so a corrupt artefact exited 2 when named and 0 when
+    it sat in a directory: the same bytes, two opposite verdicts. A CI step pointed at `results/`
+    went green on a directory where every file was broken.
+
+    Being unable to READ a file is a fact about the file. Nobody has to claim anything for it to be
+    true, so it is reported as unchecked either way.
+    """
+
+    __slots__ = ()
+
+
 def read_artefact(path):
     """One file in the canonical vocabulary, or (None, why not).
 
     Split out of `inspect_file` because `--pair` needs the same three refusals (unreadable,
     unparseable, unrecognised) on both arms before it can compare anything, and a second copy of
     them would be a second set of error sentences to keep in step.
+
+    The unrecognised one is returned as `Unrecognised`, which reads as its own sentence everywhere
+    and lets the sweep tell "not a result" from "not readable". See that class.
     """
     try:
         doc = read_json_bounded(path)
@@ -185,7 +210,7 @@ def read_artefact(path):
     try:
         return normalise(doc), None
     except UnknownArtefactError as e:
-        return None, str(e)
+        return None, Unrecognised(str(e))
 
 
 def inspect_file(path, checks):
@@ -336,6 +361,19 @@ def main(argv=None, out=None):
     for path, was_named in files:
         named = was_named and claimed
         findings, skipped, problem = inspect_file(path, checks)
+        if not was_named and problem is not None and not isinstance(problem, Unrecognised):
+            # UNREADABLE IS NOT A MATTER OF WHO CLAIMED WHAT. The sweep discount exists for a file
+            # that is simply not a result; a file that could not be parsed at all is broken whether
+            # or not anybody named it, and discounting it let a directory of corrupt artefacts
+            # report a clean sweep and exit 0.
+            #
+            # SCOPED TO THE SWEEP, and `--skip-unknown` is deliberately left alone. That flag is a
+            # different statement: pre-commit picked these paths with a regex, so NONE of them is a
+            # person's claim, and its own help says it treats a named file "the way a swept one" is
+            # treated. Widening it here would change what blocks somebody's commit, which is a
+            # decision rather than a bug fix. The open question it leaves, whether a staged file
+            # that is corrupt should block, is in DEFERRED.md.
+            named = True
         results.append((path, findings, skipped, problem, named,
                         0 if problem else len(checks) - len(skipped)))
 
@@ -362,6 +400,15 @@ def main(argv=None, out=None):
                 "artefact": str(p),
                 "unchecked": problem if named else None,
                 "not_a_result": problem if not named else None,
+                # HOW MANY CHECKS ACTUALLY RAN ON THIS FILE, which is the difference between a
+                # file that was examined and one that was merely opened. It was computed here from
+                # the start and dropped on the floor, so every consumer of this report had to
+                # reconstruct "was this checked" from `unchecked` and `not_a_result` alone, and a
+                # file that parsed with every check skipped came out looking checked. The Action
+                # did exactly that and its `fail-on-empty` could not fire. `n_checked` below is
+                # `not problem and applied`; with this field a reader can reproduce it rather than
+                # keep a second definition that agrees most of the time.
+                "applied": applied,
                 "skipped": sk,
                 "findings": [{
                     "check": f.check_id, "title": f.title, "confidence": f.confidence,

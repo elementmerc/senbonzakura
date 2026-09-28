@@ -1161,3 +1161,103 @@ jobs:
               assert (track / name).is_dir(), f"the split left no {name}"
           print("  the track has both sides split")
           PY
+
+  action:
+    # THE ACTION THIS REPOSITORY PUBLISHES, RUN RATHER THAN PARSED.
+    #
+    # `tests/test_check_cli.py` asserts the shape of `action.yml`: that it installs with no heavy
+    # stack, that its defaults block, that it exposes both counts. Every one of those passed on
+    # 2026-09-28 while the action was comprehensively broken, because none of them ran it.
+    #
+    # It installed `--no-deps senbonzakura`, which brings the launcher without the
+    # `senbonzakura_check` package it dispatches to, so the command exited 1 saying so. The step
+    # swallowed that with `|| true`, the report was empty, the three counts parsed to the empty
+    # string, `[ "" -eq 0 ]` errors rather than returning false, every gate was skipped, and the
+    # step reached `exit 0`. A broken install reported a clean run, on the one channel whose whole
+    # purpose is running without anybody choosing to run it.
+    #
+    # So this job runs it three times, and each case is a defect that actually happened:
+    #   clean    a real artefact with nothing wrong passes, and reports a non-zero `checked`
+    #   finding  an artefact with a known defect FAILS, which is the entire point of the action
+    #   junk     a directory of unrecognised JSON reports checked=0, so `fail-on-empty` can fire.
+    #            It used to report `checked=1` from `len(report)` while the command itself printed
+    #            "NOTHING WAS CHECKED", so the gate named for this case could never reach it.
+    name: the Action this repository publishes actually runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fixtures, in the shape a real consumer produces
+        run: |
+          set -euo pipefail
+          mkdir -p fx/clean fx/finding fx/junk
+          python - <<'PY'
+          import json, pathlib
+          good = {"version": 2, "status": "success",
+                  "eval": {"task": "t", "model": "m"},
+                  "results": {"total_samples": 200, "completed_samples": 200,
+                              "scores": [{"name": "s", "scorer": "choice",
+                                          "scored_samples": 200,
+                                          "metrics": {"accuracy": {"name": "accuracy",
+                                                                   "value": 0.5}}}]}}
+          bad = json.loads(json.dumps(good))
+          # A metric reported with no estimator behind it, which is the check the README leads on.
+          bad["results"]["scores"][0]["scorer"] = None
+          pathlib.Path("fx/clean/good.json").write_text(json.dumps(good))
+          pathlib.Path("fx/finding/bad.json").write_text(json.dumps(bad))
+          # Valid JSON that is not a result artefact. The command reports it, and must not count
+          # it as checked.
+          pathlib.Path("fx/junk/config.json").write_text(json.dumps({"ran": ["a"]}))
+          PY
+
+      - id: clean
+        name: A clean artefact passes, and says it looked at something
+        uses: ./
+        with:
+          path: fx/clean
+
+      - id: finding
+        name: An artefact with a known defect fails
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/finding
+
+      - id: junk
+        name: A directory of unrecognised JSON is empty, not clean
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/junk
+          fail-on-empty: "true"
+
+      - name: The three outcomes are the ones that make the action worth having
+        run: |
+          set -euo pipefail
+          fail=0
+          say() { echo "  $*"; }
+
+          # A green that checked nothing is the failure this whole job exists for, so the clean
+          # case asserts the COUNT and not merely the exit status.
+          if [ "${{ steps.clean.outputs.checked }}" != "1" ]; then
+            echo "::error::the clean run reported checked='${{ steps.clean.outputs.checked }}', not 1. A pass that examined nothing is not a pass."
+            fail=1
+          else say "clean: checked=1, passed"; fi
+
+          if [ "${{ steps.finding.outcome }}" != "failure" ]; then
+            echo "::error::the action PASSED a file with a known finding. That is the defect the action exists to catch."
+            fail=1
+          elif [ "${{ steps.finding.outputs.findings }}" -lt 1 ]; then
+            echo "::error::the action failed the finding case but reported ${{ steps.finding.outputs.findings }} findings, so it failed for some other reason."
+            fail=1
+          else say "finding: outcome=failure, findings=${{ steps.finding.outputs.findings }}"; fi
+
+          if [ "${{ steps.junk.outputs.checked }}" != "0" ]; then
+            echo "::error::a directory holding no result artefacts reported checked='${{ steps.junk.outputs.checked }}'. Unreadable files are being counted as checked, so fail-on-empty can never fire."
+            fail=1
+          elif [ "${{ steps.junk.outcome }}" != "failure" ]; then
+            echo "::error::fail-on-empty was set and nothing was checked, and the action passed anyway."
+            fail=1
+          else say "junk: checked=0, fail-on-empty fired"; fi
+
+          exit $fail

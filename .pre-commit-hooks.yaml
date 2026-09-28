@@ -23,11 +23,36 @@
 # commit regardless is a hook that gets skipped with `--no-verify`, and a skipped hook is worth
 # nothing at all.
 #
-# WHY THERE IS NO `additional_dependencies`. pre-commit builds an isolated environment from this
-# repository, and the checker imports nothing beyond the standard library, which
-# `tests/test_torch_free.py` asserts by running the command with every heavy package made
-# unimportable. So the environment is small and fast to build, which is the difference between a
-# hook people keep and one they remove after a week.
+# WHAT THIS ENVIRONMENT ACTUALLY COSTS, MEASURED 2026-09-28. Read this before quoting the hook's
+# "no model, no GPU, no network" as an install cost, because those are different claims.
+#
+# This comment used to say the environment was "small and fast to build", reasoning that the
+# checker imports nothing beyond the standard library. That is true of the checker and irrelevant
+# here. pre-commit's python language runs `python -mpip install . <additional_dependencies>` in a
+# clone of THIS repository, read from pre-commit 4.6.2's own `languages/python.py`. The root
+# distribution is `senbonzakura`, whose dependencies include torch, transformers, accelerate,
+# optuna, pyarrow and sentencepiece. So a stranger adding this hook downloads roughly a gigabyte
+# into a commit hook.
+#
+# It is the same mistake as the one `action.yml` records: reasoning about what the code IMPORTS
+# when the question is what packaging RESOLVES.
+#
+# SO THE HOOK INSTALLS NOTHING. `language: script` resolves `entry` inside the clone pre-commit
+# already made and runs it with no environment at all: `unsupported_script.py`, which is what
+# `script` maps to in `clientlib.py`, sets `install_environment = lang_base.no_install`. The
+# checker declares `dependencies = []` and imports only the standard library, so an isolated
+# environment was buying nothing here; there was never a dependency to isolate, only the root
+# distribution's, which is exactly what we do not want.
+#
+# The cost is that the hook runs on whatever `python3` is on the user's PATH rather than on an
+# interpreter pre-commit chose, so `checker/pre-commit-entry.py` checks the version itself and
+# says what to do. pre-commit parses the shebang on Windows rather than relying on the OS
+# (`parse_shebang.normalize_cmd`), so this is not a POSIX-only route.
+#
+# A MIRROR REPOSITORY WAS THE OTHER WAY, and is the usual answer to this shape of problem: a
+# second repository whose root is a thin package depending on `senbonzakura-check`. It would have
+# meant a second public repository to tag in step with this one, and a second place for the
+# version to drift. This costs one file and keeps one home.
 
 - id: senbonzakura-check
   name: check evaluation results for known failure modes
@@ -38,8 +63,8 @@
   # `--skip-unknown` because pre-commit chose these paths with a regex and a person did not.
   # Without it a config file living in `results/` would block the commit, and the command's
   # ordinary rule is right: naming a file is a claim that it is a result. A pattern match is not.
-  entry: senbonzakura check --skip-unknown
-  language: python
+  entry: checker/pre-commit-entry.py --skip-unknown
+  language: script
   # Only files that plausibly are results. A JSON file elsewhere in the tree is not a claim that
   # it is one. With `--skip-unknown` above, a false match costs a line of output rather than a
   # blocked commit.

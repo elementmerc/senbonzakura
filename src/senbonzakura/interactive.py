@@ -111,6 +111,10 @@ DEVICES = [
     ("mps", "Apple silicon"),
 ]
 
+#: Where cpu sits in `DEVICES`. Looked up rather than typed, so reordering the menu cannot silently
+#: point the fallback at a card. See `pick_device`.
+CPU_INDEX = next(i for i, (name, _note) in enumerate(DEVICES) if name == "cpu")
+
 
 class AbandonedError(Exception):
     """The user chose to stop.
@@ -229,13 +233,29 @@ def confirm(question, *, default=True, ask_fn=input, log=print):
 
 
 def warn_if_unbundled(log=print):
-    """The bundled track is packed at release time, so a source clone has none."""
+    """The bundled track is packed at release time. Returns True when there is none here.
+
+    TWO CAUSES, TWO REMEDIES, AND IT USED TO PRINT ONE SENTENCE FOR BOTH. A source checkout with no
+    packed track is normal and one command fixes it. An installed wheel with no packed track is
+    defective, and `tools/packaging/pack_track.py` is not in that install, so naming it sends the
+    reader looking for a file that was never shipped. `bundled.running_from_a_checkout` exists to
+    tell those apart and this was the one caller not asking it.
+
+    It also promised "choose another option" while the caller returned the bundled track anyway, so
+    the only way out of the screen was Ctrl+C at the confirm. The offer is the caller's job now, and
+    the return value is what lets it make one.
+    """
     if bundled.is_available():
-        return
+        return False
     log("")
-    log("  NOTE: no bundled track is installed in this checkout. It is packed at release")
-    log("        time, so a wheel has one and a source clone does not. Run")
-    log("        `python tools/packaging/pack_track.py --track <dir>`, or choose another option.")
+    log("  NOTE: no bundled track is installed here.")
+    if bundled.running_from_a_checkout():
+        log("        It is packed at release time, so a source checkout carries none until")
+        log("        `python tools/packaging/pack_track.py --track <dir>` has been run.")
+    else:
+        log("        A wheel is supposed to ship one, so its absence in an installed copy is a")
+        log("        packaging fault rather than something you can fix here. Please report it.")
+    return True
 
 
 def pick_side(side, question, ask_fn=input, log=print):
@@ -291,8 +311,22 @@ def pick_device(ask_fn=input, log=print):
             first_usable = position
         suffix = "" if usable is None else ("" if usable else "  [not available on this machine]")
         marked.append((name + suffix, note))
-    index = choose("Where should it run?", marked,
-                   default=first_usable if first_usable is not None else 0,
+    if first_usable is None:
+        # THE HOLE IN THE DETECTION, and it was in the one case this function was written for.
+        # `device_available` answers None when torch is absent, None is falsy, so nothing ever set
+        # `first_usable` and the default fell back to index 0, which is cuda, with no marker beside
+        # it. A base install is exactly where torch is missing, so the walk that exists to stop a
+        # newcomer being handed `--device cuda` handed it to them by default there.
+        #
+        # cpu rather than the first entry, because it is the one that cannot be wrong about the
+        # hardware, and said out loud rather than chosen quietly: "cannot tell" is not "no", and a
+        # person composing a command for a machine with a card must still be able to say so.
+        first_usable = CPU_INDEX
+        log("")
+        log("  NOTE: PyTorch is not installed here, so this cannot check what the machine has.")
+        log("        cpu is the default for that reason alone. Choose cuda if you know there is")
+        log("        a card, and `pip install senbonzakura[abliterate]` is what installs torch.")
+    index = choose("Where should it run?", marked, default=first_usable,
                    ask_fn=ask_fn, log=log)
     return DEVICES[index][0]
 
@@ -315,11 +349,18 @@ def pick_track(ask_fn=input, log=print):
         ("A track directory I already built",
          "one holding bad_ds, good_ds and bad_eval_ds"),
     ]
-    index = choose("Which prompts should it learn refusal from?", options,
-                   default=0, ask_fn=ask_fn, log=log)
+    while True:
+        index = choose("Which prompts should it learn refusal from?", options,
+                       default=0, ask_fn=ask_fn, log=log)
+        if index != 0 or not warn_if_unbundled(log=log):
+            break
+        # The way out the note used to name and not provide. Defaulting to no, because the run it
+        # would start dies in the track pre-flight and the other two options both work here.
+        if not confirm("  Ask for it anyway?", default=False, ask_fn=ask_fn, log=log):
+            continue
+        break
 
     if index == 0:
-        warn_if_unbundled(log=log)
         return "default", "CC BY-NC 4.0", None
     if index == 2:
         return ask("  Path to the track directory", ask_fn=ask_fn, log=log), "yours", None
@@ -348,10 +389,15 @@ def pick_eval(ask_fn=input, log=print):
                 ("4,636 prompts nothing was fitted or searched on, which is where a number worth "
                  "publishing comes from"))]
     options += [(f"{e['title']}  ({e['licence']})", e["note"]) for e in entries]
-    index = choose("Which prompts should it be measured on?", options,
-                   default=0, ask_fn=ask_fn, log=log)
+    while True:
+        index = choose("Which prompts should it be measured on?", options,
+                       default=0, ask_fn=ask_fn, log=log)
+        if index != 0 or not warn_if_unbundled(log=log):
+            break
+        if not confirm("  Ask for it anyway?", default=False, ask_fn=ask_fn, log=log):
+            continue
+        break
     if index == 0:
-        warn_if_unbundled(log=log)
         return "default/bad_eval_ds", "CC BY-NC 4.0"
     entry = entries[index - 1]
     if entry["spec"] is None:
@@ -379,6 +425,30 @@ RECIPES = [
     ("measure", "Measure a model I already have", "no editing, no output model"),
     ("flags", "Everything by hand", "prints the flag list and stops"),
 ]
+
+
+def missing_conversion_tools():
+    """What this install lacks before it could write a GGUF, as display phrases. Empty when it can.
+
+    ASKED BEFORE THE RUN, WHICH IS THE WHOLE POINT. The "Build a local brain" recipe appends a
+    convert-and-quantise step to a plan whose first command downloads a model and spends GPU hours,
+    and both halves of that step are build-time artefacts: the converter is a Python script fetched
+    by the vendoring tool, and `llama-quantize` is a compiled binary. A source checkout has neither
+    until that tool has run, so the recipe could search for hours, save a model, and only then say
+    it cannot do the half the person picked the recipe for. Every bit of this verdict is knowable
+    before anything is downloaded, which is the reason the rest of the tool pre-flights at all.
+    """
+    from .vendored import VendorError, find_binary, find_script
+    missing = []
+    try:
+        find_script("convert_hf_to_gguf.py")
+    except VendorError:
+        missing.append("the vendored converter script")
+    try:
+        find_binary("llama-quantize", log=lambda _m: None)
+    except VendorError:
+        missing.append("llama-quantize, which is the only thing that can write a Q4_K_M")
+    return missing
 
 
 def resumable_runs(root="."):
@@ -419,6 +489,18 @@ def resumable_runs(root="."):
     return out
 
 
+def licence_for_track(track):
+    """The licence a recorded track implies, in the words the fresh path uses for the same corpus.
+
+    Only the bundled alias is knowable from a string: any other value is a directory on somebody's
+    disk, whose terms are theirs. The resume path used to hard-code "yours" for every run alike, so
+    resuming a run recorded against `default` dropped the CC BY-NC notice that the fresh walk shows
+    for the same 9,877 prompts. A licence obligation that appears on one route and not the other is
+    worse than one that appears on neither, because it reads as a considered decision.
+    """
+    return "CC BY-NC 4.0" if str(track) == "default" else "yours"
+
+
 def resume_plan(path, record, ask_fn=input, log=print):
     """The command that carries on the run in `path`, filled in from what that run recorded.
 
@@ -428,12 +510,29 @@ def resume_plan(path, record, ask_fn=input, log=print):
     been worse: `--track` has a default, so a resume that omits it carries on one corpus's trials
     while scoring new ones against another, and no artefact says the run changed corpus halfway.
 
-    Both come off the record the run writes before it starts searching. A run from a build that
-    predates that record cannot be reconstructed, so its inputs are asked for rather than guessed,
-    and the same guard in the abliterator refuses the pair if they disagree with the study anyway.
+    THE SAME MISTAKE THREE MORE TIMES, found 2026-09-28. `run.json` also records the device, the
+    trial budget and the search strategy, and this read none of them, so the parser default won
+    every time:
+
+    - `--device` fell back to cuda, and a run resumed on the machine it was copied to died in the
+      device pre-flight. That is the one the operator actually met.
+    - `--trials` fell back to 60 against a study with 150 trials already in it, so the remaining
+      budget computed to zero and the run announced "the trial budget is already spent" and baked.
+      The model came out of a search the user had asked to be 200 trials, and every artefact said
+      otherwise, with nothing on screen asking them.
+    - `--search` is pinned in `runrecord.PINNED`, so a study built with `--search scalar` resumed
+      at the default pareto is refused outright, over a flag this menu has never mentioned.
+
+    Anything recorded is carried, and anything carried that could surprise the reader is said out
+    loud before the confirm rather than left in the printed line for them to notice.
+
+    A run from a build that predates the record cannot be reconstructed, so its inputs are asked
+    for rather than guessed, and the same guard in the abliterator refuses the pair if they
+    disagree with the study anyway.
     """
+    record = record or {}
     options = {}
-    if record and record.get("model"):
+    if record.get("model"):
         options["--model"] = record["model"]
     else:
         log("")
@@ -441,15 +540,79 @@ def resume_plan(path, record, ask_fn=input, log=print):
         log("  now keep. Resuming with the wrong one would continue this search against a")
         log("  different model, so it has to be named.")
         options["--model"] = ask("  Which model was it?", ask_fn=ask_fn, log=log)
-    if record and record.get("track"):
+    if record.get("track"):
         options["--track"] = record["track"]
     else:
         options["--track"] = ask("  And which track was it scored on?", default="default",
                                  ask_fn=ask_fn, log=log)
     options["--out"] = path
-    options["--resume"] = True
-    command = "abliterate" if record and record.get("bankai") is False else "kageyoshi"
-    return {"command": command, "options": options, "licence": "yours", "recipe": "resume"}
+
+    # THE FLAG THAT ACTUALLY RE-BAKES. A directory holding `best-config.json` and no study is
+    # offered as "a winning config, so it re-bakes in minutes rather than re-searching", and this
+    # emitted `--resume`, which finds no study, creates one, and starts a fresh search from trial
+    # zero under a log line saying "(resuming)". The promise was minutes and the cost was the whole
+    # search again. `--bake-config` is the flag that does what the menu row says, and the guided
+    # mode had never emitted it.
+    root = Path(path)
+    baking = (root / BAKEABLE).is_file() and not (root / STUDY_DB).is_file()
+
+    notes = []
+    device = record.get("device")
+    if device:
+        options["--device"] = device
+        if device_available(device) is False:
+            notes.append(f"--device {device}, which is what it ran on. This machine cannot use "
+                         f"that device, so change it on the line above or the pre-flight refuses.")
+        else:
+            notes.append(f"--device {device}, the device the first leg ran on.")
+    trials = record.get("trials")
+    if trials and not baking:
+        options["--trials"] = trials
+        notes.append(f"--trials {trials}, the budget the first leg was given. Without it the "
+                     f"default of 60 applies, and a study already past 60 trials would be "
+                     f"declared finished and baked early.")
+    search = record.get("search")
+    if search:
+        options["--search"] = search
+        notes.append(f"--search {search}, the strategy the completed trials were searched with. "
+                     f"The study is named after it, so a different one starts from trial zero.")
+
+    if baking:
+        options["--bake-config"] = str(root / BAKEABLE)
+    else:
+        options["--resume"] = True
+
+    log("")
+    if baking:
+        log(f"  {path} holds a winning configuration and no study, so this bakes that")
+        log("  configuration straight out rather than searching for it again.")
+    else:
+        log("  The completed trials in the study are kept and the search carries on from them.")
+    # HONESTY ABOUT WHAT IS WRITTEN OVER. This screen used to open with "Nothing there is
+    # overwritten", which is false of every resume: the run record, the winning config and the
+    # saved weights are all rewritten in that directory as the run goes on. What survives is the
+    # completed trials, which is the thing worth saying, and saying it accurately costs nothing.
+    log("  The run record, the winning config and any saved weights in that directory are")
+    log("  written over as it goes; the completed trials are what is preserved.")
+    if notes:
+        log("")
+        log("  Taken from what that run recorded, so this leg matches the last one:")
+        for note in notes:
+            log(f"    {note}")
+
+    # WHAT A RESUME CANNOT KNOW. `run.json` records the inputs of the abliteration and nothing
+    # about the recipe around it, so a person who chose "Build a local brain" and crashed gets the
+    # model baked and no GGUF, with nothing saying a step is missing. It cannot be added silently
+    # and there is no recorded answer to read, so the command is named instead.
+    log("")
+    log("  This edits and saves the model; it converts nothing. If this run was headed for a")
+    log("  GGUF, that is a second command once it finishes:")
+    log("")
+    log(f"    {render_command('convert', {path: True, '--quantise': 'Q4_K_M'})}")
+
+    command = "abliterate" if record.get("bankai") is False else "kageyoshi"
+    return {"command": command, "options": options,
+            "licence": licence_for_track(options["--track"]), "recipe": "resume"}
 
 
 def offer_resume(root=".", ask_fn=input, log=print):
@@ -469,15 +632,24 @@ def offer_resume(root=".", ask_fn=input, log=print):
         return None
     path, _what, record = found[index]
     log("")
-    log(f"  Carrying on with {path}. Nothing there is overwritten: the search continues from the")
-    log("  trials it already has, and if it had already finished it goes straight to baking.")
+    log(f"  Carrying on with {path}.")
     return resume_plan(path, record, ask_fn=ask_fn, log=log)
 
 
-def ask_output(ask_fn=input, log=print):
+def ask_output(ask_fn=input, log=print, *, chosen=None):
     """Where the edited model goes, and what to do when something is already there.
 
-    Returns (path, resume).
+    Returns (path, resume). `chosen` is the answers already given, keyed as `runrecord.PINNED` is.
+
+    THE LAST QUESTION USED TO INVALIDATE THE FIRST TWO IN SILENCE. The walk asks for the model, the
+    track, the device and then the output, and "Continue that run" here adds `--resume`, which
+    makes `refuse_across_inputs` pin the model, the track and the search against the `run.json`
+    already sitting in that directory. So answers given four screens earlier could be contradicted
+    by the last one, and the person found out from a refusal at the end, after a track may already
+    have been rebuilt on disk from an answer that no longer applies.
+
+    The record is right there, and this module already reads it to decorate the menu, so the clash
+    is shown at the moment the choice is made and the person picks which of the two wins.
 
     A CHOICE RATHER THAN A WARNING, and that is the point of it (critique finding 5). A warning is
     what a person scrolls past on the way to the next question; this project has lost three
@@ -506,11 +678,56 @@ def ask_output(ask_fn=input, log=print):
             ("Continue that run", "resumes the search where it stopped, adds --resume"),
         ], default=0, ask_fn=ask_fn, log=log)
         if pick == 1:
-            return out, True
+            clash = runrecord.mismatches(runrecord.read_quiet(out), chosen or {})
+            if not clash:
+                return out, True
+            log("")
+            log(f"  {out} records a run that was given different answers:")
+            for field, was, now in clash:
+                log(f"    --{field}: it used {was!r}, and you chose {now!r}"
+                    f" ({runrecord.PINNED[field]}).")
+            log("  Carrying on its completed trials under your answers would score one corpus's")
+            log("  trials against another, so the tool refuses that outright. One of the two")
+            log("  has to give, and it is your choice which.")
+            keep = choose("Which should this run use?", [
+                (f"What {out} recorded", ("the answers above change to match it, and the trials "
+                                          "already in that study are kept")),
+                ("Choose a different directory", "keeps the answers you gave, and keeps both runs"),
+            ], default=0, ask_fn=ask_fn, log=log)
+            if keep == 0:
+                return out, True
+            log("  Nothing has been changed. Pick another path.")
+            continue
         # Deliberately no "overwrite" option. Deleting somebody's previous result on their behalf,
         # inside a guided flow they are still learning, is not a choice this should offer; the
         # person can remove the directory themselves and come back.
         log("  Nothing has been changed. Pick another path.")
+
+
+def ask_trials(ask_fn=input, log=print):
+    """The trial budget, checked here rather than five screens later.
+
+    TWO DEFECTS IN ONE PROMPT. It was free text handed straight to the plan, so "abc" and "0" were
+    accepted, printed into the command, confirmed by the person, and only then refused by
+    `--trials`, which wants a whole number of at least 1. Every other question in this walk
+    validates what it takes, and this was the one that did not.
+
+    And the sentence was wrong. "200 is the usual" matches nothing in the tool: the flat default is
+    60, and the kageyoshi preset picks 100, 80 or 64 by model size. A number invented for a prompt,
+    described as the convention, is how a reader ends up believing the tool has a convention it has
+    never had.
+    """
+    while True:
+        answer = ask("How many search trials? More is better and slower; the presets pick 60 to "
+                     "100 by model size, and 200 explores the frontier properly",
+                     default="200", ask_fn=ask_fn, log=log)
+        try:
+            count = int(str(answer).strip())
+        except ValueError:
+            count = 0
+        if count >= 1:
+            return str(count)
+        log(f"  '{answer}' is not a trial budget. It has to be a whole number, 1 or more.")
 
 
 def plan_abliteration(ask_fn=input, log=print):
@@ -531,7 +748,37 @@ def plan_abliteration(ask_fn=input, log=print):
     if recipe == "flags":
         # Not a dead end and not a pretend screen: the person asked for the flags, so they get
         # them, and the guided mode gets out of the way rather than wrapping `--help` in a menu.
-        return {"command": "--help", "options": {}, "licence": None, "recipe": recipe}
+        #
+        # `--help-all`, NOT `--help`. The menu row promises the flag list and `--help` prints the
+        # core flags with the rest suppressed, so the one entry written for somebody who wants to
+        # see everything was the one that showed them the short page, and never named the flag that
+        # does show everything.
+        #
+        # `prints_only` because the confirm this plan reaches defaults to no, for the good reason
+        # that the other three recipes spend GPU hours on it. This one prints a help page, so the
+        # bare Enter that is safe everywhere else in the walk turned the one free entry into
+        # "Nothing was run." and an exit.
+        return {"command": "--help-all", "options": {}, "licence": None, "recipe": recipe,
+                "prints_only": True}
+
+    if recipe == "brain":
+        # BEFORE THE MODEL DOWNLOADS, because it is knowable before the model downloads.
+        missing = missing_conversion_tools()
+        if missing:
+            log("")
+            log("  This install cannot finish that recipe: it is missing " + " and ".join(missing)
+                + ".")
+            log("  Both are fetched at build time by `python tools/packaging/vendor_llama.py`, so")
+            log("  a source checkout has neither until that has run. An installed copy missing")
+            log("  them is a packaging fault worth reporting. `senbonzakura doctor` says which.")
+            log("  The abliteration itself needs neither and would still work.")
+            if choose("What would you like to do?", [
+                ("Abliterate anyway, and convert later",
+                 "the edit runs now; the GGUF is a second command once the tools are there"),
+                ("Stop here", "nothing is run, and nothing is downloaded"),
+            ], default=0, ask_fn=ask_fn, log=log) == 1:
+                raise AbandonedError
+            recipe = "abliterate"
 
     model = ask("\nWhich model? (a Hub id, or a local directory)",
                 default="Qwen/Qwen3-1.7B", ask_fn=ask_fn, log=log)
@@ -556,9 +803,27 @@ def plan_abliteration(ask_fn=input, log=print):
 
     track, licence, build = pick_track(ask_fn=ask_fn, log=log)
     device = pick_device(ask_fn=ask_fn, log=log)
-    out, resume = ask_output(ask_fn=ask_fn, log=log)
-    trials = ask("How many search trials? More is better and slower; 200 is the usual",
-                 default="200", ask_fn=ask_fn, log=log)
+    out, resume = ask_output(ask_fn=ask_fn, log=log,
+                             chosen={"model": model, "track": track})
+    search = None
+    if resume:
+        # The answers this walk never asks for, and the ones it asked for before the directory was
+        # named. `ask_output` has already shown any disagreement and taken the person's decision;
+        # applying it here is what makes that decision reach the printed command.
+        record = runrecord.read_quiet(out) or {}
+        model = record.get("model") or model
+        search = record.get("search")
+        recorded_track = record.get("track")
+        if recorded_track and recorded_track != track:
+            track, licence = recorded_track, licence_for_track(recorded_track)
+            if build:
+                # Dropped rather than left to run. It would build a corpus this run cannot use,
+                # and it would do it on disk, before the abliteration was refused for using it.
+                build = None
+                log("")
+                log("  The track build is dropped with it: the completed trials were scored on")
+                log(f"  {track}, so building another corpus would produce one this run cannot use.")
+    trials = ask_trials(ask_fn=ask_fn, log=log)
 
     options = {
         "--model": model,
@@ -566,7 +831,15 @@ def plan_abliteration(ask_fn=input, log=print):
         "--out": out,
         "--device": device,
         "--trials": trials,
+        # THE GUIDED MODE TAKES THE SCREEN, AND SAYS SO ON THE LINE. Decision Q-42 D4: a person who
+        # chose to be led gets the dashboard, and a script gets the compact panel beside its log.
+        # Passed as the flag rather than as a hidden mode for the reason the `--resume` comment
+        # below gives: the command printed here is the command that runs, so somebody who copies
+        # it gets the same screen, and somebody who does not want it can delete four words.
+        "--panel": "full",
     }
+    if search:
+        options["--search"] = search
     if resume:
         # A flag, not a hidden mode. The whole contract of this file is that the command it prints
         # is the command it runs, so a decision taken in the walkthrough has to appear on the line.
@@ -639,13 +912,26 @@ def present(plan, *, ask_fn=input, log=print):
     # at the end of a menu whose whole design is that Enter is safe. The asymmetry is the same one
     # the refusals follow: one extra keystroke from a person who has just read the command and
     # wants it, against an irreversible outcome at the end of a sequence of reversible ones.
-    if not confirm("Run it?", default=False, ask_fn=ask_fn, log=log):
+    #
+    # `prints_only` is the one exception, and it is the exception for the same reason: a plan that
+    # prints a help page and stops costs nothing, so the safe-default reasoning above does not
+    # apply to it, and applying it anyway made the one free entry on the recipe menu a dead end.
+    # A bare Enter there answered "Nothing was run." to somebody who had asked to see the flags.
+    if not confirm("Run it?", default=bool(plan.get("prints_only")), ask_fn=ask_fn, log=log):
         log("Nothing was run. The commands above still work if you want them later.")
         return None
     return lines[0]
 
 
-def log_failure(plan, reason, *, step=None, log=print):
+#: What a resumable search leaves in `--out`, and the label for each. Checked on disk rather than
+#: asserted: see `log_failure`.
+RECOVERABLE = (
+    ("senbon-study.db", "the persisted study, so completed trials are not lost"),
+    ("best-config.json", "best-config.json, the winning configuration"),
+)
+
+
+def log_failure(plan, reason, *, step=None, log=print, crashed=False):
     """What a person needs when a guided run dies partway: what is kept, and the way back in.
 
     THE FAILURE SCREEN, in the form this codebase can deliver today (critique finding 1, ranked
@@ -657,29 +943,52 @@ def log_failure(plan, reason, *, step=None, log=print):
     than anything reconstructable here and they are still on the way out; this adds the sentence
     they do not carry, which is that the search is on disk and one command resumes it.
 
-    `step` says WHICH command died, because the advice is only true of one of them. A plan can
-    build a track first and convert a model afterwards, and telling somebody whose track build
-    failed that their completed trials are safe on disk would be a comforting sentence about a
-    search that never started.
+    `step` says WHICH command died, because the advice is only true of one of them, and WHERE that
+    step sits decides which advice. A plan can build a track before the search and convert a model
+    after it. Telling somebody whose track build failed that their completed trials are safe on
+    disk would be a comforting sentence about a search that never started; telling somebody whose
+    conversion failed that there is no partial run to recover writes off a model that finished.
+
+    Matched against the plan's own `first` and `then` for exactly that reason. The test used to be
+    "this is not the main command", which is true of both of them, so the conversion step got the
+    sentence written for the track build and every word of it was wrong.
     """
     log("── the run stopped ───────────────────────────────────────────")
     if reason:
         log(f"  {reason}")
     log("")
-    if step is not None and step.get("command") != plan.get("command"):
-        log(f"  It was the '{step['command']}' step that failed, before the search began, so")
+    named = (step or {}).get("command")
+    out = plan.get("options", {}).get("--out")
+    if step is not None and named == (plan.get("first") or {}).get("command"):
+        log(f"  It was the '{named}' step that failed, before the search began, so")
         log("  there is no partial run to recover. Once the cause is fixed, this is the command:")
         log("")
         log(f"    {render_command(step['command'], step['options'])}")
-        log("")
-        log("  If this looks like a bug, the traceback above is the useful part of a report.")
+        _log_bug_line(log, crashed)
         log("──────────────────────────────────────────────────────────────")
         return
-    out = plan.get("options", {}).get("--out")
-    if out:
+    if step is not None and named == (plan.get("then") or {}).get("command"):
+        # THE BRANCH THAT USED TO GIVE THE OPPOSITE ADVICE. The test was "this is not the main
+        # command", which is true of the conversion step as well as the track build, and those two
+        # sit on opposite sides of the expensive part. A conversion runs after the abliteration has
+        # finished and saved, so telling that person there is no partial run to recover writes off
+        # a model that is on their disk and invites them to run the whole search again.
+        log(f"  It was the '{named}' step that failed, and that runs after the abliteration, so")
+        log("  the edit itself finished and the model was saved. Only the conversion is missing.")
+        if out:
+            log(f"  The edited model is in {out}.")
+        log("")
+        log("  Once the cause is fixed, this is the command, and nothing before it repeats:")
+        log("")
+        log(f"    {render_command(step['command'], step['options'])}")
+        _log_bug_line(log, crashed)
+        log("──────────────────────────────────────────────────────────────")
+        return
+    kept = _what_survived(out)
+    if kept:
         log(f"  What is on disk, in {out}:")
-        log("    the persisted study, so completed trials are not lost")
-        log("    best-config.json, if the search got as far as picking a winner")
+        for line in kept:
+            log(f"    {line}")
         log("")
         log("  To pick up where it stopped:")
         log("")
@@ -687,11 +996,48 @@ def log_failure(plan, reason, *, step=None, log=print):
         log("")
         log("  That continues the search rather than starting it again, and if the search had")
         log("  already finished it goes straight to baking and saving.")
+    elif out:
+        # THE CASE THAT USED TO BE TOLD A COMFORTING LIE. A refusal before the search starts, a
+        # device pre-flight being the one actually seen, left `--out` empty; the old text still
+        # announced a persisted study and offered `--resume`, which would refuse identically and
+        # cost the user a second go at nothing. Now the directory is read.
+        log(f"  Nothing recoverable was written to {out}, so the run stopped before the search")
+        log("  had anything to save. Fix the cause above and run the same command again;")
+        log("  --resume would have nothing to resume.")
     else:
         log("  Nothing was written, so there is nothing to recover.")
-    log("")
-    log("  If this looks like a bug, the traceback above is the useful part of a report.")
+    _log_bug_line(log, crashed)
     log("──────────────────────────────────────────────────────────────")
+
+
+def _what_survived(out):
+    """The recoverable artefacts that are ACTUALLY in `out`, as display lines.
+
+    Read from the filesystem, never assumed. The old version asserted a persisted study and a
+    best-config.json on every failure alike, including the ones that happened before the search
+    began, which is a claim about somebody's disk made without looking at it.
+    """
+    if not out:
+        return []
+    import pathlib as _pathlib
+
+    root = _pathlib.Path(out)
+    return [label for name, label in RECOVERABLE if (root / name).exists()]
+
+
+def _log_bug_line(log, crashed):
+    """Point at a traceback only when one was actually printed.
+
+    A refusal the tool phrased itself raises SystemExit and prints no traceback, and this line used
+    to be printed unconditionally. Telling somebody the traceback above is the useful part of a bug
+    report, when the screen above holds no traceback, sends them looking for something that was
+    never there and makes the whole block read as a crash it was not.
+    """
+    log("")
+    if crashed:
+        log("  If this looks like a bug, the traceback above is the useful part of a report.")
+    else:
+        log("  This was a refusal, not a crash, so the reason above is the whole story.")
 
 
 def _argv_for(plan):
@@ -769,7 +1115,18 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
             if i:
                 log("")
                 log(f"Now: {step['command']}.")
-            code = cli_main(_argv_for(step))
+            # THROUGH `exit_status`, NEVER RAW. `cli.main` returns a delegated command's own
+            # return value unchanged, and `track`, `score`, `compass`, `drift` and `coherence`
+            # return their RESULT on success rather than a status. A non-empty dict is truthy, so
+            # `if code` read every successful run of those five as a failure: a track that built
+            # correctly printed TRACK_BUILT and was then followed by "the run stopped ... it was
+            # the 'track' step that failed", and the abliteration the user had confirmed never ran.
+            #
+            # `entry.exit_status` is the one place that knows how to read both conventions, and its
+            # own docstring records this defect being fixed at the `__main__` boundary. Calling
+            # `cli.main` directly walked straight back into it.
+            from .entry import exit_status
+            code = exit_status(cli_main(_argv_for(step)))
             # Stop at the first failure. The steps are ordered because each needs what the one
             # before it produced, so carrying on would abliterate against a track that was not
             # built, or convert a model that was never saved.
@@ -793,7 +1150,7 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
         # saying their GPU hours are not gone. `cli.py` records that a traceback out of
         # `_save_weights` has twice meant hours of card time producing nothing usable.
         log("")
-        log_failure(plan, f"{type(e).__name__}: {e}", step=step, log=log)
+        log_failure(plan, f"{type(e).__name__}: {e}", step=step, log=log, crashed=True)
         raise
     else:
         # A non-zero status is a failure the command reported without raising, and it used to

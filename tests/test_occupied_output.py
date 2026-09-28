@@ -208,25 +208,66 @@ def _plan(out="abliterated"):
             "licence": "yours"}
 
 
-def test_the_failure_screen_names_the_way_back_in():
+def _resumable(tmp_path):
+    """A plan whose `--out` really holds a persisted study, in a directory this test owns.
+
+    BOTH TESTS BELOW USED THE BARE STRING "abliterated" AND PASSED BY ACCIDENT. `log_failure` now
+    reads the directory before it promises a resume, because it used to promise one after failures
+    that had written nothing. That turned these two into tests of whatever was in the working
+    directory: on the build box a real `abliterated/` was left over from an earlier run, so they
+    went green there and would have gone red on a clean runner. The property each is named for is
+    about a directory that HAS a study, so each now makes one.
+    """
+    out = tmp_path / "abliterated"
+    out.mkdir()
+    (out / "senbon-study.db").write_text("x", encoding="utf-8")
+    return _plan(out=str(out)), out
+
+
+def test_the_failure_screen_names_the_way_back_in(tmp_path):
     """THE POINT OF IT. Not a summary of the error, which the tool already printed better, but the
     sentence those messages do not carry: the search is on disk and one command resumes it.
     """
+    plan, out = _resumable(tmp_path)
     lines = []
-    interactive.log_failure(_plan(), "RuntimeError: CUDA out of memory", log=lines.append)
+    interactive.log_failure(plan, "RuntimeError: CUDA out of memory", log=lines.append)
     text = "\n".join(lines)
     assert "RuntimeError: CUDA out of memory" in text
     assert "--resume" in text, "a failure screen without the recovery is just bad news"
-    assert "abliterated" in text
+    assert str(out) in text
 
 
-def test_the_recovery_command_is_the_original_one_plus_resume():
+def test_the_recovery_command_is_the_original_one_plus_resume(tmp_path):
     """A command a person can paste, not a description of one they should construct."""
+    plan, out = _resumable(tmp_path)
+    lines = []
+    interactive.log_failure(plan, "boom", log=lines.append)
+    line = next(ln.strip() for ln in lines if ln.strip().startswith("senbonzakura"))
+    assert line == (f"senbonzakura kageyoshi --model Qwen/Qwen3-1.7B --out {out} "
+                    "--trials 200 --resume")
+
+
+def test_the_recovery_screen_does_not_depend_on_the_working_directory(tmp_path, monkeypatch):
+    """The seam the two tests above fell through, asserted directly.
+
+    A relative `--out` must be read relative to where the tool is running, and an empty directory
+    must not be described as holding a study. Without this, a stray directory beside the suite can
+    make a promise-a-resume test pass for a reason that has nothing to do with the code.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "abliterated").mkdir()
     lines = []
     interactive.log_failure(_plan(), "boom", log=lines.append)
-    line = next(ln.strip() for ln in lines if ln.strip().startswith("senbonzakura"))
-    assert line == ("senbonzakura kageyoshi --model Qwen/Qwen3-1.7B --out abliterated "
-                    "--trials 200 --resume")
+    text = "\n".join(lines)
+    # ASSERTED ON THE COMMAND, NOT ON THE WORD. The correct message for this case says
+    # "--resume would have nothing to resume", so a test forbidding the string fails on the very
+    # text it is meant to approve. What must not appear is a pasteable resume command.
+    offered = [ln.strip() for ln in lines
+               if ln.strip().startswith("senbonzakura") and "--resume" in ln]
+    assert not offered, (
+        f"an empty output directory was offered a resume command: {offered}")
+    assert "nothing to resume" in text, (
+        "the screen neither offers a resume nor says why there is none")
 
 
 def test_a_run_that_wrote_nothing_says_so_rather_than_offering_a_false_recovery():
@@ -422,9 +463,14 @@ def test_measuring_scores_the_held_out_arm_not_the_fitting_one():
 def test_everything_by_hand_gets_out_of_the_way():
     """The person asked for the flags. Wrapping --help in a menu would be the guided mode
     insisting on itself.
+
+    IT ASKS FOR `--help-all` NOW, and the old `--help` was the defect. `build_parser` suppresses
+    every flag outside the core set, so the menu entry that promises "the flag list" was showing a
+    fraction of it and never naming the flag that shows the rest. The guided mode's own docstring
+    says this tool has dozens of flags, which is the thing the person just asked to see.
     """
     plan = _walk(["4"])
-    assert plan["command"] == "--help"
+    assert plan["command"] == "--help-all"
     assert plan["options"] == {}
 
 

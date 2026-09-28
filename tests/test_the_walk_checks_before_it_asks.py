@@ -316,3 +316,31 @@ def test_every_check_the_run_makes_is_a_check_the_board_makes():
         f"{sorted(missing)} run inside the abliteration and not on the pre-flight board, so the "
         f"guided mode can print 'all clear' about a run that is then refused. Either add them to "
         f"`_checked_rows` or name them in BOARD_LEAVES_TO_THE_RUN with the reason.")
+
+
+def test_a_cpu_walk_produces_a_command_its_own_preflight_accepts(tmp_path, monkeypatch):
+    """THE WALK HANDED PEOPLE A COMMAND THAT COULD NOT RUN.
+
+    The capability probe defaults to 200 items at 512 new tokens, minutes on a card and about
+    four hours on a processor, and `refuse_a_slow_probe` stops the second before it starts. The
+    walk never asked about either, so somebody on a laptop answered six questions and got a
+    command the tool then refused, over flags they had no reason to know existed.
+    """
+    options = {"--device": "cpu"}
+    note = interactive.size_the_probe_for("cpu", options)
+    assert options["--capability-n"] == "40" and options["--capability-max-new"] == "256"
+    assert note and "40 items rather than 200" in note, (
+        "a smaller probe changes what the capability figure means, so it is never applied in "
+        "silence")
+
+    on_a_card = {"--device": "cuda"}
+    assert interactive.size_the_probe_for("cuda", on_a_card) is None
+    assert on_a_card == {"--device": "cuda"}, "a card needs no help and gets no extra flags"
+
+
+def test_the_sizing_is_on_the_printed_command_rather_than_applied_invisibly(tmp_path):
+    """The contract of this file: the line somebody copies is the line that ran."""
+    plan = _plan(tmp_path, **{"--device": "cpu"})
+    interactive.size_the_probe_for("cpu", plan["options"])
+    line = interactive.render_command(plan["command"], plan["options"])
+    assert "--capability-n 40" in line and "--capability-max-new 256" in line

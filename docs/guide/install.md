@@ -54,7 +54,7 @@ The first needs only the network. The second needs a track, which is either
 The first brings everything: torch, transformers, accelerate, optuna, and the rest, and there is
 nothing else to choose. Nothing is behind an extra.
 
-It is **69 packages and 5.9 GB**, measured 2026-09-26 in an empty virtualenv on Python 3.14. That
+It is **70 packages and 5.9 GB**, measured 2026-09-28 in an empty virtualenv on Python 3.14. That
 count is what `pip list` shows you, and it breaks down like this:
 
 | | |

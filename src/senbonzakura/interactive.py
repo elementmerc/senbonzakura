@@ -266,7 +266,12 @@ def choose(question, options, *, default=0, ask_fn=input, log=print):
     log(_wrap(question, log=log))
     for i, (label, description) in enumerate(options, 1):
         marker = "*" if i - 1 == default else " "
-        log(f"  {marker} {i}. {label}")
+        # HANGING INDENT, so a long label folds under itself rather than off the edge or into the
+        # number column. The number stays where the eye expects it on every row.
+        head, *tail = say.lines(label, columns=max(20, say.width() - 7)) or [""]
+        log(f"  {marker} {i}. {head}")
+        for line in tail:
+            log(f"       {line}")
         if description:
             for line in say.lines(description, indent="       ",
                                   columns=max(40, say.width())):
@@ -1285,7 +1290,10 @@ def _board(plan, log=print):
             # hundred-column line inside a board. The rest of it is printed below, intact,
             # because it is the part somebody acts on.
             head = str(detail).strip().splitlines()[0] if str(detail).strip() else ""
-            first, *rest = say.lines(head, columns=max(40, say.width() - width - 8)) or [""]
+            # `max(20, ...)`, NOT 40. A forty column floor plus a fifteen column row prefix is a
+            # fifty five column line on a fifty column terminal, which is the fault this was
+            # meant to fix, one indent further in.
+            first, *rest = say.lines(head, columns=max(20, say.width() - width - 8)) or [""]
             log(f"    {mark}  {label:<{width}} {first}".rstrip())
             for line in rest:
                 log(f"       {'':<{width}} {line}")
@@ -1355,7 +1363,7 @@ def present(plan, *, ask_fn=input, log=print):
     # disappearing: "anyway" is the whole of the warning a second time, in one word.
     question = "Run it?" if clean else "Run it anyway?"
     if not confirm(question, default=bool(plan.get("prints_only")), ask_fn=ask_fn, log=log):
-        log("Nothing was run. The commands above still work if you want them later.")
+        _say("Nothing was run. The commands above still work if you want them later.", log=log)
         return None
     return lines[0]
 

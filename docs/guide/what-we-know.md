@@ -143,8 +143,18 @@ not make the numbers checkable. Same defect class as the two above.*
 Two things follow, and the second was a surprise.
 
 The first is that the tool now has `--matched-scoring`, which picks each candidate's controls from
-the harmless prompts nearest it in content. It's off by default, because it changes what every
-separation number means and we haven't yet measured it on a real model.
+the harmless prompts nearest it in content. **It's on by default, and it changes what every
+separation number means.** This page said it was off until 2026-09-28, which had been false since
+the default flipped on 2026-09-17: so the regime every separation number is now produced under is
+one this page described as inactive, and it still hasn't been measured on a real model. Pass
+`--no-matched-scoring` for the older comparison, which is worth doing only to reproduce an older
+run.
+
+That leaves three candidate selection regimes in play, and it's worth being blunt about which one
+the published numbers came from. The 2026-08-13 arms, the only multi direction evidence here, ran
+unmatched and in sample against a filter that rejected nothing. What ships today is matched by
+default. **The published evidence corresponds to neither**, which is a limit on reading those arms
+as evidence about the tool you can install.
 
 The second is that **a topic-matched harmless corpus would not have been enough on its own**. In
 the numbers above the harmless side already had the same mix of subjects as the harmful side, and

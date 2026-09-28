@@ -68,7 +68,7 @@ pip install senbonzakura
 senbonzakura setup
 ```
 
-That brings torch, transformers, accelerate and optuna with it: **69 packages, 5.9 GB**, fifteen
+That brings torch, transformers, accelerate and optuna with it: **70 packages, 5.9 GB**, fifteen
 of them CUDA wheels. There is nothing to choose.
 
 > This paragraph used to tell you *not* to run that command, and it was right to until 0.4.0 went

@@ -55,7 +55,7 @@ and picks the knee of that trade-off, not the extreme.
 
 ## Module map
 
-There are 56 modules under `src/senbonzakura/`. This lists the ones somebody reading or extending
+There are 62 modules under `src/senbonzakura/`. This lists the ones somebody reading or extending
 the code will meet, grouped by what they are for. It listed six until 2026-09-25, none of them
 from the measurement suite, which is the half of the project the README calls the interesting one.
 

@@ -6,110 +6,74 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 ## [Unreleased]
 
-### Added
+### Guided mode
+- Typing `senbonzakura` on its own now answers instead of refusing. It used to print a 27 line list of every flag and exit 1; it now prints a short page naming the ways in, and exits 0.
+- `senbonzakura -i` is a short spelling of `senbonzakura interactive`, and it is the entry point that page recommends.
+- The guided mode offers the models already on this machine, so a first run need not be a download.
+- It runs every pre-flight check before asking you to confirm, rather than after. A run it was going to refuse is now refused before you commit to it, and a clean board is one line rather than fourteen ticks.
+- When a run finishes it says what changed, what it cost and what you might do next, each as a command you can paste.
+- On a processor it sizes the capability probe for a processor, so the command it prints is one its own pre-flight accepts.
+- The front door, the guided walk and `senbonzakura doctor` fold to the width of the terminal, so a half width window no longer runs text off the edge.
 
-- `senbonzakura compass` now says what its number means. The three marker lines it printed are
-  unchanged, and under them it reports the AUC as the ranking statistic it is, the interval with its
-  confidence level named, and a verdict: usable on this corpus, no finding, no verdict without an
-  interval, or not a measurement at all.
-- `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser
-  print. Both are summarised by default now, because a real model produces one line per tensor and
-  several hundred of them arrived ahead of this tool's own summary. A warning or an error is never
-  summarised away, a long run says it is still working every thirty seconds, and a failure quotes the
-  tool's last lines either way.
+### Install
+- Card temperature and power on the live dashboard work on a plain `pip install senbonzakura`. The bindings that read them used to be absent from every install.
 
-### Changed
+### CLI
+- `senbonzakura check` now exits 2 for a directory holding artefacts it could not read, where it used to exit 0. A CI step pointed at a directory of corrupt files goes from green to red on this release, which is the fix rather than a side effect of it: naming a broken file already exited 2, so the same bytes got opposite verdicts depending on how you reached them.
+- `senbonzakura compass` now reports its AUC, the interval with its confidence level named, and a plain verdict, under the three marker lines it already printed.
+- `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser print. Both are summarised by default, and a warning, an error or a failure is never summarised away.
+- The JSON report carries `applied`, the number of checks that actually ran on each file, so a reader can tell a file that was examined from one that was only opened.
+- No command abbreviates its flags any more, so what is accepted is what the help page lists. `convert --out x` and `quantise --out x` used to complain about a precision flag nobody typed.
+- A mistyped flag is now reported even when a required flag is missing too. Previously the second hid the first.
+- A model id that does not exist is now reported as a model id that does not exist. `senbonzakura fetch` used to print five paragraphs of library output, including "Invalid username or password" for a simple typo.
+- `senbonzakura gate` now names the command that writes a baseline when it refuses for want of one.
+- `senbonzakura track` with no arguments now answers with a command you can run rather than two flag names.
+- `senbonzakura corpora --check` no longer needs the GitHub CLI when every source it reads is already on the machine.
+- `senbonzakura baseline` no longer reports a deterministic metric as "at 2.7486 None", and keeps the units that were sitting in the artefact beside the value.
+- `senbonzakura doctor` names itself before the corpus attribution, and says how many imports it left out of a list rather than reporting seven and naming six.
+- `--out` now refuses a directory holding a tokeniser, which the files a save writes could previously overwrite in silence.
+- `--inspect` marks where it cut a prompt or a generation to fit the column, so a healthy generation no longer looks as though the model stopped mid-word.
+- `--print-completion` without the completion extra now says which install it needs rather than that the flag does not exist.
+- The standalone checker's "nothing was checked" footer now reads differently depending on whether it is about to exit zero or fail.
+- A quantisation receipt now records the hash of the files it names rather than of the quantiser alone.
+- A result produced by an installed wheel can say which commit built it.
 
-- **`senbonzakura check` now exits 2 for a directory holding artefacts it could not read, where it
-  used to exit 0.** If you point a CI step at a results directory and every file in it is corrupt,
-  that step goes from green to red on this release. That is the fix rather than a side effect of it:
-  naming a broken file already exited 2, and sweeping the same file out of a directory exited 0, so
-  the same bytes got opposite verdicts depending on how you reached them. A file nobody could parse
-  is now reported as unchecked either way. A file that is simply not a result artefact, a config
-  living in `results/`, still costs nothing when it is swept, which is what the sweep discount was
-  always for.
-- The JSON report carries `applied`, the number of checks that actually ran on each file, so a
-  reader can tell a file that was examined from one that was only opened.
-
-### Fixed
-
-- `pip install senbonzakura` is the documented install everywhere. Several pages still told readers
-  not to use PyPI and offered a pair of `git+` URLs instead, which was correct until 0.4.0 reached
-  the index and wrong from the moment it did.
-- The evaluation track card said no install a reader could make carries the 6,200 harmful prompts.
-  The published wheel carries them, so a disclosure had inverted into a reassurance about the wrong
-  artefact.
-- The first command in the README and the quickstart exited 1. It measured a 135M model, which puts
-  no verdict token where the compass reads one, so the run correctly refused to call its own figure
-  a measurement. Both pages now use a model that answers, and the compass guide explains the exit
-  code where the refusal is the point.
-- `senbonzakura corpora` needs the GitHub CLI, and neither page that introduced it said so.
-- The reference page told readers the GitHub Action and the pre-commit hook could not work yet.
-- `convert --out x` and `quantise --out x` complained about a precision flag nobody typed. Both take
-  the output path as a positional, and argparse was abbreviating `--out` into a longer flag. No
-  command abbreviates its flags now, so what is accepted is what the help page lists.
-- A quantisation receipt recorded the hash of the quantiser and of neither file it named, so nobody
-  holding the result could tell it was the file the receipt described.
-- A result produced by an installed wheel could not say which commit built it.
-- `senbonzakura corpora --check` refused for want of the GitHub CLI even when every source it reads
-  was already on the machine.
-- `senbonzakura baseline` reported a deterministic metric as "at 2.7486 None", and left out the units
-  that were sitting in the artefact beside the value.
-- `senbonzakura doctor` printed ten lines of corpus attribution before naming itself, with the
-  sentence covering all six corpora indented under the first one.
-- `senbonzakura measure` pointed readers at a documentation path that is in the repository and in no
-  wheel, and explained a stage's refusal with its exit status instead of its reason.
-- The standalone checker's "nothing was checked" footer read identically whether it was about to
-  exit zero or fail.
-- A model id that does not exist was reported as a missing file format, in one long line ending in a
-  Python exception name. `senbonzakura fetch` was worse: five paragraphs of library output, including
-  "Invalid username or password" for an id that was simply mistyped. A repository that is absent and
-  a private one you cannot see look the same from outside, so the Hub is asked which it was.
-- A mistyped flag was invisible whenever a required flag was also missing, so the fix for one left
-  the other silently ignored. Both are reported now.
-- `--inspect` cut its prompts and generations to fit a column with nothing to show the cut, which
-  made a healthy generation look as though the model had stopped mid-word. Reading that text is the
-  whole point of the flag.
-- `senbonzakura doctor` reported "7 failed to import" and then named six of them. Every message that
-  states a total and lists some of it now says how many it left out.
-- `--out` refused a directory holding a previous run or a model and not one holding a tokeniser,
-  where the files a save writes were silently overwritable.
-- `senbonzakura track` with no arguments named two flags where `senbonzakura report` answers the same
-  mistake with a command you can run.
-- `senbonzakura gate` refused a missing baseline without saying that a baseline is a file this tool
-  writes, or which command writes it.
-- `--print-completion` on an install without the completion extra reported that the flag did not
-  exist, rather than that it needed one more install.
-- The guided mode told readers to run `huggingface-cli login`, which `hf auth login` replaced.
+### Documentation
+- `pip install senbonzakura` is the documented install everywhere. Several pages still told readers not to use PyPI and offered a pair of `git+` URLs, which was correct until 0.4.0 reached the index and wrong from the moment it did.
+- The evaluation track card said no install a reader could make carries the 6,200 harmful prompts, and the published wheel carries them, so a disclosure had inverted into a reassurance.
+- The first command in the README and the quickstart exited 1, because it measured a model too small to produce the token the compass reads. Both now use a model that answers.
+- The pages introducing `senbonzakura corpora` now say it needs the GitHub CLI.
+- The reference page no longer says the GitHub Action and the pre-commit hook cannot work yet.
+- `senbonzakura measure` no longer points at a documentation path that no wheel carries, and explains a stage's refusal with its reason rather than its exit status.
+- The guided mode no longer tells readers to run `huggingface-cli login`, which `hf auth login` replaced.
 
 ### Other
-
-Bug fixes and improvements.
+- Bug fixes and improvements.
 
 ## [0.4.0] "TYBW" — 2026-09-26
 
 The release that makes the measurement trustworthy.
 
 **The multi-direction feature had never worked, and was rewritten in this release.** The check
-that decided whether a candidate direction carries refusal could not accept any direction, on
-any model, at any setting, for a reason in the maths rather than in the data, so every earlier
-run applied exactly one direction however many it was asked for. Directions are now found by
-grouping the harmful prompts and taking each group's own average, which finds up to eight per
-layer where the old method found one.
+that decided whether a candidate direction carries refusal couldn't accept any direction, on any
+model, at any setting, for a reason in the maths rather than in the data, so every earlier run
+applied exactly one direction however many it was asked for. Directions are now found by grouping
+the harmful prompts and taking each group's own average, which finds up to eight per layer where
+the old method found one.
 
-**Read the next sentence before quoting the one above.** Finding more directions is not the
-same as showing they carry refusal, and this release does not show that. Any direction count
-from a version before this one is not trustworthy, and the comparison that was meant to prove
-several directions beat one is withdrawn.
+**Read the next sentence before quoting the one above.** Finding more directions isn't the same as
+showing they carry refusal, and this release doesn't show that. Any direction count from a version
+before this one isn't trustworthy, and the comparison that was meant to prove several directions
+beat one is withdrawn.
 
 **The check itself was then found to be measuring nothing, for a second reason.** It scored each
 candidate direction on the very rows the direction was built from, so it was asking whether the
-quantity a vector was built to maximise is large along that vector. It always is, which is why
-the filter accepted every candidate on every run. Candidates are now fitted on half their rows
-and scored on the half they never saw, and the threshold has a floor measured from directions
-that carry nothing, so a candidate has to beat what the statistic hands out for free. Both
-numbers are recorded in every result file. This still does not show a direction carries refusal
-rather than topic, and the run says so in those words.
+quantity a vector was built to maximise is large along that vector. It always is, which is why the
+filter accepted every candidate on every run. Candidates are now fitted on half their rows and
+scored on the half they never saw, and the threshold has a floor measured from directions that
+carry nothing, so a candidate has to beat what the statistic hands out for free. Both numbers are
+recorded in every result file. This still doesn't show a direction carries refusal rather than
+topic, and the run says so in those words.
 
 **And when we ran that comparison, more directions lost.** One direction against two, five seeds
 each, with the same tool, the same corpus, the same search budget and the same direction budget
@@ -128,470 +92,389 @@ collateral damage on the mean over five seeds, bought nothing measurable for it,
 predictable run to run.
 
 **Two figures in the paragraph above were corrected on 2026-09-28, after this release.** It gave
-the cost as "roughly 1.4 to 1.9", which reads as an interval and is not one: 1.9 is the ratio of
-the means and 1.4 is the same ratio with the one outlying two-direction seed dropped, which is a
+the cost as "roughly 1.4 to 1.9", which reads as an interval and isn't one: 1.9 is the ratio of the
+means and 1.4 is the same ratio with the one outlying two-direction seed dropped, which is a
 sensitivity check. The 95% interval is 1.2 to 3.1, four times wider. And "bought nothing" is only
 true of what this design could see: both arms sit on the floor of the refusal measurement, so the
 largest gain two directions could ever have shown here is 0.1 of a percentage point, a fifth of one
 scorable event. The figures above are the corrected ones, and this note stays under the release it
 corrects so that a reader of these notes meets the correction rather than having to find the guide
-page that carries it. One direction beats two in 24 of the 25 pairwise seed comparisons, so the direction of
-the result is sturdier than its size. An exact permutation test over all 252 splits of the ten
-seeds puts the difference at p = 0.016. Dropping the worst two-direction seed halves the gap and
-moves that to p = 0.048, so the finding does not rest on one run and is weaker without it. This is
-one model, Qwen3-1.7B, and it does not settle the question for every architecture.
+page that carries it. One direction beats two in 24 of the 25 pairwise seed comparisons, so the
+direction of the result is sturdier than its size. An exact permutation test over all 252 splits of
+the ten seeds puts the difference at p = 0.016. Dropping the worst two-direction seed halves the
+gap and moves that to p = 0.048, so the finding doesn't rest on one run and is weaker without it.
+This is one model, Qwen3-1.7B, and it doesn't settle the question for every architecture.
 
 **Read that table with its limit attached.** These arms ran on 2026-08-13, before the held-out
 direction selection described above existed, so the second direction in each two-direction arm was
 chosen by the filter now known to accept everything. What the table prices is an *arbitrary* second
-direction, which is a weaker claim than the thesis it gets read against: it is not evidence that
-two well-chosen directions cost more than one. The word "properly" stood here until 2026-09-25 and
+direction, which is a weaker claim than the thesis it gets read against: it isn't evidence that two
+well-chosen directions cost more than one. The word "properly" stood here until 2026-09-25 and
 invited exactly that reading. The table stands as the old filter's answer until a re-run under the
 fixed selector replaces it, and the same caveat is recorded in the evidence file itself.
 
-Where we can currently measure it, then, the project's central idea is unsupported, and we would
-rather publish that than wait for a friendlier model.
+Where we can currently measure it, then, the project's central idea is unsupported, and we'd rather
+publish that than wait for a friendlier model.
 
-**If you have numbers from an earlier version, re-measure them.** Two scoring bugs were
-fixed in this cycle and both moved published figures. Anything measured before 2026-07-30 is
-not comparable to what this version produces.
+**If you have numbers from an earlier version, re-measure them.** Two scoring bugs were fixed in
+this cycle and both moved published figures. Anything measured before 2026-07-30 isn't comparable
+to what this version produces.
 
-**And one measurement definition changed on 2026-09-08, so noncompliance figures moved again.**
-The hedging detector counted statements of fact about legality or danger as hedging: a complete,
-compliant technical answer that mentioned an activity is illegal was scored as a soft refusal.
-That fires asymmetrically, because a more explanatory model collects more of them regardless of
-whether it complied, and it carried full weight in the rule that decides which trial is saved as
-the finished model, so the search was being steered toward models that do not caveat. Noncompliance
-rates from before this date are not comparable with rates after it.
+**And one measurement definition changed on 2026-09-08, so noncompliance figures moved again.** The
+hedging detector counted statements of fact about legality or danger as hedging: a complete,
+compliant technical answer that mentioned an activity is illegal was scored as a soft refusal. That
+fires asymmetrically, because a more explanatory model collects more of them regardless of whether
+it complied, and it carried full weight in the rule that decides which trial is saved as the
+finished model, so the search was being steered toward models that don't caveat. Noncompliance
+rates from before this date aren't comparable with rates after it.
 
 ### Breaking
 
 Read this section before upgrading. Nothing here breaks an install; what breaks is the meaning of
 results you already hold.
 
-- **Every number produced by an earlier version is withdrawn, not adjusted.** Three separate
-  faults in this cycle each changed what the tool measures: the direction filter accepted every
-  candidate it was given, the hedging detector scored compliant answers as soft refusals, and the
-  weight edit did not reach the running state on one family of models. There is no conversion
-  factor between an old figure and a new one. Re-measure.
+- **Every number produced by an earlier version is withdrawn, not adjusted.** Three separate faults
+  in this cycle each changed what the tool measures: the direction filter accepted every candidate
+  it was given, the hedging detector scored compliant answers as soft refusals, and the weight edit
+  didn't reach the running state on one family of models. There is no conversion factor between an
+  old figure and a new one. Re-measure.
 - **`--max-directions` above 1 did nothing before this release, on any model, at any setting.**
-  Every earlier run applied exactly one direction however many it was asked for. A run whose
-  records say it used eight used one. This release finds up to eight per layer, and the
-  comparison that was meant to show several beat one is withdrawn; when it was finally run
-  properly, more directions lost.
+  Every earlier run applied exactly one direction however many it was asked for, so a run whose
+  records say it used eight used one. This release finds up to eight per layer, and the comparison
+  that was meant to show several beat one is withdrawn; when it was finally run properly, more
+  directions lost.
 - **Gemma, Gemma 3 and Olmo 2 results from earlier versions describe the base model.** Those
-  architectures rescale each layer's output before adding it to the model's running state, and
-  the edit was applied upstream of that rescaling, so it was largely undone. Fixed in this
-  release. Any earlier Gemma checkpoint or figure is about an unedited model.
-- **The evaluation track is now required, and a run without one refuses instead of guessing.**
-  An install carries a bundled track and `--track default` uses it, so most users see no change.
-  A clone has none, because the track is generated rather than committed, and there the refusal
-  names the two commands that build one.
-- **The `datasets` package moved to an extra, and naming a dataset by its HuggingFace id needs
-  it.** `--good-ds owner/name` now asks for `pip install 'senbonzakura[hub]'`. Local tracks, the
-  bundled corpora and every file format the tool reads are unaffected. Shell completion moved the
-  same way, to `senbonzakura[completion]`. Both were part of a plain install in 0.3.0.
-- **0.3.0 could not run the compass at all**, and neither could 0.3.1, which was a licence patch
-  with byte-identical code. Those wheels contain no `margin.py` and no `crashsafe.py`. If you
-  read about `senbonzakura compass` and could not find it, that is why, and this release is the
-  first one that has it.
+  architectures rescale each layer's output before adding it to the model's running state, and the
+  edit was applied upstream of that rescaling, so it was largely undone. Fixed in this release, but
+  any earlier Gemma checkpoint or figure is about an unedited model.
+- **The evaluation track is now required, and a run without one refuses instead of guessing.** An
+  install carries a bundled track and `--track default` uses it, so most users see no change; a
+  clone has none, and there the refusal names the two commands that build one.
+- **The `datasets` package moved to an extra, and naming a dataset by its HuggingFace id needs it.**
+  `--good-ds owner/name` now asks for `pip install 'senbonzakura[hub]'`, and shell completion moved
+  the same way to `senbonzakura[completion]`; both were part of a plain install in 0.3.0. Local
+  tracks, the bundled corpora and every file format the tool reads are unaffected.
+- **0.3.0 couldn't run the compass at all**, and neither could 0.3.1, which was a licence patch with
+  byte-identical code. Those wheels contain no `margin.py` and no `crashsafe.py`, and this release
+  is the first one that has the command.
 
-### Install
+### Known defects
 
-- `pip install senbonzakura` installs torch, transformers, accelerate and optuna, as 0.3.0 also
-  did. It is 69 packages and 5.9 GB. If you tracked `dev` in early September you
-  were told to add an `abliterate` extra; that extra still resolves and now installs exactly what
-  a plain install does, so nothing needs changing.
-- New: `senbonzakura setup` puts the right build of torch on the machine it is run on. pip picks
-  by platform rather than by hardware, so a Windows box with a GPU gets a CPU-only wheel and a
-  Linux box with no GPU gets fifteen CUDA packages it cannot use. It prints the command that fixes
-  it and changes nothing unless you pass `--apply`.
-- The wheel now carries the bundled evaluation track, so `--track default` works with no network
-  and nothing to assemble. That is roughly 6,200 harmful prompts inside your site-packages; the
-  install page says what is in it and how to build a wheel without it. 0.3.0 shipped no corpora at
-  all, so this is new.
-
-### If you are coming from 0.3.0, this is what you can now run
-
-0.3.0 installed three things you could run: abliterating a model (as `senbonzakura --model ...`
-or `senbonzakura kageyoshi`, the only mode word it knew), plus `python -m senbonzakura.score` and
-`python -m senbonzakura.coherence`. Everything below is a command that release did not contain at
-all, so if you read about one of them and could not find it, this is why.
-
-- `senbonzakura compass` — does the model still recognise harm, as opposed to still refusing?
-- `senbonzakura capability` — what did the edit cost, on five graded tasks?
-- `senbonzakura validate` — the checks behind a published number, including the experiments.
-- `senbonzakura judge` — validates a judge before it grades anything, and refuses a bad one.
-- `senbonzakura track` — build an evaluation split, and check it for contamination.
-- `senbonzakura head-to-head` — run this tool and another one on the same model, one ruler.
-- `senbonzakura convert`, `quantise`, `imatrix` — GGUF conversion and quantisation.
-- `senbonzakura doctor` — can this install actually do what it claims, before a long run?
-- `senbonzakura fetch` — fetch a model, resumable.
-- `senbonzakura report` — the model card for a finished run.
-- `senbonzakura interactive` — a guided mode for people who don't want to read the flag list.
-- `senbonzakura drift` — how far the edited model moved from the original.
-- `senbonzakura setup` — put the right build of torch on this machine, which pip cannot do for itself.
-
-Also: the corpora ship inside the package, so `--track default` works offline on a fresh
-install rather than only in a source checkout.
+- **Every Gemma measurement is withdrawn.** The weight edit didn't reach the model's running state
+  on that architecture: Gemma 2 and Gemma 3 pass each layer's output through a learned rescaling
+  step before adding it back, and the tool edited the weights feeding that step rather than what
+  comes out of it, so the rescaling partly undid the edit. Measured on gemma-2-2b-it, the weight
+  edit and an equivalent direct intervention disagreed by 0.578 in refusal rate, against 0.016 on
+  Qwen3, and no Gemma setting moved KL above 0.021. The cause is fixed in this release and Gemma
+  numbers will be re-measured; until then they are unmeasured rather than wrong. Llama, Mistral,
+  Phi and Qwen are unaffected.
+- **Ablating a direction removes most of it, not all of it.** The edit preserves each weight row's
+  original length, which is what keeps the model coherent, and that step doesn't commute with the
+  removal, so roughly an eighth of a direction survives on every architecture. This is a deliberate
+  trade-off inherited from the upstream method rather than a new fault, but it wasn't written down
+  anywhere and "the direction was ablated" reads stronger than what happens.
+- **Finding several directions isn't the same as showing they are refusal directions.** The check
+  meant to tell a refusal direction from a topic direction does now reject: each candidate is
+  fitted on half its rows and scored on the half it never saw, against a threshold with a measured
+  floor beneath it. This entry said it "accepts every candidate it is shown" until 2026-09-25,
+  which described the state before that fix and contradicted the body of this same release entry.
+  **What is still open is the thing that matters**: a filter that can reject is not evidence that
+  what it accepted carries refusal rather than topic, so nothing in this release establishes that
+  the extra directions remove refusal rather than ability. A run reports the rejection rate on every
+  extraction, and both "none rejected" and "all rejected" print a warning.
+- **A direction count reported before this release cannot be trusted**, including the comparison
+  table in the README. Those runs applied one direction whatever they requested, which doesn't mean
+  refusal is a single direction; it means the tool hadn't measured it.
+- **Whether removing several directions beats removing one is unanswered.** The comparison intended
+  to settle it is withdrawn, because both of its arms turned out to be removing the same single
+  direction.
 
 ### Measurement
 
-- Every run now measures what the edit cost on a task the model either gets right or does not,
-  and it does so by default. Refusal rates, the keyword rate, drift and brokenness never ask the
-  model to reason, so a model could hold a low divergence with nothing broken and have lost
-  multi-step arithmetic, with nothing in the run saying so.
-- The package carries the probe it uses, so this works with no network: 256 grade-school
-  arithmetic questions, attributed in THIRD-PARTY-NOTICES.md under "The bundled capability probe".
-  Point `--capability-eval` at your own graded benchmark instead, or pass an empty string to turn
-  it off.
-- The capability probe previously ran only on configurations a search had shortlisted, so a run
-  that pinned its settings and skipped the search accepted the request, measured nothing, and
-  reported success. Result files now always say whether capability was measured, and say so
-  separately from whether it was asked for.
+- Every run now measures what the edit cost on a task the model either gets right or doesn't, and
+  it does so by default. Refusal rates, drift and brokenness never ask the model to reason, so a
+  model could hold a low divergence with nothing broken and have lost multi-step arithmetic.
+- The package carries the probe it uses, so this works with no network: 256 grade-school arithmetic
+  questions, attributed in THIRD-PARTY-NOTICES.md under "The bundled capability probe". Point
+  `--capability-eval` at your own graded benchmark instead, or pass an empty string to turn it off.
+- A run that pinned its settings and skipped the search used to measure no capability at all and
+  report success, so result files now say whether capability was measured, separately from whether
+  it was asked for.
 - The compass, a harm-recognition score, is now a first-class command: it asks whether an
   abliterated model still recognises harm rather than only whether it complies.
-- Every compass figure now carries a confidence interval. An AUC without one invites belief
-  the data cannot support.
-- The compass measures on rows nothing was fitted or selected on. Its harmful arm was
-  previously scored on the prompts the winning configuration had been chosen from.
-- Results ship with the controls that qualify them: what a ruler reading only prompt length
-  would score, the same figure over one fixed token pair, and a topic-matched arm.
-- A read-out audit reports what the model actually put at the position being scored, which is
-  how the largest bug in this release was found.
-- `--seed` exists, and every result file records the value it ran at. One run cannot tell a
-  finding from a coin toss.
-- Every result records what produced it: the code version, the package versions, and the
-  commit.
+- Every compass figure carries a confidence interval, and the compass measures on rows nothing was
+  fitted or selected on; its harmful arm was previously scored on the prompts the winning
+  configuration had been chosen from.
+- The compass warns when the position its margin is read from holds something other than a verdict
+  token, which on a thinking model can be the reasoning opener, and records what the position
+  actually held on both arms.
+- Results ship with the controls that qualify them: what a ruler reading only prompt length would
+  score, the same figure over one fixed token pair, and a topic-matched arm.
+- A read-out audit reports what the model actually put at the position being scored, which is how
+  the largest bug in this release was found.
+- `--seed` exists, and every result file records the value it ran at alongside the code version,
+  the package versions and the commit.
+- The per-layer direction counts in the run record are now per layer, where they were indexed by
+  residual-stream position under a name that said layer, so each entry described the layer before
+  the one it named and the search-window report was out by one.
 
-- The compass says when its own read-out is not a verdict. It records what token actually sits
-  at the position the margin is read from and how much probability the two verdict spellings
-  hold, on both arms, and prints a warning beside the figure when that position holds something
-  else. On a thinking model it can hold the reasoning opener, and the margin is then a comparison
-  between two tokens the model was never going to produce.
-- The per-layer direction counts in the run record are per layer. They were indexed by
-  residual-stream position under a name that said layer, so each entry described the layer
-  before the one it named, the minimum was always zero, and the search-window report was out by
-  one. Both views now ship, with a note saying which is which.
+### Engine
+
+- Refusal directions are found by grouping the harmful prompts and taking each group's own average
+  against the harmless average, rather than by looking at how the harmful prompts vary, because a
+  model refuses a weapons request differently from a self-harm one. `--direction-clusters` sets how
+  many groups to look for.
+- A run that asks for several directions keeps the same first direction it would have kept at a
+  budget of one, so two runs that differ only in the budget differ only in the budget.
+- A contrast set too small to form two groups says so and explains how many prompts it needs.
+- Hybrid architectures are supported: where a layer holds a short convolution instead of attention,
+  that convolution writes the model's running state just as attention does, and it's now edited too.
+- Every saved model carries a record of what produced it in both its configuration file and its
+  weight files, naming the version, the settings, and whether the model is a complete abliteration
+  or a deliberately partial one.
+- Sparse surgery restricts the ablation to the rows that write refusal.
+- The search can warm-start from a difference-of-means seed, and can be given a fixed prompt format
+  instead of inventing one when a model has no chat template.
+- A disk-space check runs before the search rather than during the save, and every result file is
+  written atomically, so an interrupted run leaves the previous result intact.
+
+### CLI
+
+- **`senbonzakura measure <model>` answers "did I break my model?" in one command**, where it took
+  five. Those five still exist and the numbers are identical, because each row is that command run
+  with the arguments you would have typed.
+- **`senbonzakura Qwen/Qwen3-1.7B` is now the whole command**, because the output directory and the
+  evaluation track are defaulted and the model is the only thing the tool can't guess.
+- `senbonzakura quantise ./abliterated` now works on a checkpoint rather than only on a GGUF, and
+  converts first with the same pinned converter `convert` uses.
+- `--help` shows the flags a run needs and `--help-all` shows all 69, where the default command's
+  help page was 470 lines; both forms accept exactly the same arguments.
+- Two build steps became commands, `senbonzakura corpora` and `senbonzakura track build`, where
+  they were scripts under `tools/` that ship in no wheel.
+- Four commands stopped demanding arguments they could work out: `capability` takes the model
+  without a flag, `track` defaults its output directory to the one the abliterator looks for, and
+  `baseline` takes the artefact as its first argument and derives the rest. `baseline --seeds` is
+  still required, because a baseline claiming a spread it doesn't have is worse than none.
+- `harm-recognition` is a second name for `compass`, the way `auto` already is for `kageyoshi`, and
+  both original names still work and are what every artefact records.
+- `bench` is now `head-to-head`, with its operation at `head-to-head run`, `stage` and `report`.
+- Real subcommands exist for `abliterate`, `kageyoshi`, `compass`, `score`, `coherence` and
+  `track`, and the existing flag form is unchanged.
+- Left out, `--track` takes `./track` when that directory exists and the bundled track otherwise,
+  and says in the log which it chose.
+- The capability probe refuses to start a run that would take hours on a CPU and names four ways
+  forward; measured on a 1.7B model, the defaults are minutes on a GPU and about four hours on a
+  processor.
+- The probe reports progress every 30 seconds, where it printed nothing at all before.
+- `drift` and the head-to-head were both dispatched without being listed in the help.
+- The guided mode asks the corpus question each command actually takes, because abliterating needs
+  a track with three partitions and scoring needs one prompt set.
+- Picking two Hub corpora in the guided mode now builds a track from them and shows that as its own
+  command, run before the abliteration that needs it.
+- A paused run records the model and the corpus it was working on, so the guided mode's offer to
+  carry on produces a command that runs.
+- `--resume` refuses a directory whose completed trials used a different model or track, and names
+  both ways forward.
+- A startup banner on a terminal, printing nothing when output is redirected so captured logs are
+  byte-identical to before.
 
 ### Data
 
-- `senbonzakura.track` builds an evaluation split and refuses to write one that leaks.
-  Nothing that appears in the measured partition may appear in the fitted or searched ones.
-- The leak check compares requests, not strings. The same question wears many templates, and
-  comparing whole prompts reported a clean split while 60% of the measured set was training
-  questions in other clothes.
-- Every category present in the corpus reaches the measured partition, so a published figure
-  cannot come from a narrower slice than it claims.
-- `track.json` records where the partition boundaries fell, and a run whose flags would cross
-  one is refused rather than quietly allowed.
-- Per-prompt margins and generations are kept, so the next question does not need the GPU
-  back, and a guard refuses to commit any file containing prompts.
+- `senbonzakura.track` builds an evaluation split and refuses to write one that leaks: nothing in
+  the measured partition may appear in the fitted or searched ones, every category in the corpus
+  reaches the measured partition, and `track.json` records where the boundaries fell so a run whose
+  flags would cross one is refused.
+- The leak check compares requests rather than strings, because the same question wears many
+  templates and comparing whole prompts reported a clean split while 60% of the measured set was
+  training questions in other clothes.
 - `--contamination` reports how much of a public benchmark a track has already been fitted or
-  searched on, which is what decides whether a figure on that benchmark would be in-sample.
-  It compares requests rather than strings, counts rows and never prints one, and names how
-  many rows could still be reported cleanly. Add `--fail-on-contamination` to gate on it.
-- The evaluation track's card now records that AdvBench is inside the track, that how much of
-  it reached the fitting side is unmeasured, and how to check before quoting such a figure.
-- `tools/packaging/build_track.py` fetches the public corpora this project measures on, at pinned
-  revisions, and writes the two prompt files the track builder splits. No prompt rows ship in
-  this repository: two of the three upstream datasets declare no licence at all and the
-  probable root of the harmless side is non-commercial, so the recipe is what can honestly be
-  published. It refuses to run if an upstream's declared licence has moved since the recipe was
-  written.
-- The dataset card now traces every source to what it actually declares, checked against the
-  Hub rather than remembered, and records which links are inferred. It also records that the
-  exact corpus behind the published numbers cannot be rebuilt by anyone: harmless top-ups were
-  added by hand and never recorded.
-- `senbonzakura track build` balances the two sides, because the sources return roughly four times as many
-  harmless prompts as harmful ones and `senbonzakura track` refuses a pair more than 10% apart.
-  The two commands did not compose at all before this, so following the track guide in order
-  stopped at its second step. `sources.json` records the seed and how many rows were dropped, and
-  `--no-balance` gives you the raw pools.
+  searched on, which is what decides whether a figure on that benchmark would be in-sample; it
+  counts rows and never prints one, and `--fail-on-contamination` gates on it.
+- The evaluation track's card records that AdvBench is inside the track, that how much of it
+  reached the fitting side is unmeasured, and how to check before quoting such a figure.
+- `tools/packaging/build_track.py` fetches the public corpora this project measures on at pinned
+  revisions, and refuses to run if an upstream's declared licence has moved since the recipe was
+  written. No prompt rows ship in this repository: two of the three upstream datasets declare no
+  licence at all and the probable root of the harmless side is non-commercial, so the recipe is
+  what can honestly be published.
+- The dataset card traces every source to what it actually declares, checked against the Hub rather
+  than remembered, records which links are inferred, and records that the exact corpus behind the
+  published numbers can't be rebuilt by anyone, because harmless top-ups were added by hand and
+  never recorded.
+- `senbonzakura track build` balances the two sides, because the sources return roughly four times
+  as many harmless prompts as harmful ones and `senbonzakura track` refuses a pair more than 10%
+  apart; `sources.json` records the seed and how many rows were dropped, and `--no-balance` gives
+  you the raw pools.
 - A format for contributing a behavioural probe, with a manifest, a declared content class and
   gates that refuse a corpus posing as a benchmark. The gates check shape only; a person still
   reads what a probe contains, and `probes/README.md` says so to contributor and user alike.
-- A capability probe ships in the package, so the capability measurement runs offline and by
-  default rather than needing a benchmark downloaded first.
+- Per-prompt margins and generations are kept, so the next question doesn't need the GPU back, and
+  a guard refuses to commit any file containing prompts.
 
 ### Benchmark
 
 - `senbonzakura head-to-head` runs a matched comparison between abliteration tools on one machine:
-  `run` puts every arm through, scoring every model with one instrument, `stage` cuts the prompt
-  slices every tool is scored on, and `report` reads a finished run.
-- Both tools get the same corpus, the same budget and the same prompt slices, and the slices
-  record which corpus they came from so a mismatched pair is refused rather than run.
-- `--isolate docker` runs each arm with no network, read-only inputs and no credentials.
-  Without it the run warns, because a third-party tool otherwise runs with yours.
-- An arm is skipped only when a manifest agrees with the run's tool, seed, model and budget and
-  every artefact it declared is present. An arm that exits cleanly having produced nothing is a
-  failure and leaves no manifest, so the next run retries it.
-- Adding another tool is an adapter: how to invoke it, what proves it ran, where it leaves a
-  model, how to read its own figures.
+  `run` puts every arm through with one scoring instrument, `stage` cuts the prompt slices, and
+  `report` reads a finished run.
+- Both tools get the same corpus, budget and prompt slices, and the slices record which corpus they
+  came from so a mismatched pair is refused rather than run.
+- `--isolate docker` runs each arm with no network, read-only inputs and no credentials; without it
+  the run warns, because a third-party tool otherwise runs with yours.
 - Every comparable axis (harm recognition, coherence drift, refusals removed) gets a permutation
-  test rather than two means side by side, with the median printed beside the mean because one
-  seed can carry a whole gap. Where the number of seeds makes it impossible for any arrangement of
-  the data to be significant, the report says the comparison could not have concluded rather than
-  calling it a tie. Comparing a gap against a spread is not a test, and was retired: it ignored
-  the number of seeds, so running ten times as many made a real effect harder to declare.
-- `senbonzakura drift` measures coherence the way the compass measures harm recognition: one
-  instrument, run by us afterwards, on held-out prompts, over every model whoever made it. Two
-  tools' self-reported divergences are two measurements wearing one name, and this release found
-  they can disagree by a hundredfold and reverse order once put on one ruler.
-- `--max-kl` searches for the fewest refusals under a coherence ceiling, which is the question
-  other tools ask. It refuses rather than falling back when no configuration meets the ceiling.
+  test rather than two means side by side, with the median beside the mean. Where the number of
+  seeds makes significance impossible for any arrangement of the data, the report says the
+  comparison couldn't have concluded rather than calling it a tie.
+- `senbonzakura drift` measures coherence the way the compass measures harm recognition, on
+  held-out prompts over every model whoever made it, and this release found two tools' self-reported
+  divergences can disagree by a hundredfold and reverse order once put on one ruler.
+- `--max-kl` searches for the fewest refusals under a coherence ceiling, and refuses rather than
+  falling back when no configuration meets it.
+- An arm is skipped only when a manifest agrees with the run's tool, seed, model and budget and
+  every artefact it declared is present, so an arm that exits cleanly having produced nothing is
+  retried.
+- Adding another tool is an adapter: how to invoke it, what proves it ran, where it leaves a model,
+  how to read its own figures.
 
-### Engine
+### Install
 
-- The search can be given a fixed prompt format instead of inventing one when a model has no
-  chat template.
-- Hybrid architectures are supported. On models where some layers hold a short convolution
-  instead of attention, that convolution writes the model's running state just as attention
-  does, and it is now edited too. Editing only part of a layer and reporting success is how
-  every Gemma figure in this project came to be withdrawn.
-- Every saved model carries a record of what produced it, in both its configuration file and
-  the weight files themselves, so copying a single file out of the folder does not lose it. It
-  names the version, the settings, and above all whether the model is a complete abliteration
-  or a deliberately partial one.
-- Sparse surgery restricts the ablation to the rows that write refusal.
-- The search can warm-start from a difference-of-means seed.
-- A disk-space check runs before the search rather than during the save, so a long run cannot
-  die at the last step.
-- Every result file is written atomically, so an interrupted run leaves the previous result
-  intact rather than a truncated one.
+- `pip install senbonzakura` installs torch, transformers, accelerate and optuna, as 0.3.0 also
+  did, and is 69 packages and 5.9 GB. If you tracked `dev` in early September you were told to add
+  an `abliterate` extra; it still resolves and now installs exactly what a plain install does.
+- `senbonzakura setup` puts the right build of torch on the machine it is run on, because pip picks
+  by platform rather than by hardware, and changes nothing unless you pass `--apply`.
+- The wheel carries the bundled evaluation track, so `--track default` works with no network; that
+  is roughly 6,200 harmful prompts inside your site-packages, and the install page says what is in
+  it and how to build a wheel without it. 0.3.0 shipped no corpora at all.
 
-### CLI
+### New since 0.3.0
 
-- **`senbonzakura measure <model>` answers "did I break my model?" in one command.** It took
-  five, each with its own required flags and its own output file. The five still exist and
-  still take knobs this does not expose; the numbers are identical, because each row is that
-  command run with the arguments you would have typed. It prints figures and never a verdict.
-- **`harm-recognition` is a second name for `compass`,** the way `auto` already is for
-  `kageyoshi`. Both original names still work and are what every artefact records: a tool
-  that renames its own commands breaks the record of what was already run.
-- **`senbonzakura quantise ./abliterated` now works on a checkpoint, not only on a GGUF.**
-  It converts first, with the same pinned converter `convert` uses. The two-step route and
-  `convert --quantise` are both unchanged; what changed is that the command people reach
-  for no longer sends them away to learn a file format first.
-- **Four commands stopped demanding arguments they could work out.** `capability` takes the
-  model without a flag and defaults its output; `track` defaults its output directory to the
-  one the abliterator already looks for; `baseline` takes the artefact as its first argument,
-  reads the metric from it when the artefact stamped exactly one, and derives the path. A
-  default output that already exists is refused rather than replaced. `baseline --seeds` is
-  still required: a baseline claiming a spread it does not have is worse than none.
-- **`--help` shows the flags a run needs; `--help-all` shows all 69.** The default command's help
-  page was 470 lines, which is the research side of this tool standing in the doorway of the
-  other side. Both forms accept exactly the same arguments.
-- **Two build steps became commands: `senbonzakura corpora` and `senbonzakura track build`.**
-  They were scripts under `tools/`, which ships in no wheel, so the guide told a reader who had
-  just installed to run a file their install did not contain. The only way through was to clone
-  the repository after installing, for two files.
-- **`senbonzakura Qwen/Qwen3-1.7B` is now the whole command.** The model is the only thing the
-  tool cannot guess; the output directory and the evaluation track are defaulted. `--model` still
-  works and is what a script should use.
-- Left out, `--track` takes `./track` when that directory exists and the track bundled in the
-  install otherwise, and says in the log which it chose.
-- The capability probe refuses to start a run that would take hours on a CPU, and names four ways
-  forward rather than being a wall in front of a default. Measured on a 1.7B model: the defaults
-  are minutes on a GPU and about four hours on a processor.
-- The probe reports progress every 30 seconds. It printed nothing at all before, so a run on a
-  CPU looked identical to a hung one for as long as it took.
-- Real subcommands: `abliterate`, `kageyoshi`, `compass`, `score`, `coherence` and `track`.
-  The existing flag form is unchanged, because every run on record is written that way.
-- A startup banner on a terminal, from a rotating set of five designs. It prints nothing when
-  output is redirected, so captured logs are byte-identical to before.
-- One model-loading surface instead of four near-copies. The four had drifted apart, which is
-  what put the compass's read-out on the wrong token.
+0.3.0 installed three things you could run: abliterating a model (as `senbonzakura --model ...` or
+`senbonzakura kageyoshi`, the only mode word it knew), plus `python -m senbonzakura.score` and
+`python -m senbonzakura.coherence`. Every command below is one that release didn't contain at all.
 
-- `bench` is now `head-to-head`, and its operation moved with it: `head-to-head run`, `stage`
-  and `report`. The old name was the word a newcomer reaches for when asking whether a model is
-  any good on their machine, which is a different question from comparing two abliteration tools.
-- `drift` and the head-to-head were both dispatched without being listed in the help.
-- The guided mode asks the corpus question each command actually takes. Abliterating needs a
-  track with three partitions in it, and scoring needs one prompt set, and both used to be
-  answered by one menu whose answer only worked for the bundled track.
-- Picking two Hub corpora in the guided mode now builds a track from them and shows that as its
-  own command, run before the abliteration that needs it.
-- A paused run records the model and the corpus it was working on, so the guided mode's "carry
-  on with this run" offer produces a command that runs.
-- `--resume` refuses a directory whose completed trials used a different model or a different
-  track, and names both ways forward.
-
-### Documentation
-
-- **The install commands now name a branch.** Without one, pip and git took the repository's
-  default branch, which did not contain the checker package at all, so the documented command
-  failed outright and the fallback installed something close to the version the page was warning
-  you about. All of it goes in one command now.
-- A Colab notebook that measures a model, edits it, and measures what that cost, on a free GPU
-  with nothing installed locally.
-- The quickstart said `pip install senbonzakura` with no warning that the published version is
-  withdrawn. It now carries the same warning the other install pages do.
-- The README documents the track layout, the manifest, and the optional datasets.
-- The headline comparison table now carries its caveats beside it: which two scoring bugs
-  affected it, that its evaluation is not held out, that it is one seed, and why it has not
-  been re-measured.
-- A contributor licence agreement, a contributing guide, and a contributors file.
+- `senbonzakura compass`: does the model still recognise harm, as opposed to still refusing?
+- `senbonzakura capability`: what did the edit cost, on five graded tasks?
+- `senbonzakura validate`: the checks behind a published number, including the experiments.
+- `senbonzakura judge`: validates a judge before it grades anything, and refuses a bad one.
+- `senbonzakura track`: build an evaluation split, and check it for contamination.
+- `senbonzakura head-to-head`: run this tool and another one on the same model, one ruler.
+- `senbonzakura convert`, `quantise`, `imatrix`: GGUF conversion and quantisation.
+- `senbonzakura doctor`: can this install actually do what it claims, before a long run?
+- `senbonzakura fetch`: fetch a model, resumable.
+- `senbonzakura report`: the model card for a finished run.
+- `senbonzakura interactive`: a guided mode for people who don't want to read the flag list.
+- `senbonzakura drift`: how far the edited model moved from the original.
+- `senbonzakura setup`: put the right build of torch on this machine, which pip can't do itself.
 
 ### Packaging and CI
 
-- Continuous integration, which this repository had never had, on Linux, Windows and macOS
-  across five platform and interpreter combinations, covering three Python versions. This said
-  "five Python versions" until 2026-09-25; the matrix has five ROWS and runs 3.10, 3.12 and 3.14.
-  Claiming an interpreter nothing tests is a promise to strangers kept by luck, which is the
-  reason 3.11 and 3.13 were removed from the package classifiers in this same release.
-- **A plain `pip install senbonzakura` still installs the deep-learning stack, as 0.3.0 did.**
-  During development this release briefly split it out behind an `abliterate` extra, and that
-  split was reversed before release: somebody who types the plain command wants to edit a model,
-  and handing them a skeleton that then asks which extra they needed is a worse first five
-  minutes than a large download. The `abliterate` extra still exists and still resolves, so
-  anything written down against it keeps working; it now installs what the plain command does.
-  The torch-free capability itself was not withdrawn, only the default, and it is still measured
-  on every commit: the checking commands run with torch, transformers, accelerate and optuna all
-  made unimportable, so a verifier or a distribution package can still be built without them.
-- **Two other things move behind extras in this release.** Naming a dataset by its HuggingFace id
-  (`--good-ds owner/name`) needs `pip install 'senbonzakura[hub]'`, and shell completion needs
-  `pip install 'senbonzakura[completion]'`. Both were part of a plain install in 0.3.0.
-- Declared dependency floors are tested at the floor, because a floor nothing installs at is
-  not a tested floor. A check now enforces that the pinned floors and the declared ones are the
-  same versions, which was previously a note in a file asking to be remembered.
-- The `datasets` package is no longer needed for ordinary work and is now an optional extra,
-  `pip install 'senbonzakura[hub]'`. Tracks, the bundled corpora and every file format the tool
-  accepts are read and written with pyarrow instead. Nothing about the files on disk changed: a
-  track built by an older version reads the same, and a track built by this one still loads in
-  `datasets`. What still needs the extra is naming a dataset by its HuggingFace id, and asking
-  for one without it says so and names what to install.
-- Importing the package no longer imports the whole command-line interface, so running any
-  module with `-m` no longer prints a warning about unpredictable behaviour.
-- Container images, so the tool can be run without installing anything. The CPU image converts,
-  quantises and builds importance matrices; a separate CUDA image abliterates on a GPU. Both
-  carry the pinned llama.cpp binaries, which a wheel cannot.
-- Per-platform wheels that carry those binaries, so `pip install` can convert and quantise. A
-  wheel is tagged for a platform only when it actually holds one platform's binaries, so a
-  package claiming to run anywhere can never contain a Linux executable.
-- Converting and quantising from a wheel needs the OpenMP runtime, which a wheel has no way to
-  ask a system for. `doctor` names the missing library and what to install; the container images
-  carry it already.
-- The command line starts in a hundredth of a second instead of just under three, because
-  printing help no longer loads a deep-learning stack. `doctor` can now run on a machine that is
-  missing the very libraries it exists to report on.
-- Every quantisation writes a record beside its output naming the toolchain that produced it:
-  the pinned version, the build the binary reports about itself, and the importance matrix used,
-  if any.
+- Continuous integration, which this repository had never had, on Linux, Windows and macOS across
+  five platform and interpreter combinations covering three Python versions. This said "five Python
+  versions" until 2026-09-25; the matrix has five rows and runs 3.10, 3.12 and 3.14, and 3.11 and
+  3.13 were removed from the package classifiers in this same release because claiming an
+  interpreter nothing tests is a promise kept by luck.
+- A plain `pip install senbonzakura` still installs the deep-learning stack, as 0.3.0 did; during
+  development this release briefly split it out behind an `abliterate` extra and that was reversed
+  before release, with the extra kept so anything written against it keeps working.
+- The torch-free capability itself wasn't withdrawn, only the default, and it's still measured on
+  every commit: the checking commands run with torch, transformers, accelerate and optuna all made
+  unimportable, so a verifier or a distribution package can still be built without them.
+- The `datasets` package is no longer needed for ordinary work, and tracks, the bundled corpora and
+  every file format the tool accepts are read and written with pyarrow instead. Nothing about the
+  files on disk changed: a track built by an older version reads the same, and one built by this
+  version still loads in `datasets`.
+- Container images, so the tool can be run without installing anything: a CPU image that converts,
+  quantises and builds importance matrices, and a CUDA image that abliterates on a GPU, both
+  carrying the pinned llama.cpp binaries a wheel can't.
+- Per-platform wheels that carry those binaries, so `pip install` can convert and quantise, tagged
+  for a platform only when they actually hold that platform's binaries.
+- Converting and quantising from a wheel needs the OpenMP runtime, which a wheel has no way to ask
+  a system for, so `doctor` names the missing library and what to install.
+- The command line starts in a hundredth of a second instead of just under three, because printing
+  help no longer loads a deep-learning stack, and `doctor` can now run on a machine missing the
+  libraries it exists to report on.
+- Every quantisation writes a record beside its output naming the pinned toolchain version, the
+  build the binary reports about itself, and the importance matrix used, if any.
+- Declared dependency floors are tested at the floor, and a check enforces that the pinned floors
+  and the declared ones are the same versions.
+- Importing the package no longer imports the whole command-line interface, so running any module
+  with `-m` no longer warns about unpredictable behaviour.
+
+### Documentation
+
+- The install commands now name a branch, where without one pip and git took the repository's
+  default branch, which held no checker package at all.
+- A Colab notebook that measures a model, edits it, and measures what that cost, on a free GPU with
+  nothing installed locally.
+- The headline comparison table now carries its caveats beside it: which two scoring bugs affected
+  it, that its evaluation isn't held out, that it is one seed, and why it hasn't been re-measured.
+- The quickstart now carries the same warning the other install pages do, that the published
+  version is withdrawn.
+- The README documents the track layout, the manifest, and the optional datasets.
+- A contributor licence agreement, a contributing guide, and a contributors file.
 
 ### Licence
 
-- The AGPL section 5(a) statement of modification, with dates, in the notices file, the
-  README, and beside the copied code. A test pins the copied region so it cannot drift from
-  upstream without someone deciding to let it.
+- The AGPL section 5(a) statement of modification, with dates, in the notices file, the README, and
+  beside the copied code. A test pins the copied region so it can't drift from upstream without
+  someone deciding to let it.
 
 ### Security
 
 - The pre-commit hooks no longer execute the project configuration file.
-- The prompt-retention guard reads what is staged rather than what is in the working tree, so
-  an artefact staged with prompts and then tidied on disk is still refused.
-
-### Known defects
-
-- **Every Gemma measurement is withdrawn.** The weight edit did not reach the model's running
-  state on that architecture. Gemma 2 and Gemma 3 pass each layer's output through a learned
-  rescaling step before adding it back, and the tool edited the weights feeding that step rather
-  than what comes out of it, so the rescaling partly undid the edit. Measured on gemma-2-2b-it:
-  the weight edit and an equivalent direct intervention disagreed by 0.578 in refusal rate,
-  against 0.016 on Qwen3, and no Gemma setting moved KL above 0.021. The cause is fixed in this
-  release and Gemma numbers will be re-measured; until then they are unmeasured rather than
-  wrong. Llama, Mistral, Phi and Qwen are unaffected.
-- **Ablating a direction removes most of it, not all of it.** The edit preserves each weight
-  row's original length, which is what keeps the model coherent, and that step does not commute
-  with the removal, so roughly an eighth of a direction survives on every architecture. This is
-  a deliberate trade-off inherited from the upstream method rather than a new fault, but it was
-  not written down anywhere and "the direction was ablated" reads stronger than what happens.
-- **Finding several directions is not the same as showing they are refusal directions.** The
-  check meant to tell a refusal direction from a topic direction does now reject: each candidate
-  is fitted on half its rows and scored on the half it never saw, against a threshold with a
-  measured floor beneath it. This entry said it "accepts every candidate it is shown" until
-  2026-09-25, which described the state before that fix and contradicted the body of this same
-  release entry. **What is still open is the thing that matters**: a filter that can reject is
-  not evidence that what it accepted carries refusal rather than topic, so nothing in this
-  release establishes that the extra directions remove refusal rather than ability. A run reports
-  the rejection rate on every extraction, and both
-  "none rejected" and "all rejected" print a warning.
-- **A direction count reported before this release cannot be trusted**, including the
-  comparison table in the README. Those runs applied one direction whatever they requested.
-  This does not mean refusal is a single direction; it means the tool had not measured it.
-- **Whether removing several directions beats removing one is unanswered.** The comparison
-  intended to settle it is withdrawn, because both of its arms turned out to be removing the
-  same single direction.
-
-### Engine
-
-- Refusal directions are found by grouping the harmful prompts and taking each group's own
-  average against the harmless average, rather than by looking at how the harmful prompts vary.
-  A model refuses a weapons request differently from a self-harm one, and the old method could
-  not represent that. `--direction-clusters` sets how many groups to look for.
-- A run that asks for several directions and gets them keeps the same first direction it would
-  have kept at a budget of one, so two runs that differ only in the budget differ only in the
-  budget.
-- A contrast set too small to form two groups says so and explains how many prompts it needs,
-  rather than quietly returning a single direction.
+- The prompt-retention guard reads what is staged rather than what is in the working tree, so an
+  artefact staged with prompts and then tidied on disk is still refused.
 
 ### Fixed
 
-- **`senbonzakura measure` scored the prompts a configuration had been chosen on, and captioned
-  the figure as held out.** The command carried its own second copy of the code that reads a
-  track's boundaries, and that copy did not know the bundled track's alias, so on the default
-  track it read the boundary as zero where the real one is 132. There is one reader now, and the
-  caption is taken from what the run recorded rather than from what the report assumes, so a
-  figure whose boundary nothing confirmed says exactly that instead of claiming a partition.
-- **A run could wait for ever for video memory.** The pause that fires under memory pressure
-  waited for a level a card filled by our own model can never reach, and the wait before the
-  first batch had no deadline at all. A pause now asks who is holding the memory: it will wait
-  for another application to give it back, never for our own model to stop being resident.
-- **The first run the documentation describes failed at its second command.** `senbonzakura
-  track build` needed a package that only the `hub` extra installs, and no documented install
-  installs it. It reads the Hub directly now, verified against the pinned revisions on an install
-  where that package is absent.
-- `senbonzakura score` could not say which rows its number came from, so the headline refusal
-  rate could never be compared against a baseline. It records the partition it measured, and a
-  confidence interval for both estimators.
-- A mistyped or retired command printed a usage block. It now names the closest real command, and
-  for a command this release retires it says what replaced it.
-- A problem in a probe file reported a line number from inside the tool instead of the line in the
-  file the user wrote.
-- An empty prompt file was read as a run with nothing to refuse rather than as a mistake, and the
-  refusal now names the column it looked in.
-- A run that requests several refusal directions and applies one now says so in those words.
-  The note that reported this was scoped to part of the model and read as though the rest had
-  been fine, which is what hid the defect above for most of a day.
-- Every candidate direction's score is kept in the result file, whether it was used or not. A
-  count on its own cannot say whether a direction was rejected narrowly or was never possible,
-  and those are different findings.
-- The refusal scanner read only the first 240 characters of a reply, and 51 of 56 refusal
-  markers land past that point.
-- The prompt renderer existed in three copies that had drifted, so a configuration selected
-  under one prompt format was reported under another.
+- **`senbonzakura measure` scored the prompts a configuration had been chosen on, and captioned the
+  figure as held out.** The command carried a second copy of the code that reads a track's
+  boundaries, and that copy didn't know the bundled track's alias, so on the default track it read
+  the boundary as zero where the real one is 132. There is one reader now, and the caption comes
+  from what the run recorded, so a figure whose boundary nothing confirmed says exactly that.
+- A run could wait for ever for video memory, because the pause that fires under memory pressure
+  waited for a level a card filled by our own model can never reach and the wait before the first
+  batch had no deadline; a pause now never waits for our own model to stop being resident.
+- The first run the documentation describes failed at its second command, because `senbonzakura
+  track build` needed a package only the `hub` extra installs; it reads the Hub directly now.
+- The refusal scanner read only the first 240 characters of a reply, and 51 of 56 refusal markers
+  land past that point.
 - The compass scored the prompt read back to the model rather than the model's verdict.
-- A non-converging matrix decomposition quietly weakened the ablation and reported the
-  strength it had been asked for, not the one it applied.
 - A layer offloaded to disk was never abliterated, and nothing said so.
-- Nine orthonormal directions cannot exist in an eight-dimensional space, and the code
-  believed they could.
+- A non-converging matrix decomposition quietly weakened the ablation and reported the strength it
+  had been asked for, not the one it applied.
+- The prompt renderer existed in three copies that had drifted, so a configuration selected under
+  one prompt format was reported under another.
+- `senbonzakura score` couldn't say which rows its number came from, so the headline refusal rate
+  could never be compared against a baseline; it records the partition it measured and a confidence
+  interval for both estimators.
+- A run that requests several refusal directions and applies one now says so in those words, where
+  the note that reported it was scoped to part of the model and read as though the rest had been
+  fine, which is what hid the defect above for most of a day.
+- Every candidate direction's score is kept in the result file whether it was used or not, because
+  a count alone can't say whether a direction was rejected narrowly or was never possible.
+- Nine orthonormal directions can't exist in an eight-dimensional space, and the code believed they
+  could.
 - Nonsense slice arguments produced a plausible-looking result file instead of an error.
-- The guided mode's corpus menu offered four corpora, and three of them printed a command that
-  could not run. Only the bundled track ever worked.
-- The guided mode's "carry on with a run you already have" screen printed a command with no
-  model on it, which is the one flag that has no default.
+- A mistyped or retired command printed a usage block, and now names the closest real command or
+  what replaced it.
+- A problem in a probe file reported a line number from inside the tool instead of the line in the
+  file the user wrote, and an empty prompt file was read as a run with nothing to refuse rather
+  than as a mistake.
+- The guided mode's corpus menu offered four corpora and three of them printed a command that
+  couldn't run, and its offer to carry on with an existing run printed a command with no model on
+  it.
 - AdvBench is gated on the Hub and was the first harmful corpus offered, so pressing Enter gave
-  anyone without a Hugging Face account an authentication error. It is still offered, second,
-  and says what it needs.
+  anyone without a Hugging Face account an authentication error; it is still offered, second, and
+  says what it needs.
 - The guided mode read a helper out of a module that imports the deep-learning stack, so on an
   install without it the walkthrough asked four questions and then produced a traceback.
-- A command that reported failure by returning a status, rather than by raising, ended the
-  guided run silently. Both now print what is on disk and how to carry on.
+- A command that reported failure by returning a status rather than by raising ended the guided run
+  silently; both now print what is on disk and how to carry on.
 
 ### Other
 
-Bug fixes and improvements.
+- Bug fixes and improvements.
 
 ## [0.3.1] "Petals" — 2026-09-09
 

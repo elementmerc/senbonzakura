@@ -109,7 +109,7 @@ numbers can be checked, and the first one a stranger checked was wrong.
 
 **It said:** three different sizes, on three pages.
 
-**It says:** 69 packages and 5.9 GB, measured on 2026-09-26 in an empty virtualenv on Python 3.14,
+**It says:** 70 packages and 5.9 GB, measured on 2026-09-28 in an empty virtualenv on Python 3.14,
 with the breakdown beside it, and a test that fails when the pages disagree.
 
 **What was actually wrong:** a measured fact copied into prose in three places, where nothing can

@@ -52,6 +52,10 @@ PAGES = [
     ROOT / "README.md",
     ROOT / "docs" / "guide" / "install.md",
     ROOT / "docs" / "guide" / "quickstart.md",
+    # THE PAGE ABOUT FIGURES DRIFTING WAS ITSELF UNGUARDED, found 2026-09-28 when the count moved
+    # from 69 to 70 and three of the four places changed. It states the current figure, not a
+    # historical one, so it is a page for this list by the rule above.
+    ROOT / "docs" / "guide" / "what-we-got-wrong.md",
 ]
 
 #: "69 packages", "68 packages". Not "packages" alone, which appears in plenty of other sentences.

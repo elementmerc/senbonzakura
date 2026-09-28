@@ -40,6 +40,8 @@ over and the weights are on disk, so refusing would cost the user the figure rat
 import types
 import typing
 
+import pytest
+
 from senbonzakura import cli
 
 
@@ -253,3 +255,105 @@ def test_the_probe_is_reached_after_the_weights_are_restored_and_not_before():
     assert park < back < probe, (
         "the order is park, restore, probe. Anything else puts the hungriest generation in the run "
         "on whichever device the save happened to leave the weights on.")
+
+
+# ── an out of memory putting them back must not cost the record ───────────────────────────────────
+
+class _RefusesToMoveBack(_FakeModel):
+    """A card with no room left. `free_before_save` succeeded; something else took the VRAM since."""
+
+    def __init__(self, fail_times=99):
+        super().__init__("cpu")
+        self.fail_times = fail_times
+        self.attempts = 0
+
+    def to(self, dev):
+        self.attempts += 1
+        if str(dev).startswith("cuda") and self.attempts <= self.fail_times:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        return super().to(dev)
+
+
+def _parked(model):
+    obj = _abl(model=model)
+    obj._weights_parked_on_host = True
+    return obj
+
+
+def test_an_out_of_memory_putting_the_weights_back_does_not_end_the_run():
+    """WHAT PROMPTED IT, 2026-09-28. Two reviewers reached this independently.
+
+    By the time this runs the weights are on disk and `abliteration.json`, the model card and the
+    completion marker are not yet written. A bare `self.model.to(self.dev)` therefore ended a
+    finished run with a traceback and left a checkpoint with no receipt, which is the state the
+    whole provenance layer exists to prevent.
+
+    It is six lines before the probe whose own out of memory this ordering was introduced to
+    survive, so the run was protected against the expensive failure and not against the cheap one
+    immediately before it.
+    """
+    model = _RefusesToMoveBack()
+    obj = _parked(model)
+    said = []
+    obj.log = said.append
+
+    obj.restore_device_after_save()   # must not raise
+
+    assert model.attempts >= 2, "it gave up without clearing the cache and trying once more"
+    printed = "\n".join(said)
+    assert "WARNING" in printed, f"the degradation was silent: {printed!r}"
+    assert "twenty times slower" in printed, (
+        "the warning does not say what it costs, so a reader cannot tell whether to re-run")
+    assert "saved weights" in printed, (
+        "nothing tells the reader their model is fine, which is the one thing they will want to "
+        f"know: {printed!r}")
+
+
+def test_a_retry_that_succeeds_is_not_reported_as_a_degradation():
+    """The cache clear is worth having only if the second attempt is really taken."""
+    model = _RefusesToMoveBack(fail_times=1)
+    obj = _parked(model)
+    said = []
+    obj.log = said.append
+
+    obj.restore_device_after_save()
+
+    assert model.attempts == 2
+    assert obj._weights_parked_on_host is False
+    assert "WARNING" not in "\n".join(said)
+    assert model.moves and model.moves[-1].startswith("cuda")
+
+
+def test_the_weights_are_still_recorded_as_parked_when_the_move_failed():
+    """Otherwise the next thing to ask is told they are on the card, and they are not."""
+    obj = _parked(_RefusesToMoveBack())
+    obj.log = lambda _m: None
+    obj.restore_device_after_save()
+    assert obj._weights_parked_on_host is True, (
+        "a failed move cleared the flag, so every later check believes the weights are on the card")
+
+
+def test_an_error_that_is_not_an_out_of_memory_is_still_raised():
+    """The handler is for a full card, not for hiding faults."""
+    class Broken(_FakeModel):
+        def to(self, _dev):
+            raise RuntimeError("device-side assert triggered")
+
+    obj = _parked(Broken())
+    obj.log = lambda _m: None
+    with pytest.raises(RuntimeError, match="device-side assert"):
+        obj.restore_device_after_save()
+
+
+def test_the_weights_are_not_moved_back_when_nothing_that_follows_needs_the_card():
+    """`cap_items` is empty under `--capability-n 0`, which the low-memory advice and the Colab
+    probe's reduced budget both set. Those runs moved a whole model onto the card for nothing.
+    """
+    import inspect
+    body = inspect.getsource(cli.Abliterator._bake_and_save)
+    back = body.index("self.restore_device_after_save()")
+    guard = body.rindex("if cap_items:", 0, back)
+    between = body[guard:back]
+    assert between.count("\n") < 12, (
+        "the restore is no longer inside the branch that checks there is a probe to run:\n"
+        f"{between[:400]}")

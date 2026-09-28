@@ -3270,8 +3270,35 @@ class Abliterator:
         """
         if not getattr(self, "_weights_parked_on_host", False):
             return
+        # AN OOM HERE MUST NOT COST THE RECORD. By the time this runs the weights are on disk and
+        # `abliteration.json`, the model card and the completion marker are not yet written, so an
+        # unguarded `.to()` ended a finished run with a traceback and left a checkpoint with no
+        # receipt: the exact state the provenance layer exists to prevent, reached six lines before
+        # the probe whose own OOM this ordering was designed to survive.
+        #
+        # The probe already warns and carries on when the weights are not where it wanted them, so
+        # the honest degradation is a slow measurement with a sentence, not a lost artefact.
+        import torch
+
+        from .resources import _is_oom
+        try:
+            self.model.to(self.dev)
+        except Exception as e:
+            if not _is_oom(e):
+                raise
+            try:
+                torch.cuda.empty_cache()
+                self.model.to(self.dev)
+            except Exception as again:
+                if not _is_oom(again):
+                    raise
+                self.log(f"  WARNING: could not put the weights back on {self.dev} after the save: "
+                         f"{again}")
+                self.log("  The model is written and the run continues on the host, which is about "
+                         "twenty times slower for the measurements that follow. Nothing about the "
+                         "saved weights is affected.")
+                return
         self._weights_parked_on_host = False
-        self.model.to(self.dev)
         self.log(f"  save prep: put the weights back on {self.dev} for the measurements that follow")
 
     def eval_provenance(self):
@@ -4330,7 +4357,12 @@ class Abliterator:
         # ran on the host: 604 seconds for sixteen items against 25 to 37 on the card, measured on
         # the ROG on 2026-09-26 with the GPU at 187 MiB. The save still gets its headroom, because by
         # here the write is finished and the VRAM is free again.
-        self.restore_device_after_save()
+        # ONLY WHEN SOMETHING NEEDS THE CARD. This was unconditional, and `cap_items` is empty
+        # whenever `--capability-n 0` or `--capability-eval ""` is set, which is what the low-memory
+        # advice and the Colab probe's reduced budget both do. Those runs moved a whole model back
+        # onto the card for nothing, and carried the risk above while doing it.
+        if cap_items:
+            self.restore_device_after_save()
         post_cap = self._capability_score(cap_items) if cap_items else None
         cap_after_summary = getattr(self, "_last_capability_summary", None) if cap_items else None
         if cap_items:

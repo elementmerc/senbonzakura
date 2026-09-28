@@ -154,6 +154,21 @@ _INSTALL_HINT = {
 }
 
 
+def _is_installed(name):
+    """Is this top-level package present on this interpreter's path?
+
+    `find_spec` LOCATES a module without executing it, which is exactly the distinction needed
+    here: a package whose `__init__` raises still has a spec, so "present but broken" and "absent"
+    stop looking the same. A broken parent can make the lookup itself raise, and that is answered
+    as "cannot tell" rather than allowed to replace one bad message with a crash.
+    """
+    import importlib.util
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
 def _cannot_run(command, module_name, error):
     """Turn a failed import of a delegated module into a sentence about the install.
 
@@ -165,8 +180,49 @@ def _cannot_run(command, module_name, error):
     A missing package of ours is a different fault from a missing dependency and says so: the first
     means the install is damaged and should be reinstalled, the second means it is incomplete and
     names what to add.
+
+    AND A PRESENT PACKAGE IS A THIRD FAULT, which this asserted its way past until 2026-09-28.
+    `error.name` is the package the failed import was reaching INTO, not a package that is absent:
+
+        ImportError: cannot import name 'Cache' from 'transformers'   ->   name == "transformers"
+
+    on an install where transformers is right there. The tool then told the operator it was not
+    installed and prescribed an install that changes nothing, over a version mismatch that the
+    same pin reproduces exactly.
+
+    TWO SIGNALS DECIDE IT, and they have to agree before absence is claimed:
+
+      * the exception TYPE. `ModuleNotFoundError` is what the import machinery raises when it
+        could not find a module; a plain `ImportError` means the module was found, ran, and did
+        not hand over what was asked for. Only the first is evidence of absence.
+      * `find_spec`, which LOCATES a package without executing it, so a package whose `__init__`
+        raises still has a spec. That is the measurement, rather than the assumption.
+
+    An error carrying no package name at all (an `OSError` from a library that will not load,
+    which is what `doctor` has always handled beside `ImportError`) is reported as what it is
+    rather than dressed up as a missing dependency, because nothing here knows what to install.
     """
-    missing = getattr(error, "name", None) or "a required package"
+    missing = getattr(error, "name", None) or ""
+    top = missing.split(".")[0]
+    found_it = bool(top) and not isinstance(error, ModuleNotFoundError) and _is_installed(top)
+    if found_it and top != __package__:
+        return SystemExit(
+            f"senbonzakura: cannot run '{command}': {top} is installed here, and importing it "
+            f"failed anyway.\n"
+            f"    {type(error).__name__}: {error}\n"
+            f"  The package is PRESENT, so installing it again will not help on its own. The "
+            f"usual causes are a version that does not match what senbonzakura expects and an "
+            f"upgrade that did not finish.\n"
+            f"  'senbonzakura doctor' reports what this install can and cannot do, and it runs "
+            f"without any of this.")
+    if not top:
+        return SystemExit(
+            f"senbonzakura: cannot run '{command}': loading the '{module_name}' module failed, and "
+            f"the error names no package, so nothing here can say which one is missing.\n"
+            f"    {type(error).__name__}: {error}\n"
+            f"  'senbonzakura doctor' reports what this install can and cannot do, and it runs "
+            f"without any of this. If it reports a required package absent, that is the one to "
+            f"install.")
     if missing.split(".")[0] == __package__:
         return SystemExit(
             f"senbonzakura: cannot run '{command}': part of senbonzakura itself is missing "
@@ -189,7 +245,11 @@ def dispatch(name):
     try:
         module = importlib.import_module(f".{module_name}", __package__)
         return getattr(module, attr)
-    except ImportError as e:
+    # OSError beside ImportError, which is what `doctor` has always done for this class: a
+    # dependency that is present and will not LOAD raises OSError (a DLL that will not map, a
+    # shared object built for another CUDA), and that escaped here as a raw traceback while the
+    # same fault one module away got a sentence.
+    except (ImportError, OSError) as e:
         raise _cannot_run(name, module_name, e) from e
     except AttributeError as e:
         # The module imported and does not carry its entry point, which no user action causes.
@@ -438,7 +498,7 @@ def main(argv=None):
     # there and this branch never runs.
     try:
         from .cli import run_parsed
-    except ImportError as e:
+    except (ImportError, OSError) as e:
         # `bankai` is a flag, not a name: naming the command after it printed "cannot run
         # 'True'". The word the user typed is the one they can act on.
         raise _cannot_run("kageyoshi" if bankai else "abliterate", "cli", e) from e

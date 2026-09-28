@@ -1130,13 +1130,18 @@ def _promote_main(argv):
     if sub == "verify":
         _ok, why = promotion_is_current(a.track)
         failures = audit(Path(a.track), labels)
-        for f in failures:
-            print(f"  {f}", file=sys.stderr)
         print(f"promotion: {why}")
         if labels is None:
             print("  note: no --labels, so the per-stratum coverage check did not run")
         if failures:
-            print(f"TRACK_VERIFY_FAILED {a.track}", file=sys.stderr)
+            # THE HEADER FIRST, AND ON THE SAME STREAM AS ITS BULLETS. These printed in the order
+            # bullets, promotion line, header, across two streams: the failures appeared above the
+            # line that names them and the line that names them arrived after everything, so a
+            # reader met a list of complaints with nothing yet saying what they were a list of.
+            print(f"TRACK_VERIFY_FAILED {a.track}: {len(failures)} check(s) failed",
+                  file=sys.stderr)
+            for f in failures:
+                print(f"  {f}", file=sys.stderr)
             raise SystemExit(1)
         print(f"TRACK_VERIFY_OK {a.track}")
         return 0

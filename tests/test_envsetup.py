@@ -798,3 +798,43 @@ def test_a_pip_install_that_hangs_is_stopped_and_said_so(capsys, monkeypatch):
     monkeypatch.setattr(envsetup.subprocess, "run", _hang)
     assert envsetup.main(["--apply"]) == 2
     assert "did not finish within" in capsys.readouterr().err
+
+
+# ── a failure on stderr must not point at a line that went to stdout ─────────────────
+def _applied_and_failed(monkeypatch, run):
+    """Drive `--apply` to the pip call on a machine whose plan produces a command."""
+    import subprocess as sp
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+    monkeypatch.setattr(envsetup.subprocess, "run", run)
+    return sp
+
+
+def test_a_hung_pip_prints_the_command_rather_than_pointing_at_stdout(capsys, monkeypatch):
+    """The command is printed to stdout and this message goes to stderr.
+
+    `senbonzakura setup --apply > setup.log` splits them, and "run the command above by hand" then
+    names a line the reader's terminal never showed. The failure carries what to type instead.
+    """
+    sp = _applied_and_failed(monkeypatch, None)
+
+    def _hang(*a, **k):
+        raise sp.TimeoutExpired(cmd="pip", timeout=envsetup.PIP_TIMEOUT)
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _hang)
+    assert envsetup.main(["--apply"]) == 2
+    err = capsys.readouterr().err
+    assert "the command above" not in err
+    assert "-m pip install" in err, f"the command to run by hand is not in the message: {err}"
+
+
+def test_a_failing_pip_prints_the_command_rather_than_pointing_at_stdout(capsys, monkeypatch):
+    _applied_and_failed(monkeypatch, lambda *a, **k: _Proc(returncode=1))
+    assert envsetup.main(["--apply"]) == 1
+    err = capsys.readouterr().err
+    assert "pip exited 1" in err
+    assert "the command above" not in err
+    assert "-m pip install" in err, f"the command to debug is not in the message: {err}"

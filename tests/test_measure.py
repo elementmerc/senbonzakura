@@ -380,6 +380,11 @@ def test_a_bare_exit_status_still_produces_a_readable_reason(monkeypatch):
     status. The summary table reported "exited 3", which is the one fact a reader cannot act on,
     while the sentence they needed sat a few lines above it with nothing connecting the two. The
     status is kept, because a script reads it; it is no longer offered as the explanation.
+
+    REWRITTEN 2026-09-28: it used to assert "log above", which is where the reason is NOT. An int
+    exit code comes from argparse, and argparse writes to stderr while this log is stdout, so
+    `senbonzakura measure ... > run.log` produced a log pointing at a reason that was never in it.
+    What has to hold is that the row names the stream the reader can actually go and read.
     """
     import sys
     import types as _types
@@ -395,8 +400,10 @@ def test_a_bare_exit_status_still_produces_a_readable_reason(monkeypatch):
         measure.run_stage("score", [], log=lambda _m: None)
     said = " ".join(str(e.value).split())
     assert "3" in said, f"the status a script reads was dropped: {said}"
-    assert "log above" in said, (
+    assert "stderr" in said, (
         f"the row reports a status and never says where the stage's own reason is: {said}")
+    assert "reason is in this run's log above" not in said, (
+        f"the row points at a reason that is not in this log: {said}")
 
 
 def test_any_other_exception_is_named_by_its_type(monkeypatch):
@@ -492,3 +499,31 @@ def test_an_ordinary_stage_is_still_reported_as_a_number():
                                                                            "units": ""}}}}
         row = measure.verdict_rows(res)[0]
         assert row.figure == "0.9887", f"a good run reported {row.figure!r} with marker {marker}"
+
+
+def test_a_redirected_run_log_does_not_promise_a_reason_it_cannot_hold(monkeypatch, capsys):
+    """The defect end to end: everything this stage's log holds, with stdout captured alone.
+
+    `measure` logs to stdout; a stage that exits with a bare status wrote its reason to stderr.
+    Redirect stdout to a file, which is what anybody running a five-stage measurement does, and
+    the file has to be honest about not holding the reason.
+    """
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("senbonzakura.score")
+
+    def _exit(_argv):
+        print("score: --track is required", file=sys.stderr)
+        raise SystemExit(2)
+
+    fake.main = _exit
+    monkeypatch.setitem(sys.modules, "senbonzakura.score", fake)
+    lines = []
+    with pytest.raises(measure.StageError) as e:
+        measure.run_stage("score", [], log=lines.append)
+    on_stdout = "\n".join(lines) + "\n" + str(e.value)
+    assert "score: --track is required" not in on_stdout, (
+        "the premise of this test is wrong: the reason DID reach the log")
+    assert "is in this run's log above" not in on_stdout
+    assert "stderr" in str(e.value)

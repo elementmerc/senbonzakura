@@ -524,13 +524,21 @@ def paired_change(before, after, seed=0, resamples=2000, alpha=0.05):
 def report(summary, change=None):
     """The result in the words a reader needs, rather than a dump of the dict."""
     lines = [f"  graded {summary['graded']} of {summary['n']} items"]
+    # WHAT THE READER CAN ACTUALLY SEE ABOVE, carried forward rather than assumed. The budget
+    # warnings below used to say "the accuracy above" and "the accuracy above stands" whichever of
+    # these three branches had run, so a run that graded nothing printed "accuracy: nothing could
+    # be graded" and then told the reader that the accuracy above was not a statement about this
+    # model. A caveat about a figure that is not there reads as a figure that is.
+    figure_above = None
     if summary["accuracy"] is not None:
         lo, hi = summary["accuracy_ci"]
         lines.append(f"  accuracy {summary['correct']}/{summary['graded']} = "
                      f"{summary['accuracy']}  95% CI [{lo}, {hi}]")
+        figure_above = "the accuracy above"
     elif summary.get("accuracy_withheld_because"):
         lines.append(f"  accuracy: {summary['correct']}/{summary['graded']} and NOT REPORTED as a "
                      f"rate: {summary['accuracy_withheld_because']}")
+        figure_above = "the counts above"
     else:
         lines.append("  accuracy: nothing could be graded")
     ref_rate = (change or {}).get("reference_indeterminate_rate")
@@ -543,18 +551,26 @@ def report(summary, change=None):
             f"items. That understates the cost in the flattering direction. Re-run the reference "
             f"with a larger --max-new before reading the change.")
     if summary.get("budget_suspect"):
+        cost = (f"so what was graded is an easier exam than the one set and {figure_above} is not "
+                f"a statement about this model"
+                if figure_above else
+                "and here nothing could be graded at all, so this run has produced no figure "
+                "about this model to read")
         lines.append(
             f"  BUDGET, NOT MODEL. {summary['indeterminate']} of {summary['n']} answers "
             f"({summary['indeterminate_rate']:.1%}) never finished, past the "
             f"{summary['budget_threshold']:.0%} this tool will report through. The ones that fail "
-            f"to finish are the LONG ones, so what was graded is an easier exam than the one set "
-            f"and the accuracy above is not a statement about this model. Raise --max-new and "
+            f"to finish are the LONG ones, {cost}. Raise --max-new and "
             f"run it again; do not quote any figure from this run.")
     elif summary["indeterminate"]:
+        stands = {
+            "the accuracy above": "so the accuracy above stands",
+            "the counts above": "so it is not why the rate above was withheld",
+        }.get(figure_above, "though nothing could be graded here, so there is no rate either way")
         lines.append(
             f"  indeterminate {summary['indeterminate']} ({summary['indeterminate_rate']:.1%}): "
             f"no number in the generation, usually the token budget rather than the model. Below "
-            f"the {summary['budget_threshold']:.0%} threshold, so the accuracy above stands.")
+            f"the {summary['budget_threshold']:.0%} threshold, {stands}.")
     if change:
         lo, hi = change["delta_ci"]
         lines += [

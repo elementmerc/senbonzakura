@@ -73,9 +73,15 @@ from .metrics import min_achievable_p, permutation_p
 #:
 #: The k-arms are listed BEFORE the bare `senbon`, because an alternation is first-match and
 #: `senbon` would otherwise swallow `senbon-k1` and leave `-k1-seed42` unmatched.
-ARM = re.compile(
-    r"^scored-(?P<tool>senbon-k1|senbon-k2|senbon-conv|senbon-noconv|senbon|heretic)"
-    r"-seed(?P<seed>\d+)(?P<variant>-own-pick)?$")
+_ARM_LABEL = (r"(?P<tool>senbon-k1|senbon-k2|senbon-conv|senbon-noconv|senbon|heretic)"
+              r"-seed(?P<seed>\d+)(?P<variant>-own-pick)?")
+
+ARM = re.compile(r"^scored-" + _ARM_LABEL + r"$")
+
+#: The same label without the `scored-` prefix: the arm's OWN directory, which is where the model
+#: and its `abliteration.json` live. Built from one pattern with ARM so the reader of the scores
+#: and the reader of the arms cannot drift apart.
+ARM_DIR = re.compile(r"^" + _ARM_LABEL + r"$")
 
 #: Below this many seeds a spread is not an estimate. Three gives a variance with two degrees of
 #: freedom, whose interval already runs from about half to six times the point estimate; the gate
@@ -175,6 +181,23 @@ def collect(run_dir):
         arm.update(one_ruler_refusal(run_dir, m["tool"], m["seed"], m["variant"]))
         arms.append(arm)
     return arms
+
+
+def arm_directories(run_dir):
+    """The arm directories sitting in this run directory, sorted. Possibly none.
+
+    ASKED RATHER THAN ASSERTED. When no scored file was found, the refusal used to state that the
+    usual cause is `--no-score`, "which leaves the arms on disk", having checked only that the path
+    is a directory. Pointed at an empty directory, or at the wrong path, it asserted that arms were
+    there and told the operator to score them. This is the two-line measurement that makes the
+    sentence true or replaces it.
+    """
+    try:
+        names = os.listdir(run_dir)
+    except OSError:
+        return []
+    return sorted(n for n in names
+                  if ARM_DIR.match(n) and os.path.isdir(os.path.join(run_dir, n)))
 
 
 def partial_ablation(run_dir, tool, seed, variant):
@@ -642,11 +665,25 @@ def main(argv=None):
 
     arms = collect(a.run_dir)
     if not arms:
+        unscored = arm_directories(a.run_dir)
+        if unscored:
+            shown = ", ".join(unscored[:6]) + ("..." if len(unscored) > 6 else "")
+            many = len(unscored) != 1
+            raise SystemExit(
+                f"headtohead report: no scored arms under {a.run_dir}. Expected files named "
+                f"scored-<tool>-seed<N>.json, which is what the score job writes.\n"
+                f"  {len(unscored)} arm {'directories are' if many else 'directory is'} here and "
+                f"none of them is scored "
+                f"({shown}), which is what a run made with --no-score leaves behind. Re-run the "
+                f"same command without it; an arm whose model is already on disk is not rebuilt:\n"
+                f"    senbonzakura head-to-head run --out {a.run_dir} ...")
         raise SystemExit(
-            f"headtohead report: no scored arms under {a.run_dir}. Expected files named "
-            f"scored-<tool>-seed<N>.json, which is what the score job writes.\n"
-            f"  The usual cause is a run made with --no-score, which leaves the arms on disk and "
-            f"the scoring for later. Re-run without it, or score the arms you have.")
+            f"headtohead report: no scored arms and no arm directories under {a.run_dir}. "
+            f"Expected files named scored-<tool>-seed<N>.json beside directories named "
+            f"<tool>-seed<N>, and this directory holds neither, so there is nothing here to "
+            f"report on and nothing here to score.\n"
+            f"  Check the path first. If it is right, the arms have not been produced yet:\n"
+            f"    senbonzakura head-to-head run --out {a.run_dir} ...")
 
     text, had_unreadable, n_readable = render(arms)
     print(text)

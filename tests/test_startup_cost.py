@@ -145,9 +145,52 @@ def test_an_unknown_dependency_still_gets_a_usable_line(monkeypatch):
 
 
 def test_an_import_error_carrying_no_name_does_not_say_none(monkeypatch):
+    """REWRITTEN 2026-09-28: it used to hold down the wording that carried the defect.
+
+    The old message read "it needs a required package, which is not installed", over an error that
+    names no package at all. That is an assertion of absence with nothing behind it, and it handed
+    the reader an install command for a package neither of them could name. What has to hold is
+    that the message says "None" nowhere and that it still points at the one command that works
+    without the missing piece.
+    """
     message = _dispatch_with(monkeypatch, ImportError("something went wrong"))
-    assert "a required package" in message
     assert "None" not in message
+    assert "names no package" in message
+    assert "something went wrong" in message, "the only clue there is must survive"
+    assert "doctor" in message
+
+
+def test_a_package_that_is_present_but_broken_is_not_called_missing(monkeypatch):
+    """`cannot import name 'Cache' from 'transformers'` sets e.name to a package that IS there.
+
+    The tool asserted it was absent and prescribed a reinstall of the same pin, which reproduces
+    the fault exactly. `json` stands in for the broken package because it is importable
+    everywhere, so this measures the discriminator rather than the test box's site-packages.
+    """
+    message = _dispatch_with(monkeypatch,
+                             ImportError("cannot import name 'Cache' from 'json'", name="json"))
+    assert "is installed here" in message
+    assert "which is not installed" not in message
+    assert "PRESENT" in message
+
+
+def test_a_module_the_import_system_could_not_find_is_still_called_missing(monkeypatch):
+    """The other half. `ModuleNotFoundError` IS the import system saying it could not find it."""
+    message = _dispatch_with(monkeypatch,
+                             ModuleNotFoundError("No module named 'nowhere_at_all'",
+                                                 name="nowhere_at_all"))
+    assert "which is not installed" in message
+    assert "is installed here" not in message
+
+
+def test_a_library_that_will_not_load_is_not_reported_as_absent(monkeypatch):
+    """A present dependency that will not LOAD raises OSError, which `doctor` has always handled
+    beside ImportError and this did not: it escaped as a raw traceback.
+    """
+    message = _dispatch_with(monkeypatch, OSError("DLL load failed while importing _C"))
+    assert "DLL load failed" in message
+    assert "which is not installed" not in message
+    assert "Traceback" not in message
 
 
 def test_a_module_without_its_entry_point_is_named_a_build_fault(monkeypatch):

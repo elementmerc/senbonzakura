@@ -240,8 +240,30 @@ def chat_template_lost(model_dir, header):
         return None
     return (f"the checkpoint declares a chat template and the converted file carries no "
             f"{GGUF_CHAT_TEMPLATE_KEY}. It will load and generate, and every conversational "
-            f"result from it will be measured on a prompt format the model was not trained on. "
-            f"Check the converter's output above for a tokeniser it did not recognise.")
+            f"result from it will be measured on a prompt format the model was not trained on.")
+
+
+def where_the_converter_said_why(verbose):
+    """Where to go looking for the tokeniser the converter did not recognise.
+
+    THE SENTENCE USED TO SAY "above", AND BY DEFAULT THERE IS NO ABOVE. The converter's roughly 350
+    lines are relayed through `vendored.relay`, which writes them only under `--verbose`; without
+    it the only lines that survive are the ones matching a warning or error pattern, and those go
+    to stderr while this note goes to stdout. So the one instruction attached to the one warning
+    that says a GGUF will answer badly pointed an operator at output their terminal had never been
+    shown, and even the surviving fragments were on the other stream.
+
+    Kept out of `chat_template_lost` because that sentence is written into the conversion record
+    beside the file, where it is read weeks later by somebody who did not run the command. A claim
+    about this terminal does not belong in an artefact; a display flag must not change what a
+    record says happened.
+    """
+    if verbose:
+        return ("The converter's own output is above on stdout (--verbose): look in it for a "
+                "tokeniser it did not recognise.")
+    return ("The converter's own output was suppressed, so the reason is NOT above: only its "
+            "warnings and errors were relayed, and those went to stderr. Re-run this conversion "
+            "with --verbose to see which tokeniser it did not recognise.")
 
 
 #: What a conversion record is called, beside the file it describes. One per output, rather than
@@ -820,7 +842,7 @@ def run(argv=None, log=print):
 
     lost = chat_template_lost(a.model, got)
     if lost:
-        log(f"  NOTE: {lost}")
+        log(f"  NOTE: {lost} {where_the_converter_said_why(a.verbose)}")
 
     # THE RECEIPT, which is the half that outlives the terminal. Written whether or not anything
     # went wrong, because a record that appears only on a bad conversion tells a reader nothing

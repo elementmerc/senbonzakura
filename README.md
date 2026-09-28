@@ -49,8 +49,8 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 ## Try it without installing anything
 
 [**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/dev/notebooks/senbonzakura_colab.ipynb).
-Free GPU, nothing on your machine, about fifteen minutes. It measures a model, edits it, then
-measures what that cost.
+Free GPU, nothing on your machine. It measures a model, edits it, then measures what that cost.
+Nobody has timed it on Colab's hardware, so it gives you no duration to hold us to.
 
 Or, if you have Docker:
 
@@ -148,8 +148,9 @@ measurement, it is not one at all.
 # A corpus with a split that stops you marking your own homework.
 senbonzakura track --harmful harmful.txt --harmless harmless.txt --out mytrack
 
-# Search for a configuration and apply it. Timed at 108 minutes end to end for Qwen3-0.6B
-# on a 6 GB card, at the defaults, with the weights already cached.
+# Search for a configuration and apply it. Timed at 108 minutes end to end on a 6 GB card, at
+# the defaults, with the weights already cached, for Qwen3-0.6B: a different model of about the
+# same size. The model below has not been timed at the default budget.
 senbonzakura kageyoshi --model Qwen/Qwen2.5-0.5B-Instruct --track mytrack --out abliterated --device cuda
 
 # Ask what the edit cost.

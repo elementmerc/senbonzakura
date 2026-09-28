@@ -36,6 +36,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 #: Every page that quotes the size of a full install. Adding one here is the point: a new page that
 #: repeats the figure has to agree with the others or this fails.
+#:
+#: THE CHANGELOG IS NOT A PAGE FOR THIS LIST, and it was put here on 2026-09-28 and taken out the
+#: same night. Its 0.4.0 entry did say "about 68 packages and a few gigabytes" while four pages said
+#: 69 and 5.9 GB, and that particular sentence was simply wrong: nobody ever measured 68, and the 69
+#: was measured on the release date itself. So the number was corrected.
+#:
+#: Holding the entry to THIS list is a different thing and it is wrong. A released entry is a claim
+#: about one artefact at one moment. The first release where a dependency is added would make this
+#: guard demand an edit to the 0.4.0 entry, and the edit would make it false. That is not a
+#: hypothetical: the same reviewer pass proposed exactly this for the flag count, where 69 was
+#: correct at the tag, and following it would have written today's 73 into the record of a release
+#: that shipped 69. See the note in `test_help_arithmetic_closes.py`.
 PAGES = [
     ROOT / "README.md",
     ROOT / "docs" / "guide" / "install.md",

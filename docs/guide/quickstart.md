@@ -6,7 +6,13 @@ the weights, the base model's licence still governs it, and you should not put o
 other people without saying what it is. [What it is](/guide/what-it-is) has the rest.
 :::
 
-One command to install, one to run. About an hour on a 6 GB card, most of it waiting.
+One command to install, one to run, and most of the time is spent waiting. The nearest thing to a
+measured expectation: **108 minutes from the command to `DONE`**, end to end, for **Qwen3-0.6B** on
+a 6 GB card at the defaults with the weights already cached. That is a different model from the one
+below, of about the same size, so treat it as the right order of magnitude rather than a promise.
+"About an hour" is roughly what the *search* alone costs, and about half the wall clock falls
+**after** the search's progress line reaches `ETA 0s`; [your first run](/guide/first-run) breaks
+that down.
 
 You need a GPU with 6 GB or more, and Python 3.10 or newer. No card? Jump to
 [without a graphics card](#without-a-graphics-card).
@@ -46,7 +52,6 @@ by this project's own code. Without it the command exits 1 and says so. Install 
 
 Or bring your own; [the track page](/guide/the-track) has both routes. A released wheel carries
 all of it and none of this is needed.
-:::
 
 ```sh
 senbonzakura setup

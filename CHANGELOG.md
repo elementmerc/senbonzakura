@@ -177,7 +177,7 @@ results you already hold.
 ### Install
 
 - `pip install senbonzakura` installs torch, transformers, accelerate and optuna, as 0.3.0 also
-  did. It is about 68 packages and a few gigabytes. If you tracked `dev` in early September you
+  did. It is 69 packages and 5.9 GB. If you tracked `dev` in early September you
   were told to add an `abliterate` extra; that extra still resolves and now installs exactly what
   a plain install does, so nothing needs changing.
 - New: `senbonzakura setup` puts the right build of torch on the machine it is run on. pip picks
@@ -220,8 +220,9 @@ install rather than only in a source checkout.
   model to reason, so a model could hold a low divergence with nothing broken and have lost
   multi-step arithmetic, with nothing in the run saying so.
 - The package carries the probe it uses, so this works with no network: 256 grade-school
-  arithmetic questions, listed in THIRD-PARTY-CORPORA.md. Point `--capability-eval` at your own
-  graded benchmark instead, or pass an empty string to turn it off.
+  arithmetic questions, attributed in THIRD-PARTY-NOTICES.md under "The bundled capability probe".
+  Point `--capability-eval` at your own graded benchmark instead, or pass an empty string to turn
+  it off.
 - The capability probe previously ran only on configurations a search had shortlisted, so a run
   that pinned its settings and skipped the search accepted the request, measured nothing, and
   reported success. Result files now always say whether capability was measured, and say so

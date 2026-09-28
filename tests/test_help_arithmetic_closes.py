@@ -33,6 +33,15 @@ from senbonzakura.parser import CORE_FLAGS, build_parser
 
 ROOT = Path(__file__).resolve().parent.parent
 
+#: The spellings a page uses to state the total number of flags. The second one exists because the
+#: count is also written as "`--help-all` shows all N", with the word "flags" in the clause before
+#: it, so a pattern anchored on "N flags" reads straight past it. No page under `docs/reference`
+#: uses that form today; it is here so that one adopting it is covered on the day it does.
+_A_STATED_FLAG_COUNT = [
+    re.compile(r"\b(\d{2,3})\s+flags\b"),
+    re.compile(r"`--help-all`\s+shows\s+all\s+(\d{2,3})\b"),
+]
+
 
 @pytest.fixture(scope="module")
 def parsers():
@@ -120,6 +129,17 @@ def test_the_reference_pages_quote_the_measured_flag_count():
     A reader who counts is the person who finds these, and this project's whole argument is that its
     numbers can be counted.
     """
+    # THE CHANGELOG IS DELIBERATELY NOT HERE, and it was added on 2026-09-28 and taken straight back
+    # out. A reviewer found its 0.4.0 entry saying `--help-all` shows 69 while the parser declares
+    # 73, which reads exactly like the drift this file exists to catch. It is not. At `v0.4.0` the
+    # parser declared 69, so that sentence was true when it was written and the release it describes
+    # still has 69. "Correcting" it to today's number puts a false statement into the record of a
+    # shipped release, which is the opposite of the property being protected here.
+    #
+    # A released CHANGELOG entry is a historical claim about one artefact. These reference pages
+    # describe the build in front of the reader. Only the second kind can be held to the count the
+    # parser declares now, and conflating them is a mistake somebody will make again, which is why
+    # this is written down rather than left as an absence.
     pages = [ROOT / "docs" / "reference" / "cli.md", ROOT / "docs" / "reference" / "flags.md"]
     total = len(_flags(build_parser(full=True)))
 
@@ -127,9 +147,21 @@ def test_the_reference_pages_quote_the_measured_flag_count():
     for page in pages:
         if not page.is_file():
             continue
-        for stated in re.findall(r"\b(\d{2,3})\s+flags\b", page.read_text(encoding="utf-8")):
-            if int(stated) != total:
-                wrong.setdefault(page.name, set()).add(stated)
+        text = page.read_text(encoding="utf-8")
+        for pattern in _A_STATED_FLAG_COUNT:
+            for stated in pattern.findall(text):
+                if int(stated) != total:
+                    wrong.setdefault(page.name, set()).add(stated)
     assert not wrong, (
         f"these pages state a flag count that is not the {total} the parser declares: "
         f"{ {k: sorted(v) for k, v in wrong.items()} }")
+
+
+def test_the_count_patterns_catch_both_spellings():
+    """Mutation test: the CHANGELOG's spelling has to be read, or adding the page changes nothing."""
+    changelog = "**`--help` shows the flags a run needs; `--help-all` shows all 69.**"
+    found = {n for pattern in _A_STATED_FLAG_COUNT for n in pattern.findall(changelog)}
+    assert found == {"69"}, found
+    reference = "the default command has 73 flags"
+    found = {n for pattern in _A_STATED_FLAG_COUNT for n in pattern.findall(reference)}
+    assert found == {"73"}, found

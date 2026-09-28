@@ -108,3 +108,108 @@ def test_the_root_links_somewhere_real(section):
     assert not missing, (
         f"docs/{section.name}/index.md links to pages that do not exist: {missing}. "
         f"The docs build fails on a dead link, so this would break the deploy.")
+
+
+# ── container fences, which the site build cannot check and never will ────────────────────────────
+#
+# WHAT PROMPTED IT, 2026-09-28
+#
+# Two pages shipped with a broken VitePress container. `docs/guide/quickstart.md` carried a closing
+# `:::` that closed nothing, and `docs/guide/install.md` nested one warning box inside another at the
+# same fence length, so the inner box's close ended the outer one and the outer's close had nothing
+# left to end. Both printed a literal `:::` on the published page.
+#
+# The build is green either way: markdown-it treats an unmatched marker as ordinary text, which is
+# exactly why a rendering defect of this class reaches a reader. So the check is arithmetic over the
+# source, not the build.
+#
+# THE NESTING RULE, WHICH IS THE PART THAT IS NOT OBVIOUS
+#
+# A container opened with N colons is closed by the next line of N or more colons. An inner container
+# at the same length as the one around it is therefore closed by a marker that also closes the outer,
+# which is the install-guide defect. Nesting works only when the outer fence is LONGER than the inner:
+# `::::` around `:::`.
+
+_FENCE = re.compile(r"^(:{3,})\s*(.*)$")
+
+
+def _content_pages():
+    """Every Markdown page under `docs/` that is content rather than machinery."""
+    pages = []
+    for path in sorted(DOCS.rglob("*.md")):
+        if any(part in _NOT_CONTENT for part in path.relative_to(DOCS).parts):
+            continue
+        pages.append(path)
+    return pages
+
+
+def _container_faults(text):
+    """Every way a page's container fences fail to make a balanced, closable set.
+
+    Fences inside a fenced code block are prose about containers rather than containers, so the
+    scanner steps over them; the install guide shows the syntax in one.
+    """
+    faults = []
+    stack = []
+    in_code = False
+    for number, line in enumerate(text.split("\n"), start=1):
+        if line.startswith(("```", "~~~")):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        match = _FENCE.match(line)
+        if not match:
+            continue
+        marker, label = match.group(1), match.group(2).strip()
+        if label:
+            if stack and len(marker) >= len(stack[-1][1]):
+                faults.append(
+                    f"line {number}: a container opened with {len(marker)} colons inside one opened "
+                    f"with {len(stack[-1][1])} at line {stack[-1][0]}. The inner one's close would "
+                    f"end the outer one too, so make the outer fence longer.")
+            stack.append((number, marker))
+        elif not stack:
+            faults.append(f"line {number}: a closing `{marker}` with no container open.")
+        else:
+            opened_at, opener = stack.pop()
+            if len(marker) < len(opener):
+                faults.append(
+                    f"line {number}: a closing `{marker}` is shorter than the `{opener}` opened at "
+                    f"line {opened_at}, so it does not close it.")
+    for opened_at, opener in stack:
+        faults.append(f"line {opened_at}: `{opener}` is opened and never closed.")
+    return faults
+
+
+def test_there_are_pages_to_scan():
+    """An empty list would pass the scan below while reading nothing."""
+    pages = _content_pages()
+    assert len(pages) > 10, f"only {len(pages)} content pages found under {DOCS}"
+
+
+def test_every_page_has_balanced_and_closable_containers():
+    broken = {}
+    for page in _content_pages():
+        faults = _container_faults(page.read_text(encoding="utf-8"))
+        if faults:
+            broken[page.relative_to(DOCS).as_posix()] = faults
+    listing = "\n".join(f"  {name}\n    " + "\n    ".join(faults)
+                        for name, faults in sorted(broken.items()))
+    assert not broken, (
+        "these pages would print a literal `:::` where a container box should be:\n" + listing)
+
+
+def test_the_scan_catches_both_shapes_it_was_written_for():
+    """Mutation test: the two defects it was written for, and one legitimate nesting.
+
+    Without this the scanner could be silently permissive and read as clean.
+    """
+    stray = _container_faults("::: warning A\nbody\n:::\n\nmore prose\n:::\n")
+    assert any("no container open" in f for f in stray), stray
+
+    same_length = _container_faults("::: warning Outer\n::: tip Inner\nbody\n:::\n\ntail\n:::\n")
+    assert any("inside one opened with" in f for f in same_length), same_length
+
+    assert not _container_faults(":::: warning Outer\n::: tip Inner\nbody\n:::\n\ntail\n::::\n")
+    assert not _container_faults("```\n::: warning shown as syntax\n```\n")

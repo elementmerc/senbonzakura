@@ -18,6 +18,7 @@ import pytest
 # Imported as a package module rather than loaded from a path under `tools/`, because that is
 # now where it lives: `tools/` ships in no wheel, so the builder the guide sends users to was
 # absent from every install.
+from senbonzakura import bundled
 from senbonzakura import trackbuild as bt
 
 
@@ -128,7 +129,10 @@ def test_check_licences_stops_when_an_upstream_has_been_relicensed(monkeypatch):
         bt.check_licences([_src(licence="apache-2.0")], log=lambda *a: None)
     msg = str(e.value)
     assert "recorded apache-2.0, now cc-by-nc-4.0" in msg
-    assert "docs/evaluation-track-card.md" in msg
+    # A LINK rather than the repository path this used to assert: the refusal reaches an installed
+    # reader, who has no `docs/`, and telling them to update a file they do not have is where the
+    # build stops.
+    assert bundled.doc_url("evaluation-track-card") in msg
 
 
 def test_check_licences_stops_when_a_licence_appears_where_there_was_none(monkeypatch):

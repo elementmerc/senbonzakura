@@ -27,11 +27,12 @@ or newer gets one carrying llama.cpp's binaries and `convert` and `quantise` wor
 Everywhere else the universal wheel installs and works without them. `senbonzakura doctor` says
 which one you received.
 
-::: warning One thing that install does not give you: `--track default`
-The two `.bin` blobs in `src/senbonzakura/data/` are generated rather than committed, because they
-hold harmful prompts, so a build from a plain clone carries neither. The tool installs, imports
-and answers `--help` exactly as normal, and then fails on `--track default`. That is not a subtle
-failure once you meet it, but nothing warns you beforehand, which is why it is here.
+:::: warning A wheel you build from a clone does not carry `--track default`
+A `pip install` carries the track, as the paragraph above says; a wheel built from a plain clone
+does not. The two `.bin` blobs in `src/senbonzakura/data/` are generated rather than committed,
+because they hold harmful prompts, so a build from a clone carries neither. The tool installs,
+imports and answers `--help` exactly as normal, and then fails on `--track default`. That is not a
+subtle failure once you meet it, but nothing warns you beforehand, which is why it is here.
 
 Build them from a clone before building the wheel:
 
@@ -48,7 +49,7 @@ by this project's own code. Without it the command exits 1 and says so. Install 
 
 The first needs only the network. The second needs a track, which is either
 [one you built](/guide/the-track) or the gated dataset.
-:::
+::::
 
 The first brings everything: torch, transformers, accelerate, optuna, and the rest, and there is
 nothing else to choose. Nothing is behind an extra.

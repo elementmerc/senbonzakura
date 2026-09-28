@@ -439,3 +439,65 @@ def test_no_documented_git_command_resolves_to_the_default_branch():
     assert not offenders, (
         "these documented git commands name no branch, so they resolve to the repository's "
         "default branch rather than to the code the page describes:\n  " + "\n  ".join(offenders))
+
+
+# ── what a page says a default is, against what the parser declares ───────────────────────────────
+
+#: Flags whose default a public page states in prose, and the page that states it. Prose about a
+#: default is a claim about the build in the reader's hand, so it is checkable, and until 2026-09-28
+#: none of it was checked.
+#:
+#: `--matched-scoring` is the entry that prompted this. Its default flipped to True on 2026-09-17
+#: and `what-we-know.md` went on saying "It's off by default" for eleven days, on the page whose
+#: whole job is to separate what is established from what is not. Every separation number the
+#: shipped tool produces comes from the regime that page described as inactive, and the page says
+#: in the same sentence that the regime has not been measured on a real model.
+DEFAULTS_STATED_IN_PROSE = [
+    ("--matched-scoring", True, "docs/guide/what-we-know.md"),
+]
+
+_ON = re.compile(r"\bon by default\b", re.IGNORECASE)
+_OFF = re.compile(r"\boff by default\b", re.IGNORECASE)
+
+
+def _declared_default(flag):
+    """What `build_parser(full=True)` actually defaults this flag to."""
+    from senbonzakura.parser import build_parser
+
+    for action in build_parser(full=True)._actions:
+        if flag in action.option_strings:
+            return action.default
+    raise AssertionError(f"{flag} is not a flag any more, so the page naming it is stale too")
+
+
+@pytest.mark.parametrize(("flag", "expected", "page"), DEFAULTS_STATED_IN_PROSE)
+def test_the_parser_still_defaults_the_way_the_table_says(flag, expected, page):
+    """The table is only worth reading if its own expectation is current."""
+    assert _declared_default(flag) is expected, (
+        f"{flag} no longer defaults to {expected}. Update {page} and this table together, which is "
+        f"the pair that came apart last time")
+
+
+@pytest.mark.parametrize(("flag", "expected", "page"), DEFAULTS_STATED_IN_PROSE)
+def test_a_page_describing_a_default_describes_the_one_that_ships(flag, expected, page):
+    text = (ROOT / page).read_text(encoding="utf-8")
+    where = text.find(flag)
+    assert where != -1, f"{page} no longer mentions {flag}, so this row is stale"
+    # The sentence or two around the mention, which is where the claim lives.
+    window = text[where:where + 400]
+    says_on, says_off = bool(_ON.search(window)), bool(_OFF.search(window))
+    assert says_on or says_off, (
+        f"{page} mentions {flag} and does not say which way it defaults, so a reader has to guess "
+        f"at the regime every number on the page was produced under")
+    assert says_on is bool(expected), (
+        f"{page} says {flag} is "
+        f"{'on' if says_on else 'off'} by default and the parser declares "
+        f"{'on' if expected else 'off'}")
+
+
+def test_the_two_spellings_are_told_apart():
+    """Mutation test: "off by default" must not also match the "on" pattern, or the check is one
+    sided and a page could say either thing and pass.
+    """
+    assert _OFF.search("It's off by default, because") and not _ON.search("It's off by default")
+    assert _ON.search("On by default, and the only setting") and not _OFF.search("On by default")

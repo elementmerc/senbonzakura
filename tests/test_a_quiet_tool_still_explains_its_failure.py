@@ -119,6 +119,14 @@ class TestTheRefusalQuotesWhatTheToolSaid:
 
         monkeypatch.setattr(convert, "supported_architectures",
                             lambda _s, **_k: ({"Qwen3ForCausalLM"}, [], None))
+        # THE VENDORED SCRIPT IS NOT A PRECONDITION OF WHAT THIS TEST MEASURES, and leaving it as
+        # one made the test pass on a development box and fail on every runner. `vendor/src` is
+        # fetched at build time rather than committed, so on a checkout that has run
+        # `vendor_llama.py` the real script is there and the run reaches `Popen`; in CI's test row,
+        # which does not fetch it, `convert` refuses at `find_script` and the refusal under
+        # examination never happens. What is being asserted is that the converter's own last words
+        # survive the summarising, so the converter only has to be nameable, not present.
+        monkeypatch.setattr(convert, "find_script", lambda _n: tmp_path / "convert_hf_to_gguf.py")
 
         class _Failed:
             returncode = 1

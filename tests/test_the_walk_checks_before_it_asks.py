@@ -196,3 +196,54 @@ def test_the_follow_on_is_a_command_the_reader_can_see(tmp_path):
     step = interactive.finished(plan, ask_fn=lambda _p: "3", log=said.append)
     assert "senbonzakura score" in "\n".join(said) or "senbonzakura convert" in "\n".join(said)
     assert step is not None and step["command"] in ("convert", "score")
+
+
+def test_a_refusal_keeps_its_own_layout_under_the_board(tmp_path, monkeypatch):
+    """A pre-flight refusal is a formatted block with a "what to do" list and commands in it.
+
+    Feeding the whole thing through the row renderer produced a hundred column line inside a
+    board laid out for eighty, and `say` leaves indented lines alone deliberately, because they
+    are commands somebody has to paste. So the row carries the first line and the block is
+    printed below it, intact.
+    """
+    refusal = ("senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.\n"
+               "  What to do:\n"
+               "    run on the processor instead:  --device cpu")
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "the device", refusal)])
+    said = []
+    interactive._board(_plan(tmp_path), log=said.append)
+    row = next(s for s in said if "✗" in s)
+    assert "What to do" not in row, "the whole refusal was folded into one row of the board"
+    # ONCE, NOT TWICE. The row carries the first line and the block below carries all of it, so a
+    # renderer that also folds the rest into the row says everything twice. Counting is what
+    # catches that: the earlier version of this test asserted on the first row alone and passed
+    # against exactly that renderer, because the duplicate landed on the line after it.
+    assert "\n".join(said).count("What to do") == 1, (
+        "the refusal's body is in the board and in the block below it, so the reader meets the "
+        "same sentences twice, once with the board's padding through them")
+    # VERBATIM, AS A BLOCK. Asserting the stripped text of some line somewhere is what the first
+    # version of this did, and it passed against a renderer that folded the whole refusal into
+    # the board and padded every continuation line to the label column. The refusal's own
+    # indentation is the thing being protected, because that is what makes its commands
+    # pasteable, so the block is matched exactly.
+    block = "\n".join(f"    {line}" for line in refusal.splitlines())
+    assert block in "\n".join(said), (
+        "the refusal did not survive as its own block, so the commands in it lost the spacing "
+        "that makes them pasteable")
+
+
+def test_the_machine_does_not_report_the_card_twice(tmp_path, monkeypatch):
+    """TWO MECHANISMS FOR ONE FACT, which is this project's most repeated defect.
+
+    The first version of the board asked `device_available` itself and printed a card row beside
+    the row that `_preflight_device` produces, so a machine with no card reported the same thing
+    twice, in two wordings, and the counts line said two failures over one problem.
+    """
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "the device", "no CUDA device here")])
+    said = []
+    interactive._board(_plan(tmp_path, **{"--device": "cuda"}), log=said.append)
+    failing = [s for s in said if "✗" in s]
+    assert len(failing) == 1, f"one absent card produced {len(failing)} failing rows: {failing}"
+    assert "1 failing" in "\n".join(said)

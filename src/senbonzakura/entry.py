@@ -429,6 +429,51 @@ def _read_as_a_model(word):
         "right and the next line will be the download.")
 
 
+#: What bare `senbonzakura` answers with, and the five ways in it names.
+#:
+#: WHY THIS EXISTS. Typing a tool's name is how people ask what it is. This one answered with a
+#: 27-line argparse usage block listing every flag, which is not short help by any reading, and
+#: then, because no model was given, refused. So the first thing the tool ever said to anybody was
+#: a wall of flags followed by an error, and the guided mode, which is the thing a newcomer
+#: actually wants, was not mentioned anywhere on it.
+#:
+#: ONE DESCRIPTION COLUMN, at a fixed depth. The earlier draft padded each line to its own
+#: command's width, so three description columns started at three different depths and the eye had
+#: no single edge to run down. Two labelled groups with blank lines around them, because "start
+#: here" against "or go direct" is the actual decision somebody is making, and naming it is what
+#: lets them stop reading after the first group.
+#:
+#: The commands named here are checked against the real command tables by the test suite rather
+#: than trusted, since a second list of command names is a second thing to keep true.
+_START_HERE = """\
+  START HERE
+
+    senbonzakura -i                       the guided way in
+
+
+  Or go direct
+
+    senbonzakura --model <id>             abliterate a model
+    senbonzakura convert <dir>            turn edited weights into a GGUF
+    senbonzakura validate --model <id>    check for refusal directions
+    senbonzakura doctor                   is this install okay?
+    senbonzakura --help                   every command, and the core flags
+"""
+
+
+def short_help():
+    """The page bare `senbonzakura` prints: a masthead, then the five ways in.
+
+    The masthead is here rather than in the banner because the banner only ever draws to a
+    terminal, and somebody piping this page into a file still needs to know which version answered
+    them.
+    """
+    return (f"    senbonzakura {__version__}\n"
+            f"    Precision abliteration, with receipts.\n"
+            f"\n\n"
+            f"{_START_HERE}")
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -437,6 +482,19 @@ def main(argv=None):
     # see exactly what they saw before this existed.
     from . import banner
     banner.emit(__version__, sys.stdout)
+
+    # BARE `senbonzakura` IS A QUESTION, NOT A MISTAKE, so it is answered rather than refused.
+    # Exit 0 for the same reason: the tool was asked what it is and it said.
+    if not argv:
+        print(short_help())
+        return 0
+
+    # `-i` is the guided mode, and it is the one entry point this page advertises. Handled here
+    # rather than added to ALIASES because everything in that table is a word: a flag spelling
+    # living beside `harm-recognition` would reach `_not_a_command`, the near-miss search and the
+    # documentation guards, none of which are written for flags.
+    if argv[0] == "-i":
+        argv[0] = "interactive"
 
     # A plain-English second name resolves to the command it stands for, before anything else
     # looks at it, so every downstream error message names the real command.

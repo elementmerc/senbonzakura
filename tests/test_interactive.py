@@ -48,6 +48,14 @@ def _row_number(side, key):
 def _a_machine_with_nothing_on_it(monkeypatch):
     monkeypatch.setattr(it, "models_on_this_machine", lambda root=".": [])
     monkeypatch.setattr(it, "_checked_rows", lambda plan: [])
+    # AND THE BUNDLED TRACK IS PRESENT, which is the third thing these walks read off the machine.
+    # A release wheel carries the packed track and a source checkout does not, so on CI the track
+    # menu asks an extra question ("Ask for it anyway?") that it does not ask on a dev box, every
+    # canned answer after it lines up against the wrong prompt, and the walk ends in StopIteration.
+    # That is the same defect as the two above wearing different clothes: a test reading the
+    # machine rather than saying what it means. The unbundled path has its own tests, which
+    # monkeypatch this deliberately.
+    monkeypatch.setattr(it.bundled, "is_available", lambda: True)
 
 
 # ── quoting ──────────────────────────────────────────────────────────────────────
@@ -656,6 +664,10 @@ from senbonzakura import interactive as it
 # gives: otherwise this subprocess asks a different question depending on what happens to be
 # in the Hub cache of whatever box is running the suite.
 it.models_on_this_machine = lambda root=".": []
+# AND A BUNDLED TRACK, for the same reason: without one the track menu asks an extra question
+# and every answer after it lines up against the wrong prompt. A release wheel carries the
+# packed track and a source checkout does not, so this differs between a dev box and CI.
+it.bundled.is_available = lambda: True
 answers = iter(["1", "M", "1", "2", "OUT", "5"])
 plan = it.plan_abliteration(ask_fn=lambda _p: next(answers), log=lambda *a: None)
 print(plan["options"]["--out"])

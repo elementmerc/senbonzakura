@@ -532,7 +532,16 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # 963-dot stream it looks exactly like a test that did. Twenty-one of these were skipping on
 # the CPU box for months because the route there strips `private/`, and the tests that guard
 # the rehearsal spec were the ones being dropped. The reason has to be on the screen.
-addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs"
+# `-m "not journey"` DESELECTS THE JOURNEYS from an ordinary run, and `pytest -m journey` runs
+# them. A journey starts the real program on a real terminal and answers its prompts, so each one
+# costs seconds rather than milliseconds; leaving them in the default run would put minutes on
+# every `pytest` somebody types, and a suite people avoid running is a suite that rots. They are
+# still COLLECTED by default, which is what lets the ratchet count them without a second
+# mechanism. A later -m on the command line wins over this one.
+addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs -m 'not journey'"
+markers = [
+  "journey: a scripted session through a real terminal, run with `pytest -m journey`. See tests/journeys/harness.py.",
+]
 # THE REPO ROOT ON sys.path, EXPLICITLY, because the two ways of starting pytest do not agree.
 # `python -m pytest` puts the working directory on sys.path and the `pytest` console script does
 # not. Several tests share fixtures with `from tests.test_abliterator import ...`, which therefore

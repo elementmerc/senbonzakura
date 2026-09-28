@@ -682,6 +682,30 @@ jobs:
           echo "$out" | grep -q "metric-reported-without-its-estimator" \
             || { echo "the finding did not name its check; are the checks in the wheel?"; exit 1; }
 
+  journeys:
+    # THE JOURNEY RATCHET (decision Q-43), which is the cheap half and runs everywhere.
+    #
+    # A journey is a scripted session through a real terminal, in tests/journeys/. This step does
+    # NOT run them: it reads them with `ast`, checks every one declares which surfaces it covers,
+    # and holds two high-water marks in journeys/ratchet.json so neither the number of journeys
+    # nor the number of surfaces they cover can fall. No torch, no terminal, seconds.
+    #
+    # Running the journeys themselves in CI is deliberately not here yet. They start the real
+    # program and answer its prompts, and the guided walk needs the bundled track, which a source
+    # checkout does not carry; wiring that is v0.5 work and is in DEFERRED.md. Until then they run
+    # locally and before a panel, which is what Q-43 asks for.
+    name: the journey ratchet holds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      # No install step: the checker reads source with `ast` and imports nothing of ours, which is
+      # the property that lets it run before anything else is built.
+      - name: Check the journeys and the ratchet
+        run: python tools/ci/check_journeys.py
+
   docs-commands:
     # EVERY COMMAND THE DOCUMENTATION SHOWS, RUN AGAINST A REAL INSTALL.
     #

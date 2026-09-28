@@ -247,3 +247,72 @@ def test_the_machine_does_not_report_the_card_twice(tmp_path, monkeypatch):
     failing = [s for s in said if "✗" in s]
     assert len(failing) == 1, f"one absent card produced {len(failing)} failing rows: {failing}"
     assert "1 failing" in "\n".join(said)
+
+
+def test_the_probe_budget_is_on_the_board(tmp_path, monkeypatch):
+    """FOUND BY A REAL RUN, 2026-09-28, which is the only way this class of gap gets found.
+
+    A guided walk on a CPU printed "14 checks, all clear", the run was confirmed, and thirty
+    seconds later it refused because the capability probe would take about four hours on that
+    machine. The refusal was right and it was decidable from the command line alone, so the board
+    had said clear about a run the tool was already going to stop. A reader told twice believes
+    the wrong one.
+    """
+    from senbonzakura import capability
+
+    def refuse(*_a, **_k):
+        raise SystemExit("this probe would take roughly 4.1 hours on this CPU")
+
+    monkeypatch.setattr(capability, "refuse_a_slow_probe", refuse)
+    rows = interactive._checked_rows(_plan(tmp_path))
+    assert any(r[0] == interactive.FAIL and "4.1 hours" in r[2] for r in rows), (
+        f"the probe budget is not among the checks the board runs: {[r[1] for r in rows]}")
+
+
+def test_the_label_column_is_measured_rather_than_assumed(tmp_path, monkeypatch):
+    """A fixed width was fine until a label outgrew it, and then that row's detail started four
+    columns right of every other row's, which loses the single edge the board is laid out around.
+    """
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "a very long label indeed", "why")])
+    said = []
+    interactive._board(_plan(tmp_path), log=said.append)
+    starts = {line.index(detail) for line in said
+              for detail in ("why", "cpu") if detail in line and line.startswith("    ")}
+    assert len(starts) == 1, f"the details begin at {sorted(starts)}, so the column has no edge"
+
+
+#: Pre-flights `run_parsed` performs that the board deliberately does NOT, each with the reason.
+#: A name here is a decision; a name missing from both this and the board is the defect below.
+BOARD_LEAVES_TO_THE_RUN = {
+    # Reads the checkpoint's safetensors headers off the Hub. It is a network call, and the run
+    # makes it seconds later anyway, so the board would pay for it twice and would fail on a
+    # machine that is merely offline rather than misconfigured.
+    "preflight_snapshot_ram",
+}
+
+
+def test_every_check_the_run_makes_is_a_check_the_board_makes():
+    """THE GUARD FOR THE NEXT ONE, rather than for the one that was found.
+
+    The capability probe's budget was decidable from the command line and was missing from the
+    board, so a walk printed "all clear" about a run the tool then refused. A second pre-flight
+    added to `run_parsed` next month would do the same thing, silently, and the board would go on
+    looking right. So the two lists are compared rather than kept in step by hand.
+    """
+    import inspect
+    import re
+
+    from senbonzakura import cli
+
+    in_the_run = set(re.findall(r"\b(_preflight_\w+|refuse_without_a_track|refuse_a_slow_probe)\b",
+                                inspect.getsource(cli.run_parsed)))
+    in_the_run |= set(re.findall(r"\b(preflight_snapshot_ram)\b", inspect.getsource(cli.run_parsed)))
+    on_the_board = set(re.findall(r"\b(_preflight_\w+|refuse_without_a_track|refuse_a_slow_probe)\b",
+                                  inspect.getsource(interactive._checked_rows)
+                                  + inspect.getsource(interactive._probe_budget)))
+    missing = in_the_run - on_the_board - BOARD_LEAVES_TO_THE_RUN
+    assert not missing, (
+        f"{sorted(missing)} run inside the abliteration and not on the pre-flight board, so the "
+        f"guided mode can print 'all clear' about a run that is then refused. Either add them to "
+        f"`_checked_rows` or name them in BOARD_LEAVES_TO_THE_RUN with the reason.")

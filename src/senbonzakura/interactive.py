@@ -1100,6 +1100,19 @@ def _machine_rows(plan):
     return rows
 
 
+def _probe_budget(args, log=print):
+    """`capability.refuse_a_slow_probe`, given what `run_parsed` gives it."""
+    from . import capability
+
+    capability.refuse_a_slow_probe(
+        getattr(args, "device", "cpu"),
+        getattr(args, "capability_n", 0),
+        getattr(args, "capability_max_new", 512),
+        spec=getattr(args, "capability_eval", ""),
+        allowed=getattr(args, "slow_probe_ok", False),
+        log=log)
+
+
 def _checked_rows(plan):
     """The tool's own pre-flights, run BEFORE the confirm instead of after it.
 
@@ -1145,6 +1158,17 @@ def _checked_rows(plan):
         ("every flag does something", cli._preflight_dead_knobs),   # noqa: SLF001
         ("where it goes", cli._preflight_output),                   # noqa: SLF001
         ("the prompts", cli.refuse_without_a_track),
+        ("the prompt files", cli._preflight_datasets),              # noqa: SLF001
+        # LAST, exactly as `run_parsed` orders it. Everything above reports a run that CANNOT
+        # work; this one reports a run that WOULD work and take an afternoon, and told about
+        # both, a person wants the impossible one first.
+        #
+        # IT WAS MISSING UNTIL A REAL RUN FOUND IT, 2026-09-28. A guided walk on a CPU printed
+        # "14 checks, all clear", the operator confirmed, and thirty seconds later the run
+        # refused because the capability probe would take four hours. A board that says clear
+        # about a run the tool is about to refuse is worse than no board, because the reader has
+        # now been told twice and believed the wrong one.
+        ("the probe budget", _probe_budget),
     )
     rows = []
     for label, check in checks:
@@ -1207,6 +1231,10 @@ def _board(plan, log=print):
         log(f"Pre-flight: {len(rows)} checks, all clear.")
         return True
 
+    # MEASURED, NOT TYPED. A fixed 14 was fine until a label ran to sixteen characters, at which
+    # point that row's detail started four columns right of every other row's and the board lost
+    # the single edge it is laid out around.
+    width = max(len(label) for _mark, label, _detail in rows)
     log("")
     log(f"  PRE-FLIGHT · {plan['options'].get('--model', '')}")
     for name, group in groups:
@@ -1222,10 +1250,10 @@ def _board(plan, log=print):
             # hundred-column line inside a board. The rest of it is printed below, intact,
             # because it is the part somebody acts on.
             head = str(detail).strip().splitlines()[0] if str(detail).strip() else ""
-            first, *rest = say.lines(head, columns=max(40, say.width() - 22)) or [""]
-            log(f"    {mark}  {label:<14} {first}".rstrip())
+            first, *rest = say.lines(head, columns=max(40, say.width() - width - 8)) or [""]
+            log(f"    {mark}  {label:<{width}} {first}".rstrip())
             for line in rest:
-                log(f"       {'':<14} {line}")
+                log(f"       {'':<{width}} {line}")
     log("")
     log(f"    {len(rows)} checks · {len(rows) - len(bad) - len(advisory)} pass · "
         f"{len(advisory)} advisory · {len(bad)} failing")

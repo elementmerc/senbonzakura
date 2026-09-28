@@ -303,9 +303,17 @@ def test_a_track_directory_already_built_needs_no_build_step():
 
 
 def test_choosing_the_bundled_track_without_one_says_how_to_get_it(monkeypatch):
+    """REWRITTEN 2026-09-28, and the property it pins is unchanged.
+
+    The note used to end with "or choose another option" while `pick_track` returned the bundled
+    track regardless, so the only way out of that screen was Ctrl+C at the final confirm. Taking it
+    anyway is now a decision rather than the only outcome, which is the second answer here.
+    """
     monkeypatch.setattr(it.bundled, "is_available", lambda: False)
+    monkeypatch.setattr(it.bundled, "running_from_a_checkout", lambda: True)
     said = []
-    it.pick_track(ask_fn=_answers("1"), log=said.append)
+    spec, _licence, _build = it.pick_track(ask_fn=_answers("1", "y"), log=said.append)
+    assert spec == "default"
     assert any("pack_track.py" in s for s in said)
 
 
@@ -521,17 +529,60 @@ def test_a_failure_before_the_search_does_not_promise_completed_trials(monkeypat
     assert "completed trials are not lost" not in joined
 
 
-def test_a_nonzero_status_gets_the_same_recovery_line_as_a_crash(monkeypatch):
+def test_a_nonzero_status_still_gets_a_recovery_block(monkeypatch, tmp_path):
     """The recovery line used to be reserved for exceptions, so a command that reported failure
     by returning a status printed its error and then nothing.
+
+    THIS USED TO ASSERT "To pick up where it stopped" UNCONDITIONALLY, and that was the defect:
+    the resume advice was printed whether or not anything resumable existed. A device pre-flight
+    refusal writes nothing, and the user was still told their completed trials were safe and given
+    a `--resume` command that would refuse identically. What the block must do is say something
+    true about the disk, which is what is asserted now.
     """
     from senbonzakura import cli
     monkeypatch.setattr(cli, "main", lambda argv: 1)
+    monkeypatch.chdir(tmp_path)
     said = []
     code = it.run(ask_fn=_answers("1", "M", "1", "2", "OUT", "5", "y"),
                   log=said.append, stdin=_Tty())
     assert code == 1
-    assert any("To pick up where it stopped" in s for s in said)
+    joined = "\n".join(said)
+    assert "the run stopped" in joined, "a non-zero status produced no recovery block at all"
+    assert "Nothing recoverable was written" in joined, (
+        "nothing was written to OUT, so the block must say so rather than promising a resume")
+    assert "To pick up where it stopped" not in joined, (
+        "resume advice was offered for a directory holding nothing to resume")
+
+
+def test_the_resume_advice_appears_once_there_is_something_to_resume(monkeypatch, tmp_path):
+    """The other half: with a study on disk, the block must offer the resume it used to fake."""
+    from senbonzakura import cli
+    monkeypatch.setattr(cli, "main", lambda argv: 1)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "OUT").mkdir()
+    (tmp_path / "OUT" / "senbon-study.db").write_text("x", encoding="utf-8")
+    said = []
+    code = it.run(ask_fn=_answers("1", "M", "1", "2", "OUT", "5", "y"),
+                  log=said.append, stdin=_Tty())
+    assert code == 1
+    joined = "\n".join(said)
+    assert "To pick up where it stopped" in joined, (
+        "a persisted study is on disk and the block did not offer to resume it")
+    assert "--resume" in joined
+
+
+def test_a_refusal_does_not_claim_there_is_a_traceback(monkeypatch, tmp_path):
+    """A SystemExit refusal prints no traceback, and the block used to point at one anyway."""
+    from senbonzakura import cli
+    monkeypatch.setattr(cli, "main", lambda argv: 1)
+    monkeypatch.chdir(tmp_path)
+    said = []
+    it.run(ask_fn=_answers("1", "M", "1", "2", "OUT", "5", "y"), log=said.append, stdin=_Tty())
+    joined = "\n".join(said)
+    assert "traceback above" not in joined, (
+        "the block told the reader to look at a traceback that was never printed, which is what "
+        "made a clean refusal read as a crash")
+    assert "refusal, not a crash" in joined
 
 
 def test_the_whole_walk_completes_on_an_install_with_no_deep_learning_stack():
@@ -628,3 +679,367 @@ class TestTheDeviceMenuKnowsThisMachine:
         shown = []
         it.pick_device(ask_fn=lambda _p: "", log=lambda *a: shown.append(" ".join(str(x) for x in a)))
         assert "not available" not in "\n".join(shown)
+
+
+# ── what a resume must not throw away (2026-09-28) ───────────────────────────────
+#
+# `run.json` records six things about a run and the resume screen read three, so the parser
+# default won for the other three every time. Each of the tests below fails without the carry
+# through, and each failure was reachable from the menu with no flags typed at all.
+
+def _config_only_run(tmp_path, name="baked", record=None):
+    d = tmp_path / name
+    d.mkdir()
+    (d / it.BAKEABLE).write_text("{}", encoding="utf-8")
+    if record is not None:
+        from senbonzakura import runrecord
+        runrecord.write(d, **record)
+    return d
+
+
+def test_a_resume_carries_the_device_the_trials_and_the_search(tmp_path):
+    """Three flags the record holds and the screen ignored.
+
+    --device fell back to cuda, so a run resumed on a machine without a card died at the device
+    pre-flight. --trials fell back to 60, so a study with 150 trials in it computed a remaining
+    budget of zero, announced the budget spent and baked a model from a search the person asked to
+    be 200. --search is pinned, so a scalar study resumed at the default pareto is refused over a
+    flag this menu has never mentioned.
+    """
+    _paused_run(tmp_path, record={"model": "M", "track": "T", "device": "cpu",
+                                  "trials": 200, "search": "scalar"})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["options"]["--device"] == "cpu"
+    assert str(plan["options"]["--trials"]) == "200"
+    assert plan["options"]["--search"] == "scalar"
+
+
+def test_a_resume_says_what_it_took_off_the_record_before_the_confirm(tmp_path):
+    """Carried silently, a recorded value is a flag on a line nobody reads twice."""
+    _paused_run(tmp_path, record={"model": "M", "track": "T", "device": "cpu",
+                                  "trials": 200, "search": "scalar"})
+    said = []
+    it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=said.append)
+    text = "\n".join(said)
+    assert "--device cpu" in text
+    assert "--trials 200" in text
+    assert "--search scalar" in text
+
+
+def test_a_recorded_device_this_machine_cannot_use_is_said_out_loud(tmp_path, monkeypatch):
+    """The defect the operator actually met: a run copied to a box with no card."""
+    monkeypatch.setattr(it, "device_available", lambda name: name != "cuda")
+    _paused_run(tmp_path, record={"model": "M", "track": "T", "device": "cuda"})
+    said = []
+    it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=said.append)
+    assert "cannot use that device" in "\n".join(said)
+
+
+def test_a_winning_config_with_no_study_re_bakes_instead_of_re_searching(tmp_path):
+    """THE PROMISE THE FLAG COULD NOT KEEP.
+
+    A directory holding only best-config.json is offered as "a winning config, so it re-bakes in
+    minutes rather than re-searching", and the screen emitted --resume. With no senbon-study.db
+    that finds no study, creates one, and starts a fresh search from trial zero under a log line
+    saying "(resuming)": the whole search again, after a promise of minutes. --bake-config is the
+    flag that does what the row says, and the guided mode had never emitted it.
+    """
+    d = _config_only_run(tmp_path, record={"model": "M", "track": "T", "trials": 200})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["options"]["--bake-config"] == str(d / it.BAKEABLE)
+    assert "--resume" not in plan["options"]
+    assert "--trials" not in plan["options"], "a direct bake runs no trials"
+
+
+def test_a_study_on_disk_still_resumes_rather_than_re_baking(tmp_path):
+    """The other half of the same decision, so the fix cannot swing too far."""
+    _paused_run(tmp_path, record={"model": "M", "track": "T"})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["options"]["--resume"] is True
+    assert "--bake-config" not in plan["options"]
+
+
+def test_a_resume_does_not_claim_nothing_is_overwritten(tmp_path):
+    """It said "Nothing there is overwritten", and a resume rewrites run.json, best-config.json
+    and the saved weights in that directory. What survives is the completed trials.
+    """
+    _paused_run(tmp_path, record={"model": "M", "track": "T"})
+    said = []
+    it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=said.append)
+    text = "\n".join(said)
+    assert "Nothing there is overwritten" not in text
+    assert "written over" in text
+
+
+def test_resuming_a_bundled_track_run_still_shows_the_corpus_licence(tmp_path):
+    """The resume path hard-coded "yours", so the CC BY-NC notice the fresh walk prints for the
+    bundled corpus vanished for the same corpus reached the other way.
+    """
+    _paused_run(tmp_path, record={"model": "M", "track": "default"})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["licence"] == "CC BY-NC 4.0"
+    said = []
+    it.present(plan, ask_fn=_answers("n"), log=said.append)
+    assert "CC BY-NC 4.0" in "\n".join(said)
+
+
+def test_a_resume_of_a_track_of_your_own_claims_no_licence(tmp_path):
+    _paused_run(tmp_path, name="two", record={"model": "M", "track": "/srv/mytrack"})
+    plan = it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=lambda *a: None)
+    assert plan["licence"] == "yours"
+
+
+def test_a_resume_says_it_converts_nothing_and_names_the_second_command(tmp_path):
+    """run.json records the abliteration's inputs and nothing about the recipe around it, so a
+    person who chose "Build a local brain" and crashed gets the model re-baked and no GGUF. It
+    cannot be added silently and there is no recorded answer to read, so the command is named.
+    """
+    _paused_run(tmp_path, record={"model": "M", "track": "T"})
+    said = []
+    it.offer_resume(root=tmp_path, ask_fn=_answers("1"), log=said.append)
+    text = "\n".join(said)
+    assert "converts nothing" in text
+    assert "senbonzakura convert" in text
+
+
+# ── the last question cannot invalidate the earlier ones ─────────────────────────
+
+def _occupied(tmp_path, name="prev", **record):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "abliteration.json").write_text("{}", encoding="utf-8")
+    from senbonzakura import runrecord
+    runrecord.write(d, **record)
+    return d
+
+
+def test_continuing_a_run_shows_the_answers_it_contradicts(tmp_path):
+    """"Continue that run" is the LAST question and it adds --resume, which pins the model, the
+    track and the search against the run.json already in that directory. So four screens of
+    answers could be contradicted by the last one, and the person found out from a refusal at the
+    end, after a track may already have been rebuilt on disk.
+    """
+    d = _occupied(tmp_path, model="RECORDED", track="RTRACK", search="scalar")
+    said = []
+    out, resume = it.ask_output(ask_fn=_answers(str(d), "2", "1"), log=said.append,
+                                chosen={"model": "CHOSEN", "track": "CTRACK"})
+    assert (out, resume) == (str(d), True)
+    text = "\n".join(said)
+    assert "'RECORDED'" in text and "'CHOSEN'" in text
+    assert "'RTRACK'" in text and "'CTRACK'" in text
+
+
+def test_keeping_your_answers_sends_you_back_for_another_directory(tmp_path):
+    d = _occupied(tmp_path, model="RECORDED", track="T")
+    free = tmp_path / "fresh"
+    out, resume = it.ask_output(ask_fn=_answers(str(d), "2", "2", str(free)),
+                                log=lambda *a: None, chosen={"model": "CHOSEN", "track": "T"})
+    assert (out, resume) == (str(free), False)
+
+
+def test_a_resume_from_the_output_question_reaches_the_printed_command(tmp_path):
+    """The reconciliation is worth nothing if it stops at the screen. The recorded answers have to
+    end up on the line that runs, including --search, which this walk never asks about at all.
+    """
+    d = _occupied(tmp_path, model="RECORDED", track="RTRACK", search="scalar")
+    plan = it.plan_abliteration(
+        ask_fn=_answers("1", "CHOSEN", "1", "2", str(d), "2", "1", "7"), log=lambda *a: None)
+    assert plan["options"]["--model"] == "RECORDED"
+    assert plan["options"]["--track"] == "RTRACK"
+    assert plan["options"]["--search"] == "scalar"
+    assert plan["options"]["--resume"] is True
+
+
+def test_a_track_build_is_dropped_when_the_study_pins_another_corpus(tmp_path):
+    """Otherwise the walk builds a corpus on disk that the run it is building it for cannot use."""
+    d = _occupied(tmp_path, model="M", track="RTRACK")
+    said = []
+    plan = it.plan_abliteration(
+        ask_fn=_answers("1", "M", "2", "1", "1", "newtrack", "2", str(d), "2", "1", "7"),
+        log=said.append)
+    assert "first" not in plan, "the track build would produce a corpus this run cannot use"
+    assert plan["options"]["--track"] == "RTRACK"
+    assert "track build is dropped" in "\n".join(said)
+
+
+# ── the recipe that could not finish ─────────────────────────────────────────────
+
+def test_a_brain_checks_it_can_convert_before_anything_downloads(monkeypatch):
+    """The convert step needs build-time artefacts a source checkout does not carry, and nothing
+    looked for them until the abliteration had already finished. Every bit of that verdict is
+    knowable before the model downloads, which is why the rest of the tool pre-flights at all.
+    """
+    monkeypatch.setattr(it, "missing_conversion_tools", lambda: ["llama-quantize"])
+    said = []
+    plan = it.plan_abliteration(ask_fn=_answers("2", "1", "M", "1", "2", "OUT", "5"),
+                                log=said.append)
+    assert "then" not in plan, "a step this install cannot run must not be in the plan"
+    text = "\n".join(said)
+    assert "cannot finish that recipe" in text
+    assert "vendor_llama.py" in text, "a refusal without the remedy is just bad news"
+
+
+def test_stopping_at_that_point_starts_nothing(monkeypatch):
+    monkeypatch.setattr(it, "missing_conversion_tools", lambda: ["llama-quantize"])
+    with pytest.raises(it.AbandonedError):
+        it.plan_abliteration(ask_fn=_answers("2", "2"), log=lambda *a: None)
+
+
+def test_a_brain_still_gets_its_convert_step_where_the_tools_exist(monkeypatch):
+    monkeypatch.setattr(it, "missing_conversion_tools", list)
+    plan = it.plan_abliteration(ask_fn=_answers("2", "M", "1", "2", "OUT", "5"),
+                                log=lambda *a: None)
+    assert plan["then"]["command"] == "convert"
+
+
+def test_the_conversion_check_names_both_halves(monkeypatch):
+    from senbonzakura import vendored
+
+    def _refuse(*_a, **_k):
+        raise vendored.VendorError("not here")
+
+    monkeypatch.setattr(vendored, "find_script", _refuse)
+    monkeypatch.setattr(vendored, "find_binary", _refuse)
+    missing = it.missing_conversion_tools()
+    assert len(missing) == 2
+    assert any("llama-quantize" in m for m in missing)
+
+
+# ── which step died decides the advice ───────────────────────────────────────────
+
+def test_a_conversion_failure_does_not_write_off_the_saved_model():
+    """The test was "this is not the main command", which is true of the track build AND the
+    conversion, and those sit on opposite sides of the expensive part. The conversion runs after
+    the abliteration has saved, so "there is no partial run to recover" wrote off a model that is
+    on the person's disk and invited them to run the whole search again.
+    """
+    plan = {"command": "kageyoshi",
+            "options": {"--model": "M", "--out": "brain"},
+            "then": {"command": "convert", "options": {"brain": True, "--quantise": "Q4_K_M"}},
+            "licence": None}
+    said = []
+    it.log_failure(plan, "boom", step=plan["then"], log=said.append)
+    text = "\n".join(said)
+    assert "no partial run to recover" not in text
+    assert "the model was saved" in text
+    assert "senbonzakura convert brain --quantise Q4_K_M" in text
+
+
+def test_a_track_build_failure_still_says_there_is_nothing_to_recover():
+    plan = {"command": "kageyoshi",
+            "options": {"--model": "M", "--out": "OUT"},
+            "first": {"command": "track", "options": {"--out": "T"}},
+            "licence": None}
+    said = []
+    it.log_failure(plan, "boom", step=plan["first"], log=said.append)
+    assert "no partial run to recover" in "\n".join(said)
+
+
+# ── the questions that were not checked ──────────────────────────────────────────
+
+def test_a_trial_budget_is_checked_at_the_prompt_rather_than_after_the_confirm():
+    """It was free text handed straight to the plan, so "abc" and "0" were printed into the
+    command, confirmed by the person, and only then refused by --trials.
+    """
+    answers = iter(["abc", "0", "-4", "12"])
+    said = []
+    assert it.ask_trials(ask_fn=lambda _p: next(answers), log=said.append) == "12"
+    assert any("not a trial budget" in s for s in said)
+
+
+def test_the_trials_prompt_does_not_invent_a_convention():
+    """"200 is the usual" matched nothing: the flat default is 60 and the preset picks 100, 80 or
+    64 by model size. A number invented for a prompt and described as the convention is how a
+    reader ends up believing the tool has one it has never had.
+    """
+    asked = []
+
+    def _ask(prompt):
+        asked.append(prompt)
+        return "60"
+
+    it.ask_trials(ask_fn=_ask, log=lambda *a: None)
+    assert "200 is the usual" not in asked[0]
+    assert "60" in asked[0], "the number the tool actually defaults to belongs in the sentence"
+
+
+def test_the_device_default_is_cpu_when_torch_cannot_be_asked(monkeypatch):
+    """`device_available` answers None with torch absent, None is falsy, so nothing ever set the
+    first usable index and the default fell back to entry zero, which is cuda, unmarked. A base
+    install is exactly where torch is missing, so the screen written to stop a newcomer being
+    handed `--device cuda` handed it to them by default.
+    """
+    monkeypatch.setattr(it, "device_available", lambda _name: None)
+    said = []
+    assert it.pick_device(ask_fn=lambda _p: "", log=said.append) == "cpu"
+    assert any("PyTorch is not installed" in s for s in said)
+
+
+def test_cuda_is_still_choosable_when_torch_cannot_be_asked(monkeypatch):
+    """Somebody may be composing a command for a machine that does have a card."""
+    monkeypatch.setattr(it, "device_available", lambda _name: None)
+    assert it.pick_device(ask_fn=lambda _p: "1", log=lambda *a: None) == "cuda"
+
+
+# ── the two dead ends ────────────────────────────────────────────────────────────
+
+def test_an_installed_copy_is_not_told_to_run_a_tool_it_does_not_have(monkeypatch):
+    """`pack_track.py` ships in no wheel. Naming it to somebody on an installed copy sends them
+    looking for a file that was never shipped, and their actual problem is a packaging fault.
+    """
+    monkeypatch.setattr(it.bundled, "is_available", lambda: False)
+    monkeypatch.setattr(it.bundled, "running_from_a_checkout", lambda: False)
+    said = []
+    assert it.warn_if_unbundled(log=said.append) is True
+    text = "\n".join(said)
+    assert "pack_track.py" not in text
+    assert "packaging fault" in text
+
+
+def test_the_track_menu_offers_the_way_out_its_note_names(monkeypatch):
+    """`pick_track` returned "default" the moment the note was printed, so the only way out of
+    that screen was Ctrl+C at the final confirm.
+    """
+    monkeypatch.setattr(it.bundled, "is_available", lambda: False)
+    monkeypatch.setattr(it.bundled, "running_from_a_checkout", lambda: True)
+    spec, _licence, build = it.pick_track(ask_fn=_answers("1", "", "3", "~/mytrack"),
+                                          log=lambda *a: None)
+    assert spec == "~/mytrack"
+    assert build is None
+
+
+def test_the_scoring_menu_offers_the_same_way_out(monkeypatch):
+    monkeypatch.setattr(it.bundled, "is_available", lambda: False)
+    monkeypatch.setattr(it.bundled, "running_from_a_checkout", lambda: True)
+    spec, _licence = it.pick_eval(ask_fn=_answers("1", "", "2"), log=lambda *a: None)
+    assert spec == "mlabonne/harmful_behaviors::train"
+
+
+def test_asking_for_the_flag_list_gets_every_flag_and_no_dead_end():
+    """Two defects in one menu row. It promised "the flag list" and ran `senbonzakura --help`,
+    which suppresses every non-core flag and never names `--help-all`. And its plan went to the
+    same [y/N] confirm as an abliteration, so the bare Enter that is safe everywhere else in the
+    walk answered "Nothing was run." to the one entry that is free to execute.
+    """
+    plan = it.plan_abliteration(ask_fn=_answers("4"), log=lambda *a: None)
+    assert plan["command"] == "--help-all"
+
+    asked = []
+
+    def _enter(prompt):
+        asked.append(prompt)
+        return ""
+
+    line = it.present(plan, ask_fn=_enter, log=lambda *a: None)
+    assert line == "senbonzakura --help-all"
+    assert "[Y/n]" in asked[-1], f"the free entry should not need a keystroke: {asked[-1]}"
+
+
+def test_a_run_that_costs_gpu_hours_still_defaults_to_no():
+    """The exception for the help page must not reach the plans that spend money."""
+    plan = it.plan_abliteration(ask_fn=_answers("1", "M", "1", "2", "OUT", "5"),
+                                log=lambda *a: None)
+    asked = []
+    assert it.present(plan, ask_fn=lambda p: (asked.append(p), "")[1],
+                      log=lambda *a: None) is None
+    assert "[y/N]" in asked[-1]

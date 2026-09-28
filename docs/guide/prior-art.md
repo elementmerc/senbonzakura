@@ -38,7 +38,7 @@ centroid subtracted. Large reported gains:
 
 ## So why does this project measure the opposite?
 
-Our own comparison found two directions costing roughly **1.4 to 1.9 times** the coherence damage
+Our own comparison found two directions costing about **1.9 times** the coherence damage
 of one at matched refusal, and buying nothing. That range is the mean over five seeds: 1.9 with
 every seed, 1.4 dropping the one outlying two-direction seed that carries much of the gap. The
 direction of the result is sturdier than its size. Both papers above report multi-direction

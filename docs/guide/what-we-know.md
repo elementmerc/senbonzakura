@@ -8,8 +8,10 @@ out from the appendix.
 
 ::: warning The short version
 **We tested it, and on the one model we can measure properly the claim is false.** Two
-directions cost roughly 1.4 to 1.9 times the collateral damage of one at the same refusal rate,
-on the mean over five seeds a side. The feature had also never worked at all until it was
+directions cost about **1.9 times** the collateral damage of one at the same refusal rate, on the
+mean over five seeds a side (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 on the mean
+dropping the one outlying two-direction seed, which is a sensitivity check rather than the bottom of
+an interval). The feature had also never worked at all until it was
 rewritten on 2026-08-03, which is why the question could not be asked before then, and those
 arms predate the held-out direction selection, so what they price is an *arbitrary* second
 direction rather than a chosen one.
@@ -193,9 +195,26 @@ The column is struck through rather than deleted because it was published.
 
 Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
 at matched refusal, where the only thing left to differ is the price paid for it. Two directions
-did roughly **1.4 to 1.9 times the collateral damage and bought nothing**, and they were less
-predictable seed to seed (the spread is nearly three times as wide). Both ends of that range are
-means over the five seeds: 1.9 with every seed, 1.4 dropping the outlying two-direction seed.
+did about **1.9 times the collateral damage** and bought nothing this design could have
+detected, and they were less predictable seed to seed (the spread is nearly three times as wide).
+
+**Both halves of that need saying precisely, and until 2026-09-28 neither did.**
+
+The cost. 1.9 is the ratio of the means over five seeds a side, and the 95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side is 1.2 to 3.1. This page used to give the figure as a range
+running from the dropped-seed ratio up to this one, which is a sensitivity check at one end and the
+estimate at the other. Printing the two joined by "to" invited every reader to take it for an
+interval, when the real interval is four times wider. The CHANGELOG's 0.4.0 entry carries the old
+wording and the correction, for anybody who read the figure before today.
+
+The absence of a benefit. Both arms sit on the floor of the refusal measurement, so this design could
+not have shown a gain: one direction already leaves hard refusal at 0.1%, the measurement moves in
+steps of 0.5 of a percentage point at 200 prompts an arm, and so the largest refusal gain two
+directions could ever have demonstrated here is 0.1 of a percentage point, a fifth of one scorable
+event. The one outcome that did have room to move, noncompliance, is the column withdrawn on
+2026-09-09. So "bought nothing" is what this run can support and "bought nothing measurable at this
+operating point" is what it means; whether a second direction buys anything where one direction
+leaves refusal standing is a question these arms were not built to answer, and answering it needs a
+run at an operating point where refusal has room to move.
 
 The gap is 0.0435, and a **two-sided exact permutation test on the difference of means**, over all
 252 ways of splitting these ten seeds, puts it at **p = 0.016**. That is a real difference, and

@@ -446,3 +446,41 @@ def test_the_licence_pointer_names_a_path_rather_than_the_inside_of_the_package(
     where = corpora._notices_path()
     assert "THIRD-PARTY-CORPORA.md" in where
     assert "ships inside this package" not in where
+
+
+def test_the_pinned_upstream_never_breaks_across_lines():
+    """The commit is the one thing in this block somebody copies, so it may not wrap.
+
+    WHAT PROMPTED IT, 2026-09-28. The first attempt at a tidier layout put the name, the licence
+    and `upstream @ commit` on one line. On an ordinary terminal that wrapped as
+    `centerforaisafety/HarmBench @` then `c0423b952435`, splitting the pin from its `@`. A reader
+    copying the pin gets half of it, and a layout change that damages an identifier is worse than
+    the wall of prose it replaced.
+
+    Asserted at a narrow width on purpose: the wrap only appears where the terminal is small, which
+    is exactly where nobody tests by eye.
+    """
+    corpora._reset_notice_for_tests()
+    for key, c in sorted(corpora.CORPORA.items()):
+        said = []
+        corpora.notice(key, log=said.append, columns=60)
+        pin = f"{c.upstream} @ {c.commit}"
+        assert any(pin in line for line in said), (
+            f"{key}: the pinned upstream {pin!r} is split across lines at 60 columns:\n"
+            + "\n".join(said))
+
+
+def test_each_corpus_is_its_own_block():
+    """Six entries running together is the wall this layout replaced.
+
+    A blank line before each is what makes the list scannable, and it is the whole of the change,
+    so it is the thing worth asserting rather than the exact indentation.
+    """
+    corpora._reset_notice_for_tests()
+    said = []
+    for key in sorted(corpora.CORPORA):
+        corpora.notice(key, log=said.append)
+    blanks = sum(1 for line in said if not line.strip())
+    assert blanks >= len(corpora.CORPORA), (
+        f"{blanks} blank line(s) for {len(corpora.CORPORA)} corpora, so the entries are not "
+        f"separated and the block reads as one paragraph again")

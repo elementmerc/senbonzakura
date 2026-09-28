@@ -38,6 +38,16 @@ from . import argresolve, say
 #: Exit codes. Distinguished so a CI job can treat a warning differently from a failure.
 OK, WARN, FAIL = 0, 1, 2
 
+#: The command's own title, in ONE place. It was a literal in `report` and another in `main`, kept
+#: in step by hand through a `header=False` argument, which is two sources of truth about one
+#: string. The parser's `prog` is the same name and reads it too.
+TITLE = "senbonzakura doctor"
+
+#: What the checks are a list of. A terminal run prints the bundled corpora's licence notice while
+#: the checks are being collected, so without this the report began mid-paragraph in somebody
+#: else's prose and a reader scanning for "is my install fine" had to find where one ended.
+SECTION = "Installed:"
+
 
 #: The tick and cross, unless the console cannot write them.
 #:
@@ -48,13 +58,18 @@ OK, WARN, FAIL = 0, 1, 2
 #:
 #: Decided once, at import, from what stdout can actually encode. ASCII marks are still aligned and
 #: still distinguishable; a traceback is neither.
+#:
+#: The ASCII pass mark is lower case, and that is not a style choice. `say.is_marker` treats a line
+#: whose first word is `OK` as a machine marker, one of the four bare markers other tools grep for,
+#: so an upper-case fallback made every passing check on a Windows console indistinguishable from a
+#: protocol line. `ok` is the same width, reads the same, and is not a marker.
 def _marks():
     glyphs = {"pass": "\u2713", "warn": "!", "fail": "\u2717"}
     encoding = getattr(sys.stdout, "encoding", None) or "ascii"
     try:
         "".join(glyphs.values()).encode(encoding)
     except (UnicodeEncodeError, LookupError):
-        return {"pass": "OK", "warn": " !", "fail": "XX"}
+        return {"pass": "ok", "warn": " !", "fail": "XX"}
     return glyphs
 
 
@@ -64,8 +79,12 @@ _MARKS = _marks()
 class Check:
     """One question, its answer, and what to do about it."""
 
-    def __init__(self, name, status, detail, fix=""):
+    def __init__(self, name, status, detail, fix="", group=None):
         self.name, self.status, self.detail, self.fix = name, status, detail, fix
+        # Which run of related checks this belongs to, so the report can put a blank line where one
+        # run ends. None means ungrouped, which is what a hand-built list in a test is, and an
+        # ungrouped report is laid out exactly as it was before.
+        self.group = group
 
     @property
     def mark(self):
@@ -96,6 +115,37 @@ def _vendor_remedy():
 
 def _fail(name, detail, fix=""):
     return Check(name, "fail", detail, fix)
+
+
+#: How much of a failed sub-command's own output one check line carries. The report prints a check
+#: on one line; the whole transcript belongs to running that command directly.
+_LAST_WORDS_CHARS = 180
+
+
+def _exit_detail(exc):
+    """What a `SystemExit` actually said, as one line.
+
+    `str(SystemExit(2))` is "2", which reads as a sentence and is a status. Telling them apart here
+    keeps a check from offering a number as the reason something failed, which is the one fact the
+    reader cannot act on.
+    """
+    code = exc.code
+    if code is None or isinstance(code, int):
+        return f"exit status {0 if code is None else code}"
+    return " ".join(str(code).split())
+
+
+def _last_words(lines, otherwise):
+    """The last thing a sub-command said before it stopped, or `otherwise` when it said nothing.
+
+    Whitespace is collapsed because this lands in a one-line report, and a captured line carrying
+    its own newline would break the column the reader is scanning.
+    """
+    said = [" ".join(str(line).split()) for line in lines]
+    said = [line for line in said if line]
+    if not said:
+        return otherwise
+    return f"the last line it printed: {say.shorten(said[-1], _LAST_WORDS_CHARS)}"
 
 
 def check_platform():
@@ -474,13 +524,23 @@ def deep_check(log=print):
     import tempfile
 
     out = []
+    # IMPORTED ONE AT A TIME so the skip names the package that failed. Together, under one
+    # `except`, a broken transformers beside a perfectly good torch was reported as "install torch
+    # and transformers ... see the torch line above", and the torch line above reads as a pass.
+    # OSError beside ImportError for the same reason `check_pinned_memory` does it: a package that
+    # is present and will not LOAD raises OSError, which is the common shape on Windows.
     try:
         import torch
+    except (ImportError, OSError) as e:
+        return [_warn("deep", f"skipped, torch is unusable ({type(e).__name__}: {e})",
+                      "the torch line above says why it will not load; fix that and this check "
+                      "runs")]
+    try:
         from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
     except (ImportError, OSError) as e:
-        return [_warn("deep", f"skipped, {e}",
-                      "install torch and transformers to run it, and if they are already "
-                      "installed see the torch line above for why they will not load")]
+        return [_warn("deep", f"skipped, transformers is unusable ({type(e).__name__}: {e})",
+                      "torch itself loaded here, so the torch line above does not explain this. "
+                      "Repair transformers with: pip install --force-reinstall senbonzakura")]
 
     with tempfile.TemporaryDirectory(prefix="senbon-doctor-") as td:
         d = Path(td)
@@ -497,10 +557,17 @@ def deep_check(log=print):
 
         from . import convert
         gguf = d / "m.gguf"
+        # KEPT RATHER THAN DISCARDED. This was `log=lambda _m: None` with the failure line saying
+        # "see the message above": the converter's own words went nowhere, and a SystemExit raised
+        # before the subprocess starts prints nothing anywhere at all, so the one line naming the
+        # cause was thrown away by the code that then pointed at it.
+        said = []
         try:
-            rc = convert.run([str(d / "m"), str(gguf), "--outtype", "bf16"], log=lambda _m: None)
+            rc = convert.run([str(d / "m"), str(gguf), "--outtype", "bf16"], log=said.append)
         except SystemExit as e:
-            return [*out, _fail("deep convert", f"failed: {e}", "see the message above")]
+            return [*out, _fail("deep convert", f"failed: {_exit_detail(e)}",
+                                _last_words(said, "the converter printed nothing before it "
+                                                  "stopped"))]
         if rc != 0 or not gguf.is_file():
             return [*out, _fail("deep convert", "produced no file", "")]
 
@@ -521,31 +588,47 @@ def deep_check(log=print):
     return out
 
 
+def _in_group(checks, name):
+    """Stamp a run of checks with the group it belongs to, and hand it back unchanged otherwise.
+
+    The groups are the ones this report has always had; naming them only lets the renderer put a
+    blank line where one ends. No check moves, and no check's verdict, wording or order changes.
+    """
+    for c in checks:
+        c.group = name
+    return checks
+
+
 def run_checks(*, deep=False, log=print):
-    checks = [check_platform(), check_torch()]
     # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
     # where finding the real ceiling means climbing to it.
-    checks.append(check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None))
-    checks += check_pins()
-    checks.append(check_quantize())
-    checks += check_converter()
-    checks.append(check_track())
-    checks.append(check_table_io())
-    checks += check_corpora()
+    checks = _in_group([check_platform(), check_torch(),
+                        check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None)], "machine")
+    checks += _in_group([*check_pins(), check_quantize(), *check_converter()], "tools")
+    checks += _in_group([check_track(), check_table_io(), *check_corpora()], "data")
     if deep:
-        checks += deep_check(log=log)
+        checks += _in_group(deep_check(log=log), "deep")
     return checks
 
 
 def report(checks, log=print, *, advisories_ok=False, header=True):
-    # `header=False` when the caller has already printed the title, which `main` does so that the
-    # corpora's licence notice cannot land above it. Default True so every other caller, and every
-    # test that renders a report on its own, is unchanged.
+    # `header=False` when the caller has already named the command, which on a terminal the banner
+    # does. Default True so every other caller, and every test that renders a report on its own,
+    # still gets the title.
     if header:
-        log("senbonzakura doctor")
-        log("")
+        log(TITLE)
+    # The heading and the blank line around it run either way. The bundled corpora print their
+    # licence notice while the checks are being collected, and that obligation stays, so this is
+    # what marks where it ends and the answer to "is my install fine" begins.
+    log("")
+    log(SECTION)
+    log("")
     width = max(len(c.name) for c in checks) + 2
-    for c in checks:
+    group = None
+    for i, c in enumerate(checks):
+        if i and c.group != group:
+            log("")
+        group = c.group
         log(f"  {c.mark}  {c.name:<{width}} {c.detail}")
         if c.fix and c.status != "pass":
             log(f"     {' ' * width} -> {c.fix}")
@@ -587,7 +670,7 @@ def report(checks, log=print, *, advisories_ok=False, header=True):
 def main(argv=None):
     ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
-        prog="senbonzakura doctor",
+        prog=TITLE,
         description="Check that this install can actually convert, quantise and measure.")
     ap.add_argument("--deep", action="store_true",
                     help="also build a two-layer model and take it through convert and quantise. "
@@ -598,12 +681,11 @@ def main(argv=None):
                          "install exits 1, because an advisory means this install cannot do "
                          "something. A genuine failure still exits 2 either way")
     a = ap.parse_args(argv)
-    # THE HEADER GOES FIRST, before any check runs. Loading the bundled corpora prints their
-    # licence notice, which is an obligation and stays, and it used to arrive above this command's
-    # own title because the checks run before the report renders. A reader met ten lines about other
-    # people's datasets before anything told them which command they were looking at.
-    print("senbonzakura doctor")
-    print()
+    # NO TITLE OF ITS OWN. It used to print one here so the corpora's licence notice could not land
+    # above it, which left the tool's name in the first six lines three times: twice from the
+    # banner the entry point draws and once from here. The corpora block is now one scannable line
+    # per corpus and the checks announce themselves with their own heading, so this line was
+    # repetition rather than orientation.
     return report(run_checks(deep=a.deep), advisories_ok=a.advisories_ok, header=False)
 
 

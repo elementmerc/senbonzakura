@@ -5467,15 +5467,23 @@ def _preflight_device(args, log=print):
         return device
     kind = device.split(":", 1)[0]
     if kind == "cuda" and not torch.cuda.is_available():
-        raise SystemExit(
-            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.\n"
-            "  Checked before the model is downloaded, because finding out afterwards costs the "
-            "download and tells you the same thing.\n"
-            "  What to do:\n"
+        # THROUGH `say.refusal_text`, which wraps to the terminal, rather than hand wrapped.
+        # This was built with explicit newlines at about a hundred and twenty columns, so the
+        # reason line ran off the edge of any ordinary window, and it runs off it twice now that
+        # the guided mode quotes a failing check's refusal on its pre-flight board. Found by a
+        # journey driving the walk with `--device cuda` on a machine with no card.
+        #
+        # The two command lines keep their own indentation: `say` leaves an indented line alone
+        # deliberately, because an indented line is something somebody has to paste.
+        raise SystemExit(say.refusal_text(
+            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.",
+            "Checked before the model is downloaded, because finding out afterwards costs the "
+            "download and tells you the same thing.",
+            "What to do:\n"
             "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
-            "    or fix the install:            senbonzakura setup --apply\n"
-            "  `senbonzakura doctor` reports the same thing as an advisory and runs without a "
-            "card.")
+            "    or fix the install:            senbonzakura setup --apply",
+            "`senbonzakura doctor` reports the same thing as an advisory and runs without a "
+            "card."))
     if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",
                                      lambda: False)():
         raise SystemExit(

@@ -201,10 +201,17 @@ def notice(log=print):
     # NOT docs/evaluation-track-card.md: `docs/` is in neither package-data nor license-files, so
     # naming it pointed readers at a file their install does not contain. That was the whole of the
     # 2026-09-10 attribution finding.
-    log(f"Using the bundled evaluation track ({LICENCE}: attribution required, NON-COMMERCIAL).")
-    log("  It holds harmful prompts and matched harmless ones. They are obfuscated as a speed bump,")
-    log("  not protection: the key ships beside it.")
-    log("  Full attribution: THIRD-PARTY-NOTICES.md, beside this install. Your own: --track.")
+    # THROUGH `say`, because these were hand wrapped at about ninety columns and the notice is
+    # printed to whatever terminal the run has. Found by a journey driving the guided walk in a
+    # fifty four column window, where the licence notice was the widest thing on the screen. The
+    # obligation is unchanged; only the folding is.
+    from . import say
+    say.say(f"Using the bundled evaluation track ({LICENCE}: attribution required, "
+            f"NON-COMMERCIAL).", log=log)
+    say.say("It holds harmful prompts and matched harmless ones. They are obfuscated as a speed "
+            "bump, not protection: the key ships beside it.", indent="  ", log=log)
+    say.say("Full attribution: THIRD-PARTY-NOTICES.md, beside this install. Your own: --track.",
+            indent="  ", log=log)
 
 
 def _reset_notice_for_tests():

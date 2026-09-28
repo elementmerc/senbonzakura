@@ -429,7 +429,7 @@ def _read_as_a_model(word):
         "right and the next line will be the download.")
 
 
-#: What bare `senbonzakura` answers with, and the five ways in it names.
+#: What bare `senbonzakura` answers with: two labelled groups, and the ways in under each.
 #:
 #: WHY THIS EXISTS. Typing a tool's name is how people ask what it is. This one answered with a
 #: 27-line argparse usage block listing every flag, which is not short help by any reading, and
@@ -437,41 +437,70 @@ def _read_as_a_model(word):
 #: a wall of flags followed by an error, and the guided mode, which is the thing a newcomer
 #: actually wants, was not mentioned anywhere on it.
 #:
-#: ONE DESCRIPTION COLUMN, at a fixed depth. The earlier draft padded each line to its own
-#: command's width, so three description columns started at three different depths and the eye had
-#: no single edge to run down. Two labelled groups with blank lines around them, because "start
-#: here" against "or go direct" is the actual decision somebody is making, and naming it is what
-#: lets them stop reading after the first group.
+#: TWO LABELLED GROUPS, because "start here" against "or go direct" is the actual decision
+#: somebody is making, and naming it is what lets them stop reading after the first group.
 #:
+#: A TABLE RATHER THAN A BLOCK OF TEXT, because the layout depends on the window. See `short_help`.
 #: The commands named here are checked against the real command tables by the test suite rather
 #: than trusted, since a second list of command names is a second thing to keep true.
-_START_HERE = """\
-  START HERE
+WAYS_IN = (
+    ("START HERE", (
+        ("senbonzakura -i", "the guided way in"),
+    )),
+    ("Or go direct", (
+        ("senbonzakura --model <id>", "abliterate a model"),
+        ("senbonzakura convert <dir>", "turn edited weights into a GGUF"),
+        ("senbonzakura validate --model <id>", "check for refusal directions"),
+        ("senbonzakura doctor", "is this install okay?"),
+        ("senbonzakura --help", "every command, and the core flags"),
+    )),
+)
 
-    senbonzakura -i                       the guided way in
+#: Below this the descriptions stop sharing a column and go under their commands instead. The
+#: longest command is 34 characters and a description needs room to be a phrase rather than two
+#: words per line, so a shared column stops being readable well before the window gets small.
+_STACK_BELOW = 72
 
 
-  Or go direct
+def short_help(columns=None):
+    """The page bare `senbonzakura` prints: a masthead, then the ways in.
 
-    senbonzakura --model <id>             abliterate a model
-    senbonzakura convert <dir>            turn edited weights into a GGUF
-    senbonzakura validate --model <id>    check for refusal directions
-    senbonzakura doctor                   is this install okay?
-    senbonzakura --help                   every command, and the core flags
-"""
-
-
-def short_help():
-    """The page bare `senbonzakura` prints: a masthead, then the five ways in.
+    ONE DESCRIPTION COLUMN, at a fixed depth, WHERE THERE IS ROOM FOR ONE. The earlier draft
+    padded each line to its own command's width, so three description columns started at three
+    different depths and the eye had no single edge to run down. In a half width window there is
+    no room for a second column at all, and holding the layout there means running off the edge,
+    so the description drops under its command instead. Found by a journey driving the real
+    program in a fifty two column terminal.
 
     The masthead is here rather than in the banner because the banner only ever draws to a
-    terminal, and somebody piping this page into a file still needs to know which version answered
-    them.
+    terminal, and somebody piping this page into a bug report still needs to know which version
+    answered them.
     """
-    return (f"    senbonzakura {__version__}\n"
-            f"    Precision abliteration, with receipts.\n"
-            f"\n\n"
-            f"{_START_HERE}")
+    from . import say
+
+    columns = say.width() if columns is None else columns
+    depth = max(len(command) for _group, rows in WAYS_IN for command, _note in rows) + 4
+    stacked = columns < _STACK_BELOW
+
+    out = [f"    senbonzakura {__version__}"]
+    out.extend(f"    {line}" for line in
+               say.lines("Precision abliteration, with receipts.", columns=columns - 4))
+    out.extend(["", ""])
+    for group, rows in WAYS_IN:
+        out.append(f"  {group}")
+        out.append("")
+        for command, note in rows:
+            if stacked:
+                out.append(f"    {command}")
+                out.extend(f"        {line}" for line in say.lines(note, columns=columns - 8))
+            else:
+                out.append(f"    {command:<{depth}}{note}")
+            out.append("")
+        out.append("")
+    # One trailing blank rather than the three the loop leaves.
+    while len(out) > 1 and out[-1] == "" and out[-2] == "":
+        out.pop()
+    return "\n".join(out)
 
 
 def main(argv=None):

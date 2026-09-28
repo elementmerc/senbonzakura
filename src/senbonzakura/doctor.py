@@ -611,6 +611,36 @@ def run_checks(*, deep=False, log=print):
     return checks
 
 
+#: The narrowest a value column may be before the row stacks instead. Below this a value is
+#: broken into two and three word fragments, which is harder to read than a second line.
+_NARROWEST_VALUE = 24
+
+
+def _row(log, prefix, body):
+    """One `label  value` row, folded under its own label rather than off the edge.
+
+    The continuation is indented to the width of the prefix, so a wrapped value stays a block
+    under its own heading instead of colliding with the next row's label.
+    """
+    from . import say
+
+    columns = say.width()
+    room = columns - len(prefix)
+    if room >= _NARROWEST_VALUE:
+        lines = say.lines(str(body), columns=room) or [""]
+        log(f"{prefix}{lines[0]}".rstrip())
+        for line in lines[1:]:
+            log(f"{' ' * len(prefix)}{line}")
+        return
+    # STACKED, because two columns do not fit. The label column is as wide as the longest check
+    # name, so on a narrow terminal there is no room left for a value beside it and holding the
+    # layout means running off the edge instead. The value drops to its own indented line, which
+    # is the same shape `doctor` already uses for a fix.
+    log(prefix.rstrip())
+    for line in say.lines(str(body), columns=max(_NARROWEST_VALUE, columns - 5)) or [""]:
+        log(f"     {line}")
+
+
 def report(checks, log=print, *, advisories_ok=False, header=True):
     # `header=False` when the caller has already named the command, which on a terminal the banner
     # does. Default True so every other caller, and every test that renders a report on its own,
@@ -629,9 +659,14 @@ def report(checks, log=print, *, advisories_ok=False, header=True):
         if i and c.group != group:
             log("")
         group = c.group
-        log(f"  {c.mark}  {c.name:<{width}} {c.detail}")
+        # WRAPPED, AND THE INDENT PASSED RATHER THAN BAKED IN. `say` leaves an already indented
+        # line alone deliberately, because an indented line is usually a command somebody has to
+        # paste, so a fix written as `"     ...text"` went out unwrapped however long it was. One
+        # of these runs to about three hundred characters, and a journey driving `doctor` in a
+        # fifty column window is what found it.
+        _row(log, f"  {c.mark}  {c.name:<{width}} ", c.detail)
         if c.fix and c.status != "pass":
-            log(f"     {' ' * width} -> {c.fix}")
+            _row(log, f"     {' ' * width} -> ", c.fix)
     fails = [c for c in checks if c.status == "fail"]
     warns = [c for c in checks if c.status == "warn"]
     log("")
@@ -639,16 +674,17 @@ def report(checks, log=print, *, advisories_ok=False, header=True):
         f"{len(warns)} advisory, {len(fails)} failed")
     if fails:
         log("")
-        log("  This install cannot do what it claims. Fix the failures above before a long run:")
-        log("  finding this on a rented card, with the weights already loaded, costs money.")
+        _row(log, "  ", "This install cannot do what it claims. Fix the failures above before a "
+                         "long run: finding this on a rented card, with the weights already "
+                         "loaded, costs money.")
         return FAIL
     if warns:
         if advisories_ok:
             # ASKED FOR EXPLICITLY, so it is stated rather than silently different. A reader
             # comparing two logs has to be able to see why one exited 0 and the other 1.
             log("")
-            log(f"  Exit status {OK}: advisories only, and --advisories-ok was given. "
-                f"Nothing failed.")
+            _row(log, "  ", f"Exit status {OK}: advisories only, and --advisories-ok was given. "
+                            f"Nothing failed.")
             return OK
         # SAY WHAT THE EXIT CODE MEANS, because the line above says "0 failed" and this returns 1.
         #
@@ -660,10 +696,11 @@ def report(checks, log=print, *, advisories_ok=False, header=True):
         # their first run. The fix is one sentence, not a changed convention: silencing the exit
         # code would remove the distinction the codes exist for.
         log("")
-        log(f"  Exit status {WARN}: advisories only, nothing failed. This install works; the "
-            f"lines above are things it cannot do.")
-        log(f"  ({OK} means nothing to report, {WARN} advisories, {FAIL} something failed.)")
-        log("  Pass --advisories-ok to exit 0 here; a real failure still exits 2.")
+        _row(log, "  ", f"Exit status {WARN}: advisories only, nothing failed. This install "
+                        f"works; the lines above are things it cannot do.")
+        _row(log, "  ", f"({OK} means nothing to report, {WARN} advisories, {FAIL} something "
+                        f"failed.)")
+        _row(log, "  ", "Pass --advisories-ok to exit 0 here; a real failure still exits 2.")
     return WARN if warns else OK
 
 

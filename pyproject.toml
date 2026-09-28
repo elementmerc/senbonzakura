@@ -15,7 +15,7 @@ dynamic = ["version"]
 description = "Precision abliteration, with receipts. Refusal abliteration for transformer language models, with the instruments to measure what the edit cost."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-or-later AND CC-BY-NC-4.0"
 # THIRD-PARTY-NOTICES.md carries the AGPL section 5(a) statement of modification: this work
 # includes code from Heretic and is not Heretic. Listing it here is what puts it INSIDE the
 # wheel. The 0.3.0 release on PyPI shipped LICENSE alone, so the statement existed in the

@@ -355,3 +355,59 @@ def test_the_publish_workflow_uploads_the_checker_before_the_package_that_needs_
     assert any("checker" not in d for _pos, d in uploads[1:]), (
         "publish.yml uploads the checker and nothing else, so the abliterator would never reach "
         "the index")
+
+
+# ── the expression has to cover what the artefact carries ─────────────────────────────────────────
+
+#: Data files that ship inside the wheel under terms the code's own licence does not cover, and the
+#: SPDX identifier each one needs the declared expression to contain.
+#:
+#: WHAT PROMPTED IT, 2026-09-28 (Q-41). `pyproject.toml` declared `AGPL-3.0-or-later` alone while the
+#: wheel carried the evaluation track, which is CC BY-NC 4.0 and is what `--track default` reads. A
+#: compliance scanner reads the expression and nothing else, so it cleared the package for commercial
+#: use; the only statements to the contrary were prose in the README and the notices, and a line
+#: printed at load. Prose is not what a compliance pipeline reads.
+DATA_UNDER_ITS_OWN_TERMS = {
+    "src/senbonzakura/data/default-track.bin": "CC-BY-NC-4.0",
+}
+
+
+def _declared_expression():
+    from pathlib import Path as _Path
+
+    from tomlread import tomllib
+
+    root = _Path(__file__).resolve().parents[1]
+    return tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["license"]
+
+
+def test_every_bundled_file_with_its_own_terms_is_named_in_the_expression():
+    expression = _declared_expression()
+    missing = {path: spdx for path, spdx in DATA_UNDER_ITS_OWN_TERMS.items()
+               if spdx not in expression}
+    assert not missing, (
+        f"the declared licence expression is {expression!r} and does not name the terms of files "
+        f"this wheel ships: {missing}.\n"
+        "  PEP 639's expression describes the DISTRIBUTION, not only its code, and a scanner reads "
+        "it instead of the prose. Either name the terms, or stop shipping the file (see Q-41).")
+
+
+def test_the_files_that_need_covering_are_still_in_the_package():
+    """Otherwise the table decays into a list of paths nobody ships and the check covers nothing.
+
+    When the harmless side of the track is rebuilt from a permissive source at v0.5, this test is
+    what should fail, and the answer then is to take the entry out and return the expression to
+    `AGPL-3.0-or-later`.
+    """
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    absent = [p for p in DATA_UNDER_ITS_OWN_TERMS if not (root / p).is_file()]
+    assert not absent, (
+        f"these are listed as shipping under their own terms and are not in the tree: {absent}. "
+        "If the file is gone, take it out of the table and narrow the expression.")
+
+
+def test_the_expression_still_declares_the_code_licence():
+    """The compound form must not have replaced the project's own licence with the data's."""
+    assert "AGPL-3.0-or-later" in _declared_expression()

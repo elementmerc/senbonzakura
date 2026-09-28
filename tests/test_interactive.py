@@ -45,7 +45,7 @@ def _row_number(side, key):
 #: `test_the_menus_describe_this_install.py` and `test_the_walk_checks_before_it_asks.py`, where
 #: the machine is made explicitly rather than inherited.
 @pytest.fixture(autouse=True)
-def _a_machine_with_nothing_on_it(monkeypatch):
+def _a_machine_with_nothing_on_it(monkeypatch, request):
     monkeypatch.setattr(it, "models_on_this_machine", lambda root=".": [])
     monkeypatch.setattr(it, "_checked_rows", lambda plan: [])
     # AND THE BUNDLED TRACK IS PRESENT, which is the third thing these walks read off the machine.
@@ -56,6 +56,16 @@ def _a_machine_with_nothing_on_it(monkeypatch):
     # machine rather than saying what it means. The unbundled path has its own tests, which
     # monkeypatch this deliberately.
     monkeypatch.setattr(it.bundled, "is_available", lambda: True)
+    # AND THE CONVERSION TOOLS ARE PRESENT, the fourth of these and found the same way as the
+    # third: the "Build a local brain" recipe asks an extra question when the vendored converter
+    # and `llama-quantize` are absent, and they are build-time artefacts, so macOS and Windows CI
+    # answered that question with an answer meant for the one after it. The missing-tools branch
+    # has its own tests, below, which monkeypatch this deliberately.
+    #
+    # A test that is ABOUT the probe rather than about the walk marks itself and gets the real one
+    # back, because pinning it there would let it pass by measuring the stand-in.
+    if request.node.get_closest_marker("reads_the_real_install") is None:
+        monkeypatch.setattr(it, "missing_conversion_tools", list)
 
 
 # ── quoting ──────────────────────────────────────────────────────────────────────
@@ -953,6 +963,7 @@ def test_a_brain_still_gets_its_convert_step_where_the_tools_exist(monkeypatch):
     assert plan["then"]["command"] == "convert"
 
 
+@pytest.mark.reads_the_real_install
 def test_the_conversion_check_names_both_halves(monkeypatch):
     from senbonzakura import vendored
 

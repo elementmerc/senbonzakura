@@ -176,3 +176,31 @@ def test_a_matching_badge_still_passes_silently_enough(tmp_path, monkeypatch, ca
     monkeypatch.setattr(badge, "collected_count", lambda: 4674)
     assert badge.main([]) == 0
     assert "4674" in capsys.readouterr().out
+
+
+# ── the line the count is read off ───────────────────────────────────────────────
+#
+# THE SECOND BLIND SPOT, and the same shape as the first: the checker read one spelling of the
+# thing it measures and reported "collection failed" about the other. pytest prints a different
+# final line the moment anything is deselected, the project's addopts started deselecting the
+# journeys, and CI exited 2 claiming a broken suite while that suite had just collected 6,641
+# tests. These pin both spellings, and that the number taken is the total rather than the
+# selected count: a marker filter must not be able to shrink a public figure quietly.
+@pytest.mark.parametrize(("line", "expected"), [
+    ("6641 tests collected in 3.82s", 6641),
+    ("1 test collected in 0.11s", 1),
+    ("6626/6641 tests collected (15 deselected) in 3.82s", 6641),
+    ("1/6641 tests collected (6640 deselected) in 3.80s", 6641),
+])
+def test_every_shape_of_the_collection_line_yields_the_total(line, expected):
+    m = _module().COLLECTED.search(f"some earlier output\n{line}\n")
+    assert m is not None, f"the checker cannot read {line!r}, so it would report a broken suite"
+    assert int(m.group("count")) == expected
+
+
+def test_a_line_that_is_not_a_collection_line_is_not_read_as_one():
+    """Exit 2 is the right answer to a genuinely broken collection, so widening the pattern must
+    not turn an error into a number.
+    """
+    for line in ("no tests ran in 0.00s", "ERROR collecting tests/journeys", "collected 0 items"):
+        assert _module().COLLECTED.search(f"{line}\n") is None, line

@@ -21,6 +21,7 @@ So the notebook's commands are parsed here, by the real parsers, with no model a
 proves the flags exist and are spelled correctly. It does not prove the run succeeds, which needs
 hardware, and the file says so rather than implying otherwise.
 """
+import ast
 import json
 import pathlib
 import shlex
@@ -181,3 +182,166 @@ def test_the_notebook_installs_the_release_and_uses_the_track_that_comes_with_it
     assert "senbonzakura doctor" in "\n".join(live), (
         "the notebook does not run `doctor`, so a reader never sees what their install can and "
         "cannot do before the first command that depends on it")
+
+
+# ── what the notebook may print, and what it may import ───────────────────────────────────────────
+
+def _code_cells():
+    doc = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    return [c for c in doc["cells"] if c["cell_type"] == "code"]
+
+
+def _demo_cell():
+    """The cell that generates from both models, found by what it does rather than by index."""
+    cells = [c for c in _code_cells() if "REFUSAL_MARKERS" in "".join(c["source"])]
+    assert len(cells) == 1, f"expected one generating cell, found {len(cells)}"
+    return "".join(cells[0]["source"])
+
+
+def test_the_notebook_carries_no_saved_output():
+    """Colab's "Save a copy in GitHub" saves outputs, and this notebook's outputs are the risk.
+
+    The leak gate refuses a committed notebook carrying outputs, so this is a second layer rather
+    than the control. It is here because the two findings below are about what the outputs WOULD
+    contain, and they are only interesting while this stays true.
+    """
+    assert not any(c.get("outputs") or c.get("attachments") for c in _code_cells()), (
+        "a code cell carries saved output; strip it before committing")
+
+
+def test_a_reply_is_withheld_unless_the_model_refused_and_that_rule_has_no_exceptions():
+    """WHAT PROMPTED IT, 2026-09-28. The panel found this and nothing in the suite could.
+
+    `answers()` used to take a `keep_text` flag, and the stock-model call passed it as True. The
+    comment justifying it said "the refusal is printed, because a refusal is safe to read", and what
+    the code did was set the reply whether or not the model refused. On the documented demo model,
+    which this repository measures at 58.6% hard refusal, that printed an unrefused completion to a
+    harmful prompt about four times in ten, in the artefact the README's first call to action points
+    at, one click from Colab writing it into a reader's own repository.
+
+    The commit that introduced it is named "prints neither payload". Nothing asserted the property
+    the commit was named after, which is why the name and the behaviour could disagree for two days.
+
+    So the rule is asserted on the SYNTAX TREE rather than on the text. The first version of this
+    test banned the string `keep_text` anywhere in the cell and failed on the comment above that
+    explains why the flag is gone, which is a guard that forbids describing the defect it prevents.
+    """
+    tree = ast.parse(_demo_cell())
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    assert funcs, "the generating cell defines no function, so this test is reading the wrong cell"
+
+    for fn in funcs:
+        names = [a.arg for a in [*fn.args.args, *fn.args.kwonlyargs]]
+        assert "keep_text" not in names, (
+            f"`{fn.name}` takes a `keep_text` parameter again. A caller's opt out of the "
+            "withholding rule means the rule is whatever each call site felt like")
+
+    # Every branch that keeps a generated reply, found by what it assigns rather than by how it is
+    # spelled, and each one has to be gated on the refusal flag and nothing else.
+    guarded = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        assigns = {t.id for sub in ast.walk(node) if isinstance(sub, ast.Assign)
+                   for t in sub.targets if isinstance(t, ast.Name)}
+        if "shown" not in assigns:
+            continue
+        guarded += 1
+        tested = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+        assert "said_no" in tested, (
+            f"a reply is kept under a condition that does not consult the refusal flag: {tested}")
+        assert tested <= {"i", "said_no"}, (
+            "the condition that keeps a reply consults something besides the loop index and the "
+            f"refusal flag, so the rule has an exception again: {tested}")
+    assert guarded == 1, (
+        f"expected exactly one branch that keeps a reply, found {guarded}; a second one is a "
+        "second copy of the rule and they will drift")
+
+
+def test_the_notebook_never_prints_the_prompt_it_drew():
+    """A held-out row of the evaluation track is a harmful prompt, and the output is public.
+
+    The cell prints the row number and a digest instead, which identifies the draw without carrying
+    it. Read off the tree, so a new spelling of the same mistake is caught: an f-string, a `%`, a
+    slice, or passing it positionally all reach the same output.
+    """
+    def names_that_are_not_a_count(node):
+        """Every name a subtree reads, except through `len`, because a count is not the content.
+
+        `print(f"row {ROW} of {len(prompts)}")` is exactly what this cell should do, and a flat walk
+        flagged it. The distinction the guard is about is whether the TEXT can reach the output.
+        """
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
+            return set()
+        found = {node.id} if isinstance(node, ast.Name) else set()
+        for child in ast.iter_child_nodes(node):
+            found |= names_that_are_not_a_count(child)
+        return found
+
+    tree = ast.parse(_demo_cell())
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "print"):
+            continue
+        reached = set().union(*(names_that_are_not_a_count(a) for a in node.args)) if node.args \
+            else set()
+        assert not reached & {"prompt", "prompts"}, (
+            f"a print reaches the prompt text at line {node.lineno} of the cell, through "
+            f"{sorted(reached & {'prompt', 'prompts'})}. Print the row number and the digest "
+            "instead")
+
+    digested = [n for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "sha256"]
+    assert digested, (
+        "nothing identifies which row was drawn, so a reader cannot tell two runs apart and the "
+        "reason for not printing the prompt reads as squeamishness rather than a trade")
+
+
+def test_every_import_in_the_notebook_is_one_the_install_carries():
+    """Cell 2 installs the base package, so a cell importing an extra fails in somebody's browser.
+
+    `from datasets import load_from_disk` was in the cell that produces the result, and `datasets`
+    is in the `[hub]` extra. Whether it worked depended on whether the image Google lent the reader
+    happened to carry it, which is not a property this notebook should have.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    base = {r.split(">")[0].split("[")[0].split("=")[0].strip().replace("-", "_").lower()
+            for r in pyproject["project"]["dependencies"]}
+    extras = {name for group in pyproject["project"]["optional-dependencies"].values()
+              for r in group
+              for name in [r.split(">")[0].split("[")[0].split("=")[0].strip()
+                           .replace("-", "_").lower()]}
+    #: Modules an extra provides and the base install does not. Named from the extras themselves so
+    #: this cannot go stale against `pyproject.toml`.
+    only_in_extras = extras - base - {"senbonzakura", "senbonzakura_check"}
+
+    offenders = []
+    for cell in _code_cells():
+        for line in "".join(cell["source"]).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith(("import ", "from ")):
+                continue
+            top = stripped.split()[1].split(".")[0].lower()
+            if top in only_in_extras:
+                offenders.append(stripped)
+    assert not offenders, (
+        "these imports need an extra that the notebook's install cell does not install, so the "
+        f"cell fails wherever the runtime image happens not to carry it: {offenders}\n"
+        f"  Extras seen: {sorted(only_in_extras)}")
+
+
+def test_the_import_check_knows_of_at_least_one_module_an_extra_provides():
+    """Otherwise the sweep above passes on an empty set, which is how a guard reports clean."""
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    base = {r.split(">")[0].split("[")[0].split("=")[0].strip().replace("-", "_").lower()
+            for r in pyproject["project"]["dependencies"]}
+    extras = {r.split(">")[0].split("[")[0].split("=")[0].strip().replace("-", "_").lower()
+              for group in pyproject["project"]["optional-dependencies"].values() for r in group}
+    assert "datasets" in extras - base, (
+        "`datasets` is no longer an extra-only module, so the sweep above may be checking nothing; "
+        "confirm what moved before trusting it")

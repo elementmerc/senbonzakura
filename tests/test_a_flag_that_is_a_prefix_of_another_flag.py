@@ -240,19 +240,49 @@ def test_the_two_audited_commands_answer_out_with_the_form_that_works(module, po
         f"the refusal does not say what to type instead:\n{said}")
 
 
-def test_argparse_really_does_prefer_an_exact_match():
+def test_argparse_really_does_prefer_an_exact_match(capsys):
     """The premise the rule rests on, asserted rather than believed.
 
     If this ever stops being true, `--base` against `--base-cache` becomes a real defect in twelve
     places and the sweep above would report clean on every one of them, because it excludes the
     declared-prefix case on the strength of exactly this behaviour.
+
+    THAT argparse refuses an ambiguous abbreviation is the premise. HOW it refuses is a version
+    detail, and this test asserted the how. From 3.11 the ambiguity is raised as `ArgumentError`,
+    which `exit_on_error=False` hands back to the caller. On 3.10 the same condition goes straight
+    to `parser.error()` and exits, because `exit_on_error` did not cover that path yet: the CI log
+    shows it at `argparse.py:2594`, calling `self.exit(2, ...)`.
+
+    So this passed on a development box at 3.14 and failed on the two rows that exist to catch
+    exactly that, the 3.10 matrix row and the declared-minimums job. Both refusals are now accepted
+    and the message is what gets checked, which is the part that is the same everywhere.
     """
     ap = argparse.ArgumentParser(prog="t", exit_on_error=False)
     ap.add_argument("--base")
     ap.add_argument("--base-cache")
     assert ap.parse_args(["--base", "X"]).base == "X"
-    with pytest.raises(argparse.ArgumentError, match="ambiguous"):
+
+    with pytest.raises((argparse.ArgumentError, SystemExit)) as refused:
         ap.parse_args(["--bas", "X"])
+    # An `ArgumentError` carries its own message; a `SystemExit` from `parser.error` printed it to
+    # stderr on the way out, so both are read.
+    said = f"{refused.value}\n{capsys.readouterr().err}"
+    assert "ambiguous" in said, (
+        f"argparse accepted `--bas` where both `--base` and `--base-cache` are declared, or "
+        f"refused it for some other reason:\n{said}")
+
+    # AND THE EXITING ROUTE, ON EVERY VERSION. `exit_on_error=True` is the default and takes the
+    # same path 3.10 takes for this condition, so running it here means the interpreter that found
+    # this failure is covered on the interpreters that did not. A version-specific branch tested
+    # only on the version that has it is how this reached CI in the first place.
+    exiting = argparse.ArgumentParser(prog="t")
+    exiting.add_argument("--base")
+    exiting.add_argument("--base-cache")
+    assert exiting.parse_args(["--base", "X"]).base == "X"
+    with pytest.raises(SystemExit) as left:
+        exiting.parse_args(["--bas", "X"])
+    assert left.value.code == 2, f"argparse exited {left.value.code}, and a usage error is 2"
+    assert "ambiguous" in capsys.readouterr().err
 
 
 def test_the_collision_check_would_fail_on_the_defect_it_was_written_for():

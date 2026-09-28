@@ -55,7 +55,7 @@ Nobody has timed it on Colab's hardware, so it gives you no duration to hold us 
 Or, if you have Docker:
 
 ```sh
-docker run --rm ghcr.io/elementmerc/senbonzakura:dev doctor
+docker run --rm ghcr.io/elementmerc/senbonzakura:v0.4.0 doctor
 ```
 
 `doctor` reports what your install can and cannot do, which on a first run is more useful than it

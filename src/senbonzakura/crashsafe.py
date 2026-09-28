@@ -550,6 +550,26 @@ COMMIT_STAMP_FILE = "CODE_VERSION"
 COMMIT_STAMP_DIRS = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[2])
 
 
+def commit_from_this_build():
+    """The commit `setup.py` stamped into `_build.py`, or None where there is no stamp.
+
+    A NAMED SEAM RATHER THAN AN IMPORT BURIED IN `git_commit`, and the name is the whole point.
+
+    The stamp was first read through a function local `from ._build import COMMIT`, which nothing
+    could reach to say "pretend there is no stamp". Eight tests below drive the sources that come
+    after it, and they passed on a development box for a reason that had nothing to do with them: an
+    editable install had written `COMMIT = None`, so the branch never fired. On a runner, where the
+    install stamps the real commit, all eight failed at once. The suite's answer depended on the
+    ambient build rather than on the code, which is the environment-shaped version of a guard that
+    reports clean because it happened to be looking at nothing.
+    """
+    try:
+        from ._build import COMMIT
+    except ImportError:
+        return None
+    return str(COMMIT).strip() or None if COMMIT is not None else None
+
+
 def git_commit(repo_root=None, env=None):
     """The commit this code is running from, with a dirty flag, or None if nothing knows.
 
@@ -600,14 +620,11 @@ def git_commit(repo_root=None, env=None):
     #
     # Ahead of the tarball stamp and the environment variable because it is the narrowest claim of
     # the three: it describes THIS package rather than a directory the package happens to sit in.
-    try:
-        from ._build import COMMIT
-    except ImportError:
-        COMMIT = None
-    if COMMIT and str(COMMIT).strip():
+    stamped = commit_from_this_build()
+    if stamped:
         # `dirty` is None rather than False on purpose. The build box's tree may well have been
         # clean, but nothing here measured it, and "not checked" is not "checked and clean".
-        return {"commit": str(COMMIT).strip(), "dirty": None, "source": "build"}
+        return {"commit": stamped, "dirty": None, "source": "build"}
     for base in (Path(root), *COMMIT_STAMP_DIRS):
         try:
             # First line only, and stripped: the obvious way to write this file is a shell

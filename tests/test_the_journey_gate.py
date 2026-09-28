@@ -36,6 +36,22 @@ _SPEC.loader.exec_module(cj)
 
 HOOK = REPO / "scripts" / "hooks" / "journey-check.sh"
 
+#: SKIPPED WHERE THE HOOK IS NOT, and that is the normal case rather than a broken one.
+#:
+#: `scripts/` is excluded from git in this repository, per baseline Section 26: it has a public
+#: remote, and naming a private tree in a committed `.gitignore` tells every visitor it exists. So
+#: the hook is per clone, and a fresh checkout, which is every CI runner, does not carry it. These
+#: tests failed on every CI job with `bash: ... No such file or directory` before this existed.
+#:
+#: A skip rather than a deletion, because the hook IS tested where it lives, which is the machine
+#: somebody is working on. The reason is printed by `-rs`, so a reader sees that this was not run
+#: rather than reading it as a pass.
+needs_the_hook = pytest.mark.skipif(
+    not HOOK.is_file(),
+    reason=("scripts/hooks/journey-check.sh is not in this checkout. It is excluded from git "
+            "(baseline Section 26, public remote), so it is per clone and CI never has it. The "
+            "hook is exercised on the machine that carries it."))
+
 
 @pytest.fixture
 def journeys(tmp_path):
@@ -343,6 +359,7 @@ def repo(tmp_path):
     return run
 
 
+@needs_the_hook
 def test_the_hook_asks_for_a_journey_when_a_user_facing_file_moved(repo):
     """The prompt fires on CHANGED SURFACE, which is what Q-43 chose over a commit count."""
     done = repo("src/senbonzakura/parser.py")
@@ -351,6 +368,7 @@ def test_the_hook_asks_for_a_journey_when_a_user_facing_file_moved(repo):
     assert "tests/journeys/" in done.stdout
 
 
+@needs_the_hook
 def test_the_hook_says_nothing_when_only_internals_moved(repo):
     """Credibility is the only property a gate has. One that speaks when nothing a person can see
     has changed is one people learn to scroll past, and then it is not there on the day it
@@ -361,6 +379,7 @@ def test_the_hook_says_nothing_when_only_internals_moved(repo):
     assert done.stdout.strip() == ""
 
 
+@needs_the_hook
 def test_the_hook_says_nothing_when_a_journey_moved_with_the_surface(repo):
     """The prompt has already been answered, so asking again is noise."""
     done = repo("src/senbonzakura/parser.py", "tests/journeys/test_walk.py")
@@ -368,6 +387,7 @@ def test_the_hook_says_nothing_when_a_journey_moved_with_the_surface(repo):
     assert done.stdout.strip() == ""
 
 
+@needs_the_hook
 def test_a_brand_new_untracked_journey_answers_the_prompt(repo):
     """The first journey anybody writes is a file git diff cannot see, because it is untracked.
 
@@ -379,6 +399,7 @@ def test_a_brand_new_untracked_journey_answers_the_prompt(repo):
     assert done.stdout.strip() == ""
 
 
+@needs_the_hook
 def test_the_hook_is_silent_and_successful_outside_a_repository(tmp_path):
     """Fail-open: an advisory hook must never be the reason a session or a commit stops."""
     done = subprocess.run(["bash", str(HOOK)], cwd=tmp_path, capture_output=True, text=True,
@@ -388,6 +409,7 @@ def test_the_hook_is_silent_and_successful_outside_a_repository(tmp_path):
     assert done.stdout.strip() == ""
 
 
+@needs_the_hook
 def test_the_surface_list_lives_in_exactly_one_place():
     """Two copies drift, and the copy that drifts is always the one deciding whether it fires."""
     text = HOOK.read_text(encoding="utf-8")

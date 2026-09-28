@@ -45,7 +45,13 @@ SPDX = "# SPDX-License-Identifier: AGPL-3.0-or-later"
 COPYRIGHT = "# Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>"
 
 #: Ours to licence. Everything under `vendor/` is somebody else's and is deliberately absent.
-ROOTS = ("src/senbonzakura", "tools", "tests", "head-to-head")
+#: `checker/src` joined this on 2026-09-28 and its absence was a real gap rather than an oversight
+#: of scope. `senbonzakura-check` is a second distribution on PyPI whose pitch is 44 KB with no
+#: dependencies, so being lifted wholesale into somebody else's tree is the likely outcome rather
+#: than a hypothetical, and a file with no header is a file whose licence that reader has to guess.
+#: It was outside this tool AND outside the lint paths, so nothing enforced its headers at all. They
+#: were all present when this was added; that was luck, and now it is checked.
+ROOTS = ("src/senbonzakura", "tools", "tests", "head-to-head", "checker/src")
 SKIP = ("/vendor/", "egg-info", "__pycache__", "/node_modules/")
 
 

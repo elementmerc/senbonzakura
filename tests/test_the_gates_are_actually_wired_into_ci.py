@@ -142,3 +142,38 @@ def test_a_bare_invocation_would_be_noticed():
     with pytest.raises(AssertionError, match="no argument"):
         test_the_gate_is_given_something_to_check(
             bare, "tools/ci/check_prompt_artefacts.py")
+
+
+# ── the Action this repository publishes ─────────────────────────────────────────────────────────
+
+def test_the_published_action_is_executed_on_every_push(workflow):
+    """Parsing `action.yml` is not running it, and for six days that difference shipped.
+
+    Four unit tests in `test_check_cli.py` asserted the action's metadata and all four passed while
+    the action could not run at all: it installed `--no-deps senbonzakura`, which brings the
+    launcher without the `senbonzakura_check` package it dispatches to. The one thing that would
+    have caught it is a job that says `uses: ./`.
+    """
+    runners = [(name, step) for name, job in _push_jobs(workflow)
+               for step in (job.get("steps") or [])
+               if str(step.get("uses") or "").strip() in {"./", ".github", "."}]
+    assert runners, (
+        "no job on the push path runs this repository's own action with `uses: ./`, so the action "
+        "is published metadata that nothing executes. That is how it shipped broken in v0.4.0.")
+
+
+def test_the_action_is_exercised_on_a_failing_case_and_not_only_a_passing_one(workflow):
+    """An action that can only be seen to pass is an action whose failure path is untested.
+
+    The break was silent precisely because the step exited 0. A job that runs the action once on
+    clean input would have stayed green through all of it.
+    """
+    invocations = [step for _n, job in _push_jobs(workflow)
+                   for step in (job.get("steps") or [])
+                   if str(step.get("uses") or "").strip() == "./"]
+    assert len(invocations) >= 2, (
+        f"the action is run {len(invocations)} time(s) on the push path. It needs at least a "
+        "passing case and a failing one, or nothing distinguishes 'it works' from 'it exits 0'.")
+    assert any(step.get("continue-on-error") for step in invocations), (
+        "every invocation of the action is expected to succeed, so the case where it MUST fail, "
+        "which is the entire purpose of the action, is never exercised.")

@@ -19,7 +19,7 @@ branding:
 # failed, and it is the structural difference between Burp's decade and Ruff's eighteen months.
 # A checker somebody remembers to run is a checker that runs occasionally.
 #
-# WHY `--no-deps` IS THE WHOLE DESIGN AND NOT AN OPTIMISATION
+# WHY IT INSTALLS `senbonzakura-check` AND NOT `senbonzakura`
 #
 # `pip install senbonzakura` brings torch, transformers, accelerate and optuna: most of a
 # gigabyte, on every CI run, of a repository that only wants its result files read. An action
@@ -27,14 +27,24 @@ branding:
 # the property it was added for.
 #
 # The checker imports nothing beyond the standard library. That is a measured claim, not a
-# hoped-for one: `tests/test_torch_free.py` runs `senbonzakura check` in a subprocess with every
-# heavy package made unimportable at the import-machinery level, and asserts it produces a
-# finding and the right exit code rather than a traceback. A separate test walks the import
-# graph of `senbonzakura/check/` and fails on anything reaching the deep-learning stack.
+# hoped-for one: `tests/test_torch_free.py` runs the checker in a subprocess with every heavy
+# package made unimportable at the import-machinery level, and asserts it produces a finding and
+# the right exit code rather than a traceback. A separate test walks the import graph of
+# `senbonzakura/check/` and fails on anything reaching the deep-learning stack.
 #
-# Decision Q-29 ships a torch-free distribution of its own, at which point this becomes an
-# ordinary install. `--no-deps` is what makes the action honest in the meantime rather than a
-# promise waiting on packaging work.
+# THIS USED TO READ `pip install --no-deps senbonzakura`, AND THAT WAS BROKEN FROM THE DAY Q-29
+# SHIPPED. The comment here named its own expiry: "Decision Q-29 ships a torch-free distribution
+# of its own, at which point this becomes an ordinary install." Q-29 shipped, `senbonzakura-check`
+# went to PyPI at 0.4.0, and nothing checked. `--no-deps` on the BIG distribution installs the
+# `senbonzakura` launcher without the `senbonzakura_check` package it dispatches to, so
+# `senbonzakura check` exited 1 saying it was not installed, and the step then reported success
+# because the report it could not write parsed to an empty string rather than to a zero. Measured
+# on 2026-09-28 by running the two commands, not by reading them.
+#
+# `senbonzakura-check` declares `dependencies = []`, so this is the ordinary install the comment
+# above was waiting for and `--no-deps` is no longer load-bearing. It is deliberately NOT passed:
+# a flag that suppresses dependency resolution is exactly what hid the previous break, and if this
+# distribution ever gains a real dependency the honest outcome is that it gets installed.
 
 inputs:
   path:
@@ -99,7 +109,15 @@ runs:
 
     - name: Install the checker, and nothing else
       shell: bash
-      run: python -m pip install --quiet --no-deps "senbonzakura${{ inputs.version }}"
+      run: |
+        set -euo pipefail
+        python -m pip install --quiet "senbonzakura-check${{ inputs.version }}"
+        # THE INSTALL HAS TO PROVE ITSELF BEFORE THE REPORT IS TRUSTED. The previous break was a
+        # package that installed cleanly and could not run the one command this action exists to
+        # run, so "pip succeeded" is not the property worth asserting here. `--help` is used rather
+        # than `--version`, which this command does not have: it exits 0 only if the entry point
+        # resolved AND dispatched into `senbonzakura_check`, which is the half that was missing.
+        senbonzakura-check --help > /dev/null
 
     - name: Check the artefacts
       id: run
@@ -107,20 +125,62 @@ runs:
       run: |
         set -uo pipefail
         report="$RUNNER_TEMP/senbonzakura-check.json"
-        senbonzakura check "${{ inputs.path }}" --json > "$report" || true
+        senbonzakura-check "${{ inputs.path }}" --json > "$report" || true
 
         # Run again for the log. The two formats come from different branches of the command, so
         # a tee would show the reader JSON where they want the report, and rendering the report
         # from the JSON here would be a third formatter to keep in step with the other two.
         # Reading a handful of JSON files twice costs nothing.
-        senbonzakura check "${{ inputs.path }}" || true
+        senbonzakura-check "${{ inputs.path }}" || true
 
-        findings=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(len(e['findings']) for e in d))" "$report")
-        unchecked=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1 for e in d if e['unchecked']))" "$report")
-        # HOW MANY FILES WERE SEEN AT ALL. Without it a path that drifts produces zero findings
-        # and zero unchecked, which is arithmetically identical to a clean sweep and reports green.
-        # Found by pointing the checker at a directory that existed and held nothing.
-        checked=$(python -c "import json,sys;d=json.load(open(sys.argv[1]));print(len(d))" "$report")
+        # THE REPORT IS READ ONCE, AND AN UNREADABLE ONE STOPS THE STEP.
+        #
+        # This used to be three `$(python -c ...)` substitutions whose failures were invisible.
+        # `|| true` above swallows the command's exit code on purpose, because findings are a
+        # normal non-zero outcome, so the report is the ONLY evidence the command ran at all. When
+        # the command could not run, the report was empty, all three substitutions failed, and the
+        # three variables held the empty string. Every gate below is an integer test, `[ "" -eq 0 ]`
+        # errors rather than being false, and a failing test is a skipped branch, so all three
+        # gates were jumped and the step reached `exit 0`. A broken install reported a clean run.
+        #
+        # So: one reader, its failure is fatal, and it emits the three counts on one line.
+        #
+        # `checked` IS THE CHECKER'S OWN `n_checked`, NOT AN APPROXIMATION OF IT. It used to be
+        # `len(d)`, which counts every file the command looked at including the ones it could not
+        # parse, so a directory holding nothing but unrecognised JSON reported `checked=1` while
+        # the command itself printed "NOTHING WAS CHECKED". `fail-on-empty` could then never fire
+        # for the exact case its own description names.
+        #
+        # The command computes `n_checked` as `not problem and applied`: a file that parsed AND
+        # had at least one check run on it. `applied` is in the report as of this release, so this
+        # is the same expression rather than a second definition that agrees most of the time.
+        # Two definitions of one count is how the first version of this line went wrong.
+        # A PINNED OLDER CHECKER HAS NO `applied` FIELD, and this says so rather than quietly
+        # meaning something else. `version:` lets somebody pin 0.4.0 under a newer action, and a
+        # count that silently changes definition with the pin is the kind of thing this whole
+        # project exists to catch in other people's tooling.
+        if ! counts=$(python -c "
+        import json, sys
+        with open(sys.argv[1]) as fh:
+            d = json.load(fh)
+        parsed = [e for e in d if not e['unchecked'] and not e['not_a_result']]
+        if all('applied' in e for e in d):
+            checked = sum(1 for e in parsed if e['applied'])
+            note = ''
+        else:
+            checked = len(parsed)
+            note = 'legacy'
+        print(sum(len(e['findings']) for e in d),
+              sum(1 for e in d if e['unchecked']),
+              checked, note)
+        " "$report"); then
+          echo "::error::The checker produced no readable report at $report, so nothing about this run is known. This is a broken checker install or a crash, NOT a clean result."
+          exit 1
+        fi
+        read -r findings unchecked checked note <<< "$counts"
+        if [ "${note:-}" = "legacy" ]; then
+          echo "::warning::The pinned checker predates the report's \`applied\` field, so \`checked\` counts files that PARSED rather than files a check actually ran on. A file whose checks were all skipped is counted here and is not counted by the checker itself. Unpin, or pin at or above the release that added the field, to make the two agree."
+        fi
         echo "findings=$findings" >> "$GITHUB_OUTPUT"
         echo "unchecked=$unchecked" >> "$GITHUB_OUTPUT"
         echo "checked=$checked" >> "$GITHUB_OUTPUT"

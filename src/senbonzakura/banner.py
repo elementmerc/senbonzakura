@@ -197,14 +197,42 @@ def render(name, version, *, colour=False):
     return "\n".join(_paint(line, colour) for line in builder(version))
 
 
+#: Whether this process has already drawn one. ONE RUN IS ONE BANNER, and the guard lives here
+#: rather than at the call sites because there are three of them and they nest.
+#:
+#: WHAT WENT WRONG, 2026-09-28. `entry.main` draws a banner and then dispatches into `cli.main`,
+#: which draws another; `interactive.run` goes through `cli.main` as well, a third time. `choose`
+#: picks at RANDOM per call, so those were usually DIFFERENT DESIGNS: a guided-mode session showed
+#: the petal banner, asked its questions, and then answered "Run it? y" with a completely different
+#: block-capitals one, two identities and two version lines in a single run. `cli.main` already had
+#: an `emit_banner=False` parameter for exactly this and NOTHING EVER PASSED IT, in `src/` or in
+#: `tests/`, so the switch that would have prevented it was dead the whole time.
+#:
+#: Guarded here instead of by fixing the callers because a caller that forgets is the same bug
+#: again, and the property wanted is a property of the run, not of any one entry point.
+#: A dict rather than a bare name so nothing here needs `global`, which the linter refuses.
+_state = {"drawn": False}
+
+
+def reset_for_tests():
+    """Forget that a banner was drawn. Tests render many in one process; runs draw one."""
+    _state["drawn"] = False
+
+
 def emit(version, stream, *, env=None):
     """Print a banner to `stream`, or print nothing, per the rules in the module docstring.
+
+    At most ONE per process: see `_drawn`. The second and later calls return without drawing and
+    without complaining, because a nested entry point asking for a banner is not an error, it is
+    just not the first one.
 
     `SENBON_BANNER` overrides: `off` suppresses it, a design name pins that one (which is
     how a screenshot or a README example gets a specific banner without waiting for the
     dice). An unknown name is ignored rather than fatal, because a mistyped decoration must
     never be the reason an abliteration does not start.
     """
+    if _state["drawn"]:
+        return
     env = os.environ if env is None else env
     setting = (env.get("SENBON_BANNER") or "").strip().lower()
     if setting in ("off", "0", "none"):
@@ -216,6 +244,9 @@ def emit(version, stream, *, env=None):
 
     colour = tty and not env.get("NO_COLOR")
     name = setting if setting in DESIGNS else choose(shutil.get_terminal_size().columns, version)
+    # Set BEFORE the write, not after. A broken pipe is swallowed below on purpose, and a later
+    # call must not treat a half-written banner as an invitation to draw a second one.
+    _state["drawn"] = True
     try:
         print(render(name, version, colour=colour), file=stream, flush=True)
     except OSError:

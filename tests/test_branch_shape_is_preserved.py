@@ -40,11 +40,24 @@ WORKFLOWS = sorted((Path(__file__).resolve().parent.parent / ".github" / "workfl
 
 #: A push of a ref to a remote, as written in a run step. Matches `git push origin HEAD:main`,
 #: `git push origin "HEAD:${GITHUB_REF_NAME}"` and `git push olympus dev`.
-_PUSHES = re.compile(r"git\s+push\s+\S+\s+[\"']?\S*[\"']?", re.MULTILINE)
+#: A BARE `git push` COUNTS, and missing it was the hole. The pattern required an argument after
+#: `push`, so it saw `git push origin dev` and was blind to `git push` on its own, which is the
+#: form that pushes whatever branch is checked out. `distribute.yml` ends its manifest refresh with
+#: exactly that, on a checkout of `main`, and was therefore reported as pushing no branch by the
+#: one test written to find workflows pushing branches. Separators are spaces and tabs rather than
+#: `\s`, so a match cannot run past the end of the line into the next command.
+_PUSHES = re.compile(r"git[ \t]+push(?:[ \t]+[\"']?\S+[\"']?)*", re.MULTILINE)
 
 #: The release workflow legitimately writes tags and release assets rather than branches. Recorded
 #: by filename so that adding a workflow does not quietly inherit an exemption.
-_MAY_WRITE_OUTSIDE_DEV = {"publish.yml", "release.yml"}
+#:
+#: `distribute.yml` is here deliberately, added 2026-09-28 once the pattern above could see it. Its
+#: manifest-refresh job rewrites the brew formula and the scoop manifest with the hashes of the
+#: archives GitHub actually serves, and commits them to `main`, which is where a released formula
+#: has to live. The consequence is real and is recorded in DEFERRED.md rather than waved away: that
+#: commit is one `main` has and `dev` does not, so the next promotion is not a fast-forward until
+#: `dev` takes it.
+_MAY_WRITE_OUTSIDE_DEV = {"publish.yml", "release.yml", "distribute.yml"}
 
 
 def test_there_are_workflows_to_check():
@@ -65,8 +78,13 @@ def test_a_job_that_pushes_a_branch_is_confined_to_dev(path):
     pushes = [m.group(0) for m in _PUSHES.finditer(text)]
     # A tag push is not a branch push and does not touch the promotion path.
     branch_pushes = [p for p in pushes if "refs/tags" not in p and "--tags" not in p]
-    if not branch_pushes or path.name in _MAY_WRITE_OUTSIDE_DEV:
+    if not branch_pushes:
         pytest.skip(f"{path.name} pushes no branch")
+    if path.name in _MAY_WRITE_OUTSIDE_DEV:
+        # TWO REASONS, SAID SEPARATELY. Both used to print "pushes no branch", so a workflow that
+        # pushes one and is allowed to read as one that does not, and somebody reading the skip
+        # goes looking for the push they were just told is not there.
+        pytest.skip(f"{path.name} pushes a branch and is on the allow-list for writing outside dev")
 
     assert "github.ref_name == 'dev'" in text, (
         f"{path.name} pushes a branch ({branch_pushes}) and never states that it means `dev` "

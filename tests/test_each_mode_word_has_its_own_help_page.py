@@ -146,3 +146,67 @@ def test_help_all_still_reaches_the_flags_through_a_mode_word():
     """`--help` is intercepted for a mode word and `--help-all` must not be."""
     text = _run("kageyoshi", "--help-all")
     assert "--separation-statistic" in text, "the mode intercept swallowed --help-all"
+
+
+# ── the half of these commands that goes to the other stream ──────────────────────────────────────
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_mode_word_is_not_announced_as_a_model_id(mode):
+    """WHAT PROMPTED IT, 2026-09-28. Eight tests drove this command and all of them read stdout.
+
+    `_read_as_a_model` excluded the literal "abliterate", so `kageyoshi` and `auto` were not
+    excluded and every invocation of either printed "reading `kageyoshi` as a model id, since it is
+    not a command" to stderr. It is false: `split_mode` peels the word off as a mode a few lines
+    later. `--help` calls `kageyoshi` the recommended way to run this tool, and `auto` exists for
+    somebody meeting it for the first time, so the two words most likely to be a reader's first
+    contact were the two that told them the tool had misunderstood.
+
+    Nothing caught it because the notice goes to stderr by design, to leave a captured stdout
+    unchanged, and every assertion in this file reads `out.stdout`. A guard that inspects one stream
+    of a command that writes two reports clean on everything in the other.
+    """
+    # Deliberately NOT through `_run`, which returns `out.stdout` and drops the rest. That helper is
+    # how eight tests came to drive this exact command without ever seeing what it wrote here.
+    out = subprocess.run([sys.executable, "-m", "senbonzakura", mode, "--help"],
+                         capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                         check=False, timeout=300)
+    assert out.returncode == 0, f"{mode} --help exited {out.returncode}"
+    assert "as a model id" not in out.stderr, (
+        f"`senbonzakura {mode} --help` claims the mode word is being read as a model:\n"
+        f"{out.stderr}")
+    assert out.stderr.strip() == "", (
+        f"`senbonzakura {mode} --help` wrote to stderr, and a help page is not an error:\n"
+        f"{out.stderr}")
+
+
+def test_the_notice_still_fires_on_a_word_that_really_is_a_model():
+    """The exclusion must not have been widened into silence.
+
+    `senbonzakura frobnicate` is read as `--model frobnicate`, and saying so before anything
+    expensive happens is the whole point of the notice. If this stops firing, the fix above has
+    turned a false message into no message.
+    """
+    from senbonzakura import entry
+
+    assert entry._read_as_a_model("frobnicate"), (
+        "nothing is said about a bare word being taken as a model id any more")
+
+
+def test_every_mode_word_can_be_suggested_for_a_typo():
+    """`known` is what a near miss is matched against, and two of three modes were not in it.
+
+    So a reader who typed `kageyosi` got no suggestion and a fetch attempt for a model of that
+    name, for the command the help page recommends.
+    """
+    import difflib
+
+    from senbonzakura import entry
+    from senbonzakura.parser import MODES
+
+    for mode in MODES:
+        typo = mode[:-2] + mode[-1]
+        said = entry._not_a_command(typo)
+        assert said and mode in said, (
+            f"`{typo}` produced no suggestion of `{mode}`: {said!r}")
+        assert difflib.get_close_matches(typo, [mode], n=1, cutoff=0.8), (
+            f"the typo {typo!r} is too far from {mode!r} for this test to be measuring anything")

@@ -296,7 +296,13 @@ def _not_a_command(word):
 
     if not word or word.startswith("-"):
         return None
-    known = sorted({*DELEGATED, *ALIASES, "abliterate"})
+    from .parser import MODES
+
+    # MODES, not the literal "abliterate". Beyond the same drift the notice below had, `known` is
+    # also what a typo is matched against, so leaving `kageyoshi` and `auto` out meant the near miss
+    # suggester could never propose the two words `--help` presents as the way to run this: a reader
+    # who typed `kageyosi` got no suggestion at all and a fetch attempt for a model of that name.
+    known = sorted({*DELEGATED, *ALIASES, *MODES})
     if word in known:
         return None
     if word in RETIRED:
@@ -337,9 +343,21 @@ def _read_as_a_model(word):
     """
     import os
 
+    from .parser import MODES
+
     if not word or word.startswith("-"):
         return None
-    if word in DELEGATED or word in ALIASES or word in RETIRED or word == "abliterate":
+    # MODES RATHER THAN THE LITERAL "abliterate", which is what this line held until 2026-09-28 and
+    # is why two of the three mode words were wrong. `senbonzakura kageyoshi <model>` is what
+    # `--help` calls the recommended way to run this, and every such invocation printed "reading
+    # `kageyoshi` as a model id, since it is not a command" to stderr, which is false: `split_mode`
+    # peels it off as a mode word a few lines later. On `kageyoshi --help` it was worse, because the
+    # next thing printed is a help page rather than the download the notice promises, so a reader
+    # meeting the tool for the first time was told it had misunderstood them.
+    #
+    # Reading the tuple is the fix rather than adding two more literals. A list of three spellings
+    # kept in two places drifts, and this is what that drift looks like.
+    if word in DELEGATED or word in ALIASES or word in RETIRED or word in MODES:
         return None
     # A slash or an existing path is unambiguous: nobody mistypes a command into either.
     if "/" in word or os.sep in word or os.path.exists(word):

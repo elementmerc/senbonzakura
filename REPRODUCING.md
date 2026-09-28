@@ -134,7 +134,7 @@ all 4,504 harmful prompts and all 4,504 harmless ones.
 
 | Claim | Artefact |
 |---|---|
-| Five seeds, one direction against two, no measurable refusal gain at 1.4 to 1.9 times the divergence, on the mean over five seeds, the low end dropping the one outlying two-direction seed | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
+| Five seeds, one direction against two, no refusal gain this design could detect, at about 1.9 times the divergence on the mean over five seeds (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 dropping the one outlying two-direction seed) | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
 | Both budgets at matched hard refusal, 0.1% against 0.3% | `evidence/k-sweep-2026-08-13/drift-per-seed.json`, `hard_refusal` |
 
 That file exists because the p-value this project was quoted on most often traced to a working

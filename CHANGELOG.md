@@ -110,10 +110,19 @@ prompts nothing was fitted or selected on:
 
 Both budgets removed hard refusal, so this is a comparison at matched refusal, and the per-seed
 drift and hard refusal values behind both columns are committed at
-`evidence/k-sweep-2026-08-13/drift-per-seed.json`. Two directions cost roughly 1.4 to 1.9 times
-the collateral damage on the mean over five seeds, the low end dropping the one outlying
-two-direction seed and the high end keeping it, bought nothing for it, and were less predictable
-run to run. One direction beats two in 24 of the 25 pairwise seed comparisons, so the direction of
+`evidence/k-sweep-2026-08-13/drift-per-seed.json`. Two directions cost about 1.9 times the
+collateral damage on the mean over five seeds, bought nothing measurable for it, and were less
+predictable run to run.
+
+**Two figures in the paragraph above were corrected on 2026-09-28, after this release.** It gave
+the cost as "roughly 1.4 to 1.9", which reads as an interval and is not one: 1.9 is the ratio of
+the means and 1.4 is the same ratio with the one outlying two-direction seed dropped, which is a
+sensitivity check. The 95% interval is 1.2 to 3.1, four times wider. And "bought nothing" is only
+true of what this design could see: both arms sit on the floor of the refusal measurement, so the
+largest gain two directions could ever have shown here is 0.1 of a percentage point, a fifth of one
+scorable event. The figures above are the corrected ones, and this note stays under the release it
+corrects so that a reader of these notes meets the correction rather than having to find the guide
+page that carries it. One direction beats two in 24 of the 25 pairwise seed comparisons, so the direction of
 the result is sturdier than its size. An exact permutation test over all 252 splits of the ten
 seeds puts the difference at p = 0.016. Dropping the worst two-direction seed halves the gap and
 moves that to p = 0.048, so the finding does not rest on one run and is weaker without it. This is

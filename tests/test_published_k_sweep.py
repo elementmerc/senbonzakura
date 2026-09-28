@@ -263,3 +263,71 @@ def test_the_evidence_carries_no_prompts():
     doc = json.loads(raw)
     assert set(doc["drift_kl"]) == {"k1", "k2"}
     assert all(isinstance(v, float) for arm in doc["drift_kl"].values() for v in arm)
+
+
+# ── a sensitivity band is not an interval ─────────────────────────────────────────────────────────
+
+#: The wording that reads as an uncertainty interval and was not one. "Roughly 1.4 to 1.9" put the
+#: ratio of the means next to the same ratio with one seed dropped and joined them with "to", which
+#: every reader takes for a range the effect lives in. The 95% percentile bootstrap over the five
+#: seeds a side is 1.2 to 3.1, four times wider, so the published form understated the uncertainty
+#: on this project's headline result by a factor of four while looking like it was reporting it.
+A_BAND_DRESSED_AS_AN_INTERVAL = re.compile(r"1\.4\s+to\s+1\.9|1\.5\s+to\s+1\.9")
+
+#: Surfaces allowed to contain the old wording, because their job is to record that it was used.
+#: The CHANGELOG carries a withdrawal note under the release it corrects.
+MAY_QUOTE_THE_OLD_WORDING = ("CHANGELOG.md", "tests/test_published_k_sweep.py")
+
+
+def test_no_surface_states_the_sensitivity_band_as_a_range():
+    offenders = [rel for rel, path in _public_docs()
+                 if rel not in MAY_QUOTE_THE_OLD_WORDING
+                 and A_BAND_DRESSED_AS_AN_INTERVAL.search(path.read_text(encoding="utf-8"))]
+    assert not offenders, (
+        "these state the ratio as a range, which reads as an uncertainty interval and is a "
+        f"leave-one-out sensitivity check: {offenders}\n"
+        "  Give the point estimate with the bootstrap interval beside it, and name the dropped "
+        "seed as a sensitivity check rather than as the low end of a range.")
+
+
+def test_the_interval_the_pages_quote_is_the_one_the_artefact_supports():
+    """Recomputed here rather than trusted, because it is the number replacing the wrong one.
+
+    Seeded, so this is a fixed answer rather than one that wanders test to test and gets widened
+    until it stops failing.
+    """
+    import random
+    import statistics
+
+    doc = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    k1, k2 = doc["drift_kl"]["k1"], doc["drift_kl"]["k2"]
+    rng = random.Random(20260928)
+    draws = sorted(
+        statistics.mean([rng.choice(k2) for _ in k2]) / statistics.mean([rng.choice(k1) for _ in k1])
+        for _ in range(20000))
+    lo = draws[int(0.025 * (len(draws) - 1))]
+    hi = draws[int(0.975 * (len(draws) - 1))]
+    assert 1.1 < lo < 1.3, f"lower limit moved to {lo:.2f}; the pages say 1.2"
+    assert 3.0 < hi < 3.3, f"upper limit moved to {hi:.2f}; the pages say 3.1"
+    assert hi - lo > 1.5, (
+        "the interval is no longer much wider than the old 1.4 to 1.9 band, so the sentence "
+        "explaining why that band was replaced needs re-reading")
+
+
+def test_the_refusal_arm_could_not_have_shown_a_gain():
+    """The arithmetic behind "bought nothing this design could have detected".
+
+    If this ever stops holding, the claim on the guide page is either too weak or too strong and
+    the page needs re-reading rather than the number being quietly updated.
+    """
+    import statistics
+
+    data = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    n = int(data["prompts_per_score"])
+    k1 = data["hard_refusal"]["k1"]
+    baseline = statistics.mean(k1)
+    assert n == 200, f"prompts per arm is now {n}; the worked figures on the page assume 200"
+    assert baseline * 100 < 0.5, (
+        f"one direction now refuses {baseline * 100:.2f}% of the time, which is above the "
+        f"{100 / n:.1f} point resolution of this measurement, so a gain WOULD be detectable and "
+        f"the page's argument no longer holds")

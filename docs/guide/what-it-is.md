@@ -60,7 +60,8 @@ refusals live in a small bundle of *nearby* directions a single blade never touc
 several at once would take the rest without damaging the model further.
 
 We built that, and then we measured it, and it did not hold. Cutting in more directions cost more
-and bought nothing on the one model we can measure properly. The capability stays in the tool,
+and bought no refusal gain this design could have detected, on the one model we can measure
+properly. The capability stays in the tool,
 because being able to test an idea is worth more than believing it, and the name stayed too.
 [What is and is not established](/guide/what-we-know) has the measurement, the conditions on it,
 and the honest limits of the negative result.

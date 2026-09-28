@@ -549,6 +549,12 @@ COMMIT_STAMP_FILE = "CODE_VERSION"
 #: happens to drop it.
 COMMIT_STAMP_DIRS = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[2])
 
+#: How many characters of a sha a recorded commit carries. Seven, because that is what
+#: `git rev-parse --short` returns here and what every artefact already committed to this
+#: repository holds, and this field is compared as a string by `tools/ci/artefact_ok.py`. One
+#: spelling or the comparison is a coin toss.
+SHORT_COMMIT_CHARS = 7
+
 
 def commit_from_this_build():
     """The commit `setup.py` stamped into `_build.py`, or None where there is no stamp.
@@ -573,18 +579,30 @@ def commit_from_this_build():
 def git_commit(repo_root=None, env=None):
     """The commit this code is running from, with a dirty flag, or None if nothing knows.
 
-    Three sources, and the answer says which one it came from. `git` is the trustworthy one
+    Four sources, and the answer says which one it came from. `git` is the trustworthy one
     because it is a measurement of the tree in front of it. A rented pod or a shipped tarball is
-    not a checkout, so git cannot answer there and two weaker sources follow: a `CODE_VERSION`
-    file written into the tree when it was cut, and the environment variable a run script exports.
-    Both are CLAIMS rather than measurements, and `source` records which one so a reader can weigh
-    it rather than being handed a commit with no idea where it came from.
+    not a checkout, so git cannot answer there and three weaker sources follow: a `CODE_VERSION`
+    file written into the tree when it was cut, the environment variable a run script exports, and
+    the stamp `setup.py` bakes into `_build.py` at build time. All three are CLAIMS rather than
+    measurements, and `source` records which one so a reader can weigh it rather than being handed
+    a commit with no idea where it came from.
 
     The stamp file is tried before the variable on purpose: it travels inside the tarball, where
     the variable has to be remembered separately at launch by whoever wrote the run script. A
     night of GPU runs produced artefacts with no commit at all for exactly that reason.
 
-    None stays the honest answer when neither source knows. A result that cannot say which
+    THE BUILD STAMP GOES LAST, and it was briefly second. The argument for second was that the
+    stamp describes THIS package rather than a directory the package happens to sit in, which is
+    true of an installed wheel and false of the shape this project actually runs on: the GPU path
+    is an rsync of the source tree, which carries no `.git`, and a `_build.py` left behind by an
+    editable install weeks earlier survives it, because `setup.py` refuses to blank a stamp it
+    cannot improve. Ahead of the other two, that stale stamp silently overrode the commit the
+    operator had just declared, which is provenance corruption in the one place provenance is all
+    there is. Last, it loses nothing: an installed wheel has no `CODE_VERSION` and no variable, so
+    it still reaches the stamp, and anyone who has declared a commit outranks a stamp nobody
+    checked.
+
+    None stays the honest answer when no source knows. A result that cannot say which
     code produced it should say so, not guess.
 
     A RULE FOR WHOEVER WRITES THE NEXT ARTEFACT SPEC, and the reason this fix waited.
@@ -611,20 +629,6 @@ def git_commit(repo_root=None, env=None):
         return {"commit": rev, "dirty": bool(dirty), "source": "git"}
     except (OSError, subprocess.SubprocessError):
         pass
-    # THE WHEEL'S OWN STAMP, read since 2026-09-27. `setup.py` writes `_build.py` at build time
-    # from the build box's commit, `tools/ci/check_wheel.py` refuses a release wheel that lacks it
-    # or carries a placeholder, and until now nothing read it. So the one artefact where git cannot
-    # answer, an installed wheel, recorded `"git": null` on every result it produced, while the
-    # commit sat in a module beside it. A stamp that is generated, gated on and never read is a
-    # provenance field that costs a release check and buys nothing.
-    #
-    # Ahead of the tarball stamp and the environment variable because it is the narrowest claim of
-    # the three: it describes THIS package rather than a directory the package happens to sit in.
-    stamped = commit_from_this_build()
-    if stamped:
-        # `dirty` is None rather than False on purpose. The build box's tree may well have been
-        # clean, but nothing here measured it, and "not checked" is not "checked and clean".
-        return {"commit": stamped, "dirty": None, "source": "build"}
     for base in (Path(root), *COMMIT_STAMP_DIRS):
         try:
             # First line only, and stripped: the obvious way to write this file is a shell
@@ -636,11 +640,28 @@ def git_commit(repo_root=None, env=None):
         if text and text[0].strip():
             return {"commit": text[0].strip(), "dirty": None, "source": "stamp"}
     declared = ((env if env is not None else os.environ).get(COMMIT_ENV) or "").strip()
-    if not declared:
-        return None
-    # Whether the tree matched that commit is unknowable from here, so the dirty flag is
-    # None rather than False: "not checked" and "checked and clean" are different facts.
-    return {"commit": declared, "dirty": None, "source": "declared"}
+    if declared:
+        # Whether the tree matched that commit is unknowable from here, so the dirty flag is
+        # None rather than False: "not checked" and "checked and clean" are different facts.
+        return {"commit": declared, "dirty": None, "source": "declared"}
+    # THE WHEEL'S OWN STAMP, read since 2026-09-27. `setup.py` writes `_build.py` at build time
+    # from the build box's commit, `tools/ci/check_wheel.py` refuses a release wheel that lacks it
+    # or carries a placeholder, and until then nothing read it. So the one artefact where git cannot
+    # answer, an installed wheel, recorded `"git": null` on every result it produced, while the
+    # commit sat in a module beside it. A stamp that is generated, gated on and never read is a
+    # provenance field that costs a release check and buys nothing.
+    #
+    # Shortened to git's own spelling, because this field is COMPARED. `setup.py` records the full
+    # forty characters and the git branch above records seven, so for one day two artefacts from the
+    # same commit did not compare equal as strings, and `tools/ci/artefact_ok.py` compares as
+    # strings: a resume spec written against a wheel-built arm would never have matched a
+    # checkout-built one. Every committed artefact in this repository records seven.
+    stamped = commit_from_this_build()
+    if stamped:
+        # `dirty` is None rather than False on purpose. The build box's tree may well have been
+        # clean, but nothing here measured it, and "not checked" is not "checked and clean".
+        return {"commit": stamped[:SHORT_COMMIT_CHARS], "dirty": None, "source": "build"}
+    return None
 
 
 def provenance(device=None, accelerator=None, extra=None):

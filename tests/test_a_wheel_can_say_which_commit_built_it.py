@@ -95,7 +95,9 @@ def test_a_wheel_with_no_git_reports_the_commit_it_was_built_from(monkeypatch, t
     _with_stamp(monkeypatch, "deadbeefcafe1234deadbeefcafe1234deadbeef")
     got = crashsafe.git_commit(repo_root=tmp_path)
     assert got is not None, "an installed wheel still cannot say which commit produced its results"
-    assert got["commit"] == "deadbeefcafe1234deadbeefcafe1234deadbeef"
+    assert got["commit"] == "deadbee", (
+        "the stamp holds forty characters and every artefact in this repository holds seven, and "
+        "this field is compared as a string")
     assert got["source"] == "build", (
         "the source has to name the stamp, so a reader can weigh a claim differently from a "
         "measurement of the tree")
@@ -132,29 +134,48 @@ def test_a_checkout_still_prefers_git_over_the_stamp(monkeypatch):
     assert got["commit"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
-def test_the_stamp_outranks_the_tarball_file_and_the_variable(monkeypatch, tmp_path):
-    """The ordering that broke the runners, asserted here rather than left to be discovered.
+def test_a_declared_commit_outranks_a_stamp_nobody_checked(monkeypatch, tmp_path):
+    """The ordering the panel caught, and the reason the stamp is last rather than second.
 
-    `_no_git` deliberately clears the two weaker sources so the tests above measure the stamp alone.
-    That left the ORDER between them unguarded: the stamp could have been moved behind either one
-    and every test in this file would still have passed, while eight tests in `test_crashsafe.py`
-    would have started passing for the wrong reason.
+    `_no_git` deliberately clears the two weaker sources so the tests above measure the stamp alone,
+    which left the ORDER between them asserted by nothing: the stamp could sit anywhere among the
+    three and every test in this file would still have passed.
 
-    The order is right as it stands. A `CODE_VERSION` file describes the directory the package
-    happens to be sitting in and the variable describes whatever the launcher believed at start-up;
-    the stamp describes THIS package, which is the narrowest of the three claims and the only one
-    written by the machine that actually built the code now running.
+    It was second for a day, on the argument that it describes THIS package rather than a directory
+    the package happens to sit in. That is true of an installed wheel and false of the shape the GPU
+    runs take, which is an rsync of the source tree with no `.git` and a `_build.py` left behind by
+    an editable install weeks earlier. Ahead of the other two, that stale stamp silently replaced
+    the commit the operator had just declared, in the one situation where the declaration is the only
+    provenance there is.
     """
     def _boom(*_a, **_k):
         raise OSError("no git here")
 
     monkeypatch.setattr(subprocess, "run", _boom)
-    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile\n", encoding="utf-8")
     _with_stamp(monkeypatch, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile\n", encoding="utf-8")
     got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "fromenv"})
-    assert got["source"] == "build", f"a weaker source answered ahead of the wheel's own stamp: {got}"
-    assert got["commit"] == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    assert got == {"commit": "fromfile", "dirty": None, "source": "stamp"}, (
+        f"a stale build stamp displaced the tarball's own record of what it is: {got}")
+
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).unlink()
+    got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "fromenv"})
+    assert got == {"commit": "fromenv", "dirty": None, "source": "declared"}, (
+        f"a stale build stamp displaced a commit the operator declared at launch: {got}")
+
+
+def test_the_stamp_still_answers_when_nothing_else_can(monkeypatch, tmp_path):
+    """Putting the stamp last must not cost the case it was added for.
+
+    An installed wheel has no `CODE_VERSION` beside it and no variable exported, so it reaches the
+    stamp anyway. If this ever stops being true the original defect is back: every result an
+    installed wheel produces recording `"git": null` while the commit sits in a module next to it.
+    """
+    _no_git(monkeypatch)
+    _with_stamp(monkeypatch, "1111111111111111111111111111111111111111")
+    assert crashsafe.git_commit(repo_root=tmp_path, env={}) == {
+        "commit": "1111111", "dirty": None, "source": "build"}
 
 
 def test_the_absence_of_a_stamp_is_something_a_caller_can_state(monkeypatch, tmp_path):
@@ -165,12 +186,15 @@ def test_the_absence_of_a_stamp_is_something_a_caller_can_state(monkeypatch, tmp
     editable install had written `COMMIT = None`, and failed on every runner at once. Patching the
     seam has to actually silence the stamp, or that fix is decorative.
     """
-    monkeypatch.setattr(crashsafe, "commit_from_this_build", lambda: None)
+    _no_git(monkeypatch)
     _with_stamp(monkeypatch, "cccccccccccccccccccccccccccccccccccccccc")
-    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile\n", encoding="utf-8")
+    assert crashsafe.git_commit(repo_root=tmp_path, env={})["source"] == "build", (
+        "the precondition failed: the stamp is not being read at all, so silencing it proves nothing")
 
-    got = crashsafe.git_commit(repo_root=tmp_path, env={})
-    assert got == {"commit": "fromfile", "dirty": None, "source": "stamp"}
+    monkeypatch.setattr(crashsafe, "commit_from_this_build", lambda: None)
+    assert crashsafe.git_commit(repo_root=tmp_path, env={}) is None, (
+        "patching the seam did not silence the stamp, so the fixture in test_crashsafe.py that "
+        "relies on it is decoration and those eight tests are back to depending on the machine")
 
 
 @pytest.mark.parametrize("value", ["", "   ", None])
@@ -196,7 +220,9 @@ def test_provenance_carries_the_commit_through_to_the_artefact(monkeypatch, tmp_
     _with_stamp(monkeypatch, "1234abcd1234abcd1234abcd1234abcd1234abcd")
     monkeypatch.chdir(tmp_path)
     got = crashsafe.provenance()["senbonzakura"]["git"]
-    assert got and got["commit"] == "1234abcd1234abcd1234abcd1234abcd1234abcd"
+    assert got and got["commit"] == "1234abc", (
+        f"the artefact records a spelling no other artefact in this repository uses: {got}")
+    assert len(got["commit"]) == crashsafe.SHORT_COMMIT_CHARS
 
 
 # ── the trap the fix would have armed ──────────────────────────────────────────────────────────────

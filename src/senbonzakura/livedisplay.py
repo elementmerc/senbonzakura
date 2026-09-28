@@ -50,9 +50,224 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 #: Below this many columns a two-panel layout is worse than the log it sits beside.
 MIN_COLUMNS = 60
+
+#: The kit's own ink, read from `assets/brand/mark.svg` rather than chosen here. The mark runs pink
+#: through purple on a navy ground, and these are three of its five stops.
+#:
+#: IT USED TO BE `border_style="cyan"`, a colour that appears in no palette this project owns: not
+#: in the mark, not in `banner.py`'s 256-colour table, not in the docs site's CSS. A run on a
+#: terminal draws a banner and then this panel, so two unrelated colour systems were on screen at
+#: once. A terminal picking its own pink would be a third identity, which is the mistake the first
+#: brand build already made with a DejaVu tagline.
+#:
+#: Hex rather than a 256-colour index because rich degrades hex to the nearest available colour on
+#: a terminal that cannot show it, and picking the index by hand is us doing that job worse.
+BRAND_PINK = "#F27FA6"
+BRAND_DEEP_PINK = "#E06A9C"
+BRAND_PURPLE = "#8B4791"
+
+#: BRAILLE, CHOSEN BY THE OPERATOR ON 2026-09-28 FROM NINE RENDERED OPTIONS, and the choice turned
+#: on width rather than taste. Every one of these cells is East Asian width "N", so each frame is
+#: exactly one column and the thing beside it never moves. Two candidates that looked fine in a
+#: listing, the block bar and the growing dots, are width "A" (ambiguous): a terminal may draw those
+#: double, and a spinner that changes width shifts the border a column every frame, which reads as
+#: the terminal misbehaving rather than as the run being alive.
+#:
+#: Ten frames rather than four, so it reads as turning rather than flicking between states.
+#: `test_the_dashboard_says_what_it_measured` asserts the single-column property and that the
+#: header's length does not change as it turns, so a later edit cannot quietly bring back one that
+#: jitters.
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+#: How many trial marks the frontier keeps. A long search is thousands of trials and the plot has a
+#: few hundred cells, so past this the oldest are dropped: the recent marks are the ones that say
+#: whether the search is still finding anything, and they are the ones a reader is looking at.
+MAX_POINTS = 400
+
+
+def _about(seconds):
+    """A hedged estimate, rounded to the unit it deserves.
+
+    `about 16m 45s` is the hedge without the honesty: the seconds are four significant figures on
+    an extrapolation from a per-trial mean, over a search whose trials genuinely differ in cost. So
+    anything over a minute is said to the minute, which is the precision the estimate has.
+    """
+    if seconds is None:
+        return "not yet"
+    if seconds < 60:
+        return "under a minute"
+    # FORMATTED HERE RATHER THAN THROUGH `_duration`, which always prints its seconds: rounding to
+    # the minute and then rendering "17m 00s" puts the false precision straight back, with a zero
+    # that looks measured.
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"about {minutes}m"
+    return f"about {minutes // 60}h {minutes % 60:02d}m"
+
+
+def _duration(seconds):
+    """A duration the way the rest of the tool already spells it.
+
+    Delegated rather than reimplemented: `resources.fmt_duration` is the project's one answer to
+    "how long is that in words", and a panel with its own would be a second spelling of the same
+    number on the same screen as the log. Imported lazily because this module is imported on paths
+    that have no reason to pull `resources` in.
+    """
+    from .resources import fmt_duration
+    return fmt_duration(seconds)
+
+
+# ── what the card is doing, measured or left blank ───────────────────────────────
+
+def card_telemetry(device):
+    """(used_bytes, total_bytes, temperature_c, power_w) for `device`, any of them None.
+
+    NOTHING HERE IS ESTIMATED. Scene 8 draws a VRAM bar, a temperature and a power figure, and the
+    first two thirds of that are already measurable: `resources.cuda_free_total` reads the card.
+    Temperature and power are not, without `pynvml`, so they come back None and the panel leaves
+    the space empty rather than filling it with a plausible number. Decision Q-42 D3: an optional
+    extra, and a blank where it is absent, because a dashboard that guesses is the exact thing this
+    project keeps having to withdraw figures over.
+
+    `pynvml` is imported inside the call and every failure is swallowed to None. A telemetry read
+    is decoration; it may not be the reason an abliteration stops.
+    """
+    used = total = temp = power = None
+    try:
+        from .resources import cuda_free_total
+        pair = cuda_free_total(str(device))
+        if pair:
+            free, total = pair
+            used = total - free
+    except Exception:
+        pass
+
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        try:
+            index = 0
+            text = str(device)
+            if ":" in text:
+                index = int(text.split(":", 1)[1])
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            power = round(pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0)
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        pass
+    return used, total, temp, power
+
+
+def bar(used, total, width=18):
+    """A proportion as a bar, or an empty frame when there is nothing to measure.
+
+    An empty frame rather than no row at all, because a row that appears and disappears between
+    redraws makes the panel jump, and a reader reads the jump as something happening.
+    """
+    if not total or used is None or used < 0:
+        return "░" * width
+    filled = max(0, min(width, round(width * (used / total))))
+    return "▓" * filled + "░" * (width - filled)
+
+
+# ── the frontier ─────────────────────────────────────────────────────────────────
+
+def frontier(points, best=None, best_label=None, width=72, height=5):
+    """The search as a plot with axes: drift across, refusal up, one mark per trial.
+
+    THE ONE PICTURE THAT SAYS WHETHER THE SEARCH IS WORKING, and until this existed it was only
+    inferable by reading per-trial log lines and holding them in your head. Down and left is better
+    on both axes, so a run that is working walks its marks towards the origin and a stuck one fills
+    a corner.
+
+    DRAWN WITH AXES BECAUSE A BARE SCATTER IS NOT A PLOT. The first version of this put dots on an
+    unlabelled grid, which tells a reader the shape of the cloud and nothing about its size: two
+    runs an order of magnitude apart in drift looked identical. The scale is the half that makes it
+    readable, so the tick labels are part of the picture rather than decoration on it.
+
+    Scaled to the DATA rather than to a fixed range, because the interesting spread differs per
+    model and a fixed axis would put every mark in one cell on half of them.
+
+    Rendered as text: it lives inside a panel redrawn several times a second on a terminal that may
+    be 60 columns wide, and no plotting library does that better than arithmetic does. Returns a
+    list of rows, empty when there is nothing yet to draw.
+    """
+    pts = [(x, y) for x, y in points if x is not None and y is not None]
+    if not pts:
+        return []
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(ys), max(ys)
+    # One distinct value on an axis has no spread to scale to, so it sits mid-cell rather than
+    # dividing by zero.
+    x_span = (x_hi - x_lo) or 1.0
+    y_span = (y_hi - y_lo) or 1.0
+
+    gutter = 9                       # "    0.20 " before the tick column
+    # ROOM FOR THE ANNOTATION IS RESERVED, NOT HOPED FOR. The arrow sits on the same row as the
+    # point it names, so a plot drawn to the full width pushes it onto a line of its own, where it
+    # names nothing. The plot gives the label its space instead.
+    reserved = (len(best_label) + 5) if best_label else 0
+    plot_w = max(10, width - gutter - 1 - reserved)
+    rows = max(3, height)
+    grid = [[" "] * plot_w for _ in range(rows)]
+
+    def cell(x, y):
+        col = min(plot_w - 1, max(0, round((x - x_lo) / x_span * (plot_w - 1))))
+        # Row 0 is the TOP and refusal rising should rise, so the axis is inverted here.
+        row = rows - 1 - min(rows - 1, max(0, round((y - y_lo) / y_span * (rows - 1))))
+        return row, col
+
+    for x, y in pts:
+        r, c = cell(x, y)
+        grid[r][c] = "·"
+    best_rc = None
+    if best is not None and best[0] is not None and best[1] is not None:
+        best_rc = cell(*best)
+        grid[best_rc[0]][best_rc[1]] = "●"
+
+    out = []
+    for i, row in enumerate(grid):
+        bottom = i == rows - 1
+        # The bottom row IS the x axis, so the gaps between marks are drawn as the axis line.
+        body = "".join(ch if ch != " " else ("─" if bottom else " ") for ch in row)
+        if i == 0:
+            label, tick = f"{y_hi:.2f}", "┤"
+        elif bottom:
+            label, tick = f"{y_lo:.2f}", "┼"
+        elif i == rows // 2:
+            label, tick = f"{(y_lo + y_hi) / 2:.2f}", "┤"
+        else:
+            label, tick = "", "│"
+        line = f"{label:>{gutter - 1}} {tick}{body}".rstrip()
+        # THE BEST POINT SAYS SO, on its own row, because a reader looking at a cloud of identical
+        # dots cannot otherwise tell which one the run will actually use.
+        if best_rc and i == best_rc[0] and best_label:
+            line = f"{line}  ← {best_label}"
+        out.append(line)
+
+    # The x scale, under the axis it belongs to. Four ticks spread across the plot.
+    ticks = [""] * plot_w
+    for n in range(4):
+        value = x_lo + (x_span * n / 3.0)
+        col = min(plot_w - 1, round((value - x_lo) / x_span * (plot_w - 1)))
+        ticks[col] = f"{value:.2f}"
+    scale = ""
+    for col, text in enumerate(ticks):
+        if not text:
+            continue
+        if len(scale) < col:
+            scale += " " * (col - len(scale))
+        scale += text
+    out.append(" " * gutter + scale.rstrip())
+    return out
 
 
 class NullPanel:
@@ -122,8 +337,8 @@ def why_not(args, stream=None):
     kind of thing somebody files a bug about.
     """
     stream = stream or sys.stdout
-    if getattr(args, "no_panel", False):
-        return "--no-panel was given"
+    if chosen_layout(args) == "off":
+        return "--panel off was given" if getattr(args, "panel", None) else "--no-panel was given"
     if not _a_terminal_we_can_draw_in(stream):
         return "output is not an interactive terminal, so the plain log is used"
     try:
@@ -133,7 +348,31 @@ def why_not(args, stream=None):
     return None
 
 
-def attach(events, args, *, total_trials=None, log=None, stream=None, console=None):
+def chosen_layout(args, guided=None):
+    """Which panel this run should draw: "full", "inline" or "off".
+
+    ONE FLAG, TWO SPELLINGS, AND THE OLD ONE STILL WORKS. `--no-panel` shipped in 0.4.0 and is
+    somebody's muscle memory and somebody's script, so it stays as a spelling of `off` rather than
+    being replaced. `--panel` wins where both are given, because naming the thing you want beats
+    naming the thing you do not.
+
+    THE DEFAULT DEPENDS ON WHO IS WATCHING (decision Q-42 D4). The guided mode is a person who
+    chose to be led, so it takes the screen. The flag path is what CI and scripts drive and what a
+    person tails, so it keeps a compact panel beside its log. `guided` is passed by the caller that
+    knows; nothing here guesses it from the environment.
+    """
+    explicit = getattr(args, "panel", None)
+    if explicit:
+        return explicit
+    if getattr(args, "no_panel", False):
+        return "off"
+    if guided is None:
+        guided = bool(getattr(args, "guided", False))
+    return "full" if guided else "inline"
+
+
+def attach(events, args, *, total_trials=None, log=None, stream=None, console=None,
+           baseline=None, guided=None):
     """A live panel over this run's event stream, or a `NullPanel`.
 
     `events` is an `EventLog`. The panel registers as an observer and unregisters on exit. Nothing
@@ -141,10 +380,19 @@ def attach(events, args, *, total_trials=None, log=None, stream=None, console=No
     """
     reason = why_not(args, stream=stream)
     if reason is not None:
+        # SAID, NOT JUST COMPUTED. `why_not` returns a sentence precisely so a reader can be told,
+        # and its own docstring gives the reason: "the panel did not appear" is otherwise the kind
+        # of thing somebody files a bug about. It was then thrown away here, so the one person who
+        # needed the sentence never saw it, and on 2026-09-28 the question was asked out loud.
+        # One line, on the way past, naming the flag that turns it off.
+        if log:
+            log(f"  no live panel: {reason}. The run is unaffected; --no-panel controls it.")
         return NullPanel()
     try:
         return _RichPanel(events, total_trials=total_trials, log=log,
-                          stream=stream or sys.stdout, console=console)
+                          stream=stream or sys.stdout, console=console,
+                          args=args, baseline=baseline,
+                          layout=chosen_layout(args, guided=guided))
     except Exception as e:
         # A panel that cannot be built is not a failed run. Said once, then forgotten.
         if log:
@@ -157,7 +405,8 @@ class _RichPanel:
 
     active = True
 
-    def __init__(self, events, *, total_trials=None, log=None, stream=None, console=None):
+    def __init__(self, events, *, total_trials=None, log=None, stream=None, console=None,
+                 args=None, baseline=None, layout="inline"):
         from rich.console import Console
         from rich.live import Live
 
@@ -175,13 +424,32 @@ class _RichPanel:
         self._trials = 0
         self._notes = []
         self._stop = None
-        self._live = Live(self._render(), console=self._console,
+        # SCENE 8'S HEADER, from the arguments the run was actually given rather than from a
+        # second source. Everything here is what the person typed or what the preset resolved, so
+        # a panel and a log that disagree is not a state this can reach.
+        self._args = args
+        self._baseline = baseline
+        self._started = time.monotonic()
+        self._layout = layout
+        self._spin = 0
+        self._on_alt = False
+        # Every (drift, refusal) seen, for the frontier. Bounded because a long search is
+        # thousands of trials and the plot has a few hundred cells: past the cap the oldest go,
+        # which is the right end to lose since the interesting marks are the recent ones.
+        self._points = []
+        self._stop = None
+        # `get_renderable` RATHER THAN A STORED RENDERABLE. With one, `Live` calls back on every
+        # refresh tick and the panel redraws four times a second whether or not a trial landed, so
+        # the spinner turns and `elapsed` counts during the long silences this exists for. With a
+        # stored renderable it would only change when `update` was called, which is once a trial.
+        self._live = Live(console=self._console, get_renderable=self._render,
                           refresh_per_second=4, transient=False)
 
     # ── lifecycle ───────────────────────────────────────────────────────────────
 
     def __enter__(self):
         self._stop = self._events.observe(self.event)
+        self._enter_screen()
         self._live.__enter__()
         return self
 
@@ -195,7 +463,46 @@ class _RichPanel:
             self._live.__exit__(*exc)
         except Exception:
             pass
+        # LAST, AND UNCONDITIONALLY. Leaving the alternate screen has to happen however the run
+        # ended, including a crash and a Ctrl+C, because a process that exits without restoring
+        # the buffer leaves the person looking at a dead dashboard with no shell prompt.
+        self._leave_screen()
         return False
+
+    # ── the alternate screen ────────────────────────────────────────────────────
+
+    def _enter_screen(self):
+        """Take the whole terminal, for the full layout only. Decision Q-42 D1.
+
+        THE STACKING DEFECT IS A SHARED-SURFACE PROBLEM, so this removes the sharing rather than
+        managing it. Measured under a pty: rich erases exactly its own panel height per redraw, and
+        an interleaved log line longer than the terminal wraps to two rows while rich counts one,
+        so the erase falls short and a dead copy of the panel is left in the scrollback. That is
+        the ledger's Torch F1 by another route.
+
+        On the alternate screen there is no scrollback to leave anything in, and the log is not
+        sharing the surface. The inline layout keeps the shared surface on purpose, because that is
+        where the log is the point, and the hard wrap in `cli.log` is what keeps it honest there.
+
+        Failures are swallowed: a terminal that will not switch buffers is not a reason an
+        abliteration stops, and the panel simply draws in place as it did before.
+        """
+        if self._layout != "full" or self._on_alt:
+            return
+        try:
+            self._console.set_alt_screen(True)
+            self._on_alt = True
+        except Exception:
+            self._on_alt = False
+
+    def _leave_screen(self):
+        if not self._on_alt:
+            return
+        try:
+            self._console.set_alt_screen(False)
+        except Exception:
+            pass
+        self._on_alt = False
 
     # ── input ───────────────────────────────────────────────────────────────────
 
@@ -207,13 +514,21 @@ class _RichPanel:
         self._last = rec
         if self._best is None or self._is_better(rec, self._best):
             self._best = rec
-        self._live.update(self._render())
+        try:
+            self._points.append((float(rec.get("kl")), float(rec.get("refusals"))))
+            del self._points[:-MAX_POINTS]
+        except (TypeError, ValueError):
+            # A trial that reported neither is still a trial; it just has no mark to draw.
+            pass
+        # No `update` call: `Live` pulls from `get_renderable`, so recording the state IS the
+        # update and calling `update` here would replace the callback with a frozen snapshot.
+        self._live.refresh()
 
     def note(self, text):
         """A line worth keeping on the panel, e.g. a stage boundary. The log gets it too, elsewhere."""
         self._notes.append(str(text))
         del self._notes[:-3]
-        self._live.update(self._render())
+        self._live.refresh()
 
     @staticmethod
     def _is_better(a, b):
@@ -230,6 +545,188 @@ class _RichPanel:
     # ── output ──────────────────────────────────────────────────────────────────
 
     def _render(self):
+        """One renderer, two containers. Decision Q-42 D4.
+
+        The flag path is what CI and scripts drive, so it keeps a compact panel beside its log. The
+        guided mode is a person watching a run that takes an hour, so it gets the whole screen. The
+        numbers are identical either way; only how much room they are given differs.
+        """
+        # ADVANCED ONCE, HERE. Two call sites each advancing it would step the animation twice a
+        # frame, which is not wrong so much as unreadable.
+        self._spin = (self._spin + 1) % len(SPINNER_FRAMES)
+        return self._render_full() if self._layout == "full" else self._render_inline()
+
+    # ── the pieces both layouts share ───────────────────────────────────────────
+
+    def _spinner(self):
+        """The frame for this render.
+
+        IT HAS TO TURN WHEN NOTHING IS HAPPENING, which is the whole point, and that is a fact
+        about who drives the redraw rather than about this function. `Live.update` is only reached
+        when a trial lands, and on a CPU run trials are minutes apart; a spinner stepping once a
+        trial stands perfectly still exactly when somebody is wondering whether the process has
+        wedged. So the panel hands `Live` a `get_renderable` and lets it redraw on its own timer.
+        """
+        return SPINNER_FRAMES[self._spin]
+
+    def _elapsed(self):
+        return time.monotonic() - self._started
+
+    def _remaining(self):
+        """An estimate, or None when there is not yet anything to estimate from.
+
+        None rather than a guess for the first trial, because "about 0s" on a two-hour run is worse
+        than an empty cell: the empty cell says nothing and the guess says something false.
+        """
+        if not self._total or self._trials < 1:
+            return None
+        per = self._elapsed() / self._trials
+        return max(0.0, per * (self._total - self._trials))
+
+    @staticmethod
+    def _short(name):
+        """`Qwen/Qwen3-1.7B` reads as `Qwen3-1.7B` in a header that already says what tool it is."""
+        return str(name).rsplit("/", 1)[-1] if name else "?"
+
+    def _headline(self):
+        """`trial 48 / 200 ⠙`, which is the one place a reader looks to ask "is it alive".
+
+        The count answers how far, and the spinner answers whether anything is still turning. They
+        belong together because a stalled run and a slow run show the same count.
+        """
+        done = f"{self._trials}" + (f" / {self._total}" if self._total else "")
+        return f"trial {done} {self._spinner()}"
+
+    def _stat_grid(self):
+        from rich.table import Table
+
+        a = getattr(self._args, "__dict__", {})
+        used, total, temp, power = card_telemetry(a.get("device", "cpu"))
+
+        # LEFT-ALIGNED LABELS, as drawn. Right-aligning them lines up their last letters, which
+        # makes a ragged left edge down the one column a reader scans.
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(justify="left", style="dim", min_width=8)
+        grid.add_column()
+        grid.add_column(justify="left", style="dim", min_width=6)
+        grid.add_column()
+
+        if total:
+            vram = f"{bar(used, total)}  {used / 1e9:.1f} / {total / 1e9:.1f} GB"
+        else:
+            # NOT A ZERO. There is no card, or it could not be read, and a bar reading 0.0 GB
+            # would be a measurement of something that was never measured.
+            vram = "not a cuda device"
+        grid.add_row("model", self._short(a.get("model")), "VRAM", vram)
+
+        # Temperature and power are blank when `pynvml` is absent. Q-42 D3: a blank is honest.
+        # TEMP AND POWER ARE THEIR OWN LABELLED FIGURES, as drawn. Merging them under one heading
+        # saved a word and lost which number was which. The label only appears when there is a
+        # reading behind it: without `pynvml` both are always absent, and a permanently blank band
+        # under a heading reads as a measurement that failed rather than one never available.
+        heat = f"{temp} °C" if temp is not None else ""
+        watts = f"{power} W" if power is not None else ""
+        if heat or watts:
+            grid.add_row("prompts", str(a.get("track", "?")), "temp", f"{heat}        power   {watts}")
+        else:
+            grid.add_row("prompts", str(a.get("track", "?")), "", "")
+        # "16, reduced from 24" when the governor cut it, because a batch that is not the one asked
+        # for changes what every timing on this screen means.
+        batch = str(a.get("gen_batch", "?"))
+        asked = a.get("gen_batch_requested")
+        if asked and str(asked) != batch:
+            batch = f"{batch}, reduced from {asked}"
+        grid.add_row("device", str(a.get("device", "?")), "batch", batch)
+        grid.add_row("trials", str(self._total or "?"), "seed", str(a.get("seed", "?")))
+        return grid
+
+    def _outcome_grid(self):
+        from rich.table import Table
+
+        # LEFT-ALIGNED LABELS, as drawn. Right-aligning them lines up their last letters, which
+        # makes a ragged left edge down the one column a reader scans.
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(justify="left", style="dim", min_width=8)
+        grid.add_column()
+        grid.add_column(justify="left", style="dim", min_width=6)
+        grid.add_column()
+
+        started = f"{self._baseline * 100:.1f}% refusal" if self._baseline is not None else "?"
+        if self._best is not None:
+            # THE DESIGN'S OWN WORDING, and shorter than the inline panel's on purpose: the full
+            # layout already carries the model, the device and the budget above this line, so
+            # repeating the whole trial row here wrapped it onto two and buried the two figures
+            # the run is actually judged on.
+            best = self._headline_outcome(self._best)
+        else:
+            best = f"{self._spinner()} waiting for the first trial"
+        grid.add_row("started at", started, "best so far", best)
+
+        # HEDGED, AS DRAWN. `remaining` is elapsed over trials done, times trials left, on a search
+        # whose trials genuinely differ in cost: a K=3 trial at a wide weight range is not the same
+        # work as a K=1 trial. Printing `16m 44s` puts four significant figures on an extrapolation.
+        # This project withdraws numbers for that, and a dashboard whose job is saying what was
+        # measured is the last place to start guessing to the second.
+        left = self._remaining()
+        grid.add_row("elapsed", _duration(self._elapsed()),
+                     "remaining", _about(left) if left is not None else "not yet")
+        return grid
+
+    # ── the two containers ──────────────────────────────────────────────────────
+
+    def _render_full(self):
+        """Scene 8. A Panel, because the title has to live IN the top border.
+
+        THE TRADE-OFF, since it is not obvious and the other way was tried. `Table.add_section`
+        draws a divider that meets the frame, which is the `├────────┤` in the drawing, but `rich`
+        renders a Table's title ABOVE the box rather than in its border, which loses the header
+        line the design opens with. A Panel does the reverse. The header was the operator's own
+        ask, so the Panel wins and the dividers span the content width instead, flush to the
+        borders rather than through them. Getting both would mean drawing every frame character by
+        hand and giving up `rich`'s wrapping, which is a bad trade for two junction glyphs.
+        """
+        from rich.console import Group
+        from rich.panel import Panel
+        from rich.rule import Rule
+        from rich.text import Text
+
+        parts = [Text(""), self._stat_grid(), Text("")]
+        rows = frontier([(x, y) for x, y in self._points],
+                        best=self._best_point(), best_label=self._best_mark(),
+                        width=max(24, self._console.width - 8))
+        if rows:
+            parts.append(Rule(style=BRAND_PURPLE))
+            parts += [Text(""),
+                      Text("  FRONTIER            refusals ↓                    drift ↓",
+                           style="dim"),
+                      Text("")]
+            parts += [Text("  " + r, style=BRAND_DEEP_PINK) for r in rows]
+            parts.append(Text(""))
+        parts.append(Rule(style=BRAND_PURPLE))
+        parts += [Text(""), self._outcome_grid()]
+        parts.extend(Text("  " + note, style="dim") for note in self._notes)
+        parts.append(Text(""))
+        parts.append(Text("  --panel inline for a smaller one, --panel off for none", style="dim"))
+        # FILLS THE TERMINAL. Scene 8 says the run takes the whole screen, and the alternate buffer
+        # is already in use, so a box that stops after its content leaves the rest blank and reads
+        # as a fragment rather than as the run.
+        return Panel(Group(*parts), title=self._title(), title_align="left",
+                     border_style=BRAND_PINK, padding=(0, 1),
+                     height=self._console.height)
+
+    def _title(self):
+        """Both ends of the top border, joined by the border itself.
+
+        `rich` gives one title and the gap has to be filled with the rule rather than with spaces,
+        or the top border is cut in half and the frame stops reading as one box. Falls back to the
+        name alone on a terminal too narrow to hold both, rather than letting them collide.
+        """
+        left = f"senbonzakura · {self._short(getattr(self._args, 'model', None))}"
+        right = self._headline()
+        room = self._console.width - 6 - len(left) - len(right)
+        return f"{left} {'─' * max(1, room - 2)} {right}" if room >= 4 else left
+
+    def _render_inline(self):
         from rich.panel import Panel
         from rich.table import Table
 
@@ -241,13 +738,41 @@ class _RichPanel:
         table.add_row("trials", done)
         for label, rec in (("best so far", self._best), ("latest", self._last)):
             if rec is None:
-                table.add_row(label, "waiting for the first trial")
+                table.add_row(label, f"{self._spinner()} waiting for the first trial")
                 continue
             table.add_row(label, self._describe(rec))
+        left = self._remaining()
+        if left is not None:
+            table.add_row("remaining", _duration(left))
         for note in self._notes:
             table.add_row("", note)
-        table.add_row("", "[dim]the full log is printing beside this; --no-panel turns this off[/dim]")
-        return Panel(table, title="senbonzakura", border_style="cyan")
+        table.add_row("", "[dim]the full log is printing beside this; --panel off turns this off[/dim]")
+        return Panel(table, title="senbonzakura", border_style=BRAND_PINK)
+
+    @staticmethod
+    def _headline_outcome(rec):
+        """The two figures a search is judged on, in the design's own words."""
+        try:
+            ref = f"{float(rec.get('refusals')) * 100:.1f}%"
+        except (TypeError, ValueError):
+            ref = "?"
+        try:
+            kl = f"{float(rec.get('kl')):.4f}"
+        except (TypeError, ValueError):
+            kl = "?"
+        return f"{ref} at drift {kl}"
+
+    def _best_mark(self):
+        """What the arrow beside the best point says, or None when there is no best yet."""
+        if self._best is None:
+            return None
+        return f"best, trial {self._best.get('number', '?')}"
+
+    def _best_point(self):
+        try:
+            return (float(self._best.get("kl")), float(self._best.get("refusals")))
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _describe(rec):
@@ -267,8 +792,13 @@ class _RichPanel:
 
 
 def add_argument(parser):
-    """`--no-panel`, defined here so the flag and the behaviour live together."""
+    """`--panel` and `--no-panel`, defined here so the flags and the behaviour live together."""
+    parser.add_argument("--panel", dest="panel", choices=("full", "inline", "off"), default=None,
+                        help="how much of the screen the live view takes. 'full' is the dashboard "
+                             "with the frontier plot, which is what the guided mode uses; 'inline' "
+                             "is a compact panel beside the log, which is the default everywhere "
+                             "else; 'off' draws nothing. The log is identical in all three: the "
+                             "same lines and the same markers are printed either way.")
     parser.add_argument("--no-panel", dest="no_panel", action="store_true",
-                        help="never draw the live panel, even on a terminal. The panel is a view "
-                             "beside the log and turning it off changes nothing else: the same "
-                             "lines, and the same markers, are printed either way.")
+                        help="the same as --panel off. Kept because it shipped first and is in "
+                             "people's scripts; --panel wins if both are given.")

@@ -746,6 +746,11 @@ def resume_plan(path, record, ask_fn=input, log=print):
                      f"default of 60 applies, and a study already past 60 trials would be "
                      f"declared finished and baked early.")
     search = record.get("search")
+    # A resumed run meets the same refusal as a fresh one, so it gets the same sizing. The note
+    # joins the list this screen already keeps, rather than being printed over it.
+    probe_note = size_the_probe_for(device, options)
+    if probe_note:
+        notes.append("--capability-n 40 and --capability-max-new 256. " + probe_note)
     if search:
         options["--search"] = search
         notes.append(f"--search {search}, the strategy the completed trials were searched with. "
@@ -876,6 +881,32 @@ def ask_output(ask_fn=input, log=print, *, chosen=None):
         # inside a guided flow they are still learning, is not a choice this should offer; the
         # person can remove the directory themselves and come back.
         log("  Nothing has been changed. Pick another path.")
+
+
+#: What the capability probe costs on a processor, and what the tool's own refusal recommends
+#: instead. 200 items at 512 new tokens is minutes on a card and about four hours on a CPU.
+CPU_PROBE = {"--capability-n": "40", "--capability-max-new": "256"}
+
+
+def size_the_probe_for(device, options):
+    """Fit the capability probe to the device, and return the sentence that says so, or None.
+
+    THE WALK PRODUCED A COMMAND ITS OWN PRE-FLIGHT REFUSED. The probe defaults are sized for a
+    card, `refuse_a_slow_probe` stops a four-hour one before it starts, and this walk never asked
+    about either, so somebody on a laptop answered six questions and was handed a command that
+    could not run, over flags they had no reason to know existed.
+
+    Applied rather than asked, because a seventh question about a probe budget is worse than a
+    sensible default, and NOT applied quietly: it changes what the capability figure means, from
+    200 paired items to 40. It goes on the printed command, so the line somebody copies is the
+    line that ran and the smaller probe is visible in it.
+    """
+    if not str(device or "").startswith("cpu"):
+        return None
+    options.update(CPU_PROBE)
+    return ("The capability probe is sized for a processor: 40 items rather than 200, which is "
+            "minutes instead of about four hours. It is on the command below, so the same run on "
+            "a card is that line without those two flags.")
 
 
 def ask_trials(ask_fn=input, log=print):
@@ -1021,6 +1052,10 @@ def plan_abliteration(ask_fn=input, log=print):
         # it gets the same screen, and somebody who does not want it can delete four words.
         "--panel": "full",
     }
+    note = size_the_probe_for(device, options)
+    if note:
+        log("")
+        _say(note, log=log)
     if search:
         options["--search"] = search
     if resume:

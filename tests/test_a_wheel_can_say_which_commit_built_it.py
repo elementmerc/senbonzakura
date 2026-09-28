@@ -132,6 +132,47 @@ def test_a_checkout_still_prefers_git_over_the_stamp(monkeypatch):
     assert got["commit"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
+def test_the_stamp_outranks_the_tarball_file_and_the_variable(monkeypatch, tmp_path):
+    """The ordering that broke the runners, asserted here rather than left to be discovered.
+
+    `_no_git` deliberately clears the two weaker sources so the tests above measure the stamp alone.
+    That left the ORDER between them unguarded: the stamp could have been moved behind either one
+    and every test in this file would still have passed, while eight tests in `test_crashsafe.py`
+    would have started passing for the wrong reason.
+
+    The order is right as it stands. A `CODE_VERSION` file describes the directory the package
+    happens to be sitting in and the variable describes whatever the launcher believed at start-up;
+    the stamp describes THIS package, which is the narrowest of the three claims and the only one
+    written by the machine that actually built the code now running.
+    """
+    def _boom(*_a, **_k):
+        raise OSError("no git here")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile\n", encoding="utf-8")
+    _with_stamp(monkeypatch, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+    got = crashsafe.git_commit(repo_root=tmp_path, env={crashsafe.COMMIT_ENV: "fromenv"})
+    assert got["source"] == "build", f"a weaker source answered ahead of the wheel's own stamp: {got}"
+    assert got["commit"] == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def test_the_absence_of_a_stamp_is_something_a_caller_can_state(monkeypatch, tmp_path):
+    """`commit_from_this_build` is a named seam so a test can say "pretend this install has none".
+
+    It exists because the stamp used to be read through an import inside `git_commit`, which nothing
+    could reach. The tests for the three later sources passed on a development box only because an
+    editable install had written `COMMIT = None`, and failed on every runner at once. Patching the
+    seam has to actually silence the stamp, or that fix is decorative.
+    """
+    monkeypatch.setattr(crashsafe, "commit_from_this_build", lambda: None)
+    _with_stamp(monkeypatch, "cccccccccccccccccccccccccccccccccccccccc")
+    (tmp_path / crashsafe.COMMIT_STAMP_FILE).write_text("fromfile\n", encoding="utf-8")
+
+    got = crashsafe.git_commit(repo_root=tmp_path, env={})
+    assert got == {"commit": "fromfile", "dirty": None, "source": "stamp"}
+
+
 @pytest.mark.parametrize("value", ["", "   ", None])
 def test_an_empty_stamp_is_no_answer_rather_than_a_blank_commit(monkeypatch, tmp_path, value):
     """A stamp written but not filled in must not produce `commit: ""`, which reads as a commit.

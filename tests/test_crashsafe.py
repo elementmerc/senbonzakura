@@ -25,6 +25,29 @@ from senbonzakura.crashsafe import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_build_stamp(monkeypatch):
+    """Every provenance test in this file drives a source that comes AFTER the wheel's own stamp.
+
+    WHAT PROMPTED IT, 2026-09-28
+
+    `git_commit` reads `_build.COMMIT` between git and the `CODE_VERSION` file, so an install that
+    carries a stamp answers "build" before the stamp file or the environment variable is ever
+    consulted. That is the intended order, and it is asserted in
+    `test_a_wheel_can_say_which_commit_built_it.py`, which owns the stamp.
+
+    What went wrong is that these tests never said they wanted it absent. They passed on a
+    development box because an editable install had written `COMMIT = None` there, and on the
+    runners, where the install stamps the real commit, eight of them failed at once with the CI
+    build's own sha. The suite was green on an accident of the local environment.
+
+    So the absence is now stated rather than assumed, in one place, autouse, because a per-test opt
+    in is a list somebody has to remember to add to. The precedence itself stays guarded in the
+    other file; nothing here weakens it.
+    """
+    monkeypatch.setattr(crashsafe, "commit_from_this_build", lambda: None)
+
+
 def _needs_a_checkout():
     """Skip where there is no git index to ask, which is not the same as passing.
 

@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import argparse
 import io
+import pathlib
+import sys
 from typing import ClassVar
 
 import pytest
+from tomlread import tomllib
 
 from senbonzakura import events, livedisplay
 
@@ -35,12 +38,22 @@ def _args(**kw):
     return argparse.Namespace(**kw)
 
 
-def _panel(layout="full", width=94, total=200, baseline=0.578):
+def _panel(layout="full", width=94, total=200, baseline=0.578, height=None, **argkw):
     rich_console = pytest.importorskip("rich.console", reason="rich draws the panel")
     console = rich_console.Console(file=io.StringIO(), width=width, force_terminal=True)
+    if height is not None:
+        console.height = height
     return livedisplay._RichPanel(
         events.EventLog(None), total_trials=total, log=None, stream=io.StringIO(),
-        console=console, args=_args(), baseline=baseline, layout=layout)
+        console=console, args=_args(**argkw), baseline=baseline, layout=layout)
+
+
+def _with_trials(panel, count=48):
+    for i in range(count):
+        panel.event({"kind": "trial", "number": i, "refusals": max(0.0, 0.2 - i * 0.004),
+                     "soft": 0.0, "broken": 0.0, "kl": 0.03 + i * 0.004,
+                     "objective": 0.5 - i * 0.002})
+    return panel
 
 
 def _drawn(panel):
@@ -94,9 +107,10 @@ class TestEveryFigureWasMeasured:
 
     def test_telemetry_never_raises_and_says_nothing_it_did_not_read(self):
         """A card reading is decoration. It may not be the reason an abliteration stops."""
-        used, total, temp, power = livedisplay.card_telemetry("cpu")
+        used, total, temp, power, reason = livedisplay.card_telemetry("cpu")
         assert temp is None or isinstance(temp, int)
         assert power is None or isinstance(power, (int, float))
+        assert (reason is None) == (temp is not None)
 
     def test_a_panel_with_no_card_does_not_print_a_vram_figure(self):
         text = _drawn(_panel())
@@ -424,3 +438,296 @@ class TestNothingBleedsPastTheFrame:
         assert len(lines) == 12, (
             f"the panel drew {len(lines)} rows into a 12-row terminal, which scrolls the top of it "
             f"off the alternate screen where there is nothing to scroll back to")
+
+
+# ── the gap where a measurement would be says why it is a gap ─────────────────────
+
+class TestTheMissingCardBindingsAreNamed:
+    """`pynvml` was read by the code and declared in no packaging file at all.
+
+    WHAT THAT ACTUALLY MEANT, and it went unnoticed because the two cells are meant to be allowed
+    to be empty: temperature and power were blank on every install that has ever shipped, and a
+    reader had no way to tell "this build cannot read your card" from "your card is idle". Q-42 D3
+    makes the extra optional; it does not make the absence silent.
+    """
+
+    def test_absent_bindings_come_back_as_a_reason_rather_than_just_a_blank(self, monkeypatch):
+        # A None in `sys.modules` is the documented way to make an import fail for one name, so
+        # this holds on a machine that happens to have the bindings as well as one that does not.
+        monkeypatch.setitem(sys.modules, "pynvml", None)
+        _used, _total, temp, power, reason = livedisplay.card_telemetry("cuda:0")
+        assert temp is None and power is None
+        assert reason == livedisplay.NO_TELEMETRY
+        assert "nvidia-ml-py" in reason, (
+            "the advice must name the distribution pyproject.toml declares. `pip install pynvml` "
+            "names the module and fetches a third-party wrapper, which is the wrong package")
+
+    def test_a_card_that_will_not_answer_is_a_different_sentence(self, monkeypatch):
+        """Bindings present and the card silent is not the same situation as bindings absent."""
+        class _Sulky:
+            @staticmethod
+            def nvmlInit():  # noqa: N802  (the real binding's own spelling)
+                raise RuntimeError("driver not loaded")
+
+        monkeypatch.setitem(sys.modules, "pynvml", _Sulky)
+        _used, _total, temp, power, reason = livedisplay.card_telemetry("cuda:0")
+        assert temp is None and power is None
+        assert reason and "pip install" not in reason
+        assert "RuntimeError" in reason, reason
+
+    def test_a_cuda_run_is_told_what_the_blank_cells_would_need(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "pynvml", None)
+        text = _drawn(_panel(device="cuda:0"))
+        assert "nvidia-ml-py" in text, (
+            "the panel left temp and power blank and said nothing about why, which is the state "
+            "that had somebody assuming the card was unreadable rather than the bindings missing")
+
+    def test_a_cpu_run_is_not_nagged_about_a_card_it_does_not_have(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "pynvml", None)
+        text = _drawn(_panel(device="cpu"))
+        assert "not a cuda device" in text
+        assert "nvidia-ml-py" not in text, (
+            "there is no card to read, so the VRAM cell has already said everything true")
+
+
+class TestThePackagingDeclaresWhatTheCodeImports:
+    """A dependency that is present by luck is not a dependency, and this one was not even that.
+
+    `livedisplay.card_telemetry` imported `pynvml` and no packaging file anywhere named it, so
+    temperature and power were blank on every install that ever shipped. The operator's ruling on
+    2026-09-28 was the base install rather than an extra, reversing Q-42 D3: one `pip install` and
+    one `senbonzakura setup` is the whole story, and a 0.05 MB wheel is not worth a user decision.
+    """
+
+    @staticmethod
+    def _project():
+        root = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+        with root.open("rb") as fh:
+            return tomllib.load(fh)["project"]
+
+    def test_the_base_install_declares_the_nvml_bindings(self):
+        required = self._project()["dependencies"]
+        assert any("nvidia-ml-py" in spec for spec in required), (
+            "nothing declares the bindings the dashboard imports, so temp and power are blank on "
+            "every install and no install command a user could run would change that")
+
+    def test_it_names_the_distribution_and_not_the_module(self):
+        """`pip install pynvml` fetches a third-party wrapper, not the bindings this imports."""
+        required = self._project()["dependencies"]
+        assert not any(spec.split(">")[0].strip() == "pynvml" for spec in required)
+
+    def test_no_extra_is_left_standing_in_its_place(self):
+        """Two answers on record is how a user ends up installing neither."""
+        extras = self._project()["optional-dependencies"]
+        assert "telemetry" not in extras
+        for name, specs in extras.items():
+            assert not any("nvidia-ml-py" in spec for spec in specs), name
+
+
+# ── the breakpoints the design specifies ─────────────────────────────────────────
+
+class TestItIsResponsiveRatherThanAbsent:
+    """The design's table: under 60 is one column and no chart, not nothing at all.
+
+    WHAT WAS WRONG. The width floor and the first breakpoint were the same number, so a terminal
+    under 60 columns was refused a panel outright. The design never says a narrow terminal loses the
+    dashboard; it says the dashboard loses its second column and its chart.
+    """
+
+    class _ATerminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    def test_a_narrow_terminal_is_still_offered_a_panel(self, monkeypatch):
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setenv("TERM", "xterm")
+        monkeypatch.setenv("COLUMNS", "40")
+        assert livedisplay.why_not(_args(), stream=self._ATerminal()) is None, (
+            "40 columns is narrow, not undrawable, and the design gives it the one-column form")
+
+    def test_a_terminal_with_no_room_for_a_row_is_still_declined(self):
+        assert livedisplay.MIN_COLUMNS < livedisplay.ONE_COLUMN_BELOW, (
+            "the floor and the first breakpoint are separate questions and must be separate numbers")
+
+    def test_under_the_breakpoint_it_draws_the_numbers_and_drops_the_chart(self):
+        text = _drawn(_with_trials(_panel(width=50)))
+        assert "FRONTIER" not in text, "the chart was kept on a terminal too narrow to plot in"
+        assert "48 / 200" in text, (
+            "the trial count lives in the top border, which is too short to hold it here, so the "
+            "one figure a reader checks to ask whether the run is alive went missing entirely")
+        for figure in ("model", "device", "started at", "best so far", "elapsed", "remaining"):
+            assert figure in text, (
+                f"{figure!r} is missing from a 50-column panel, so the narrow layout dropped a "
+                f"number, which is the one thing the design says it must not do")
+
+    def test_above_the_breakpoint_the_chart_is_still_drawn(self):
+        assert "FRONTIER" in _drawn(_with_trials(_panel(width=94, height=40)))
+
+
+class TestAShortTerminalShedsTheChartFirst:
+    """The design's rule, verbatim: "short terminals drop the chart before they drop a number".
+
+    The panel is drawn to the terminal height, so anything that does not fit is cropped from the
+    BOTTOM, and the bottom is where "best so far", "elapsed" and "remaining" live. On a short window
+    the plot survived and every outcome figure went over the edge, which is the rule inverted.
+    """
+
+    def test_the_outcome_figures_survive_a_short_window(self):
+        text = _drawn(_with_trials(_panel(width=94, height=18)))
+        assert "best so far" in text, (
+            "an 18-row terminal cropped the outcome figures off the bottom while keeping the plot")
+        assert "FRONTIER" not in text, "the chart should have been shed to make that room"
+
+    def test_it_still_fills_the_short_terminal_exactly(self):
+        p = _with_trials(_panel(width=94, height=18))
+        assert len(_drawn(p).rstrip("\n").split("\n")) == 18
+
+    def test_a_tall_terminal_keeps_both(self):
+        text = _drawn(_with_trials(_panel(width=94, height=40)))
+        assert "FRONTIER" in text and "best so far" in text, (
+            "there was room for everything and something was shed anyway")
+
+
+class _AReadableCard:
+    """A `pynvml` that answers, so the drawing path for a real reading is exercised too.
+
+    The absent case is the one that was broken and the one most installs used to hit, so it is
+    where the tests above sit. This is the other half: without it nothing ever asserts that a
+    figure the bindings DO return reaches the screen, and a panel that draws the missing case
+    perfectly and the present case not at all would pass every test above.
+    """
+
+    NVML_TEMPERATURE_GPU = 0
+
+    @staticmethod
+    def nvmlInit():  # noqa: N802  (the real binding's own spelling)
+        return None
+
+    @staticmethod
+    def nvmlShutdown():  # noqa: N802
+        return None
+
+    @staticmethod
+    def nvmlDeviceGetHandleByIndex(index):  # noqa: N802
+        return index
+
+    @staticmethod
+    def nvmlDeviceGetTemperature(_handle, _kind):  # noqa: N802
+        return 71
+
+    @staticmethod
+    def nvmlDeviceGetPowerUsage(_handle):  # noqa: N802
+        return 84_137
+
+
+class TestACardThatAnswers:
+    def test_the_reading_comes_back_with_no_reason_attached(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "pynvml", _AReadableCard)
+        _used, _total, temp, power, reason = livedisplay.card_telemetry("cuda:1")
+        assert (temp, power) == (71, 84), "milliwatts are reported as watts, to the watt"
+        assert reason is None, "there is nothing missing, so there is nothing to explain"
+
+    def test_the_device_index_is_the_one_the_run_is_using(self, monkeypatch):
+        """`cuda:1` must not read card 0, which is the card somebody else's job is on."""
+        asked = []
+        monkeypatch.setitem(sys.modules, "pynvml", _AReadableCard)
+        monkeypatch.setattr(_AReadableCard, "nvmlDeviceGetHandleByIndex",
+                            staticmethod(lambda index: asked.append(index) or index))
+        livedisplay.card_telemetry("cuda:1")
+        assert asked == [1]
+
+    @pytest.mark.parametrize("width", [50, 94])
+    def test_both_widths_draw_the_figures_rather_than_the_advice(self, monkeypatch, width):
+        monkeypatch.setitem(sys.modules, "pynvml", _AReadableCard)
+        text = _drawn(_panel(width=width, device="cuda:0"))
+        assert "71 °C" in text and "84 W" in text
+        assert "nvidia-ml-py" not in text, "a card that answered was still told to install something"
+
+
+class TestTheScreenShowsWhatWasActuallyGiven:
+    """A panel that quietly alters the thing it is reporting.
+
+    A grid cell is parsed for rich markup, so a path with square brackets in it loses the
+    bracketed part: `runs/[v2]/model` renders as `runs//model`. The panel's whole job is to say
+    what is being measured, so showing a path that is not the one the run is using is the worst
+    available way for it to be wrong. Found by the agent that built the narrow layouts, in its own
+    file, and reported rather than swallowed.
+    """
+
+    @staticmethod
+    def _grid(**argkw):
+        panel = _panel(**argkw)
+        panel._console.file = io.StringIO()
+        panel._console.print(panel._stat_grid())
+        return panel._console.file.getvalue()
+
+    def test_a_bracketed_model_path_survives_to_the_screen(self):
+        out = self._grid(model="runs/model[v2]")
+        assert "[v2]" in out, (
+            "the brackets were parsed as markup and dropped, so the panel is naming a model the "
+            "run is not using. `_short` keeps the last path segment, which is why the bracket is "
+            "in that segment here rather than in a parent directory")
+
+    def test_a_bracketed_track_path_survives_to_the_screen(self):
+        out = self._grid(track="corpora/[held-out]")
+        assert "[held-out]" in out
+
+    def test_it_holds_on_the_narrow_layout_too(self):
+        out = self._grid(width=50, model="runs/model[v2]")
+        assert "[v2]" in out
+
+
+class TestTheReasonNamesTheActualReason:
+    """"The panel did not appear" is the kind of thing somebody files a bug about, so the tool
+    says why. It said the same sentence for four different causes, including a terminal that is
+    perfectly interactive and merely narrower than a panel can be drawn in. Somebody reading that
+    goes hunting through their pipes and their CI variables for a problem that is the width of
+    their window.
+    """
+
+    @staticmethod
+    def _stream():
+        """An interactive stream with no `fileno`, so COLUMNS decides the width."""
+        class _Tty:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                raise OSError("no fileno in this test, so the environment decides the width")
+
+        return _Tty()
+
+    def test_a_narrow_terminal_is_told_it_is_narrow(self, monkeypatch):
+        monkeypatch.setenv("TERM", "xterm-256color")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.setenv("COLUMNS", "12")
+        why = livedisplay.why_not(_args(), stream=self._stream())
+        assert why is not None
+        assert "narrower" in why, f"a twelve column terminal was told: {why!r}"
+        assert "not an interactive terminal" not in why, (
+            "this terminal IS interactive, and sending somebody to look at their pipes over a "
+            "window width is a confident message about the wrong problem")
+
+    def test_a_pipe_is_still_told_it_is_a_pipe(self, monkeypatch):
+        monkeypatch.setenv("TERM", "xterm-256color")
+        monkeypatch.delenv("CI", raising=False)
+
+        class _Pipe:
+            def isatty(self):
+                return False
+
+        why = livedisplay.why_not(_args(), stream=_Pipe())
+        assert why and "not an interactive terminal" in why
+
+    def test_an_unset_term_says_so(self, monkeypatch):
+        """MET ON A REAL RUN, 2026-09-28. A guided abliteration driven through a pty over ssh drew
+        no panel and reported "output is not an interactive terminal", about a pty. The cause was
+        an unset TERM, which is ordinary over ssh, and the message sent the reader somewhere else.
+        """
+        monkeypatch.setenv("TERM", "")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        why = livedisplay.why_not(_args(), stream=self._stream())
+        assert why and "TERM" in why

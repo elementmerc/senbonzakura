@@ -49,6 +49,15 @@ sentencepiece==0.1.98
 # a version check has to go through `importlib.metadata`. Nothing in this project does one.
 rich==13.0.0
 
+# The card's temperature and power on the live dashboard, and nothing else in the tree reads it.
+# The floor is from August 2023, far below what any recent driver ships against, so the cooldown
+# is not a question and this is the oldest that has been exercised rather than the oldest that
+# might work.
+#
+# `nvidia-ml-py` and NOT `pynvml`: the distribution name is not the module name. NVIDIA publishes
+# the bindings under this name and installing it gives you the `pynvml` module the panel imports.
+nvidia-ml-py==12.535.108
+
 # The dev extra, because `pip install -e '.[dev]'` at the floors is a real
 # thing a contributor does, and the suite has to pass there too.
 #

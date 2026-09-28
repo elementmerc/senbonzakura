@@ -177,6 +177,28 @@ dependencies = [
   # cooldown (baseline Section 5) is not a question. `panel.py` imports it inside functions and
   # falls back to the plain log if the import fails, so an environment without it still works.
   "rich>=13.0",
+  # Card temperature and power on the live dashboard, read by `livedisplay.card_telemetry`, and
+  # nothing else in the tool touches it.
+  #
+  # `nvidia-ml-py` AND NOT `pynvml`, because the distribution name is not the module name. NVIDIA
+  # publishes the bindings as `nvidia-ml-py` and installing it gives you the `pynvml` module the
+  # dashboard imports. The separate `pynvml` distribution on PyPI is a third-party wrapper which
+  # now does little but depend on this one, so naming it would add a layer nothing here calls.
+  #
+  # BASE AND NOT AN EXTRA, decided by the operator on 2026-09-28, reversing decision Q-42 D3.
+  # The install story is `pip install senbonzakura` and then `senbonzakura setup`, and nothing
+  # else; an extra is one more thing a user has to know about and reason about before the tool
+  # works properly. This is a 0.05 MB pure-Python `py3-none-any` wheel with no dependencies of
+  # its own, against a base install already measured at about 5.9 GB. Keeping it optional saved
+  # fifty kilobytes and cost two permanently blank cells on the dashboard of a normal install.
+  #
+  # DECLARED IS NOT IMPORTABLE. It still degrades: an old driver, a machine where the wheel did
+  # not land, a stripped environment. `card_telemetry` imports it inside the call and returns a
+  # sentence naming what is missing, so the blank cells say why they are blank.
+  #
+  # The floor is from August 2023, so the 7-day cooldown (baseline Section 5) is not a question,
+  # and it is far below what any recent driver ships against.
+  "nvidia-ml-py>=12.535.108",
   # Required by the vendored converter's vocabulary path, which several architectures reach,
   # including both of the families this tool is currently pointed at: llama.cpp's own
   # requirements-convert_legacy_llama.txt lists it, and a conversion without it dies at

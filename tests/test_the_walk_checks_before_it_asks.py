@@ -344,3 +344,60 @@ def test_the_sizing_is_on_the_printed_command_rather_than_applied_invisibly(tmp_
     interactive.size_the_probe_for("cpu", plan["options"])
     line = interactive.render_command(plan["command"], plan["options"])
     assert "--capability-n 40" in line and "--capability-max-new 256" in line
+
+
+def _too_wide(lines, columns, *, allowed=()):
+    """Lines past the edge that had somewhere to break.
+
+    A line carrying one unbreakable token wider than the window, a path or a command, is not a
+    wrapping failure and must not be folded: a folded path is a wrong path and a folded command
+    cannot be pasted. So a line is only a finding when its longest word would have fitted.
+    """
+    found = []
+    for line in lines:
+        if len(line) <= columns or any(a and a in line for a in allowed):
+            continue
+        if max((len(w) for w in line.split()), default=0) + 4 > columns:
+            continue
+        found.append(line)
+    return found
+
+
+@pytest.mark.parametrize("columns", [50, 60, 80, 120])
+def test_nothing_the_walk_prints_is_wider_than_the_window(tmp_path, monkeypatch, columns, all_clear):
+    """MEASURED AT FOUR WIDTHS, because the failure is invisible at the author's own.
+
+    Everything here was hand wrapped at 79 columns, which reads correctly on a wide terminal and
+    raggedly on a narrow one, and the guided mode is the screen most likely to be open in a half
+    width window beside something else.
+
+    The printed command is the one thing allowed to run past the edge, and it has to be: it exists
+    to be pasted, and a folded command is a broken one.
+    """
+    monkeypatch.setenv("COLUMNS", str(columns))
+    said = []
+    plan = _plan(tmp_path, **{"--out": "abliterated"})
+    interactive.present(plan, ask_fn=lambda _p: "n", log=said.append)
+    command = interactive.render_command(plan["command"], plan["options"])
+    over = _too_wide(said, columns, allowed=(command,))
+    assert not over, f"at {columns} columns these run past the edge: {over}"
+
+
+@pytest.mark.parametrize("columns", [50, 60, 80])
+def test_the_board_itself_fits_the_window(tmp_path, monkeypatch, columns):
+    """The rows, not just the prose around them.
+
+    The first version of this had a forty column floor on the row detail, which plus a fifteen
+    column row prefix is a fifty five column line on a fifty column terminal: the fault it was
+    written to fix, one indent further in. A clean board is one line and never shows a row, so
+    this one has to fail a check to see them at all.
+    """
+    monkeypatch.setenv("COLUMNS", str(columns))
+    why = ("this machine has no usable CUDA device and cuda was asked for, which is decidable "
+           "from the command line alone")
+    monkeypatch.setattr(interactive, "_checked_rows",
+                        lambda plan: [(interactive.FAIL, "the device", why)])
+    said = []
+    interactive._board(_plan(tmp_path, **{"--out": "abliterated"}), log=said.append)
+    over = _too_wide(said, columns)
+    assert not over, f"at {columns} columns the board runs past the edge: {over}"

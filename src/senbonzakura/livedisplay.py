@@ -34,7 +34,9 @@ WHEN IT DOES NOT RUN, which is most of the time
   * `--no-panel` was given.
   * stdout is not a terminal, which covers every CI run, every pipe and every redirect to a file.
   * `rich` cannot be imported.
-  * the terminal is too narrow to draw in.
+  * the terminal is narrower than `MIN_COLUMNS`, which is a floor and not a preference: below it
+    there is no room for a label and its value on one row. A merely narrow terminal still gets a
+    panel; it gets the one-column form instead.
 
 In all four cases this module returns an object that does nothing at all, and the run is
 byte-identical to a run from before the panel existed. The first two are decisions, the second two
@@ -52,8 +54,18 @@ import os
 import sys
 import time
 
-#: Below this many columns a two-panel layout is worse than the log it sits beside.
-MIN_COLUMNS = 60
+#: THE FLOOR, not the breakpoint. Four columns go to the frame and its padding, and a label and
+#: its value need the rest, so below this there is genuinely nowhere to put a row and the plain log
+#: is the better answer. It used to be 60, which is the design's FIRST BREAKPOINT rather than a
+#: floor, so every terminal under 60 columns got no panel at all instead of the one-column form the
+#: design asks for. The two are separate numbers because they answer separate questions: "can this
+#: be drawn" and "how should it be drawn".
+MIN_COLUMNS = 24
+
+#: The design's first breakpoint: under this many columns the panel drops to one column and no
+#: chart. A stat grid of four side-by-side cells needs about sixty columns before the values start
+#: wrapping into each other, and a frontier plot narrower than that is a smudge with a scale on it.
+ONE_COLUMN_BELOW = 60
 
 #: The kit's own ink, read from `assets/brand/mark.svg` rather than chosen here. The mark runs pink
 #: through purple on a navy ground, and these are three of its five stops.
@@ -123,18 +135,40 @@ def _duration(seconds):
 
 # ── what the card is doing, measured or left blank ───────────────────────────────
 
+#: What the panel says where temperature and power would be, when the bindings will not import.
+#: The DISTRIBUTION is named, not the module: `pip install pynvml` fetches a third-party wrapper
+#: rather than the bindings `pyproject.toml` declares, so naming what the code imports would send
+#: somebody to the wrong package. A declared dependency can still be missing, on an environment
+#: where the wheel never landed, so this sentence is reachable on a normal install.
+NO_TELEMETRY = "temp and power need nvidia-ml-py, which did not import: pip install nvidia-ml-py"
+
+
 def card_telemetry(device):
-    """(used_bytes, total_bytes, temperature_c, power_w) for `device`, any of them None.
+    """(used_bytes, total_bytes, temperature_c, power_w, reason) for `device`.
+
+    Any of the four figures may be None, and `reason` is a sentence saying why the last two are
+    missing, or None when they are not missing.
 
     NOTHING HERE IS ESTIMATED. Scene 8 draws a VRAM bar, a temperature and a power figure, and the
     first two thirds of that are already measurable: `resources.cuda_free_total` reads the card.
-    Temperature and power are not, without `pynvml`, so they come back None and the panel leaves
-    the space empty rather than filling it with a plausible number. Decision Q-42 D3: an optional
-    extra, and a blank where it is absent, because a dashboard that guesses is the exact thing this
-    project keeps having to withdraw figures over.
+    Temperature and power need `pynvml`, and where it will not import they come back None and the
+    panel leaves the space empty rather than filling it with a plausible number, because a
+    dashboard that guesses is the exact thing this project keeps having to withdraw figures over.
 
-    `pynvml` is imported inside the call and every failure is swallowed to None. A telemetry read
-    is decoration; it may not be the reason an abliteration stops.
+    THE BINDINGS ARE A BASE DEPENDENCY, so the empty case is now the unusual one. They were an
+    undeclared import until 2026-09-28: read here, named in no packaging file, and therefore blank
+    on every install that had ever shipped. The operator's fix was to declare them in the base
+    install rather than behind an extra, on the grounds that the install story is one `pip install`
+    and one `senbonzakura setup`, and that fifty kilobytes is not worth a decision a user has to
+    make. This reverses decision Q-42 D3.
+
+    THE REASON IS RETURNED BECAUSE A BLANK ON ITS OWN IS NOT HONEST, IT IS ONLY QUIET, and declared
+    is not importable: an old driver or an environment the wheel never reached still lands here.
+    Fail loud, never silent (baseline Section 2.1): the figure is still withheld, and the
+    withholding now says what it would take to have it.
+
+    `pynvml` is imported inside the call and a read that fails costs the reading, never the run. A
+    telemetry read is decoration; it may not be the reason an abliteration stops.
     """
     used = total = temp = power = None
     try:
@@ -148,6 +182,10 @@ def card_telemetry(device):
 
     try:
         import pynvml
+    except Exception:
+        return used, total, temp, power, NO_TELEMETRY
+
+    try:
         pynvml.nvmlInit()
         try:
             index = 0
@@ -159,9 +197,11 @@ def card_telemetry(device):
             power = round(pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0)
         finally:
             pynvml.nvmlShutdown()
-    except Exception:
-        pass
-    return used, total, temp, power
+    except Exception as e:
+        # NAMED, NOT SWALLOWED. The bindings are present and the card still would not answer, which
+        # is a different situation from not having them and wants a different sentence.
+        return used, total, None, None, f"the card would not report temp and power ({type(e).__name__})"
+    return used, total, temp, power, None
 
 
 def bar(used, total, width=18):
@@ -330,6 +370,23 @@ def _a_terminal_we_can_draw_in(stream):
     return columns >= MIN_COLUMNS
 
 
+def _cannot_draw_because(stream):
+    """Which of the conditions in `_a_terminal_we_can_draw_in` actually failed, as a sentence."""
+    try:
+        interactive_stream = bool(stream.isatty())
+    except (AttributeError, ValueError):
+        interactive_stream = False
+    if not interactive_stream:
+        return "output is not an interactive terminal, so the plain log is used"
+    if os.environ.get("TERM", "").lower() in ("dumb", ""):
+        return "TERM says this terminal cannot move the cursor, so the plain log is used"
+    for name in ("NO_COLOR", "CI"):
+        if os.environ.get(name):
+            return f"{name} is set, so the plain log is used"
+    return (f"this terminal is narrower than {MIN_COLUMNS} columns, which is not enough for a "
+            f"label and a number, so the plain log is used")
+
+
 def why_not(args, stream=None):
     """The reason a panel will not be drawn, or None if it will be. Separated so it can be tested.
 
@@ -340,7 +397,13 @@ def why_not(args, stream=None):
     if chosen_layout(args) == "off":
         return "--panel off was given" if getattr(args, "panel", None) else "--no-panel was given"
     if not _a_terminal_we_can_draw_in(stream):
-        return "output is not an interactive terminal, so the plain log is used"
+        # TWO REASONS, NOT ONE SENTENCE FOR BOTH. This said "output is not an interactive
+        # terminal" whatever the cause, including a terminal that is perfectly interactive and
+        # merely narrower than the panel can be drawn in. Somebody reading that goes looking at
+        # their pipes and their CI variables for a problem that is the width of their window,
+        # which is the shape of message this project keeps removing: confident, and about the
+        # wrong thing.
+        return _cannot_draw_because(stream)
     try:
         import rich  # noqa: F401
     except ImportError:
@@ -597,19 +660,44 @@ class _RichPanel:
         done = f"{self._trials}" + (f" / {self._total}" if self._total else "")
         return f"trial {done} {self._spinner()}"
 
-    def _stat_grid(self):
+    def _narrow(self):
+        """Whether this render is under the design's first breakpoint: one column, no chart."""
+        return self._console.width < ONE_COLUMN_BELOW
+
+    def _grid(self):
+        """An empty stat grid, two label/value pairs wide or one, depending on the terminal.
+
+        LEFT-ALIGNED LABELS, as drawn. Right-aligning them lines up their last letters, which
+        makes a ragged left edge down the one column a reader scans.
+        """
         from rich.table import Table
 
-        a = getattr(self._args, "__dict__", {})
-        used, total, temp, power = card_telemetry(a.get("device", "cpu"))
-
-        # LEFT-ALIGNED LABELS, as drawn. Right-aligning them lines up their last letters, which
-        # makes a ragged left edge down the one column a reader scans.
         grid = Table.grid(padding=(0, 2))
         grid.add_column(justify="left", style="dim", min_width=8)
         grid.add_column()
-        grid.add_column(justify="left", style="dim", min_width=6)
-        grid.add_column()
+        if not self._narrow():
+            grid.add_column(justify="left", style="dim", min_width=6)
+            grid.add_column()
+        return grid
+
+    @staticmethod
+    def _cell(value):
+        """A value that came from the user, as text rather than as markup.
+
+        A grid cell is parsed for rich markup, so a model path or a track directory with square
+        brackets in it has the bracketed part SILENTLY EATEN: `runs/[v2]/model` renders as
+        `runs//model`, and the panel then shows a path that is not the one the run is using. On a
+        screen whose whole job is to say what is being measured, that is the worst available way
+        to be wrong. Every cell whose text came from outside this file goes through here.
+        """
+        from rich.text import Text
+
+        return Text(str(value))
+
+    def _stat_grid(self):
+        a = getattr(self._args, "__dict__", {})
+        used, total, temp, power, blocked = card_telemetry(a.get("device", "cpu"))
+        grid = self._grid()
 
         if total:
             vram = f"{bar(used, total)}  {used / 1e9:.1f} / {total / 1e9:.1f} GB"
@@ -617,39 +705,68 @@ class _RichPanel:
             # NOT A ZERO. There is no card, or it could not be read, and a bar reading 0.0 GB
             # would be a measurement of something that was never measured.
             vram = "not a cuda device"
-        grid.add_row("model", self._short(a.get("model")), "VRAM", vram)
 
-        # Temperature and power are blank when `pynvml` is absent. Q-42 D3: a blank is honest.
+        # Temperature and power are blank when `pynvml` will not import, and a blank is honest.
         # TEMP AND POWER ARE THEIR OWN LABELLED FIGURES, as drawn. Merging them under one heading
         # saved a word and lost which number was which. The label only appears when there is a
         # reading behind it: without `pynvml` both are always absent, and a permanently blank band
         # under a heading reads as a measurement that failed rather than one never available.
         heat = f"{temp} °C" if temp is not None else ""
         watts = f"{power} W" if power is not None else ""
-        if heat or watts:
-            grid.add_row("prompts", str(a.get("track", "?")), "temp", f"{heat}        power   {watts}")
-        else:
-            grid.add_row("prompts", str(a.get("track", "?")), "", "")
         # "16, reduced from 24" when the governor cut it, because a batch that is not the one asked
         # for changes what every timing on this screen means.
         batch = str(a.get("gen_batch", "?"))
         asked = a.get("gen_batch_requested")
         if asked and str(asked) != batch:
             batch = f"{batch}, reduced from {asked}"
-        grid.add_row("device", str(a.get("device", "?")), "batch", batch)
-        grid.add_row("trials", str(self._total or "?"), "seed", str(a.get("seed", "?")))
+
+        if self._narrow():
+            # STACKED, IN THE SAME READING ORDER. A narrow terminal loses the second column, not
+            # the figures that were in it, so every cell above reappears on a row of its own.
+            grid.add_row("model", self._cell(self._short(a.get("model"))))
+            grid.add_row("VRAM", vram)
+            grid.add_row("prompts", self._cell(a.get("track", "?")))
+            if heat:
+                grid.add_row("temp", heat)
+            if watts:
+                grid.add_row("power", watts)
+            grid.add_row("device", self._cell(a.get("device", "?")))
+            grid.add_row("batch", batch)
+            # THE HEADLINE COMES INSIDE THE BOX HERE. `_title` drops the trial count when the top
+            # border cannot hold the model name and the count without them colliding, which on a
+            # narrow terminal is always, so the count and the spinner would be lost entirely: the
+            # one place a reader looks to ask whether the run is alive. A narrow terminal drops the
+            # chart, not a number.
+            grid.add_row("trial", f"{self._trials} / {self._total or '?'} {self._spinner()}")
+            grid.add_row("seed", str(a.get("seed", "?")))
+        else:
+            grid.add_row("model", self._cell(self._short(a.get("model"))), "VRAM", vram)
+            if heat or watts:
+                grid.add_row("prompts", self._cell(a.get("track", "?")), "temp",
+                             f"{heat}        power   {watts}")
+            else:
+                grid.add_row("prompts", self._cell(a.get("track", "?")), "", "")
+            grid.add_row("device", self._cell(a.get("device", "?")), "batch", batch)
+            grid.add_row("trials", str(self._total or "?"), "seed", str(a.get("seed", "?")))
+
+        # THE GAP SAYS WHY IT IS A GAP, and only where a card was asked for. On a CPU run the VRAM
+        # cell already reads "not a cuda device" and a second line about missing bindings would be
+        # noise; on a CUDA run two permanently empty cells with no explanation is the state that had
+        # somebody assuming the card was unreadable rather than the bindings missing.
+        if blocked and str(a.get("device", "")).startswith("cuda"):
+            # AS `Text`, NOT AS A STRING: a grid cell given a `str` is parsed as rich markup, and
+            # this cell carries a sentence rather than a figure, so anything bracketed in it would
+            # be read as a style tag and eaten. It also wants to sit dimmer than the numbers.
+            from rich.text import Text
+            note = Text(blocked, style="dim")
+            if self._narrow():
+                grid.add_row("", note)
+            else:
+                grid.add_row("", note, "", "")
         return grid
 
     def _outcome_grid(self):
-        from rich.table import Table
-
-        # LEFT-ALIGNED LABELS, as drawn. Right-aligning them lines up their last letters, which
-        # makes a ragged left edge down the one column a reader scans.
-        grid = Table.grid(padding=(0, 2))
-        grid.add_column(justify="left", style="dim", min_width=8)
-        grid.add_column()
-        grid.add_column(justify="left", style="dim", min_width=6)
-        grid.add_column()
+        grid = self._grid()
 
         started = f"{self._baseline * 100:.1f}% refusal" if self._baseline is not None else "?"
         if self._best is not None:
@@ -660,7 +777,6 @@ class _RichPanel:
             best = self._headline_outcome(self._best)
         else:
             best = f"{self._spinner()} waiting for the first trial"
-        grid.add_row("started at", started, "best so far", best)
 
         # HEDGED, AS DRAWN. `remaining` is elapsed over trials done, times trials left, on a search
         # whose trials genuinely differ in cost: a K=3 trial at a wide weight range is not the same
@@ -668,8 +784,15 @@ class _RichPanel:
         # This project withdraws numbers for that, and a dashboard whose job is saying what was
         # measured is the last place to start guessing to the second.
         left = self._remaining()
-        grid.add_row("elapsed", _duration(self._elapsed()),
-                     "remaining", _about(left) if left is not None else "not yet")
+        remaining = _about(left) if left is not None else "not yet"
+        if self._narrow():
+            for label, value in (("started at", started), ("best so far", best),
+                                 ("elapsed", _duration(self._elapsed())),
+                                 ("remaining", remaining)):
+                grid.add_row(label, value)
+        else:
+            grid.add_row("started at", started, "best so far", best)
+            grid.add_row("elapsed", _duration(self._elapsed()), "remaining", remaining)
         return grid
 
     # ── the two containers ──────────────────────────────────────────────────────
@@ -690,29 +813,65 @@ class _RichPanel:
         from rich.rule import Rule
         from rich.text import Text
 
-        parts = [Text(""), self._stat_grid(), Text("")]
-        rows = frontier([(x, y) for x, y in self._points],
-                        best=self._best_point(), best_label=self._best_mark(),
-                        width=max(24, self._console.width - 8))
-        if rows:
-            parts.append(Rule(style=BRAND_PURPLE))
-            parts += [Text(""),
-                      Text("  FRONTIER            refusals ↓                    drift ↓",
-                           style="dim"),
-                      Text("")]
-            parts += [Text("  " + r, style=BRAND_DEEP_PINK) for r in rows]
-            parts.append(Text(""))
-        parts.append(Rule(style=BRAND_PURPLE))
-        parts += [Text(""), self._outcome_grid()]
-        parts.extend(Text("  " + note, style="dim") for note in self._notes)
-        parts.append(Text(""))
-        parts.append(Text("  --panel inline for a smaller one, --panel off for none", style="dim"))
+        head = [Text(""), self._stat_grid(), Text("")]
+        tail = [Rule(style=BRAND_PURPLE), Text(""), self._outcome_grid()]
+        tail.extend(Text("  " + note, style="dim") for note in self._notes)
+        tail.append(Text(""))
+        # The short spelling where the long one would wrap onto a second row and read as a
+        # half-finished sentence rather than as a hint.
+        tail.append(Text("  --panel off turns this off" if self._narrow() else
+                         "  --panel inline for a smaller one, --panel off for none", style="dim"))
+
+        chart = self._chart()
+        # SHORT TERMINALS DROP THE CHART BEFORE THEY DROP A NUMBER, which is the design's rule and
+        # was the exact opposite of what happened. The Panel is drawn to the terminal height, so
+        # anything that does not fit is cropped from the BOTTOM, and the bottom is where the two
+        # figures the run is judged on live: on a short window the plot survived and "best so far"
+        # did not. Shedding the chart is what buys the numbers their rows back.
+        if chart and self._rows_needed(head + chart + tail) > self._console.height - 2:
+            chart = []
+
         # FILLS THE TERMINAL. Scene 8 says the run takes the whole screen, and the alternate buffer
         # is already in use, so a box that stops after its content leaves the rest blank and reads
         # as a fragment rather than as the run.
-        return Panel(Group(*parts), title=self._title(), title_align="left",
+        return Panel(Group(*head, *chart, *tail), title=self._title(), title_align="left",
                      border_style=BRAND_PINK, padding=(0, 1),
                      height=self._console.height)
+
+    def _chart(self):
+        """The frontier block, or nothing when there is no room across or nothing to plot.
+
+        Dropped outright under the first breakpoint (`ONE_COLUMN_BELOW`): a plot given twenty
+        columns is a smudge with a scale beside it, and the rows it costs are rows the numbers want.
+        """
+        from rich.rule import Rule
+        from rich.text import Text
+
+        if self._narrow():
+            return []
+        rows = frontier([(x, y) for x, y in self._points],
+                        best=self._best_point(), best_label=self._best_mark(),
+                        width=max(24, self._console.width - 8))
+        if not rows:
+            return []
+        block = [Rule(style=BRAND_PURPLE), Text(""),
+                 Text("  FRONTIER            refusals ↓                    drift ↓", style="dim"),
+                 Text("")]
+        block += [Text("  " + r, style=BRAND_DEEP_PINK) for r in rows]
+        block.append(Text(""))
+        return block
+
+    def _rows_needed(self, parts):
+        """How many terminal rows `parts` would occupy inside the frame, measured not counted.
+
+        Counted by hand this drifts the moment a grid wraps, which is precisely the narrow terminal
+        the shedding rule is for, so it asks rich the same question rich will answer when it draws.
+        Four columns go to the two borders and the panel's horizontal padding.
+        """
+        from rich.console import Group
+
+        options = self._console.options.update(width=max(1, self._console.width - 4))
+        return len(self._console.render_lines(Group(*parts), options, pad=False))
 
     def _title(self):
         """Both ends of the top border, joined by the border itself.

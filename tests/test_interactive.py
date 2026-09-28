@@ -30,6 +30,26 @@ def _answers(*values):
     return lambda _prompt: next(seq)
 
 
+def _row_number(side, key):
+    """Where a corpus sits on its side's menu, 1 based. See the note in the track test."""
+    return next(i for i, e in enumerate(it.by_side(side), 1) if e["key"] == key)
+
+
+#: A MACHINE WITH NOTHING ON IT, and every walk below runs on one.
+#:
+#: Two screens in this walk read the machine rather than the answers: the model question offers
+#: what is already in the Hub cache, and the pre-flight board runs the real checks. Left alone,
+#: both make these tests depend on whatever is cached and writable on the box running them, which
+#: is how `test_occupied_output.py` once passed on a build box holding a stray `abliterated/` and
+#: would have failed on a clean runner. The screens themselves are covered by
+#: `test_the_menus_describe_this_install.py` and `test_the_walk_checks_before_it_asks.py`, where
+#: the machine is made explicitly rather than inherited.
+@pytest.fixture(autouse=True)
+def _a_machine_with_nothing_on_it(monkeypatch):
+    monkeypatch.setattr(it, "models_on_this_machine", lambda root=".": [])
+    monkeypatch.setattr(it, "_checked_rows", lambda plan: [])
+
+
 # ── quoting ──────────────────────────────────────────────────────────────────────
 #
 # BOTH SHELLS ARE TESTED ON EVERY MACHINE. The printed command exists to be pasted and run, so
@@ -232,9 +252,15 @@ def test_every_corpus_is_offered_for_the_side_it_actually_holds():
     """
     assert {e["side"] for e in it.KNOWN_DATASETS} <= {"track", "harmful", "harmless"}
     by_key = {e["key"]: e["side"] for e in it.KNOWN_DATASETS}
-    assert by_key["advbench"] == "harmful"
+    assert by_key["harmful-behaviors"] == "harmful"
     assert by_key["harmless-alpaca"] == "harmless"
     assert by_key["default"] == "track"
+    # AND THE SAME PROPERTY OVER THE BUNDLED ROWS, which are generated rather than typed and so
+    # could not be checked in the table above. A corpus offered on the wrong side prints a command
+    # that dies in the pre-flight, whichever list it came from.
+    for side in ("harmful", "harmless"):
+        for row in it.by_side(side):
+            assert row["side"] == side, row
 
 
 def test_a_side_menu_shows_the_licence_before_the_choice_is_made():
@@ -245,32 +271,38 @@ def test_a_side_menu_shows_the_licence_before_the_choice_is_made():
 
 
 def test_picking_a_known_corpus_returns_its_spec():
-    spec, licence = it.pick_side("harmful", "which?", ask_fn=_answers("2"),
-                                 log=lambda *a: None)
-    assert spec == "walledai/AdvBench::train"
-    assert licence == "MIT"
-
-
-def test_a_gated_corpus_is_not_the_default_and_says_it_is_gated():
-    """AdvBench was the first harmful choice, so it was what pressing Enter picked, and it is
-    gated: a newcomer with no Hugging Face account met an authentication error from a menu that
-    had just called it the field's common yardstick.
-    """
+    """The row's own spec, whatever position it sits in. Indices move when the menu grows."""
     harmful = it.by_side("harmful")
-    assert harmful[0]["key"] != "advbench"
-    advbench = next(e for e in harmful if e["key"] == "advbench")
-    assert "GATED" in advbench["note"]
-    # `hf auth login`, NOT `huggingface-cli login`, since 2026-09-27. The newer client replaced the
-    # old command, and this menu was the last place in the tool still handing a reader the old
-    # spelling: `hubmessage` strips that exact line out of UPSTREAM's advice for being stale, so the
-    # tool was treating one sentence as wrong from somebody else and right from itself.
-    #
-    # Asserted in both directions. What matters is that the reader is told how to authenticate, and
-    # that they are not told to run a command that no longer exists.
-    assert "hf auth login" in advbench["note"]
-    assert "huggingface-cli login" not in advbench["note"], (
-        "the superseded login command is back in the menu; see SUPERSEDED_COMMANDS in "
-        "test_output_never_names_a_file_the_wheel_lacks.py")
+    where = next(i for i, e in enumerate(harmful, 1) if e["key"] == "harmful-behaviors")
+    spec, licence = it.pick_side("harmful", "which?", ask_fn=_answers(str(where)),
+                                 log=lambda *a: None)
+    assert spec == "mlabonne/harmful_behaviors::train"
+    assert licence == "undeclared upstream"
+
+
+def test_the_default_harmful_choice_needs_no_account_at_all():
+    """REPLACES A TEST THAT PROTECTED THE WRONG THING, 2026-09-28.
+
+    It used to hold down that AdvBench is not the default BECAUSE IT IS GATED, and that its note
+    tells the reader to run `hf auth login`. Both statements were about a Hub download this
+    package does not need: AdvBench's 520 prompts are inside the wheel, and `--harmful advbench`
+    reads them off the disk with the network unplugged. The old menu sent a newcomer to
+    authenticate against a service for a file they had already installed.
+
+    What is worth protecting is the property underneath: the row pressing Enter picks must work on
+    a machine with no account and no network.
+    """
+    from senbonzakura import corpora
+
+    first = it.by_side("harmful")[0]
+    assert first["spec"] in corpora.CORPORA, (
+        f"the default harmful choice is {first['spec']!r}, which is fetched. Taking the default "
+        f"is what a newcomer does, and it must not be the one answer that needs an account.")
+    for side in ("harmful", "harmless"):
+        for row in it.by_side(side):
+            assert "huggingface-cli login" not in row["note"], (
+                "the superseded login command is back in the menu; see SUPERSEDED_COMMANDS in "
+                "test_output_never_names_a_file_the_wheel_lacks.py")
 
 
 def test_picking_your_own_asks_for_the_path():
@@ -283,8 +315,13 @@ def test_picking_your_own_asks_for_the_path():
 
 
 def test_two_hub_corpora_become_a_track_build_step_rather_than_a_broken_track_flag():
+    # LOCATED, NOT COUNTED. These were literal menu positions until the bundled corpora were
+    # added above them, at which point "1" meant a different corpus and the test read as a
+    # regression in the code rather than a move in the menu.
+    harmful_at = _row_number("harmful", "harmful-behaviors")
+    harmless_at = _row_number("harmless", "harmless-alpaca")
     spec, licence, build = it.pick_track(
-        ask_fn=_answers("2", "1", "1", "mytrack"), log=lambda *a: None)
+        ask_fn=_answers("2", str(harmful_at), str(harmless_at), "mytrack"), log=lambda *a: None)
     assert spec == "mytrack"
     assert build == {"command": "track",
                      "options": {"--harmful": "mlabonne/harmful_behaviors::train",
@@ -324,8 +361,14 @@ def test_scoring_asks_for_one_prompt_set_rather_than_a_three_way_split():
     """
     spec, _licence = it.pick_eval(ask_fn=_answers("1"), log=lambda *a: None)
     assert spec == "default/bad_eval_ds"
-    spec, _licence = it.pick_eval(ask_fn=_answers("2"), log=lambda *a: None)
+    # `pick_eval` puts the held-out partition first and then the side menu, so every row below it
+    # is one further down than `by_side` has it.
+    spec, _licence = it.pick_eval(
+        ask_fn=_answers(str(_row_number("harmful", "harmful-behaviors") + 1)), log=lambda *a: None)
     assert spec == "mlabonne/harmful_behaviors::train"
+    spec, _licence = it.pick_eval(
+        ask_fn=_answers(str(_row_number("harmful", "advbench") + 1)), log=lambda *a: None)
+    assert spec == "advbench", "a bundled corpus is passed by name, not as a Hub id"
 
 
 # ── the plan ─────────────────────────────────────────────────────────────────────
@@ -399,7 +442,9 @@ def test_accepting_calls_the_cli_with_the_displayed_flags(monkeypatch):
     from senbonzakura import cli
     monkeypatch.setattr(cli, "main", fake_main)
     said = []
-    code = it.run(ask_fn=_answers("1", "MODEL", "3", "mytrack", "2", "OUT", "7", "y"),
+    # The last answer is the finished screen's "What next?", which a successful run now reaches.
+    # Empty, because its highlighted default is "Nothing, I am done": see `interactive.finished`.
+    code = it.run(ask_fn=_answers("1", "MODEL", "3", "mytrack", "2", "OUT", "7", "y", ""),
                   log=said.append, stdin=_Tty())
     assert code == 0
     argv = seen["argv"]
@@ -607,6 +652,10 @@ class Block:
         return None
 sys.meta_path.insert(0, Block())
 from senbonzakura import interactive as it
+# A machine with nothing on it, for the reason the autouse fixture at the top of this file
+# gives: otherwise this subprocess asks a different question depending on what happens to be
+# in the Hub cache of whatever box is running the suite.
+it.models_on_this_machine = lambda root=".": []
 answers = iter(["1", "M", "1", "2", "OUT", "5"])
 plan = it.plan_abliteration(ask_fn=lambda _p: next(answers), log=lambda *a: None)
 print(plan["options"]["--out"])
@@ -1011,7 +1060,9 @@ def test_the_track_menu_offers_the_way_out_its_note_names(monkeypatch):
 def test_the_scoring_menu_offers_the_same_way_out(monkeypatch):
     monkeypatch.setattr(it.bundled, "is_available", lambda: False)
     monkeypatch.setattr(it.bundled, "running_from_a_checkout", lambda: True)
-    spec, _licence = it.pick_eval(ask_fn=_answers("1", "", "2"), log=lambda *a: None)
+    spec, _licence = it.pick_eval(
+        ask_fn=_answers("1", "", str(_row_number("harmful", "harmful-behaviors") + 1)),
+        log=lambda *a: None)
     assert spec == "mlabonne/harmful_behaviors::train"
 
 

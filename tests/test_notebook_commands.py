@@ -305,7 +305,7 @@ def test_every_import_in_the_notebook_is_one_the_install_carries():
     is in the `[hub]` extra. Whether it worked depended on whether the image Google lent the reader
     happened to carry it, which is not a property this notebook should have.
     """
-    import tomllib
+    from tomlread import tomllib
 
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     base = {r.split(">")[0].split("[")[0].split("=")[0].strip().replace("-", "_").lower()
@@ -335,7 +335,7 @@ def test_every_import_in_the_notebook_is_one_the_install_carries():
 
 def test_the_import_check_knows_of_at_least_one_module_an_extra_provides():
     """Otherwise the sweep above passes on an empty set, which is how a guard reports clean."""
-    import tomllib
+    from tomlread import tomllib
 
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     base = {r.split(">")[0].split("[")[0].split("=")[0].strip().replace("-", "_").lower()

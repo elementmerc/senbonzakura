@@ -146,3 +146,66 @@ class TestTheArtefactIsAsserted:
             pytest.skip("nothing vendored here, so there is no artefact to check")
         for d in platforms:
             assert (d / "LICENSE").is_file(), f"{d} carries object code and no MIT notice"
+
+
+# ── what the notice may claim about somebody else's tree ──────────────────────────────────────────
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+NOTICES = ROOT_DIR / "THIRD-PARTY-NOTICES.md"
+VENDOR_SRC = ROOT_DIR / "src" / "senbonzakura" / "vendor" / "src"
+
+#: Phrases that assert authorship. In a section describing a third party's tree, each of these is a
+#: claim that we wrote some of it, which is the opposite of what a section 5(a) notice is for.
+#:
+#: IT CANNOT READ A NEGATION, deliberately. The first correction wrote "Neither the split nor any
+#: part of the arrangement is ours" and this fired on it, which is correct behaviour for a blunt
+#: rule and annoying for an author. The answer is to state the positive fact, which a licence notice
+#: should anyway: say whose the work is, rather than whose it is not. Do not teach this to parse
+#: "not", because then a sentence that says "this is not ours, well, mostly" would pass.
+CLAIMS_AUTHORSHIP = ("restructured by us", "the arrangement is ours", "rearranged by us",
+                     "split by us", "reorganised by us", "our arrangement")
+
+
+def test_the_notice_does_not_claim_authorship_of_the_vendored_tree():
+    """WHAT PROMPTED IT, 2026-09-28.
+
+    The notice said `vendor/src/conversion/` was "restructured by us ... The behaviour is upstream's;
+    the arrangement is ours". Upstream did the split: the pin's own keep list names `conversion/` as
+    a directory to fetch, and the same pin's reasoning says `convert_hf_to_gguf.py` is "a 312-line
+    entry point that does `from conversion import ...`" at both tags this notice has been live for.
+
+    Claiming authorship of somebody else's 94 module layout, in the file this project calls legally
+    load bearing, is a worse error than omitting a credit: it tells a downstream reader that part of
+    an MIT tree is ours to license. It is the third false statement found in this file by reading the
+    tree against it, which is why this is a guard and not just a correction.
+    """
+    text = NOTICES.read_text(encoding="utf-8")
+    found = [phrase for phrase in CLAIMS_AUTHORSHIP if phrase in text.lower()]
+    assert not found, (
+        f"THIRD-PARTY-NOTICES.md claims authorship of vendored code: {found}. The vendored tree is "
+        f"fetched unmodified at a pinned tag; nothing in this repository produces any of it.")
+
+
+def test_we_have_not_written_ourselves_into_the_vendored_tree():
+    """"Fetched unmodified" is checkable offline in one direction: our own marks must not be in it.
+
+    A full byte comparison needs the archive and the network, so it belongs to the release path. This
+    is the half that can run on every commit, and it is the half that would catch somebody "fixing"
+    a vendored module in place and leaving the notice describing an unmodified tree.
+    """
+    if not VENDOR_SRC.is_dir():
+        pytest.skip("vendor/src is fetched at build time and is not in this checkout")
+
+    files = [p for p in VENDOR_SRC.rglob("*.py") if p.is_file()]
+    assert len(files) > 50, (
+        f"only {len(files)} python files under {VENDOR_SRC}, so this test would pass on an empty "
+        f"tree, which is how a guard reports clean")
+
+    ours = []
+    for path in files:
+        head = path.read_text(encoding="utf-8", errors="replace")[:600]
+        if "AGPL" in head or "Daniel Iwugo" in head or "senbonzakura" in head.lower():
+            ours.append(path.relative_to(ROOT_DIR).as_posix())
+    assert not ours, (
+        "these vendored files carry this project's own marks, so either they were edited in place or "
+        f"a licence header was applied to third-party code: {ours}")

@@ -97,10 +97,12 @@ which together are by far the largest third-party component in the artefact:
   family and the `llama-quantize` and `llama-imatrix` executables, roughly
   35 MB.
 - `src/senbonzakura/vendor/src/gguf-py/gguf/` — llama.cpp's `gguf-py` package.
-- `src/senbonzakura/vendor/src/conversion/` — llama.cpp's
-  `convert_hf_to_gguf.py`, **restructured by us** from one file into per
-  architecture modules so that a broken architecture can be detected on import
-  rather than at use. The behaviour is upstream's; the arrangement is ours.
+- `src/senbonzakura/vendor/src/conversion/` — llama.cpp's own `conversion`
+  package, fetched unmodified at the pinned tag. Upstream split
+  `convert_hf_to_gguf.py` into per architecture modules; that file is now a
+  312 line entry point that imports from this package. **The split and the
+  layout are upstream's**, and this entry claimed they were ours until
+  2026-09-28. We add nothing to the tree and change nothing in it.
 
 - Project: https://github.com/ggml-org/llama.cpp
 - Copyright (c) 2023-2026 The ggml authors

@@ -751,14 +751,15 @@ def _run(loaded, tmp_path, tag, extra=()):
     out = str(tmp_path / f"{tag}.json")
     return margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", out,
                         "--n", "3", "--skip-harmful", "0", "--skip-harmless", "0",
-                        "--bootstrap", "60", "--device", "cpu", "--label", tag, *extra])
+                        "--bootstrap", str(margin.MIN_RESAMPLES), "--device", "cpu", "--label", tag,
+                        *extra])
 
 
 def test_the_result_carries_an_interval_and_its_seed(loaded, tmp_path, capsys):
     res = _run(loaded, tmp_path, "before")
     lo, hi = res["auc_ci"]
     assert lo <= res["auc"] <= hi
-    assert res["bootstrap_resamples"] == 60
+    assert res["bootstrap_resamples"] == margin.MIN_RESAMPLES
     assert res["seed"] == 42
     assert "ci=[" in capsys.readouterr().out
 
@@ -852,19 +853,34 @@ def test_compare_to_with_no_resampling_is_refused_rather_than_overridden(loaded,
 
 # ── arguments that would silently score the wrong rows ─────────────────────────────
 @pytest.mark.parametrize(("extra", "expected"), [
-    (["--n", "0"], "scores no prompts"),
-    (["--n", "-3"], "scores no prompts"),
-    (["--skip-harmful", "-1"], "is negative"),
-    (["--skip-harmless", "-1"], "is negative"),
+    (["--n", "0"], "cannot be below 1"),
+    (["--n", "-3"], "cannot be below 1"),
+    (["--skip-harmful", "-1"], "cannot be below 0"),
+    (["--skip-harmless", "-1"], "cannot be below 0"),
 ])
-def test_nonsense_slice_arguments_are_refused(loaded, tmp_path, extra, expected):
-    """A negative skip reads the TAIL of the set: real rows, from the wrong partition."""
+def test_nonsense_slice_arguments_are_refused(loaded, tmp_path, extra, expected, capsys):
+    """A negative skip reads the TAIL of the set: real rows, from the wrong partition.
+
+    REFUSED AT PARSE TIME SINCE 2026-09-28, which is the part this now pins. These were caught after
+    `load_model_and_tokenizer`, so `--skip-harmless 99999` against a 30B model downloaded and loaded
+    tens of gigabytes and then exited on a fault that was decidable from the command line and a
+    dataset header. `score` had already been moved ahead of its load; `compass` had not.
+
+    Exit status 2 is what proves it: that is argparse's own, so reaching it means the model was never
+    asked for. A refusal with the right words at the wrong moment still costs the download.
+    """
     bad, good = _track(tmp_path, n_harmful=4, n_harmless=4)
-    with pytest.raises(SystemExit, match=expected):
+    with pytest.raises(SystemExit) as e:
         margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
                      "--out", str(tmp_path / "never.json"), "--n", "3",
                      "--skip-harmful", "0", "--skip-harmless", "0",
                      "--bootstrap", "0", "--device", "cpu", *extra])
+    assert e.value.code == 2, (
+        f"refused with status {e.value.code}, not argparse's 2, so this happened after the parser "
+        f"and quite possibly after the model loaded")
+    said = capsys.readouterr().err
+    assert expected in said, f"the refusal does not say what was wrong: {said!r}"
+    assert extra[0] in said, f"the refusal does not name the flag: {said!r}"
 
 
 # ── the dataset boundary ───────────────────────────────────────────────────────────
@@ -989,7 +1005,7 @@ def test_everything_recorded_survives_the_round_trip_to_disk(loaded, tmp_path):
     out = tmp_path / "r.json"
     res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good, "--out", str(out),
                        "--n", "2", "--skip-harmful", "0", "--skip-harmless", "0",
-                       "--bootstrap", "20", "--device", "cpu"])
+                       "--bootstrap", str(margin.MIN_RESAMPLES), "--device", "cpu"])
     on_disk = json.loads(out.read_text(encoding="utf-8"))
     assert on_disk["verdict_tokens"] == res["verdict_tokens"]
     assert on_disk["provenance"]["packages"] == res["provenance"]["packages"]

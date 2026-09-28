@@ -212,7 +212,7 @@ def check_count(corpus, prompts):
 _notified = set()
 
 
-def notice(key, log=print):
+def notice(key, log=print, columns=None):
     """Print the attribution for a bundled corpus, once per process.
 
     THE OBLIGATION THAT WAS GENERATED AND NEVER DELIVERED. `notices()` below says in its own
@@ -255,12 +255,28 @@ def notice(key, log=print):
         # counting it is that this sentence is printed once rather than once per corpus.
         for line in say.lines("Bundled corpora. Citations and terms: THIRD-PARTY-CORPORA.md, "
                               "beside this install. Attribution travels with any figure you "
-                              "publish."):
+                              "publish.", columns=columns):
             log(line)
-    for line in say.lines(f"Bundled corpus: {c.name} ({c.licence}). {c.attribution}",
-                          indent="  ", first=""):
+    # ONE BLOCK PER CORPUS, SEPARATED BY A BLANK LINE. Operator direction,
+    # 2026-09-28, against a real `doctor` screen where six corpora filled twenty-odd lines of
+    # unbroken prose before the first check appeared, and the reader had to parse sentences to
+    # answer "which corpora do I have". Name, licence and pinned upstream are what a person scans
+    # for, so they are one line and they line up down the column.
+    #
+    # THE CITATION IS NOT DROPPED, and the shorter draft that dropped it would have been a licence
+    # change dressed as a layout change. `test_every_corpus_still_carries_its_own_licence_and_
+    # upstream` asserts the attribution reaches the reader, and it is right to: the licences ask
+    # for the notice to travel with the work. So it moves DOWN a level rather than away, which is
+    # a decision about emphasis and not about obligation.
+    log("")
+    for line in say.lines(f"{c.name}  ({c.licence})", indent="    ", first="  ", columns=columns):
         log(line)
+    # THE UPSTREAM AND ITS PIN GET A LINE TO THEMSELVES so they cannot wrap. Sharing a line with
+    # the name broke `centerforaisafety/HarmBench @ c0423b952435` across two lines on an ordinary
+    # terminal, splitting the commit from the `@`, which is the one thing here somebody copies.
     log(f"    {c.upstream} @ {c.commit}")
+    for line in say.lines(c.attribution, indent="    ", first="    ", columns=columns):
+        log(line)
     # THE SHARED SENTENCE, ONCE PER PROCESS RATHER THAN ONCE PER CORPUS.
     #
     # The per-corpus lines above are the obligation and are per corpus because they differ. The two

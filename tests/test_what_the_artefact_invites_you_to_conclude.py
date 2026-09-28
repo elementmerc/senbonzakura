@@ -128,20 +128,34 @@ class TestEveryCorpusCarriesItsOwnAttribution:
         yield
         corpora._reset_notice_for_tests()
 
-    # THE PREFIX CHANGED, NOT THE PROPERTY. The banner was three lines per corpus and read
-    # "Using the bundled corpus X (LICENCE)."; on 2026-09-27 it became one line reading
-    # "Bundled corpus: X (LICENCE)." after an output review found `doctor` opening with
-    # twenty-two lines of it. What these tests assert is unchanged: one notice per corpus, once
-    # per corpus, so every corpus a run touches is attributed somewhere the user can see.
+    # COUNTED ON THE CORPUS, NOT ON A PREFIX, and the third rewrite is why.
+    #
+    # These tests used to count lines starting with a literal. That literal has now changed twice:
+    # "Using the bundled corpus X (LICENCE)." became "Bundled corpus: X (LICENCE)." on 2026-09-27
+    # when an output review found `doctor` opening with twenty-two lines of it, and on 2026-09-28
+    # the block became one indented line per corpus under a shared heading. Each time the property
+    # held perfectly and the test broke, which is a test measuring the wording of a thing rather
+    # than the thing.
+    #
+    # The obligation is that every corpus a run touches is attributed where the user can see it,
+    # exactly once. So that is what is counted: the corpus's own name and its own licence, in the
+    # output, once each. A layout change cannot break it and a dropped attribution cannot pass it.
+    @staticmethod
+    def _attributions(said, c):
+        """How many times this corpus's name and licence are stated together."""
+        return sum(1 for line in said if c.name in line and f"({c.licence})" in line)
+
     def test_a_second_corpus_is_not_silenced_by_the_first(self):
         keys = list(corpora.CORPORA)[:3]
         said = []
         for key in keys:
             corpora.notice(key, log=said.append)
-        headers = [s for s in said if s.startswith("Bundled corpus:")]
-        assert len(headers) == len(keys), (
-            f"{len(keys)} corpora were loaded and {len(headers)} attributions printed. The others "
-            f"were used with their attribution nowhere in what the user has.")
+        wrong = {k: self._attributions(said, corpora.CORPORA[k])
+                 for k in keys if self._attributions(said, corpora.CORPORA[k]) != 1}
+        assert not wrong, (
+            f"{len(keys)} corpora were loaded; these were attributed a number of times other "
+            f"than once: {wrong}. A corpus attributed zero times was used with its attribution "
+            f"nowhere the user can see it.")
 
     def test_the_same_corpus_twice_still_prints_once(self):
         """Once per corpus, not once per read. A search loads a corpus many times."""
@@ -149,16 +163,15 @@ class TestEveryCorpusCarriesItsOwnAttribution:
         said = []
         corpora.notice(key, log=said.append)
         corpora.notice(key, log=said.append)
-        assert len([s for s in said if s.startswith("Bundled corpus:")]) == 1
+        assert self._attributions(said, corpora.CORPORA[key]) == 1
 
     def test_every_bundled_corpus_can_state_its_own_terms(self):
         said = []
         for key in corpora.CORPORA:
             corpora.notice(key, log=said.append)
-        headers = [s for s in said if s.startswith("Bundled corpus:")]
-        assert len(headers) == len(corpora.CORPORA)
-        for header in headers:
-            assert "(" in header and ")" in header, f"no licence named in {header!r}"
+        for key, c in corpora.CORPORA.items():
+            assert self._attributions(said, c) == 1, (
+                f"{key} is not attributed exactly once in:\n" + "\n".join(said))
 
 
 class TestOurDefaultAdaptsAndYourNumberDoesNot:

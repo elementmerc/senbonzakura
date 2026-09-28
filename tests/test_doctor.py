@@ -639,3 +639,167 @@ def test_the_quantiser_remedy_does_not_name_a_command_that_cannot_supply_it(monk
     assert "fetch" not in got.fix, (
         "the remedy points at `senbonzakura fetch`, which downloads a model file and cannot supply "
         "a llama.cpp binary")
+
+
+# ── a skipped or failed deep check has to name what actually went wrong ──────────
+def test_a_broken_transformers_is_not_blamed_on_the_torch_line(monkeypatch):
+    """Both imports sat under one `except`, so this said "see the torch line above" and it passed.
+
+    A present-but-unloadable transformers beside a healthy torch is the ordinary shape of a
+    half-finished upgrade, and the reader was sent to a line reporting a pass.
+    """
+    import builtins
+    real = builtins.__import__
+
+    def no_transformers(name, *a, **k):
+        if name == "transformers":
+            raise ImportError("cannot import name 'Cache' from 'transformers'")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_transformers)
+    out = doctor.deep_check(log=lambda _m: None)
+    assert out and out[0].status == "warn"
+    assert "transformers" in out[0].detail
+    assert "install torch and transformers" not in out[0].fix
+    # The torch line may be mentioned, but only to rule it out.
+    assert "does not explain" in out[0].fix
+
+
+def test_a_torch_that_will_not_load_still_points_at_the_torch_line(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_torch(name, *a, **k):
+        if name == "torch":
+            raise OSError("DLL load failed")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_torch)
+    out = doctor.deep_check(log=lambda _m: None)
+    assert out and out[0].status == "warn"
+    assert "torch is unusable" in out[0].detail
+    assert "torch line above" in out[0].fix
+
+
+def test_a_deep_convert_that_raises_carries_the_converter_s_own_words(monkeypatch):
+    """The call discarded the converter's log and the failure line then pointed at it.
+
+    `log=lambda _m: None` threw every line away, and the fix read "see the message above" over an
+    empty screen. A SystemExit raised before the subprocess starts prints nothing anywhere.
+    """
+    from senbonzakura import convert
+
+    def talks_then_dies(_argv, log=print):
+        log("  no converter script was found in this install")
+        raise SystemExit("convert: refusing to start")
+
+    monkeypatch.setattr(convert, "run", talks_then_dies)
+    out = doctor.deep_check(log=lambda _m: None)
+    bad = [c for c in out if c.name == "deep convert"]
+    assert bad and bad[0].status == "fail"
+    assert "no converter script was found" in bad[0].fix
+    assert "see the message above" not in bad[0].fix
+
+
+def test_a_silent_deep_convert_failure_says_it_was_silent(monkeypatch):
+    from senbonzakura import convert
+    monkeypatch.setattr(convert, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(SystemExit(2)))
+    out = doctor.deep_check(log=lambda _m: None)
+    bad = [c for c in out if c.name == "deep convert"]
+    assert bad and bad[0].status == "fail"
+    assert "printed nothing" in bad[0].fix
+    assert "see the message above" not in bad[0].fix
+    # A status is not a sentence: "2" must not be offered as the reason.
+    assert "exit status 2" in bad[0].detail
+
+
+def test_a_failed_sub_command_is_quoted_on_one_line(monkeypatch):
+    """The report prints one line per check, so a captured newline would break the column."""
+    from senbonzakura import convert
+
+    def talks_then_dies(_argv, log=print):
+        log("first line\nsecond line")
+        raise SystemExit("done")
+
+    monkeypatch.setattr(convert, "run", talks_then_dies)
+    out = doctor.deep_check(log=lambda _m: None)
+    bad = [c for c in out if c.name == "deep convert"]
+    assert bad and "\n" not in bad[0].fix and "\n" not in bad[0].detail
+
+
+# ── the report is laid out so a reader can find the checks in it ─────────────────
+def test_the_checks_are_announced_by_a_heading_with_space_around_it():
+    """The bundled corpora print their licence notice while the checks are being collected, so
+    without this the first check landed directly under somebody else's prose.
+    """
+    lines = []
+    doctor.report([doctor._pass("a", "fine")], log=lines.append, header=False)
+    assert doctor.SECTION in lines
+    at = lines.index(doctor.SECTION)
+    assert lines[at - 1] == "", "nothing separates the heading from whatever printed before it"
+    assert lines[at + 1] == "", "the checks start immediately under the heading"
+
+
+def test_the_title_is_one_string_rather_than_two_copies():
+    """It was a literal in `report` and another in `main`, kept in step by hand."""
+    import inspect
+    source = inspect.getsource(doctor)
+    assert source.count('"senbonzakura doctor"') == 1, (
+        "the title is written out more than once, so the two can drift")
+    assert doctor.TITLE == "senbonzakura doctor"
+
+
+def test_main_does_not_print_a_title_of_its_own(monkeypatch, capsys):
+    """The entry point's banner already names the tool above this; a third copy is repetition."""
+    monkeypatch.setattr(doctor, "run_checks", lambda deep=False: [doctor._pass("a", "fine")])
+    doctor.main([])
+    out = capsys.readouterr().out
+    assert doctor.TITLE not in out
+    assert doctor.SECTION in out
+
+
+def test_a_blank_line_separates_the_groups_the_report_already_had():
+    checks = (doctor._in_group([doctor._pass("platform", "x")], "machine")
+              + doctor._in_group([doctor._pass("pin llama.cpp", "y")], "tools"))
+    lines = []
+    doctor.report(checks, log=lines.append, header=False)
+    first = next(i for i, ln in enumerate(lines) if "platform" in ln)
+    second = next(i for i, ln in enumerate(lines) if "pin llama.cpp" in ln)
+    assert lines[second - 1] == "", "the two groups run together"
+    assert first < second, "grouping must not reorder the checks"
+
+
+def test_an_ungrouped_report_gains_no_blank_lines():
+    """A hand-built list, which is what every other caller and every test passes, is unchanged."""
+    lines = []
+    doctor.report([doctor._pass("a", "1"), doctor._pass("b", "2"), doctor._pass("c", "3")],
+                  log=lines.append, header=False)
+    body = lines[lines.index(doctor.SECTION) + 2:]
+    assert body[:3] == [ln for ln in body[:3] if ln.strip()], f"blank lines appeared: {body[:3]}"
+
+
+def test_grouping_changes_no_check_and_drops_none():
+    """The layout work must not touch what is reported, only where the blank lines go."""
+    checks = doctor.run_checks(deep=False)
+    names = [c.name for c in checks]
+    assert names == sorted(set(names), key=names.index), "a check appears twice"
+    assert names[0] == "platform" and names[1] == "torch"
+    assert "pinned memory" in names and "bundled track" in names
+    assert all(c.group for c in checks), "a check reached the report ungrouped"
+
+
+def test_the_ascii_pass_mark_is_not_a_machine_marker(monkeypatch):
+    """`say.is_marker` reads a line whose first word is `OK` as a protocol line, and the ASCII
+    fallback put exactly that at the head of every passing check on a Windows console.
+    """
+    import io
+
+    from senbonzakura import say
+    monkeypatch.setattr(doctor.sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    marks = doctor._marks()
+    assert marks["pass"] != "OK"
+    assert not say.is_marker(f"  {marks['pass']}  platform   linux-x86_64")
+    # Still aligned and still distinguishable, which is the whole reason the fallback exists.
+    assert len({marks["pass"], marks["warn"], marks["fail"]}) == 3
+    assert len({len(m) for m in marks.values()}) == 1

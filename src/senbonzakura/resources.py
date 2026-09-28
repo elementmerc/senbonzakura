@@ -112,6 +112,24 @@ FORCED_PAUSE_DEADLINE_S = 30.0
 #: measurement noise.
 EXTERNAL_HOLD_FLOOR_BYTES = 64 * 1024 * 1024
 
+#: How long the STARVATION pause may run before control goes back to the caller. Not a tolerance and
+#: not a tuning knob: it is the answer to "what if the thing we are waiting for is us".
+#:
+#: `_external_used` subtracts `torch.cuda.memory_reserved`, which counts the caching allocator and
+#: nothing else, so this process's own CUDA context, its cuBLAS and cuDNN workspaces and any non
+#: torch allocation all read as somebody else holding the card. On a 6 GB card with a 5 GB model and
+#: nothing else running, that is enough to clear the floor above, so `_should_pause` stayed true and
+#: an unbounded wait waited for a process that does not exist to release memory that is ours. That is
+#: the 2026-09-25 wedge, in the code written to fix it, and the accounting fix below narrows it
+#: without being able to prove it gone on every driver.
+#:
+#: So the wait is bounded as well. Pushing on risks an out of memory, which this class already
+#: handles by halving the batch, and an out of memory that shrinks a batch is a far better outcome
+#: than a run that never returns. The foreground yield is deliberately NOT bounded by this: that
+#: patience is a good citizen behaviour the operator asked for, and its predicate is about somebody
+#: else's app rather than about our own residency.
+STARVATION_DEADLINE_S = 300.0
+
 #: How often a wait says it is still waiting.
 #:
 #: Every long wait in this class was announced once and then went quiet, which is the property that
@@ -249,6 +267,22 @@ class ResourceGovernor:
             return True
         if self._avail_frac() >= self.min_free_frac:
             return False
+        # THIS FIGURE IS KNOWN TO OVER-REPORT, and the deadline in `wait_for_headroom` is the answer
+        # rather than a correction here. `_external_used` subtracts `torch.cuda.memory_reserved`,
+        # which counts the caching allocator and nothing else, so our own CUDA context and workspaces
+        # are attributed to another process; on a 6 GB card with a 5 GB model that alone clears the
+        # floor below.
+        #
+        # SUBTRACTING A MEASURED BASELINE OF OUR OWN OVERHEAD WAS TRIED ON 2026-09-28 AND BACKED OUT.
+        # It has to be measured at some moment, and whatever is on the card at that moment is
+        # absorbed into it, so an app that was already running became invisible and the starvation
+        # pause stopped firing for it. `test_external_pressure_triggers_pause` is that scenario and it
+        # went green by losing the behaviour it names. Telling our context from their allocation needs
+        # per-process accounting, which is what this class deliberately avoids so it works in WSL2
+        # where the Windows-side app is invisible to nvidia-smi.
+        #
+        # So the over-report stands and the WAIT is bounded. An unbounded wait on a predicate that can
+        # be permanently true is the wedge, whatever the predicate is.
         return self._external_used() > EXTERNAL_HOLD_FLOOR_BYTES
 
     def _calibrate_once(self):
@@ -319,6 +353,18 @@ class ResourceGovernor:
                          f"Close whatever else is on the card, or pass --max-pause to push on")
             if self.max_pause_s is not None and waited >= self.max_pause_s:
                 self.log(f"  resuming after {fmt_duration(waited)} paused (max-pause reached)")
+                return waited
+            # THE STARVATION WAIT IS BOUNDED AND THE FOREGROUND YIELD IS NOT. Patience is the right
+            # answer to another app holding the card, and it cannot change our own residency, so a
+            # pause caused by mis-attributing our own memory would otherwise never end. Pushing on
+            # risks an out of memory, which halves the batch; a run that never returns has no
+            # recovery at all.
+            if not self._foreground_pressure() and waited >= STARVATION_DEADLINE_S:
+                self.log(
+                    f"  WARNING: {fmt_duration(waited)} paused waiting for VRAM that has not come "
+                    f"back, so pushing on. If the card is genuinely full this will show up as an "
+                    f"out of memory and the batch will shrink; if nothing else is on the card, the "
+                    f"memory being waited for is this run's own and the pause was the fault.")
                 return waited
         if announced:
             self.log(f"  resumed: ~{self._avail_frac() * (self._mem_fn()[1] if self._mem_fn() else 0) / 1e9:.1f} "

@@ -24,6 +24,7 @@ from senbonzakura.resources import (
     EXTERNAL_HOLD_FLOOR_BYTES,
     FORCED_PAUSE_DEADLINE_S,
     HEARTBEAT_S,
+    STARVATION_DEADLINE_S,
     ResourceGovernor,
 )
 
@@ -192,3 +193,118 @@ def test_run_reaches_its_refusal_on_a_card_it_filled_itself(monkeypatch):
     with pytest.raises(RuntimeError, match="cannot hold one prompt"):
         gov.run(always_oom, ["one item"])
     assert any("of 20" in m for m in logs)
+
+
+# ── the half the fixture above cannot see ─────────────────────────────────────────────────────────
+
+def _governor_that_under_reports_its_own(free_bytes, reported_own, *, polls_allowed=10_000, **kw):
+    """A card where `own_fn` reports LESS than we are actually using.
+
+    WHY THIS HELPER EXISTS ALONGSIDE `_governor`, 2026-09-28.
+
+    `_governor` derives `own` as `TOTAL - free - external`, so every byte not free belongs to us or
+    to a named external holder. That is the right shape for the scenarios it was written for and it
+    defines away the thing a reviewer found: the real `own_fn` is `torch.cuda.memory_reserved`, which
+    counts the caching allocator and nothing else, so the CUDA context, the cuBLAS and cuDNN
+    workspaces and any non torch allocation are all missing from it. `(total - free) - own` therefore
+    attributes this process's own context to somebody else.
+
+    On a 6 GB card with a 5 GB model and nothing else running, that was enough to clear
+    `EXTERNAL_HOLD_FLOOR_BYTES`, so `_should_pause` stayed true and an unbounded wait waited for a
+    process that does not exist to release memory that is ours.
+
+    `polls_allowed` makes a broken deadline FAIL rather than hang. This file already records a suite
+    that hung at the same test twice; a test for an unbounded wait must not be able to become one.
+    """
+    clock = {"t": 0.0, "polls": 0}
+
+    def sleep(seconds):
+        clock["polls"] += 1
+        if clock["polls"] > polls_allowed:
+            raise AssertionError(
+                f"the governor polled {clock['polls']} times without returning, which is the wedge "
+                f"this test exists to catch")
+        clock["t"] += seconds
+
+    logs = []
+    gov = ResourceGovernor(
+        "cuda:0", log=logs.append,
+        mem_fn=lambda: (free_bytes, TOTAL),
+        reclaim_fn=lambda: 0.0,
+        own_fn=lambda: reported_own,
+        empty_cache_fn=lambda: None,
+        sleep_fn=sleep,
+        clock=lambda: clock["t"],
+        **kw)
+    return gov, logs, clock
+
+
+def test_the_external_figure_over_reports_and_the_test_suite_says_so_out_loud():
+    """The mis-attribution is REAL and is not corrected here, which is worth pinning either way.
+
+    `own_fn` is `torch.cuda.memory_reserved`, which counts the caching allocator and nothing else, so
+    our own CUDA context and workspaces are attributed to another process. 0.2 GB free of 6 with the
+    allocator reporting 5.0 GB leaves 0.8 GB unaccounted, twelve times the floor, and every byte of
+    it is ours.
+
+    A measured baseline of our own overhead was tried on 2026-09-28 and backed out: it has to be
+    measured at some moment, and whatever sits on the card at that moment is absorbed, so an app that
+    was already running became invisible and `test_external_pressure_triggers_pause` went green by
+    losing the behaviour it is named after. Telling our context from their allocation needs
+    per-process accounting, which this class avoids on purpose so that it works in WSL2, where the
+    Windows-side app is invisible to nvidia-smi.
+
+    So this asserts the over-report rather than its absence, and the wedge is closed by bounding the
+    wait instead. If somebody makes the accounting exact, this test should fail and be deleted.
+    """
+    gov, _logs, _clock = _governor_that_under_reports_its_own(0.2e9, 5.0e9)
+    assert gov._external_used() > EXTERNAL_HOLD_FLOOR_BYTES, (
+        "the external figure no longer over-reports our own memory. If that is deliberate, the "
+        "deadline below may no longer be the only thing standing between a full card and a wedge, "
+        "and the comment in _should_pause needs rewriting.")
+    assert gov._should_pause() is True, (
+        "the starvation pause no longer fires on a card its own model fills, so either the "
+        "accounting was fixed or the pause was turned off; find out which")
+
+
+def test_a_starvation_wait_is_bounded_even_if_the_accounting_is_still_wrong():
+    """The belt to the accounting's braces, and the reason both are here.
+
+    The accounting fix narrows the mis-attribution; it cannot prove it gone on every driver and
+    every card. An unbounded wait whose predicate can be permanently true is a wedge whatever the
+    predicate is, so the starvation pause now has a deadline, and past it the run pushes on and says
+    why. Worst case is an out of memory, which halves the batch; a run that never returns has no
+    recovery at all.
+    """
+    # Nothing is ever released: free stays low and the reported own stays low, so with the overhead
+    # baseline never taken (no calibration) the predicate holds for ever.
+    gov, logs, clock = _governor_that_under_reports_its_own(0.2e9, 1.0e9)
+    assert gov._should_pause() is True, "the precondition failed: this governor would not pause"
+
+    waited = gov.wait_for_headroom()
+
+    assert waited >= STARVATION_DEADLINE_S, (
+        f"returned after {waited}s, before the deadline, so something else ended the wait")
+    assert waited < STARVATION_DEADLINE_S + 60, f"overshot the deadline by a long way: {waited}s"
+    printed = "\n".join(logs)
+    assert "WARNING" in printed and "pushing on" in printed, (
+        f"it gave up silently, so an operator cannot tell this from a normal resume: {printed!r}")
+    assert "own" in printed, (
+        "the message does not raise the possibility that the memory being waited for is this run's, "
+        "which is the one explanation an operator cannot reach on their own")
+
+
+def test_a_foreground_yield_is_still_patient():
+    """Bounding that one would break a behaviour the operator opted into.
+
+    Good-gaming-citizen mode exists to keep somebody's game smooth, and a game is not a wedge: the
+    predicate is about another process, and it becomes false when they close it. So the deadline
+    above is deliberately not applied here, and this pins that difference.
+    """
+    gov, logs, clock = _governor_that_under_reports_its_own(
+        0.2e9, 1.0e9, background_mode=True, polls_allowed=400)
+    assert gov._foreground_pressure() is True
+
+    with pytest.raises(AssertionError, match="without returning"):
+        gov.wait_for_headroom()
+    assert any("yielding" in line for line in logs)

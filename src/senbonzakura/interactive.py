@@ -1170,19 +1170,18 @@ def _checked_rows(plan):
     An empty list when `cli` will not import: the guided mode runs on a base install where torch
     may be absent, and a board that cannot be built is a reason to say so rather than to stop.
     """
-    from .parser import build_parser, split_mode
-
     try:
         from . import cli
     except Exception:       # a base install with no torch. `_board` says so rather than lying.
         return None
 
+    # `cli.parsed_for_preflight`, NOT `build_parser` here. The flag audit pairs each declaration
+    # with the modules that read it and treats whoever calls the parser as the declarer, so
+    # parsing in this file reported all 56 abliterate flags as declared by a module that reads
+    # none of them. The audit is right: the parse belongs where the flags are read.
     argv = _argv_for({"command": plan["command"], "options": plan["options"]})
     try:
-        _bankai, rest = split_mode(argv)
-        args = build_parser().parse_args(rest)
-        cli.resolve_model(args)
-        cli.resolve_track(args, log=lambda *_a, **_k: None)
+        args = cli.parsed_for_preflight(argv)
     except SystemExit as e:
         return [(FAIL, "the command", str(e))]
 

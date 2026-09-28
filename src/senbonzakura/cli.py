@@ -5903,6 +5903,27 @@ def resolve_model(args):
     return args.model
 
 
+def parsed_for_preflight(argv):
+    """An abliterate command line, parsed and resolved exactly as `run_parsed` receives it.
+
+    HERE RATHER THAN IN THE CALLER, and the flag audit is why. It pairs each flag declaration with
+    the modules that read it, and it treats the module calling `build_parser` as the one declaring
+    them, so the guided mode calling it directly reported this parser's entire surface, 56 flags,
+    as declared by a module that reads none of them. That check is right and the fix is to put the
+    parse where the flags are actually read.
+
+    The track is resolved silently because the caller is drawing a board rather than running: the
+    resolution's own advisory belongs to the run, which prints it seconds later.
+    """
+    from .parser import build_parser, split_mode
+
+    _bankai, rest = split_mode(list(argv))
+    args = build_parser().parse_args(rest)
+    resolve_model(args)
+    resolve_track(args, log=lambda *_a, **_k: None)
+    return args
+
+
 def refuse_without_a_track(args):
     """Stop a run that has no track, at the point where the cheaper checks have all had their say.
 

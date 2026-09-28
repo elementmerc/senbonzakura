@@ -469,10 +469,13 @@ def build_parser(full=False):
                         help='print a shell completion script and exit. Needs the '
                              'completion extra: pip install "senbonzakura[completion]"')
     ap.add_argument("--out", default="abliterated", help="directory to write the abliterated model to")
-    ap.add_argument("--dir-prompts", type=int, default=256, help="contrast prompts per side for direction extraction")
-    ap.add_argument("--eval-refusal", type=int, default=64, help="bad-eval prompts for the refusal score")
-    ap.add_argument("--eval-kl", type=int, default=64, help="harmless prompts for the KL score")
-    ap.add_argument("--trials", type=int, default=60,
+    ap.add_argument("--dir-prompts", type=argresolve.whole_number("--dir-prompts", minimum=1), default=256,
+                    help="contrast prompts per side for direction extraction")
+    ap.add_argument("--eval-refusal", type=argresolve.whole_number("--eval-refusal", minimum=1), default=64,
+                    help="bad-eval prompts for the refusal score")
+    ap.add_argument("--eval-kl", type=argresolve.whole_number("--eval-kl", minimum=1), default=64,
+                    help="harmless prompts for the KL score")
+    ap.add_argument("--trials", type=argresolve.whole_number("--trials", minimum=1), default=60,
                     help="how many search trials to run (default: 60). The search is NSGA-II over "
                          "refusal against quality, so more trials buy a better-explored frontier "
                          "rather than a better single answer; see --patience to stop early when "
@@ -487,7 +490,7 @@ def build_parser(full=False):
                     help="search layers up to this fraction of depth (default: 0.8). The window is "
                          "a fraction rather than a layer number so the same setting means the same "
                          "thing on models of different depths")
-    ap.add_argument("--gen-tokens", type=int, default=_DEFAULT_BUDGET,
+    ap.add_argument("--gen-tokens", type=argresolve.whole_number("--gen-tokens", minimum=1), default=_DEFAULT_BUDGET,
                     help=f"how many tokens each reply gets while the search scores it (default: "
                          f"{_DEFAULT_BUDGET}). THE SETTING MOST LIKELY TO MAKE A REFUSAL RATE READ "
                          f"LOW: a refusal the model never reaches is not counted, and the search "
@@ -498,7 +501,7 @@ def build_parser(full=False):
                     help=f"allow --gen-tokens below {_VISIBILITY_FLOOR}, which is otherwise "
                          f"refused. For a smoke test, not for a number you will quote: at that "
                          f"budget the result is about the budget and not about the model")
-    ap.add_argument("--gen-batch", type=int, default=16, dest="gen_batch",
+    ap.add_argument("--gen-batch", type=argresolve.whole_number("--gen-batch", minimum=1), default=16, dest="gen_batch",
                     help="max prompts per generation batch (the ceiling the adaptive VRAM throttle "
                          "ramps up to; it shrinks below this automatically when the card is busy).")
     ap.add_argument("--gpu-min-free-frac", type=float, default=0.06, dest="gpu_min_free_frac",
@@ -516,7 +519,8 @@ def build_parser(full=False):
                     help="good-gaming-citizen mode: run in the background and YIELD the GPU (pause "
                          "generation) whenever a foreground app (a game) is on the card, resuming when "
                          "it closes. Frees compute, not just VRAM, so the game stays smooth.")
-    ap.add_argument("--external-pressure-mb", type=int, default=500, dest="external_pressure_mb",
+    ap.add_argument("--external-pressure-mb", type=argresolve.whole_number("--external-pressure-mb", minimum=0),
+                    default=500, dest="external_pressure_mb",
                     help="in --background mode, how much VRAM a non-senbon process must hold to count "
                          "as a foreground app worth yielding to (default 500 MB).")
     ap.add_argument("--bench-only", action="store_true", help="load, extract, run 1 default-strength "
@@ -546,13 +550,14 @@ def build_parser(full=False):
     ap.add_argument("--inspect", nargs=2, type=float, default=None, metavar=("LAYER", "STRENGTH"),
                     help="print real harmful+harmless generations at (layer, strength), pre and post "
                          "ablation, then exit")
-    ap.add_argument("--inspect-n", type=int, default=8, help="prompts per side to print in --inspect")
-    ap.add_argument("--max-directions", type=int, default=3,
+    ap.add_argument("--inspect-n", type=argresolve.whole_number("--inspect-n", minimum=0), default=8,
+                    help="prompts per side to print in --inspect")
+    ap.add_argument("--max-directions", type=argresolve.whole_number("--max-directions", minimum=1), default=3,
                     help="CEILING on refusal directions per layer, not a count. Each trial draws "
                          "its own number between --min-directions and this, and records what it "
                          "chose as `num_directions`. Set both to the same number to pin it, which "
                          "is what turns a ceiling into an experiment")
-    ap.add_argument("--direction-clusters", type=int, default=8,
+    ap.add_argument("--direction-clusters", type=argresolve.whole_number("--direction-clusters", minimum=1), default=8,
                     help="how many refusal modes to look for per layer. Each cluster of harmful "
                          "prompts proposes one candidate direction, and the best separators are "
                          "kept up to --max-directions. Independent of that ceiling, so the "
@@ -583,7 +588,8 @@ def build_parser(full=False):
                          "works offline. Give a graded benchmark (a question column and an answer "
                          "column, e.g. openai/gsm8k:main::test) for your own, or an empty string "
                          "to turn the probe off. No other metric here can see reasoning loss.")
-    ap.add_argument("--capability-n", dest="capability_n", type=int, default=200,
+    ap.add_argument("--capability-n", dest="capability_n", type=argresolve.whole_number("--capability-n", minimum=0),
+                    default=200,
                     help="how many items the capability probe uses (default: 200, 0 = off). Before "
                          "and after are scored on the same items, so the comparison is paired. "
                          "Much below 200 the error bar covers the effect this edit is expected to "
@@ -594,7 +600,9 @@ def build_parser(full=False):
                     help="how the probe grades. One of: " + ", ".join(_capability_tasks())
                          + " (default: numeric). `senbonzakura capability --help` says what each "
                            "one measures.")
-    ap.add_argument("--capability-max-new", dest="capability_max_new", type=int, default=512,
+    ap.add_argument("--capability-max-new", dest="capability_max_new",
+                    type=argresolve.whole_number("--capability-max-new", minimum=1),
+                    default=512,
                     help="token budget per probe answer (default: 512). A worked solution is long, "
                          "and a budget that cuts it off measures the budget rather than the model. "
                          "A truncated answer is counted as ungradeable, never as wrong.")
@@ -612,7 +620,9 @@ def build_parser(full=False):
                          "defaults are sized for a GPU, where they are minutes; on a CPU with a "
                          "1.7B model they are about four hours, so the run stops and says so "
                          "rather than looking like a hung one all afternoon.")
-    ap.add_argument("--ablation-rounds", dest="ablation_rounds", type=int, default=0,
+    ap.add_argument("--ablation-rounds", dest="ablation_rounds",
+                    type=argresolve.whole_number("--ablation-rounds", minimum=0),
+                    default=0,
                     help="how many times to alternate restoring the row lengths and removing the "
                          "direction again (default: 0, a single pass). A single pass leaves 5%% to "
                          "46%% of the direction behind, because restoring the lengths undoes part "
@@ -688,7 +698,7 @@ def build_parser(full=False):
     # `--help` does not pay for it).
     from . import livedisplay as _livedisplay
     _livedisplay.add_argument(ap)
-    ap.add_argument("--seed", type=int, default=42,
+    ap.add_argument("--seed", type=argresolve.whole_number("--seed", minimum=0), default=42,
                     help="seed for the Optuna sampler (default 42). Vary it to measure run-to-run "
                          "spread: a single run tells you nothing about whether a gap between two "
                          "configurations is real. Note GPU kernels are not bit-deterministic, so a "
@@ -716,7 +726,9 @@ def build_parser(full=False):
     ap.add_argument("--clean-ds", default=None,
                     help="dir of CLEAN (disclaimer-free) compliance for the hedged contrast; "
                          "defaults to --good-ds / <track>/good_ds.")
-    ap.add_argument("--min-directions", dest="min_directions", type=int, default=1,
+    ap.add_argument("--min-directions", dest="min_directions",
+                    type=argresolve.whole_number("--min-directions", minimum=1),
+                    default=1,
                     help="the FEWEST directions a trial may use. --max-directions is only a "
                          "ceiling, so 'up to two' is not 'two': set both to the same number to pin "
                          "the budget, which is what turns a K comparison into an experiment rather "
@@ -727,16 +739,17 @@ def build_parser(full=False):
                          "biggest refusal reduction it can manage under this figure, and refuses "
                          "rather than returning a configuration that misses it. This is the flag "
                          "that puts this tool and Heretic at one operating point.")
-    ap.add_argument("--patience", type=int, default=0,
+    ap.add_argument("--patience", type=argresolve.whole_number("--patience", minimum=0), default=0,
                     help="stop the search early if no trial improves the best scalarised score for "
                          "this many consecutive trials (0 = run all --trials).")
-    ap.add_argument("--eval-refusal-final", type=int, default=128,
+    ap.add_argument("--eval-refusal-final", type=argresolve.whole_number("--eval-refusal-final", minimum=0),
+                    default=128,
                     help="re-score the top frontier candidates on this many held-out bad-eval "
                          "prompts before picking the knee (default: 128, 0 = off). Without it the "
                          "winner is the best of N draws over the same small set every trial was "
                          "scored on, so its refusal figure describes the rows it was selected on. "
                          "Costs one scoring pass, against a search measured in hours")
-    ap.add_argument("--top-rescore", type=int, default=6,
+    ap.add_argument("--top-rescore", type=argresolve.whole_number("--top-rescore", minimum=0), default=6,
                     help="how many frontier candidates to re-score with --eval-refusal-final.")
     ap.add_argument("--study-db", default=None,
                     help="persist the Optuna study to this SQLite file (default: <out>/senbon-study.db, "

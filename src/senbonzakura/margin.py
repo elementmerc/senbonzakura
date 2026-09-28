@@ -162,7 +162,7 @@ def build_parser():
                     help="a name for this run, copied into the results json. Nothing reads it: "
                          "it is how you tell two result files apart later, so give it the thing "
                          "that varied")
-    ap.add_argument("--n", type=int, default=None,
+    ap.add_argument("--n", type=argresolve.whole_number("--n", minimum=1), default=None,
                     help="prompts to score per arm. The default is EVERY held-out prompt, taking "
                          "the smaller of the two arms so they stay balanced, because a fixed "
                          "number cannot know how big the corpus is. It used to default to 200, "
@@ -174,20 +174,20 @@ def build_parser():
                     help="the track these prompts came from. Its track.json records where the "
                          "partition boundaries actually fell, and passing it is the only way to "
                          "skip exactly the rows the search could see rather than a guess at them")
-    ap.add_argument("--skip-harmless", type=int, default=None,
+    ap.add_argument("--skip-harmless", type=argresolve.whole_number("--skip-harmless", minimum=0), default=None,
                     help=f"drop the head of the harmless set, which is where the abliteration "
                          f"directions and the drift check were fitted from. Read from --track when "
                          f"given; otherwise defaults to {LEGACY_SKIP_HARMLESS}")
-    ap.add_argument("--skip-harmful", type=int, default=None,
+    ap.add_argument("--skip-harmful", type=argresolve.whole_number("--skip-harmful", minimum=0), default=None,
                     help=f"drop the head of the harmful set, which is where the search selected "
                          f"its winning trial from. Read from --track when given; otherwise "
                          f"defaults to {LEGACY_SKIP_HARMFUL} "
                          f"(0 to score the selection set too, which is not a held-out number)")
-    ap.add_argument("--batch", type=int, default=16,
+    ap.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
                     help="prompts per forward pass (default: 16). Lower it if the card runs out of memory")
-    ap.add_argument("--seed", type=int, default=42,
+    ap.add_argument("--seed", type=argresolve.whole_number("--seed", minimum=0), default=42,
                     help="seed for the bootstrap resampling, recorded in the result")
-    ap.add_argument("--bootstrap", type=int, default=2000,
+    ap.add_argument("--bootstrap", type=_resamples, default=2000,
                     help="bootstrap resamples for the AUC interval (0 to skip). At n=200 the "
                          "analytic standard error is about 0.029, so an AUC without an interval "
                          "invites a reader to believe a difference the data does not carry")
@@ -221,7 +221,8 @@ def build_parser():
                           f"{PREAMBLE_MIN_CLOSED * 100:.0f}%% of them close, and gives up at "
                           f"{PREAMBLE_BUDGET_MAX}. A fixed budget nobody sized is how this "
                           "position came to be reported as available and unmeasured"))
-    ap.add_argument("--skip-matched", dest="skip_matched", type=int, default=0,
+    ap.add_argument("--skip-matched", dest="skip_matched", type=argresolve.whole_number("--skip-matched", minimum=0),
+                    default=0,
                     help="drop the head of the topic-matched set, as --skip-harmless does for "
                          "the main harmless arm")
     return ap
@@ -961,6 +962,41 @@ def _stamp_compass(res, pinned=None):
 #: The confidence level `bootstrap_auc_ci` actually computes, named once so the sentence a reader
 #: gets and the number it describes cannot drift apart. alpha=0.05 over 2,000 resamples.
 CONFIDENCE = "95%"
+
+#: The fewest bootstrap resamples at which the reported interval is the interval it is named after.
+#: The percentile indices are `int((alpha / 2) * (resamples - 1))` and its mirror, so below about 41
+#: the low index is 0 and the "2.5th percentile" is the sample MINIMUM; at one or two resamples both
+#: indices are 0 and the interval is a point of zero width, which `in_words` then reads as not
+#: crossing chance and reports as usable. So `--bootstrap 10` bought a confident verdict from an
+#: interval that is not a 95% interval of anything. 200 is comfortably clear of the boundary and is
+#: stated rather than derived so the refusal can explain itself.
+MIN_RESAMPLES = 200
+
+
+def _resamples(value):
+    """An argparse `type=` for `--bootstrap`: zero to skip, or enough to mean what it says.
+
+    Not `argresolve.whole_number`, because zero is documented as "skip the interval" and every other
+    small value is a trap rather than a choice.
+    """
+    import argparse
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--bootstrap takes a whole number of resamples, not {value!r}. "
+            f"0 skips the interval; anything else must be at least {MIN_RESAMPLES}.") from None
+    if number == 0:
+        return 0
+    if number < MIN_RESAMPLES:
+        raise argparse.ArgumentTypeError(
+            f"--bootstrap {number} cannot produce a {CONFIDENCE} interval: with fewer than about 41 "
+            f"resamples the lower limit is the smallest draw rather than a percentile, so the "
+            f"interval would be narrower than the data supports and the verdict read off it would "
+            f"be unearned. Use 0 to skip the interval, or at least {MIN_RESAMPLES}.")
+    return number
+
 
 
 def in_words(res, score):

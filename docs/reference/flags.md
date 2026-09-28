@@ -1,6 +1,6 @@
 # Flags worth knowing
 
-There are 73 flags, and `senbonzakura --help` shows the handful a run needs while
+There are 74 flags, and `senbonzakura --help` shows the handful a run needs while
 `senbonzakura --help-all` lists every one. This page said "forty-odd" until 2026-09-26, which was
 off by forty per cent. These are the seven that
 change what a run *means* rather than how it's spelled, so if you're going to read about any

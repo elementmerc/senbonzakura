@@ -2152,6 +2152,26 @@ def inspect_lines(tag, prompts, pre, post):
     return out
 
 
+def interrupted_notice(done, out, log):
+    """What somebody who pressed Ctrl+C needs to know, which is that they lost almost nothing.
+
+    A NAMED SEAM because the branch it belongs to cannot otherwise be reached in a test: the
+    handler sits inside `_run_search`, which needs a model, a track and a driven search around it.
+    The wording is the part that goes wrong and the part worth guarding, so it lives where a test
+    can read it.
+
+    The three facts, in the order they matter. How many trials survived, because the fear is that
+    an hour is gone. How to carry on, because the answer is one flag. And that the weights are
+    being put back, because the previous behaviour left a traceback through torch and a person
+    reasonably assumed they had corrupted something.
+    """
+    log("")
+    log(f"STOPPED. You pressed Ctrl+C. {done} completed trial(s) are saved; the one in flight "
+        f"was discarded, because its weights were mid-edit.")
+    log(f"  To carry on from here, add --resume to the same command (--out {out}).")
+    log("  The model in memory is being put back as it was; nothing else has been written.")
+
+
 class Abliterator:
     """The loaded model plus everything that operates on it: direction extraction, the
     reversible norm-preserving bake (shared by the search and the final save), evaluation
@@ -3405,8 +3425,18 @@ class Abliterator:
             if not is_space_exhaustion(first):
                 # Not a space problem, so a smaller shard changes nothing and retrying would
                 # only delay the report.
+                #
+                # SAID, BECAUSE THIS BRANCH IS WHERE IT IS KNOWN. The report used to end every
+                # save failure with "free space or point --out at a larger volume", including the
+                # ones reaching it through this line, which exists precisely because the failure
+                # is NOT about space. An operator whose save died on a read-only --out was told to
+                # free disk and re-bake, and the re-bake died the same way after the same GPU
+                # hours. The report can measure the exception itself and does, so this is belt to
+                # that braces: the one place that has already asked the question passes its answer
+                # rather than leaving it to be asked again.
                 raise SystemExit(save_failure_report(
-                    first, args.out, free_bytes=free, cuda_free=cuda_free)) from first
+                    first, args.out, free_bytes=free, cuda_free=cuda_free,
+                    space_related=False)) from first
 
             log(f"  the failure looks like exhausted space, so retrying once at "
                 f"{RETRY_SHARD_SIZE} shards")
@@ -3488,7 +3518,7 @@ class Abliterator:
             bpr, b_K, b_mode, b_di = config_to_bake_args(fixed)
             self.log(f"method {args.method}: baking a fixed profile, no search")
             return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
-        study, db = self._run_search(TR)
+        study, db = self._run_search(TR, baseline=base_ref)
         bpr, b_K, b_mode, b_di = self._select_knee(study, db, TR)
         return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
 
@@ -3911,7 +3941,7 @@ class Abliterator:
         log(f"direct bake from {args.bake_config} (skipping the search)")
         return self._bake_and_save(bpr, b_K, b_mode, b_di, base_ref)
 
-    def _run_search(self, TR):
+    def _run_search(self, TR, baseline=None):
         """Run the Optuna search, and return the study with the path it persisted to.
 
         The db path comes back as well as the study because the failure message when no trial
@@ -4091,11 +4121,32 @@ class Abliterator:
             # concretely: CI decides whether a release ships by grepping this output for nine
             # markers, and a panel that redrew stdout would turn all nine green by absence.
             from . import livedisplay as _livedisplay
-            with _livedisplay.attach(self.events, args, total_trials=trial_budget, log=log):
+            with _livedisplay.attach(self.events, args, total_trials=trial_budget, log=log,
+                                     baseline=baseline):
                 try:
                     study.optimize(self.objective, n_trials=trial_budget,
                                    callbacks=[_patience_cb, _progress_cb],
                                    catch=(RuntimeError,))
+                except KeyboardInterrupt:
+                    # CTRL+C IS A DECISION, NOT A CRASH, and it used to read as one. Unhandled, it
+                    # unwound through optuna, which logs the in-flight trial as FAILED with a full
+                    # parameter dump at WARNING, and then through torch and transformers into a
+                    # ninety-line traceback. The guided mode's own first screen promises "Ctrl+C
+                    # stops at any point and changes nothing"; what a person actually saw looked
+                    # exactly like they had broken the tool.
+                    #
+                    # Nothing is lost and that is the whole message. The study is on disk after
+                    # every completed trial, so the trials already done survive; only the one in
+                    # flight is discarded, which is correct because its weights were mid-edit.
+                    # `restore_weights` in the `finally` below puts the model back either way.
+                    done = len(study.get_trials(deepcopy=False,
+                                                states=(optuna.trial.TrialState.COMPLETE,)))
+                    interrupted_notice(done, args.out, log)
+                    # SystemExit rather than a re-raise. A KeyboardInterrupt reaching the top
+                    # prints a traceback, and there is nothing in ninety frames of torch internals
+                    # that a person who pressed Ctrl+C on purpose needs to read. 130 is the shell's
+                    # convention for it, so a script can still tell this from a failure.
+                    raise SystemExit(130) from None
                 finally:
                     self.restore_weights()
             # Mark the search finished (budget spent or early-stopped) so a later --resume skips it
@@ -5791,10 +5842,15 @@ def run_parsed(args, bankai, argv):
     # `say` leaves machine markers and indented commands alone, which is the whole reason it exists:
     # CI greps nine markers out of this output, head-to-head parses fields off them, and a wrapped
     # command cannot be pasted.
-    _STAMP = 10                                       # len("[   0.0s] ")
+    # SUB-SECOND ON PURPOSE, operator direction 2026-09-28. A CPU run prints `[ 231.8s]` and then
+    # nothing for 339 seconds while it extracts directions, and a tenth of a second is no help to
+    # somebody staring at that: the question is not "how precise" but "is this thing alive". Three
+    # decimals make the last line visibly a real moment rather than a rounded one, and they cost a
+    # column count. Nothing parses this stamp; the nine markers CI greps are their own lines.
+    _STAMP = 12                                       # len("[   0.000s] ")
 
     def log(m):
-        stamp = f"[{time.time() - t0:6.1f}s] "
+        stamp = f"[{time.time() - t0:8.3f}s] "
         body = say.lines(m, columns=max(40, say.width() - _STAMP))
         if not body:
             print(stamp.rstrip(), flush=True)

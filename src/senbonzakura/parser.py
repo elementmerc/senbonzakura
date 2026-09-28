@@ -284,6 +284,7 @@ FLAG_GROUPS = {
     ),
     "the output": (
         "base_licence", "base_licence_link", "free_base_model", "json_events", "no_panel",
+        "panel",
     ),
 }
 

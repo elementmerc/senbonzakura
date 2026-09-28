@@ -363,3 +363,21 @@ def test_attach_degrades_to_the_null_panel_when_construction_fails(monkeypatch):
     p = livedisplay.attach(events.EventLog(None), _args(), log=said.append, stream=_Recording())
     assert isinstance(p, livedisplay.NullPanel)
     assert any("could not start" in m for m in said), "the fallback happened silently"
+
+
+def test_a_panel_that_will_not_be_drawn_says_so(monkeypatch):
+    """The reason was computed and discarded, so the panel's absence was unexplained.
+
+    `why_not` returns a sentence rather than a flag on purpose, and its docstring says why: a panel
+    that silently does not appear gets filed as a bug. `attach` then dropped the sentence on the
+    floor. This asserts the reason reaches the log, because a diagnostic wired to nothing is the
+    same as not having one.
+    """
+    said = []
+    panel = livedisplay.attach(events.EventLog(None), _args(no_panel=True), log=said.append,
+                               stream=_NotATerminal())
+    assert not panel.active, "a disabled panel reported itself active"
+    assert said, "the panel was skipped and the run was told nothing about why"
+    assert "no live panel" in said[0], said
+    assert "--no-panel" in said[0], (
+        f"the reason does not name the flag that controls it: {said[0]!r}")

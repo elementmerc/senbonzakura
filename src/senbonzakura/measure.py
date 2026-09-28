@@ -86,8 +86,10 @@ def stage_argv(name, args, out_dir):
     """
     common = ["--model", args.model, "--device", args.device]
     if args.hf_token and name in TAKES_HF_TOKEN:
-        # The VALUE is never printed: `_shown` below replaces it. It is here because the stage
-        # needs it, and a gated model fails four ways without it.
+        # The VALUE is never printed, and that is now a property of `without_secrets` rather than a
+        # promise about call sites. It said "`_shown` below replaces it" and `_shown` was reached by
+        # two of the three paths that print this argv; the third logged it raw on every real run.
+        # It is here because the stage needs it, and a gated model fails four ways without it.
         #
         # GUARDED BY THE STAGE, because three of the five do not declare the flag and argparse
         # prints an unrecognised argument WITH ITS VALUE. `--hf-token hf_live_token` therefore
@@ -146,11 +148,44 @@ def stage_argv(name, args, out_dir):
     raise KeyError(name)
 
 
+#: Flags whose VALUE is a secret, whatever that value happens to be. Redaction keys on these rather
+#: than on knowing the secret, because a caller that has to be handed the token in order to hide it
+#: is a caller that can forget to, and one did: `run_stage` logged the raw argv for months under a
+#: comment two hundred lines up promising the value is never printed.
+SECRET_FLAGS = ("--hf-token",)
+
+REDACTED = "***"
+
+
+def without_secrets(argv):
+    """The same command line with the value after every secret flag replaced.
+
+    Needs no token, so nothing has to be remembered at a call site. `_shown` still does a
+    value match on top of this, because a token can also reach argv somewhere this does not model,
+    and two cheap rules covering each other is the right trade for the one field in this module
+    that must never be printed.
+    """
+    out, hide_next = [], False
+    for arg in argv:
+        if hide_next:
+            out.append(REDACTED)
+            hide_next = False
+            continue
+        out.append(arg)
+        # `--hf-token=value` as one token too: argparse accepts it and a reader will type it.
+        if arg in SECRET_FLAGS:
+            hide_next = True
+        elif any(arg.startswith(f + "=") for f in SECRET_FLAGS):
+            out[-1] = arg.split("=", 1)[0] + "=" + REDACTED
+    return out
+
+
 def _shown(argv, token):
     """The same command line with the token replaced, for printing and for the artefact."""
+    argv = without_secrets(argv)
     if not token:
-        return list(argv)
-    return ["***" if a == token else a for a in argv]
+        return argv
+    return [REDACTED if a == token else a for a in argv]
 
 
 def run_stage(name, argv, *, log=print):
@@ -167,7 +202,10 @@ def run_stage(name, argv, *, log=print):
 
     module_name = DELEGATED[name][0]
     module = importlib.import_module(f".{module_name}", __package__)
-    log(f"  senbonzakura {name} {' '.join(argv)}")
+    # REDACTED HERE AND NOT AT THE CALLER. This line printed the live token to stdout on every real
+    # run, twice, into the transcript people paste into bug reports and that CI archives, while
+    # `_shown` was applied only to the dry run and the artefact.
+    log(f"  senbonzakura {name} {' '.join(without_secrets(argv))}")
     try:
         return module.main(argv)
     except SystemExit as e:

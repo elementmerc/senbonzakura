@@ -120,3 +120,70 @@ def test_the_token_list_matches_the_parsers_that_actually_declare_the_flag():
         assert declares == listed, (
             f"{stage} {'declares' if declares else 'does not declare'} --hf-token but is "
             f"{'listed' if listed else 'not listed'} in TAKES_HF_TOKEN")
+
+
+# ── the line that printed it anyway ───────────────────────────────────────────────────────────────
+
+def test_run_stage_does_not_print_the_token_it_was_handed():
+    """WHAT PROMPTED IT, 2026-09-28. The panel demonstrated this; the suite could not see it.
+
+    `run_stage` logged the joined argv before executing it, so a real `measure --hf-token <live>`
+    printed the token to stdout, twice, into the transcript people paste into bug reports and that
+    CI jobs archive. `_shown` existed and was applied to the dry run and to `measure.json`, which
+    are the two paths a test was watching.
+
+    Every test that exercised `run()` monkeypatched `run_stage` away, and the three token tests
+    above all assert on `stage_argv`'s output. So the one place the raw argv reached a stream was
+    the one place nothing looked, under a comment in `stage_argv` promising the value is never
+    printed. That promise had already been broken once, in argparse's stderr, in September.
+    """
+    module = types.ModuleType("senbonzakura.pretend_stage")
+    module.main = lambda _argv: {"ok": True}
+    monkey = {"score": ("pretend_stage", "x")}
+
+    lines = []
+    import senbonzakura.entry as entry_module
+    real = entry_module.DELEGATED
+    sys.modules["senbonzakura.pretend_stage"] = module
+    entry_module.DELEGATED = monkey
+    try:
+        measure.run_stage("score", ["--model", "m", "--hf-token", FAKE_TOKEN, "--out", "x.json"],
+                          log=lines.append)
+    finally:
+        entry_module.DELEGATED = real
+        del sys.modules["senbonzakura.pretend_stage"]
+
+    printed = "\n".join(lines)
+    assert FAKE_TOKEN not in printed, (
+        f"run_stage printed the token: {printed!r}")
+    assert "--hf-token" in printed and measure.REDACTED in printed, (
+        "the flag should still be visible so a reader can see the stage was given one; only the "
+        f"value goes: {printed!r}")
+
+
+@pytest.mark.parametrize(("argv", "expected"), [
+    (["--hf-token", "s3cret"], ["--hf-token", "***"]),
+    (["--hf-token=s3cret"], ["--hf-token=***"]),
+    (["--model", "m", "--hf-token", "s3cret", "--device", "cpu"],
+     ["--model", "m", "--hf-token", "***", "--device", "cpu"]),
+    (["--model", "m"], ["--model", "m"]),
+    (["--hf-token"], ["--hf-token"]),
+])
+def test_the_redaction_needs_no_token_to_do_its_job(argv, expected):
+    """Keyed on the flag, so no call site has to be handed the secret in order to hide it.
+
+    The `--hf-token=value` spelling is in here because argparse accepts it and a reader will type
+    it, and a rule that only knows the two token form would have printed it whole.
+    """
+    assert measure.without_secrets(argv) == expected
+
+
+def test_every_secret_flag_named_here_is_one_some_parser_declares():
+    """Otherwise the list decays into a name nothing uses, and the redaction covers nothing."""
+    import importlib
+
+    sources = "".join(
+        Path(importlib.import_module(f"senbonzakura.{m}").__file__).read_text(encoding="utf-8")
+        for m in ("score", "capability", "measure", "parser"))
+    for flag in measure.SECRET_FLAGS:
+        assert flag in sources, f"{flag} is redacted and declared by no parser in this package"

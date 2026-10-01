@@ -164,17 +164,31 @@ equivalent from public sources. The split matters more than the prompts.
 
 ## What it measures
 
-Each is a command, and each reports an interval rather than a bare number:
+Each is a command, and each measurement carries an interval rather than a bare number:
 
 | | The question it answers |
 |---|---|
 | `score` | Are the refusals actually gone, on rows the search never saw? |
 | `compass` | Does the model still **recognise** harm, as opposed to still refusing it? |
 | `capability` | What did the edit cost on tasks the model either gets right or does not? Refusal rates and divergence cannot see reasoning loss. Runs by default. |
-| `drift` | How far did the output distribution move, on a ruler that can be pointed at a model edited by any tool? |
+| `drift` | How far did the **first-token** distribution move, on a ruler that can be pointed at a model edited by any tool? |
 | `validate` | Does a direction set carry refusal, or carry topic? |
 | `check` | Reads result files from **other** tools and reports how their numbers could be wrong. No GPU, no model, no network. |
 | `report` | Assembles the above into the card that should travel beside the weights. |
+
+Two exceptions to the interval, named here rather than discovered later. `score` stamps a Wilson
+interval and the raw counts into its result file, and its finishing line on the terminal still
+prints a bare percentage. `coherence` prints no interval at all, because one forward pass over one
+fixed passage returns the same number every time, so there's no run-to-run spread for an interval
+to describe. `check` and `report` read other numbers rather than producing one.
+
+**What `drift` measures, precisely.** One position per prompt: the next-token distribution at the
+end of the rendered prompt, before the model has written anything. That's cheap, it's the same
+quantity on both sides of a comparison, and it's blind to a shift that only appears later in a
+long answer. A reasoning model that still opens identically and then reasons differently will look
+untouched on this ruler. Treat `drift` as a named estimator rather than as the whole distance
+between two models, and read [the benchmark page](https://elementmerc.github.io/senbonzakura/guide/benchmark)
+for what it does and doesn't license you to say.
 
 Two habits run through all of them. **The split is three-way**, so the rows a configuration is
 selected on are never the rows it is reported on. And **every figure arrives with a control**,

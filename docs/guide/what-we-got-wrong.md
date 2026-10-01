@@ -128,6 +128,66 @@ with the breakdown beside it, and a test that fails when the pages disagree.
 notice it drifting. The same shape as the flag count above, and as the AUC figures this project
 withdrew.
 
+## Two pages disagreed about whether our own numbers carry intervals
+
+**It said:** the README, "each reports an interval rather than a bare number", of all seven
+commands. The comparison page, in the same release, "`score`, `coherence` and `drift` print bare
+numbers". Both cannot be right, and the README was making the broader claim.
+
+**It says:** every measurement carries an interval, with the two exceptions named on the spot.
+`score` stamps a Wilson interval and the raw counts into its result file and still prints a bare
+percentage on its finishing line. `coherence` carries no interval and isn't going to, because one
+forward pass over one fixed passage returns the same number every time. `drift` prints a seeded
+bootstrap interval beside its KL.
+
+**What was actually wrong:** both of them, in opposite directions. The README overclaimed by
+sweeping `check` and `report`, which read numbers rather than produce them, into a sentence about
+intervals. The comparison page was accurate when written and went stale: the refusal interval and
+the drift interval both landed on 2026-09-25, and nothing re-read the page that said they were
+missing. A self-criticism rots the same way a boast does, and it's the one nobody thinks to
+re-check, because a page admitting a gap reads as safe.
+
+## The norm-restore residue was presented as a property of the field
+
+**It said:** "Everyone has the norm-restore problem." Three tools preserve each weight row's
+original length after removing a direction, projection and rescaling don't commute, so part of the
+direction survives, and none of the three measures the residue.
+
+**It says:** the same thing, scoped to the three tools it was measured across, with the note that
+a fourth tool bakes its projection with no per-row restoration at all and so doesn't inherit the
+problem. Whether that costs something else is open.
+
+**What was actually wrong:** the word "everyone", across a field of which the page had read two
+other tools. The measurement was right and the quantifier wasn't. Our strongest framing was that
+the residue is inherited from the published method rather than chosen by any of us, and that
+framing is weaker once a tool exists that simply doesn't do the step.
+
+## `drift` was described as the distance between two models
+
+**It said:** "How far did the output distribution move."
+
+**It says:** how far the **first-token** distribution moved, one position per prompt, at the end
+of the rendered prompt before the model has written anything.
+
+**What was actually wrong:** the scope, in the one place a reader meets the command first. The
+precise definition was in the benchmark and first-run pages the whole time, and the README, the CLI
+reference and the flags page each said the loose version. The gap matters most on a reasoning
+model, which can open identically and then reason differently, and look untouched on this ruler.
+Naming the estimator is the fix; measuring more positions is a separate piece of work and isn't
+done.
+
+## "Nobody validates the judge" was broader than the evidence
+
+**It said:** nobody validates the judge.
+
+**It says:** nobody computes agreement above chance. `grep -ri kappa` still returns zero across
+every other tool read.
+
+**What was actually wrong:** the claim was true on its letter and invited a fair reply. One tool
+grades delivery with an externally validated published classifier pinned by revision, which is a
+real answer to "is your grader any good" even though it isn't the answer this project gives. The
+narrower sentence is the one that survives contact with a reader who knows the field.
+
 ## Where next
 
 - [What is and is not established](/guide/what-we-know) for the research claims, which is the

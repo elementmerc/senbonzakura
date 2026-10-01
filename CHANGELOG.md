@@ -5,6 +5,18 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
+### Documentation
+- Two pages disagreed about whether our own numbers carry intervals; both are corrected and the
+  two real exceptions are named where a reader meets them
+- `drift` is named as a **first-token** measurement in the README, the CLI reference and the flags
+  page, not just in the benchmark and first-run guides
+- The norm-restore sentence claimed a property of the field on a reading of two other tools;
+  **withdrawn, not adjusted**, and restated scoped to the tools actually read
+- "Nobody validates the judge" is now "nobody computes agreement above chance", which is the
+  claim the evidence supports
+- The comparison page says which tools it read, which it didn't, and on what date
+- A fourth tool and a third idea, the conditional edit, are named in the prior-art page
+
 ### Other
 - Bug fixes and improvements.
 

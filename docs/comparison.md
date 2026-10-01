@@ -15,13 +15,30 @@ weights was not measured by anything in this repository.
 If that reads like a lot of retractions for one page, it is, and it is also the reason to
 trust what is left. What survives is narrower than the first draft claimed.
 
+## Which tools this page read, and which it didn't
+
+The title says "the other abliteration tools" and the page surveys two of them. That's a scope,
+so it belongs in writing rather than in the reader's inference.
+
+| Tool | Read | How |
+|---|---|---|
+| [Heretic](https://github.com/p-e-w/heretic) | Yes, at `7675b90` on 2026-09-08 | Source, line by line |
+| [abliterix](https://github.com/wuwangzhang1216/abliterix) | Yes, at `v1.12.1` on 2026-09-08 | Source, line by line |
+| [apostate](https://github.com/heterodoxin/apostate) | Partly, at `main` on 2026-10-01 | Source, through a summarising reader rather than a clone. Enough to correct the claims below, not enough to give it a column |
+| Anything else | No | Not searched for systematically |
+
+Where a sentence below says "both other tools", or counts three tools, it means Heretic,
+abliterix and this one, and it's scoped to the dates above. The apostate read is recent and
+partial, and two independent passes disagreed about which grader its main pipeline uses, so it
+corrects the claims it touches and gets no column until somebody has run it.
+
 ## The three-line version
 
 | | Heretic | abliterix | Senbonzakura |
 |---|---|---|---|
 | Measures what the edit cost | Yes, 11 lm-eval benchmarks | Yes, lm-eval plus a GSM8K "capability tax" | Yes, 5 graded tasks |
-| Validates the thing doing the grading | No | No | **Yes, and it refuses a bad one** |
-| Puts an interval on the number | No | Yes in its A/B scripts, no in the interactive table | Yes on the compass and the capability score, no on refusal rate |
+| Reports its grader's agreement above chance | No | No | **Yes, and it refuses a grader that fails** |
+| Puts an interval on the number | No | Yes in its A/B scripts, no in the interactive table | Yes on every measurement, and the refusal rate's lives in the result file rather than on the terminal line |
 
 Read that last row carefully, because an earlier version of this page got it wrong in our
 favour and it was the page's headline claim. Only the first two rows are a clear lead.
@@ -58,7 +75,8 @@ residual stream, and for that variant it is an ordinary `o_proj` like any other.
 work on the projections feeding into attention is a different technique with a different
 purpose, not coverage we lacked.
 
-**Everyone has the norm-restore problem.** All three tools preserve each weight row's
+**All three tools here have the norm-restore problem, and it isn't a law of the field.** All
+three preserve each weight row's
 original length after removing a direction, which is what keeps the edited model coherent.
 Projection acts across rows and rescaling acts per row, and those two operations do not
 commute, so part of the direction survives.
@@ -84,12 +102,27 @@ not measured by anything in this repository and has been withdrawn.
 This is inherited from the published method rather than invented by any of us, and none of the
 three tools reports it.
 
+It was also stated here as a property of the field, and it isn't one. A fourth tool, apostate,
+bakes its projection without any per-row norm restoration, so it doesn't have this problem to
+inherit. That's a different trade rather than a free win, since the restoration is what the
+published method uses to keep the edited model coherent, and the question of what dropping it
+costs is open. The honest shape of the claim: three tools do this and none of them measures the
+residue, and skipping the restoration is a route out that at least one tool has taken.
+
 ## What is actually ours
 
 Three things, and they are all about whether a number deserves to be believed rather than
 about the edit itself.
 
-**Nobody validates the judge.** Both other tools grade refusal with something, and neither
+**Nobody computes agreement above chance.** That's the defensible version, and it's narrower
+than what this page said first, which was "nobody validates the judge". `grep -ri kappa` returns
+zero across all three other trees, including apostate's, so no tool in the field reports whether
+its grader beats guessing. But apostate's delivery grader is HarmBench, an externally validated
+published classifier pinned by revision, which is a real answer to "is your grader any good" even
+though it isn't this one. "Nobody validates the judge" invites the reply "we use HarmBench,
+pinned", and that reply would be fair.
+
+Both other tools read here grade refusal with something, and neither
 checks that the something is any good. abliterix uses an external model as a judge
 (`google/gemini-3.1-flash-lite-preview` by default, `src/abliterix/settings.py:1405`);
 Heretic's grader is a fixed keyword list. `grep -ri kappa` returns zero in both trees.
@@ -121,10 +154,21 @@ table, the surface most users actually read, is handed standard errors by lm-eva
 them before display (`src/abliterix/interactive.py:277` and `:283`), so a user comparing two
 models there sees bare percentages.
 
-**And we do not manage it everywhere either.** The compass and the capability score carry
-intervals on every figure. `score`, `coherence` and `drift` print bare numbers, and `score` is
-where the headline refusal rate comes from. Fixing that is ours to do before this row means
-much.
+**And we don't manage it everywhere either, though less of this is outstanding than the page
+said.** The compass and the capability score carry intervals on every figure. So does `drift`,
+which prints a seeded bootstrap interval beside its KL on the same line
+(`src/senbonzakura/drift.py`, `kl_interval`), and so does the refusal rate, which stamps a Wilson
+interval and the raw counts into its result file (`src/senbonzakura/score.py`, `_stamp_refusal`).
+This page previously said all three printed bare numbers. Two of those three were fixed on
+2026-09-25 and the page wasn't re-read.
+
+What's actually left is one line of terminal output and one measurement that doesn't want an
+interval. `score` prints its finishing percentage bare even though the artefact beside it carries
+the interval, which is a display gap rather than a measurement gap and is still a gap, because the
+line on the terminal is what gets pasted into a message. `coherence` carries no interval and is
+not going to: one forward pass over one fixed passage under fixed precision returns the same
+number every time, so there's no run-to-run spread to describe, and a token-level interval would
+put variation across the passage into a field that means variation across runs.
 
 **We publish what our own numbers cost.** This is less a feature than a habit, and it is the
 one I would most like to be copied. When a measurement here turns out to have been made

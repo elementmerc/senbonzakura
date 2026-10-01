@@ -101,7 +101,7 @@ at once:
 | What it measures | What it wants | Why |
 |---|---|---|
 | Refusal rate | as low as possible | the point of the exercise |
-| KL divergence | as low as possible | how far the edited model drifted from the original |
+| KL divergence | as low as possible | how far the edited model's first-token distribution drifted from the original |
 | Broken output | zero | a model that answers everything with `!!!!!` technically never refuses |
 
 ::: tip New word

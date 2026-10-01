@@ -109,7 +109,9 @@ reader. Same defect class as the figure earlier on this page, and named for the 
 That's fixed. Each candidate is now fitted on half its rows and scored on the half it never saw,
 and the threshold has a measured floor beside it: directions built from random subsets of the
 harmful prompts, carrying nothing, scored through the identical path. A candidate has to beat
-the best of them.
+their 95th percentile, taken at nearest rank so the bar is a score some null actually reached. That
+is a 5% false-keep rate per candidate by design, which is a weaker bar than beating every null and
+a far stronger one than the constant it replaced.
 
 **What's still open is the part the fix doesn't reach.** A held-out score says a direction
 separates harmful prompts from harmless ones. It doesn't say *why*. Cluster your harmful prompts

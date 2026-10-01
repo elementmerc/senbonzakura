@@ -5,6 +5,38 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
+### GitHub Action
+- Give the step a baseline and a measurement and it also runs the regression gate, so a property
+  that moves outside its interval fails the build
+- A pass, a regression and a refusal produce three different annotations, and a refusal fails the
+  step with its own message because nothing was shown about the model at all
+- Passing one of the two gate inputs without the other stops the run rather than quietly skipping
+  the comparison
+- Reports `gate-status` as an output, empty when no baseline was given, which is not the same as
+  zero
+- Inputs reach the step's shell through the environment rather than being pasted into the script,
+  so a path containing a quote is a path and not a command
+
+### Regression gate
+- `--history` records every run, pass, fail or refusal, with the whole measurement rather than
+  just its number, so a regression caught in March is still evidence in June
+- Records are named after their own contents, so re-running a comparison records it once and
+  nothing is ever overwritten
+- A recorded measurement carries the digest of its own contents, so a baseline can be fetched by
+  address with `--store` instead of measured again, and one that has been edited since is refused
+- The verdict names the property, the partition, the sample size and the estimator it looked at,
+  and says what it did not cover
+- A history that cannot be written is reported and does not change the verdict
+
+### Checker
+- Findings are printed as each file is finished, so a sweep over thousands of artefacts that you
+  stop halfway has still told you about the half it did
+- An interrupted run has no summary and no exit status, and with `--json` the report does not
+  parse, so a partial report is never read as a clean one
+- A long sweep says where it has got to every thirty seconds, on standard error, so `--json` stays
+  machine readable
+- `--pair` checks that it was given two files before reading any of them
+
 ### Documentation
 - Two pages disagreed about whether our own numbers carry intervals; both are corrected and the
   two real exceptions are named where a reader meets them

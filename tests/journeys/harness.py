@@ -241,7 +241,7 @@ def drive(tmp_path, argv, answers=(), *, columns=100, lines=40, timeout=120, env
         pass
 
     out, sent, deadline = b"", 0, time.time() + timeout
-    timed_out, quiet_since = False, None
+    timed_out, deadlocked, quiet_since = False, False, None
     while True:
         if time.time() > deadline:
             timed_out = True
@@ -268,6 +268,25 @@ def drive(tmp_path, argv, answers=(), *, columns=100, lines=40, timeout=120, env
             quiet_since = time.time()
         if blocked is None and time.time() - quiet_since < _QUIET:
             continue
+        # A DEADLOCK IS PROVABLE HERE, so it is not worth waiting out the timeout for.
+        #
+        # The kernel has said the child is blocked reading its terminal, and every answer this
+        # journey has is already sent. Nobody is going to type anything, so the child will sit
+        # there until the deadline and the assertion at the bottom then has to offer two
+        # explanations because by then it genuinely cannot tell them apart.
+        #
+        # Caught here it is one explanation, and it arrives in a fraction of a second instead of
+        # `timeout`. That matters most for the journey it was added for: a flag whose job is to
+        # stop the tool asking anything sends no answers on purpose, so if the flag ever stops
+        # being read, the failure mode is this exact state. The old cost of noticing was two
+        # minutes of a CI job; the new cost is immediate.
+        #
+        # `blocked is True` only, never `None`: a kernel that cannot be asked gets the old
+        # behaviour, because a guess here would kill a journey that was merely slow.
+        if blocked is True and sent >= len(answers):
+            deadlocked = True
+            os.kill(pid, signal.SIGKILL)
+            break
         if sent < len(answers) and _WAITING.search(_ANSI.sub("", out.decode(errors="replace"))):
             answer = answers[sent]
             # An interrupt is a byte, not a line: writing a newline after it would answer the
@@ -292,8 +311,13 @@ def drive(tmp_path, argv, answers=(), *, columns=100, lines=40, timeout=120, env
     except ChildProcessError:                             # pragma: no cover - already reaped
         pass
     text = _ANSI.sub("", out.decode(errors="replace"))
+    tail = "\n".join(f"  | {line}" for line in text.splitlines()[-25:])
+    assert not deadlocked, (
+        "the session stopped at a prompt with no answers left to send, so it would have waited "
+        f"for the whole {timeout}s timeout. The kernel reported it blocked reading its terminal: "
+        "either this journey is short an answer, or something that should not have asked a "
+        f"question asked one.\nWhat it had said:\n{tail}")
     assert not timed_out, (
         f"the session was still running after {timeout}s and was killed. It is either hung or "
-        f"waiting for an answer nobody sent.\nWhat it had said:\n" +
-        "\n".join(f"  | {line}" for line in text.splitlines()[-25:]))
+        f"waiting for an answer nobody sent.\nWhat it had said:\n{tail}")
     return Result(text, status, columns)

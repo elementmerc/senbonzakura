@@ -1,6 +1,6 @@
 {
-  "journeys": 15,
-  "surfaces": 14,
-  "updated": "2026-09-28",
+  "journeys": 16,
+  "surfaces": 15,
+  "updated": "2026-10-01",
   "why": "High-water marks for the journey suite (decision Q-43). Each may only rise. Raised by `python tools/ci/check_journeys.py --update`; lowering one needs --force and a reason in the commit message."
 }

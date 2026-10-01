@@ -64,6 +64,10 @@ ROOT = Path(__file__).resolve().parents[2]
 #: first. Keeping it in one typed list is the cost of covering the sequences that have no symbol.
 STATE_SURFACES = (
     "no-tty",
+    # Distinct from `no-tty`, and the distinction is the whole reason the state exists: this is a
+    # pseudo-terminal with nobody behind it, which `isatty` reports as a terminal. `docker run -t`,
+    # `expect` and some CI agents all produce it, and it is the one case the inference cannot see.
+    "fake-tty",
     "narrow-terminal",
     "cancelled-at-confirm",
     "interrupted-mid-run",

@@ -27,9 +27,35 @@ on:
   schedule:
     - cron: "17 7 * * 1"
   workflow_dispatch:
+    inputs:
+      required:
+        description: >-
+          Fail the run when a check could not run at all, rather than reporting it green with a
+          warning. Turn this on to rehearse the posture required status checks will need.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# ── Q-71, AND THE FLIP IS THE ONE LINE BELOW ───────────────────────────────────────────────────
+#
+# A check has three outcomes and GitHub's conclusions only express two, so DID NOT RUN has to
+# borrow one. Today it borrows success and shouts: a warning annotation and a summary block on a
+# green job. That is right while a person reads the run, because a gate that goes red whenever
+# github.com or pypi.org hiccups is a gate everybody learns to re-run rather than read.
+#
+# It stops being right the day a REQUIRED STATUS CHECK reads the conclusion, because a rule reads
+# green as "verified" and a network blip would let a merge through on a check that verified
+# nothing. Enabling required status checks on `main` and `dev` is a settings change on the
+# operator's account rather than a change in this tree, so the sequence is: turn protection on,
+# then change the `'false'` below to `'true'`. Nothing else moves.
+#
+# `inputs.required` is null on a push (the `inputs` context is empty for anything but a dispatch),
+# so the fallback is what governs every automatic run and the input is there to rehearse the other
+# posture by hand first.
+env:
+  REQUIRE_EVERY_CHECK_TO_RUN: ${{ inputs.required && 'true' || 'false' }}
 
 jobs:
   # ---------------------------------------------------------------------------------------------
@@ -70,16 +96,13 @@ jobs:
             sleep 5
           done
           if [ "$ok" != 1 ]; then
-            # DID NOT RUN, and it is deliberately not red. An unreachable github.com is a network
-            # condition, not a finding, and a gate that goes red on the network teaches people to
-            # re-run until it is green, which is how a red build stops meaning anything. It is
-            # loud instead: a warning annotation and a line in the run summary.
-            echo "::warning::DID NOT RUN: actionlint could not be fetched after 3 attempts, so the workflows were NOT linted. This is a network result, not a pass."
-            {
-              echo "### Supply chain: actionlint DID NOT RUN"
-              echo "Could not fetch \`actionlint ${AL_VERSION}\` after 3 attempts."
-              echo "**The workflows in this run were not linted.** Re-run once the network recovers."
-            } >> "$GITHUB_STEP_SUMMARY"
+            # DID NOT RUN. Whether that is yellow or red is one decision for the whole workflow
+            # and it lives in REQUIRE_EVERY_CHECK_TO_RUN, so this site states the fact and lets
+            # the helper decide the consequence. See the comment on that variable above.
+            if ! tools/ci/did_not_run.sh "actionlint ${AL_VERSION}" \
+                 "the workflows in this run were NOT linted, after 3 attempts to fetch the binary. Re-run once the network recovers."; then
+              exit 1
+            fi
             echo "ran=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -215,11 +238,10 @@ jobs:
             echo "reachable=true" >> "$GITHUB_OUTPUT"
           else
             echo "reachable=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::DID NOT RUN: pypi.org is unreachable from this runner, so the lockfile hashes were NOT verified. This is a network result, not a pass."
-            {
-              echo "### Supply chain: lockfile verification DID NOT RUN"
-              echo "\`pypi.org/simple/\` was unreachable, so none of the 207 recorded hashes were checked in this run."
-            } >> "$GITHUB_STEP_SUMMARY"
+            if ! tools/ci/did_not_run.sh "the package index" \
+                 "none of the 207 hashes recorded in requirements.lock were checked, because pypi.org/simple/ was unreachable from this runner."; then
+              exit 1
+            fi
           fi
 
       - name: Download every pin and verify its bytes
@@ -364,11 +386,10 @@ jobs:
             sleep 5
           done
           if [ "$ok" != 1 ]; then
-            echo "::warning::DID NOT RUN: gitleaks could not be fetched after 3 attempts, so history was NOT scanned. This is a network result, not a pass."
-            {
-              echo "### Supply chain: secret scan DID NOT RUN"
-              echo "Could not fetch \`gitleaks ${GL_VERSION}\`. **History was not scanned in this run.**"
-            } >> "$GITHUB_STEP_SUMMARY"
+            if ! tools/ci/did_not_run.sh "gitleaks ${GL_VERSION}" \
+                 "this repository's history was NOT scanned for secrets, after 3 attempts to fetch the binary. Re-run once the network recovers."; then
+              exit 1
+            fi
             echo "ran=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

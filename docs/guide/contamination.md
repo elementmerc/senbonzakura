@@ -9,8 +9,10 @@ If it is, you tuned the model on the exam paper. The number is still a number, i
 mean what it says.
 
 ::: warning This is not a hypothetical for us either
-About **430 rows** of this project's harmful corpus **are AdvBench**, arriving through
-`mlabonne/harmful_behaviors` without anybody choosing to put them there.
+**176 rows** of this project's harmful corpus **are AdvBench**, arriving through
+`mlabonne/harmful_behaviors` without anybody choosing to put them there. We ran the check on our
+own bundled track on 2026-10-01 and it came back contaminated: 11 of AdvBench's requests were in
+the partitions we fit and search on.
 
 Public corpora are assembled from each other. A benchmark can be inside yours and nothing will
 mention it.
@@ -28,15 +30,20 @@ senbonzakura track --out mytrack \
     --contamination-report contamination-advbench.json
 ```
 
+Here's what it printed against our own bundled track, which is a real run rather than an
+illustration:
+
 ```
 contamination: AdvBench against this track
-  520 rows, 520 distinct requests (templates discovered: 7)
-  in fit 2, in search 3, in measure 7, absent 508
-  CONTAMINATED: 5 of its requests were fitted or searched on.
+  520 rows, 508 distinct requests (templates discovered: 131)
+  in fit 8, in search 3, in measure 159, absent 338
+  CONTAMINATED: 11 of its requests were fitted or searched on.
+  publishable today: 159 requests from the measure partition, plus 338 this track has never held.
 ```
 
-Five rows out of 520. Small enough to shrug at, and it's still the difference between a
-number you can publish and one you can't.
+Eleven requests out of 508. Small enough to shrug at, and it's still the difference between a
+number you can publish and one you can't. Note what the last line gives you: 497 requests you can
+still report on honestly, as long as you say that's the subset you used.
 
 ## Three things to know about how it counts
 

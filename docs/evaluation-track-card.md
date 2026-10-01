@@ -84,10 +84,10 @@ revision each was read at is recorded so a later reader can tell a changed card 
 | Source | Side | Declared licence | Revision read |
 |---|---|---|---|
 | `Bahushruth/abliteration-harmful-enriched` | most of the harmful side | **apache-2.0**, declared in `cardData` and tagged | `f29c0b77` |
-| `mlabonne/harmful_behaviors`, reached through the above | about 430 harmful rows | **None.** No `license` field, no `cardData` licence, no tag | `02c6a92c`-era, unchanged since 2024-05-30 |
+| `mlabonne/harmful_behaviors`, reached through the above | 176 harmful rows, measured | **None.** No `license` field, no `cardData` licence, no tag | `01cead01` |
 | `mlabonne/harmless_alpaca` | the harmless side | **None.** No `license` field, no `cardData` licence, no tag | `02c6a92c` |
 | `tatsu-lab/alpaca`, the probable root of the above | the harmless side, indirectly | **cc-by-nc-4.0**, declared and tagged | `dce01c9b` |
-| The harmless top-ups | part of the harmless side | **Unrecorded.** See the reproducibility limitation below | not recorded |
+| The harmless top-ups | 2,036 rows, being 386 requests, measured 2026-10-01 | **Unrecorded.** See the reproducibility limitation below | not recorded |
 
 ### The two inferred links, stated plainly
 
@@ -118,7 +118,7 @@ non-commercial use only.
 | Slice | Upstream terms | What redistribution requires |
 |---|---|---|
 | Most of the harmful side | Apache-2.0 | Carry the notice |
-| About 430 harmful rows | MIT, inferred | Attribute Zou et al. |
+| 176 harmful rows | MIT, inferred | Attribute Zou et al. |
 | The harmless side | CC BY-NC 4.0, inferred | Attribute, and non-commercial |
 
 Two of the direct upstreams declare nothing at all, which is why the table reads through to the
@@ -159,9 +159,14 @@ These are recorded because a measuring instrument with undisclosed limits is wor
   rebuilt from the pool exactly. What was never written down is how the pool was assembled from
   its upstreams, specifically the harmless "top-ups" added after the first build: not their
   source, not their count, not the revision they came from. So `senbonzakura track build` reconstructs
-  a pool of the same shape from the same named upstreams rather than the identical one, and the
-  difference is unquantified. Anything built from here on carries a manifest, so this cannot
-  recur.
+  a pool of the same shape from the same named upstreams rather than the identical one. Anything
+  built from here on carries a manifest, so this cannot recur.
+
+  **The difference was measured on 2026-10-01 and it is 2,036 of the 4,982 harmless rows (40.87%),
+  being 386 distinct requests expanded about five times each.** It is spread across all three
+  partitions (106 of 257 in `fit`, 58 of 128 in `search`, 1,872 of 4,597 in `measure`) rather than
+  appended as a tail, which says a second source was mixed in before partitioning rather than added
+  at the end. `docs/corpus-provenance.md` carries the table and the method.
 - **A copy of this track distributed before 2026-07-30 leaks, badly, and was labelled "clean".**
   Measured 2026-08-16: in that earlier export, 189 of 200 harmful evaluation rows and 196 of 196
   harmless ones were sitting inside the fitting set. The repair landed on 2026-07-30 and the
@@ -178,21 +183,44 @@ These are recorded because a measuring instrument with undisclosed limits is wor
   baseline as a null.
 - **The topic-matched harmless set is not partitioned**, so results using it are not held out
   in the same sense as the rest.
-- **AdvBench is inside this track, and how much of it reached the fitting side has not been
-  measured.** About 430 rows of the harmful side are AdvBench, arriving through
-  `mlabonne/harmful_behaviors` as described above. If any of those rows sit in the `fit` or
-  `search` partitions, then a model tuned with this track was tuned on requests AdvBench would
-  later mark it against, and any AdvBench figure from it is in-sample rather than held out.
-  Nobody has run that check yet, so this card does not tell you the answer; it tells you the
-  question is open. Run it yourself before relying on any such figure:
+- **AdvBench is inside this track, and 11 of its requests reached the fitting side.** Measured
+  2026-10-01, and the verdict is **contaminated**. AdvBench arrives through
+  `mlabonne/harmful_behaviors` as described above. Of its 508 distinct requests, 8 sit in the
+  harmful `fit` partition and 3 in `search`, so a model tuned with this track was tuned on 11
+  requests AdvBench would later mark it against. **Any AdvBench figure computed over the whole
+  benchmark from this track is in-sample for those 11 requests and must not be reported as held
+  out.**
+
+  | Where | Distinct AdvBench requests |
+  |---|---|
+  | `fit` | 8 |
+  | `search` | 3 |
+  | `measure` | 159 |
+  | never held by this track | 338 |
+
+  What that leaves is a clean figure a reader can still compute: **497 requests**, being the 159
+  in `measure` plus the 338 this track has never held. Report that subset and say which subset it
+  is. Reproduce the measurement with the track's own checker:
 
   ```sh
   python -m senbonzakura.track --out <this track> --contamination advbench.txt \
       --contamination-name AdvBench
   ```
 
+  Two caveats on the number, stated rather than buried. The benchmark it was measured against is
+  AdvBench **as it arrives in this track**, that is the 520 rows of `mlabonne/harmful_behaviors`
+  at revision `01cead01`, whose row count and contents match AdvBench's `harmful_behaviors.csv`;
+  it was not a fresh fetch of the `llm-attacks` CSV. And matching is by request key over
+  discovered templates, not by string, because a whole-prompt comparison on this corpus once
+  reported zero overlap while the same requests sat on both sides wearing different templates.
+
   The same applies to any other public set assembled from the same upstream sources, which is
   most of them.
+- **The "about 430 rows are AdvBench" figure this card used to carry is not supported by
+  measurement.** The measured count is **176 of 4,895 harmful rows (3.6%)** whose request appears
+  in `mlabonne/harmful_behaviors`, counted template-aware on 2026-10-01. The 430 was an estimate
+  and it was roughly two and a half times too high. The corrected figure is used throughout this
+  card.
 
 ## Citing
 

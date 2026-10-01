@@ -16,14 +16,38 @@
 
 transformers==4.56
 accelerate==0.26
-pyarrow==14
+# NOT 14, AND THE DECLARED FLOOR IS STILL 14. This is the one pin in this file that is
+# deliberately ABOVE the floor it tests, and the reason is a collision between two declared
+# floors rather than a preference.
+#
+# `datasets` 5.0.1, the security floor raised under Q-72, requires `pyarrow>=21.0.0` (read from
+# the published metadata on 2026-10-01, not guessed). The `dev` extra pulls `[hub]`, so this
+# environment always contains `datasets`, so it can never contain pyarrow 14 again. The base
+# floor of `pyarrow>=14` remains correct and remains the thing that keeps `trackio` installable
+# from a distribution package; it is simply no longer installed by this job.
+#
+# WHAT THAT COSTS, stated rather than left to be discovered: the `pyarrow>=14` claim now has no
+# job that installs it. Restoring it needs a second, hub-free floor environment, which is a
+# ledger item rather than something to pretend away here. 21.0.0 exactly, because it is the
+# release `datasets` names as its minimum and it ships a cp310 wheel, which is what this job's
+# Python 3.10 needs; an unpinned pyarrow would resolve to whatever is newest and would build
+# from source the day that stops shipping one, which is the cp314 failure this file already
+# carries a scar from.
+pyarrow==21.0.0
 huggingface_hub==0.34.0
-# numpy is not a declared dependency of this project and is pinned here anyway, because the floor
-# combination is otherwise not installable. pyarrow 14's extension modules are compiled against
-# numpy 1 and its metadata says only `numpy>=1.16.6`, so the resolver is free to pair it with
-# numpy 2 and did: the floors job failed with "ImportError: numpy.core.multiarray failed to
-# import" from `pyarrow.lib`. Users are unaffected, because pip gives them a recent pyarrow; it is
-# the FLOOR claim that was incoherent. 1.26.4 is the last numpy 1 and supports Python 3.10.
+# numpy is not a declared dependency of this project and is pinned here anyway.
+#
+# THE ORIGINAL REASON NO LONGER APPLIES, and saying so is cheaper than letting the next reader
+# trust it: pyarrow 14's extension modules are compiled against numpy 1 while its metadata said
+# only `numpy>=1.16.6`, so the resolver paired it with numpy 2 and the job failed with
+# "ImportError: numpy.core.multiarray failed to import" from `pyarrow.lib`. pyarrow is pinned at
+# 21.0.0 here now, which is built for numpy 2, so that collision is gone.
+#
+# THE PIN STAYS ANYWAY, as a deliberate hold rather than a forced one. This environment has
+# never been exercised on numpy 2, and `accelerate==0.26` predates numpy 2 entirely. Moving the
+# datasets floor and the numpy major in one commit would make a failure unattributable, which is
+# the opposite of what a floors job is for. 1.26.4 is the last numpy 1 and supports Python 3.10.
+# Lifting it is a separate, deliberate step with its own measurement.
 numpy==1.26.4
 # 4.0, not 3.1. `head-to-head/best_of_n_heretic.py` imports
 # `optuna.storages.journal.JournalFileBackend`, which arrived in Optuna 4.0; at 3.1 the floors job
@@ -64,9 +88,14 @@ nvidia-ml-py==12.535.108
 # `datasets` moved out of the runtime dependencies and into the `hub` extra when
 # `trackio.py` took over reading and writing tracks, but its floor still has to be
 # tested: `[dev]` installs it so the suite can assert that both backends read and
-# write the same bytes, and 2.15 against pyarrow 14 is exactly the pairing the
-# pyproject comments describe.
-datasets==2.15
+# write the same bytes.
+#
+# 5.0.1 since 2026-10-01 (Q-72), and it is a SECURITY floor: PYSEC-2026-3716 is live at 2.15.0,
+# 2.21.0, 3.0.0 and 4.0.0 and clean only at 5.0.1, so every version the old floor admitted
+# carried a path traversal in the folder-based builders. This job is the only place that floor
+# is ever installed, so it is the only place the exposure was ever visible, and it is why the
+# pyarrow pin above had to move with it.
+datasets==5.0.1
 pytest==7.0.0
 pytest-cov==4.0.0
 # The floor for the parallel runner. `-n 4` is what every suite job uses, so the

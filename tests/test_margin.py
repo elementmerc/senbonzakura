@@ -895,8 +895,8 @@ def test_an_empty_dataset_names_itself(loaded, tmp_path):
     _, good = _track(tmp_path)
     empty = str(tmp_path / "empty")
     Dataset.from_dict({"text": []}).save_to_disk(empty)
-    # The message differs across the supported datasets range (5.x raises inside
-    # load_from_disk, 2.15 returns nothing), so assert what both paths guarantee:
+    # The message differs by datasets version (5.x raises inside load_from_disk, the 2.15 that
+    # was the declared floor until Q-72 returns nothing), so assert what both paths guarantee:
     # a loud exit that names which arm.
     with pytest.raises(SystemExit, match="harmful"):
         margin.main(["--model", "x", "--harmful", empty, "--harmless", good,
@@ -941,9 +941,10 @@ def test_main_refuses_a_tokenizer_whose_verdict_words_do_not_resolve(loaded, tmp
 def test_a_dataset_that_loads_but_holds_nothing_is_refused(loaded, tmp_path, monkeypatch):
     """Version-independent cover for the empty branch.
 
-    datasets 5.x raises inside load_from_disk before a row is read, so on a current
-    install that branch is unreachable; on the 2.15 floor the same directory loads and
-    yields nothing. Faking the loader exercises it on every supported version.
+    datasets 5.x raises inside load_from_disk before a row is read, so on every install the
+    declared floor now admits that branch is unreachable; on the old 2.15 floor the same
+    directory loaded and yielded nothing. Faking the loader is what keeps the branch covered
+    rather than dead, and it is the only thing that reaches it now.
     """
     class _Empty:
         column_names = ("text",)

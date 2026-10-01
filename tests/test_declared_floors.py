@@ -110,14 +110,92 @@ def test_every_declared_floor_is_pinned_and_tested():
         f"with the reason.")
 
 
+#: Declared dependencies whose pin in floors.txt is deliberately ABOVE the declared floor,
+#: because ANOTHER declared floor forces it. Each entry is a decision on the record: the key is
+#: the dependency, the value is the floor that forces it and the reason, so a reader meets the
+#: collision rather than inferring it from two numbers that disagree.
+#:
+#: This is not a softening of the gate. A forced pin still has to be strictly above the declared
+#: floor (a pin BELOW it is the original defect and still fails), the forcing dependency has to
+#: be a real declared dependency, and anything not listed here still has to match exactly.
+FORCED_ABOVE_FLOOR = {
+    # `datasets` 5.0.1, the security floor raised under Q-72 to clear PYSEC-2026-3716, requires
+    # `pyarrow>=21.0.0`. The `dev` extra pulls `[hub]`, so the floors environment always holds
+    # `datasets`, so it can never hold pyarrow 14 again. The base `pyarrow>=14` claim is still
+    # correct for an install without `[hub]`; it simply has no job installing it any more, which
+    # is a ledger item rather than something this test should hide.
+    "pyarrow": (
+        "datasets",
+        ("datasets 5.0.1 requires pyarrow>=21.0.0, so the pyarrow floor of 14 cannot be "
+         "co-installed with the hub extra's floor"),
+    ),
+}
+
+
 def test_every_pin_matches_the_floor_it_claims_to_test():
     """The louder half: a pin that disagrees tests a version the package forbids."""
     reqs, pins = _requirements(), _pins()
     wrong = {name: (floor, pins[name]) for name, floor in reqs.items()
-             if name in pins and not _same_version(pins[name], floor)}
+             if name in pins and name not in FORCED_ABOVE_FLOOR
+             and not _same_version(pins[name], floor)}
     assert not wrong, (
         "constraints/floors.txt pins versions that are not the declared floors: "
         + "; ".join(f"{n}: pyproject says >={f}, floors.txt pins =={p}" for n, (f, p) in sorted(wrong.items())))
+
+
+@pytest.mark.parametrize("name", sorted(FORCED_ABOVE_FLOOR))
+def test_each_forced_pin_is_still_pinned_above_its_declared_floor(name):
+    """An allowance that has stopped being needed is dead text that hides the next collision.
+
+    Three things have to hold for the entry to still be honest, and each has its own failure.
+    If the pin went away, the allowance is stale. If the pin dropped to or below the declared
+    floor, the collision has been resolved upstream and the allowance should go with it. And if
+    the pin slid BELOW the floor, that is the original defect this file was written for, wearing
+    an exemption as cover.
+    """
+    reqs, pins = _requirements(), _pins()
+    forcing, reason = FORCED_ABOVE_FLOOR[name]
+
+    assert name in pins, (
+        f"{name} is listed in FORCED_ABOVE_FLOOR ({reason}) and is no longer pinned in "
+        f"constraints/floors.txt. Remove the allowance, or restore the pin.")
+    assert name in reqs, (
+        f"{name} is listed in FORCED_ABOVE_FLOOR and pyproject.toml no longer declares a floor "
+        f"for it, so there is no floor for the pin to be above. Remove the allowance.")
+    assert forcing in reqs, (
+        f"FORCED_ABOVE_FLOOR says {name}'s pin is forced by {forcing}, which pyproject.toml no "
+        f"longer declares. The reason has expired: re-establish why {name} is pinned above its "
+        f"floor, or drop the allowance and pin it at the floor.")
+
+    pinned, floor = _release(pins[name]), _release(reqs[name])
+    width = max(len(pinned), len(floor))
+    pinned += (0,) * (width - len(pinned))
+    floor += (0,) * (width - len(floor))
+    assert pinned > floor, (
+        f"constraints/floors.txt pins {name}=={pins[name]} and pyproject.toml declares "
+        f">={reqs[name]}. FORCED_ABOVE_FLOOR is only for a pin ABOVE the floor; this one is not "
+        f"above it, so either the collision is over and the pin belongs at the floor, or the pin "
+        f"has slid below the floor, which is the defect this file exists to catch.")
+
+
+def test_the_hub_extras_floor_and_the_pyarrow_pin_cannot_drift_apart():
+    """The coupling, asserted directly, because it is the thing a future edit will break.
+
+    `datasets` 5 and later require `pyarrow>=21.0.0`. Somebody tidying `constraints/floors.txt`
+    back to "pin every floor exactly" would restore `pyarrow==14`, and the result is not a wrong
+    number that a reader notices: it is an environment pip cannot resolve at all, in the one job
+    whose whole purpose is to prove the declared floors resolve. Asserting the pair here makes
+    that edit fail in the suite, in seconds, instead of in CI after an install.
+    """
+    pins = _pins()
+    datasets_pin, pyarrow_pin = _release(pins["datasets"]), _release(pins["pyarrow"])
+    if datasets_pin < (5,):
+        pytest.skip("the datasets pin is below 5, where pyarrow 21 is not forced")
+    assert pyarrow_pin >= (21,), (
+        f"constraints/floors.txt pins datasets=={pins['datasets']}, which requires "
+        f"pyarrow>=21.0.0, and pins pyarrow=={pins['pyarrow']}. That combination is not "
+        f"installable, so the dependency-floor job would fail on the resolve rather than on "
+        f"anything about this project's floors.")
 
 
 #: Transitive dependencies pinned ON PURPOSE, with the reason. This is the case the test below

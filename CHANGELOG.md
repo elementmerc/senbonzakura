@@ -6,6 +6,14 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 ## [Unreleased]
 
+### Other
+- Bug fixes and improvements.
+
+## [0.4.1] "TYBW" — 2026-10-01
+
+A patch release. Nothing here changes what the tool measures, so figures from 0.4.0 stay
+comparable with figures from this one.
+
 ### Guided mode
 - Typing `senbonzakura` on its own now answers instead of refusing. It used to print a 27 line list of every flag and exit 1; it now prints a short page naming the ways in, and exits 0.
 - `senbonzakura -i` is a short spelling of `senbonzakura interactive`, and it is the entry point that page recommends.
@@ -16,6 +24,7 @@ All notable changes to Senbonzakura are recorded here. The format follows
 - The front door, the guided walk and `senbonzakura doctor` fold to the width of the terminal, so a half width window no longer runs text off the edge.
 
 ### Install
+- `brew install` and `scoop install` work. Both manifests carried a placeholder URL and no checksum, because the job that rewrites them at a release had failed on 0.4.0 and the failure was never read.
 - Card temperature and power on the live dashboard work on a plain `pip install senbonzakura`. The bindings that read them used to be absent from every install.
 
 ### CLI
@@ -46,6 +55,11 @@ All notable changes to Senbonzakura are recorded here. The format follows
 - The reference page no longer says the GitHub Action and the pre-commit hook cannot work yet.
 - `senbonzakura measure` no longer points at a documentation path that no wheel carries, and explains a stage's refusal with its reason rather than its exit status.
 - The guided mode no longer tells readers to run `huggingface-cli login`, which `hf auth login` replaced.
+- The Colab notebook drew its before and after refusal rates from the head of the evaluation track and captioned them held out. That head is the partition a run scores its own candidates against, so two thirds of the prompts behind the notebook's result were the run's own draws. It now reads the boundary from the track's own manifest.
+- The notebook also told readers without a GPU that everything still works, where the commands default to the card and refuse rather than falling back; promised a line per trial under a method that runs no trials; and gave an unmeasured figure for how long the measuring cells take.
+
+### GitHub Action
+- The action can be listed on the GitHub Marketplace. Its description was 185 characters against a limit of 125, so the listing was refused while every other field it needs was correct.
 
 ### Other
 - Bug fixes and improvements.

@@ -149,6 +149,48 @@ Print real harmful and harmless generations at one (layer, strength), before and
 after ablation, then exit. Use it to see whether high KL means "wrecked" or just
 "a few benign first tokens flipped".
 .TP
+.BI \-\-capability\-eval " SPEC"
+What the run measures the edit's cost against. Every other number a run reports is
+about refusal; none of them asks the model to do anything hard. On by default,
+using 256 arithmetic questions that ship inside the package, so it needs no
+network. Give a graded benchmark (a question column and an answer column) for your
+own, or an empty string to turn the probe off.
+.TP
+.BI \-\-capability\-n " N"
+How many items the probe uses (default 200, 0 turns it off). Before and after are
+scored on the same items, so the comparison is paired. Much below 200 the error bar
+covers the effect the edit is expected to have.
+.TP
+.BI \-\-capability\-task " TASK"
+How an answer is graded (default
+.BR numeric ).
+The default grader reads a number out of the answer, which is right for arithmetic
+and wrong for multiple choice or free text, so a benchmark of your own usually
+wants this changed too. See
+.B senbonzakura capability \-\-help
+for what each task measures.
+.TP
+.BI \-\-capability\-max\-new " N"
+Token budget per probe answer (default 512). A worked solution is long, and a
+budget that cuts it off measures the budget rather than the model. A truncated
+answer counts as ungradeable, never as wrong.
+.TP
+.B \-\-slow\-probe\-ok
+Run the capability probe on a CPU even when the run has worked out it will take
+hours. The probe's defaults are sized for a GPU, where they are minutes; on a CPU
+with a 1.7B model they are about four hours, so the run stops and says so rather
+than looking like a hung one all afternoon. Lowering
+.B \-\-capability\-n
+is usually the better answer.
+.TP
+.B \-\-short\-budget\-ok
+Allow
+.B \-\-gen\-tokens
+below the visibility floor, which is otherwise refused. For a smoke test, not for
+a number you will quote: at that budget a refusal the model never reaches is not
+counted, so the search picks configurations whose refusal lands after the cutoff
+and the result is about the budget rather than about the model.
+.TP
 .B \-\-version
 Print the version and exit.
 .SH EXAMPLES
@@ -184,6 +226,57 @@ senbonzakura \-\-model ./base \-\-track ./ds \-\-out ./att \\
 .B 0
 Success, or a clean early exit from
 .BR \-\-inspect / \-\-bench\-only .
+.TP
+.B 1
+The run happened and its answer is bad. A regression against a baseline, a finding in a result
+artefact, a missing dependency, or a run that invalidated its own figure: the compass sets this
+when the model's verdict was not at the position being scored, having printed that the AUC is not
+a measurement of harm discrimination.
+.TP
+.B 2
+Nothing was decided. A refused comparison, an argument error, or a file that was named as a
+result and could not be read as one.
+.PP
+.B THE TWO SCALES ARE NOT THE SAME,
+and this is worth reading before a script branches on a status.
+.PP
+.BR gate ", " check " and " prereg
+use the scale above:
+.B 1
+is a verdict you will not like and
+.B 2
+means no verdict was reached. So
+.B 2
+says nothing about the model, and a script that reports it as a regression sends somebody looking
+for a change in the weights instead of a mismatch in their baseline.
+.PP
+.B doctor
+is ordered by severity instead:
+.B 0
+is clean,
+.B 1
+is advisories only and the install works, and
+.B 2
+is a failure that means the install cannot do what it claims. Both conventions are deliberate,
+and a
+.B case
+block written for one of them misreads the other: applied to
+.BR doctor ,
+it treats a working install with advisories as a hard failure.
+.PP
+.B setup
+adds a third answer of its own:
+.B 3
+means the machine cannot run this tool and this command cannot change that, which is a different
+thing from
+.B 0
+for "nothing to do". It is the only command that returns
+.BR 3 .
+.PP
+Read the number rather than its truthiness. A test of
+.I "did it fail"
+collapses three answers into two, and the answer it loses is
+.BR 2 .
 .SH ENVIRONMENT
 These change what a run does or what it records, and none of them has a flag.
 .TP

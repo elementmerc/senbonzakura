@@ -17,6 +17,7 @@ of them, read about these.
 | `--eval-refusal-final N` | Re-score the best candidates on a bigger evaluation before picking the winner | Always, really. See below |
 | `--inspect LAYER STRENGTH` | Print real generations from before and after a cut | You want to look at the actual text instead of a percentage |
 | `--capability-eval` | What the run measures the edit's cost against. On by default, using a benchmark that ships with the package | You want to point it at your own graded benchmark, or turn it off. See below |
+| `--slow-probe-ok` | Runs the capability probe on a CPU even when the tool has worked out it will take hours | You have no GPU, you have read the estimate, and you mean it. See below |
 
 ## The three that deserve a paragraph
 
@@ -85,3 +86,65 @@ shown to have lost it.
 
 Point it at your own benchmark with a question column and an answer column, or pass an empty
 string to switch it off.
+
+### The rest of the capability family
+
+Four more flags shape that probe. None of them appears in `senbonzakura --help`, which shows the
+fifteen flags a run needs; they are in `senbonzakura --help-all` along with the other 59.
+
+| Flag | Default | What it decides |
+|---|---|---|
+| `--capability-n N` | 200 | How many items the probe uses. 0 turns it off. Before and after are scored on the same items, so the comparison is paired |
+| `--capability-task TASK` | `numeric` | How an answer is graded. `senbonzakura capability --help` says what each task measures |
+| `--capability-max-new N` | 512 | Token budget per answer. A worked solution is long, and a budget that cuts it off measures the budget rather than the model |
+| `--slow-probe-ok` | off | Run the probe on a CPU anyway, when the tool has worked out it will take hours |
+
+### The other override of the same kind
+
+**`--short-budget-ok`** is not a capability flag, and it belongs beside `--slow-probe-ok` because
+it is the same sort of thing: an override for a refusal the tool raises about its own measurement
+being worthless rather than about the machine.
+
+`--gen-tokens` below the visibility floor is refused without it. The reason is worth understanding
+before you reach for the override: **a refusal the model never reaches is not counted.** With a
+short budget the model gets cut off before it would have refused, the run scores that as
+compliance, and the search then prefers configurations whose refusal lands just after the cutoff.
+The number goes in the direction you were hoping for and measures the budget.
+
+So it is for a smoke test and not for a figure you will quote. To find the budget your model
+actually needs, run `senbonzakura score --length-sweep` instead of lowering the floor.
+
+**`--capability-task`** is the one to look at if your own benchmark's answers are not numbers. The
+default grader reads a number out of the model's answer, which is right for arithmetic and wrong
+for a multiple-choice set or a free-text one. Pointing `--capability-eval` at your own data
+without changing this is the easy mistake: the model answers correctly, the grader cannot find a
+number, and every item comes back ungradeable.
+
+**`--capability-max-new`** interacts with the ungradeable rule above. Lowering it to save time
+makes answers get cut off before the model reaches its conclusion, and those count as
+ungradeable rather than wrong. So a budget set too low does not give you a faster measurement, it
+gives you fewer measurements and a run that says so.
+
+**`--slow-probe-ok`** exists because the probe's defaults are sized for a GPU, where they take
+minutes. On a CPU with a 1.7B model they take about four hours. Rather than looking like a hung
+run all afternoon, the tool works out what it is about to cost and stops:
+
+```
+senbonzakura: 100% of this model's layers are on the CPU or on disk, not on the GPU, so the
+capability probe would generate at host speed and take roughly 4.1 hours (200 items at 512
+tokens each).
+  The card has less free memory than this model needs, so accelerate put the rest in host RAM.
+  That is a working model and a very slow one, and --device cuda does not make it a GPU run.
+  What to do:
+    free the card, or use one with more memory, or load smaller with --load-in-4bit
+    measure less of it:  --n 40 --max-new 256
+    if you meant it and will leave it running, add --slow-probe-ok
+```
+
+Three answers, and the flag is the last of them. Measuring less of it is usually the right one:
+the figure gets a wider error bar and you get it today.
+
+Note that the worked command there says `--n` and `--max-new`, not `--capability-n` and
+`--capability-max-new`. That is because the message comes from `senbonzakura capability`, which
+can be run on its own against a model you already have, and which spells the same two settings
+without the prefix. Inside an `abliterate` run, use the prefixed names.

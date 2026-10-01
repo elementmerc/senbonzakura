@@ -162,3 +162,30 @@ than two runs that happened near each other.
 |---|---|
 | `interactive` | A guided walk through the handful of choices that decide whether a run means anything. It prints the exact command before running it, so the second time you can type that instead. |
 | `auto` | An alias for `kageyoshi`, for anyone who has not met the name. |
+
+`interactive` needs a terminal, because it reads answers, and it refuses with exit status 2 when
+its input is a pipe. It takes `-h` and one other flag:
+
+| Flag | What it does |
+|---|---|
+| `--no-interactive` | Refuse instead of asking, and exit 2. |
+
+That flag is for one case. Deciding whether there is a person present is a guess, made by asking
+the operating system whether the input is a terminal, and the guess is wrong whenever something
+hands the command a fake terminal with nobody behind it. `docker run -t`, `expect` and some CI
+agents all do that. The command cannot tell them from a person, so it prints the menu and waits
+for an answer that never comes. Passing the flag says so outright, and saying beats guessing:
+
+```sh
+docker run -t your-image senbonzakura interactive --no-interactive
+```
+
+```
+senbonzakura: guided mode was asked to run with --no-interactive, so it is not asking anything.
+  A script wants the flags rather than the menu. `senbonzakura --help` lists them,
+  and `senbonzakura interactive` on a terminal prints the command for any run.
+```
+
+If you are writing the script, the flags are what you want in it rather than the flag that turns
+the menu off; `senbonzakura --help` lists them. The flag is for the case where something else
+decides how your command is launched.

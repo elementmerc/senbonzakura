@@ -236,3 +236,73 @@ def test_each_evidence_recipe_matches_its_own_artefact(readme, body, artefact):
     assert seen >= 4, (
         f"{readme.relative_to(ROOT)} names only {seen} of the flags that decide which rows are "
         f"measured, so the recipe does not pin the partition the artefact was taken on")
+
+
+# ── group 2: the pages that rest on an unpublished run ──────────────────────────
+#: The idiom this project uses to say a number's provenance out loud. Three uses in
+#: `docs/guide/what-we-know.md` when this was written, and the convention is to paste it rather
+#: than to invent a new wording per page.
+SOURCE_IDIOM = "*Source, stated rather than implied:"
+
+#: What a group 2 page must say, beyond naming its source: that the reader cannot check it.
+CANNOT_CHECK = ("cannot currently check", "not published", "are not published")
+
+
+def _group_two_pages():
+    """The documentation pages `REPRODUCING.md` itself puts in group 2.
+
+    READ OUT OF THE DOCUMENT RATHER THAN LISTED HERE, because a hardcoded list is a second
+    source of truth about which pages carry an unpublished number, and the two would drift the
+    first time a third page joined the group. The parse is deliberately narrow: group 2 is one
+    numbered item, and the pages in it are the `docs/guide/*.md` paths and guide URLs it names.
+    """
+    text = REPRODUCING.read_text(encoding="utf-8")
+    start = text.index("2. **It traces to a run whose logs are not committed.**")
+    end = text.index("3. **Neither.**", start)
+    item = text[start:end]
+    pages = {ROOT / m for m in re.findall(r"`(docs/guide/[\w.-]+\.md)`", item)}
+    # The second page is linked as a published URL rather than as a path, because that is the
+    # link a reader follows. Mapped back to the file that builds it.
+    for slug in re.findall(r"senbonzakura/guide/([\w-]+)\)", item):
+        pages.add(ROOT / "docs" / "guide" / f"{slug}.md")
+    return sorted(pages)
+
+
+def test_reproducing_still_declares_a_group_two():
+    """A guard on the guard.
+
+    If group 2 is ever rewritten out of the document, the test below would find no pages and pass
+    silently, which is the shape this project keeps finding: a check that stops asking its
+    question and reports the silence as a pass.
+    """
+    pages = _group_two_pages()
+    assert len(pages) >= 2, (
+        f"REPRODUCING.md's group 2 names {len(pages)} documentation page(s), and the prose says "
+        f"'the two that carry weight'. Either the document changed and this test needs "
+        f"re-reading, or the parse below has stopped matching it")
+    for page in pages:
+        assert page.exists(), f"REPRODUCING.md's group 2 names {page}, which is not in the tree"
+
+
+@pytest.mark.parametrize("page", _group_two_pages(), ids=lambda p: p.name)
+def test_every_group_two_page_says_where_its_number_came_from(page):
+    """`REPRODUCING.md` vouches for these pages, and on 2026-10-01 one of them did not say it.
+
+    The document's claim is specific: "Both pages state what the number is and that you cannot
+    currently check it." `docs/guide/limits.md` carried the Gemma withdrawal table (0.016 against
+    0.578, "never above 0.021") with no source note of any kind, while the idiom it was supposed
+    to be using was in use three times on the page next door.
+
+    This is the finding class, not the finding: a document vouching for a second document, with
+    nothing checking that the second one holds up its end. Group 3 of the same file calls a number
+    with no stated source a defect, so the rule was already written down and only unenforced.
+    """
+    text = page.read_text(encoding="utf-8")
+    rel = page.relative_to(ROOT)
+    assert SOURCE_IDIOM in text, (
+        f"{rel} is in REPRODUCING.md's group 2, so a number on it rests on a run whose logs are "
+        f"not published, and the page must say so where the number is quoted. Paste the idiom "
+        f"used in docs/guide/what-we-know.md: {SOURCE_IDIOM} ...*")
+    assert any(phrase in text for phrase in CANNOT_CHECK), (
+        f"{rel} names a source but never says the reader cannot check it, which is the half "
+        f"REPRODUCING.md promises on its behalf. One of {CANNOT_CHECK} belongs in the note")

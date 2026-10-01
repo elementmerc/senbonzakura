@@ -32,6 +32,8 @@ sidebar has the same links in the same order.
 
 - [The compass](/guide/compass) — whether the model still recognises harm, which is a different
   question from whether it still refuses.
+- [Failing a build on a regression](/guide/gating) — recording a measurement as a baseline, and
+  the three exit codes a CI step has to tell apart.
 - [Benchmarking against another tool](/guide/benchmark) — the equal-budget head to head.
 - [How this compares to other tools](/comparison) — the honest scorecard.
 

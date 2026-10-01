@@ -62,6 +62,12 @@ Those bottom two rows are what a null result looks like: the model barely moved,
 did move, the tool's carefully chosen directions did no better than directions picked out of
 a hat.
 
+*Source, stated rather than implied: all three rows come from the diagnostic run of 2026-08-05
+on gemma-2-2b-it and Qwen3, whose logs are not published. They are measurements, not estimates,
+and you cannot currently check them. `REPRODUCING.md`, in the repository root, names this page as
+one of two places where a number rests on an unpublished run, and says that such a number must say
+so where it is quoted. It now does.*
+
 The cause is fixed and the numbers will be re-measured. Until then, treat every Gemma result
 you find here or anywhere else in this project's history as **unmeasured**, not as a result.
 

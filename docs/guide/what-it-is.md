@@ -112,6 +112,53 @@ Two things follow, and neither is a formality:
   deployed model should not; putting one in front of other people is a decision with consequences
   that belong to whoever makes it.
 
+## Three licences, and they are not the same one
+
+People read the package metadata, see one licence, and stop. There are three in play, they cover
+different things, and the one that catches commercial readers out is the first.
+
+### The code: AGPL-3.0-or-later
+
+**If you run a modified version of this code as a network service, the AGPL's section 13 obliges
+you to offer your modified source to the people using it over that network.**
+
+That is the clause that separates the AGPL from the GPL, and it is worth being precise about who
+it reaches:
+
+| What you are doing | Does section 13 bite? |
+|---|---|
+| Running it on your own machine, however commercially | No |
+| Running it inside your company, for your own staff | No |
+| Running an unmodified copy as a service | No, there is nothing modified to offer |
+| Running a **modified** copy as a service other people use over a network | **Yes.** Your modifications have to be offered to those users |
+
+So it bites an abliteration-as-a-service business, and it does not bite an internal user. The
+licence is AGPL rather than something more permissive because the code embeds a keyword metric
+copied from [Heretic](https://github.com/p-e-w/heretic), which is AGPL.
+
+This is stated here because two readers with no knowledge of the project went looking for it in
+September 2026 and found it nowhere but the licence file itself, which is the wrong place for the
+one licence fact a commercial reader most needs.
+
+### The bundled evaluation track: CC BY-NC 4.0, non-commercial
+
+The prompt sets under `senbonzakura/data/` are a separate work aggregated into the same wheel, and
+they are non-commercial. The package metadata carries one licence expression and that expression
+describes the code.
+
+**If you are using this commercially, supply your own corpus with `--track` rather than using
+`--track default`.** Full attribution is in `THIRD-PARTY-NOTICES.md`, which is installed beside
+the package, and the provenance is in the
+[evaluation track card](/evaluation-track-card).
+
+### A model you abliterate: whatever the base model says
+
+Covered above, and repeated here because it belongs in the same list. Redistributing an
+abliterated checkpoint is governed by the upstream licence (Qwen, Llama, Gemma and so on), never
+by this repository's.
+
+None of this is legal advice. It is a map of which document to read.
+
 ## Where next
 
 - [Install](/guide/install) if you just want it running.

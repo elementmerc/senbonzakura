@@ -4,6 +4,11 @@ This is the card for the evaluation track every published number in this project
 on. It exists so a reader can answer three questions without asking us: what is in it, where
 every row came from, and what they are allowed to do with it.
 
+**This card covers what is in the track and what is wrong with it.** For where each row came
+from, which revision it was fetched at, and how the partitions are packed into the files, see
+[where the evaluation corpus came from](./corpus-provenance.md). The two pages are kept separate
+on purpose, so there is one place to look for each question rather than two accounts of both.
+
 **Nothing here is generated content.** The track is a partitioned collection of prompts drawn
 from existing public datasets. It contains no model outputs, no completions, and no answers to
 any harmful request. It is a measuring instrument, not a corpus of harm.

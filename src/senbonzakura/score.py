@@ -311,7 +311,7 @@ def main(argv=None):
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         res["chat_template"] = getattr(tok, "senbon_chat_template", None)
         res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device),
-                                   track=track.revision_entry(a.eval))
+                                   corpus=track.revision_entry(a.eval))
         with atomic_write(a.out) as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
@@ -331,7 +331,7 @@ def main(argv=None):
                     "chat_template": getattr(tok, "senbon_chat_template", None),
                     "provenance": provenance(device=a.device,
                                              accelerator=accelerator_name(a.device),
-                                             track=track.revision_entry(a.eval))})
+                                             corpus=track.revision_entry(a.eval))})
         if a.save_generations:
             save_generations(a.save_generations, prompts,
                              [r[cuts[-1]] for r in rows], "length_sweep", a.model, a.label)
@@ -355,7 +355,7 @@ def main(argv=None):
     # not comparable, and this is what lets a reader tell.
     res["chat_template"] = getattr(tok, "senbon_chat_template", None)
     res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device),
-                                   track=track.revision_entry(a.eval))
+                                   corpus=track.revision_entry(a.eval))
     # Recorded in the artefact and not only printed, so a number read back months later carries
     # the caveat it was produced under rather than relying on somebody having seen a log line.
     res["budget_warning"] = warning

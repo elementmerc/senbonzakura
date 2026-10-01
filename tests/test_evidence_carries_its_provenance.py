@@ -41,8 +41,17 @@ REQUIRED = {
     "model_id": ("model",),
     "model_revision": ("model_revision", "provenance.model.revision"),
     "dataset": ("track", "eval", "harmful", "dataset"),
+    # `provenance.corpus.revision` was `provenance.track.revision` for one afternoon (Q-52).
+    # Replaced rather than listed alongside, because no artefact was ever written with the old
+    # spelling: measured 2026-10-01 over every JSON in the tree, 54 carrying a provenance block
+    # and none carrying that key at any depth. Listing a spelling nothing has ever used is dead
+    # tolerance, and this list is the one place in the suite built to resist exactly that.
+    #
+    # The rename's reason is visible two lines up: `track` is already the spelling this gate
+    # accepts for the *dataset name*. A `provenance.track` meaning the pinned corpus would have
+    # made `track` mean two different things inside one REQUIRED map.
     "dataset_revision": ("track_revision", "dataset_revision",
-                         "provenance.track.revision"),
+                         "provenance.corpus.revision"),
     "accelerator": ("provenance.accelerator", "provenance.device", "device"),
     "seeds": ("seed", "seeds"),
 }

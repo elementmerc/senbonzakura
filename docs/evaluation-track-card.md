@@ -199,8 +199,22 @@ These are recorded because a measuring instrument with undisclosed limits is wor
 - **A ruler reading only prompt length beats one of the measured models.** That control is
   published alongside the results for exactly this reason; treat any AUC near the length-only
   baseline as a null.
-- **The topic-matched harmless set is not partitioned**, so results using it are not held out
-  in the same sense as the rest.
+- **The topic-matched harmless set is retired, as of 2026-10-01.** It was never partitioned, so
+  results using it were not held out in the same sense as the rest. Rather than partition it, we
+  measured whether it was worth keeping: on Qwen3-1.7B its subject-matching statistic read 0.722
+  against 0.718 for the general corpus, where a synthetically perfect match reads 0.299. So the
+  set we called topic-matched matched no better than the corpus it was meant to improve on, and
+  partitioning it would have bought 0.004 of subject matching for a schema change and a repack.
+
+  **Retired by documentation, not by deletion.** The set stays on disk with that measurement
+  beside it, so anybody who reads the trade differently can pick it back up. If you hold a figure
+  computed against it, the lack of partitioning is the caveat that attaches, and it attaches only
+  to abliterated models: on a base model nothing is fitted on any rows, so there is nothing to
+  hold out from.
+
+  This gets revisited if matching at scoring time, rather than in the dataset, turns out to change
+  a result. The synthetic evidence so far says a matched dataset is necessary and not sufficient,
+  which is why the dataset was the cheaper thing to give up.
 - **AdvBench is inside this track, and 11 of its requests reached the fitting side.** Measured
   2026-10-01, and the verdict is **contaminated**. AdvBench arrives through
   `mlabonne/harmful_behaviors` as described above. Of its 508 distinct requests, 8 sit in the

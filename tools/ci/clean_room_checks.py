@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 
@@ -59,6 +60,30 @@ def note(message):
     print(f"  NOTE  {message}")
 
 
+#: The phrases `doctor` uses when a binary is correct and the machine under it is not.
+#:
+#: Matched on more than one spelling deliberately. A guard that covers one spelling of a defect
+#: reports confidently on the others, which is this project's most recurring failure shape, and
+#: `doctor` has several ways of saying a binary could not start.
+IMAGE_IS_AT_FAULT = (
+    "shared library is missing",
+    "error while loading shared libraries",
+    "cannot open shared object",
+)
+
+
+def blames_the_image(verdict):
+    """Whether this verdict is about the machine rather than about the wheel.
+
+    Kept as a named function with its own test rather than inlined, because the whole point of
+    row 8.7 is that the clean room was confidently wrong about whose fault something was, and a
+    one-line condition inside a branch nobody can reach without a container is a condition
+    nobody can watch being right.
+    """
+    lowered = str(verdict).lower()
+    return any(phrase in lowered for phrase in IMAGE_IS_AT_FAULT)
+
+
 def run(args, timeout=120):
     """Run the installed console script, never a checkout."""
     return subprocess.run([sys.executable, "-m", "senbonzakura", *args],
@@ -73,9 +98,51 @@ def main(argv=None):
 
     print("clean room: what this install can actually do\n")
 
-    # ── it is genuinely a fresh install ──────────────────────────────────────────
+    # ── BEFORE ANY CHECK: is this a clean room at all ────────────────────────────
+    #
+    # A clean room that is not clean is the one kind of test whose pass means nothing, and this
+    # has happened here: the harness on one machine shadowed an installed 0.3.0 with a
+    # `PYTHONPATH` pointing at a checkout, so what it tested was not what it installed. Every
+    # check below then described the checkout, including the ones about what a wheel ships, and
+    # the run reported on an artefact nobody built.
+    #
+    # IT REFUSES RATHER THAN UNSETTING, and that is the whole decision. Quietly dropping the
+    # variable would make the run correct and leave the caller believing they had measured the
+    # thing they pointed it at, so the next person wires it up the same way. Loudly refusing
+    # costs one message and is the only version that changes anything.
+    #
+    # EXIT 2, not 1. One means the install misbehaved, which is a finding about the software;
+    # this means the room was not sealed, which is a finding about the harness, and a caller
+    # that treats them alike learns to ignore both. The gate this project ships makes exactly
+    # that distinction and it would be strange to not make it here.
+    unclean = []
+    if os.environ.get("PYTHONPATH"):
+        unclean.append(
+            f"PYTHONPATH is set to {os.environ['PYTHONPATH']!r}. Anything on it shadows the "
+            f"installed wheel, so these checks would describe whatever is on that path.")
+    # PYTHONHOME IS DELIBERATELY NOT CHECKED, and that was tried first. A value that would do any
+    # harm stops the interpreter before this file is reached ("No module named 'encodings'",
+    # measured), and a value that does no harm is a set variable pointing at the prefix already in
+    # use, which this would refuse for nothing. A guard that cannot fire for the dangerous case
+    # and does fire for the harmless one is worse than no guard: it teaches the reader that the
+    # refusal is noise.
     spec = importlib.util.find_spec("senbonzakura")
     origin = spec.origin if spec else ""
+    if "site-packages" not in (origin or ""):
+        unclean.append(
+            f"senbonzakura imports from {origin or 'nowhere'}, which is not an installed "
+            f"location. A checkout on the path answers every question below about itself.")
+    if unclean:
+        print("  REFUSED  this is not a clean room, so nothing was checked.\n")
+        for reason in unclean:
+            print(f"    - {reason}")
+        print("\n  Nothing here was unset for you: a run that silently repaired its own "
+              "environment would pass while measuring something else, and the caller would "
+              "wire it up the same way next time. Clear the variable, or install the wheel into "
+              "the environment you are pointing this at, and run it again.")
+        print("\n  A REFUSAL IS NOT A PASS AND NOT A FAILURE OF THE INSTALL. Exit 2.")
+        return 2
+
     check("installed from a wheel, not a checkout", "site-packages" in (origin or ""),
           f"imported from {origin}")
     check("no repository present", not __import__("pathlib").Path("/src/.git").exists())
@@ -138,13 +205,42 @@ def main(argv=None):
     verdict = next((ln for ln in out.splitlines() if "llama-quantize" in ln), "")
     runs = verdict.strip().startswith("\u2713")
 
-    if shipped and not runs:
+    # WHOSE FAULT IT IS, AND THIS CHECK USED TO BE CONFIDENTLY WRONG ABOUT IT.
+    #
+    # It reported every non-starting binary as "a packaging fault". The commonest reason a
+    # vendored `llama-quantize` will not start in here is not packaging at all: llama.cpp links
+    # OpenMP, `python:3.13-slim` does not ship `libgomp1`, and this project's own Dockerfile
+    # installs it explicitly with a comment saying why. The binary is exactly what we think it is
+    # and the image is missing a dependency of it, which `doctor` already says correctly and this
+    # file then contradicted.
+    #
+    # BEING WRONG ABOUT THE CAUSE IS NOT A SMALL THING HERE: a confidently misattributed gate
+    # sends somebody to re-vendor a correct binary, which is the exact failure mode this project
+    # keeps finding in other people's tooling and had shipped in its own.
+    #
+    # NOR IS IT A CLEAN BILL OF HEALTH. A user who pip-installs the platform wheel onto a slim
+    # base meets the same wall, and a wheel cannot declare a system package. So it still fails,
+    # with the honest name: an undeclared system dependency.
+    missing_library = blames_the_image(verdict)
+
+    if shipped and not runs and missing_library:
+        check("a shipped quantiser actually starts", False,
+              f"the wheel installed {shipped[0]} and it cannot start because this image lacks a "
+              f"library it links: {verdict.strip()!r}. The binary is correct. This is an "
+              f"UNDECLARED SYSTEM DEPENDENCY, which a wheel has no way to express, so anybody "
+              f"installing onto a base image this slim meets it too.")
+        print("\n  note  the binaries this wheel carries are correct and this IMAGE cannot run "
+              "them: it is missing a shared library they link, which on Debian and Ubuntu is "
+              "usually libgomp1. Re-vendoring will not help. Install the library, or state the "
+              "requirement where somebody installing the wheel will read it.\n")
+    elif shipped and not runs:
         check("a shipped quantiser actually starts", False,
               f"the wheel installed {shipped[0]} and doctor rejects it: {verdict.strip()!r}. "
               f"A wheel that carries a capability it cannot deliver is worse than one that "
               f"carries neither, because only the second is honest about it.")
-        print("\n  note  this wheel CARRIES binaries that do not run here. That is a packaging "
-              "fault, not a missing feature.\n")
+        print("\n  note  this wheel CARRIES binaries that do not run here, and doctor does not "
+              "name a missing library, so the binaries themselves are suspect. That is a "
+              "packaging fault, not a missing feature.\n")
     elif shipped:
         print("\n  note  this is a PLATFORM wheel and its binaries run.\n")
         check("a platform wheel can convert and quantise", "\u2717" not in verdict, verdict)

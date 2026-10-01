@@ -310,6 +310,49 @@ def frontier(points, best=None, best_label=None, width=72, height=5):
     return out
 
 
+#: How much of the output printed behind the alternate screen is kept for the replay, in
+#: characters. A documented hard cap rather than a growing list: a long search prints for hours,
+#: and one optuna parameter dump is worth hundreds of ordinary lines. 256 KiB is far more than the
+#: handful of lines that actually matter at the end of a run and small enough to be irrelevant
+#: beside the model in memory.
+CAPTURE_CHARS = 256 * 1024
+
+
+class _Tee:
+    """A write-through copy of a stream. Not a redirect: see `_RichPanel._start_capture`.
+
+    Every write reaches the wrapped stream unchanged and immediately, in the same order, and a
+    copy goes to `keep`. Everything else is delegated, which matters more than it looks: `isatty`,
+    `fileno`, `encoding` and `buffer` all have to keep answering the way the real stream does, or
+    something downstream decides it is writing to a pipe and changes its own behaviour. That would
+    make this wrapper visible, and a wrapper whose presence changes the output is not a tee.
+    """
+
+    def __init__(self, stream, keep):
+        self._stream = stream
+        self._keep = keep
+
+    def write(self, text):
+        # THE REAL WRITE FIRST. If `keep` ever raises, the output has already gone where it was
+        # going, so the worst case is a replay missing a line rather than a run missing its log.
+        written = self._stream.write(text)
+        try:
+            self._keep(text)
+        except Exception:
+            pass
+        return written
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 class NullPanel:
     """What every disabled path returns. Every method is a no-op that costs a call.
 
@@ -496,6 +539,11 @@ class _RichPanel:
         self._layout = layout
         self._spin = 0
         self._on_alt = False
+        # What the alternate screen would otherwise discard. See `_replay`.
+        self._captured = []
+        self._captured_chars = 0
+        self._dropped_lines = 0
+        self._saved_streams = None
         # Every (drift, refusal) seen, for the frontier. Bounded because a long search is
         # thousands of trials and the plot has a few hundred cells: past the cap the oldest go,
         # which is the right end to lose since the interesting marks are the recent ones.
@@ -505,8 +553,27 @@ class _RichPanel:
         # refresh tick and the panel redraws four times a second whether or not a trial landed, so
         # the spinner turns and `elapsed` counts during the long silences this exists for. With a
         # stored renderable it would only change when `update` was called, which is once a trial.
+        # `redirect_stdout=False, redirect_stderr=False`, AND THEY ARE THE WHOLE POINT OF THIS
+        # MODULE'S HEADLINE RULE. rich defaults BOTH to True: `Live.__enter__` replaces `sys.stdout`
+        # and `sys.stderr` with a `FileProxy` that buffers each write to a newline and re-emits it
+        # through `console.print`. So the log this file promises to leave alone was being captured
+        # and reprinted by the panel, which is the one thing the docstring above says it never does.
+        #
+        # Three things that cost. A line is re-wrapped to the console width, and `say.lines` leaves
+        # indented lines alone on purpose because they are commands somebody pastes, so those are
+        # exactly the lines rich broke. `sys.stderr` went the same way, which is where optuna logs
+        # a caught trial failure with its full parameter dump and where every torch and
+        # transformers warning arrives, none of it routed through `say`. And `Live.stop` restores
+        # the two streams without flushing the proxy, so any write not ending in a newline is
+        # discarded outright.
+        #
+        # Nothing was observed broken, because `print` ends every line and `cli.log` pre-wraps to
+        # the width minus its stamp, so the common case survived the round trip. That is luck
+        # rather than design: the guard is the flag, not the coincidence that the two wrappers
+        # happened to agree.
         self._live = Live(console=self._console, get_renderable=self._render,
-                          refresh_per_second=4, transient=False)
+                          refresh_per_second=4, transient=False,
+                          redirect_stdout=False, redirect_stderr=False)
 
     # ── lifecycle ───────────────────────────────────────────────────────────────
 
@@ -534,6 +601,100 @@ class _RichPanel:
 
     # ── the alternate screen ────────────────────────────────────────────────────
 
+    def _keep(self, text):
+        """Hold on to one write, under a hard cap, dropping whole lines from the oldest end.
+
+        Bounded because baseline Section 12 forbids a collection that grows with input, and a long
+        search prints for hours. The cap is characters rather than lines, since one optuna parameter
+        dump is worth hundreds of ordinary lines.
+
+        The OLDEST end goes, which is a deliberate choice and the opposite of what a log would do.
+        What this buffer exists to save is the end of the run: the governor's last shrink, the OOM,
+        and the Ctrl+C notice, which is the final thing printed before the screen closes. Losing the
+        start of a long search costs context; losing the end costs the recovery instructions.
+        """
+        self._captured.append(text)
+        self._captured_chars += len(text)
+        if self._captured_chars <= CAPTURE_CHARS:
+            return
+        joined = "".join(self._captured)
+        # Whole lines, so a replayed block never opens mid-word. The `+ 1` keeps the newline with
+        # the line above it rather than orphaning it onto the front of the kept text.
+        cut = len(joined) - CAPTURE_CHARS
+        boundary = joined.find("\n", cut)
+        boundary = len(joined) if boundary < 0 else boundary + 1
+        self._dropped_lines += joined.count("\n", 0, boundary)
+        self._captured = [joined[boundary:]]
+        self._captured_chars = len(self._captured[0])
+
+    def _start_capture(self):
+        """Tee stdout and stderr for as long as the alternate screen is up.
+
+        THIS IS NOT THE REDIRECT THIS MODULE REFUSES TO DO, and the difference is worth stating
+        plainly because the file's whole identity is that it leaves the log alone. rich's redirect
+        replaces `sys.stdout` with a proxy that buffers to a newline and re-emits through
+        `console.print`, so the text is re-wrapped, routed through the panel and silently truncated
+        if it does not end in a newline. This passes every write **through to the same stream,
+        unchanged, immediately**, and keeps a copy. Nothing is re-wrapped, nothing is re-ordered and
+        nothing waits for a newline.
+
+        The panel's own drawing cannot be captured by this, and that is structural rather than
+        careful: `self._console` was bound to the real stream object in `__init__`, before any tee
+        exists, so rich writes past it. If the console is ever constructed lazily from `sys.stdout`
+        instead, the replay below starts including the dashboard, and
+        `test_the_replay_does_not_contain_the_dashboard_itself` is what fails.
+        """
+        self._saved_streams = (sys.stdout, sys.stderr)
+        sys.stdout = _Tee(sys.stdout, self._keep)
+        sys.stderr = _Tee(sys.stderr, self._keep)
+
+    def _stop_capture(self):
+        """Put the real streams back. Must run before the replay, or the replay captures itself."""
+        if self._saved_streams is None:
+            return
+        sys.stdout, sys.stderr = self._saved_streams
+        self._saved_streams = None
+
+    def _replay(self):
+        """Write back what the alternate screen is about to throw away.
+
+        WHY THIS EXISTS. `set_alt_screen(False)` restores the primary buffer and the terminal
+        discards the alternate one, so everything printed beside the panel during the search went
+        into a buffer nobody will ever see again. Four paths wrote into it: the governor's pause,
+        shrink, yield and resume lines with `VRAM OOM at batch=1`; optuna's WARNING for a caught
+        trial failure with its parameter dump; torch and transformers warnings; and
+        `cli.interrupted_notice`.
+
+        THE LAST ONE IS WHY THIS IS SERIOUS RATHER THAN UNTIDY. A person presses Ctrl+C on a long
+        run, the tool prints how many trials survived and where the study is, and then the screen
+        closes and takes the answer with it. The run was recoverable and they were told nothing
+        about how. That is worse than printing nothing, because the tool believes it has explained
+        itself.
+
+        Verbatim, through the real stream, with no `say` and no rich in the path: the whole point is
+        that this is the same bytes the run already emitted. The header is new text, not altered
+        text, and it is here because output appearing after a dashboard has closed is otherwise
+        unexplained.
+        """
+        text = "".join(self._captured)
+        self._captured = []
+        self._captured_chars = 0
+        if not text.strip():
+            return
+        out = self._saved_streams[0] if self._saved_streams else sys.stdout
+        try:
+            print("\n  ── what was printed behind the dashboard "
+                  "───────────────────────────", file=out)
+            if self._dropped_lines:
+                print(f"  ({self._dropped_lines} earlier line(s) dropped: this keeps the most "
+                      f"recent {CAPTURE_CHARS // 1024} KiB)", file=out)
+            out.write(text if text.endswith("\n") else text + "\n")
+            out.flush()
+        except Exception:
+            # A terminal that has gone away is not a reason an abliteration reports failure, and
+            # this runs on the Ctrl+C path where there is nothing useful left to do about it.
+            pass
+
     def _enter_screen(self):
         """Take the whole terminal, for the full layout only. Decision Q-42 D1.
 
@@ -553,19 +714,43 @@ class _RichPanel:
         if self._layout != "full" or self._on_alt:
             return
         try:
-            self._console.set_alt_screen(True)
-            self._on_alt = True
+            # THE RETURN VALUE, RATHER THAN THE ABSENCE OF AN EXCEPTION. `set_alt_screen` returns
+            # False without raising when the console is not a terminal, or on legacy Windows: it
+            # simply writes no control codes. Reading only the exception recorded "we are on the
+            # alternate screen" for a console that never switched, which was harmless while nothing
+            # depended on the flag and is not harmless now, because the replay below would then
+            # print a copy of output the terminal had never discarded.
+            self._on_alt = bool(self._console.set_alt_screen(True))
         except Exception:
             self._on_alt = False
+        if self._on_alt:
+            self._start_capture()
 
     def _leave_screen(self):
         if not self._on_alt:
             return
+        # ONE ORDERING IS LOAD-BEARING AND THE OTHER IS NOT, and the difference was established by
+        # mutating both rather than by reasoning about them.
+        #
+        # LOAD-BEARING: the screen closes before the replay. Reverse those two and the replayed text
+        # goes into the buffer the terminal is about to discard, which is the defect this exists to
+        # fix, wearing the fix's own clothes.
+        #
+        # NOT: restoring the streams before the replay. A mutant that moved `_stop_capture` after
+        # `_replay` changed nothing, correctly, because `_replay` writes to `self._saved_streams[0]`
+        # by name rather than to whatever `sys.stdout` currently is, so it cannot feed itself
+        # whichever order these sit in. It is restored first anyway, because leaving a tee installed
+        # across a print is a thing a later reader has to reason about for no benefit.
+        #
+        # What IS worth guarding there is the target, not the order:
+        # `test_the_replay_writes_to_the_saved_stream_rather_than_to_whatever_stdout_is_now`.
+        self._stop_capture()
         try:
             self._console.set_alt_screen(False)
         except Exception:
             pass
         self._on_alt = False
+        self._replay()
 
     # ── input ───────────────────────────────────────────────────────────────────
 

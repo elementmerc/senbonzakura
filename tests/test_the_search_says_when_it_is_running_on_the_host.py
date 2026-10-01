@@ -68,10 +68,78 @@ def test_an_offloaded_model_is_reported(model):
 
 
 def test_the_notice_says_the_run_still_works():
-    """It is a slow run, not a broken one, and a reader who thinks it is broken kills it."""
+    """It is a slow run, not a broken one, and a reader who thinks it is broken kills it.
+
+    HOST RAM ONLY. The disk case is the test below, and it is the opposite claim.
+    """
     text = " ".join(_lines(HALF_ON_HOST))
     assert "works" in text, (
         "the notice has to say the run is fine, or somebody reaches for Ctrl+C on working work")
+    assert "DISK" not in text, "nothing is on disk in this placement, so nothing should say so"
+
+
+# ── disk is a different outcome, not a slower one ────────────────────────────────
+
+def test_a_disk_placement_is_never_told_the_run_works():
+    """The 2026-10-01 finding, and the whole reason the disk reading is taken separately.
+
+    `offloaded_share` groups `cpu`, `disk` and `meta` because for pricing generation they are all
+    "not the accelerator". This notice was built on that one number, so it could only ever say
+    "slower", and it said "The run works" for a placement under which the edit does not run at
+    all: `cli._real_tensor` raises on the first disk-offloaded writer it is asked to edit, because
+    the offload map hands back a fresh tensor on every read and the bake would write into a copy
+    that is discarded before the next forward pass.
+
+    That is the same defect as `doctor`'s CPU advisory, which said "editing a model on CPU works
+    and is slow" while the default flags refuse: **a reassurance built on a check that never
+    tested the thing it was reassuring about.** Two instances of one pattern in one tool, so this
+    one gets an assertion on the words rather than on the presence of words.
+
+    `SOME_ON_DISK` was already a fixture here, parametrised into
+    `test_an_offloaded_model_is_reported`, which asserts the notice says *something*. Nothing
+    asserted WHAT, which is how the wrong sentence survived.
+    """
+    text = " ".join(_lines(SOME_ON_DISK))
+    assert "works" not in text, (
+        "a disk placement was told the run works. The edit is refused when it reaches a "
+        "disk-offloaded weight, so this promises an outcome the tool does not deliver.")
+    assert "DISK" in text, "the notice has to name disk, because it is the thing that decides"
+    assert "not run" in text or "refused" in text, (
+        "the notice has to say the edit will not run, which is the fact a reader needs before "
+        "spending an hour finding out")
+
+
+def test_a_disk_placement_is_told_what_to_do_instead():
+    """A refusal that names no way forward sends somebody to the issue tracker."""
+    text = " ".join(_lines(SOME_ON_DISK))
+    assert "host RAM" in text or "RAM" in text, "adding host RAM is the fix that makes it editable"
+    assert "--load-in-4bit" in text, "the flag that makes it fit has to be named"
+
+
+def test_a_disk_placement_is_reported_at_any_token_budget():
+    """The disk notice must not sit behind the rate arithmetic, and it did in the first draft.
+
+    `gen_tokens` arrives as 0 or None on the paths that inject a model, and the function returns
+    early on that because there is no rate to project. A disk placement refuses the edit at any
+    budget, so a notice that returned first would be silent on exactly the paths most likely to
+    be driven from a script. Caught 2026-10-01 by running the zero-budget case against the new
+    branch rather than by reading it.
+    """
+    for kw in ({"gen_tokens": 0}, {"gen_tokens": None},
+               {"trials": 0}, {"prompts_per_trial": None}):
+        text = " ".join(_lines(SOME_ON_DISK, **kw))
+        assert "DISK" in text, (
+            f"a disk placement said nothing with {kw}; the placement fact does not depend on the "
+            f"budget and must be reported before the rate is worked out")
+
+
+def test_the_disk_reading_counts_only_disk():
+    """`cpu` and `meta` are not disk, and a notice that lumped them would fire on every offload."""
+    on_disk, total = capability.disk_offloaded_entries(SOME_ON_DISK)
+    assert (on_disk, total) == (1, 10), f"expected exactly one disk entry of ten, got {on_disk}/{total}"
+    assert capability.disk_offloaded_entries(HALF_ON_HOST)[0] == 0, "host RAM is not disk"
+    assert capability.disk_offloaded_entries(ALL_ON_GPU)[0] == 0
+    assert capability.disk_offloaded_entries(NO_MAP) == (0, 0), "no map is not a disk placement"
 
 
 def test_the_notice_carries_a_rate_and_owns_that_it_is_a_projection():

@@ -133,14 +133,78 @@ def test_a_dumb_terminal_turns_it_off(monkeypatch):
 
 @pytest.mark.parametrize("needle", _needles())
 def test_every_smoke_needle_still_reaches_a_piped_stream(needle, capsys):
-    """A log line carrying a needle is printed unchanged while a null panel is held open.
+    """A log line carrying a needle survives the NULL panel, which is the CI shape.
 
-    This is the property the smoke harness depends on, asserted against the real needle list.
+    KEPT, AND NARROWED IN WHAT IT CLAIMS. This used to say it asserted "the property the smoke
+    harness depends on", and it does not: `stream=_NotATerminal()` makes `attach` return a
+    `NullPanel`, which the test above this one asserts does nothing at all. A panel that does
+    nothing cannot eat a marker, so this could never fail, for any panel implementation. It was
+    passing on 2026-10-01 while `_RichPanel` was in fact capturing every byte of stdout.
+
+    It is still worth running. The CI path really is the null path, and an `attach` that started
+    returning a live panel on a pipe would fail here. The property this file is NAMED for is
+    asserted by the two tests below, which drive the real thing.
     """
     log = events.EventLog(None)
     with livedisplay.attach(log, _args(), stream=_NotATerminal()):
         print(f"some output with {needle} in it")
     assert needle in capsys.readouterr().out
+
+
+def _driven_panel(console):
+    """A real `_RichPanel`, driven without a terminal, which is what `console=` exists for."""
+    return livedisplay._RichPanel(events.EventLog(None), total_trials=4,
+                                  console=console, layout="inline")
+
+
+@pytest.mark.parametrize("needle", _needles())
+def test_every_smoke_needle_survives_a_real_drawing_panel(needle, capsys):
+    """The property this file is named for, asserted against a panel that actually draws.
+
+    WHAT THIS CATCHES, measured on 2026-10-01 before it was fixed. `rich.live.Live` defaults BOTH
+    `redirect_stdout` and `redirect_stderr` to True, so entering it replaces `sys.stdout` with a
+    `FileProxy` that re-emits every line through the panel's own console. Driven with the console
+    pointed somewhere else, the real stdout received **zero bytes**: every needle printed inside
+    the block went to the panel's stream instead.
+
+    In production the console is on the same stdout, so the text still reached the terminal by a
+    longer road. That makes the live defect a re-wrap rather than a disappearance, and it does not
+    make the module's headline rule true, which is what this asserts.
+    """
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    elsewhere = io.StringIO()
+    panel = _driven_panel(Console(file=elsewhere, width=80, force_terminal=True))
+    with panel:
+        print(f"some output with {needle} in it")
+    out = capsys.readouterr().out
+    assert needle in out, (
+        f"{needle!r} printed while the panel was live did not reach stdout; the panel captured it. "
+        f"Check `redirect_stdout`/`redirect_stderr` on the `Live` in livedisplay.py.")
+    assert needle not in elsewhere.getvalue(), (
+        f"{needle!r} reached the panel's own console, which means stdout is being redirected "
+        f"through it. The log is drawn BESIDE the panel, never through it.")
+
+
+def test_the_live_is_constructed_with_both_redirects_off():
+    """The flag itself, because the behavioural test above cannot see a partial line.
+
+    `Live.stop` restores the two streams WITHOUT flushing the proxy, so a write that does not end
+    in a newline is discarded outright: verified directly on 2026-10-01, the proxy's buffer still
+    held the text and the text never appeared. Nothing in this package writes a partial line today
+    (`cli.log` uses `print`), so there is no behaviour to assert and the guard has to be the
+    construction. Mutating either argument to True fails here.
+    """
+    pytest.importorskip("rich")
+    import inspect
+
+    src = inspect.getsource(livedisplay._RichPanel.__init__)
+    call = src[src.index("Live("):]
+    for flag in ("redirect_stdout=False", "redirect_stderr=False"):
+        assert flag in call, (
+            f"the `Live` in livedisplay.py no longer passes {flag}. rich defaults it to True, "
+            f"which redirects the run's log through the panel's console.")
 
 
 def test_the_panel_module_does_not_touch_stdout_at_import():

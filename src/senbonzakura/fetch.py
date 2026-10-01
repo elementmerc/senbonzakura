@@ -250,6 +250,92 @@ def _the_hub_said_no(ref, filename, error, *, token=None):
         "passing one as an argument: an argument is visible in `ps` and in your shell history.")
 
 
+#: Markers of `huggingface_hub`'s own "please log in" notice, which this command says in its own
+#: words instead. Matched on any one of them rather than on a sentence, because the sentence has
+#: been reworded upstream at least twice and a brittle match here fails in the safe direction:
+#: a notice we no longer recognise is passed through, so the worst case is saying it twice.
+#:
+#: The spellings live in `hubmessage`, which is the one home for what upstream says, so this file
+#: holds no copy of a command the project no longer recommends. See `LOGIN_NUDGE_MARKERS` there.
+_LOGIN_NUDGE = hubmessage.LOGIN_NUDGE_MARKERS
+
+#: What we say instead. One line, and it names the cost rather than only the remedy: a reader who
+#: is downloading a public file does not need an account and should not be nudged towards one
+#: without being told what it buys them.
+ANONYMOUS_NOTICE = (
+    "NOTE: no Hugging Face token is set, so this download is anonymous. That works for public "
+    "files and is subject to a lower rate limit. Set $HF_TOKEN or run `hf auth login` if you hit "
+    "one, or if the repository is private or gated.")
+
+
+@contextlib.contextmanager
+def hub_logging_through_us(log, *, token=None):
+    """`huggingface_hub`'s logging arrives through this command's formatting, or not at all.
+
+    WHAT PROMPTED IT, 2026-10-01
+
+    A surface audit found "You are sending unauthenticated requests ..." arriving on stderr above
+    this command's own output, unwrapped and in upstream's voice, for the ordinary case of
+    downloading a public file. Same class as the vendored converter's 350 lines of per-tensor
+    chatter: somebody else's output in our surface, pushing ours down the screen.
+
+    WHY A LOGGER AND NOT `vendored.relay`
+
+    The ledger item named `relay` as the shape of the answer and `relay` is the wrong tool, because
+    it reads a subprocess's pipe. `huggingface_hub` runs in this process and writes through the
+    `logging` module, so the same idea has to be applied to a logger: take its handlers for the
+    duration, collect what it emits, and re-emit everything through `say` afterwards.
+
+    NOTHING IS DROPPED EXCEPT THE ONE NOTICE WE REPLACE
+
+    Setting the library's verbosity to error would be one line and would hide a genuine warning,
+    which is the trade this project refuses everywhere else. So records are collected rather than
+    silenced, and only the login nudge is dropped, and only when this command has already said the
+    same thing in its own words. Everything else is re-emitted.
+
+    The match is deliberately loose and fails safe: an upstream rewording we do not recognise is
+    passed through, so the worst outcome is a reader told twice rather than a warning lost.
+    """
+    import logging
+
+    # THROUGH `say`, not through `log`. The first version of this called `log` directly and
+    # printed a 227-column line, which is the defect it was written to fix, moved one voice over.
+    if not token:
+        say.say(ANONYMOUS_NOTICE, indent="  ", log=log)
+
+    logger = logging.getLogger("huggingface_hub")
+    collected: list[logging.LogRecord] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            collected.append(record)
+
+    was = (logger.handlers, logger.propagate, logger.level, logger.disabled)
+    # `propagate = False` as well as replacing the handlers: `huggingface_hub` installs its own
+    # handler on its own logger, and a bare handler swap still lets the record reach the root
+    # logger's stderr handler if anything configured one.
+    logger.handlers = [_Collect()]
+    logger.propagate = False
+    logger.disabled = False
+    # DEBUG rather than the library's level, so a record it would have filtered is still collected
+    # and can be reported here. Raising the floor is how this would start losing things.
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield collected
+    finally:
+        logger.handlers, logger.propagate, logger.level, logger.disabled = was
+        for record in collected:
+            try:
+                text = record.getMessage()
+            except Exception:                       # a malformed format string upstream
+                text = str(record.msg)
+            flat = text.lower()
+            if not token and any(m in flat for m in _LOGIN_NUDGE):
+                continue
+            if record.levelno >= logging.WARNING:
+                say.say(f"NOTE, from huggingface_hub: {text}", indent="  ", log=log)
+
+
 def download(kind, ref, filename, out_dir, *, revision=None, token=None, log=print):
     """Place the file in `out_dir` and return its path. Resumable, and never leaves a partial."""
     out_dir = Path(out_dir)
@@ -261,13 +347,17 @@ def download(kind, ref, filename, out_dir, *, revision=None, token=None, log=pri
         # in every respect, and it arrives already as a dependency of `datasets`.
         from huggingface_hub import hf_hub_download
         from huggingface_hub.errors import HfHubHTTPError
-        try:
-            got = hf_hub_download(repo_id=ref, filename=filename, revision=revision,
-                                  local_dir=str(out_dir), token=token)
-        except HfHubHTTPError as e:
-            raise FetchError(_the_hub_said_no(ref, filename, e, token=token)) from e
-        except (OSError, ValueError) as e:
-            raise FetchError(f"could not fetch {ref}:{filename}: {e}") from e
+        # AROUND THE CALL AND NOTHING ELSE. The handler swap is global to the process while it is
+        # held, so it is held for exactly as long as the transfer and restored in a `finally`,
+        # including on the refusal paths below.
+        with hub_logging_through_us(log, token=token):
+            try:
+                got = hf_hub_download(repo_id=ref, filename=filename, revision=revision,
+                                      local_dir=str(out_dir), token=token)
+            except HfHubHTTPError as e:
+                raise FetchError(_the_hub_said_no(ref, filename, e, token=token)) from e
+            except (OSError, ValueError) as e:
+                raise FetchError(f"could not fetch {ref}:{filename}: {e}") from e
         return Path(got)
 
     import urllib.error

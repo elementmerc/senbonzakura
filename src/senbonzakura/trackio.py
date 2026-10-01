@@ -379,6 +379,29 @@ def fingerprint(rows: list[str]) -> str:
     return h.hexdigest()[:16]
 
 
+def writable() -> str | None:
+    """The name of the library that would write a table here, or None when nothing can.
+
+    WHY A SEPARATE QUESTION FROM WRITING, 2026-10-01
+
+    `senbonzakura track` on an install with neither pyarrow nor datasets read both prompt files,
+    filtered them, printed the kept counts, and then died with a thirty-line traceback ending in
+    `senbonzakura.trackio.TrackIOError`. The message inside that traceback is the right message. It
+    was simply delivered as a crash, after the work, which breaks two rules at once: a dependency
+    is checked before a job starts, and what a user reads is prose rather than a raw error string.
+
+    The check mirrors `_write_shard`'s precedence exactly, pyarrow first and datasets second, so it
+    cannot answer yes to a writer the write would not take.
+    """
+    if _pyarrow() is not None:
+        return "pyarrow"
+    try:
+        import datasets  # noqa: F401
+    except ImportError:
+        return None
+    return "datasets"
+
+
 def write_text_column(path, rows, column: str = TEXT_COLUMN) -> None:
     """Write one column of text as a save_to_disk directory, atomically.
 

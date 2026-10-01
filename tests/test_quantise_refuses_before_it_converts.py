@@ -167,3 +167,52 @@ def test_a_failed_conversion_leaves_no_resume_point_it_cannot_honour(tmp_path, m
     out = tmp_path / "out" / "m.gguf"
     assert quantise.run([str(_checkpoint(tmp_path)), str(out)], log=lambda _m: None) == 2
     assert not _kept(out.parent)
+
+
+# ── contradictory flags, 2026-10-01 ─────────────────────────────────────────────
+def _parsed(*extra):
+    return quantise.build_parser().parse_args(["src.gguf", "--type", "Q4_K_M", *extra])
+
+
+def test_keep_source_and_prune_source_together_are_refused():
+    """The two flags ask for opposite things about somebody's largest file.
+
+    WHAT PROMPTED IT. A CLI surface sweep item, paired with `convert` accepting `--imatrix`
+    without `--quantise`: both flags were accepted together and the outcome was decided by
+    precedence inside `_run`. That makes the answer to "is my f16 still there afterwards" a
+    question about reading this module, which is not a question a user can answer.
+
+    `--prune-source` deletes a file that is usually tens of gigabytes. Resolving a contradiction
+    silently is the wrong way round for an irreversible one.
+    """
+    with pytest.raises(SystemExit) as exit_info:
+        quantise._preflight_arguments(_parsed("--keep-source", "--prune-source"),
+                                      log=lambda *_a, **_kw: None)
+    said = str(exit_info.value)
+    assert "--keep-source" in said and "--prune-source" in said, said
+    assert "opposite" in said, said
+
+
+@pytest.mark.parametrize("extra", [(), ("--keep-source",), ("--prune-source",)])
+def test_either_flag_on_its_own_is_allowed(extra):
+    """The guard must not fire on the two combinations the flags were written for."""
+    quantise._preflight_arguments(_parsed(*extra), log=lambda *_a, **_kw: None)
+
+
+def test_the_contradiction_is_caught_from_the_command_line_and_not_after_the_conversion():
+    """The whole subject of this file: a fault visible before the work must not be found after it.
+
+    Asserted by position in `_preflight_arguments`, which `run` calls before the conversion, so
+    reaching it at all is the claim. A test driving `run` would need a real GGUF and the vendored
+    binary; what this adds over the test above is that the check lives in the pre-flight rather
+    than somewhere further in.
+    """
+    import inspect
+
+    # One of the two places in this project where reading a source body is the point rather than
+    # a shortcut: the claim is about WHERE a check sits, which has no runtime signature. Narrow to
+    # the one function, and asserting only that the names appear in it.
+    body = inspect.getsource(quantise._preflight_arguments)
+    assert "keep_source" in body and "prune_source" in body, (
+        "the contradiction check has moved out of the argument pre-flight, so it now runs after "
+        "a conversion that may take tens of minutes")

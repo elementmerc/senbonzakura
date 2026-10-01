@@ -45,6 +45,23 @@ from __future__ import annotations
 #: command line, it is FALSE for the case that produces it most often. Nobody typed a password, and
 #: a reader who is told their credentials are wrong goes looking for a token when the id had a
 #: character missing.
+#: Markers of `huggingface_hub`'s own "please log in" notice, for a caller that says it in its own
+#: words instead and needs to recognise the original to suppress it.
+#:
+#: HERE RATHER THAN IN `fetch`, AND THE REASON IS A TEST THAT WAS RIGHT. This tuple has to contain
+#: `huggingface-cli login`, because upstream still emits that spelling and a matcher that cannot
+#: see it cannot suppress it. `fetch.py` held its own copy, and
+#: `test_no_user_facing_string_recommends_a_superseded_command` flagged it on 2026-10-01 as a
+#: string telling a reader to run a command this project no longer recommends. The flag was fair:
+#: nothing in `fetch` distinguished a spelling we RECOGNISE from one we RECOMMEND, and that exact
+#: confusion is what the guard was written for, after the guided mode handed a reader the same
+#: stale command the tool strips out of somebody else's output.
+#:
+#: This module is the one home for what upstream says, and the guard skips it by name for that
+#: reason. A matcher belongs here; advice belongs where it is given.
+LOGIN_NUDGE_MARKERS = ("unauthenticated request", "hf auth login", "huggingface-cli login",
+                       "log in to get higher")
+
 ADVICE_FOR_THE_PYTHON_API = (
     "token=<your_token>", "use_auth_token", "huggingface-cli login",
     "If this is a private repository", "If this is a private repo",

@@ -58,6 +58,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import adapters
 from ._version import __version__
 from .adapters import UnknownArtefactError, normalise
 from .registry import (
@@ -274,6 +275,50 @@ def _section(label, text, out):
     print(file=out)
 
 
+def _wrapped(text, out, *, indent="  "):
+    """One paragraph of prose, wrapped to the same width the findings use.
+
+    `_section` wraps a labelled body; this wraps a bare paragraph, which is what the summary block
+    at the end of a run is made of. A URL or a long path is left whole rather than broken, because
+    a wrapped path cannot be pasted.
+    """
+    import textwrap
+
+    for line in textwrap.wrap(" ".join(text.split()), width=_WIDTH,
+                              initial_indent=indent, subsequent_indent=indent,
+                              break_long_words=False, break_on_hyphens=False):
+        print(line, file=out)
+
+
+#: The schema field this project stamps on an evidence file that is a COLLECTION of figures rather
+#: than one measurement. Read rather than guessed: the value is what
+#: `evidence/k-sweep-2026-08-13/drift-per-seed.json` actually carries.
+OUR_EVIDENCE_SCHEMA = "senbonzakura-evidence/"
+
+
+def _why_it_was_skipped(path):
+    """What to say about a swept file no adapter claimed, which is not always the same sentence.
+
+    Our own evidence collections get their own wording, because calling them "not a result
+    artefact" is false and reads as a verdict on the file rather than on the question.
+    """
+    import json
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        schema = doc.get("schema") if isinstance(doc, dict) else None
+    except (OSError, ValueError, UnicodeDecodeError):
+        # Unreadable here is not a finding: the caller already read this file and decided no
+        # adapter claimed it, so an error on a second read is about this sentence and nothing
+        # else. The general wording is the honest fallback.
+        schema = None
+    if isinstance(schema, str) and schema.startswith(OUR_EVIDENCE_SCHEMA):
+        return ("a senbonzakura evidence collection, not a single measurement, so no check can "
+                "read it: skipped")
+    return "not a result artefact, skipped"
+
+
 def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, total=None):
     if problem:
         if named:
@@ -282,7 +327,17 @@ def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, t
             # Swept out of a directory rather than named, so the user never claimed it was a
             # result. Reported, because silence about a file that was read would be its own
             # small dishonesty, but not counted against the run.
-            print(f"-  {path}\n   not a result artefact, skipped", file=out)
+            #
+            # OUR OWN EVIDENCE IS NOT "NOT A RESULT ARTEFACT", 2026-10-01. Pointed at this
+            # project's own `evidence/`, the checker said that of
+            # `k-sweep-2026-08-13/drift-per-seed.json`, which declares `schema:
+            # senbonzakura-evidence/1` in its first field. Skipping it is right: it holds
+            # per-seed lists for two arms (`drift_kl.k1`, `drift_kl.k2`) rather than one
+            # measurement with an estimator, so there is no single figure a check can read. The
+            # WORDS were wrong, and wrong in the direction that matters, because they say a file
+            # carrying our schema is foreign to us. A reader checking our own published evidence
+            # met that sentence and had no way to tell a collection from a stranger's file.
+            print(f"-  {path}\n   {_why_it_was_skipped(path)}", file=out)
         return
     for f in findings:
         if quiet:
@@ -452,18 +507,31 @@ def main(argv=None, out=None):
         # directory that existed and held nothing: it exited 0, which in CI is a green that
         # checked nothing.
         if not n_checked:
-            print("NOTHING WAS CHECKED: no result artefacts were found at the path(s) given. "
-                  "That is not the same as a clean result.", file=out)
+            # WRAPPED, 2026-10-01. Driven at COLUMNS=80 this block printed lines of 113 and 123
+            # columns, so the paragraph a reader meets when nothing was checked was the one
+            # paragraph the terminal reflowed into a wall. `_section` above already owns the width
+            # for findings; this block had been written with bare `print` calls and never passed
+            # through it.
+            _wrapped("NOTHING WAS CHECKED: no result artefacts were found at the path(s) given. "
+                     "That is not the same as a clean result.", out, indent="")
             # AND WHICH OF THE TWO OUTCOMES THIS IS, added 2026-09-27. The sentence above was
             # printed identically whether the command was about to exit 0 or non-zero, so a reader
             # could not tell from the output whether their CI step had just failed, and the reader
             # who exits 0 is not told that the behaviour they almost certainly want is one flag
             # away. An empty sweep is legitimately fine from a shell and almost never fine in CI.
+            # AND WHAT IT WOULD HAVE ACCEPTED. A file named on the command line is told this by
+            # `UnknownArtefactError`; a SWEPT file gets "not a result artefact, skipped" and the
+            # summary never says it either, so the one run where the reader has nothing else to go
+            # on was the run that named no kinds. Read off the registry rather than typed here, so
+            # a fourth adapter cannot leave this sentence stale.
+            _wrapped("Recognised kinds: "
+                     + ", ".join(a.name for a in adapters.ADAPTERS)
+                     + ". Point it at one of those, or at a directory holding them.", out)
             if args.fail_on_empty:
-                print("  Exiting non-zero because --fail-on-empty was given.", file=out)
+                _wrapped("Exiting non-zero because --fail-on-empty was given.", out)
             elif not n_unchecked:
-                print("  This run exits 0. Pass --fail-on-empty to make an empty sweep a "
-                      "failure, which is what a CI step usually wants.", file=out)
+                _wrapped("This run exits 0. Pass --fail-on-empty to make an empty sweep a "
+                         "failure, which is what a CI step usually wants.", out)
         # LOOPHOLE 7, IN THE OUTPUT RATHER THAN THE README. Somebody will otherwise quote a
         # clean report as a claim of correctness, and it is not one.
         print("This looks for known failure modes. It cannot tell you a number is right.",

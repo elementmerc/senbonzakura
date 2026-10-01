@@ -43,7 +43,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve, gguf_io, vendored
+from . import argresolve, gguf_io, say, vendored
 from .crashsafe import atomic_write, digest_for_the_record, free_bytes_for
 from .vendored import VendorError, find_binary
 
@@ -322,6 +322,19 @@ def _preflight_arguments(a, log=print):
     if a.imatrix and not Path(a.imatrix).is_file():
         raise SystemExit(
             f"no importance matrix at {a.imatrix}. Build one with `senbonzakura imatrix`.")
+    # THE TWO FLAGS CONTRADICT EACH OTHER AND BOTH WERE ACCEPTED, 2026-10-01. `--keep-source` says
+    # do not remove the source and `--prune-source` says delete it, so giving both asks for two
+    # opposite things about somebody's largest file. The code resolved it by precedence rather than
+    # by refusing, which means the answer depended on reading this function. Decidable from the
+    # command line, so it belongs up here with the other four.
+    if a.keep_source and a.prune_source:
+        raise SystemExit(say.refusal_text(
+            "--keep-source and --prune-source ask for opposite things, and this run would have to "
+            "choose for you.",
+            "--prune-source deletes the source once the output is verified. --keep-source says "
+            "not to. The source is usually the largest file on the disk, so which one wins is not "
+            "a detail to settle by precedence.",
+            "Pass whichever you meant, and only that one."))
     for s in a.tensor_type:
         parse_tensor_type(s)
 

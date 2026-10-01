@@ -202,10 +202,11 @@ Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measuremen
 
 By design, this is methods and results, not a loaded weapon:
 
-- **No model weights in this git tree, and none published yet.** When any are published they go up
-  separately, each under its base model's own licence, which travels with the weights and is not
-  ours to loosen. Until then the way to get one is to run the tool. (This sentence used to claim
-  they were already up; see
+- **No model weights in this git tree.** Abliterated checkpoints are published separately, on the
+  Hub, and they are public and ungated: each one under its base model's own licence, which travels
+  with the weights and is not ours to loosen. **The evaluation numbers on most of those cards are
+  withdrawn**, for the reasons in the changelog, so read the card before trusting a figure on it.
+  (This bullet twice said the opposite of the truth; see
   [what we got wrong](https://elementmerc.github.io/senbonzakura/guide/what-we-got-wrong).)
 - **No harmful prompt sets in this git tree, and this is the bullet that needs the most care.**
   The evaluation track is published separately as a

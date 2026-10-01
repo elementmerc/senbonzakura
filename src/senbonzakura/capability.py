@@ -738,6 +738,26 @@ def offloaded_share(model):
     return host / len(dmap)
 
 
+def disk_offloaded_entries(model):
+    """How many of a loaded model's entries accelerate put on DISK, and the total.
+
+    SEPARATE FROM `offloaded_share` BECAUSE DISK IS A DIFFERENT OUTCOME, not a slower one.
+    `_HOST_DEVICES` groups `cpu`, `disk` and `meta` because for the purpose of pricing generation
+    they are all "not the accelerator". For the purpose of telling somebody whether their run
+    works they are not alike at all: a CPU-offloaded weight is editable in place, and a
+    disk-offloaded one makes `cli._real_tensor` raise, because its offload map returns a fresh
+    tensor on every read and the bake would write into a copy that is discarded.
+
+    So a notice built on `offloaded_share` alone can only ever say "slower". That is what it said,
+    for a placement under which the edit refuses outright.
+    """
+    dmap = getattr(model, "hf_device_map", None) or {}
+    if not dmap:
+        return 0, 0
+    on_disk = sum(1 for d in dmap.values() if str(d).lower().split(":")[0] == "disk")
+    return on_disk, len(dmap)
+
+
 def report_offload_cost_for_a_search(model, *, trials, prompts_per_trial, gen_tokens, log=print):
     """Say that the SEARCH is running partly on the host, and roughly what that costs.
 
@@ -765,6 +785,28 @@ def report_offload_cost_for_a_search(model, *, trials, prompts_per_trial, gen_to
     share = offloaded_share(model)
     if not share:
         return
+    # DISK FIRST, AND ABOVE THE BUDGET GUARDS. Everything below this prices a slower run, and
+    # on a disk placement there is no run to price: `cli._real_tensor` raises on the first
+    # disk-offloaded writer it is asked to edit, because the offload map hands back a fresh tensor
+    # each read and the bake would write into a copy. This notice said "The run works" for that
+    # placement, which is the `doctor` CPU advisory's defect in a second place: a reassurance built
+    # on a check that never tested the thing it was reassuring about. `offloaded_share` cannot tell
+    # the two apart by design, so the disk reading is taken separately.
+    #
+    # ABOVE THE BUDGET GUARDS, because this needs no arithmetic: a disk placement refuses the edit
+    # at any token budget, and the early return on `tokens <= 0` was silencing it on exactly the
+    # paths that inject a model without one.
+    on_disk, total = disk_offloaded_entries(model)
+    if on_disk:
+        log(f"NOTE: {on_disk} of {total} module groups are on DISK, not in host RAM, because the "
+            f"card and the host together have less free memory than the model needs.")
+        log("  The edit will not run. A disk-offloaded weight is handed back as a fresh copy on "
+            "every read, so the bake would write into something discarded before the next forward "
+            "pass and the model would come out unedited with nothing saying so. It is refused "
+            "instead, when the first such weight is reached.")
+        log("  To make it a run: free the card, use one with more memory, add host RAM, or load "
+            "smaller with --load-in-4bit. Host-RAM offload is fine; disk is not.")
+        return
     # EVERY BUDGET IS COERCED, because this runs on the way into the longest job the tool has and
     # must never be the reason a run fails to start. `gen_tokens` arrives as None on the paths that
     # inject a model, and an unguarded `int(None)` here crashed a real search in a test written for
@@ -775,7 +817,7 @@ def report_offload_cost_for_a_search(model, *, trials, prompts_per_trial, gen_to
         return
     seconds = cpu_probe_estimate(generations, tokens) * share
     hours = seconds / 3600
-    log(f"NOTE: {share * 100:.0f}% of this model's layers are in host RAM or on disk, not on the "
+    log(f"NOTE: {share * 100:.0f}% of this model's layers are in host RAM, not on the "
         f"GPU, because the card has less free memory than the model needs.")
     log(f"  The run works. It generates at host speed for that share, and the search is the long "
         f"part: roughly {hours:.1f} hours for about {generations} generations at {int(gen_tokens)} "

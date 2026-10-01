@@ -2290,7 +2290,18 @@ class Abliterator:
         # slower, throttled run is not a surprise. dmap values are ints (a cuda device) or "cpu"/"disk".
         dmap = getattr(model, "hf_device_map", None) or {}
         self.offloaded = sum(1 for v in dmap.values() if not isinstance(v, int))
-        if self.offloaded:
+        # `not isinstance(v, int)` IS "cpu" OR "disk" OR "meta", and those are not one outcome.
+        # CPU offload is slower; disk offload means `_real_tensor` raises on the first writer it is
+        # asked to edit. This line promised the throttle would pace a run that cannot start, which
+        # is the same defect as the capability notice and as the `doctor` CPU advisory before it.
+        on_disk = sum(1 for v in dmap.values()
+                      if not isinstance(v, int) and str(v).lower().split(":")[0] == "disk")
+        if on_disk:
+            log(f"  low-VRAM mode: {on_disk}/{len(dmap)} module groups are on DISK. The edit is "
+                "refused when it reaches one of them: a disk-offloaded weight reads back as a "
+                "fresh copy, so the bake cannot write to it. Free the card, add host RAM, or use "
+                "--load-in-4bit.")
+        elif self.offloaded:
             log(f"  low-VRAM mode: {self.offloaded}/{len(dmap)} module groups offloaded off the GPU; "
                 "the adaptive throttle will pace generation to the card")
 

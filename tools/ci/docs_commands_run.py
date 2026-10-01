@@ -135,8 +135,15 @@ RULES: list[tuple[str, str, str]] = [
     # Running blocks as sequences is the obvious next step for this tool and is not done yet.
     (r"^python3? -c .*dist/\*", SKIP,
      "reads the artefacts the line above it builds; this runner executes lines, not sequences"),
+    (r"^senbonzakura gate\b", SKIP,
+     ("compares the two baselines the lines above it record; this runner executes lines, not "
+      "sequences. `tests/test_gate.py` drives it end to end")),
 
     # ── what actually gets run ───────────────────────────────────────────────────────
+    # `baseline` runs because `make_scratch` writes the two artefacts the gating page names. It
+    # is the one command here whose documented example this runner can carry out verbatim, and
+    # the example is a worked one precisely so that it can be.
+    (r"^senbonzakura baseline (before|after)\.json\b", RUN, ""),
     (r"^senbonzakura(-check)? (--help|--version|-h)\b", RUN, ""),
     (r"^senbonzakura(-check)? [a-z-]+ (--help|-h)\b", RUN, ""),
     (r"^senbonzakura doctor\b", RUN, ""),
@@ -179,7 +186,49 @@ def make_scratch() -> pathlib.Path:
             d.mkdir(parents=True, exist_ok=True)
             for a in artefacts[:3]:
                 shutil.copy(a, d / a.name)
+    _write_gating_fixtures(scratch)
     return scratch
+
+
+#: The stamped block `senbonzakura baseline` needs, with every field `baseline.PINNED` requires.
+#: Kept here rather than imported, so this runner stays importable without the package on the
+#: path, which is how it is used by `tests/test_docs_match_the_package.py`.
+_STAMPED = {
+    "metric": "coherence",
+    "measures": "whether the edit left the model able to predict English",
+    "estimator": "neutral-passage-nll", "estimator_description": "the mean per-token NLL",
+    "units": "nats-per-token", "higher_is_better": False, "n": 1,
+    "n_tokens": 268, "input_digest": "0123456789abcdef", "prompt_format": "raw",
+    "partition": "fixed-passage", "precision": "bfloat16", "tool_version": "0.4.0",
+}
+
+
+def _write_gating_fixtures(scratch: pathlib.Path) -> None:
+    """`before.json` and `after.json`, which `docs/guide/gating.md` names.
+
+    THE FIRST HAND-MADE FIXTURE IN THIS FILE, AND WHY
+
+    `make_scratch`'s own docstring argues for copying this project's committed artefacts rather
+    than inventing a shape that happens to satisfy a command, and that argument is right. It
+    cannot be followed here: not one artefact under `evidence/` carries a stamped `metrics`
+    block, which is exactly what `baseline` reads, so there is nothing real to copy. Checked
+    before writing this, rather than assumed.
+
+    The alternative was to skip the gating page's commands with a reason, which is what the rules
+    above do for `gate`. Two commands skipped on a page whose whole purpose is a worked example
+    would have left the example unverified, and an unverified worked example is the defect the
+    page was written to fix one level up.
+    """
+    import json
+
+    (scratch / "before.json").write_text(json.dumps({
+        "label": "before", "model": "Qwen/Qwen3-1.7B",
+        "metrics": {"coherence": {**_STAMPED, "value": 3.01, "interval": [2.95, 3.07]}},
+    }, indent=2), encoding="utf-8")
+    (scratch / "after.json").write_text(json.dumps({
+        "label": "after", "model": "Qwen/Qwen3-1.7B",
+        "metrics": {"coherence": {**_STAMPED, "value": 3.44, "interval": [3.38, 3.50]}},
+    }, indent=2), encoding="utf-8")
 
 
 def _ours(path: pathlib.Path) -> bool:

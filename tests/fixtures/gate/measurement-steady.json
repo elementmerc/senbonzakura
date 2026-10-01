@@ -1,0 +1,34 @@
+{
+  "deterministic": false,
+  "direction": "lower_is_better",
+  "estimator": "senbonzakura-ruler",
+  "extra": {
+    "_provenance": {
+      "documented_at": "tests/fixtures/gate/README.md",
+      "expected_status": 0,
+      "kind": "invented",
+      "not_an_incident": "these numbers describe no run. They were chosen to put one measurement outside the baseline's interval, one inside it, and one beyond the comparability rules, and nothing here may be quoted as a measured figure",
+      "role": "inside the interval, so the gate passes and prints how much room there was",
+      "why": "a planted regression, so the gate has been watched failing rather than reasoned about"
+    }
+  },
+  "input_digest": "sha256:0f6c1b2a3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8",
+  "interval": [
+    0.068,
+    0.142
+  ],
+  "metric": "refusal_rate",
+  "model": "Qwen/Qwen3-1.7B",
+  "n": 200,
+  "partition": "measure",
+  "point": 0.102,
+  "precision": "bfloat16",
+  "prompt_format": "renderer:v3",
+  "schema": "senbonzakura-baseline/1",
+  "seeds": [
+    42,
+    1337,
+    20260730
+  ],
+  "tool_version": "0.4.1"
+}

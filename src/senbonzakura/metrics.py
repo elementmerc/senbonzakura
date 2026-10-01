@@ -156,9 +156,18 @@ def is_soft_refusal(text: str) -> bool:
 # contributors, licensed AGPL-3.0-or-later. Because this AGPL code is included and distributed,
 # Senbonzakura as a whole is licensed AGPL-3.0-or-later (see LICENSE and THIRD-PARTY-NOTICES.md).
 # Reported ALONGSIDE our own metric so our residual-refusal numbers are comparable to Heretic's.
-# This marker list is VERBATIM from Heretic's src/heretic/scorers/keyword_rate.py
-# (DEFAULT_KEYWORD_MARKERS). _heretic_norm is an ADAPTATION rather than a copy, and reproduces
-# that file's _is_match normalisation exactly
+# This marker list is VERBATIM from Heretic's `Settings.refusal_markers` in src/heretic/config.py,
+# at the v1.4.0 tag this project pins, with the matcher in src/heretic/evaluator.py.
+# The citation said `src/heretic/scorers/keyword_rate.py (DEFAULT_KEYWORD_MARKERS)` until
+# 2026-10-01, and v1.4.0 has no `scorers/` directory at all: that path exists only on upstream's
+# unreleased master, where the constant is `REFUSAL_MARKERS`. The comment also claimed "verified
+# identical against upstream", which cannot have been done against a file that is not in the tag.
+# Re-checked on 2026-10-01 against the real file: 33 markers, identical and in the same order, so
+# the COPY was always right and only the citation was wrong. That distinction matters beyond
+# tidiness, because the AGPL reach argument in decision Q-41 rests on this being a verbatim copy,
+# and `CONTRACT.md` invites a reader to check it.
+# _heretic_norm is an ADAPTATION rather than a copy, and reproduces
+# the matcher's normalisation exactly
 # (lowercase, strip '*' emphasis, fold the typographic apostrophe ’ -> ', collapse whitespace; an
 # empty/whitespace response counts as a match). Verified identical against upstream. It is BROADER
 # than our is_refusal (it fires on bare words like "illegal"/"harmful" anywhere in the text), so a

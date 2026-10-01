@@ -37,6 +37,14 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   machine readable
 - `--pair` checks that it was given two files before reading any of them
 
+### Command line
+- A negative or zero count is refused at the flag on every command rather than on some of them,
+  so a mistyped minus can no longer measure the last five prompts and report them as the first
+- `--inspect` refuses a fractional layer index instead of truncating it, and a negative strength
+  instead of adding the refusal direction back
+- The governor's free memory fraction, the pause ceiling and the divergence ceiling are checked
+  before a run starts, because each of them moves a bar rather than crashing
+
 ### Measurement
 - The null floor the direction filter holds candidates to is reported as the percentile it is,
   with its false keep rate, rather than as a bar every null draw fails

@@ -78,9 +78,9 @@ def build_parser():
     src.add_argument("--file", default=None,
                      help="a plain text file of calibration text. The usual choice for a general "
                           "purpose quantisation is broad prose rather than task prompts")
-    ap.add_argument("--chunks", type=int, default=DEFAULT_CHUNKS,
+    ap.add_argument("--chunks", type=argresolve.whole_number("--chunks", minimum=1), default=DEFAULT_CHUNKS,
                     help=f"chunks of text to process (default: {DEFAULT_CHUNKS})")
-    ap.add_argument("--gpu-layers", type=int, default=0,
+    ap.add_argument("--gpu-layers", type=argresolve.whole_number("--gpu-layers", minimum=0), default=0,
                     help="layers to offload to the GPU. 0 keeps it on the CPU, which is slower and "
                          "always works")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")

@@ -5399,6 +5399,19 @@ _NUMERIC_BOUNDS = (
      ("it weights KL in the objective, so a negative value REWARDS the search for damaging the "
       "model")),
     ("sparsity", "--sparsity", 0.0, 1.0, "it is a fraction of rows left untouched"),
+    # ADDED 2026-10-02. The four flags this table had never covered, found by holding it against
+    # the parser rather than against the list of values somebody had already tried. Every one of
+    # them governs a REFUSAL, so an out-of-range value does not crash: it moves a bar until the
+    # thing it guards either never fires or always does, which is the silent half of the same
+    # finding two panel personas reached from opposite ends.
+    ("gpu_min_free_frac", "--gpu-min-free-frac", 0.0, 1.0,
+     ("it is the FRACTION of the card the governor insists stays free, so below zero it never "
+      "waits and above one it can never be satisfied")),
+    ("max_pause_s", "--max-pause", 0.0, None,
+     "it is a number of seconds to wait at most, and a negative deadline has already passed"),
+    ("max_kl", "--max-kl", 0.0, None,
+     ("it is the divergence ceiling a result has to come in under, so a negative one can never "
+      "be met and every run is refused for a reason that is not about the model")),
 )
 
 
@@ -5442,6 +5455,28 @@ def _preflight_numbers(args):
         bad.append(
             f"  --layer-lo is {lo:g} and --layer-hi is {hi:g}, so the search window is empty. "
             f"They are fractions of depth and the low one comes first.")
+    # `--inspect LAYER STRENGTH` takes two floats and `_inspect` casts the first with `int()`,
+    # which truncates rather than refuses, so `--inspect 2.9 0.5` inspects layer 2 and says it
+    # inspected layer 2 while the reader believes they asked about a different one. A negative
+    # layer is worse: it is a valid index from the END of the stack, so the ablation lands
+    # somewhere nobody named. The table above cannot carry a two-value flag, hence its own check.
+    inspect = getattr(args, "inspect", None)
+    if inspect is not None:
+        ilayer, istrength = float(inspect[0]), float(inspect[1])
+        if ilayer != int(ilayer):
+            bad.append(
+                f"  --inspect's first value is {ilayer:g} and it is a LAYER INDEX, which is a "
+                f"whole number. It would be truncated to {int(ilayer)} and the run would report "
+                f"that layer as the one you asked about.")
+        if ilayer < 0:
+            bad.append(
+                f"  --inspect's first value is {ilayer:g}, and a layer index cannot be negative: "
+                f"it would count from the end of the stack, so the ablation would land on a layer "
+                f"nobody named.")
+        if istrength < 0:
+            bad.append(
+                f"  --inspect's second value is {istrength:g}, and an ablation strength cannot be "
+                f"negative: it would ADD the refusal direction back rather than remove it.")
     # THE SAME PAIR CHECK FOR THE DIRECTION BUDGET, which had none until 2026-09-26, ten lines from
     # one that does exactly this for the layer window.
     #

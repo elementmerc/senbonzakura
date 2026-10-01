@@ -1478,7 +1478,7 @@ def build_parser():
     h.add_argument("--track", required=True, help="the corpus every arm reads. One corpus, or "
                                                  "the comparison is between corpora")
     h.add_argument("--out", required=True, help="where the arms and the report are written")
-    h.add_argument("--trials", type=int, default=200,
+    h.add_argument("--trials", type=argresolve.whole_number("--trials", minimum=1), default=200,
                    help="search budget per arm, identical for every tool (default: 200)")
     h.add_argument("--isolate", choices=("none", "docker"), default="none",
                    help="'docker' runs each arm sealed: no network, read-only inputs, no "
@@ -1500,15 +1500,17 @@ def build_parser():
                         "unless --no-score is given")
     h.add_argument("--harmless", default="",
                    help="held-out harmless dataset for the compass's other arm")
-    h.add_argument("--skip-harmful", dest="skip_harmful", type=int, default=None,
+    h.add_argument("--skip-harmful", dest="skip_harmful", default=None,
+                   type=argresolve.whole_number("--skip-harmful", minimum=0),
                    help="how many harmful rows the search already saw, and the compass must "
                         "therefore skip. A count, never a bare flag. Left unset, the compass "
                         "reads the boundary out of the track's own manifest, which is the "
                         "recorded fact rather than a restatement of it")
-    h.add_argument("--batch", type=int, default=16,
+    h.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
                    help="scoring batch size, held fixed across every arm so no two arms are "
                         "measured under different conditions")
-    h.add_argument("--max-new", dest="max_new", type=int, default=REFUSAL_MAX_NEW,
+    h.add_argument("--max-new", dest="max_new", default=REFUSAL_MAX_NEW,
+                   type=argresolve.whole_number("--max-new", minimum=1),
                    help=f"tokens each reply gets before it is judged refused or not (default: "
                         f"{REFUSAL_MAX_NEW}, the same budget `senbonzakura score` uses, because "
                         f"an arm and the report about it have to be measured on one ruler). This "
@@ -1542,13 +1544,14 @@ def build_parser():
                          "`run --eval-slices`")
     # Each of these sizes one staged file, and every tool in the comparison is then scored on that
     # file, so they are the budget for the WHOLE comparison rather than settings for one arm.
-    st.add_argument("--dir-prompts", type=int, default=256,
+    st.add_argument("--dir-prompts", type=argresolve.whole_number("--dir-prompts", minimum=1), default=256,
                     help="how many contrast prompts per side to stage for direction extraction "
                          "(default: 256)")
-    st.add_argument("--eval-refusal", type=int, default=64,
+    st.add_argument("--eval-refusal", type=argresolve.whole_number("--eval-refusal", minimum=1), default=64,
                     help="how many held-out harmful prompts to stage for the in-search refusal "
                          "score (default: 64)")
-    st.add_argument("--eval-refusal-final", type=int, default=128,
+    st.add_argument("--eval-refusal-final", default=128,
+                    type=argresolve.whole_number("--eval-refusal-final", minimum=0),
                     help="HOW FAR INTO bad_eval_ds THE FINAL RE-SCORE REACHES, counted from the "
                          "start, not the size of the file it writes (default: 128). The rows up to "
                          "--eval-refusal are the search-time slice; `final_prompts.txt` gets what "
@@ -1558,7 +1561,7 @@ def build_parser():
                          "whichever arm got luckiest on those rows. The wording used to say 'how "
                          "many prompts to stage', which reads as the file's own length, and it "
                          "took three runs at different settings to tell which it meant")
-    st.add_argument("--eval-kl", type=int, default=64,
+    st.add_argument("--eval-kl", type=argresolve.whole_number("--eval-kl", minimum=1), default=64,
                     help="how many harmless prompts to stage for the KL divergence score "
                          "(default: 64)")
 

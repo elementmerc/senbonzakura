@@ -206,7 +206,7 @@ def main(argv=None):
                    help="break one side on purpose. The instrument must report a difference and "
                         "this command must exit non-zero. An instrument that cannot be made to "
                         "fail has not been shown to work.")
-    p.add_argument("--tolerance", type=float, default=SAME_SUBSPACE_TOL,
+    p.add_argument("--tolerance", type=argresolve.real_number("--tolerance", minimum=0.0), default=SAME_SUBSPACE_TOL,
                    help=f"how far apart two subspaces may sit and still be called the same "
                         f"(default: {SAME_SUBSPACE_TOL:g}). Raising it makes the check easier to "
                         f"pass, which is worth doing only with a reason written down")

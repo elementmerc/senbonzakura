@@ -77,7 +77,7 @@ def build_parser():
                     help="a name for this run, copied into the results json. Nothing reads it: "
                          "it is how you tell two result files apart later, so give it the thing "
                          "that varied")
-    ap.add_argument("--batch", type=int, default=16,
+    ap.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
                     help="prompts per forward pass. Reduction order depends on it, so a "
                          "comparison must hold it fixed across models")
     ap.add_argument("--base-cache", default=None,

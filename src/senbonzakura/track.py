@@ -645,11 +645,11 @@ def build_parser():
                          "directory the abliterator picks up when --track is left out). "
                          "An existing track is moved to <out>.pre-build rather than replaced "
                          "in place, unless a backup from an earlier rebuild is already there")
-    ap.add_argument("--fit", type=int, default=256,
+    ap.add_argument("--fit", type=argresolve.whole_number("--fit", minimum=0), default=256,
                     help="prompts per side the directions are extracted from (default: the "
                          "auto presets' --dir-prompts). Applies when BUILDING a track; under "
                          "--audit the recorded boundaries are what count, so it is refused there")
-    ap.add_argument("--search", type=int, default=128,
+    ap.add_argument("--search", type=argresolve.whole_number("--search", minimum=0), default=128,
                     help="prompts per side the search scores trials on (default: the largest "
                          "--eval-refusal-final any auto preset uses)")
     ap.add_argument("--labels", default="",

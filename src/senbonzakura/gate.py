@@ -27,14 +27,25 @@ Two and one are distinct on purpose. A refusal is not a regression: nothing has 
 the model, and a build that treats "I could not compare these" as "this got worse" teaches its
 reader to ignore the difference.
 """
+import datetime
+import hashlib
+import json
 import sys
+from pathlib import Path
 
 from . import argresolve, baseline
+from .crashsafe import atomic_write
 
 #: Exit statuses, named so the tests and the docs cannot drift from the code.
 OK = 0
 REGRESSED = 1
 REFUSED = 2
+
+#: What a written run record declares itself to be, so a reader of the directory knows.
+RUN_SCHEMA = "senbonzakura-gate-run/1"
+
+#: What each verdict is called in a written record, so the file reads the way the log does.
+VERDICT_NAMES = {OK: "OK", REGRESSED: "REGRESSED", REFUSED: "REFUSED"}
 
 
 def build_parser():
@@ -64,7 +75,71 @@ def build_parser():
     p.add_argument("--quiet", action="store_true",
                    help="print only the verdict line, for a build log that already has enough in "
                         "it. The refusal path ignores this and always says why")
+    p.add_argument("--history", metavar="DIR",
+                   help="record this run, pass or fail, under DIR. A regression caught in March "
+                        "is only evidence in June if March wrote something down. Records are "
+                        "named after their own contents, so re-running the same comparison "
+                        "records it once and overwrites nothing")
+    p.add_argument("--store", metavar="DIR",
+                   help="where measurements recorded by address live, so --baseline and --current "
+                        "may be given as `sha256:...` addresses instead of paths")
     return p
+
+
+def _now():
+    """One timestamp per run, captured once and reused, per baseline section 2.1."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _write_history(directory, *, recorded, current, status, headline, detail, at, log):
+    """Write what this run compared and what it concluded. Return the path, or None.
+
+    THE RECORD IS NAMED AFTER THE COMPARISON AND NOT AFTER THE CLOCK. Two runs of the same
+    comparison are the same evidence, so they land on the same file and the first one's recording
+    stands; two different comparisons can never collide. That makes an interrupted job safe to
+    re-run, which is the property a history kept by a build system needs most, and it means a
+    directory of these can be merged from several runners without anybody choosing a winner.
+
+    A FAILURE TO WRITE IS REPORTED AND DOES NOT CHANGE THE VERDICT. The gate's answer is about
+    the model; whether this machine could write a file is about the machine, and swallowing one
+    inside the other in either direction would be wrong. A full disk must not turn a regression
+    into a pass, and it must not turn a pass into a regression either.
+    """
+    body = {
+        "schema": RUN_SCHEMA,
+        "baseline": recorded.get(baseline.ADDRESS_FIELD) or baseline.address(recorded),
+        "current": current.get(baseline.ADDRESS_FIELD) or baseline.address(current),
+        "metric": recorded.get("metric"),
+        "partition": recorded.get("partition"),
+        "status": status,
+        "verdict": VERDICT_NAMES.get(status, f"unknown status {status}"),
+        "headline": headline,
+        "detail": detail,
+        # THE WHOLE MEASUREMENT, not a copy of its number. A history holding the figure and not
+        # the conditions it was taken under is a history nobody can re-judge, and re-judging is
+        # what somebody disputing a verdict in June will want to do.
+        "measurement": current,
+        "recorded_at": at,
+    }
+    canonical = json.dumps({k: v for k, v in body.items() if k != "recorded_at"},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    path = Path(directory) / digest[:2] / digest[2:4] / f"{digest}.json"
+    try:
+        if path.exists():
+            log(f"  this comparison was already recorded at {path}")
+            return path
+        with atomic_write(path) as f:
+            json.dump(body, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except OSError as e:
+        log(f"  WARNING: the verdict above is correct and could NOT be recorded under "
+            f"{directory}: {type(e).__name__}: {e}")
+        log("  Nothing was written, so this run leaves no evidence behind. The exit status is "
+            "still the verdict.")
+        return None
+    log(f"  recorded at {path}")
+    return path
 
 
 def run(argv=None, log=print):
@@ -74,12 +149,25 @@ def run(argv=None, log=print):
     were not comparable, which is information, and it is reported the same way a regression is.
     """
     a = build_parser().parse_args(argv)
+    at = _now()
+
+    def record_run(status, headline, detail):
+        """Write the history entry, when one was asked for and there is something to write."""
+        if a.history:
+            _write_history(a.history, recorded=recorded, current=current, status=status,
+                           headline=headline, detail=detail, at=at, log=log)
 
     try:
-        recorded = baseline.read(a.baseline)
-        current = baseline.read(a.current)
+        recorded = baseline.read(baseline.resolve(a.baseline, a.store))
+        current = baseline.read(baseline.resolve(a.current, a.store))
     except baseline.BaselineError as e:
+        # NOTHING IS RECORDED HERE, AND THAT IS NOT AN OVERSIGHT. One of the two files could not
+        # be read, so there is no measurement to write down and no comparison to describe. A
+        # history entry saying "a run happened and we cannot say what it compared" is a row that
+        # looks like evidence and is not.
         log(f"gate REFUSED: {e}")
+        if a.history:
+            log("  nothing was recorded: there is no measurement here to record.")
         return REFUSED
 
     try:
@@ -94,6 +182,11 @@ def run(argv=None, log=print):
         # reason a gate declined to answer, because the alternative reading of a silent refusal
         # is that nothing was wrong.
         log(f"gate REFUSED: {e}")
+        # A REFUSAL IS RECORDED, because it is a finding about the measurements rather than an
+        # absence of one: six weeks later, "the gate refused every day that fortnight" is the
+        # answer to why nothing was caught, and without a row for it the record reads as though
+        # the gate had been passing.
+        record_run(REFUSED, "refused", str(e))
         return REFUSED
 
     # A MALFORMED MEASUREMENT IS A REFUSAL, NOT A REGRESSION. `baseline.read` validates the
@@ -117,16 +210,35 @@ def run(argv=None, log=print):
             recorded, current["point"], baseline.interval_of(current))
     except baseline.BaselineError as e:
         log(f"gate REFUSED: {e}")
+        record_run(REFUSED, "refused", str(e))
         return REFUSED
     except (KeyError, TypeError, ValueError, IndexError) as e:
         log(f"gate REFUSED: {a.current} is not a measurement this gate can read: "
             f"{type(e).__name__}: {e}")
         return REFUSED
+    status = OK if ok else REGRESSED
     log(f"gate {'OK' if ok else 'FAIL'}: {headline}")
     if not a.quiet or not ok:
         log(f"  {detail}")
-        log(f"  {baseline.VERDICT_CAVEAT}")
-    return OK if ok else REGRESSED
+        # WHAT WAS LOOKED AT, printed beside the verdict and not only in the file.
+        #
+        # Loophole 5: somebody will read a pass as a claim that the model is safe, and the
+        # sentence below says it is not. That sentence is useless on its own, because "one
+        # measured property, on one track" does not tell a reader WHICH property or WHICH track,
+        # and a reader who cannot see the slice cannot tell a gate over 200 rows of one partition
+        # from a gate over everything. So the slice is named: the metric, the partition, the
+        # sample size, and the seeds the baseline was taken over.
+        log(f"  Checked: {recorded.get('metric')} on the {recorded.get('partition')} partition, "
+            f"n={recorded.get('n')}, seeds {recorded.get('seeds')}, "
+            f"estimator {recorded.get('estimator')!r} at {recorded.get('precision')}.")
+        log(f"  Not checked: every other property, every other partition, and anything this "
+            f"metric does not measure.")
+        # THE CAVEAT IS WORDED FOR THE VERDICT IT FOLLOWS. It used to read "a pass means ..."
+        # under a FAIL as well, which is a sentence about an outcome that did not happen sitting
+        # directly beneath the one that did.
+        log(f"  {baseline.VERDICT_CAVEAT if ok else baseline.FAILURE_CAVEAT}")
+    record_run(status, headline, detail)
+    return status
 
 
 def main(argv=None):

@@ -102,9 +102,19 @@ class TestWhatItSaysAndWhenItStaysQuiet:
         assert "within interval" in quiet
 
     def test_quiet_does_not_shorten_a_failure(self, files):
-        """A build log that hid why it failed would send its reader to the wrong place."""
+        """A build log that hid why it failed would send its reader to the wrong place.
+
+        THE CAVEAT IS WORDED FOR THE VERDICT IT FOLLOWS, since 2026-10-02. This asserted the
+        pass caveat's words, "not a statement that the model is safe", under a FAIL, which is a
+        sentence about an outcome that did not happen printed directly under the one that did.
+        What a reader of a failure needs to be told is the other half of the same caution: one
+        property moved, and the ones nobody gated are not known to have held.
+        """
         _, said = _run(files, "worse", "--quiet")
-        assert "0.33" in said and "not a statement that the model is safe" in said
+        assert "0.33" in said
+        assert "they were not gated" in said, said
+        assert "not a statement that the model is safe" not in said, (
+            "the pass caveat was printed under a failure")
 
     def test_quiet_never_silences_a_refusal(self, files):
         """The alternative reading of a silent refusal is that nothing was wrong."""
@@ -212,16 +222,47 @@ def test_a_measurement_at_the_baselines_precision_still_compares(tmp_path):
                      "--measurement", str(made["now"])]) == gate.OK
 
 
-def test_a_malformed_measurement_is_refused_rather_than_called_a_regression(tmp_path, capsys):
-    """`baseline.read` validates the schema string and nothing else, so a file with the right
-    schema and no `point` raised KeyError out of `run` and exited 1, which is this command's
-    code for REGRESSED. A CI gate reading exit 1 reports a regression that was never measured.
+def test_an_edited_measurement_is_refused_and_says_it_was_edited(tmp_path, capsys):
+    """A recorded measurement carries the digest of its own contents, so editing one shows.
+
+    This used to delete `point` and assert the "cannot read this" message, and it still asserts
+    the status, which is the part that matters: a malformed measurement must never arrive as exit
+    1, this command's code for REGRESSED. The MESSAGE is now the more specific of the two true
+    things, because the file it is given was recorded and then changed, and telling somebody their
+    file is unreadable sends them to rebuild a measurement whose real problem is that somebody
+    edited the number out of it.
     """
     made = _pair(tmp_path,
                  {"point": 0.10, "interval": (0.05, 0.18)},
                  {"point": 0.11, "interval": (0.06, 0.19)})
     doc = json.loads(made["now"].read_text(encoding="utf-8"))
     del doc["point"]
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps(doc), encoding="utf-8")
+
+    rc = gate.run(["--baseline", str(made["base"]), "--measurement", str(broken)])
+    assert rc == gate.REFUSED, "a measurement with no point estimate was called a regression"
+    said = capsys.readouterr().out
+    assert "has been changed since it was recorded" in said, said
+
+
+def test_a_malformed_measurement_is_refused_rather_than_called_a_regression(tmp_path, capsys):
+    """`baseline.read` validates the schema string and nothing else, so a file with the right
+    schema and no `point` raised KeyError out of `run` and exited 1, which is this command's
+    code for REGRESSED. A CI gate reading exit 1 reports a regression that was never measured.
+
+    THE ADDRESS IS STRIPPED ALONG WITH THE FIELD, which is what keeps this test about the case it
+    was written for. A measurement recorded before addresses existed carries none, so nothing
+    detects an edit to it and the gate meets the shape this test describes: the right schema, no
+    point estimate, and no stamp to contradict. That file still exists in the world, so the path
+    that handles it still has to work.
+    """
+    made = _pair(tmp_path,
+                 {"point": 0.10, "interval": (0.05, 0.18)},
+                 {"point": 0.11, "interval": (0.06, 0.19)})
+    doc = json.loads(made["now"].read_text(encoding="utf-8"))
+    del doc["point"]
+    doc.pop(b.ADDRESS_FIELD, None)
     broken = tmp_path / "broken.json"
     broken.write_text(json.dumps(doc), encoding="utf-8")
 

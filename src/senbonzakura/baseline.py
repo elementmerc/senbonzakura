@@ -31,6 +31,7 @@ before the intervals existed.
 
 Torch-free and import-light on purpose: the gate runs on whatever hardware a CI runner has.
 """
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -41,6 +42,32 @@ from .crashsafe import atomic_write
 #: Bumped only for a change that makes an older file mean something different. Adding a field is
 #: not that: readers use `.get`, and an absent field is reported as unknown rather than as a match.
 SCHEMA = "senbonzakura-baseline/1"
+
+#: WHERE A MEASUREMENT CAN BE FOUND, which is a different question from what it was measured on.
+#:
+#: NAMED FOR WHAT IT ADDRESSES RATHER THAN FOR WHAT IT HASHES, because this file already carries
+#: `input_digest` and two similarly named digests with different jobs in one module is a drift
+#: this project has paid for once: the other field was called `track_digest` until 2026-09-21,
+#: which read as the digest of a track and so only fitted a corpus-scored run, while
+#: `coherence.py` invented `passage_digest` for the same slot and the two never met.
+#:
+#: `input_digest` answers "which input was this number taken on". This answers "which measurement
+#: is this", and the two are never interchangeable: a thousand measurements of one corpus share an
+#: `input_digest` and have a thousand addresses.
+#:
+#: WHY IT IS WORTH HAVING AT ALL. A team gating many adapters a day re-measures a baseline it
+#: already holds unless there is a name under which the old one can be found, and the cost of
+#: re-measuring is what makes a gate too expensive to run on every change, which is this gate's
+#: own revisit trigger. An address is also how a baseline can be quoted in a build log and later
+#: fetched rather than described.
+ADDRESS_FIELD = "artefact_address"
+
+#: Characters of the digest used for each directory level in an addressed store.
+#:
+#: The layout is `hash[0:2]/hash[2:4]/hash`, per baseline section 12.3, so the same tree works
+#: unchanged on a local disk and on object storage, and no directory holds more entries than a
+#: filesystem is comfortable with.
+_FANOUT = 2
 
 #: What `partition` says for a measurement taken on a fixed input rather than on rows of a corpus.
 #:
@@ -183,7 +210,7 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
                 f"compare a number to an interval that never described it.")
     if n <= 0:
         raise BaselineError(f"a baseline measured on {n} observations is not a measurement.")
-    return {
+    built = {
         "schema": SCHEMA,
         "model": str(model),
         "metric": str(metric),
@@ -203,6 +230,100 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
         "seeds": sorted(int(s) for s in seeds),
         "extra": dict(extra or {}),
     }
+    built[ADDRESS_FIELD] = address(built)
+    return built
+
+
+def address(doc):
+    """Where this measurement can be found: a digest of everything else it says.
+
+    Two measurements that say the same thing have the same address, which is what makes a baseline
+    fetchable rather than re-measurable. The address field itself is excluded, so computing the
+    address of a document that already carries one returns the same value rather than a new one:
+    without that, stamping would change the content and the content would change the stamp.
+
+    The serialisation is canonical (sorted keys, no spacing, ASCII escapes) because an address
+    that depends on how a dictionary happened to be printed is not an address.
+    """
+    body = {k: v for k, v in doc.items() if k != ADDRESS_FIELD}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_address(spec):
+    """Whether this string is an address rather than a path. Deliberately strict.
+
+    A loose test would claim a filename, and resolving a path as an address would send a reader
+    looking in a store for a file that is sitting in front of them.
+    """
+    spec = str(spec)
+    if not spec.startswith("sha256:"):
+        return False
+    rest = spec[len("sha256:"):]
+    return len(rest) == 64 and all(c in "0123456789abcdef" for c in rest)
+
+
+def addressed_path(store, spec):
+    """Where an address lives under `store`, as `hash[0:2]/hash[2:4]/hash.json`."""
+    if not is_address(spec):
+        raise BaselineError(
+            f"{spec!r} is not a measurement address. An address is `sha256:` followed by 64 "
+            f"lowercase hexadecimal characters, which is what `senbonzakura baseline` prints when "
+            f"it records one.")
+    digest = str(spec)[len("sha256:"):]
+    return (Path(store) / digest[:_FANOUT] / digest[_FANOUT:2 * _FANOUT]
+            / f"{digest}.json")
+
+
+def resolve(spec, store=None):
+    """Turn either a path or an address into the path to read, and say why if it cannot.
+
+    The two are told apart by shape rather than by a flag, because a reader who has an address
+    pastes the address, and asking them to also say which kind of string they pasted is a question
+    the string already answers.
+    """
+    if not is_address(spec):
+        return Path(spec)
+    if store is None:
+        raise BaselineError(
+            f"{spec} is a measurement address and no store was given, so there is nowhere to look "
+            f"for it. Pass the directory the measurement was recorded into, or pass its path.")
+    return addressed_path(store, spec)
+
+
+def write_addressed(store, baseline):
+    """Record a measurement under its own address, and never twice.
+
+    IDEMPOTENT BY CONSTRUCTION rather than by a check bolted on: the path is derived from the
+    content, so re-running after an interruption writes the same bytes to the same place. A file
+    that is already there and already says the same thing is left exactly as it is, because the
+    first recording's mtime is part of the history this store exists to keep.
+
+    A file already there saying something DIFFERENT under the same address would mean two
+    documents sharing a sha256, so it is reported rather than resolved. Nobody will meet it; the
+    alternative is silently preferring one of two measurements that both claim to be the same.
+    """
+    want = dict(baseline)
+    want[ADDRESS_FIELD] = address(want)
+    path = addressed_path(store, want[ADDRESS_FIELD])
+    if path.exists():
+        try:
+            held = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError, OSError) as e:
+            raise BaselineError(
+                f"{path} already holds this measurement's address and cannot be read ({e}), so "
+                f"this run cannot tell whether the recording it would make is already there. The "
+                f"file is left alone: a store that overwrites what it cannot read is not a "
+                f"history.") from e
+        if held != want:
+            raise BaselineError(
+                f"{path} already holds a DIFFERENT measurement under the same address, which "
+                f"would mean two documents sharing a sha256. Nothing was written.")
+        return path
+    with atomic_write(path) as f:
+        json.dump(want, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
 
 
 def write(path, baseline):
@@ -334,6 +455,17 @@ def read(path):
             f"{path} declares schema {got!r} and this build understands {SCHEMA!r}. A schema "
             f"change means an older file means something different, so it is refused rather than "
             f"read on the assumption that the fields still line up.")
+    # THE ADDRESS IS CHECKED WHEN IT IS THERE, AND NOT DEMANDED WHEN IT IS NOT. A baseline
+    # recorded before this field existed is an older file that means the same thing, which is
+    # the case the comment on `SCHEMA` reserves `.get` for. A baseline that carries an address
+    # that does not match its contents is a different matter: somebody edited the number and
+    # left the stamp, and a gate that read it would compare against a measurement nobody took.
+    stamped = loaded.get(ADDRESS_FIELD)
+    if stamped is not None and stamped != address(loaded):
+        raise BaselineError(
+            f"{path} carries the address {stamped} and its contents address to "
+            f"{address(loaded)}, so the file has been changed since it was recorded. A baseline is "
+            f"never edited: record a new one, name it for what changed, and keep the old one.")
     return loaded
 
 
@@ -537,6 +669,17 @@ VERDICT_CAVEAT = (
     "A pass means one measured property did not move outside its interval, on one track, under "
     "the conditions the baseline records. It is not a statement that the model is safe, that "
     "other properties held, or that the track represents anything beyond itself.")
+
+#: The same sentence turned the other way up, for the verdict it actually follows.
+#:
+#: `VERDICT_CAVEAT` was printed under a failure too, so a reader who had just been told a property
+#: regressed then read a paragraph about what a pass does not mean. The caveat matters as much
+#: here and says a different thing: one property moved, and the ones nobody gated are not known
+#: to have held.
+FAILURE_CAVEAT = (
+    "A failure means one measured property moved outside its interval, on one track, under the "
+    "conditions the baseline records. Nothing here says the other properties held: they were not "
+    "gated, and a single failing gate is a floor on what moved rather than the whole of it.")
 
 
 # ── the producer, without which none of the above has an input ───────────────────────────────

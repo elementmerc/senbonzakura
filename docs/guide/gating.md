@@ -215,6 +215,49 @@ refused:
   ...
 ```
 
+## Keeping the history, so March is still evidence in June
+
+By default the gate reads two files, decides, and writes nothing. Pass `--history` and every run
+leaves a record behind, pass or fail.
+
+```sh
+senbonzakura gate --baseline baselines/coherence.json --current later.json \
+  --history gate-history/
+```
+
+Each record holds what was compared, what the verdict was, and the whole measurement rather than
+just its number, so somebody disputing the verdict later can re-judge it from the conditions it
+was taken under. Records are named after their own contents, which means two things worth
+knowing. A re-run of the same comparison records it once, so a job killed halfway is safe to
+re-run. And nothing is ever overwritten: a different comparison is a different name.
+
+If the directory cannot be written to, the gate says so and the verdict stands. Whether your disk
+is full is a fact about your disk, and a full disk must not turn a regression into a pass or a
+pass into a regression.
+
+## Fetching a baseline instead of re-measuring it
+
+Every recorded measurement carries the digest of its own contents, printed as
+`sha256:` followed by sixty-four characters. That is its address, and two measurements that say
+the same thing share one.
+
+```sh
+senbonzakura gate --store baselines/ \
+  --baseline sha256:8392ca6c81f978b6...  --current out/this-run.json
+```
+
+With `--store` pointing at a directory, either file may be given as an address rather than a
+path, and the gate looks it up. The point is cost: a team gating several models a day
+re-measures a baseline it already holds unless there is a name under which the old one can be
+found, and re-measuring is what makes a gate too expensive to run on every change.
+
+The address is not the same thing as `input_digest`, which says which input the number was taken
+on. A thousand measurements of one corpus share an `input_digest` and have a thousand addresses.
+
+One useful side effect: because the address covers the contents, a recorded measurement that has
+been edited since no longer matches its own stamp, and the gate refuses it rather than comparing
+against a number nobody measured.
+
 ## What a pass does not mean
 
 Printed by the command itself, every time, and worth repeating here:
@@ -225,6 +268,19 @@ Printed by the command itself, every time, and worth repeating here:
 
 A green gate on coherence says nothing about refusal, and a green gate on refusal says nothing
 about capability. Gate the properties you care about, each with its own baseline file.
+
+That sentence on its own is not much use, because "one property, on one track" does not say
+which. So the command prints the slice beside it, every run:
+
+```
+  Checked: coherence on the fixed-passage partition, n=1, seeds [42],
+           estimator 'senbonzakura-nll' at bfloat16.
+  Not checked: every other property, every other partition, and anything this
+           metric does not measure.
+```
+
+A reader can then tell a gate over one passage from a gate over a whole corpus without going to
+look for the baseline file.
 
 ## Where next
 

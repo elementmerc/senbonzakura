@@ -418,6 +418,27 @@ def test_the_gate_reaches_all_three_verdicts_with_nothing_installed(
         f"environment with nothing installed:\n{proc.stdout}\n{proc.stderr}")
 
 
+def test_the_gate_writes_its_history_with_nothing_installed(bare, tmp_path):
+    """THE WRITING PATH, not only the comparing one, and it is covered separately on purpose.
+
+    A writing path is where an import creeps in: a timestamp helper, a digest helper, something
+    convenient from the big package. The failure would appear only on a runner that installed
+    this distribution without resolving its dependencies, which is every runner the CI action
+    uses and none of the ones anybody develops on.
+    """
+    history = tmp_path / "history"
+    proc = _run(bare, "gate",
+                "--baseline", GATE_FIXTURES / "baseline-refusal-rate.json",
+                "--current", GATE_FIXTURES / "measurement-regressed.json",
+                "--history", history)
+    assert "Traceback" not in proc.stderr, proc.stderr
+    assert proc.returncode == 1, f"{proc.stdout}\n{proc.stderr}"
+    written = list(history.rglob("*.json"))
+    assert len(written) == 1, (
+        f"the verdict was reached and nothing was recorded, so the history writer needs something "
+        f"a dependency-free install does not have:\n{proc.stdout}\n{proc.stderr}")
+
+
 def test_the_gate_can_print_its_help_with_nothing_installed(bare):
     """`--help` is the smoke check the CI action runs to prove the install can do the job."""
     proc = _run(bare, "gate", "--help")

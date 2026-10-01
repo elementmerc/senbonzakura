@@ -501,3 +501,168 @@ def test_the_two_spellings_are_told_apart():
     """
     assert _OFF.search("It's off by default, because") and not _ON.search("It's off by default")
     assert _ON.search("On by default, and the only setting") and not _OFF.search("On by default")
+
+
+# ── the four cross-page drifts the 2026-09-28 review reported and did not fix ────────
+#
+# All four are the panel's dominant convergence theme, reached by three reviewers with twelve
+# findings behind it: A CORRECTION LANDS ON THE PAGE WHERE SOMEBODY NOTICED IT AND STAYS WRONG
+# ON ITS SIBLINGS. So each guard below holds a claim against the thing that decides it rather
+# than against a second copy of the prose, because two copies of the prose is the defect.
+
+#: Present-tense claims that the separation filter rejects nothing. It DID, for the project's
+#: whole history, because a candidate was scored on the rows it was built from, and
+#: `how-it-works.md` went on saying so for seven weeks after the held-out score and the measured
+#: null floor landed. The historical statement is still worth making, which is why this looks for
+#: the present tense and not for the words: `compass.md` and `what-we-know.md` both quote the old
+#: log line verbatim and must keep being allowed to.
+_FILTER_REJECTS_NOTHING_NOW = re.compile(
+    r"(currently|now)\s+rejects\s+(nothing|none)"
+    r"|filter\s+rejects\s+(nothing|none)"
+    r"|rejects\s+(nothing|none)\s+at\s+all",
+    re.IGNORECASE)
+
+
+def test_no_page_says_the_separation_filter_rejects_nothing_in_the_present_tense():
+    """It rejects candidates now, and one page told a reader the opposite of what the tool does.
+
+    The filter scores each candidate on rows it never saw, against a floor measured from
+    directions built from random subsets and carrying nothing, and candidates do lose to it:
+    `axes_rejected_by_null` is the count. A page saying it rejects nothing is not merely stale,
+    it withdraws the only guard standing between a topic direction and the weights.
+    """
+    offenders = {}
+    for rel in _prose_markdown():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        hits = [m.group(0) for m in _FILTER_REJECTS_NOTHING_NOW.finditer(text)]
+        if hits:
+            offenders[rel] = hits
+    assert not offenders, (
+        "these pages say the refusal-separation filter rejects nothing as a present-tense fact. "
+        "It did until the held-out score and the measured null floor landed; it does not now, "
+        "and `axes_rejected_by_null` counts what it drops:\n  "
+        + "\n  ".join(f"{rel}: {hits}" for rel, hits in sorted(offenders.items())))
+
+
+def test_the_rejects_nothing_scan_still_allows_the_historical_statement():
+    """Mutation test. A guard that also forbade the past tense would delete a finding we publish."""
+    assert _FILTER_REJECTS_NOTHING_NOW.search("the filter currently rejects nothing at all")
+    assert _FILTER_REJECTS_NOTHING_NOW.search("that check now rejects none of them")
+    assert not _FILTER_REJECTS_NOTHING_NOW.search(
+        'That filter printed *"rejected NONE of 109 candidates"* on every run')
+    assert not _FILTER_REJECTS_NOTHING_NOW.search(
+        "used to reject nothing at all, because it scored each candidate on its own rows")
+
+
+def test_a_where_next_section_is_the_last_section_on_its_page():
+    """`flags.md` had its closing links in the middle of the body, under a third of the page.
+
+    A "Where next" heading is a page's exit. Above the body it reads as the end to anybody
+    skimming headings, and `--capability-eval`, the one flag that runs whether you ask for it or
+    not, sat below it with two subsections of its own. Presentation rather than fact, which is
+    why it waited; it is also the kind of thing nobody notices twice, which is why it gets a
+    guard rather than a second look.
+    """
+    offenders = {}
+    for rel in _prose_markdown():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        headings = [(m.start(), m.group(1), m.group(2).strip())
+                    for m in re.finditer(r"^(#{2,6})[ \t]+(.+?)[ \t]*$", text, re.MULTILINE)]
+        for i, (_, level, title) in enumerate(headings):
+            if not re.fullmatch(r"where\s+next\b.*", title, re.IGNORECASE):
+                continue
+            # Anything at the same level or shallower after it means the page carried on.
+            later = [t for _, lv, t in headings[i + 1:] if len(lv) <= len(level)]
+            if later:
+                offenders[rel] = (title, later)
+    assert not offenders, (
+        "a \"Where next\" section is a page's exit and these pages continue past it, so the "
+        "closing links sit in the middle of the body:\n  "
+        + "\n  ".join(f"{rel}: {title!r} is followed by {later}"
+                      for rel, (title, later) in sorted(offenders.items())))
+
+
+def test_the_where_next_scan_reads_something():
+    """A structural scan that matches no page passes, which is how it goes quiet after a rename."""
+    pages = [rel for rel in _prose_markdown()
+             if re.search(r"^#{2,6}[ \t]+where\s+next\b", (ROOT / rel).read_text(encoding="utf-8"),
+                          re.IGNORECASE | re.MULTILINE)]
+    assert len(pages) >= 3, (
+        f'only {len(pages)} pages carry a "Where next" heading, so the pattern has stopped '
+        f"matching rather than the docs having stopped closing with one")
+
+
+#: "5 graded tasks" / "five graded tasks". True and read as five datasets, which is the reading
+#: that flatters us: it is five GRADING RULES over one bundled dataset, and that dataset is a
+#: subset of GSM8K, the same benchmark the comparison table credits a competitor with by name.
+_GRADED_TASKS = re.compile(r"\b(five|5)\s+(code-graded\s+|code\s+graded\s+)?(graded\s+)?tasks\b",
+                           re.IGNORECASE)
+
+#: What a page using that phrase has to also say, so a reader cannot take it for five datasets.
+_SAYS_IT_IS_RULES = re.compile(r"grading\s+rules?", re.IGNORECASE)
+
+
+def test_a_page_counting_five_tasks_says_they_are_grading_rules():
+    """Both halves were true and a reader will take them for the same thing.
+
+    `capability.TASKS` holds five entries and they are five ways to READ an answer. One dataset
+    ships, a 256 row subset of GSM8K, and a run uses whichever rule fits whatever it was given.
+    So "five graded tasks" against a competitor's "11 lm-eval benchmarks" is one dataset against
+    eleven, dressed as five against eleven.
+
+    A released CHANGELOG entry is exempt by the rule set on 2026-09-28: it is a historical claim
+    about one shipped artefact, and rewriting it would put a false statement into the record.
+    """
+    offenders = {}
+    for rel in _prose_markdown():
+        if rel == "CHANGELOG.md":
+            continue
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        if _GRADED_TASKS.search(text) and not _SAYS_IT_IS_RULES.search(text):
+            offenders[rel] = _GRADED_TASKS.search(text).group(0)
+    assert not offenders, (
+        "these pages count five graded tasks without saying they are five grading rules over one "
+        "bundled dataset, so the phrase reads as five datasets:\n  "
+        + "\n  ".join(f"{rel}: {hit!r}" for rel, hit in sorted(offenders.items())))
+
+
+def test_the_five_tasks_premise_is_still_true():
+    """The guard above is only worth running while `capability` really declares five rules."""
+    from senbonzakura import capability
+    assert len(capability.TASKS) == 5, (
+        f"`capability.TASKS` now holds {len(capability.TASKS)} rules, so every page saying five "
+        f"is wrong on the count as well as on what it counts")
+
+
+def test_the_graded_tasks_pattern_tells_the_two_readings_apart():
+    """Mutation test for both halves of the pair above."""
+    assert _GRADED_TASKS.search("Yes, 5 graded tasks")
+    assert _GRADED_TASKS.search("on five code-graded tasks")
+    assert not _GRADED_TASKS.search("eleven standard benchmarks")
+    assert _SAYS_IT_IS_RULES.search("five grading rules, not five datasets")
+    assert not _SAYS_IT_IS_RULES.search("five graded tasks")
+
+
+def test_the_install_prose_does_not_outbid_its_own_card_table():
+    """The prose said 6 GB "gets you to about 2B"; the table twenty lines down said 1.7B.
+
+    A reader holding a 6 GB card could not tell which of the two to believe, and the two numbers
+    are different answers to the one question that decides whether they can use the tool at all.
+    The table is the measured side, so the prose is held against it.
+    """
+    text = _text("docs/guide/install.md")
+    rows = re.findall(r"^\|\s*([\d.]+)B\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*$", text, re.MULTILINE)
+    assert rows, "the card-size table has changed shape, so this guard is reading nothing"
+    measured = [size for size, card in rows if "measured" in card.lower()]
+    assert measured, (
+        "no row of the card-size table is marked measured, and the prose above it quotes a "
+        "measured figure")
+    biggest = max(float(s) for s in measured)
+    claim = re.search(r"6 GB\s+(?:gets you to|has been measured at|reaches)\s+(?:about\s+)?"
+                      r"([\d.]+)B", text)
+    assert claim, (
+        "the GPU-requirements table no longer states what a 6 GB card gets you to in a form this "
+        "guard can read, and that sentence is the one that disagreed with the table")
+    assert float(claim.group(1)) <= biggest, (
+        f"the prose says a 6 GB card gets you to {claim.group(1)}B and the only measured row in "
+        f"the table below is {biggest}B. One of them is wrong and a reader cannot tell which")

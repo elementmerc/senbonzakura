@@ -42,6 +42,13 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   with its false keep rate, rather than as a bar every null draw fails
 
 ### Documentation
+- The page explaining how the tool works said the direction filter rejects nothing, which stopped
+  being true when the filter gained a held out score and a measured floor
+- The capability probe is described as five grading rules over one bundled dataset, not as five
+  datasets, on every page that counts them
+- The GPU requirements table and the prose above it gave different answers for a 6 GB card, and
+  the prose now quotes the measured row
+- The flags page had its closing links in the middle of the body, above a third of the page
 - Two pages disagreed about whether our own numbers carry intervals; both are corrected and the
   two real exceptions are named where a reader meets them
 - `drift` is named as a **first-token** measurement in the README, the CLI reference and the flags

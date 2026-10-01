@@ -60,10 +60,7 @@ Earlier versions optimised hard-refusal against KL only and left the keyword and
 axis to chance, which is how you end up with a model that scores beautifully and hedges
 constantly.
 
-## Where next
-
-- [The full CLI reference](/reference/cli).
-- [Your first run](/guide/first-run), which uses almost none of this.
+## The one that runs whether you ask for it or not
 
 **`--capability-eval`** is the one that runs whether you ask for it or not, so it is worth
 knowing what it does. Every other number a run gives you is about refusal: how often the model
@@ -148,3 +145,8 @@ Note that the worked command there says `--n` and `--max-new`, not `--capability
 `--capability-max-new`. That is because the message comes from `senbonzakura capability`, which
 can be run on its own against a model you already have, and which spells the same two settings
 without the prefix. Inside an `abliterate` run, use the prefixed names.
+
+## Where next
+
+- [The full CLI reference](/reference/cli).
+- [Your first run](/guide/first-run), which uses almost none of this.

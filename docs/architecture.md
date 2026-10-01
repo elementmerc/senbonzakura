@@ -75,7 +75,7 @@ from the measurement suite, which is the half of the project the README calls th
 |---|---|
 | `score.py` | Refusal scoring against an eval set: hard refusal, the strict (keyword) rate, and broken-output detection. |
 | `margin.py` | The compass. Does the model still recognise harm, scored by logit margin rather than by counting verdicts. |
-| `capability.py` | What the edit cost, on five code-graded tasks. |
+| `capability.py` | What the edit cost. Five grading rules, not five datasets: one bundled dataset (a 256 row GSM8K subset) read by whichever rule fits, and the other rules are for a benchmark you bring. |
 | `coherence.py` | The neutral-passage perplexity probe, the check that a cut model still reads coherently. |
 | `drift.py` | Distributional cost as KL divergence against the unedited model. |
 | `measure.py` | Runs all five of the above into one table. It measures nothing itself; each stage is the command that owns that number. |

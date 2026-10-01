@@ -47,8 +47,12 @@ a weapon" and "I won't help you write a phishing email" may not be the same refu
 ::: warning Whether those extra arrows are refusal or just topic is unproven
 A cluster of harmful prompts about one subject differs from harmless prompts partly *because of
 the subject*. Cutting that removes knowledge rather than reluctance. The check that was supposed
-to separate those two things currently rejects nothing at all, which means it has swapped failure
-modes rather than started working. See [what is and is not established](/guide/what-we-know).
+to separate those two things used to reject nothing at all, because it scored each candidate on
+the very rows the candidate was built from. It now scores on rows it never saw, against a floor
+measured from directions carrying nothing, and it does reject candidates. What it still cannot
+tell you is whether a kept direction is refusal or subject: that needs the subject matter held
+still. See [what is and is not established](/guide/what-we-know) and
+[the compass](/guide/compass), which describes the filter as it now behaves.
 :::
 
 ## Step 3: cut

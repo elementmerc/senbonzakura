@@ -397,7 +397,76 @@ def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, t
         print(f"✓  {path}\n   nothing found", file=out)
 
 
-def main(argv=None, out=None):
+#: How often a sweep says it is still alive, in seconds. Baseline section 2.1 asks for one every
+#: 30 to 60 in any long-running loop, and this is the bottom of that range because the loop's unit
+#: of work is one file: a sweep that has gone quiet for half a minute has either stalled on one
+#: enormous artefact or wedged, and both are worth hearing about promptly.
+HEARTBEAT_SECONDS = 30
+
+
+def _entry(path, findings, skipped, problem, named, applied):
+    """One file's object in the machine-readable report.
+
+    Pulled out of the `--json` branch when the report started streaming: the shape has to be
+    identical whether it is written during the loop or after it, and the only way to be sure of
+    that is for there to be one copy of it.
+    """
+    return {
+        "artefact": str(path),
+        "unchecked": problem if named else None,
+        "not_a_result": problem if not named else None,
+        # HOW MANY CHECKS ACTUALLY RAN ON THIS FILE, which is the difference between a file that
+        # was examined and one that was merely opened. It was computed from the start and dropped
+        # on the floor, so every consumer had to reconstruct "was this checked" from `unchecked`
+        # and `not_a_result` alone, and a file that parsed with every check skipped came out
+        # looking checked. The Action did exactly that and its `fail-on-empty` could not fire.
+        "applied": applied,
+        "skipped": skipped,
+        "findings": [{
+            "check": f.check_id, "title": f.title, "confidence": f.confidence,
+            "severity": f.severity,
+            "detects": f.detects, "incident": f.incident, "remedy": f.remedy,
+            "false_positive": f.false_positive,
+        } for f in findings],
+    }
+
+
+class _Heartbeat:
+    """Say that a long sweep is still alive, on stderr, at a stated interval.
+
+    ON STDERR, AND THIS IS THE WHOLE DESIGN. `--json` on stdout is read by `action.yml` and by the
+    pre-commit entry point, and a progress line in that stream turns a clean run into a parse
+    error on somebody else's CI. The project has the opposite scar too: a quiet mode once
+    suppressed warnings because a recorded decision's premise about which stream carried what was
+    false. So the separation is asserted by a test rather than trusted to this comment.
+
+    THE CLOCK IS INJECTABLE because a test that waits thirty seconds to find out whether a
+    heartbeat fires is a test nobody runs, and a heartbeat nobody has watched fire is the same
+    kind of nothing as a gate nobody has watched fail.
+    """
+
+    def __init__(self, total, *, stream=None, clock=None, every=HEARTBEAT_SECONDS):
+        import time
+        self._clock = clock or time.monotonic
+        self._stream = stream if stream is not None else sys.stderr
+        self._every = every
+        self._total = total
+        self._last = self._clock()
+        self._done = 0
+
+    def tick(self, path):
+        """One unit of work finished. Emits only when the interval has elapsed."""
+        self._done += 1
+        now = self._clock()
+        if now - self._last < self._every:
+            return False
+        self._last = now
+        print(f"... {self._done} of {self._total} checked, now at {path}",
+              file=self._stream, flush=True)
+        return True
+
+
+def main(argv=None, out=None, clock=None):
     args = build_parser().parse_args(argv)
     out = out or sys.stdout
     checks = load_checks()
@@ -412,7 +481,73 @@ def main(argv=None, out=None):
     files = _files(args.paths)
     n_pair_checks = sum(1 for c in checks if c.arity == "pair")
 
-    results = []
+    # THE PAIR'S ARITY IS CHECKED BEFORE ANYTHING IS READ, and it used to be checked after the
+    # whole sweep. Moved up when the report started streaming, because a refusal that arrives
+    # after half the output has been written is a refusal nobody can act on, and reading every
+    # file before saying "this needed exactly two" was work spent to reach a conclusion that was
+    # available from the arguments alone. Pre-flight, per baseline section 2.1.
+    if args.pair and (len(files) != 2 or not all(named for _, named in files)):
+        print("--pair needs exactly two result files, named on the command line. Which two "
+              "artefacts are arms of one comparison is a claim only you can make: sweeping a "
+              "directory and pairing everything in it would report findings about "
+              "comparisons nobody ran.", file=out)
+        return 2
+
+    # ── the report is written as the sweep goes, not accumulated and rendered afterwards ────────
+    #
+    # WHY, per baseline section 12.1 and this project's own scale note: one order of magnitude
+    # past today is a repository of a few thousand result artefacts, or a CI run over a monorepo
+    # of them, and a run over those that dies at four thousand should still have told you about
+    # the first four thousand. It used to build a list of every file's result and render after the
+    # loop, so a killed run reported nothing at all.
+    #
+    # WHAT IS STILL ACCUMULATED, AND WHY IT IS BOUNDED. Four integer counters, and the artefacts
+    # that fell below `--min-applied`, which in a healthy run is an empty list. Nothing here grows
+    # with the number of files that were fine.
+    #
+    # THE EXIT STATUS IS STILL DECIDED AT THE END. Loophole 10: `--pair` runs after the singles,
+    # and one unreadable file in the last artefact changes the status of everything before it, so
+    # streaming the OUTPUT must not mean deciding the STATUS early. A partial report carries no
+    # footer and no status line, which is what tells a reader it is partial.
+    n_findings = n_unchecked = n_not_result = n_checked = 0
+    thin = []
+    reachable = [c for c in checks if getattr(c, "arity", "document") != "pair"]
+    heartbeat = _Heartbeat(len(files) + (1 if args.pair else 0), clock=clock)
+    first_json_entry = True
+
+    def emit(path, findings, skipped, problem, named, applied):
+        """Write one entry, in whichever of the two formats was asked for."""
+        nonlocal first_json_entry
+        if args.json:
+            # STREAMED AS A JSON ARRAY, one element at a time, so the format a consumer parses is
+            # unchanged. A run killed partway leaves the array unterminated, which `json.load`
+            # refuses, and a report that cannot be parsed is reported by `action.yml` as "nothing
+            # about this run is known" rather than as a clean sweep. That is the correct reading
+            # of a partial file and the reason this is an array rather than one object per line.
+            print("" if first_json_entry else ",", file=out)
+            json.dump(_entry(path, findings, skipped, problem, named, applied), out, indent=2)
+            first_json_entry = False
+        elif not (args.quiet and not findings and not (problem and named)):
+            _render(path, findings, skipped, problem, out, named=named,
+                    quiet=args.quiet, total=len(checks))
+
+    def tally(findings, problem, named, applied):
+        nonlocal n_findings, n_unchecked, n_not_result, n_checked
+        n_findings += len(findings)
+        if problem and named:
+            n_unchecked += 1
+        elif problem:
+            n_not_result += 1
+        elif applied:
+            # WHAT WAS ACTUALLY EXAMINED, which is not the same as what was listed. An entry is
+            # checked when it was read, recognised, and at least one check applied to it. A file
+            # that was unreadable, unrecognised, or that every check skipped has been listed and
+            # not checked, and `--fail-on-empty` used to read the listing.
+            n_checked += 1
+
+    if args.json:
+        print("[", end="", file=out)
+
     for path, was_named in files:
         named = was_named and claimed
         findings, skipped, problem = inspect_file(path, checks)
@@ -429,70 +564,31 @@ def main(argv=None, out=None):
             # decision rather than a bug fix. The open question it leaves, whether a staged file
             # that is corrupt should block, is in DEFERRED.md.
             named = True
-        results.append((path, findings, skipped, problem, named,
-                        0 if problem else len(checks) - len(skipped)))
+        applied = 0 if problem else len(checks) - len(skipped)
+        emit(path, findings, skipped, problem, named, applied)
+        tally(findings, problem, named, applied)
+        if not problem and applied < min(args.min_applied or 0, len(reachable)):
+            thin.append((path, applied))
+        heartbeat.tick(path)
 
     # THE PAIR RUNS AFTER THE SINGLES, OVER THE SAME TWO FILES. Each arm is still checked on its
     # own, because a defect that is visible in one artefact is visible whether or not it is being
     # compared with another, and `--pair` adds the questions that need both rather than replacing
     # the ones that do not.
     if args.pair:
-        if len(files) != 2 or not all(named for _, named in files):
-            print("--pair needs exactly two result files, named on the command line. Which two "
-                  "artefacts are arms of one comparison is a claim only you can make: sweeping a "
-                  "directory and pairing everything in it would report findings about "
-                  "comparisons nobody ran.", file=out)
-            return 2
         pair_findings, pair_skipped, pair_problem = inspect_pair(
             files[0][0], files[1][0], checks)
-        results.append((f"{files[0][0]} vs {files[1][0]}",
-                        pair_findings, pair_skipped, pair_problem, True,
-                        0 if pair_problem else n_pair_checks - len(pair_skipped)))
+        pair_applied = 0 if pair_problem else n_pair_checks - len(pair_skipped)
+        pair_label = f"{files[0][0]} vs {files[1][0]}"
+        emit(pair_label, pair_findings, pair_skipped, pair_problem, True, pair_applied)
+        tally(pair_findings, pair_problem, True, pair_applied)
+        heartbeat.tick(pair_label)
 
     if args.json:
-        json.dump([
-            {
-                "artefact": str(p),
-                "unchecked": problem if named else None,
-                "not_a_result": problem if not named else None,
-                # HOW MANY CHECKS ACTUALLY RAN ON THIS FILE, which is the difference between a
-                # file that was examined and one that was merely opened. It was computed here from
-                # the start and dropped on the floor, so every consumer of this report had to
-                # reconstruct "was this checked" from `unchecked` and `not_a_result` alone, and a
-                # file that parsed with every check skipped came out looking checked. The Action
-                # did exactly that and its `fail-on-empty` could not fire. `n_checked` below is
-                # `not problem and applied`; with this field a reader can reproduce it rather than
-                # keep a second definition that agrees most of the time.
-                "applied": applied,
-                "skipped": sk,
-                "findings": [{
-                    "check": f.check_id, "title": f.title, "confidence": f.confidence,
-                    "severity": f.severity,
-                    "detects": f.detects, "incident": f.incident, "remedy": f.remedy,
-                    "false_positive": f.false_positive,
-                } for f in fs],
-            }
-            for p, fs, sk, problem, named, applied in results
-        ], out, indent=2)
-        print(file=out)
-    else:
-        for path, findings, skipped, problem, named, _applied in results:
-            if args.quiet and not findings and not (problem and named):
-                continue
-            _render(path, findings, skipped, problem, out, named=named,
-                    quiet=args.quiet, total=len(checks))
-
-    n_findings = sum(len(fs) for _, fs, _, _, _, _ in results)
-    n_unchecked = sum(1 for _, _, _, problem, named, _ in results if problem and named)
-    n_not_result = sum(1 for _, _, _, problem, named, _ in results if problem and not named)
-    # WHAT WAS ACTUALLY EXAMINED, which is not the same as what was listed, and the difference
-    # is the whole of this number. An entry is checked when it was read, recognised, and at least
-    # one check applied to it. A file that was unreadable, unrecognised, or that every check
-    # skipped has been listed and not checked, and `--fail-on-empty` used to read the listing:
-    # with `--skip-unknown` beside it, a named non-result file made `results` non-empty and the
-    # flag whose entire job is to catch "nothing happened" returned success having checked
-    # nothing. That is the defect this command exists to find in other people's pipelines.
-    n_checked = sum(1 for _, _, _, problem, _, applied in results if not problem and applied)
+        # THE ARRAY IS CLOSED HERE AND NOWHERE ELSE, which is what makes a killed run detectable:
+        # the bracket is the last thing written, so a report that has one is a report that
+        # finished.
+        print("\n]" if not first_json_entry else "]", file=out)
 
     if not args.json and not args.quiet:
         tail = f", {n_not_result} not a result" if n_not_result else ""
@@ -564,14 +660,14 @@ def main(argv=None, out=None):
         # checks, so a single artefact can never exceed 11 applied, while this compared against
         # 15 and printed "of 15". `--min-applied 12` and above could not be satisfied by a
         # healthy run, which is the opposite of what a floor is for.
-        reachable = [c for c in checks if getattr(c, "arity", "document") != "pair"]
-        thin = sorted((path, applied) for path, _, _, problem, _, applied in results
-                      if not problem and applied < min(args.min_applied, len(reachable)))
+        #
+        # SORTED AT THE BOUNDARY, not in the loop that filled it, so two runs over the same tree
+        # print the same list whatever order the filesystem handed the files over in.
         if thin:
             if not args.json and not args.quiet:
                 print(f"\nFEWER THAN {args.min_applied} CHECKS APPLIED to "
                       f"{len(thin)} artefact(s):", file=out)
-                for path, applied in thin:
+                for path, applied in sorted(thin):
                     print(f"  {path}: {applied} of {len(reachable)} applied", file=out)
                 print("Either these artefacts stopped carrying what the checks read, or the "
                       "checks stopped recognising them. Both look like a clean run.", file=out)

@@ -546,15 +546,63 @@ NULL_RULERS = {
 }
 
 
+def _null_strength(block):
+    """A sort key over `{name: auc}`: distance from chance, then the AUC itself.
+
+    DISTANCE, because a ruler that separates the two arms perfectly in the OTHER direction is
+    exactly as much a confound as one that separates them forwards. The sign is which way the
+    surface property happens to point and nothing in the argument rests on it.
+
+    TIES GO TO THE HIGHER AUC, and the tie is common rather than exotic: the worked example on the
+    compass page has three of five rulers at distance 0.5, one at 1.0 and two at 0.0. Ranking on
+    distance alone would make the named ruler depend on the order `NULL_RULERS` happens to be
+    written in, so adding a ruler would move a published figure for a reason no reader could see.
+    At equal distance the two are equally strong and every ruler's own AUC prints beside the
+    headline, so preferring one hides nothing; what it buys is that the headline is a property of
+    the numbers rather than of a dictionary.
+    """
+    return lambda name: (abs(block[name] - 0.5), block[name])
+
+
 def null_panel(harmful_prompts, harmless_prompts):
-    """What each null ruler scores on this pair of arms, all of them, whatever they say."""
+    """What each null ruler scores on this pair of arms, all of them, whatever they say.
+
+    AN AUC OF 0.0 IS THE STRONGEST RESULT A NULL CAN HAVE, not the weakest, and this used to score
+    it as a coin flip. The old line read `abs((out[k] or 0.5) - 0.5)`, and `0.0 or 0.5` is `0.5` in
+    Python, so a ruler that separated the two arms PERFECTLY in the other direction came out at
+    distance zero from chance and was never named as the strongest. A ruler reading nothing but
+    punctuation that puts every harmless prompt above every harmful one is exactly as much a
+    confound as one that puts them the other way round; the sign is which way the surface property
+    happens to point, and nothing in the argument depends on it.
+
+    `nulls_matching_the_instrument` had it right, with a plain `abs(kv[1] - 0.5)`, so the two
+    disagreed on precisely this case: the invalidation rule would fire and the headline
+    `MARGIN_NULLS` line next to it would name a weaker ruler as the worst one. Found by the
+    Metrologist on 2026-09-28.
+
+    `None` IS NOT ZERO EITHER, which is what that expression was reaching for and the reason it
+    looked safe. `auc` returns None when a side is empty, meaning the panel could not be run
+    rather than that it found nothing, and folding the two together is the same conflation one
+    layer down. An unmeasured ruler is excluded from the comparison and the absence is reported.
+    """
     out = {}
     for name, ruler in NULL_RULERS.items():
         out[f"{name}_auc"] = auc([ruler(p) for p in harmful_prompts],
                                  [ruler(p) for p in harmless_prompts])
-    strongest = max(out, key=lambda k: abs((out[k] or 0.5) - 0.5))
+    measured = {k: v for k, v in out.items() if isinstance(v, (int, float))}
+    if not measured:
+        out["strongest"] = None
+        out["strongest_auc"] = None
+        out["strongest_note"] = ("no null ruler could be scored, because one of the two arms is "
+                                 "empty. This is an unmeasured panel and not a clean one")
+        return out
+    strongest = max(measured, key=_null_strength(measured))
     out["strongest"] = strongest
-    out["strongest_auc"] = out[strongest]
+    out["strongest_auc"] = measured[strongest]
+    if len(measured) < len(NULL_RULERS):
+        out["strongest_note"] = (
+            f"{len(NULL_RULERS) - len(measured)} of {len(NULL_RULERS)} null rulers could not be "
+            f"scored, so the strongest is the strongest of those that could be")
     return out
 
 
@@ -1353,10 +1401,21 @@ def main(argv=None):
     # reach of the compass means the compass may be reading the same surface property it does.
     if c.get("nulls"):
         n = c["nulls"]
-        print(f"MARGIN_NULLS {a.label} strongest={n['strongest']}={_fmt(n['strongest_auc'])} "
-              f"against compass={_fmt(res.get('auc'))}  "
-              + " ".join(f"{k}={_fmt(v)}" for k, v in n.items() if k.endswith("_auc")
-                         and k != "strongest_auc"))
+        each = " ".join(f"{k}={_fmt(v)}" for k, v in n.items()
+                        if k.endswith("_auc") and k != "strongest_auc")
+        if n.get("strongest") is None:
+            # AN UNMEASURED PANEL IS NOT A CLEAN ONE. Printing `strongest=None=n/a` beside a
+            # headline AUC reads as a control that ran and found nothing, which is the opposite of
+            # what it means, and a control block that cannot say no is the thing the panel exists
+            # to avoid being.
+            print(f"MARGIN_NULLS {a.label} NOT MEASURED: "
+                  f"{n.get('strongest_note', 'no null ruler could be scored')}. The AUC of "
+                  f"{_fmt(res.get('auc'))} therefore has no control beside it.  {each}")
+        else:
+            print(f"MARGIN_NULLS {a.label} strongest={n['strongest']}={_fmt(n['strongest_auc'])} "
+                  f"against compass={_fmt(res.get('auc'))}  {each}")
+            if n.get("strongest_note"):
+                print(f"MARGIN_NULLS_PARTIAL {a.label} {n['strongest_note']}")
     # BESIDE THE NUMBER, not only in the file. The controls were already computed, already recorded
     # and already printed on the line above, and none of that stopped two readers quoting an AUC a
     # null had beaten: somebody has to be told that the comparison above means the instrument failed.

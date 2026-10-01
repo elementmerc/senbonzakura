@@ -312,11 +312,21 @@ jobs:
         # THIS JOB DOES NOT COMMIT IT. This row has just installed torch, transformers and the
         # rest of the dependency tree, so it is the last place that should hold a token able to
         # write to the repository. It measures, and hands the result to a job that runs nothing.
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        #
+        # `always()` BECAUSE THE COUNT IS NOT A VERDICT. Two panel reviewers reached the same
+        # finding on 2026-09-28: the badge was stale and the thing that corrects it is skipped
+        # exactly when the suite is red, which is when a stale number is most likely to be
+        # noticed and least likely to be fixed. What this measures is how many tests COLLECT,
+        # and collection succeeds or fails on its own: a suite with ten failures collects
+        # exactly as many tests as a green one. So nothing about this number depends on the
+        # suite having passed, and gating it on that was a guess rather than a reason.
+        # Collection breaking is a different matter and the script exits 2 on it, which fails
+        # this step rather than writing a figure it could not measure.
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python tools/ci/check_tests_badge.py --write
 
       - name: Hand the corrected badge to the job that can commit it
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: tests-badge-readme
@@ -407,14 +417,32 @@ jobs:
     # reaches `main` at the next promotion like everything else does, so confining it to `dev`
     # costs nothing and keeps both invariants: `main` is always a fast-forward of `dev`, and every
     # remote holds the same `main`.
+    #
+    # `always()` AND NOT `needs: test` ALONE. `needs` skips this job when any matrix row fails, so
+    # the one job that keeps the badge honest stood down on exactly the days the badge was most
+    # likely to be wrong, which is the half of the finding two reviewers reached independently on
+    # 2026-09-28. The number is a COLLECTION count and not a verdict, and the step that produces
+    # it says why that makes the suite's result irrelevant to it. `cancelled()` is still a stop:
+    # a cancelled run proves nothing and may not have reached the measurement at all.
+    #
+    # Nothing about the blast radius changes. This job still installs nothing, runs no project
+    # code, and the step below still refuses to commit a diff that touches anything but the badge
+    # line, so the worst a red run can hand it is a number it then checks.
     if: >-
-      github.event_name == 'push' && github.repository == 'elementmerc/senbonzakura'
+      always() && !cancelled()
+      && github.event_name == 'push' && github.repository == 'elementmerc/senbonzakura'
       && github.ref_name == 'dev'
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        # NOT A FAILURE WHEN IT IS ABSENT, and it is absent for a readable reason: `test` can go
+        # red before it reaches the measurement, for instance on a failed install, and then there
+        # is no count to commit. Failing here would add a second red job to a run that is already
+        # red and would say nothing new. The step below reports the absence in words rather than
+        # letting it look like a badge that was already correct.
+        continue-on-error: true
         with:
           name: tests-badge-readme
           path: badge
@@ -422,6 +450,11 @@ jobs:
       - name: Commit the corrected badge, or say why it did not
         run: |
           set -euo pipefail
+          if [ ! -f badge/README.md ]; then
+            echo "no measured badge was handed over, so there is nothing to correct."
+            echo "the test job did not reach the measurement step; this is not a badge failure."
+            exit 0
+          fi
           if cmp -s badge/README.md README.md; then
             echo "tests badge already correct; nothing to commit"
             exit 0

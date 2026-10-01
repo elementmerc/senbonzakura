@@ -207,3 +207,128 @@ def test_the_regression_gate_is_exercised_through_the_action_and_not_only_as_a_c
     assert any(step.get("continue-on-error") for step in gated), (
         "every gated invocation is expected to succeed, so the case where the gate MUST fail the "
         "build, which is the only reason a gate exists, is never exercised.")
+
+
+# ── the badge, and a self-correcting job that stood down when it was needed ──────────
+#
+# Two reviewers reached the same finding on 2026-09-28: the `tests-NNNN` badge was stale, and the
+# job that corrects it is skipped precisely when the suite is red. `needs: test` is the mechanism,
+# and it was a guess rather than a reason. The number is how many tests COLLECT, and a suite with
+# ten failures collects exactly as many as a green one, so nothing about it depends on the result.
+#
+# The property these hold is not "the condition reads a certain way". It is that neither the
+# measurement nor the commit is gated on the suite having PASSED, which is the shape the finding
+# was about, and that the one job holding a write token is still fenced everywhere else.
+
+BADGE_JOB = "tests-badge"
+BADGE_SCRIPT = "tools/ci/check_tests_badge.py"
+
+
+def _step_named(workflow, job, needle):
+    for step in (workflow["jobs"][job].get("steps") or []):
+        if needle.lower() in str(step.get("name", "")).lower():
+            return step
+    return None
+
+
+def _badge_steps(workflow):
+    """Every step of any job that invokes the badge script, plus the job's name."""
+    return [(name, job, step)
+            for name, job in (workflow.get("jobs") or {}).items()
+            for step in (job.get("steps") or [])
+            if BADGE_SCRIPT in str(step.get("run", ""))]
+
+
+def test_the_badge_is_measured_somewhere(workflow):
+    """Without this the two tests below pass on a workflow that stopped measuring it at all."""
+    found = _badge_steps(workflow)
+    assert found, f"no step in this workflow runs {BADGE_SCRIPT}, so nothing measures the badge"
+
+
+def test_the_badge_measurement_is_not_gated_on_the_suite_passing(workflow):
+    """A collection count does not depend on the suite's verdict, and used to be gated on it."""
+    for job_name, _job, step in _badge_steps(workflow):
+        condition = str(step.get("if", ""))
+        assert "always()" in condition, (
+            f"the step measuring the badge in `{job_name}` has `if: {condition or '<none>'}`, so a "
+            f"failing step earlier in that job skips it. The count is how many tests collect, "
+            f"which is the same number whether the suite passed or not, and the badge therefore "
+            f"stays stale on exactly the runs somebody is already looking at")
+
+
+def test_the_badge_artefact_is_handed_over_on_a_red_run_too(workflow):
+    """Measuring it and then not uploading it leaves the committing job nothing to commit."""
+    step = _step_named(workflow, "test", "Hand the corrected badge")
+    assert step is not None, "the test job no longer uploads the measured badge"
+    assert "always()" in str(step.get("if", "")), (
+        "the badge is measured on a red run and then not handed over, so the correction stops "
+        "one step short of the job that can commit it")
+
+
+def test_the_badge_job_runs_when_the_suite_is_red_and_stops_when_it_is_cancelled(workflow):
+    """`needs:` alone skipped it on every red run. A cancelled run is still a stop."""
+    job = (workflow.get("jobs") or {}).get(BADGE_JOB)
+    assert job is not None, f"there is no `{BADGE_JOB}` job to check"
+    condition = str(job.get("if", ""))
+    assert "always()" in condition, (
+        f"`{BADGE_JOB}` has `needs: {job.get('needs')}` and no `always()`, so it is skipped "
+        f"whenever any matrix row fails, which is when the badge is most likely to be wrong")
+    assert "cancelled()" in condition, (
+        f"`{BADGE_JOB}` runs on `always()` and does not exclude a cancelled run, which may not "
+        f"have reached the measurement at all")
+
+
+def test_the_badge_job_still_installs_nothing_and_runs_no_project_code(workflow):
+    """The reason it is allowed a write token at all, per baseline section 5.
+
+    Loosening WHEN it runs must not loosen WHAT it runs. Checked here rather than left implied,
+    because the condition above is the sort of change that invites a convenience step afterwards.
+    """
+    job = (workflow.get("jobs") or {}).get(BADGE_JOB)
+    assert job is not None
+    for step in (job.get("steps") or []):
+        uses = str(step.get("uses", ""))
+        if uses:
+            assert uses.startswith(("actions/checkout@", "actions/download-artifact@")), (
+                f"`{BADGE_JOB}` holds a write token and now uses `{uses}`, which puts a third "
+                f"party in the same process as that token")
+        run = str(step.get("run", ""))
+        for forbidden in ("pip install", "uv pip", "pytest", "python tools/", "python -m"):
+            assert forbidden not in run, (
+                f"`{BADGE_JOB}` holds a write token and its step `{step.get('name')}` now runs "
+                f"`{forbidden}`. It is allowed that token because it executes nothing")
+
+
+def test_the_badge_job_cannot_commit_more_than_the_badge_line(workflow):
+    """The guard that makes running it on a red run safe. It must survive this change."""
+    step = _step_named(workflow, BADGE_JOB, "Commit the corrected badge")
+    assert step is not None, f"`{BADGE_JOB}` no longer has its commit step"
+    run = str(step.get("run", ""))
+    assert "img\\.shields\\.io/badge/tests-" in run or "img.shields.io/badge/tests-" in run, (
+        "the commit step no longer checks that the handed-over diff touches only the badge URL, "
+        "which is the check that stops this job committing whatever an earlier job produced")
+    assert "numstat" in run, (
+        "the commit step no longer checks that exactly one line changed")
+
+
+def test_the_badge_job_says_so_when_no_count_was_handed_over(workflow):
+    """A missing artefact must read as a missing artefact, not as a badge already correct.
+
+    `test` can go red before the measurement, for instance on a failed install, and the download
+    is `continue-on-error` so this job does not add a second red to an already red run. Silence
+    there would be indistinguishable from `cmp -s` finding the badge correct.
+    """
+    data = workflow
+    download = None
+    for step in (data["jobs"][BADGE_JOB].get("steps") or []):
+        if "download-artifact" in str(step.get("uses", "")):
+            download = step
+    assert download is not None, f"`{BADGE_JOB}` no longer downloads the measured badge"
+    assert download.get("continue-on-error") is True, (
+        "the download is not `continue-on-error`, so a run that never reached the measurement "
+        "fails this job for an input it was never promised")
+    commit = _step_named(data, BADGE_JOB, "Commit the corrected badge")
+    run = str(commit.get("run", ""))
+    assert "badge/README.md" in run and "nothing to correct" in run, (
+        "the commit step does not say, in words, that no count was handed over. A silent exit "
+        "reads exactly like a badge that was already right")

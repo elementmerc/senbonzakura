@@ -1,10 +1,13 @@
 # Author:  Daniel Iwugo
 # Comment: Christ is King
 name: "Senbonzakura check"
+# MARKETPLACE CAPS THIS AT 125 CHARACTERS and refuses the listing above it, which is why the
+# fuller sentence that stood here until 2026-10-01 kept the action unpublishable. The three
+# format names stay because Marketplace search reads this field; "no model, no network" moved
+# into the notes below, where no limit applies.
 description: >-
-  Read evaluation result files and report how the numbers could be wrong. Reads
-  lm-evaluation-harness results, Inspect eval logs, and senbonzakura artefacts. No model, no
-  GPU, no network.
+  Reports how your eval numbers could be wrong. Reads lm-evaluation-harness, Inspect and
+  senbonzakura results. No GPU.
 author: "Daniel Iwugo"
 
 branding:

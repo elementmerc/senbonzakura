@@ -268,3 +268,158 @@ def test_the_checker_reports_an_unreadable_file_with_no_stack(stripped, tmp_path
     proc = _run(stripped, "check", bad)
     assert "Traceback" not in proc.stderr, proc.stderr
     assert proc.returncode == 2, "unreadable must stay distinct from clean without the stack"
+
+
+# ── the gate, in an environment with NOTHING this package declares ──────────────────────────────
+#
+# WHY A SECOND AND STRICTER ENVIRONMENT, rather than reusing `stripped` above.
+#
+# `stripped` blocks the deep-learning stack, which is the adoption question for the checker. The
+# gate asks a different one. The gate runs on every change, so the CI action that invokes it
+# installs this distribution without resolving its dependencies, and what that leaves behind is
+# the standard library plus the checker and nothing else. Blocking torch alone would pass while
+# an import of `rich` for a nicer verdict line quietly broke every gated build on somebody
+# else's runner.
+#
+# THE LIST IS READ FROM `pyproject.toml` RATHER THAN TYPED, because a guard that covers one
+# spelling of a defect is this project's most recurring failure. A dependency added next month is
+# blocked here automatically, and if nobody has said what it is imported as, the test refuses
+# rather than silently skipping it.
+
+#: Distribution name to the module name it is imported as, for everything this package declares.
+#: `senbonzakura-check` is deliberately absent: it IS installed on the path the action takes, as
+#: its own step and by name, so blocking it would test an install nobody performs.
+IMPORT_NAMES = {
+    "tomli": "tomli",
+    "pyarrow": "pyarrow",
+    "huggingface_hub": "huggingface_hub",
+    "torch": "torch",
+    "transformers": "transformers",
+    "accelerate": "accelerate",
+    "optuna": "optuna",
+    "gguf": "gguf",
+    "rich": "rich",
+    "sentencepiece": "sentencepiece",
+    "nvidia-ml-py": "pynvml",
+    "bitsandbytes": "bitsandbytes",
+    "datasets": "datasets",
+    "shtab": "shtab",
+}
+
+#: Declared dependencies that are NOT blocked, each with the reason, so an exemption is a
+#: decision somebody wrote down rather than a name that fell off a list.
+NOT_BLOCKED = {"senbonzakura-check": "installed by name as its own step on the gate's path"}
+
+
+def _declared_dependencies():
+    """Every runtime dependency this distribution declares, normalised to its project name."""
+    import re
+
+    from tomlread import load
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        pyproject = load(fh)
+    names = set()
+    for spec in pyproject["project"]["dependencies"]:
+        # The name is everything before the first version operator, extra bracket or marker.
+        name = re.split(r"[<>=!~;\[ ]", spec.strip(), maxsplit=1)[0]
+        names.add(name.replace("_", "-").lower())
+    return names
+
+
+@pytest.fixture(scope="module")
+def bare(tmp_path_factory):
+    """An environment holding the standard library, this checkout, and the checker. Nothing else."""
+    blocked = []
+    missing = []
+    for dep in sorted(_declared_dependencies()):
+        if dep in NOT_BLOCKED:
+            continue
+        key = dep if dep in IMPORT_NAMES else dep.replace("-", "_")
+        if key in IMPORT_NAMES:
+            blocked.append(IMPORT_NAMES[key])
+        else:
+            missing.append(dep)
+    assert not missing, (
+        f"these dependencies have no import name recorded, so this test cannot block them and "
+        f"would report a torch-free gate it never tested: {missing}. Add each one to "
+        f"IMPORT_NAMES, or to NOT_BLOCKED with the reason.")
+
+    shim = tmp_path_factory.mktemp("bare")
+    (shim / "sitecustomize.py").write_text(
+        SITECUSTOMIZE.replace(f"BLOCKED = {BLOCKED!r}", f"BLOCKED = {tuple(blocked)!r}"),
+        encoding="utf-8")
+    env = dict(os.environ)
+    # THE CHECKOUT IS ON THE PATH, unlike `stripped` above, which leans on the install. The
+    # question here is what the gate's import closure reaches, and that is a property of the
+    # source rather than of the wheel, so it is measured against the source. Whether every file
+    # the closure needs is actually packaged is `tests/test_shipped_files.py`'s question and is
+    # deliberately a different one.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(shim), str(ROOT / "src"),
+         *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])])
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    return env
+
+
+def test_the_bare_environment_blocks_more_than_the_stripped_one(bare):
+    """Checked first. A shim that failed to install makes every assertion below worthless.
+
+    `pyarrow` is the probe rather than `torch`, because `torch` is blocked by the other shim too
+    and would pass whichever environment this fixture actually built.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c", "import pyarrow"],
+        capture_output=True, text=True, env=bare, timeout=120, check=False)
+    assert proc.returncode != 0, "the bare shim did not fire, so nothing below is a measurement"
+    assert "torch-free gate" in proc.stderr
+
+
+GATE_FIXTURES = ROOT / "tests" / "fixtures" / "gate"
+
+
+@pytest.mark.parametrize(("measurement", "status", "says"), [
+    ("measurement-steady.json", 0, "within interval"),
+    ("measurement-regressed.json", 1, "REGRESSED"),
+    ("measurement-incomparable.json", 2, "REFUSED"),
+])
+def test_the_gate_reaches_all_three_verdicts_with_nothing_installed(
+        bare, measurement, status, says):
+    """The property the CI action's gate step rests on, measured rather than assumed.
+
+    A gate that needs a gigabyte of wheels is a gate somebody switches off, and the action
+    installs this distribution without resolving dependencies for exactly that reason. The
+    claim underneath it is that the gate's whole import closure is the standard library, and
+    nothing enforces a closure except a run with the alternative taken away.
+
+    All three statuses, not just the pass: an import that only the failure path reaches would
+    turn a regression into a crash, and a crash exits 1, which is this command's code for a
+    regression. The build would look right and mean nothing.
+
+    THE VERDICT TEXT IS ASSERTED ALONGSIDE THE STATUS, and that is not belt and braces. Measured
+    while writing this: planting `import rich` into the gate's closure left the regression case
+    GREEN, because the dispatch table converts a missing dependency into a readable refusal and
+    exits 1, and 1 is REGRESSED. The status alone cannot tell a caught regression from an install
+    that never ran, so the words have to be there too.
+    """
+    proc = _run(bare, "gate",
+                "--baseline", GATE_FIXTURES / "baseline-refusal-rate.json",
+                "--current", GATE_FIXTURES / measurement)
+    assert "Traceback" not in proc.stderr, (
+        f"the gate needed something a dependency-free install does not have:\n{proc.stderr}")
+    said = proc.stdout + proc.stderr
+    assert "pip install" not in said, (
+        f"the gate asked for something to be installed rather than producing a verdict, so this "
+        f"status is the dispatch table's and not the gate's:\n{said}")
+    assert says in proc.stdout, (
+        f"{measurement} produced no verdict naming {says!r} in an environment with nothing "
+        f"installed:\n{said}")
+    assert proc.returncode == status, (
+        f"{measurement} reached the shell as {proc.returncode} rather than {status} in an "
+        f"environment with nothing installed:\n{proc.stdout}\n{proc.stderr}")
+
+
+def test_the_gate_can_print_its_help_with_nothing_installed(bare):
+    """`--help` is the smoke check the CI action runs to prove the install can do the job."""
+    proc = _run(bare, "gate", "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "--baseline" in proc.stdout and "--current" in proc.stdout

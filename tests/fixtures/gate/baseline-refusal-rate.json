@@ -1,4 +1,5 @@
 {
+  "artefact_address": "sha256:c28fd830241431e511e6bc1cc0505862f876bb211a7d1c044a922b8cdcf17f8e",
   "deterministic": false,
   "direction": "lower_is_better",
   "estimator": "senbonzakura-ruler",

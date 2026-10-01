@@ -93,20 +93,35 @@ def test_what_cannot_be_pinned_produces_no_field_rather_than_a_null_one(spec):
     A Hub dataset's revision is a fact only the Hub holds, so this cannot pin it offline. Writing
     the key with a null value would satisfy the provenance gate's presence check while telling a
     reader nothing they could fetch, which is worse than the absence: it reads as answered. The
-    artefact then carries no track block at all, exactly as it did before this existed, so nothing
+    artefact then carries no corpus block at all, exactly as it did before this existed, so nothing
     regresses for the corpora this cannot reach.
     """
     assert track.revision_entry(spec) is None
 
 
 def test_provenance_omits_the_block_when_there_is_nothing_to_pin():
-    assert "track" not in provenance(device="cpu")
-    assert "track" not in provenance(device="cpu", track=None)
+    assert "corpus" not in provenance(device="cpu")
+    assert "corpus" not in provenance(device="cpu", corpus=None)
 
 
 def test_provenance_records_the_block_when_there_is():
-    p = provenance(device="cpu", track={"id": "default", "revision": "abc", "kind": "x"})
-    assert p["track"]["revision"] == "abc"
+    p = provenance(device="cpu", corpus={"id": "default", "revision": "abc", "kind": "x"})
+    assert p["corpus"]["revision"] == "abc"
+
+
+def test_the_old_name_is_gone_rather_than_silently_accepted():
+    """Q-52: the key was `track` for one afternoon, and `track` means something else nearby.
+
+    A margin manifest already carries a top-level `track` naming the directory its skip boundary
+    came from, beside a `provenance` block. Renaming to `corpus` cost nothing because no artefact
+    had been written with the old key. This asserts the rename went all the way: a caller still
+    passing `track=` must fail loudly rather than have the pin silently swallowed by `**extra` or
+    ignored, because a quietly-dropped pin is the exact failure the pin exists to prevent.
+    """
+    with pytest.raises(TypeError, match="track"):
+        provenance(device="cpu", track={"id": "default", "revision": "abc"})
+    assert "track" not in provenance(
+        device="cpu", corpus={"id": "default", "revision": "abc"})
 
 
 @pytest.mark.parametrize("bad", [
@@ -122,11 +137,11 @@ def test_a_half_pin_is_refused_rather_than_written(bad):
     """Loud, per §2.1, because the quiet version of this is what the gate could not see.
 
     An entry with a name and no digest is the exact shape of the thing being fixed. If it were
-    written anyway, `provenance.track` would exist on every artefact and the gate would pass, while
-    no artefact recorded which bytes produced its number.
+    written anyway, `provenance.corpus` would exist on every artefact and the gate would pass,
+    while no artefact recorded which bytes produced its number.
     """
-    with pytest.raises(ValueError, match="track provenance entry"):
-        provenance(device="cpu", track=bad)
+    with pytest.raises(ValueError, match="corpus provenance entry"):
+        provenance(device="cpu", corpus=bad)
 
 
 def test_every_provenance_call_in_score_pins_the_corpus_it_measured():
@@ -134,12 +149,17 @@ def test_every_provenance_call_in_score_pins_the_corpus_it_measured():
 
     A mutation pass over 21 fixes on this project found six that nothing would have noticed, five
     of them wired to call sites no test checked. `revision_entry` passing its own unit tests says
-    the pin can be built; it does not say any artefact carries one. Deleting `track=` from
+    the pin can be built; it does not say any artefact carries one. Deleting `corpus=` from
     `score.py` would leave every test above green.
 
     Read from the source rather than by running a scoring pass, because a pass needs a model and a
     card. That is a weaker check than observing a written artefact and it is the one that runs
-    everywhere, so it is deliberately strict: every `provenance(` in this module must pass `track`.
+    everywhere, so it is deliberately strict: every `provenance(` in this module must pass
+    `corpus`.
+
+    The keyword this matches moved from `track=` to `corpus=` on 2026-10-01 (Q-52). It matches the
+    keyword rather than the value because the value is a call, and the parameter name is the thing
+    that has to stay wired.
     """
     src = (ROOT / "src/senbonzakura/score.py").read_text()
     calls = []
@@ -155,7 +175,7 @@ def test_every_provenance_call_in_score_pins_the_corpus_it_measured():
         calls.append(src[i:end + 1])
         i = end
     assert calls, "no provenance call found in score.py; this test has stopped measuring"
-    unpinned = [c for c in calls if "track=" not in c]
+    unpinned = [c for c in calls if "corpus=" not in c]
     assert not unpinned, (
         f"{len(unpinned)} of {len(calls)} provenance calls in score.py record no corpus pin, so "
         f"the artefacts they write cannot satisfy evidence/README.md: {unpinned}")

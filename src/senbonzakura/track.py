@@ -892,8 +892,55 @@ def audit(track: Path, labels=None) -> list[str]:
     without labels cannot run it, so a hand-built track passes an audit that never asked
     the question.
     """
+    return audit_report(track, labels)[0]
+
+
+def audit_report(track: Path, labels=None) -> tuple[list[str], list[str]]:
+    """The audit's failures, and the lines saying what it actually examined.
+
+    WHY A SUCCESSFUL AUDIT NEEDS MORE THAN ONE WORD, 2026-10-01
+
+    `--audit` printed `TRACK_AUDIT_OK <path>` and nothing else, so the one thing it could not tell
+    you was what it had checked. That matters here more than it would elsewhere, because the
+    strongest check this command has is the one it silently declines to run: the strata check needs
+    `--labels`, and an audit without them passes a track in which an entire stratum is missing from
+    the measured arm. The docstring above has said so since the check was written. The output did
+    not, and the output is what somebody pastes into a release note as evidence.
+
+    So a pass now states the partition boundaries it read, the number of prompts behind each, and
+    whether the strata check ran. `TRACK_AUDIT_OK` stays on its own line and unchanged, because CI
+    greps for it.
+
+    Returned as lines rather than printed, so the caller owns the stream and a test can read them
+    without capturing stdout.
+    """
     harmful, harmless = load_partitions(track)
-    return check(harmful, harmless, labels)
+    failures = check(harmful, harmless, labels)
+    lines = []
+    for name, side in (("harmful", harmful), ("harmless", harmless)):
+        counts = ", ".join(f"{part} {len(side[part])}" for part in ("fit", "search", "measure")
+                           if part in side)
+        lines.append(f"  {name}: {counts}")
+    checks = ["no measure prompt appears in fit or search",
+              "no measure REQUEST appears in fit or search under another template",
+              "no duplicate prompts across partitions",
+              "no empty partition"]
+    if labels:
+        strata = len(set(labels.values()))
+        checks.append(f"every stratum present in a side is present in its measure partition "
+                      f"({len(labels)} labelled prompts across {strata} strata)")
+    else:
+        checks.append("STRATA NOT CHECKED: no --labels was given, so this audit cannot tell "
+                      "whether a stratum is missing from the measured arm. Pass --labels to "
+                      "ask that question.")
+    lines.append("  checked:")
+    # WRAPPED, because the strata notice is 188 characters and the four above it are short. The
+    # first draft of this emitted every check as `f"    {c}"`, which put the one line a reader has
+    # to act on over the column ceiling while the four that need no action fitted. A six-space
+    # continuation indent rather than four, so a wrapped check reads as one item and not as two.
+    for c in checks:
+        lines.extend(say.lines(c, first="    ", indent="      "))
+    return failures, lines
 
 
 #: What a promotion stamp is called, inside the track it describes.
@@ -1111,13 +1158,19 @@ def main(argv=None):
 
     if a.audit:
         _refuse_build_flags_under_audit(argv, out)
-        failures = audit(out, read_labels(a.labels) if a.labels else None)
+        failures, examined = audit_report(out, read_labels(a.labels) if a.labels else None)
         if failures:
             print(f"TRACK_AUDIT_FAILED {out}", file=sys.stderr)
             for f in failures:
                 print(f"  {f}", file=sys.stderr)
+            # The same detail on the failure path too, because "what did it look at" is the first
+            # question either verdict raises and the failure path had it no more than the pass did.
+            for line in examined:
+                print(line, file=sys.stderr)
             raise SystemExit(1)
         print(f"TRACK_AUDIT_OK {out}")
+        for line in examined:
+            print(line)
         return {}
 
     missing = [f for f, v in (("--harmful", a.harmful), ("--harmless", a.harmless)) if not v]
@@ -1136,6 +1189,20 @@ def main(argv=None):
             + "\n".join(say.lines(
                 "To USE the track that ships with this install, pass `--track default` to a command "
                 "that reads one; this command builds a new one.", indent="  ", first="  ")))
+
+    # PRE-FLIGHT THE WRITER BEFORE READING A SINGLE PROMPT. On an install with neither pyarrow nor
+    # datasets this command read both files, filtered them, printed the kept counts and then died
+    # with a thirty-line traceback whose last line was `senbonzakura.trackio.TrackIOError`. The
+    # dependency was knowable before any of that work, and the user was handed a stack trace of our
+    # files for a problem that is entirely in their install.
+    from . import trackio
+    if trackio.writable() is None:
+        raise SystemExit(say.refusal_text(
+            "building a track needs a library that can write its tables, and this install has "
+            "neither pyarrow nor datasets.",
+            "Nothing has been read or written, so there is no half-built track to clear up.",
+            "Install one and run the same command again:",
+            "    pip install pyarrow"))
 
     labels = read_labels(a.labels) if a.labels else None
     if labels:
@@ -1159,7 +1226,16 @@ def main(argv=None):
             print(f"  {f}", file=sys.stderr)
         raise SystemExit(1)
 
-    m = write_track(out, sides["harmful"], sides["harmless"], sources)
+    # The pre-flight above closes the one case we can name; this closes the class. Every other
+    # `TrackIOError` (a mistyped backend in the environment, a shard that will not write) reached
+    # the terminal as a traceback, and the messages inside them are already written for a reader.
+    try:
+        m = write_track(out, sides["harmful"], sides["harmless"], sources)
+    except trackio.TrackIOError as e:
+        raise SystemExit(say.refusal_text(
+            "the track could not be written.", str(e),
+            f"The write goes through a staging directory and a rename, so there is no half-built "
+            f"track at {out}.")) from e
     print(f"TRACK_BUILT {out}  harmful {m['counts']['harmful']}  harmless {m['counts']['harmless']}")
     print(f"  measure with: --skip-harmful {m['skip_harmful']} --skip-harmless {m['skip_harmless']} "
           f"--n {min(m['n_harmful'], m['n_harmless'])}")

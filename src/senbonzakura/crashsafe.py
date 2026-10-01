@@ -721,10 +721,10 @@ def git_commit(repo_root=None, env=None):
     return None
 
 
-def provenance(device=None, accelerator=None, extra=None, track=None):
+def provenance(device=None, accelerator=None, extra=None, corpus=None):
     """Everything needed to tell whether a re-run is comparable to this one.
 
-    `track` names the corpus a figure came from AND pins it, as
+    `corpus` names the corpus a figure came from AND pins it, as
     `{"id": ..., "revision": ...}`. `evidence/README.md` has required a pinned dataset revision
     since the 2026-09-25 panel and nothing produced one, so every artefact in the tree failed the
     project's own rule: measured on 2026-10-01 across 41 candidate artefacts from two unrelated
@@ -732,17 +732,27 @@ def provenance(device=None, accelerator=None, extra=None, track=None):
     which is the failure the rule exists to catch, so the name alone was never the answer. Built by
     `track.revision_entry` rather than here, because pinning it means reading the corpus and this
     module stays free of anything heavy.
+
+    NAMED `corpus` RATHER THAN `track`, which is what it was for one afternoon (Q-52). A margin
+    manifest already carries a top-level `track`, meaning the directory its skip boundary was read
+    from, beside a `provenance` block; `track.py`'s own manifest does the same. A second `track`
+    meaning "the corpus these bytes came from" would have put two meanings in one file, and the
+    renaming cost nothing because no artefact had been written with the old key yet: measured
+    2026-10-01 across every JSON in the tree, 54 carrying a provenance block, none carrying this
+    key at any depth.
     """
     import platform
 
     from . import __version__
-    if track is not None:
+    if corpus is not None:
         # Fail loud on a malformed entry rather than writing a half-pinned artefact, which would
         # satisfy the gate's presence check while recording nothing a reader could fetch.
-        missing = [k for k in ("id", "revision") if not (isinstance(track, dict) and track.get(k))]
+        missing = [k for k in ("id", "revision")
+                   if not (isinstance(corpus, dict) and corpus.get(k))]
         if missing:
-            raise ValueError(f"a track provenance entry needs a non-empty {' and '.join(missing)}; "
-                             f"got {track!r}. Build it with track.revision_entry().")
+            raise ValueError("a corpus provenance entry needs a non-empty "
+                             f"{' and '.join(missing)}; got {corpus!r}. "
+                             "Build it with track.revision_entry().")
     return {
         "senbonzakura": {"version": __version__, "git": git_commit()},
         "python": platform.python_version(),
@@ -752,6 +762,6 @@ def provenance(device=None, accelerator=None, extra=None, track=None):
         # deliberately does not import it.
         "accelerator": accelerator,
         "packages": resolved_versions(),
-        **({"track": track} if track is not None else {}),
+        **({"corpus": corpus} if corpus is not None else {}),
         **(extra or {}),
     }

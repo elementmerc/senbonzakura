@@ -30,8 +30,11 @@ A patch release. Nothing here changes what the tool measures, so 0.4.0 figures s
 - `convert --verbose` and `quantise --verbose` show every line the vendored tools print
 - Flags are no longer abbreviated, so what is accepted is what `--help` lists
 - A model id that does not exist is reported as one, not as an authentication failure
+- Each head-to-head arm records its own wall clock and its peak card memory
 
 ### Documentation
+- Baseline refusal rates for eight models ship in `evidence/`, scored by both rulers
+- The README bullet on published weights was false in both directions
 - `pip install senbonzakura` is the documented install everywhere
 - The Colab notebook measured on the selection partition and called it held out
 - The first command in the README and the quickstart exited 1

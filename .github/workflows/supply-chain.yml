@@ -310,17 +310,30 @@ jobs:
   #     gitleaks dir .   ->  scanned the tree, "no leaks found", exit 0   <- the 2026-09-25 mistake
   #     gitleaks git .   ->  scanned history,  "leaks found: 1", exit 1   <- what we need
   #
-  # REPORTING ONLY, DELIBERATELY, and the plan's reason for that has since been measured away.
+  # BLOCKING SINCE 2026-10-01, under Q-75, and the measurement is what moved it.
+  #
   # The plan said run it reporting for one release cycle to collect the false-positive set, then
   # make it blocking, because this repository deliberately contains token-shaped strings: fixtures
   # for the redaction path, example keys in documentation, the corpora. Measured over all 854
-  # commits: 842 commits with additions, 9.25 MB, 13 seconds, **ZERO findings**. So there is no
-  # false-positive set to collect and nothing to put in a .gitleaksignore. That is an argument for
-  # making this blocking sooner than the plan said, and it is the operator's call rather than
-  # one to take quietly in a workflow file, so this stays reporting until they rule.
+  # commits: 842 commits with additions, 9.25 MB, 13 seconds, ZERO findings, with a positive
+  # control proving the scan looks (two secrets planted in history and deleted from the tree were
+  # both found). So there was no false-positive set to collect and nothing to put in a
+  # .gitleaksignore, which means the plan's stated reason for waiting had evaporated.
+  #
+  # The counter-argument, which is real: zero findings today is not zero findings on the next
+  # commit, and blocking now means the first false positive blocks a push rather than printing a
+  # warning. It was answered rather than dismissed. The recovery path exists BEFORE it is needed:
+  # the .gitleaksignore policy and its expiry test are already written and already tested
+  # (`tests/test_gitleaks_allowlist_cannot_outlive_its_reason.py`), so a false positive is a
+  # documented five-minute unblock rather than an emergency. A gate that reports for a cycle is a
+  # gate somebody has to remember to arm, and this project's own history is full of those.
+  #
+  # One thing already settled, because it would otherwise be the obvious objection: a
+  # .gitleaksignore entry can only ever suppress gitleaks' own findings, so it cannot weaken the
+  # prompt-artefact gate, which is the one control between a harmful prompt and a public push.
   # ---------------------------------------------------------------------------------------------
   secrets:
-    name: No secrets in history (reporting only)
+    name: No secrets in history
     runs-on: ubuntu-latest
     steps:
       # FULL history, not a shallow clone and not the push range. `fetch-depth: 0` is
@@ -405,18 +418,42 @@ jobs:
               echo "### Supply chain: secret scan PASS (${total} commits, 0 findings)" >> "$GITHUB_STEP_SUMMARY"
               ;;
             1)
-              # REPORTING ONLY: a finding is a warning, not a failure, until the operator rules
-              # on making this blocking. The finding count goes in the summary so a reporting run
-              # cannot be mistaken for a clean one by somebody glancing at a green tick.
+              # BLOCKING. The count is still read out, because "there is a finding" and "there
+              # are forty" lead to different first moves, and a reader who has to open an
+              # artefact to learn which is a reader who re-runs the job instead.
+              #
+              # The count itself degrades rather than fails: if the report cannot be parsed the
+              # message says so in words rather than printing a number it does not have. What it
+              # must never do is turn an unparseable report into a pass, which is why the exit
+              # below sits outside the substitution.
               n="$(python3 -c "import json;print(len(json.load(open('gitleaks.json'))))" 2>/dev/null || echo "an unknown number of")"
-              echo "::warning::${n} secret finding(s) in history. REPORTING ONLY: this job does not fail yet. Read the report before pushing anything else."
+              echo "::error::${n} secret finding(s) in this repository's history. This job BLOCKS. Download the gitleaks-report artefact from this run to see which commits and which rules, then read the summary below for what to do about each kind."
               {
-                echo "### Supply chain: secret scan FOUND ${n} finding(s)"
-                echo "This job is reporting-only, so the run is green. **That is not a pass.**"
-                echo "Each finding is either a real secret, which needs rotating and a history"
-                echo "rewrite, or a fixture, which needs a \`.gitleaksignore\` entry carrying a"
-                echo "written reason and an expiry test. See DEFERRED.md for the policy."
+                echo "### Supply chain: secret scan FOUND ${n} finding(s), and this job blocks"
+                echo ""
+                echo "The report is attached to this run as the \`gitleaks-report\` artefact. It is"
+                echo "redacted, so it names the commit, the file and the rule without reprinting the"
+                echo "secret into a public log."
+                echo ""
+                echo "**If it is a real secret**, the order matters: rotate the credential FIRST,"
+                echo "because it has been readable for as long as the commit has existed and a"
+                echo "history rewrite does not un-publish it. Then rewrite the history that carries"
+                echo "it, force-push nothing to a shared branch without saying so, and record the"
+                echo "rotation."
+                echo ""
+                echo "**If it is a fixture or an example key**, which this repository deliberately"
+                echo "holds for the redaction path and the corpora, add its fingerprint to"
+                echo "\`.gitleaksignore\` at the repository root. An entry needs the fingerprint in"
+                echo "the form \`commit:path:rule:line\` and a written reason on the line above it,"
+                echo "or \`tests/test_gitleaks_allowlist_cannot_outlive_its_reason.py\` refuses the"
+                echo "commit. **An entry expires:** that same test fails once the path it exempts"
+                echo "stops existing, so an allowance cannot outlive the thing it was written for."
+                echo ""
+                echo "**What not to do:** do not re-run this job hoping for a different answer. The"
+                echo "scan reads committed history, so it will give the same answer until the"
+                echo "history or the ignore file changes."
               } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
               ;;
             *)
               echo "::error::DID NOT RUN: gitleaks exited ${status}, which means the tool failed rather than that the history is clean. An exit status other than 0 or 1 is never a pass."
@@ -424,8 +461,12 @@ jobs:
               ;;
           esac
 
+      # `always()` IS LOAD-BEARING NOW THAT THE SCAN BLOCKS. Without it this step is skipped on
+      # the one run where it matters, and the error message above would send a reader to an
+      # artefact that was never uploaded. That was the state of this step for the length of one
+      # edit, which is exactly how a recovery path becomes a dead end.
       - name: Keep the report
-        if: steps.fetch.outputs.ran == 'true'
+        if: always() && steps.fetch.outputs.ran == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1, as pinned in ci.yml
         with:
           name: gitleaks-report

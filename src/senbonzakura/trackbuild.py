@@ -61,8 +61,10 @@ SOURCES = [
         "split": "train",
         "revision": "f29c0b778d3412d5cc7acfc9c6463ce13886212c",
         "licence": "apache-2.0",
-        "note": "Synthetic harmful prompts across 33 categories, plus about 430 rows that trace "
-                "to mlabonne/harmful_behaviors and from there to AdvBench.",
+        "note": "Synthetic harmful prompts across 33 categories, plus rows that trace to "
+                "mlabonne/harmful_behaviors and from there to AdvBench. On the bundled track "
+                "that overlap measured 176 rows of 4,895 on 2026-10-01, counted by request key "
+                "rather than by string; an earlier estimate of about 430 was not supported.",
     },
     {
         "repo": "mlabonne/harmless_alpaca",

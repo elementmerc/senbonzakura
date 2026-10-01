@@ -763,10 +763,15 @@ def contamination(external: list[str], partitions: dict[str, list[str]], name="e
 
     The question a published number depends on. Every abliteration tool quotes AdvBench, so
     a figure on it is what lets a reader place this project against the literature at all,
-    and roughly 430 rows of this corpus's harmful side ARE AdvBench, reached through
+    and 176 rows of this corpus's harmful side ARE AdvBench, reached through
     `mlabonne/harmful_behaviors`. If any of them sit in `fit` or `search`, the model was
     tuned on the benchmark it is being scored against and the figure is in-sample: exactly
     the defect this project is building a checker to find in other people's evaluations.
+
+    Run against the bundled track on 2026-10-01 this returned `contaminated`: 8 of AdvBench's
+    508 distinct requests in `fit`, 3 in `search`, 159 in `measure` and 338 absent. The 176
+    and the 8/3 both replaced estimates, and the earlier "roughly 430 rows" figure this
+    docstring carried was about two and a half times too high.
 
     **Matched by request, never by string.** Seven templates share one seed here, and on
     this project's own corpus a whole-prompt comparison once reported zero overlap while

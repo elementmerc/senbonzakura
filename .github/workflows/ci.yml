@@ -173,6 +173,24 @@ jobs:
           pip install -e ./checker --no-deps
           pip install -e ".[dev]"
 
+      # THE THIRD RESOLVED ENVIRONMENT: the free resolve, which floats every version to whatever
+      # is newest today. The pinned job and the floors job bracket the declared range; this one
+      # catches an advisory against a release newer than anything we pin, which neither of them
+      # can see.
+      #
+      # One representative row, following this job's existing convention, because the advisory
+      # set does not vary by platform and five rows would pay five times for one answer.
+      #
+      # It runs here rather than in a job of its own because a job of its own would have to
+      # resolve this environment again, and that resolve is the expensive part: measured
+      # 2026-10-01, `pip install --dry-run` over `.[dev]` did not finish in five minutes. This
+      # row has already paid for it.
+      - name: Dependency advisories, free resolve
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: |
+          pip install pip-audit==2.10.1
+          python tools/ci/audit_env.py --label "free resolve (no constraints, python 3.12)" --min-packages 40
+
       - name: Lint
         run: ruff check src/ tests/ tools/ checker/src/
 
@@ -464,6 +482,19 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
           pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/ci.txt
+
+      # ONE OF THE THREE RESOLVED ENVIRONMENTS THIS PROJECT SHIPS AGAINST, audited here rather
+      # than in a job of its own. A separate job would have to rebuild this environment, and
+      # rebuilding it from constraints/ci.txt does not work: that file pins `torch==2.13.0+cpu`,
+      # a local version segment that exists on the PyTorch CPU index and not on PyPI, so the
+      # resolve fails outright. Measured 2026-10-01. The environment already exists here, built
+      # correctly, so the audit costs the advisory lookup and nothing else.
+      #
+      # The floor is what stops a subset audit reading as clean. See tools/ci/audit_env.py.
+      - name: Dependency advisories, pinned environment
+        run: |
+          pip install pip-audit==2.10.1
+          python tools/ci/audit_env.py --label "pinned (constraints/ci.txt, python 3.14)" --min-packages 60
       - name: Lint
         run: ruff check src/ tests/ tools/ checker/src/
       - name: Every shipped source file carries its licence header
@@ -530,6 +561,26 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
           pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/floors.txt --upgrade-strategy only-if-needed
+
+      # THIS IS THE AUDIT THAT JUSTIFIES AUDITING IN CI AT ALL, and it is verified rather than
+      # inherited. Checked against OSV on 2026-10-01:
+      #
+      #     datasets==2.15.0  PYSEC-2026-3716   <- the declared floor, in constraints/floors.txt
+      #     datasets==4.0.0   PYSEC-2026-3716
+      #     datasets==5.0.1   clean             <- what a pre-push audit and the pinned job see
+      #
+      # A path traversal in folder-based builders, live across the whole declared range below 5
+      # and fixed by the version everything else resolves. So the exposure is INVISIBLE to the
+      # pre-push gate, which audits the pushing machine's environment, and invisible to the
+      # pinned job, and it is shipped to anybody installing at our declared minimums. The `hub`
+      # extra's floor is `datasets>=2.15`, and this job is the only place that floor is installed.
+      #
+      # Python 3.10 here is load-bearing for a second reason: auditing floors.txt on 3.14 fails
+      # because `pyarrow==14` has no cp314 wheel and pip falls back to building it from source.
+      - name: Dependency advisories, declared floors
+        run: |
+          pip install pip-audit==2.10.1
+          python tools/ci/audit_env.py --label "declared floors (constraints/floors.txt, python 3.10)" --min-packages 40
       - name: The tool starts and reports its version
         run: |
           python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"
@@ -755,7 +806,7 @@ jobs:
           # commits AHEAD of `origin/main` and carries every path, so asking the local branch
           # answers yes to links that 404 for every reader.
           fetch-depth: 0
-      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v5.0.0
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v6.0.0
         with:
           node-version: "22"
           cache: npm
@@ -1268,13 +1319,25 @@ jobs:
             fail=1
           else say "clean: checked=1, passed"; fi
 
+          # The findings count is captured into a variable and checked for being a number BEFORE
+          # it is compared as one. Found by actionlint (SC2170) and the real defect is worse than
+          # the one it names: when the action crashes before setting `findings`, the expansion is
+          # empty, `[ "" -lt 1 ]` exits 2 with "integer expected", and a non-zero status in an
+          # `elif` CONDITION is just "false" and does not trip `set -e`. Control fell through to
+          # the `else`, which printed a success line, and the job exited 0. So the block that
+          # exists to catch "a green that checked nothing" was itself green when it had checked
+          # nothing. Verified 2026-10-01 by running the substituted form.
+          findings="${{ steps.finding.outputs.findings }}"
           if [ "${{ steps.finding.outcome }}" != "failure" ]; then
             echo "::error::the action PASSED a file with a known finding. That is the defect the action exists to catch."
             fail=1
-          elif [ "${{ steps.finding.outputs.findings }}" -lt 1 ]; then
-            echo "::error::the action failed the finding case but reported ${{ steps.finding.outputs.findings }} findings, so it failed for some other reason."
+          elif ! printf '%s' "$findings" | grep -qE '^[0-9]+$'; then
+            echo "::error::the action failed the finding case but reported findings='${findings}', which is not a number. It crashed before setting its output rather than reporting a finding, and an unset count must never read as a pass."
             fail=1
-          else say "finding: outcome=failure, findings=${{ steps.finding.outputs.findings }}"; fi
+          elif [ "$findings" -lt 1 ]; then
+            echo "::error::the action failed the finding case but reported ${findings} findings, so it failed for some other reason."
+            fail=1
+          else say "finding: outcome=failure, findings=${findings}"; fi
 
           if [ "${{ steps.junk.outputs.checked }}" != "0" ]; then
             echo "::error::a directory holding no result artefacts reported checked='${{ steps.junk.outputs.checked }}'. Unreadable files are being counted as checked, so fail-on-empty can never fire."

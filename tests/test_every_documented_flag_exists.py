@@ -51,9 +51,19 @@ SUBCOMMANDS = {"track": ("build", "promote", "verify")}
 FLAG = re.compile(r"`(--[a-z][a-z0-9-]+)")
 
 
+#: The fewest flags a sweep that really ran could come back with. The default command alone
+#: carries 69, so a total anywhere near zero means the sweep did not happen rather than that the
+#: tool lost its surface. Deliberately far below the real count: this is a did-it-run floor, not
+#: a count the next flag addition has to keep up with.
+SWEEP_FLOOR = 50
+
+
 @functools.cache
-def _accepted():
+def _sweep():
     """Every flag any command accepts, read off the tool rather than off its source.
+
+    Returns the flags alongside the invocations that failed, because an invocation that exits
+    non-zero contributes nothing to the set and the set alone cannot say why.
 
     Cached because it shells out once per command and this file parametrises over every flag the
     guide names, which would otherwise pay for the whole sweep on each one.
@@ -65,13 +75,37 @@ def _accepted():
     # surface it was written to cover, and every flag behind `--help-all` would have started
     # reading as one the tool does not accept.
     invocations += [[c, "--help-all"] for c in ("abliterate", "kageyoshi", "auto")]
-    seen = set()
+    seen, failures = set(), []
     for words in invocations:
         out = subprocess.run([sys.executable, "-m", "senbonzakura", *words],
                              capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              check=False, timeout=300)
+        if out.returncode != 0:
+            failures.append((" ".join(words), out.returncode, out.stderr.strip()[-400:]))
         seen |= set(re.findall(r"(--[a-z][a-z0-9-]+)", out.stdout))
-    return seen
+    return frozenset(seen), tuple(failures)
+
+
+def _accepted():
+    return _sweep()[0]
+
+
+def _sweep_failure(accepted, failures):
+    """Why a sweep looks like it never ran, or None when it plainly did.
+
+    An empty sweep makes every documented flag look like a flag the tool rejects, so without this
+    the whole file reports two dozen documentation defects when the real fault is that the tool
+    would not start. That is the shape of defect this project keeps finding: a check answering a
+    narrower question than the one it was asked, and reporting the narrow answer as the wide one.
+    """
+    if len(accepted) >= SWEEP_FLOOR:
+        return None
+    detail = "\n".join(f"  `senbonzakura {words}` exited {rc}\n    {err}"
+                       for words, rc, err in failures) or "  (every invocation exited 0)"
+    return (f"the help sweep found only {len(accepted)} flag(s), below the {SWEEP_FLOOR} a sweep "
+            f"that ran would return, so this file cannot say anything about the documentation. "
+            f"The tool did not start, most likely a missing dependency rather than a missing "
+            f"flag:\n{detail}")
 
 
 def _documented():
@@ -89,10 +123,38 @@ def _documented():
 def test_a_flag_the_docs_name_is_a_flag_the_tool_takes(flag, page):
     if flag in NOT_OURS:
         pytest.skip(f"{flag} is documented as not ours, see NOT_OURS")
+    if reason := _sweep_failure(*_sweep()):
+        pytest.fail(reason)
     assert flag in _accepted(), (
         f"{page} tells the reader to pass {flag}, and no command accepts it. Either the flag was "
         f"removed and the page was not, or the page describes a flag that belongs to a different "
         f"command. A reader who follows the documentation gets `unrecognized arguments`.")
+
+
+def test_the_help_sweep_actually_finds_flags():
+    """A guard against the gate above passing, or failing, because it swept nothing.
+
+    `test_every_flag_is_documented.py` has had the matching guard on its AST walk since it was
+    written; this file went without one and paid for it. On a machine with no torch every help
+    invocation exits 1, the sweep comes back empty, and all two dozen cases fail saying the
+    documentation names a flag the tool rejects. The reader is then sent to edit a page that was
+    never wrong.
+    """
+    accepted, failures = _sweep()
+    assert not (reason := _sweep_failure(accepted, failures)), reason
+
+
+def test_the_sweep_guard_catches_a_sweep_that_found_nothing():
+    """The guard above is only worth having if it fires, so plant the empty sweep and check.
+
+    Two plants, because the two ways a sweep dies read differently to a reader: every invocation
+    failing loudly, and every invocation exiting 0 while printing nothing.
+    """
+    loud = _sweep_failure(set(), (("abliterate --help", 1, "ModuleNotFoundError: torch"),))
+    assert loud and "ModuleNotFoundError" in loud and "abliterate --help" in loud
+    quiet = _sweep_failure(set(), ())
+    assert quiet and "every invocation exited 0" in quiet
+    assert _sweep_failure({f"--flag{n}" for n in range(SWEEP_FLOOR)}, ()) is None
 
 
 # ── the short help and the long one ──────────────────────────────────────────────

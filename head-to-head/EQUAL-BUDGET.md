@@ -28,9 +28,20 @@ and calling it our method.
 
 Stated for symmetry, because a one-sided accounting is not an accounting:
 
-- **200 trials by default** (`config.default.toml: n_trials = 200`) against our 60. On trial count
-  alone Heretic is given more than three times the search.
-- **Two scorers on a Pareto front** (keyword rate, KL divergence), the same shape as ours.
+- **200 trials by default** against our 60. On trial count alone Heretic is given more than three
+  times the search.
+
+  *Provenance, added 2026-10-01.* The figure is 200 **at tag `v1.4.0`**, which is the ref
+  `Dockerfile.heretic` pins and the ref every published arm ran against. **Two places hold it and
+  both are named, so a reader checking this lands on it either way**: `config.default.toml` carries
+  `n_trials = 200`, and `src/heretic/config.py` carries `n_trials: int = Field(default=200, ...)`.
+  Both read at that tag on 2026-10-01. **Upstream's unreleased `master` lowers the same default to
+  100**, so this number is version-specific and now says so. **The published comparison used 200**,
+  which is the v1.4.0 default, and nothing below changes.
+- **Two scorers on a Pareto front** (keyword rate, KL divergence), the same shape as ours. *True at
+  `v1.4.0`, where the two are fixed. On `master` the scorers are plugins and the list is
+  configurable, with `KeywordRate` and `KLDivergence` still the default pair, so the shape survives
+  and the mechanism is no longer fixed.*
 - Heretic is the upstream this project derives from, so its defaults have had far more exposure to
   real models than ours have.
 
@@ -93,7 +104,8 @@ originally said Heretic's six would be picked "by the same scalarisation senbonz
 is not implementable at any budget worth spending, and the correction matters enough to state
 rather than quietly fix.
 
-Our scalariser reads measurements. Applying it to Heretic's 200 trials would mean rebuilding and
+Our scalariser reads measurements. Applying it to Heretic's 200 trials (the v1.4.0 default, as
+above) would mean rebuilding and
 re-scoring all 200 models, which is the entire search over again and would hand Heretic several
 times the compute nothing else in the comparison gets. Worse, it would not be the equivalent
 procedure: senbonzakura's own six are nominated from the numbers *its* search already measured, not
@@ -111,6 +123,11 @@ Heretic's two scorers each own an evaluation prompt set, separate from the corpu
 are fitted on, and both default to a Hugging Face dataset. Inside a box with no network those
 defaults cannot load at all. They are pointed instead at the slices senbonzakura is scored on,
 written by `head-to-head/stage_eval_slices.py` from the same code that builds them for our own arm.
+
+*Described at `v1.4.0`, added 2026-10-01, where the four prompt sets are fields of `Settings`. On
+`master` the fitting sets belong to the `Abliteration` modifier and the evaluation set to the
+`KeywordRate` scorer, so the structure holds and the config path does not. That is one of the
+integration points a pin move would rewrite, and it changes nothing about the requirement below.*
 
 This is a comparability requirement, not a concession to the isolation. A tool's search is steered
 by whatever its scorers measure. Two tools optimising against different prompts have not been given
@@ -137,9 +154,24 @@ The pass records which trial Heretic's own menu offers first, saves that model t
 with the same instrument. A reader can therefore see whether the selection we added is what moved
 the number, rather than having to take our word that it was applied fairly.
 
+*"Offers first" is a `v1.4.0` behaviour, stated 2026-10-01.* At that tag the menu's order comes
+from upstream's own Pareto walk over completed trials, which `best_of_n_heretic.py` reproduces. On
+`master` the order comes from `study.best_trials` instead, so **which trial is offered first is
+itself version-specific** and an unaided pick taken from a different version is not the same
+quantity. Nothing published is affected, because every arm ran at the pinned tag.
+
 **Trials are matched at 200 for both**, which raises ours from its default of 60. Matching upward
 rather than down: capping Heretic at 60 would hand us a result that depends on starving the
 comparison, and 200 is Heretic's own default so it is the number its author considers adequate.
+
+*The justification is version-specific and the rule is not, stated 2026-10-01.* "The number its
+author considers adequate" was 200 at `v1.4.0`, the pinned tag every arm ran against, and is 100 on
+upstream's unreleased `master`. **The matching rule does not change and no arm is re-run:** 200 is
+still the larger of the two numbers, so matching upward to it still refuses a result that depends
+on starving the comparison, and it is still a number the author shipped. What this note fixes is
+that the sentence read as a claim about Heretic in general when it was a claim about one tag. If the
+pin ever moves, the rule to apply is the same one, which means matching to whichever default is
+larger and saying which version it came from.
 
 **The warm start stays on, and is reported.** It cannot be given to Heretic without modifying its
 search, and switching it off would benchmark a configuration nobody ships. So the table states
@@ -191,3 +223,30 @@ because an amendment a reader has to go looking for is an amendment that was hal
 Every one of them came from building the thing and then running one short arm end to end. That is
 the argument for a dry run: the pre-registration was written carefully and was still wrong in
 three places that only running it could show.
+
+**Corrections, which are a different kind of change from an amendment, and the count above stays
+three.** An amendment changes what was promised. A correction attaches provenance to a claim
+without moving it. This file's own rule is that a pre-commitment edited after the run is not one,
+so the distinction is recorded rather than assumed, and every correction below says what it did not
+change.
+
+- **2026-10-01, the versionless upstream quotes.** Five claims about Heretic carried no version:
+  the `n_trials = 200` default and its `config.default.toml` filename, the two fixed scorers, where
+  the four prompt sets live in the config, which trial the unaided menu offers first, and the
+  "number its author considers adequate" justification for matching at 200. Every one is true at
+  tag `v1.4.0`, which is what `Dockerfile.heretic` pins and what every published arm ran against,
+  and **three of the five read differently on upstream's unreleased `master`**, where `n_trials`
+  defaults to 100, the scorers became configurable plugins, and the prompt sets moved onto the
+  modifier and the scorer. Each claim now carries its version and its read date.
+
+  **Nothing in the budget definition, the equalisation rule or any published number changes.** The
+  defect was missing provenance on a number, not the number. It matters here more than it would
+  anywhere else, because this is the document a sceptic is pointed at to check that the rules were
+  fixed before the run, and an unversioned quote about a moving upstream is the one kind of
+  sentence that can go false while nobody edits it. That is the same failure this file already
+  carries a 2026-09-25 append about, arriving by a different route: last time a sentence went stale
+  because our harness changed, this time because somebody else's did.
+
+  **The rule this sets, so it does not have to be rediscovered:** every quoted upstream default,
+  filename or behaviour in this file names the ref it was read at and the date it was read. A
+  figure without a ref is a figure that cannot be checked and cannot be noticed going wrong.

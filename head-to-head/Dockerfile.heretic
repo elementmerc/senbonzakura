@@ -34,13 +34,56 @@ RUN git clone --quiet --branch "$HERETIC_REF" --depth 1 \
  && git -C /opt/heretic rev-parse HEAD > /opt/heretic-commit.txt \
  && cat /opt/heretic-commit.txt
 
-# --no-deps on torch specifically: the base pins torch 2.5.1+cu124 to match the driver on the card,
-# and Heretic deliberately leaves its torch version unspecified. Letting pip resolve it here would
-# quietly swap the CUDA build for whichever wheel the resolver likes, and the two tools would then
-# be benchmarked on different torch builds while the table claimed one environment.
-RUN pip install --no-cache-dir /opt/heretic \
- && python -c "import torch; assert torch.__version__.startswith('2.5.1'), torch.__version__" \
+# THE ASSERTION WAS THE GUARD, NOT A FLAG, AND IT WAS TOO NARROW. Both halves recorded, because
+# this comment was wrong in one way and incomplete in another.
+#
+# It used to open "--no-deps on torch specifically", and the install below has never carried
+# `--no-deps`. There was nothing to find: a reader checking that claim against the command would
+# have looked for a flag that is not there, the same defect shape as a comment citing a file path
+# that does not exist. What actually held the torch pin was the `assert` beside it.
+#
+# And the assert was about torch, which was never the package that moved. **Heretic v1.4.0 declares
+# `numpy~=2.2`**, the base pinned `numpy==2.1.3`, and `2.1.3` does not satisfy `>=2.2, ==2.*`, so
+# this install upgraded numpy on every build ever made while the senbonzakura image left it alone.
+# The two arms differed in their numeric stack by construction and no guard here could see it,
+# because a one-package assertion cannot see a second package move.
+#
+# So numpy is now pinned HERE, explicitly, at the version the base pins, rather than inherited
+# from whatever pip resolves for Heretic's own range. An arm that cannot state its own numeric
+# stack is not stating its environment, and `--no-deps` is still not the answer: Heretic's own
+# dependency tree is wanted, and only this one package is held.
+#
+# `--verify-pins` replaces the hand-written literal. It reads this image's declared pins from
+# `BENCH_DECLARED_PINS` and holds every one of them, plus the packages named in
+# `BENCH_REQUIRED_PRESENT`, so the check and the record are one string and adding a fourth package
+# is editing the ARG below. See `head-to-head/benchenv.py` for why that matters more than it looks.
+# ONE VERSION, ONE PLACE. `NUMPY_PIN` feeds both the install below and the declared string the
+# check reads, so the pin and the thing enforcing it cannot drift. Writing `2.5.3` twice in one
+# file is the shape of defect this whole change is about.
+ARG TORCH_PIN=2.5.1
+ARG NUMPY_PIN=2.4.6
+ARG BENCH_PINS="torch==$TORCH_PIN numpy==$NUMPY_PIN"
+# tokenizers arrives with Heretic's `transformers[kernels]~=5.6` and its version is NOT pinned
+# here, pending a decision on pinning transitive closures. It changes what the model is shown, so
+# it is required present and recorded rather than left unmentioned.
+ARG BENCH_REQUIRED="transformers tokenizers accelerate peft optuna"
+ENV BENCH_DECLARED_PINS=$BENCH_PINS \
+    BENCH_REQUIRED_PRESENT=$BENCH_REQUIRED
+
+RUN pip install --no-cache-dir /opt/heretic "numpy==$NUMPY_PIN" \
+ && python /opt/benchenv.py --verify-pins \
  && python -c "import heretic; print('heretic imports')"
+
+# RE-BAKED, because the freeze inherited from the base describes the base. This layer installed a
+# whole dependency tree, and a reader handed the base's freeze would be reading the wrong set under
+# the right filename.
+RUN pip freeze > /opt/bench-env.txt \
+ && echo "bench-env.txt: $(wc -l < /opt/bench-env.txt) distributions"
+
+LABEL org.senbonzakura.bench.declared-pins=$BENCH_PINS \
+      org.senbonzakura.bench.required-present=$BENCH_REQUIRED \
+      org.senbonzakura.bench.tool-ref=$HERETIC_REF \
+      org.senbonzakura.bench.freeze="/opt/bench-env.txt"
 
 USER bench
 WORKDIR /work

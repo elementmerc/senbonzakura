@@ -205,9 +205,11 @@ the invitation this document opens with. Every model above is Apache-2.0 and ung
 **Two limits on the revised set, stated here rather than discovered later.** Every model is small
 enough that all four tools run at full precision, which is deliberate: senbonzakura refuses 4-bit on
 its editing path and all three rivals permit or default to nf4, so without that cap the tools would
-not be doing the same thing. And OLMo 2's baseline refusal rate was unmeasured when this was
-written; if it falls below the floor our own tool refuses to edit, the row cannot exist and this
-table loses the one row that justified widening it.
+not be doing the same thing. The second limit has since been closed: OLMo 2's baseline refusal rate
+was unmeasured when this was written, and the worry was that a rate below the floor our own tool
+refuses to edit would delete the one row that justified widening the set. It was screened on
+2026-10-01 at **68.8%** on our scorer (71.9% on the keyword rule Heretic uses), n = 128, bundled
+track, held-out rows, RTX 3060. That clears the floor with room, so the row stands.
 
 **Our own post-norm fix is not yet confirmed on a real model.** It landed in 0.4.0 covered only by
 unit tests over synthetic norms, and the changelog still describes Gemma as unmeasured rather than

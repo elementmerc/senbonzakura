@@ -66,8 +66,15 @@ number is right, and it says so in its own output.
 
 ### Running it without choosing to
 
-A checker somebody remembers to run is a checker that runs occasionally. Both of these install
-the package with `--no-deps`, so neither pulls torch into your CI or your commit hook.
+A checker somebody remembers to run is a checker that runs occasionally. Neither of these pulls
+torch into your CI or your commit hook, and they get there by different routes. The Action
+installs `senbonzakura-check`, a separate package that declares no dependencies at all, so an
+ordinary install resolves to one small wheel. The hook installs nothing: it runs the checker out
+of the clone pre-commit already made, on the `python3` already on your PATH.
+
+That is worth saying because the obvious shortcut is wrong. Both of these used to reach for
+`--no-deps`, which suppresses dependency resolution, and suppressing it is what once hid a broken
+install: the package arrived, the command could not run, and the step reported success.
 
 ::: tip These work from v0.4.0, which is out
 The `v0.4.0` tag exists, `action.yml` and `.pre-commit-hooks.yaml` are on the default branch that
@@ -86,9 +93,31 @@ had never been run.
     fail-on-findings: true                    # false to report without blocking
 ```
 
-It exposes `findings`, `unchecked` and `report` as outputs, so a later step can act on the two
-counts separately. `fail-on-unchecked` is true by default and is worth leaving that way: a gate
-that ignores a file it could not read goes green on the day your result format changes.
+It exposes `checked`, `findings`, `unchecked` and `report` as outputs, so a later step can act on
+each count separately. Read `checked` as well as `findings`: zero findings over zero files is
+arithmetically identical to a clean sweep, so a path that drifts reports green for ever.
+`fail-on-unchecked` is true by default and is worth leaving that way: a gate that ignores a file
+it could not read goes green on the day your result format changes.
+
+**Failing the build on a behavioural regression.** Give the same step a baseline and a
+measurement and it also runs `gate`, so a model change that moves a property outside its interval
+fails before anything is promoted.
+
+```yaml
+- uses: elementmerc/senbonzakura@v0.4.0      # pin it
+  with:
+    path: results/
+    baseline: baselines/refusal-rate.json     # written by `senbonzakura baseline`
+    measurement: out/this-run.json            # the same shape, from this run
+```
+
+It reports what it concluded as `gate-status`: `0` the property stayed inside its interval, `1` it
+regressed, `2` the two measurements were never comparable. The last one fails the build too, with
+a different message, because a refusal means nothing was shown about the model at all and reading
+that as either a pass or a regression teaches you to ignore the difference. Pass one of the two
+inputs without the other and the step stops rather than quietly skipping the comparison: a
+workflow whose author believes their numbers are gated and whose build has never compared them is
+worse than no gate.
 
 **As a pre-commit hook:**
 

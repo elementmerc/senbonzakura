@@ -426,17 +426,74 @@ def test_the_action_installs_the_checker_distribution_and_not_the_big_one():
     left the test green. Found by mutation rather than by reading. That is the same defect as the
     one recorded at the top of `test_the_gates_are_actually_wired_into_ci.py`, where a check was
     satisfied by a filename appearing somewhere in a file. So this reads the INSTALL LINE.
+
+    THE PROPERTY IS NOW PER STEP RATHER THAN PER LINE, because the action grew a second command.
+    The regression gate ships in the big distribution and is asked for by input, so an install of
+    the big distribution is legitimate on the gate's step and nowhere else. The conditions that
+    make it legitimate are asserted separately below: it is conditional, it resolves no
+    dependencies, and it proves itself before anything trusts it. A blanket "no step installs the
+    big one" would have to be deleted to add the gate, and a deleted assertion protects nothing.
     """
     steps = _action()["runs"]["steps"]
-    lines = [ln.strip() for s in steps for ln in (s.get("run") or "").splitlines()
+    gate_step_names = {"Install the regression gate"}
+    lines = [(s.get("name"), ln.strip())
+             for s in steps for ln in (s.get("run") or "").splitlines()
              if "pip install" in ln and not ln.lstrip().startswith("#")]
     assert lines, "the action does not install the package"
-    for line in lines:
+    checker_lines = [ln for name, ln in lines if name not in gate_step_names]
+    assert checker_lines, (
+        "no step outside the gate's installs anything, so the checker, which is what this action "
+        "is for, is not installed at all")
+    for line in checker_lines:
         assert re.search(r'"senbonzakura-check', line), (
             f"the install line does not name the torch-free checker distribution: {line!r}")
         assert not re.search(r'"senbonzakura(?!-check)', line), (
             f"this line installs the big distribution, which brings the deep-learning stack into "
             f"somebody else's CI, and under --no-deps brings a launcher that cannot run: {line!r}")
+        assert "--no-deps" not in line, (
+            f"the checker's install suppresses dependency resolution, which is the flag that hid "
+            f"the 2026-09-28 break: {line!r}")
+
+
+def test_the_gates_install_is_conditional_dependency_free_and_proves_itself():
+    """Three conditions, and the gate's install is only defensible with all three.
+
+    CONDITIONAL, because a repository using the checker alone must not pay for a distribution it
+    never calls. DEPENDENCY-FREE, because the gate's whole argument is that it is cheap enough to
+    run on every change, and resolving this distribution's dependencies means torch: most of a
+    gigabyte on a step that is supposed to cost seconds. PROVES ITSELF, because the one thing the
+    2026-09-28 break teaches is that "pip succeeded" is not the property worth asserting.
+
+    `--no-deps` is the right flag here and was the wrong one there, and the difference is what
+    this test pins rather than the flag. There, it was how the CHECKER was obtained, and it
+    dropped `senbonzakura-check`, the package the `check` command dispatches into. Here the
+    checker is installed by name as its own step, and the gate dispatches into nothing: its whole
+    import closure is the standard library, which `tests/test_torch_free.py` measures by taking
+    every declared dependency away and running the gate to all three of its verdicts.
+    """
+    steps = {s.get("name"): s for s in _action()["runs"]["steps"]}
+    step = steps.get("Install the regression gate")
+    assert step, (
+        f"no step installs the regression gate. The steps are {sorted(k for k in steps if k)}, and "
+        f"a gate nobody installs runs exactly as often as no gate.")
+
+    condition = str(step.get("if") or "")
+    assert "inputs.baseline" in condition, (
+        f"the gate's install is not conditional on a baseline being asked for ({condition!r}), so "
+        f"every consumer of the checker now installs the big distribution too")
+
+    line = next((ln.strip() for ln in step["run"].splitlines()
+                 if "pip install" in ln and not ln.lstrip().startswith("#")), None)
+    assert line, "the gate's install step runs no pip install"
+    assert "--no-deps" in line, (
+        f"the gate's install resolves this distribution's dependencies, which means torch on a "
+        f"step whose entire argument is that it is cheap: {line!r}")
+    assert re.search(r'"senbonzakura(?!-check)', line), (
+        f"the gate's install does not name the distribution the gate ships in: {line!r}")
+
+    assert re.search(r"senbonzakura gate --help", step["run"]), (
+        "the gate's install does not prove it can run the command. `pip succeeded` is what "
+        "reported a clean run on a broken install once already.")
 
 
 def test_the_action_runs_the_checkers_own_entry_point():

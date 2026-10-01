@@ -37,6 +37,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   machine readable
 - `--pair` checks that it was given two files before reading any of them
 
+### Measurement
+- The null floor the direction filter holds candidates to is reported as the percentile it is,
+  with its false keep rate, rather than as a bar every null draw fails
+
 ### Documentation
 - Two pages disagreed about whether our own numbers carry intervals; both are corrected and the
   two real exceptions are named where a reader meets them

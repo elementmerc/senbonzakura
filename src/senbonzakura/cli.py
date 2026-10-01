@@ -2866,11 +2866,15 @@ class Abliterator:
         # measurement, and the filter it governed rejected nothing on every run for the project's
         # whole history. A floor that is never shown is a floor nobody checks.
         if self.null_separation_floor is not None:
-            log(f"  null-direction floor: a direction built from a random subset of the harmful "
-                f"rows, carrying nothing, scores up to {self.null_separation_floor:.4f} through "
-                f"the same held-out path. Candidates were held to "
-                f"max({sep_stat.threshold}, that), and {axes_rejected_by_null} cleared the "
-                f"constant but not the floor.")
+            log(f"  null floor: {NULL_DIRECTIONS_PER_CANDIDATE} directions built from random "
+                f"subsets of the harmful rows, carrying nothing, were scored through the same "
+                f"path a candidate goes through, and the "
+                f"{int(NULL_FLOOR_QUANTILE * 100)}th percentile of them reached "
+                f"{self.null_separation_floor:.4f} at the highest of the layers searched. That is "
+                f"a percentile and not the best draw, so the bar carries a "
+                f"{round((1 - NULL_FLOOR_QUANTILE) * 100)}% false keep rate per candidate by "
+                f"design. Candidates were held to max({sep_stat.threshold}, that), and "
+                f"{axes_rejected_by_null} cleared the constant but not the floor.")
         if axes_measured_total:
             reject_rate = axes_rejected_total / axes_measured_total
             if reject_rate == 0.0:

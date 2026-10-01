@@ -1349,7 +1349,15 @@ def test_the_null_floor_is_measured_and_reported(base_args, tiny_model, tiny_tok
     a.extract_directions("bad", "good", None, "good")
 
     assert a.null_separation_floor is not None
-    assert "null-direction floor" in "\n".join(lines)
+    joined = "\n".join(lines)
+    assert "null floor" in joined
+    # NAMES THE PERCENTILE, because the previous wording said a null "scores up to" the floor,
+    # which reads as the largest of the draws and is not what the code computes. Two panel
+    # reviewers reached that independently on 2026-09-28. A reader who takes the bar for "beats
+    # every null" over-reads the filter by exactly its false-keep rate.
+    assert f"{int(cli.NULL_FLOOR_QUANTILE * 100)}th percentile" in joined
+    assert "not the best draw" in joined
+    assert str(cli.NULL_DIRECTIONS_PER_CANDIDATE) in joined
     measured = [f for f in a.layer_null_floors if f is not None]
     assert measured, "no layer measured a floor, so the threshold is still unchecked"
 

@@ -244,8 +244,12 @@ quantity a vector was built to maximise is large along that vector. It always is
 So the score is now **held out**: each candidate is fitted on half the rows and scored on the
 half it never saw. And the threshold now has a **measured floor** beside it, exactly like the
 compass's null panel: directions built from random subsets of the harmful prompts, carrying
-nothing, are scored through the identical path, and a candidate must beat the best of them.
-Both numbers land in `abliteration.json`.
+nothing, are scored through the identical path, and a candidate must beat the 95th percentile of
+them. Not the single best draw: forty nulls are scored and the floor is the 38th of them in sorted
+order, so one freak draw can't lift the bar above anything a real direction could reach. The cost
+of that choice, stated rather than buried: a candidate that happens to score between the 95th
+percentile and the best null gets kept, so the filter carries a 5% false-keep rate per candidate by
+construction. Both numbers land in `abliteration.json`.
 
 What that buys is narrower than it sounds, and the run says so: it establishes that a kept
 direction separates held-out harmful prompts from held-out harmless ones. **It still does not

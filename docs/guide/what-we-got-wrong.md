@@ -32,17 +32,29 @@ went out, and then it was false for as long as nobody re-read it. The lesson is 
 accuracy, it is about where a time-limited claim goes: one that expires on a release needs to be
 checked by the release, not by memory.
 
-## It said abliterated checkpoints were published
+## It said no abliterated checkpoints were published, and that correction was the error
 
-**It said:** abliterated checkpoints from this work are published separately on HuggingFace.
+**It said:** first, that abliterated checkpoints from this work are published separately on
+HuggingFace. Then, after that was judged an overclaim, that no model weights are in this git tree
+and none are published.
 
-**It says:** no model weights are in this git tree and none are published. When any are, they go
-up separately, each under its base model's own licence, which travels with the weights and is not
-ours to loosen. Until then the way to get one is to run the tool.
+**It says:** no model weights are in this git tree, and abliterated checkpoints are published
+separately on the Hub, public and ungated, each under its base model's own licence. The
+evaluation numbers on most of those cards are withdrawn, so a reader should check the card rather
+than trust a figure on it.
 
-**What was actually wrong:** a statement of intent written in the present tense. The sentence
-gave no link, because there was none to give, and that absence was the only thing distinguishing
-it from a true sentence.
+**What was actually wrong:** the first sentence was true and was corrected into a false one.
+Checked on 2026-10-01 with no credentials, the way a stranger would: fourteen public repositories,
+`gated` false on every one, real weight files, and downloads in the hundreds on some. The original
+sentence gave no link, and the absence of a link was read as the absence of the checkpoints.
+
+**Why this one is worth its own entry rather than a quiet fix.** It is a dual-use disclosure that
+inverted into a reassurance, which is the second time that has happened here; the evaluation track
+card did the same thing at 0.4.0. And it inverted *inside the page that exists to record
+inversions*, which is the part worth sitting with: a correction mechanism with nothing checking it
+is another unchecked claim. The weights are the one thing in this project a reader might most want
+an honest sentence about, and for a release and a half they got the opposite of one in both
+directions.
 
 ## The first-run guide timed the wrong model
 

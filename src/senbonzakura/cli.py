@@ -676,11 +676,19 @@ def _masked(delta, mask):
 
 @torch.no_grad()
 def _sparsify_rows_(delta, sparsity):
-    # Sparse surgery (OBLITERATUS-style, adapted to the norm-preserving projection): only KEEP the
-    # top (1-sparsity) output-rows by edit magnitude, zero the edit on the rest. The rows with the
-    # largest projection delta are the ones that actually WRITE the refusal direction; leaving the
-    # low-projection rows pristine spares whatever capability they carry, for less collateral at the
-    # same refusal removal on the rows that matter. `delta` is [..., out, in]; rows are the -2 dim.
+    # Sparse surgery (OBLITERATUS-style, adapted to the norm-preserving projection): EDIT only the
+    # top (1-sparsity) output-rows by edit magnitude, and leave the rest untouched. The rows with
+    # the largest projection delta are the ones that actually WRITE the refusal direction; leaving
+    # the low-projection rows pristine spares whatever capability they carry, for less collateral at
+    # the same refusal removal on the rows that matter. `delta` is [..., out, in]; rows are the -2
+    # dim.
+    #
+    # "EDIT" rather than "KEEP", because this is borrowed work and the borrowed word pointed the
+    # other way. OBLITERATUS's `SparseDirectionSurgeon.apply_sparse_projection` selects top-k rows
+    # TO EDIT; this comment said we "KEEP the top rows", which a reader checking our attribution
+    # against their source would read as the opposite polarity. The code was always right: the
+    # mask below zeroes the DELTA on low-magnitude rows, so those rows keep their original weights.
+    # Two names for one operation is how an audit of an attribution goes wrong.
     if sparsity <= 0.0:
         return delta
     mag = delta.norm(dim=-1)                            # [..., out] per-row edit magnitude

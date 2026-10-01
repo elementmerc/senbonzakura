@@ -939,3 +939,24 @@ class TestSweptIsNotAnExcuseForUnreadable:
         swept = cli.main([str(tmp_path)], out=io.StringIO())
         assert named == swept == 2, (
             f"named exits {named} and swept exits {swept} for the same bytes")
+
+
+def test_the_actions_description_fits_what_marketplace_accepts():
+    """125 CHARACTERS, AND THE LISTING IS REFUSED ABOVE IT.
+
+    This is not a style rule. The description that shipped with v0.4.0 was 185 characters, so
+    the Marketplace publish form rejected it, and the action stayed unlisted while every other
+    piece of its metadata (name, author, branding icon and colour) was correct and had been
+    checked. Nothing in the repository measured the one field that was wrong, so "ready to
+    publish" was asserted from the fields somebody thought to look at.
+
+    The limit is on the rendered value, not the source lines, because the folded block scalar
+    this field uses is wrapped for the file and joined before anybody counts it.
+    """
+    description = " ".join(_action()["description"].split())
+    assert len(description) <= 125, (
+        f"action.yml's description is {len(description)} characters and Marketplace takes at "
+        f"most 125, so the listing would be refused with every other field correct:\n"
+        f"  {description}\n"
+        f"Shorten it. The longer explanation belongs in the comments above the field, or in the "
+        f"action's own documentation, where no limit applies.")

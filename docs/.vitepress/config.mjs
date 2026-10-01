@@ -121,12 +121,14 @@ export default {
             { text: 'Contamination', link: '/guide/contamination' },
             { text: 'Quantisation', link: '/guide/quantisation' },
             { text: 'The evaluation track: dataset card', link: '/evaluation-track-card' },
+            { text: 'Where the corpus came from', link: '/corpus-provenance' },
           ],
         },
         {
           text: 'Measuring',
           items: [
             { text: 'The compass', link: '/guide/compass' },
+            { text: 'Failing a build on a regression', link: '/guide/gating' },
             { text: 'Benchmarking against another tool', link: '/guide/benchmark' },
             { text: 'How this compares to other tools', link: '/comparison' },
           ],

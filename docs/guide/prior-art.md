@@ -36,6 +36,23 @@ centroid subtracted. Large reported gains:
 | Gemma2-9B | 96.3% | 38.9% |
 | Qwen-7B | 88.1% | 81.1% |
 
+## The third idea: don't edit all the time
+
+Everything above, this project included, removes a direction unconditionally. The weights change
+once, and from then on every prompt pays the same cost, benign ones included. That's the trade
+this whole field argues about: how much refusal you removed against how much the model moved.
+
+apostate's default method walks around the trade rather than along it. It fits a detector
+direction, a threshold and an actuator direction, and the edit only fires when the detector
+crosses the threshold, so a benign prompt is meant to be left untouched. The implementation is the
+clever part: the condition is folded into a single ordinary MLP neuron, so the result is a plain
+checkpoint that any runtime loads with no custom code.
+
+We haven't reproduced it, we haven't measured it, and nothing on this site is evidence either way.
+It's named here because it's a genuinely different idea from the one the papers above are arguing
+about, and because this project's instruments, the controls, the three-way split, the compass and
+the capability probe, are the ones that could price it. That's a thing to do, not a thing done.
+
 ## So why does this project measure the opposite?
 
 Our own comparison found two directions costing about **1.9 times** the coherence damage
@@ -84,6 +101,15 @@ competitor and overlaps us heavily: Optuna search, Pareto co-minimisation of ref
 reversible edits. It is **ahead of us** on method breadth (several named multi-direction methods
 we have not implemented), on mixture-of-experts handling, and on prebuilt configurations.
 
+**[apostate](https://github.com/heterodoxin/apostate)** by `heterodoxin`, MIT, four months old
+and read here at `main` on 2026-10-01. It's four tools behind one command, and only the oldest of
+them is a variant of the method everything above shares: its default, the one you get from
+`apostate ablate`, isn't a projection at all. Its other methods include a greedy search under
+budgets and an oblique projection with a fitted detector. It has no CI, no lockfile and no
+changelog, and it ships its harmful prompt set in plaintext in the tree, which this project
+deliberately doesn't. Read partly, through a summarising reader rather than a clone, so the
+[comparison page](/comparison) gives it a scope line rather than a column.
+
 **["Exploring the multi-dimensional refusal subspace"](https://www.lesswrong.com/posts/ixJrmYrgHM4TenN7D/exploring-the-multi-dimensional-refusal-subspace-in-1)**
 reached this project's clustering approach independently, and says plainly that it has no
 random-direction baseline, no cross-topic generalisation test and no KL matching. It clusters
@@ -97,6 +123,13 @@ Not the search. Abliterix has one. Not multi-direction. Two papers got there fir
 the cost of the edit, compared at an operating point where both arms removed the same amount of
 refusal. Without matching first, the arm that cut harder looks worse on coherence for a reason
 that has nothing to do with what was being tested.
+
+apostate is the clearest illustration of why that claim is worth making. Its README puts delivery
+and KL in one table and then calls one method's KL "an order of magnitude below" another's, with
+the two methods sitting at **different delivery levels**, 90.6% against 88.5%. That's exactly the
+comparison that can't be read: the arm that removed less refusal had less to pay for, and the
+table gives a reader no way to tell how much of the gap is the method and how much is the
+operating point. Nobody's hiding anything there; the column simply isn't in the field's habit yet.
 
 Nor does anyone publish a random-direction floor beside their result, or a null panel beside
 their harm-recognition score. Those are the columns this project exists to add, and the reason

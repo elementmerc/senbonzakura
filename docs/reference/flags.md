@@ -66,7 +66,7 @@ constantly.
 
 **`--capability-eval`** is the one that runs whether you ask for it or not, so it is worth
 knowing what it does. Every other number a run gives you is about refusal: how often the model
-refused, how often it hedged, how far its output distribution moved, whether it still forms
+refused, how often it hedged, how far its first-token distribution moved, whether it still forms
 sentences. None of those asks the model to do anything hard. A model can come through a bake with
 a low divergence and nothing broken, and have lost the ability to work through a problem in
 several steps, because nothing in the run ever asked it to.

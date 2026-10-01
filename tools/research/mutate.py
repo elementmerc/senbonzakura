@@ -192,7 +192,43 @@ ROUND_TWO = [
      'f"exited {code}. "', "tests/test_measure.py"),
 ]
 
-ROUNDS = {1: ROUND_ONE, 2: ROUND_TWO}
+# ROUND THREE: the night of 2026-10-01 into 2026-10-02, when about forty commits landed across
+# five lanes and nothing had been green anywhere. Added rather than folded into the two rounds
+# above, because the 29% figure is 6 of 21 and a roster that grows makes that figure uncomparable.
+# Rounds one and two stay exactly what they were on 2026-09-27; this is a separate measurement of
+# a separate night's work and reports its own rate.
+#
+# Composed in the two shapes the original split proved matter: the helper, and whether the helper
+# is wired in. Five of the six 2026-09-27 misses were call sites, so the governor's new length
+# check appears three times here, once as itself and once per caller.
+ROUND_THREE = [
+    ("the governor refuses a short batch", "src/senbonzakura/resources.py",
+     "        if len(res) != expected:\n", "        if False:\n",
+     "tests/test_the_governor_keeps_results_aligned.py"),
+    ("the sequential path checks its batch", "src/senbonzakura/resources.py",
+     "out.extend(self._checked(fn(chunk), bs, i))", "out.extend(fn(chunk))",
+     "tests/test_the_governor_keeps_results_aligned.py"),
+    ("the batched path checks its batch", "src/senbonzakura/resources.py",
+     "out.extend(self._checked(res, bs, i))", "out.extend(res)",
+     "tests/test_the_governor_keeps_results_aligned.py"),
+    ("the report calls the refusal panel", "src/senbonzakura/headtohead_report.py",
+     "        lines.extend(refusal_panel(readable))\n", "",
+     "tests/test_the_refusal_panel_has_a_caller.py"),
+    ("the null floor says it is a percentile", "src/senbonzakura/cli.py",
+     'f"a percentile and not the best draw, so the bar carries a "', 'f""',
+     "tests/test_abliterator.py::test_the_null_floor_is_measured_and_reported"),
+    # The pre-fix line exactly, which resolved stderr once at construction. Restoring it is longer
+    # than the fix rather than the same length, which matters: a same-length plant is the one whose
+    # `.pyc` survives the restore, and the run on 2026-10-01 that chased a phantom pass was a
+    # same-length `sys.stderr` to `sys.stdout` edit.
+    ("the heartbeat resolves its stream at write time",
+     "checker/src/senbonzakura_check/cli.py",
+     "        self._stream = stream\n",
+     "        self._stream = stream if stream is not None else sys.stderr\n",
+     "tests/test_the_checker_reports_as_it_goes.py"),
+]
+
+ROUNDS = {1: ROUND_ONE, 2: ROUND_TWO, 3: ROUND_THREE}
 
 NOTICED, MISSED, DRIFT = "NOTICED", "MISSED", "DRIFT"
 

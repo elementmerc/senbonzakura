@@ -93,13 +93,14 @@
     },
     {
       "action": "actions/setup-node",
-      "sha": "2028fbc5c25fe9cf00d9f06a71cc4710d4507903",
+      "sha": "820762786026740c76f36085b0efc47a31fe5020",
       "exists": true,
       "tags_pointing_here": [
-        "v6.0.0"
+        "v7",
+        "v7.0.0"
       ],
-      "tag": "v6.0.0",
-      "committed": "2025-10-14T02:37:06Z",
+      "tag": "v7.0.0",
+      "committed": "2026-07-14T02:38:27Z",
       "files": [
         "ci.yml",
         "docs.yml"

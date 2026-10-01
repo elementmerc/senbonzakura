@@ -275,10 +275,34 @@ completion = ["shtab>=1.6"]
 # few local shapes `trackio` declines to guess at (a DatasetDict, a formatted set). Local
 # tracks, the bundled corpora and every file format the tool accepts work without it.
 #
-# 2.15 is the first release that does not call `pyarrow.PyExtensionType`, which pyarrow
-# removed in 14. The old 2.0 floor resolved cleanly and then died at import, which is
-# precisely what the dependency-floor CI job exists to catch, and did, on its first ever run.
-hub = ["datasets>=2.15"]
+# 5.0.1 IS A SECURITY FLOOR, NOT A COMPATIBILITY ONE, raised from 2.15 on 2026-10-01 under
+# Q-72. PYSEC-2026-3716 is a path traversal in the folder-based builders, and it was checked
+# against OSV directly rather than inherited from a note that said "fixed in the next patch":
+#
+#     datasets 2.15.0  live     <- the floor this project published until today
+#     datasets 2.21.0  live
+#     datasets 3.0.0   live
+#     datasets 4.0.0   live
+#     datasets 5.0.1   clean
+#
+# So the entire declared range below 5 carried it, and this tool reads datasets somebody else
+# published. A user installing at our own published floor got the advisory, and nothing we ran
+# would have told either of us: the pre-push audit reads the pushing machine's environment,
+# where the pin is 5.0.1, and the `pinned` CI job reads the same number.
+#
+# THE COMPATIBILITY BREAK IS REAL AND IT IS STATED RATHER THAN SOFTENED. Anyone pinned below
+# datasets 5 can no longer install the `hub` extra, and 5.0.1 requires `pyarrow>=21.0.0`, which
+# is well above this project's own declared `pyarrow>=14`. The base install is untouched: a
+# reader who never asks for a Hub dataset id still needs nothing newer than pyarrow 14, which is
+# the floor that keeps `trackio` installable from a distribution package. What changed is that
+# the two floors can no longer be installed in one environment, and `constraints/floors.txt`
+# says so where the next reader meets it.
+#
+# The previous reason, kept because it is still true of the range below: 2.15 was the first
+# release that does not call `pyarrow.PyExtensionType`, which pyarrow removed in 14. The old 2.0
+# floor resolved cleanly and then died at import, which is precisely what the dependency-floor
+# CI job exists to catch, and did, on its first ever run.
+hub = ["datasets>=5.0.1"]
 # `datasets` is in `dev` because the test suite asserts BOTH backends read and write the same
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.

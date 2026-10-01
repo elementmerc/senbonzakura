@@ -510,9 +510,12 @@ def _drop_shards(directory):
 
     THE TWO TESTS BELOW WERE PINNED TO ONE LIBRARY VERSION. A recent `datasets` writes an empty
     set as `state.json` and `dataset_info.json` and no Arrow file at all, which is the shape that
-    makes `dataset_info.json` load-bearing for the column names. `datasets` 2.15, the DECLARED
-    FLOOR, writes `data-00000-of-00001.arrow` for the same empty set, so on the floors job these
-    read `[{'filename': ...}]` where they expected `[]` and failed.
+    makes `dataset_info.json` load-bearing for the column names. `datasets` 2.15, which was the
+    declared floor until Q-72 raised it to 5.0.1 on 2026-10-01, writes `data-00000-of-00001.arrow`
+    for the same empty set, so on the floors job these read `[{'filename': ...}]` where they
+    expected `[]` and failed. The construction below is kept rather than simplified: it is what
+    makes the shape under test a fact about this test rather than about whichever `datasets` the
+    environment happens to hold.
 
     That is a fact about `datasets`, not about `trackio`, and `trackio` reads both shapes
     correctly. So the shape under test is constructed here rather than requested from a library

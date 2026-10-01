@@ -29,6 +29,7 @@ a step moved behind a condition fails it.
 from __future__ import annotations
 
 import pathlib
+from pathlib import Path
 
 import pytest
 
@@ -177,3 +178,32 @@ def test_the_action_is_exercised_on_a_failing_case_and_not_only_a_passing_one(wo
     assert any(step.get("continue-on-error") for step in invocations), (
         "every invocation of the action is expected to succeed, so the case where it MUST fail, "
         "which is the entire purpose of the action, is never exercised.")
+
+
+def test_the_regression_gate_is_exercised_through_the_action_and_not_only_as_a_command(workflow):
+    """A gate nobody has wired in runs exactly as often as no gate.
+
+    `gate.py` was complete, tested and reachable by no CI job and no action input for a fortnight,
+    which is the failure mode that is easiest to mistake for closed because the code is there. The
+    unit tests drive the action's shell with stubs, which is where the verdict-to-annotation
+    mapping lives; this asserts that the real thing runs, against the real install, on every push.
+
+    ALL THREE VERDICTS, not just the failure. A refusal and a regression are different findings and
+    the exit statuses exist to keep them apart, so an action exercised on two of the three can map
+    the third onto either of the others and nothing would notice.
+    """
+    gated = [step for _n, job in _push_jobs(workflow)
+             for step in (job.get("steps") or [])
+             if str(step.get("uses") or "").strip() == "./" and (step.get("with") or {}).get("baseline")]
+    assert len(gated) >= 3, (
+        f"the published action is run with a baseline {len(gated)} time(s) on the push path. It "
+        f"needs the pass, the regression and the refusal, because those are three outcomes and a "
+        f"job that sees two of them cannot tell the third from either.")
+    measurements = {Path(str((step.get("with") or {}).get("measurement") or "")).name
+                    for step in gated}
+    assert len(measurements) >= 3, (
+        f"the gate is run against {sorted(measurements)}. Three invocations of the same comparison "
+        f"exercise one verdict three times.")
+    assert any(step.get("continue-on-error") for step in gated), (
+        "every gated invocation is expected to succeed, so the case where the gate MUST fail the "
+        "build, which is the only reason a gate exists, is never exercised.")

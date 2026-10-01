@@ -15,6 +15,28 @@ on:
 permissions:
   contents: read
 
+# ── Q-71, AND THE FLIP IS THE ONE LINE BELOW ───────────────────────────────────────────────────
+#
+# `--required` turns a dependency audit that could not reach the advisory service from a loud
+# green into a red. It is off today because the only thing reading these conclusions is a person,
+# who can see the warning annotation saying nothing was checked, and because a gate that goes red
+# whenever pypi.org hiccups is a gate everybody learns to re-run rather than read.
+#
+# It has to go on the day required status checks land on `main` and `dev`, because a branch rule
+# reads green as "verified" and cannot see an annotation. That is a settings change on the
+# operator's GitHub account, so the sequence is: turn protection on, then change the `'false'`
+# below to `'true'`.
+#
+# It is one line per workflow rather than one line overall, because GitHub gives workflows no way
+# to share an `env` block. `.github/workflows/supply-chain.yml` carries the other one, named
+# REQUIRE_EVERY_CHECK_TO_RUN, and both are listed in the ledger entry that carries this flip.
+#
+# AN EMPTY `env:` KEY IS NOT AN EMPTY MAPPING, IT IS NULL, and GitHub rejects the whole file: the
+# run completes as a failure with ZERO jobs, which looks nothing like a normal red build. That has
+# happened here. If this block's last key is ever removed, remove the `env:` line with it.
+env:
+  AUDIT_REQUIRED: 'false'
+
 # THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
 # live here is gone, along with the `env:` block that held it. A workflow with an `env:` key and
 # nothing under it is not an empty mapping, it is null, and GitHub rejects the whole file: the
@@ -189,7 +211,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: |
           pip install pip-audit==2.10.1
-          python tools/ci/audit_env.py --label "free resolve (no constraints, python 3.12)" --min-packages 40
+          python tools/ci/audit_env.py --label "free resolve (no constraints, python 3.12)" --min-packages 40 --required "$AUDIT_REQUIRED"
 
       - name: Lint
         run: ruff check src/ tests/ tools/ checker/src/
@@ -494,7 +516,7 @@ jobs:
       - name: Dependency advisories, pinned environment
         run: |
           pip install pip-audit==2.10.1
-          python tools/ci/audit_env.py --label "pinned (constraints/ci.txt, python 3.14)" --min-packages 60
+          python tools/ci/audit_env.py --label "pinned (constraints/ci.txt, python 3.14)" --min-packages 60 --required "$AUDIT_REQUIRED"
       - name: Lint
         run: ruff check src/ tests/ tools/ checker/src/
       - name: Every shipped source file carries its licence header
@@ -583,7 +605,7 @@ jobs:
       - name: Dependency advisories, declared floors
         run: |
           pip install pip-audit==2.10.1
-          python tools/ci/audit_env.py --label "declared floors (constraints/floors.txt, python 3.10)" --min-packages 40
+          python tools/ci/audit_env.py --label "declared floors (constraints/floors.txt, python 3.10)" --min-packages 40 --required "$AUDIT_REQUIRED"
       - name: The tool starts and reports its version
         run: |
           python -c "import senbonzakura, torch; print(senbonzakura.__version__, torch.__version__)"
@@ -1308,6 +1330,94 @@ jobs:
         with:
           path: fx/junk
           fail-on-empty: "true"
+
+      # THE REGRESSION GATE, THROUGH THE SAME ACTION. A gate nobody has wired in runs exactly as
+      # often as no gate, and the whole argument for the gate is that it runs on every change.
+      #
+      # The three measurements are committed under `tests/fixtures/gate/` and say inside
+      # themselves that nobody measured them. What is being tested is the action's shell: that a
+      # regression fails the step, that a refusal fails it for a DIFFERENT and stated reason, and
+      # that a pass passes while saying how much room there was.
+      #
+      # NOTE WHAT THIS EXERCISES THAT THE UNIT TESTS CANNOT: the install. These steps resolve
+      # `senbonzakura` from the index and run its gate, so an action whose install line cannot
+      # produce a working command fails here rather than on a stranger's runner. That was the
+      # 2026-09-28 defect exactly.
+      - id: gate_pass
+        name: A measurement inside its interval passes the gate
+        uses: ./
+        with:
+          path: fx/clean
+          baseline: tests/fixtures/gate/baseline-refusal-rate.json
+          measurement: tests/fixtures/gate/measurement-steady.json
+
+      - id: gate_regressed
+        name: A measurement outside its interval fails the gate
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/clean
+          baseline: tests/fixtures/gate/baseline-refusal-rate.json
+          measurement: tests/fixtures/gate/measurement-regressed.json
+
+      - id: gate_refused
+        name: A measurement that was never comparable is refused, not failed
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/clean
+          baseline: tests/fixtures/gate/baseline-refusal-rate.json
+          measurement: tests/fixtures/gate/measurement-incomparable.json
+
+      - id: gate_half
+        name: Half a gate stops the run rather than checking nothing
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/clean
+          baseline: tests/fixtures/gate/baseline-refusal-rate.json
+
+      - name: The gate's three verdicts are three different outcomes
+        run: |
+          set -euo pipefail
+          fail=0
+          say() { echo "  $*"; }
+
+          # EVERY STATUS IS CHECKED FOR BEING A NUMBER BEFORE IT IS COMPARED AS ONE, which is the
+          # lesson from the block below this one: an action that crashes before writing its output
+          # leaves the expansion empty, `[ "" -eq 0 ]` exits 2 with "integer expected", and a
+          # non-zero status inside an `elif` condition is merely false and does not trip `set -e`.
+          # Control then falls through to a success line.
+          check() {
+            local label="$1" want="$2" got="$3" outcome="$4" want_outcome="$5"
+            if ! printf '%s' "$got" | grep -qE '^[0-9]+$'; then
+              echo "::error::${label}: gate-status was '${got}', which is not a number. The action did not reach a verdict, and an unset status must never read as a pass."
+              fail=1
+            elif [ "$got" -ne "$want" ]; then
+              echo "::error::${label}: gate-status was ${got}, expected ${want}."
+              fail=1
+            elif [ "$outcome" != "$want_outcome" ]; then
+              echo "::error::${label}: the step outcome was '${outcome}', expected '${want_outcome}'. The verdict was right and the build was told the wrong thing."
+              fail=1
+            else say "${label}: gate-status=${got}, outcome=${outcome}"; fi
+          }
+
+          check "pass" 0 "${{ steps.gate_pass.outputs.gate-status }}" "${{ steps.gate_pass.outcome }}" "success"
+          check "regressed" 1 "${{ steps.gate_regressed.outputs.gate-status }}" "${{ steps.gate_regressed.outcome }}" "failure"
+          check "refused" 2 "${{ steps.gate_refused.outputs.gate-status }}" "${{ steps.gate_refused.outcome }}" "failure"
+
+          # A baseline with no measurement must stop the run before anything is installed, so it
+          # has no gate-status at all. An empty status here is the correct answer rather than the
+          # failure the helper above is shaped around, which is why it is checked separately.
+          if [ "${{ steps.gate_half.outcome }}" != "failure" ]; then
+            echo "::error::half a gate was accepted. A workflow whose author believes their numbers are gated and whose build never compares them is worse than no gate."
+            fail=1
+          elif [ -n "${{ steps.gate_half.outputs.gate-status }}" ]; then
+            echo "::error::half a gate produced gate-status='${{ steps.gate_half.outputs.gate-status }}'. It must stop before comparing anything."
+            fail=1
+          else say "half a gate: refused before installing anything"; fi
+
+          exit $fail
 
       - name: The three outcomes are the ones that make the action worth having
         run: |

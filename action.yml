@@ -33,7 +33,7 @@ branding:
 # hoped-for one: `tests/test_torch_free.py` runs the checker in a subprocess with every heavy
 # package made unimportable at the import-machinery level, and asserts it produces a finding and
 # the right exit code rather than a traceback. A separate test walks the import graph of
-# `senbonzakura/check/` and fails on anything reaching the deep-learning stack.
+# `senbonzakura_check/` and fails on anything reaching the deep-learning stack.
 #
 # THIS USED TO READ `pip install --no-deps senbonzakura`, AND THAT WAS BROKEN FROM THE DAY Q-29
 # SHIPPED. The comment here named its own expiry: "Decision Q-29 ships a torch-free distribution
@@ -48,6 +48,38 @@ branding:
 # above was waiting for and `--no-deps` is no longer load-bearing. It is deliberately NOT passed:
 # a flag that suppresses dependency resolution is exactly what hid the previous break, and if this
 # distribution ever gains a real dependency the honest outcome is that it gets installed.
+#
+# THE REGRESSION GATE, AND WHY ITS INSTALL IS THE ONE PLACE `--no-deps` IS RIGHT
+#
+# `senbonzakura gate` compares a measurement against a recorded baseline and fails the build when
+# a property moved outside its interval. It ships in the BIG distribution, because the baseline
+# rules it reads are shared with the writers that produce them, and installing the big
+# distribution normally means torch: most of a gigabyte, on a step whose entire argument is that
+# it is cheap enough to run on every change. A gate that costs five minutes of install is a gate
+# somebody switches off, which is the property this step exists to supply.
+#
+# So the gate step installs the big distribution WITHOUT resolving its dependencies, and the
+# distinction from the break above is the whole reason that is not the same mistake twice. There,
+# `--no-deps senbonzakura` was the way the CHECKER was obtained, and it dropped
+# `senbonzakura-check`, which is the package the `check` command dispatches into: the command
+# could not run and the step reported success anyway. Here the checker is already installed, by
+# name, as its own step, and the gate dispatches into nothing: its entire import closure is the
+# standard library.
+#
+# THAT CLOSURE IS MEASURED AND GATED, not assumed. `tests/test_torch_free.py` runs the gate to all
+# three of its verdicts in an environment where every dependency this distribution declares has
+# been made unimportable, with the blocked list read out of `pyproject.toml` so a dependency added
+# later is covered without anybody remembering. The same test asserts the verdict TEXT beside the
+# status, because a missing dependency becomes a readable refusal that exits 1, and 1 is the gate's
+# code for a regression: a crash and a caught regression are the same number to a shell.
+#
+# And the install still has to prove itself here, for the same reason the checker's does: the step
+# runs `senbonzakura gate --help`, which exits 0 only if the entry point resolved and the module
+# imported, and that is the half that was missing last time.
+#
+# THE TWO VERSIONS ARE PINNED TOGETHER. `version:` applies to both installs, because the gate
+# pins `tool_version` as one of the fields two measurements must agree on, and a pinned checker
+# beside a floating gate is two halves of one release disagreeing about which release they are.
 
 inputs:
   path:
@@ -86,6 +118,20 @@ inputs:
     description: "Python to run on. 3.10 or newer."
     required: false
     default: "3.12"
+  baseline:
+    description: >-
+      A recorded baseline to judge this run against, written by `senbonzakura baseline`. Give
+      this and `measurement` together to run the regression gate as well as the checker. Give
+      one without the other and the step stops rather than quietly skipping the gate.
+    required: false
+    default: ""
+  measurement:
+    description: >-
+      This run's measurement, in the same shape as the baseline. Run `senbonzakura baseline` on
+      the run's result artefact to produce it: the gate compares two recorded measurements, not a
+      recorded one against a raw artefact.
+    required: false
+    default: ""
 
 outputs:
   checked:
@@ -102,39 +148,99 @@ outputs:
   report:
     description: "Path to the JSON report."
     value: ${{ steps.run.outputs.report }}
+  gate-status:
+    description: >-
+      What the regression gate concluded: 0 the property stayed inside its interval, 1 it
+      regressed, 2 the two measurements were never comparable so nothing was shown about the
+      model. Empty when no baseline was given, which is not the same as 0 and is why it is empty
+      rather than zero.
+    value: ${{ steps.gate.outputs.status }}
 
 runs:
   using: composite
   steps:
+    # FIRST, AND BEFORE ANYTHING IS INSTALLED, because a half-configured gate costs nothing to
+    # catch here and silently checks nothing if it reaches the end of the job.
+    #
+    # A baseline with no measurement, or a measurement with no baseline, is somebody who meant to
+    # turn the gate on. Skipping it quietly would leave a workflow whose author believes their
+    # numbers are gated and whose build has never once compared them, which is the failure mode
+    # this whole repository is pointed at in other people's tooling.
+    - name: Say what this run was asked to do
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        MEASUREMENT: ${{ inputs.measurement }}
+      run: |
+        set -euo pipefail
+        if [ -n "$BASELINE" ] && [ -z "$MEASUREMENT" ]; then
+          echo "::error::A baseline was given with no measurement to judge against it, so the regression gate cannot run. Pass both, or neither."
+          exit 1
+        fi
+        if [ -z "$BASELINE" ] && [ -n "$MEASUREMENT" ]; then
+          echo "::error::A measurement was given with no baseline to judge it against, so the regression gate cannot run. Pass both, or neither."
+          exit 1
+        fi
+
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
         python-version: ${{ inputs.python-version }}
 
+    # THE INPUTS REACH BASH THROUGH `env:` AND NOT THROUGH `${{ }}` INSIDE THE SCRIPT, every one
+    # of them. A `${{ }}` expansion is pasted into the script before bash ever sees it, so a path
+    # or a version specifier containing a quote and a semicolon runs as a command on the runner,
+    # with whatever that job's token can reach. Quoting a shell variable is a thing bash can do;
+    # quoting a string that was substituted before bash started is not.
     - name: Install the checker, and nothing else
       shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        python -m pip install --quiet "senbonzakura-check${{ inputs.version }}"
+        python -m pip install --quiet "senbonzakura-check${VERSION}"
         # THE INSTALL HAS TO PROVE ITSELF BEFORE THE REPORT IS TRUSTED. The previous break was a
         # package that installed cleanly and could not run the one command this action exists to
-        # run, so "pip succeeded" is not the property worth asserting here. `--help` is used rather
-        # than `--version`, which this command does not have: it exits 0 only if the entry point
-        # resolved AND dispatched into `senbonzakura_check`, which is the half that was missing.
+        # run, so "pip succeeded" is not the property worth asserting here. `--help` is used
+        # rather than `--version`, which this command has carried since 0.4.1 and which argparse
+        # answers from the version string alone: `--help` exits 0 only if the entry point resolved
+        # AND the parser was built, which is the half that was missing. The comment here said
+        # until 2026-10-01 that `--version` did not exist, and by then it did; the choice is the
+        # same either way, and the reason for it is not.
         senbonzakura-check --help > /dev/null
+
+    # BEFORE the checker runs, so an install that cannot work is reported next to the other
+    # install rather than at the end of a job whose earlier half already looked fine.
+    - name: Install the regression gate
+      if: inputs.baseline != ''
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        python -m pip install --quiet --no-deps "senbonzakura${VERSION}"
+        # The same proof the checker's install has to give. `--help` exits 0 only if the entry
+        # point resolved and the gate's whole import closure was satisfiable, which on a
+        # dependency-free install is the only thing that can go wrong.
+        senbonzakura gate --help > /dev/null
 
     - name: Check the artefacts
       id: run
       shell: bash
+      env:
+        ARTEFACT_PATH: ${{ inputs.path }}
+        FAIL_ON_EMPTY: ${{ inputs.fail-on-empty }}
+        FAIL_ON_UNCHECKED: ${{ inputs.fail-on-unchecked }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
       run: |
         set -uo pipefail
         report="$RUNNER_TEMP/senbonzakura-check.json"
-        senbonzakura-check "${{ inputs.path }}" --json > "$report" || true
+        senbonzakura-check "$ARTEFACT_PATH" --json > "$report" || true
 
         # Run again for the log. The two formats come from different branches of the command, so
         # a tee would show the reader JSON where they want the report, and rendering the report
         # from the JSON here would be a third formatter to keep in step with the other two.
         # Reading a handful of JSON files twice costs nothing.
-        senbonzakura-check "${{ inputs.path }}" || true
+        senbonzakura-check "$ARTEFACT_PATH" || true
 
         # THE REPORT IS READ ONCE, AND AN UNREADABLE ONE STOPS THE STEP.
         #
@@ -202,18 +308,78 @@ runs:
         # the one worth failing on even when findings are advisory: it is the outcome that makes
         # the rest of the report meaningless.
         if [ "$checked" -eq 0 ]; then
-          echo "::warning::No result artefacts were found at '${{ inputs.path }}'. Nothing was checked, which is not the same as a clean result."
-          if [ "${{ inputs.fail-on-empty }}" = "true" ]; then
+          echo "::warning::No result artefacts were found at '$ARTEFACT_PATH'. Nothing was checked, which is not the same as a clean result."
+          if [ "$FAIL_ON_EMPTY" = "true" ]; then
             echo "::error::Nothing was checked and fail-on-empty is set. Check the path."
             exit 1
           fi
         fi
-        if [ "$unchecked" -gt 0 ] && [ "${{ inputs.fail-on-unchecked }}" = "true" ]; then
+        if [ "$unchecked" -gt 0 ] && [ "$FAIL_ON_UNCHECKED" = "true" ]; then
           echo "::error::$unchecked file(s) could not be read. An unreadable artefact is reported unchecked, never clean."
           exit 1
         fi
-        if [ "$findings" -gt 0 ] && [ "${{ inputs.fail-on-findings }}" = "true" ]; then
+        if [ "$findings" -gt 0 ] && [ "$FAIL_ON_FINDINGS" = "true" ]; then
           echo "::error::$findings finding(s). See the step log for each one and what would make it wrong."
           exit 1
         fi
         exit 0
+
+    # `always()` BECAUSE A FINDING IS A NORMAL OUTCOME OF THE STEP ABOVE, and a repository that
+    # gates on findings would otherwise never see its own regression verdict: the checker's exit
+    # would skip this step, and the one thing a reader would conclude from a missing gate line is
+    # that the gate passed.
+    - name: Run the regression gate
+      id: gate
+      if: always() && inputs.baseline != ''
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        MEASUREMENT: ${{ inputs.measurement }}
+      run: |
+        set -uo pipefail
+        # THE COMMAND IS CHECKED BEFORE IT IS RUN. `always()` means this step is reached even when
+        # the install step above failed, and `senbonzakura: command not found` is exit 127 from
+        # bash, which this script would otherwise have to tell apart from a verdict. It says so
+        # instead.
+        if ! command -v senbonzakura > /dev/null; then
+          echo "::error::The regression gate is not installed, so nothing was compared. The install step failed earlier in this job; its log says why. This is not a passing gate."
+          exit 1
+        fi
+
+        set +e
+        said=$(senbonzakura gate --baseline "$BASELINE" --current "$MEASUREMENT" 2>&1)
+        status=$?
+        set -e
+        printf '%s\n' "$said"
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+
+        # THE THREE STATUSES GET THREE DIFFERENT ANNOTATIONS, and the fourth case is the one
+        # worth most care. A gate whose only two outcomes are pass and fail cannot say "I could
+        # not compare these", and a build that reads a refusal as a regression teaches its reader
+        # to ignore the difference. A status this script does not recognise means the gate did not
+        # reach a verdict at all, which is neither.
+        {
+          echo "### Senbonzakura regression gate"
+          echo
+          echo '```'
+          printf '%s\n' "$said"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        case "$status" in
+          0)
+            echo "::notice::The gated property stayed inside its interval. A pass means one measured property did not move, under the conditions the baseline records. It is not a statement that the model is safe."
+            ;;
+          1)
+            echo "::error::A gated property moved outside its interval. The log above names which one, by how much, and against which baseline."
+            exit 1
+            ;;
+          2)
+            echo "::error::The gate refused to compare: these two measurements were never comparable, so NOTHING was shown about the model. This is not a regression and it is not a pass. The log above names the field that disagreed."
+            exit 1
+            ;;
+          *)
+            echo "::error::The gate exited $status, which is not one of its three verdicts, so it did not reach one. Treat this as a broken gate rather than a result."
+            exit 1
+            ;;
+        esac

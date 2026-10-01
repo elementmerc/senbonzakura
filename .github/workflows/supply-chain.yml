@@ -1,0 +1,678 @@
+# Author:  Daniel Iwugo
+# Comment: Christ is King
+name: Supply chain
+
+# Two deterministic, blocking gates, from items 1 and 2 of the supply-chain plan.
+#
+# Both are here rather than in ci.yml for one reason: ci.yml is 1,287 lines and these two have
+# nothing to do with the suite. They run in parallel with it and add nothing to the critical path.
+#
+# THE RULE BOTH JOBS FOLLOW, and it is the reason each one asserts a count rather than an exit
+# status. A check has THREE outcomes, never two: PASS, FAIL, and DID NOT RUN. The third is as loud
+# as the second and names the tool. This repository has already been bitten by the two-outcome
+# version twice: a single unresolvable pin made pip-audit report NOT SCANNED for a whole file,
+# so a real advisory and a scanner that never ran looked identical; and `senbonzakura check`
+# could report a clean pass over a directory it had read nothing from. A gate whose exit status
+# cannot express "did not run" is decoration.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  # A new advisory against an unchanged pin makes us vulnerable without any commit, and nothing
+  # noticed until somebody pushed. This is the trigger that closes that, and the scheduled run
+  # REPORTS rather than blocks: an advisory published overnight should not turn a green main red
+  # at 03:00 with nobody to act, repeatedly, until red is the normal colour.
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Item 1. actionlint over every workflow file.
+  #
+  # What it would have caught, and it is in this repository's history at ci.yml:18-23: a workflow
+  # with an `env:` key and nothing under it is not an empty mapping, it is null, and GitHub
+  # rejects the whole file. The run completes as a failure with ZERO jobs, which looks nothing
+  # like a normal red build. PyYAML parses it happily, so the local `yaml.safe_load` we reached
+  # for accepted it. actionlint validates against GitHub's schema rather than against YAML's.
+  #
+  # The binary is fetched and checked against a recorded sha256 rather than used as an action,
+  # deliberately: adding a third-party action to the job whose purpose is auditing third-party
+  # actions is a circularity worth avoiding.
+  # ---------------------------------------------------------------------------------------------
+  actionlint:
+    name: Workflows lint clean
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      # Pinned by sha256 of the release asset, which is the binary equivalent of pinning an
+      # action by commit (baseline §5). The tag is a label and can be moved; these bytes cannot.
+      # v1.7.12 is tag object commit 914e7df21a07ef503a81201c76d2b11c789d3fca.
+      - name: Fetch actionlint at a pinned digest
+        id: fetch
+        env:
+          AL_VERSION: 1.7.12
+          AL_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -uo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${AL_VERSION}/actionlint_${AL_VERSION}_linux_amd64.tar.gz"
+          ok=0
+          for attempt in 1 2 3; do
+            if curl -fsSL --retry 2 --max-time 60 -o actionlint.tar.gz "$url"; then ok=1; break; fi
+            echo "attempt ${attempt} could not fetch ${url}"
+            sleep 5
+          done
+          if [ "$ok" != 1 ]; then
+            # DID NOT RUN, and it is deliberately not red. An unreachable github.com is a network
+            # condition, not a finding, and a gate that goes red on the network teaches people to
+            # re-run until it is green, which is how a red build stops meaning anything. It is
+            # loud instead: a warning annotation and a line in the run summary.
+            echo "::warning::DID NOT RUN: actionlint could not be fetched after 3 attempts, so the workflows were NOT linted. This is a network result, not a pass."
+            {
+              echo "### Supply chain: actionlint DID NOT RUN"
+              echo "Could not fetch \`actionlint ${AL_VERSION}\` after 3 attempts."
+              echo "**The workflows in this run were not linted.** Re-run once the network recovers."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ran=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A digest mismatch is NOT a network condition and is NOT yellow. These bytes came from
+          # somewhere, and somewhere is not where we pinned.
+          echo "${AL_SHA256}  actionlint.tar.gz" > actionlint.sha256
+          if ! sha256sum -c actionlint.sha256; then
+            echo "::error::the actionlint tarball does not match its recorded sha256. Expected ${AL_SHA256}, got $(sha256sum actionlint.tar.gz | cut -d' ' -f1). Do not re-run this hoping it passes: either the pin is stale and this commit must update it, or the bytes were replaced."
+            exit 1
+          fi
+          tar xzf actionlint.tar.gz actionlint
+          chmod +x actionlint
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+
+      - name: Lint every workflow
+        if: steps.fetch.outputs.ran == 'true'
+        run: |
+          set -uo pipefail
+
+          # The shellcheck binary is preinstalled on ubuntu-latest and actionlint shells out to
+          # it for the `run:` blocks. If it ever stops being present the shell checks silently
+          # stop running, so its absence is a loud DID NOT RUN rather than a quieter lint.
+          # (This comment deliberately does not begin with the tool's name: a comment whose
+          # first word is that name is parsed as a shellcheck DIRECTIVE, and this gate caught
+          # exactly that in its own first draft.)
+          if ! command -v shellcheck >/dev/null; then
+            echo "::error::shellcheck is not on PATH, so actionlint would skip every run-block check and still exit 0. That is a gate that checked less than it claims."
+            exit 1
+          fi
+          shellcheck --version | head -2
+
+          # The files are passed explicitly and COUNTED. actionlint with no arguments discovers
+          # .github/workflows itself and exits 0 when it finds nothing, so a rename or a moved
+          # directory would turn this gate green by emptying it. Counting is the whole defence,
+          # and it is the same assertion the lockfile job makes with -eq 12.
+          mapfile -t files < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+          echo "workflow files found: ${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          if [ "${#files[@]}" -lt 4 ]; then
+            echo "::error::found ${#files[@]} workflow files and expected at least 4 (ci, distribute, docs, publish, and this one). A lint over fewer files than the repository has is not a lint. If a workflow was deliberately removed, lower this floor in the same commit."
+            exit 1
+          fi
+
+          set +e
+          ./actionlint -no-color -oneline "${files[@]}"
+          status=$?
+          set -e
+
+          # Three outcomes, by exit status, because this is the mistake I made while measuring
+          # this job: a wrong flag made actionlint exit 2 printing usage, and a naive grep for
+          # findings read that as zero findings and therefore as clean. Exit 2 is the tool
+          # failing, which is DID NOT RUN, and it must never be mistaken for PASS.
+          case "$status" in
+            0)
+              echo "PASS: ${#files[@]} workflow files, no findings."
+              echo "### Supply chain: actionlint PASS (${#files[@]} files, 0 findings)" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            1)
+              echo "::error::actionlint reported findings in the workflows above. Fix them, or ignore one individually in .github/actionlint.yaml with a written reason, in this same commit."
+              exit 1
+              ;;
+            *)
+              echo "::error::DID NOT RUN: actionlint exited ${status}, which means the tool itself failed rather than that the workflows are clean. An exit status other than 0 or 1 is never a pass."
+              exit 1
+              ;;
+          esac
+
+      # Offline, and blocking. The version beside each pinned SHA used to be prose nobody read,
+      # and an audit on 2026-10-01 found one comment a full major version wrong. This asserts
+      # every comment agrees with .github/action-pins.lock, which a machine resolved against the
+      # GitHub API. No network, no credentials: the record is checked in and reviewed in a diff.
+      - name: Action pin comments match the resolved record
+        run: |
+          set -uo pipefail
+          # `set +e` around the call, because GitHub runs this block under `bash -e`: without it
+          # a non-zero exit kills the step before the case statement below can say WHICH of the
+          # two non-zero meanings it was, and "exit 1, no explanation" is the shape this job
+          # exists to stop producing.
+          set +e
+          python3 tools/ci/resolve_action_pins.py --check
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "### Supply chain: action pin comments agree with the lockfile" >> "$GITHUB_STEP_SUMMARY" ;;
+            1)
+              echo "::error::A pinned action's trailing comment disagrees with .github/action-pins.lock. Correct the comment, or change the pin and re-resolve with 'python3 tools/ci/resolve_action_pins.py --resolve'."
+              exit 1
+              ;;
+            *)
+              echo "::error::DID NOT RUN: the pin check exited ${status}, so it did not reach a verdict. A missing or unparseable lockfile is this status, and it is not a pass."
+              exit 1
+              ;;
+          esac
+
+  # ---------------------------------------------------------------------------------------------
+  # Item 2. Make the hashes in requirements.lock load-bearing.
+  #
+  # The file carries 207 sha256 hashes across twelve `==` pins and NOTHING INSTALLED IT. The only
+  # three consumers were REPRODUCING.md as prose, a test asserting it names the same versions as
+  # constraints.txt, and a research note describing it. So the hashes were a record nothing ever
+  # checked, which is the same shape as an attestation nobody verifies: a file.
+  #
+  # No incident in this repository's history is a swapped artefact behind an unchanged version
+  # number, and this job is not justified by pretending otherwise. It is justified by a near-miss
+  # one layer out: the PyPI `gguf` package and llama.cpp's `gguf-py` both declared version 0.19.0
+  # with different contents, and every surface reported success. A version number is not an
+  # identity, and this repository has a scar proving it.
+  # ---------------------------------------------------------------------------------------------
+  lockfile:
+    name: Lockfile hashes verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0, as pinned in ci.yml
+        with:
+          # 3.14 because the lock was compiled with --python-version 3.14. A different
+          # interpreter resolves different wheel variants, and a variant whose hash is not in
+          # the recorded set fails in a way that reads like tampering and is not.
+          python-version: "3.14"
+
+      # An unreachable index is "could not check", not "checked and failed", and collapsing those
+      # two is how a check becomes decoration. Probing first means every failure AFTER this point
+      # is a real one, so the job never has to guess at the meaning of a pip error message.
+      - name: Is the index reachable
+        id: probe
+        run: |
+          set -uo pipefail
+          if curl -fsS --retry 2 --max-time 30 -o /dev/null https://pypi.org/simple/; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DID NOT RUN: pypi.org is unreachable from this runner, so the lockfile hashes were NOT verified. This is a network result, not a pass."
+            {
+              echo "### Supply chain: lockfile verification DID NOT RUN"
+              echo "\`pypi.org/simple/\` was unreachable, so none of the 207 recorded hashes were checked in this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Download every pin and verify its bytes
+        if: steps.probe.outputs.reachable == 'true'
+        run: |
+          set -euo pipefail
+
+          # TWO independent statements of the expected count, and the redundancy is the point.
+          # Deriving the number from the lockfile alone would let a truncated lockfile derive a
+          # smaller number and pass; hardcoding it alone would go stale silently when a pin is
+          # added. Together, a truncation on either side is caught.
+          expected=12
+          declared="$(grep -cE '^[a-zA-Z][a-zA-Z0-9._-]*==' requirements.lock)"
+          if [ "$declared" -ne "$expected" ]; then
+            echo "::error::requirements.lock declares ${declared} pinned packages and this job expects ${expected}. If a pin was added or removed deliberately, update the expected count in this workflow in the same commit. If it was not, the lockfile is truncated."
+            exit 1
+          fi
+
+          # --no-deps IS NOT OPTIONAL. The lock was compiled with
+          #   uv pip compile --generate-hashes --no-deps --python-version 3.14 constraints.txt
+          # so it holds ONLY the twelve direct pins. Without --no-deps, --require-hashes mode
+          # demands a hash for every transitive dependency too, and the lock has none, so pip
+          # fails naming something like `packaging>=20.0` or `click<9.0.0,>=8.4.2`. Measured
+          # 2026-10-01, both directions. That failure has nothing to do with tampering, and a
+          # draft of this job had exactly that bug.
+          #
+          # `download` rather than `install` because an install with --no-deps produces an
+          # environment missing every transitive dependency, which cannot run anything and would
+          # invite somebody to "fix" this job by dropping the flag. The job verifies bytes; it
+          # does not build a usable environment, and downloading says so.
+          mkdir -p lockcheck
+          python -m pip download --require-hashes --no-deps -r requirements.lock -d lockcheck
+
+          # THE COUNT ASSERTION IS THE POINT, and it is measured rather than assumed. Verified
+          # 2026-10-01: `pip download --require-hashes --no-deps` over a lockfile with zero pins
+          # EXITS 0 having verified nothing. So a download that verified nothing and a download
+          # that verified twelve packages both exit 0, and without this line an emptied or
+          # truncated lock passes. Same class as the exit-code defect the mutation harness
+          # carried.
+          found="$(find lockcheck -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l)"
+          echo "verified ${found} distributions against the hashes in requirements.lock:"
+          find lockcheck -type f \( -name '*.whl' -o -name '*.tar.gz' \) -printf '  %f\n' | sort
+          if [ "$found" -ne "$expected" ]; then
+            echo "::error::pip exited 0 but ${found} distributions landed, not ${expected}. A download that verified nothing exits 0 exactly like one that verified everything, which is why this line exists."
+            exit 1
+          fi
+
+          echo "PASS: ${found}/${expected} pins, bytes match the recorded hashes."
+          {
+            echo "### Supply chain: lockfile hashes PASS"
+            echo "${found} of ${expected} pinned distributions downloaded and verified against \`requirements.lock\` (207 recorded hashes, one set per wheel variant)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A hash mismatch reads like tampering and is almost always something duller, so the job
+      # says which to check first rather than leaving a reader to panic. Measured: the lock holds
+      # 17 hashes for safetensors alone, one per wheel variant, so it already verifies across
+      # platforms; add a platform or interpreter row whose wheel variant is not among them and
+      # pip prints "THESE PACKAGES DO NOT MATCH THE HASHES" for a reason that is not an attack.
+      - name: What a failure above most likely means
+        if: failure()
+        run: |
+          {
+            echo "### If the step above failed with a hash mismatch, read this first"
+            echo ""
+            echo "In descending order of likelihood:"
+            echo ""
+            echo "1. **A pin moved in \`constraints.txt\` and \`requirements.lock\` was not regenerated.** By far the commonest. Regenerate with the command in the lockfile's own header."
+            echo "2. **A new platform or interpreter row whose wheel variant is not in the recorded hash set.** Add the row, regenerate the lock."
+            echo "3. **A genuine bytes-level difference for a pinned version**, which means a compromised index, a hostile mirror or a corrupted cache. This is what the hashes are for. Do not regenerate the lock to make it pass; find out why first."
+            echo ""
+            echo "When checking a hash by hand, take the WHOLE block for a package. A \`grep -A6\` slice captured 6 of safetensors' 17 hashes during this job's design and produced a mismatch that looked like a bad hash in our own lockfile. The sha pip computed was in the lock all along, eleven lines below where the slice stopped."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------------------------
+  # Item 5. Secret scanning over HISTORY, and the word history is the whole point.
+  #
+  # WHAT THIS IS THE INSTRUMENT FOR. A 2026-09-25 handoff recorded "nothing leaked, verified on
+  # all three machines". It was wrong, and the way it was wrong is this job's entire specification:
+  # it checked the WORKING TREE, where the files were absent, rather than the HISTORY, where they
+  # remained. Five hook files were live on public GitHub, confirmed on 2026-09-26 by fetching one
+  # from the GitHub API. No secrets and no infrastructure identifiers in any of them, so there was
+  # nothing to rotate, but the claim had been checked against the wrong thing.
+  #
+  # So a scanner pointed at the filesystem would reproduce the exact defect it is here to catch.
+  # Established by experiment on 2026-10-01 rather than read off a README, in a throwaway repo
+  # holding a secret that was committed and then deleted:
+  #
+  #     gitleaks dir .   ->  scanned the tree, "no leaks found", exit 0   <- the 2026-09-25 mistake
+  #     gitleaks git .   ->  scanned history,  "leaks found: 1", exit 1   <- what we need
+  #
+  # REPORTING ONLY, DELIBERATELY, and the plan's reason for that has since been measured away.
+  # The plan said run it reporting for one release cycle to collect the false-positive set, then
+  # make it blocking, because this repository deliberately contains token-shaped strings: fixtures
+  # for the redaction path, example keys in documentation, the corpora. Measured over all 854
+  # commits: 842 commits with additions, 9.25 MB, 13 seconds, **ZERO findings**. So there is no
+  # false-positive set to collect and nothing to put in a .gitleaksignore. That is an argument for
+  # making this blocking sooner than the plan said, and it is the operator's call rather than
+  # one to take quietly in a workflow file, so this stays reporting until they rule.
+  # ---------------------------------------------------------------------------------------------
+  secrets:
+    name: No secrets in history (reporting only)
+    runs-on: ubuntu-latest
+    steps:
+      # FULL history, not a shallow clone and not the push range. `fetch-depth: 0` is
+      # load-bearing: the default shallow checkout would hand gitleaks one commit, and a scan of
+      # one commit reporting "no leaks found" is the same sentence as a scan of all of them.
+      #
+      # The push range was the plan's suggestion and it answers a narrower question. A range scan
+      # catches a secret being introduced; it cannot answer "is there anything in our history",
+      # which is the question the 2026-09-25 claim got wrong. At 13 seconds for the whole history
+      # there is no reason to scan less, so this scans everything every time.
+      - name: Check out, with all of history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+        with:
+          fetch-depth: 0
+
+      - name: Fetch gitleaks at a pinned digest
+        id: fetch
+        env:
+          GL_VERSION: 8.30.1
+          GL_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -uo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          ok=0
+          for attempt in 1 2 3; do
+            if curl -fsSL --retry 2 --max-time 90 -o gitleaks.tar.gz "$url"; then ok=1; break; fi
+            echo "attempt ${attempt} could not fetch ${url}"
+            sleep 5
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::warning::DID NOT RUN: gitleaks could not be fetched after 3 attempts, so history was NOT scanned. This is a network result, not a pass."
+            {
+              echo "### Supply chain: secret scan DID NOT RUN"
+              echo "Could not fetch \`gitleaks ${GL_VERSION}\`. **History was not scanned in this run.**"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ran=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "${GL_SHA256}  gitleaks.tar.gz" > gitleaks.sha256
+          if ! sha256sum -c gitleaks.sha256; then
+            echo "::error::the gitleaks tarball does not match its recorded sha256. Either the pin is stale and this commit must update it, or the bytes were replaced. Do not re-run hoping it passes."
+            exit 1
+          fi
+          tar xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+
+      - name: Scan every commit
+        if: steps.fetch.outputs.ran == 'true'
+        run: |
+          set -uo pipefail
+
+          # The commit count is asserted for the same reason every other gate here asserts a
+          # count: a scan that examined one commit and a scan that examined all of them print the
+          # same sentence when both are clean. Verified 2026-10-01 against a positive control, a
+          # scratch clone with two secrets planted in history and then deleted from the tree:
+          # this command found both and exited 1, so a clean result from it means "looked and
+          # found nothing" rather than "did not look".
+          #
+          # NOTE ON THE NUMBER gitleaks PRINTS: it counts commits carrying ADDED lines, not all
+          # commits, because a deletion introduces no new content to match. On this repository
+          # that was 842 of 854. So the floor is deliberately well below the commit count rather
+          # than equal to it, and it exists to catch a shallow clone (which would scan 1), not to
+          # track the history's exact length.
+          total="$(git rev-list --count HEAD)"
+          echo "commits in this checkout: ${total}"
+          if [ "$total" -lt 100 ]; then
+            echo "::error::this checkout holds ${total} commits, which is far short of this repository's history. fetch-depth is wrong, and a scan of a shallow clone reporting no leaks is the exact defect this job exists to catch."
+            exit 1
+          fi
+
+          # --redact so a finding does not print the secret into a public log, which would turn
+          # the gate into a second disclosure.
+          set +e
+          ./gitleaks git . --no-banner --redact --report-format json --report-path gitleaks.json
+          status=$?
+          set -e
+
+          case "$status" in
+            0)
+              echo "PASS: no secrets found across ${total} commits of history."
+              echo "### Supply chain: secret scan PASS (${total} commits, 0 findings)" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            1)
+              # REPORTING ONLY: a finding is a warning, not a failure, until the operator rules
+              # on making this blocking. The finding count goes in the summary so a reporting run
+              # cannot be mistaken for a clean one by somebody glancing at a green tick.
+              n="$(python3 -c "import json;print(len(json.load(open('gitleaks.json'))))" 2>/dev/null || echo "an unknown number of")"
+              echo "::warning::${n} secret finding(s) in history. REPORTING ONLY: this job does not fail yet. Read the report before pushing anything else."
+              {
+                echo "### Supply chain: secret scan FOUND ${n} finding(s)"
+                echo "This job is reporting-only, so the run is green. **That is not a pass.**"
+                echo "Each finding is either a real secret, which needs rotating and a history"
+                echo "rewrite, or a fixture, which needs a \`.gitleaksignore\` entry carrying a"
+                echo "written reason and an expiry test. See DEFERRED.md for the policy."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::DID NOT RUN: gitleaks exited ${status}, which means the tool failed rather than that the history is clean. An exit status other than 0 or 1 is never a pass."
+              exit 1
+              ;;
+          esac
+
+      - name: Keep the report
+        if: steps.fetch.outputs.ran == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1, as pinned in ci.yml
+        with:
+          name: gitleaks-report
+          path: gitleaks.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------------------------
+  # Item 3, the scheduled half. The three BLOCKING audits live beside the environments they audit,
+  # in ci.yml's `pinned`, `dependency-floor` and `test` jobs, because those jobs already build
+  # those environments and rebuilding any of them from its constraints file does not work. See the
+  # module docstring of tools/ci/audit_env.py for the three measured reasons.
+  #
+  # This job is the other half of the asymmetry: it re-audits on a schedule so a new advisory
+  # against an unchanged pin is noticed without a commit, and it REPORTS rather than blocks. The
+  # push path is where blocking belongs; 03:00 is not.
+  #
+  # It audits the measured environment, `requirements.lock`, which is the one set of pins no
+  # ci.yml job installs. Item 2 above verifies those bytes are what we recorded; this asks the
+  # different question of whether what we recorded has since been found vulnerable.
+  # ---------------------------------------------------------------------------------------------
+  scheduled-audit:
+    name: Dependency advisories (reporting only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0, as pinned in ci.yml
+        with:
+          python-version: "3.14"
+
+      - name: Install the measured environment
+        run: |
+          pip install pip-audit==2.10.1
+          pip install --no-deps -r requirements.lock
+
+      # --report means findings are a warning annotation rather than a failure. The coverage
+      # floor still FAILS, because "the audit covered almost nothing" is not a finding about our
+      # dependencies, it is the check not working, and that is worth waking up to.
+      - name: Audit the measured environment
+        run: |
+          python tools/ci/audit_env.py \
+            --label "measured (requirements.lock, python 3.14)" \
+            --min-packages 12 \
+            --report
+
+  # ---------------------------------------------------------------------------------------------
+  # Item 7. Notice when a tag we pinned under moves.
+  #
+  # The pins themselves are safe by construction: a SHA names content nobody can change. What a
+  # SHA cannot tell us is that upstream has repointed the tag we recorded, which is the visible
+  # footprint of a compromised release, and the event the pinning rule exists to survive. The
+  # offline check in the `actionlint` job proves our comments match our record. Only this job can
+  # say whether our record still matches the world.
+  #
+  # It REPORTS and does not rewrite. A job that quietly re-resolved the lockfile would erase the
+  # evidence of exactly the event it is watching for and call it success.
+  # ---------------------------------------------------------------------------------------------
+  pin-drift:
+    name: Action pins still resolve as recorded (reporting only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - name: Re-resolve every pin and compare with the record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          # Probe first, so every failure below is a real finding rather than an outage. This is
+          # the same ordering the other jobs in this file use, and the reason is the same: a
+          # check that cannot tell "the world changed" from "I could not look" reports the wrong
+          # one at the worst moment.
+          if ! gh api rate_limit >/dev/null 2>&1; then
+            echo "::warning::DID NOT RUN: the GitHub API did not answer, so no pin was re-resolved. This is not a pass and it is not a finding."
+            echo "### Supply chain: pin drift DID NOT RUN (API unreachable)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Same reason as the offline check: `bash -e` would abort here and the warning below,
+          # which is the whole point of a reporting-only job, would never be emitted.
+          set +e
+          python3 tools/ci/resolve_action_pins.py --resolve --stdout > resolved.json
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::DID NOT RUN: the resolver exited ${status} without producing a complete record, so nothing was compared."
+            exit 0
+          fi
+
+          # Compare the resolved SHA-to-tag mapping, not the whole file: `resolved_at` differs on
+          # every run by design, and a diff that is always non-empty is a diff nobody reads.
+          python3 - <<'PY'
+          import json, sys, pathlib
+
+          def mapping(doc):
+              return {
+                  (p["action"], p["sha"]): (p["exists"], sorted(p["tags_pointing_here"]))
+                  for p in doc["pins"]
+              }
+
+          recorded = mapping(json.loads(pathlib.Path(".github/action-pins.lock").read_text()))
+          fresh = mapping(json.loads(pathlib.Path("resolved.json").read_text()))
+
+          if not fresh:
+              print("::warning::DID NOT RUN: the fresh resolution contains no pins at all.")
+              sys.exit(0)
+
+          drift = []
+          for key in sorted(set(recorded) | set(fresh)):
+              was, now = recorded.get(key), fresh.get(key)
+              if was != now:
+                  drift.append(f"{key[0]}@{key[1][:12]}: recorded {was}, now {now}")
+
+          print(f"compared {len(fresh)} pins against {len(recorded)} recorded")
+          if drift:
+              for line in drift:
+                  print(f"::warning::pin drift: {line}")
+              summary = "\n".join(f"- {line}" for line in drift)
+              pathlib.Path("drift.md").write_text(
+                  f"### Supply chain: {len(drift)} action pin(s) no longer resolve as recorded\n\n"
+                  f"{summary}\n\nA tag moving is not automatically an attack: upstream retags for "
+                  f"ordinary reasons. Read what moved, then re-resolve deliberately with "
+                  f"`python3 tools/ci/resolve_action_pins.py --resolve`.\n"
+              )
+          else:
+              pathlib.Path("drift.md").write_text(
+                  f"### Supply chain: all {len(fresh)} action pins still resolve as recorded\n"
+              )
+          PY
+          cat drift.md >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------------------------
+  # Q-51 option B. The sampled, budgeted mutation report, with a ratchet that cannot fire for
+  # sampling reasons.
+  #
+  # WHY THIS SITS ON THE WEEKLY CRON RATHER THAN A NIGHTLY ONE OF ITS OWN, which is a deliberate
+  # departure from the plan's "say 90 minutes nightly", argued from the measurement:
+  #
+  # The cost turned out to be about a hundred times lower than the plan assumed, because mutmut 3
+  # forks a child per mutant from a parent that has already imported the suite and runs only the
+  # covering tests, fastest first, with -x. Measured on `say.py`: 0.046 s per mutant, 21.5 per
+  # second. The whole addressable surface is 43,903 mutants, so the backlog clears in a handful
+  # of runs rather than a year.
+  #
+  # That is the argument AGAINST nightly, not for it. Once the backlog is swept there is no
+  # backlog, only drift, and drift arrives when code changes, which is not nightly here. Worse,
+  # the first sweep will produce thousands of survivors (20% of `say.py`'s 153 survived), and
+  # nobody reads thousands of findings a night. Weekly matches the rate at which a survivor
+  # actually gets acted on, and the ledger makes each one a single discovery rather than a line
+  # that reappears every morning until it is noise.
+  #
+  # To make it nightly, give it its own `schedule:` entry. One line, and the budget already holds.
+  #
+  # IT REPORTS, except for one thing. Survivors never fail the job: they are discoveries, and the
+  # first weeks will be full of them. The one failing condition is the ratchet, which only fires
+  # when a mutant that was KILLED comes back SURVIVED with its function unchanged. That compares
+  # named mutants against identical code, so it has no sampling error, and the only thing that
+  # produces it is a test that stopped noticing.
+  # ---------------------------------------------------------------------------------------------
+  mutation-sample:
+    name: Mutation sample and ratchet (reporting, except the ratchet)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0, as pinned in ci.yml
+        with:
+          python-version: "3.14"
+
+      # `private/` is excluded from this repository's remotes, so a CI clone has no ledger and it
+      # has to be carried between runs here. A cache can be evicted, and the tool treats a ledger
+      # with nothing to compare as NOT EVALUATED rather than as a pass, precisely so an eviction
+      # cannot read as a clean week for ever.
+      - name: Restore the mutation ledger
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: private/reviews/mutation-ledger.json
+          key: mutation-ledger-${{ github.run_id }}
+          restore-keys: |
+            mutation-ledger-
+
+      - name: Install the suite and the engine
+        run: |
+          set -uo pipefail
+          # mutmut 3.7.0, BSD-3-Clause, uploaded 2026-07-31 and so 62 days clear of the 7-day
+          # cooldown on 2026-10-01. It is a development dependency and is never distributed, so
+          # its licence does not reach what this project ships.
+          pip install mutmut==3.7.0
+          pip install -e ".[dev,abliterate]"
+
+      - name: Sample, run and ratchet
+        id: mutate
+        env:
+          # The budget the plan named. It is enforced here rather than hoped for: the tool sizes
+          # the sample from this number and the rate it measured last time, and `timeout-minutes`
+          # above is the backstop if the tool itself wedges.
+          BUDGET: "5400"
+        run: |
+          set -uo pipefail
+          set +e
+          python tools/ci/mutation_sample.py \
+            --budget-seconds "$BUDGET" \
+            --since "$(git rev-parse HEAD~20 2>/dev/null || git rev-parse HEAD)" \
+            --max-sample 4000 \
+            | tee mutation-report.txt
+          status=${PIPESTATUS[0]}
+          set -e
+
+          {
+            echo "### Supply chain: mutation sample"
+            echo
+            echo '```'
+            # The header carries the sample-not-a-score wording, and it goes into the summary
+            # rather than a footnote because this is the text somebody will copy.
+            sed -n '1,30p' mutation-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          case "$status" in
+            0) echo "PASS: the ratchet held, or this was a first run." ;;
+            1)
+              echo "::error::The mutation ratchet FAILED: a mutant that was killed now survives with its function unchanged. A test got weaker. See the report above."
+              exit 1
+              ;;
+            *)
+              echo "::warning::DID NOT RUN: the mutation sample exited ${status} without reaching a verdict, so nothing was measured. This is not a pass and it is not a finding."
+              exit 0
+              ;;
+          esac
+
+      - name: Keep the report and the ledger
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1, as pinned in ci.yml
+        with:
+          name: mutation-sample
+          path: |
+            mutation-report.txt
+            private/reviews/mutation-ledger.json
+          if-no-files-found: warn
+          retention-days: 90

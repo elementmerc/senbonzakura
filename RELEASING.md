@@ -324,6 +324,57 @@ and `testpypi`.
 7. Annotated tag with the `Codename:` line.
 8. Push, then a GitHub Release with the CHANGELOG entry as its body and the built artefacts
    attached. Publishing it runs the upload workflow; approve the `pypi` environment.
+9. **Verify the provenance by hand, before telling anyone the release exists.** The two commands
+   are in the next section. This is a person's step on purpose, and the reason is in there.
+
+---
+
+## Verify the provenance, by hand, every release
+
+Two artefacts carry build provenance and **both have a verifier that is not us**. This section is
+the half of that control a workflow cannot do for itself.
+
+**Why a human runs it.** The container job verifies the attestation it just made, which catches
+the likely failure, the attest step silently not running. It cannot catch the interesting one: a
+compromised workflow attests its own output and then verifies it, and both steps pass. That circle
+is only broken by somebody outside the workflow asking the registry the same question. It takes
+under a minute and it is the moment it matters, so it is step 9 rather than a suggestion.
+
+**1. The container image on GHCR.**
+
+```sh
+VERSION=0.4.2   # the version just released
+gh attestation verify \
+  "oci://ghcr.io/elementmerc/senbonzakura:v${VERSION}" \
+  --repo elementmerc/senbonzakura
+```
+
+Expect `Loaded digest ... ` then a line confirming the predicate type and the signer identity. It
+must name `.github/workflows/distribute.yml` and the commit the tag points at. **A failure here
+after a green release run means the image in the registry is not the image the workflow built**,
+which is the one case worth stopping everything for.
+
+**2. The two distributions on PyPI.** These are PEP 740 attestations and they already exist: both
+distributions at 0.4.0 carried a provenance document naming GitHub, this repository,
+`publish.yml` and the `pypi` environment, with a Rekor inclusion proof. Nothing in this repository
+produces them; PyPI mints them as a side effect of Trusted Publishing.
+
+```sh
+# The INTEGRITY API. Read this endpoint and not the other one.
+curl -s "https://pypi.org/integrity/senbonzakura/${VERSION}/senbonzakura-${VERSION}-py3-none-any.whl/provenance" \
+  | python3 -m json.tool | head -40
+```
+
+**Read the Integrity endpoint, never the legacy JSON API's `provenance` field.** That field is
+`null` whether or not attestations exist, and reading it cost this project a wrong conclusion
+once: the provenance was recorded as missing when a full document with a Rekor proof was sitting
+behind the endpoint above. A null from an endpoint that does not carry the answer is not evidence
+of absence, and that is the general lesson rather than a quirk of PyPI.
+
+**What is NOT attested, so nobody assumes it is.** The brew and scoop manifests point at the
+GitHub Release tarball and carry a sha256 each, checked by those package managers on install;
+they are not SLSA attestations and this section does not claim they are. The wheels attached to
+the GitHub Release are covered by the PyPI attestations above once uploaded, and not before.
 
 ---
 

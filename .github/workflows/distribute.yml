@@ -84,15 +84,21 @@ jobs:
     name: container to ghcr
     needs: lane
     runs-on: ubuntu-latest
+    # Scoped to this job alone, which is why the workflow-level block stays read-only.
+    # `attestations: write` and `id-token: write` are what the build-provenance step needs: the
+    # first to record the attestation against the repository, the second to get the OIDC token
+    # that signs it. Neither is granted to any other job here.
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # tip of the v3 series, resolved 2026-09-23
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # tip of the v3 series, resolved 2026-09-23
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -136,7 +142,7 @@ jobs:
           python -m pip install --quiet --upgrade pyarrow
           python tools/packaging/build_corpora.py
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         # BUILT AND LOADED, NOT PUSHED. The smoke test below used to run after the push, and its
         # own failure message said so out loud: "the image was pushed and cannot run doctor".
         # A test that can only report what the public already has is not a gate, and on the first
@@ -212,14 +218,88 @@ jobs:
             [ "$found" -gt 0 ] || { echo "no platform directory under $bin"; exit 1; }
           ' || { echo "::error::the image ships vendored binaries without their MIT notice"; exit 1; }
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # tip of the v6 series, resolved 2026-09-23
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         # The same layers, now that something has actually run them.
+        id: push
         with:
           context: .
           file: Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
+
+      # BUILD PROVENANCE, AND THE REASON IT IS WORTH ADDING RATHER THAN A CHECKBOX.
+      #
+      # The v0.4.0 build printed `fatal: not a git repository` and stamped a wheel with a commit
+      # it had failed to compute, and nothing noticed. An attestation would not have prevented
+      # that, and saying otherwise would be overclaiming: what it gives is a signed claim of the
+      # commit and workflow an artefact was built from, so the stamp inside the artefact and the
+      # provenance outside it can be COMPARED. A discrepancy becomes detectable rather than
+      # invisible.
+      #
+      # Checked before building any of this, on 2026-10-01, because the PyPI side taught the
+      # lesson the hard way: PEP 740 attestations for both distributions already existed and
+      # nobody knew, because the legacy JSON API's `provenance` field is null while the Integrity
+      # API holds the full document with a Rekor proof. So: does GHCR already carry attestations?
+      # **No, and the reason is mechanistic rather than read off a 404.** PyPI's exist because the
+      # INDEX mints them as a side effect of Trusted Publishing; GHCR has no automatic producer,
+      # only this step, and `git log --all -S` over the whole history returns ZERO commits
+      # containing `attest-build-provenance`, `attestations: write`, or even the string
+      # `attestations:` anywhere under `.github/`. Nothing could have produced one.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2, released 2026-08-06, 55 days clear of the 7-day cooldown
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      # THE NAMED VERIFIER, HALF ONE OF TWO. An attestation nobody verifies is a file, exactly
+      # like the 207 hashes in requirements.lock that nothing read until today. This half catches
+      # the much more likely failure, which is the attest step silently not running.
+      #
+      # It is CIRCULAR and that is stated rather than hidden: a compromised workflow could attest
+      # and verify its own output. The second half, a command in RELEASING.md that the operator
+      # runs by hand before promoting, is what breaks the circle at the moment it matters.
+      - name: Verify the attestation we just made
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          # A digest the push step did not set would make the verify below pass vacuously by
+          # verifying nothing, which is this repository's recurring defect: a check that examined
+          # nothing reading as a check that passed.
+          if [ -z "${DIGEST:-}" ]; then
+            echo "::error::the push step reported no image digest, so there is nothing to verify and the attestation above cannot be confirmed to exist."
+            exit 1
+          fi
+          echo "verifying ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"
+
+          gh attestation verify \
+            "oci://ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --format json > attestation.json
+
+          # `gh attestation verify` exits non-zero on a failed verification, so reaching here
+          # means it passed. The assertion below is about something else: that what it verified
+          # names THIS workflow and THIS commit, rather than merely being a valid signature over
+          # something. A valid attestation for the wrong build is the interesting attack, and it
+          # is the one a bare exit status cannot distinguish.
+          python3 - <<'PY'
+          import json, os, sys
+          doc = json.load(open("attestation.json"))
+          results = doc if isinstance(doc, list) else [doc]
+          if not results:
+              sys.exit("::error::gh attestation verify returned an empty result set, so it "
+                       "confirmed nothing. An empty pass is not a pass.")
+          sha = os.environ["GITHUB_SHA"]
+          found = json.dumps(results)
+          if sha not in found:
+              sys.exit(f"::error::the verified attestation does not name the commit this run "
+                       f"built ({sha}). A valid signature over a different build is exactly the "
+                       f"case a bare exit status cannot tell from a correct one.")
+          print(f"PASS: {len(results)} attestation(s), naming commit {sha}")
+          PY
 
   wheels:
     name: wheels for the fast lane

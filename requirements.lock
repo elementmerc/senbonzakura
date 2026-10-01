@@ -15,12 +15,34 @@
 # after the fact, which is the half that defends against a compromised release rather than a
 # careless one.
 #
-#     pip install -r requirements.lock      # exactly these bytes, nothing else
-#     pip install . -c constraints.txt      # the project, held to these versions
+#     pip install --no-deps -r requirements.lock   # exactly these bytes, nothing else
+#     pip install . -c constraints.txt             # the project, held to these versions
+#
+# `--no-deps` IS NOT OPTIONAL ON THE FIRST LINE, and this file used to document it without.
+# Measured 2026-10-01: the version without the flag fails with
+#
+#     ERROR: In --require-hashes mode, all requirements must have their versions pinned with ==.
+#     These do not:
+#         packaging>=20.0 from https://files.pythonhosted.org/.../packaging-26.3-py3-none-any.whl
+#
+# because hashes anywhere in the file put pip into --require-hashes mode, and that mode then
+# demands a hash for every transitive dependency as well. This file is compiled --no-deps and so
+# holds only the twelve direct pins, which is the whole design, so the install has to be --no-deps
+# too. Note what that buys and what it does not: it verifies these twelve sets of bytes, and it
+# leaves an environment missing every transitive dependency, so it is a check rather than a way to
+# install anything. The second line is the one that installs something usable.
+#
+# The CI job that makes these hashes load-bearing is `.github/workflows/supply-chain.yml`, and it
+# uses `pip download` rather than `pip install` for exactly that reason.
 #
 # HOW IT WAS PRODUCED, so it can be produced again:
 #
 #     uv pip compile --generate-hashes --no-deps --python-version 3.14 constraints.txt
+#
+# Or, preferably, `tools/packaging/regenerate_lock.sh`, which runs exactly that line and then
+# refuses to install the result if the pin count moved or the hashes are missing. The command
+# above and the one in that script are held equal by
+# `tests/test_lock_regeneration_is_runnable.py`, so this comment cannot drift from what runs.
 #
 # `--no-deps` is load-bearing. Without it the resolver adds every transitive dependency at
 # whatever version is current today, which is a different environment wearing this filename.

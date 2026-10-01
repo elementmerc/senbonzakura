@@ -32,7 +32,17 @@
 # Without `--gpus all` the container starts, finds no device, and `doctor` says so. It does not
 # pretend, and it does not fail obscurely halfway into a run.
 
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS builder
+# PINNED BY DIGEST, NOT BY TAG, since 2026-10-01 under Q-73, for the same reason as the CPU
+# image and with one difference worth knowing. Unlike `python:3.13-slim`, which the registry
+# rebuilds roughly weekly, this tag names an exact CUDA patch release: its digest was last
+# published 2024-04-24 and has not moved since. So the pin changes nothing about what gets built
+# today and everything about whether a change would be noticed.
+#
+# `tools/ci/check_base_images.py --check` refuses a FROM line here that is not digest-pinned, and
+# the scheduled `--drift` reports when the tag stops resolving to this digest. For an immutable
+# patch tag that event is the interesting one: a CUDA patch tag being repointed is the visible
+# footprint of exactly what digest pinning exists to survive.
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 # libgomp1 is what llama.cpp's binaries link against; without it they install and cannot start,
@@ -112,7 +122,7 @@ RUN pip install --no-cache-dir --quiet --upgrade pip \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-quantize
 
 # ── runtime ─────────────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6 AS runtime
 
 LABEL org.opencontainers.image.title="senbonzakura (CUDA)" \
       org.opencontainers.image.description="Precision abliteration, with receipts. GPU build." \

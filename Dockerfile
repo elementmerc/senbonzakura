@@ -44,7 +44,28 @@
 # that starts, answers `--help` and fails `--track default` for everybody who pulls it.
 
 # ── builder ─────────────────────────────────────────────────────────────────────
-FROM python:3.13-slim AS builder
+#
+# PINNED BY DIGEST, NOT BY TAG, since 2026-10-01 under Q-73. Baseline section 5 says container
+# base images are pinned by digest and this file said `python:3.13-slim`, a tag, while
+# `head-to-head/Dockerfile.tool` in the same repository did it correctly. So this was the house
+# rule being broken in the one place it matters most: the image published to GHCR, which is what
+# a stranger pulls.
+#
+# The digest is the manifest-list digest, so it still selects the right architecture; it just
+# selects an exact set of bytes while doing it. Both stages carry the same one deliberately: two
+# digests would mean the runtime stage could drift away from the one the wheel was built against.
+#
+# WHAT PINNING COSTS, and the answer to it: a tag moves with security patches and a digest does
+# not, so a pin can quietly go stale, which is a different risk from a moving base rather than a
+# smaller one. `tools/ci/check_base_images.py` is the half that closes it. `--check` runs offline
+# on every push and refuses a FROM line that is not digest-pinned at all; the scheduled
+# `--drift` re-resolves the tag and says when a newer digest exists, proposing it only once it
+# has cleared the seven day cooldown, so neither a stale pin nor a fresh adoption can happen
+# silently.
+#
+# On the day this was pinned the tag already resolved to this digest, published 2026-09-25, so
+# nothing newer was adopted by the act of pinning: every build was already pulling these bytes.
+FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS builder
 
 # `curl` for the pinned binary download, `git` because the vendoring tool records provenance.
 # libgomp1 is not optional: llama.cpp's binaries are linked against OpenMP, and `slim` does not
@@ -93,7 +114,7 @@ RUN python -m pip install --no-cache-dir --quiet "requests>=2" \
  && test -x src/senbonzakura/vendor/bin/linux-x86_64/llama-imatrix
 
 # ── runtime ─────────────────────────────────────────────────────────────────────
-FROM python:3.13-slim AS runtime
+FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS runtime
 
 LABEL org.opencontainers.image.title="senbonzakura" \
       org.opencontainers.image.description="Precision abliteration, with receipts." \

@@ -64,6 +64,16 @@ statement from "nothing found".
 **A clean report is not a certificate.** It looks for known failure modes. It cannot tell you a
 number is right, and it says so in its own output.
 
+Findings are printed as each file is finished rather than collected and shown at the end, so a
+sweep over a few thousand artefacts that you stop halfway has still told you about the half it
+did. The closing summary is the one thing that waits: a run that was interrupted has no summary
+line and no exit status, and that absence is what tells you the report is partial. With `--json`
+the array is left unterminated for the same reason, so a consumer parses it and knows the run did
+not finish rather than reading a short report as a clean one.
+
+A long sweep says where it has got to every thirty seconds, on standard error, so `--json` on
+standard output stays machine readable while it does.
+
 ### Running it without choosing to
 
 A checker somebody remembers to run is a checker that runs occasionally. Neither of these pulls

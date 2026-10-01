@@ -341,6 +341,9 @@ runs:
         # the install step above failed, and `senbonzakura: command not found` is exit 127 from
         # bash, which this script would otherwise have to tell apart from a verdict. It says so
         # instead.
+        # THIS BRANCH DOES FAIL THE STEP, unlike the verdicts below, and the difference is the
+        # point: a missing command means the step could not do its job at all, so there is no
+        # verdict to record and nothing downstream to read. A bad verdict means it did its job.
         if ! command -v senbonzakura > /dev/null; then
           echo "::error::The regression gate is not installed, so nothing was compared. The install step failed earlier in this job; its log says why. This is not a passing gate."
           exit 1
@@ -372,14 +375,41 @@ runs:
             ;;
           1)
             echo "::error::A gated property moved outside its interval. The log above names which one, by how much, and against which baseline."
-            exit 1
             ;;
           2)
             echo "::error::The gate refused to compare: these two measurements were never comparable, so NOTHING was shown about the model. This is not a regression and it is not a pass. The log above names the field that disagreed."
-            exit 1
             ;;
           *)
             echo "::error::The gate exited $status, which is not one of its three verdicts, so it did not reach one. Treat this as a broken gate rather than a result."
-            exit 1
             ;;
         esac
+        exit 0
+
+    # THIS STEP IS WHERE THE BUILD FAILS, AND THE SPLIT IS THE WHOLE REASON IT EXISTS.
+    #
+    # The step above reports the verdict and exits 0 even when the verdict is bad. That looks
+    # wrong and is not: a composite action's `outputs:` are mapped from its steps' outputs, and
+    # whether a step that exited non-zero still has its output propagated to the caller is not a
+    # guarantee worth resting a gate on. A consumer reading `gate-status` to decide what to do
+    # next would then get the empty string from exactly the runs that matter, and an empty string
+    # compared as an integer is how this action already went green on a broken install once.
+    #
+    # So: one step records the verdict and cannot fail, and one step fails on what was recorded.
+    # The failure the consumer sees is unchanged and the output is always there.
+    - name: Fail the build on the gate's verdict
+      # `steps.gate.outcome == 'success'` so this only speaks when the step above reached a
+      # verdict. The two ways it does not, a half-configured gate and an install that could not
+      # produce the command, each fail loudly on their own step, and a second error underneath
+      # saying the same thing differently is how a reader learns to skim the log.
+      if: always() && inputs.baseline != '' && steps.gate.outcome == 'success' && steps.gate.outputs.status != '0'
+      shell: bash
+      env:
+        STATUS: ${{ steps.gate.outputs.status }}
+      run: |
+        set -euo pipefail
+        if [ -z "$STATUS" ]; then
+          echo "::error::The regression gate recorded no status at all, so nothing is known about the comparison. That is a broken gate rather than a result, and it is not a pass."
+          exit 1
+        fi
+        echo "The regression gate concluded $STATUS. The annotation above says what that means."
+        exit 1

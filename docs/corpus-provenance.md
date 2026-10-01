@@ -113,6 +113,14 @@ How to reproduce this measurement: read `good_ds` and `mlabonne/harmless_alpaca`
 `good_ds` rows whose key is absent upstream. Matching by raw string instead gives a different and
 wrong answer, for the reason the contamination checker documents.
 
+**What the count does not cover, stated so it does not read as cleared.** It tests against the one
+harmless upstream this track declares. If those 386 requests came from an undeclared second
+dataset rather than being written by hand, they have a source that was simply never recorded, which
+is a recoverable situation rather than a permanent one, and this count cannot tell the two apart.
+`wangzhang/abliterix-datasets` is the obvious candidate to check next. It was **not** checked and
+not cleared: the copy available when this was measured held only a ref with no data, so there was
+nothing to compare against.
+
 Every track built after that point carries a manifest recording its sources and revisions, so
 this cannot happen again. It did happen once, and it happened to the corpus behind the published
 figures.

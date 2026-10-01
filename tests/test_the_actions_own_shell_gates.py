@@ -97,8 +97,19 @@ class Result:
         return [ln for ln in self.log.splitlines() if ln.startswith("::warning::")]
 
 
+def _run_step_with_env(step_name: str, tmp_path: Path, env_values: dict) -> Result:
+    """Execute a step whose `env:` reads something other than an input.
+
+    The step that fails the build reads `steps.gate.outputs.status`, which this harness cannot
+    resolve from the action's own metadata because it is produced by a previous step at runtime.
+    The test supplies it, and `_run_step` below is deliberately strict about the rest so that a
+    step whose inputs the harness CANNOT resolve fails loudly rather than running with holes.
+    """
+    return _run_step(step_name, tmp_path, supplied_env=env_values)
+
+
 def _run_step(step_name: str, tmp_path: Path, inputs: dict | None = None,
-              stubs: dict | None = None) -> Result:
+              stubs: dict | None = None, supplied_env: dict | None = None) -> Result:
     """Execute one step's script, and hand back everything a workflow would be able to read."""
     step = _step(step_name)
     resolved = {**DEFAULTS, **(inputs or {})}
@@ -130,6 +141,9 @@ def _run_step(step_name: str, tmp_path: Path, inputs: dict | None = None,
         "GITHUB_STEP_SUMMARY": str(summary_file),
     }
     for name, value in (step.get("env") or {}).items():
+        if supplied_env is not None and name in supplied_env:
+            env[name] = supplied_env[name]
+            continue
         match = TEMPLATE.fullmatch(str(value).strip())
         assert match, (
             f"step {step_name!r} sets env {name} to {value!r}, which this harness cannot resolve. "
@@ -172,19 +186,28 @@ class TestTheGatesThreeVerdictsReachTheWorkflow:
         res = _gate(tmp_path, 0)
         assert "not a statement that the model is safe" in res.notices[0], res.notices
 
-    def test_a_regression_fails_the_step(self, tmp_path):
+    def test_a_regression_is_reported_and_recorded(self, tmp_path):
+        """THE VERDICT STEP DOES NOT FAIL, AND THAT IS DELIBERATE: see the step below it.
+
+        A composite action's outputs are mapped from its steps' outputs, and whether a step that
+        exited non-zero still has its output propagated to the caller is not a guarantee worth
+        resting a gate on. A consumer reading `gate-status` would get the empty string from
+        exactly the runs that matter, and an empty string compared as an integer is how this
+        action went green on a broken install once already. So the verdict is recorded by a step
+        that cannot fail, and `TestWhereTheBuildActuallyFails` below is what fails on it.
+        """
         res = _gate(tmp_path, 1, "gate FAIL: refusal_rate: REGRESSED")
-        assert res.status == 1, f"a regression did not fail the step:\n{res.log}"
+        assert res.status == 0, f"the recording step must not fail:\n{res.log}"
         assert res.errors, res.log
         assert "outside its interval" in res.errors[0], res.errors
         assert res.outputs["status"] == "1"
 
-    def test_a_refusal_fails_the_step_and_says_nothing_was_shown(self, tmp_path):
+    def test_a_refusal_is_recorded_and_says_nothing_was_shown(self, tmp_path):
         """A refusal is not a regression. Both fail the build, and they must not read alike:
         one says the model got worse, the other says the comparison never happened.
         """
         res = _gate(tmp_path, 2, "gate REFUSED: prompt_format disagreed")
-        assert res.status == 1, f"a refusal was treated as a pass:\n{res.log}"
+        assert res.status == 0, f"the recording step must not fail:\n{res.log}"
         assert "NOTHING was shown" in res.errors[0], res.errors
         assert "not a regression" in res.errors[0], res.errors
         assert res.outputs["status"] == "2"
@@ -207,7 +230,7 @@ class TestTheGatesThreeVerdictsReachTheWorkflow:
         it as either verdict is how a crash becomes a measurement.
         """
         res = _gate(tmp_path, 7)
-        assert res.status == 1, res.log
+        assert res.status == 0, res.log
         assert "did not reach one" in res.errors[0], res.errors
         assert res.outputs["status"] == "7", (
             "the status was not reported, so a workflow reading `gate-status` would see nothing "
@@ -342,6 +365,50 @@ class TestTheCheckersThreeOutcomesReachTheWorkflow:
         assert any("predates" in w for w in res.warnings), res.warnings
 
 
+
+
+class TestWhereTheBuildActuallyFails:
+    """The step that turns a recorded verdict into a failed build.
+
+    Split from the step that records it, so the output a consumer reads is always there. The two
+    halves have to agree about which statuses are failures, and this is the half a reader of the
+    workflow sees, so each status is driven through it separately rather than inferred.
+    """
+
+    STEP = "Fail the build on the gate's verdict"
+
+    def test_the_condition_skips_a_passing_gate(self):
+        """Read off the step's own `if`, because nothing else in this module can: a skipped step
+        is the runner's decision and there is no script to execute for it.
+        """
+        condition = str(_step(self.STEP).get("if") or "")
+        assert "steps.gate.outputs.status != '0'" in condition, condition
+        assert "inputs.baseline != ''" in condition, (
+            f"the failing step is not conditional on the gate having been asked for, so a run "
+            f"that gave no baseline would be failed by it: {condition}")
+        assert "always()" in condition, (
+            f"the step is skipped when the checker ahead of it failed, so a repository that gates "
+            f"on findings would never have its regression failure delivered: {condition}")
+        assert "steps.gate.outcome == 'success'" in condition, (
+            f"the step speaks even when the gate above it never reached a verdict, which puts a "
+            f"second error under a failure that already said why: {condition}")
+
+    @pytest.mark.parametrize("status", ["1", "2", "7"])
+    def test_every_non_zero_verdict_fails_the_build(self, tmp_path, status):
+        res = _run_step_with_env(self.STEP, tmp_path / f"env{status}", {"STATUS": status})
+        assert res.status == 1, f"status {status} did not fail the build:\n{res.log}"
+        assert status in res.log, res.log
+
+    def test_an_absent_status_is_a_broken_gate_and_not_a_pass(self, tmp_path):
+        """The case the split exists for. If the recording step could not run at all there is no
+        status, and the one thing that must not happen is this reading as a pass.
+        """
+        res = _run_step_with_env(self.STEP, tmp_path, {"STATUS": ""})
+        assert res.status == 1, res.log
+        assert "no status at all" in res.errors[0], res.errors
+        assert "not a pass" in res.errors[0], res.errors
+
+
 # ── the property that keeps this module able to test anything at all ───────────────────────────
 
 def test_no_step_pastes_an_expression_into_its_own_script():
@@ -367,7 +434,8 @@ def test_no_step_pastes_an_expression_into_its_own_script():
 
 
 @pytest.mark.parametrize("name", ["Run the regression gate", "Check the artefacts",
-                                  "Say what this run was asked to do"])
+                                  "Say what this run was asked to do",
+                                  "Fail the build on the gate's verdict"])
 def test_every_driven_step_still_exists(name):
     """`_step` raises on a rename, and a renamed step would otherwise take its tests with it."""
     assert _step(name)["run"].strip()

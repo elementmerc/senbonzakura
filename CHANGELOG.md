@@ -11,55 +11,53 @@ All notable changes to Senbonzakura are recorded here. The format follows
 
 ## [0.4.1] "TYBW" — 2026-10-01
 
-A patch release. Nothing here changes what the tool measures, so figures from 0.4.0 stay
-comparable with figures from this one.
+A patch release. Nothing here changes what the tool measures, so 0.4.0 figures stay comparable.
 
 ### Guided mode
-- Typing `senbonzakura` on its own now answers instead of refusing. It used to print a 27 line list of every flag and exit 1; it now prints a short page naming the ways in, and exits 0.
-- `senbonzakura -i` is a short spelling of `senbonzakura interactive`, and it is the entry point that page recommends.
+- Typing `senbonzakura` on its own now prints a short page naming the ways in, rather than a 27 line flag list and an error.
+- `senbonzakura -i` is a short spelling of `senbonzakura interactive`.
 - The guided mode offers the models already on this machine, so a first run need not be a download.
-- It runs every pre-flight check before asking you to confirm, rather than after. A run it was going to refuse is now refused before you commit to it, and a clean board is one line rather than fourteen ticks.
-- When a run finishes it says what changed, what it cost and what you might do next, each as a command you can paste.
-- On a processor it sizes the capability probe for a processor, so the command it prints is one its own pre-flight accepts.
-- The front door, the guided walk and `senbonzakura doctor` fold to the width of the terminal, so a half width window no longer runs text off the edge.
+- Every pre-flight check runs before you confirm rather than after, so a run that was going to be refused is refused first.
+- When a run finishes it says what changed, what it cost and what to do next, each as a command you can paste.
+- The capability probe is sized for the machine it will run on, so the command printed is one the pre-flight accepts.
+- The front door, the guided walk and `senbonzakura doctor` fold to the terminal width.
 
 ### Install
-- `brew install` and `scoop install` work. Both manifests carried a placeholder URL and no checksum, because the job that rewrites them at a release had failed on 0.4.0 and the failure was never read.
-- Card temperature and power on the live dashboard work on a plain `pip install senbonzakura`. The bindings that read them used to be absent from every install.
+- `brew install` and `scoop install` work. Both manifests shipped with a placeholder URL and no checksum at 0.4.0.
+- Card temperature and power on the live dashboard work on a plain `pip install senbonzakura`.
 
 ### CLI
-- `senbonzakura check` now exits 2 for a directory holding artefacts it could not read, where it used to exit 0. A CI step pointed at a directory of corrupt files goes from green to red on this release, which is the fix rather than a side effect of it: naming a broken file already exited 2, so the same bytes got opposite verdicts depending on how you reached them.
-- `senbonzakura compass` now reports its AUC, the interval with its confidence level named, and a plain verdict, under the three marker lines it already printed.
-- `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser print. Both are summarised by default, and a warning, an error or a failure is never summarised away.
-- The JSON report carries `applied`, the number of checks that actually ran on each file, so a reader can tell a file that was examined from one that was only opened.
-- No command abbreviates its flags any more, so what is accepted is what the help page lists. `convert --out x` and `quantise --out x` used to complain about a precision flag nobody typed.
-- A mistyped flag is now reported even when a required flag is missing too. Previously the second hid the first.
-- A model id that does not exist is now reported as a model id that does not exist. `senbonzakura fetch` used to print five paragraphs of library output, including "Invalid username or password" for a simple typo.
-- `senbonzakura gate` now names the command that writes a baseline when it refuses for want of one.
-- `senbonzakura track` with no arguments now answers with a command you can run rather than two flag names.
-- `senbonzakura corpora --check` no longer needs the GitHub CLI when every source it reads is already on the machine.
-- `senbonzakura baseline` no longer reports a deterministic metric as "at 2.7486 None", and keeps the units that were sitting in the artefact beside the value.
-- `senbonzakura doctor` names itself before the corpus attribution, and says how many imports it left out of a list rather than reporting seven and naming six.
-- `--out` now refuses a directory holding a tokeniser, which the files a save writes could previously overwrite in silence.
-- `--inspect` marks where it cut a prompt or a generation to fit the column, so a healthy generation no longer looks as though the model stopped mid-word.
-- `--print-completion` without the completion extra now says which install it needs rather than that the flag does not exist.
-- The standalone checker's "nothing was checked" footer now reads differently depending on whether it is about to exit zero or fail.
-- A quantisation receipt now records the hash of the files it names rather than of the quantiser alone.
+- `senbonzakura check` now exits 2 for a directory holding artefacts it could not read, where it exited 0. A CI step pointed at corrupt files goes from green to red on this release.
+- `senbonzakura compass` reports its AUC, the interval with its confidence level named, and a plain verdict.
+- `convert --verbose` and `quantise --verbose` show every line the vendored converter and quantiser print. A warning, an error or a failure is never summarised away.
+- The JSON report carries `applied`, so a reader can tell a file that was examined from one that was only opened.
+- No command abbreviates its flags any more, so what is accepted is what the help page lists.
+- A mistyped flag is reported even when a required flag is missing too. The second used to hide the first.
+- A model id that does not exist is reported as a model id that does not exist, rather than as an authentication failure.
+- `senbonzakura gate` names the command that writes a baseline when it refuses for want of one.
+- `senbonzakura track` with no arguments answers with a command you can run.
+- `senbonzakura corpora --check` no longer needs the GitHub CLI when every source is already on the machine.
+- `senbonzakura baseline` keeps the units that were sitting in the artefact beside the value.
+- `senbonzakura doctor` names itself before the corpus attribution, and says how many imports it left out of a list.
+- `--out` refuses a directory holding a tokeniser, which a save could previously overwrite in silence.
+- `--inspect` marks where it cut a prompt or a generation to fit the column.
+- `--print-completion` without the completion extra says which install it needs.
+- A quantisation receipt records the hash of the files it names rather than of the quantiser alone.
 - A result produced by an installed wheel can say which commit built it.
 
 ### Documentation
-- `pip install senbonzakura` is the documented install everywhere. Several pages still told readers not to use PyPI and offered a pair of `git+` URLs, which was correct until 0.4.0 reached the index and wrong from the moment it did.
-- The evaluation track card said no install a reader could make carries the 6,200 harmful prompts, and the published wheel carries them, so a disclosure had inverted into a reassurance.
-- The first command in the README and the quickstart exited 1, because it measured a model too small to produce the token the compass reads. Both now use a model that answers.
-- The pages introducing `senbonzakura corpora` now say it needs the GitHub CLI.
+- `pip install senbonzakura` is the documented install everywhere. Several pages still offered `git+` URLs and told readers not to use PyPI.
+- The evaluation track card said no install carries the bundled harmful prompts, and the published wheel carries them.
+- The first command in the README and the quickstart exited 1, because it measured a model too small to produce the token the compass reads.
+- The pages introducing `senbonzakura corpora` say it needs the GitHub CLI.
 - The reference page no longer says the GitHub Action and the pre-commit hook cannot work yet.
-- `senbonzakura measure` no longer points at a documentation path that no wheel carries, and explains a stage's refusal with its reason rather than its exit status.
+- `senbonzakura measure` no longer points at a documentation path that no wheel carries.
 - The guided mode no longer tells readers to run `huggingface-cli login`, which `hf auth login` replaced.
-- The Colab notebook drew its before and after refusal rates from the head of the evaluation track and captioned them held out. That head is the partition a run scores its own candidates against, so two thirds of the prompts behind the notebook's result were the run's own draws. It now reads the boundary from the track's own manifest.
-- The notebook also told readers without a GPU that everything still works, where the commands default to the card and refuse rather than falling back; promised a line per trial under a method that runs no trials; and gave an unmeasured figure for how long the measuring cells take.
+- The Colab notebook drew its refusal rates from the partition a run selects on and captioned them held out. It now reads the boundary from the track's own manifest.
+- The notebook also promised that everything works without a GPU, a line per trial under a method that runs no trials, and an unmeasured time for the measuring cells.
 
 ### GitHub Action
-- The action can be listed on the GitHub Marketplace. Its description was 185 characters against a limit of 125, so the listing was refused while every other field it needs was correct.
+- The action can be listed on the GitHub Marketplace. Its description was 185 characters against a limit of 125.
 
 ### Other
 - Bug fixes and improvements.

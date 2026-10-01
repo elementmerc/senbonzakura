@@ -77,6 +77,113 @@ def cuda_own_reserved(device="cuda:0"):
         return 0
 
 
+def cuda_used_bytes_external(index=0):
+    """Device-wide VRAM in use, read WITHOUT creating a CUDA context in this process.
+
+    WHY NOT `cuda_free_total`, WHICH ALREADY READS THE WHOLE CARD. Because the caller is measuring
+    somebody ELSE: a competing tool's arm, running as a subprocess, often in a container. Touching
+    `torch.cuda` here would initialise a CUDA context in the measuring process, and a context costs
+    a few hundred MB. On the 6 GB card this project targets that is not noise, it is a measurable
+    slice of the budget the arm is being judged on. **An instrument that changes the quantity it
+    measures is worse than no instrument**, because the number it hands back looks fine.
+
+    So this shells out, which `ResourceGovernor` deliberately does not. The reason the two differ is
+    the sampling rate, not taste: the governor was rejected for shelling out because it refreshes at
+    4 Hz, and this samples at well under 1 Hz over an arm that runs for tens of minutes.
+
+    Device-wide is also the only HONEST cross-tool number. A rival's process is not ours to
+    introspect, and asking each tool to report its own peak would compare four different
+    definitions. The cost is that anything else on the card is counted too, which is why the caller
+    records the baseline as well as the peak and the pair is published together.
+
+    Returns bytes, or None when it cannot be read at all.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", f"--id={int(index)}", "--query-gpu=memory.used",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip().splitlines()[0] if out.stdout.strip() else ""
+    try:
+        return int(float(line.strip())) * 1024 * 1024       # nvidia-smi reports MiB
+    except ValueError:
+        return None
+
+
+class PeakVram:
+    """Samples device-wide VRAM on a thread while something else runs, and reports the peak.
+
+    A context manager, so the sampling cannot outlive the thing it is measuring:
+
+        with PeakVram() as peak:
+            run_the_arm()
+        peak.peak_bytes, peak.baseline_bytes, peak.samples
+
+    `baseline_bytes` is read once before the body starts, and it is reported alongside the peak
+    rather than subtracted from it. Subtracting would invent a number: the baseline is what was
+    resident a moment earlier, not what that other process held throughout, and a difference
+    presented as "what this tool used" would be a guess wearing a measurement's clothes.
+
+    **A card this cannot read yields None rather than zero.** Zero reads as "used no memory", which
+    is the shape of claim this project keeps withdrawing: `samples` is published too, so a reader
+    can tell a measurement from a card that was never polled.
+    """
+
+    def __init__(self, index=0, interval_s=5.0, reader=None):
+        self._index = int(index)
+        self._interval = float(interval_s)
+        self._read = reader or (lambda: cuda_used_bytes_external(self._index))
+        self.baseline_bytes = None
+        self.peak_bytes = None
+        self.samples = 0
+        self._stop = None
+        self._thread = None
+
+    def _sample(self):
+        value = self._read()
+        if value is None:
+            return
+        self.samples += 1
+        if self.peak_bytes is None or value > self.peak_bytes:
+            self.peak_bytes = value
+
+    def __enter__(self):
+        import threading
+        self.baseline_bytes = self._read()
+        self._sample()
+        self._stop = threading.Event()
+
+        def loop():
+            # `wait` rather than `sleep`, so a finished arm is not followed by up to one interval
+            # of pointless polling, and so the thread cannot outlive the body on an exception.
+            while not self._stop.wait(self._interval):
+                self._sample()
+
+        self._thread = threading.Thread(target=loop, name="peak-vram", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        if self._stop is not None:
+            self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self._interval + 10)
+        self._sample()
+        return False
+
+    def as_record(self):
+        """The pair, in MiB, shaped for a run record. None stays None."""
+        mib = lambda b: None if b is None else round(b / (1024 * 1024))  # noqa: E731
+        return {"peak_vram_mib": mib(self.peak_bytes),
+                "baseline_vram_mib": mib(self.baseline_bytes),
+                "vram_samples": self.samples}
+
+
 def _is_oom(exc, extra_types=()):
     # True for a CUDA out-of-memory error across torch versions: the dedicated OutOfMemoryError on
     # newer torch, or a RuntimeError whose message says so on older ones.

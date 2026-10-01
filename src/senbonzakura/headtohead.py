@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import argresolve, lengthsweep
+from . import argresolve, lengthsweep, resources
 from ._version import __version__
 from .metrics import min_achievable_p
 
@@ -880,6 +880,9 @@ class ArmResult:
     ok: bool
     reason: str
     argv: list = field(default_factory=list)
+    #: Wall clock and the VRAM pair for an arm that actually ran. Empty for a skipped arm, because
+    #: a skip measured nothing and a zero here would read as an arm that took no time.
+    measured: dict = field(default_factory=dict)
 
 
 #: Hours an arm may run before it is killed. An arm is a whole abliteration search, so this is
@@ -1038,8 +1041,25 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
     # WHEN THIS ARM STARTED, so the artefact check can tell what this arm produced from what was
     # simply lying in the directory. See the staleness check below.
     started = time.time() - 1          # a second of slack for filesystem timestamp granularity
+    # WALL CLOCK AND PEAK VRAM, measured here because here is the only place that can.
+    #
+    # `EQUAL-BUDGET.md` has required per-arm wall clock since it was written and nothing recorded
+    # it, so the ~52 and ~39 minute figures this project has quoted come from directory mtimes, and
+    # the committed arm artefacts carry no duration key at all. Two of the three things the
+    # comparison claims ("less card, in less time") were unmeasured while being argued about.
+    #
+    # Both are free: the arm runs either way. What is NOT free is adding them afterwards, because an
+    # arm run without instrumentation has to be run again to get its own timing, so this lands
+    # before any arm of a published table does.
+    #
+    # Measured around the runner alone, not around the whole function, so a skipped arm reports
+    # nothing rather than reporting the few milliseconds its manifest check took.
+    clock = time.monotonic()
+    peak = resources.PeakVram()
     try:
-        code = runner(argv, log=log)
+        with peak:
+            code = runner(argv, log=log)
+        elapsed_s = round(time.monotonic() - clock, 1)
     except ArmTimeoutError as e:
         # This arm only. Every other BenchError still propagates, because the rest are conditions
         # that will meet the next arm identically.
@@ -1072,7 +1092,13 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
                     mounts=[(model, "/model", "ro"), (track, "/corpus", "ro"),
                             (arm, "/work/out", "rw")])
         log(f"  {adapter.name} seed {seed}: selection pass")
-        code = runner(final_argv, log=log)
+        # Counted into the arm's wall clock and its VRAM peak, because an arm that needs this pass
+        # has not finished without it. Heretic needs it and we do not, so leaving it out would
+        # quietly bill the two tools differently for producing the same artefact.
+        clock = time.monotonic()
+        with peak:
+            code = runner(final_argv, log=log)
+        elapsed_s = round(elapsed_s + time.monotonic() - clock, 1)
         if code != 0:
             return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
                              reason=f"the selection pass exited {code}", argv=list(final_argv))
@@ -1102,9 +1128,10 @@ def run_arm(adapter: Adapter, *, seed, model, track, out, trials, extra=(), isol
                        f"produced nothing and would have been scored on stale output")
         return ArmResult(adapter.name, seed, arm, ran=True, ok=False,
                          reason="exited 0 but " + " and ".join(why), argv=list(argv))
-    write_arm_manifest(arm, expected)
+    measured = {"elapsed_s": elapsed_s, **peak.as_record()}
+    write_arm_manifest(arm, {**expected, **measured})
     return ArmResult(adapter.name, seed, arm, ran=True, ok=True, reason="produced every artefact",
-                     argv=list(argv))
+                     argv=list(argv), measured=measured)
 
 
 def head_to_head(*, tools, seeds, model, track, out, trials, isolate="none", images=None,

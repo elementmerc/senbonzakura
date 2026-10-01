@@ -1281,3 +1281,62 @@ def test_the_seed_floor_and_the_report_agree_about_what_clears():
     from senbonzakura import headtohead_report
 
     assert headtohead.VERDICT_ALPHA == headtohead_report.ALPHA
+
+
+# ── wall clock and peak VRAM: the two columns the comparison claimed and never measured ───
+#
+# `EQUAL-BUDGET.md` has required per-arm wall clock since it was written. Nothing recorded it, so
+# the ~52 and ~39 minute figures this project quoted came from directory mtimes, and not one
+# committed arm artefact carries a duration key. Two of the three things the table claims, "less
+# card, in less time", were unmeasured while being argued about.
+
+def test_an_arm_records_its_own_wall_clock(tmp_path, runner):
+    r = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner,
+                           **_args(tmp_path))
+    assert r.ran and r.ok
+    assert "elapsed_s" in r.measured, (
+        "an arm finished without recording how long it took, which is the state EQUAL-BUDGET.md "
+        "already forbade and nothing checked")
+    assert isinstance(r.measured["elapsed_s"], float)
+    assert r.measured["elapsed_s"] >= 0.0
+
+
+def test_the_measurements_reach_the_manifest_on_disk(tmp_path, runner):
+    """IN THE ARTEFACT, not only in the return value. A re-scoring run months later reads the
+    directory, not this process, and re-scoring stored arms is the whole reason the table can
+    recur without the GPU.
+    """
+    a = _args(tmp_path)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    written = json.loads((a["out"] / "senbon-seed42" / headtohead.ARM_MANIFEST)
+                         .read_text(encoding="utf-8"))
+    for key in ("elapsed_s", "peak_vram_mib", "baseline_vram_mib", "vram_samples"):
+        assert key in written, f"{key} never reached the manifest a later run would read"
+
+
+def test_a_skipped_arm_reports_no_measurement_rather_than_zero(tmp_path, runner):
+    """A ZERO HERE WOULD READ AS AN ARM THAT TOOK NO TIME. The skip measured nothing, and this
+    project's recurring defect is a number that looks like a measurement and is not one.
+    """
+    a = _args(tmp_path)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    second = headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    assert not second.ran
+    assert second.measured == {}, (
+        f"a skipped arm reported {second.measured}, which a report would print as a timing")
+
+
+def test_the_extra_manifest_keys_do_not_break_the_resume_guard(tmp_path, runner):
+    """THE REGRESSION THE CHANGE ABOVE RISKED, asserted directly.
+
+    The manifest now carries measurements alongside the four keys that identify the arm. If
+    `arm_is_done` ever compared the WRITTEN keys rather than the EXPECTED ones, every arm would
+    re-run for ever, each one wall-clocked differently from the last, and the resume guard this
+    file exists for would be silently gone.
+    """
+    a = _args(tmp_path)
+    headtohead.run_arm(headtohead.ADAPTERS["senbon"], seed=42, runner=runner, **a)
+    arm = a["out"] / "senbon-seed42"
+    expected = headtohead.arm_manifest(headtohead.ADAPTERS["senbon"], 42, a["model"], a["trials"])
+    done, why = headtohead.arm_is_done(arm, expected, headtohead.ADAPTERS["senbon"])
+    assert done, f"the arm stopped counting as done once its manifest carried measurements: {why}"

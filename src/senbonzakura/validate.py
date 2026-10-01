@@ -1227,6 +1227,44 @@ def load_directions(a, path, log):
     log(f"loaded directions from {path}: K up to {max(a.dirs_per_layer)} per layer")
 
 
+def _refuse_flags_past_the_track(args, log):
+    """Refuse flags that would read past the boundaries the track records.
+
+    `abliterate` has had this check since `cli.py:3569`; `validate` had not, and it is the
+    entry point where it matters most, because every control in this module depends on
+    measuring on rows the directions were not fitted on. `prepare_for_bakes` below reads
+    `--dir-prompts` plus `--eval-kl` rows from `good_ds`, which is the harmless fit, search and
+    measure partitions concatenated in that order, and then slices by index. Ask for more rows
+    than fit and search hold and the KL reference is measured on the rows the compass reports
+    on, with nothing in the artefact to say so.
+
+    Checked here rather than after the model loads, which is where the abliterate path puts it,
+    because that placement exists for a reason this module does not share: `kageyoshi` resolves
+    its own budget from the loaded model and overwrites `eval_refusal_final`, so a check before
+    it would inspect the parser default. Nothing in `validate` rewrites these three flags, so
+    the earliest moment is also the correct one, and it costs no download.
+
+    One wording, shared with the abliterate path, so the two cannot drift into describing the
+    same refusal differently.
+    """
+    manifest = cli.read_manifest(args.track)
+    if not manifest:
+        # Matches `cli.py:3567`'s `if manifest:` deliberately rather than being stricter. A
+        # track built before manifests existed has no boundaries to check against, and making
+        # that a hard refusal would reject every such track at once. The track card and
+        # `docs/corpus-provenance.md` both state that an unmanifested track is unguarded.
+        return
+    bad_flags = cli.flag_violations(
+        manifest, eval_refusal=args.eval_refusal,
+        eval_refusal_final=getattr(args, "eval_refusal_final", 0) or 0,
+        dir_prompts=args.dir_prompts, eval_kl=args.eval_kl)
+    if bad_flags:
+        raise SystemExit("these flags would read past the boundaries "
+                         f"{args.track}/track.json records:\n"
+                         + "\n".join(f"  {b}" for b in bad_flags))
+    log(f"track boundaries: {manifest['counts']}")
+
+
 def prepare_for_bakes(a, log, directions_from=None):
     """Install the directions, build the eval sets, and snapshot the pristine weights.
 
@@ -1310,6 +1348,7 @@ def unusable_reasons(record):
 def main(argv=None):
     own, args = build_args(argv)
     log = lambda m: print(m, flush=True)   # noqa: E731
+    _refuse_flags_past_the_track(args, log)
     a = cli.Abliterator(args, log)
 
     # Everything that changes what this record MEANS, so a later reader (or a resume guard) can

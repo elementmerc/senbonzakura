@@ -820,6 +820,64 @@ class TestTheEmptyFooterSaysWhichOutcomeThisIs:
         assert "NOTHING WAS CHECKED" not in out.getvalue()
 
 
+class TestTheEmptyFooterNamesWhatItWouldHaveAccepted:
+    """A swept file that no adapter knows is told "not a result artefact, skipped" and no more.
+
+    WHAT PROMPTED IT, 2026-10-01
+
+    A CLI surface sweep item: "`senbonzakura check` never says which files it accepts." Driven
+    here, half of it held. A file NAMED on the command line is told, because
+    `UnknownArtefactError` carries "Supported: lm-evaluation-harness, inspect, senbonzakura".
+    A file SWEPT out of a directory is not: it gets five words, and the footer that follows said
+    nothing either. So the one run where the reader has nothing else to go on was the run that
+    named no kinds.
+
+    The list is read off `adapters.ADAPTERS` rather than typed into the message, and the test
+    below holds that coupling rather than the three names, because a fourth adapter must not be
+    able to leave the sentence stale.
+    """
+
+    def _footer(self, path, capsys, *flags):
+        cli.main([str(path), *flags])
+        return capsys.readouterr().out
+
+    def test_an_empty_sweep_names_the_kinds_it_recognises(self, tmp_path, capsys):
+        from senbonzakura_check import adapters
+
+        said = self._footer(tmp_path, capsys)
+        assert "Recognised kinds" in said, said
+        for adapter in adapters.ADAPTERS:
+            assert adapter.name in said, f"{adapter.name} is registered and unnamed in: {said}"
+
+    def test_a_directory_of_non_results_names_them_too(self, tmp_path, capsys):
+        """The case the sweep item was actually about, rather than the empty directory."""
+        _write(tmp_path, "notaresult.json", {"hello": 1})
+        said = self._footer(tmp_path, capsys)
+        assert "not a result artefact, skipped" in said
+        assert "Recognised kinds" in said, said
+
+    def test_the_kinds_are_not_named_on_a_run_that_checked_something(self, tmp_path, capsys):
+        """Advice for a mistake nobody made is noise, and noise is what gets skimmed past."""
+        _write(tmp_path, "r.json", GOOD)
+        said = self._footer(tmp_path, capsys)
+        assert "Recognised kinds" not in said, said
+
+    @pytest.mark.parametrize("kind", ["empty", "non-results"])
+    def test_the_footer_fits_an_eighty_column_terminal(self, tmp_path, capsys, kind):
+        """Measured at 113 and 123 columns before this, which is what prompted the wrapping.
+
+        The reported path is exempt and only the path: it is something a reader pastes, and
+        breaking it would be the bigger defect. Every other line here is prose.
+        """
+        if kind == "non-results":
+            _write(tmp_path, "notaresult.json", {"hello": 1})
+        said = self._footer(tmp_path, capsys)
+        for line in said.splitlines():
+            if str(tmp_path) in line:
+                continue
+            assert len(line) <= 79, f"{len(line)} columns: {line!r}"
+
+
 def test_the_pre_commit_hook_installs_nothing():
     """pre-commit's `python` language would install this repository's ROOT, which is the big one.
 
@@ -960,3 +1018,110 @@ def test_the_actions_description_fits_what_marketplace_accepts():
         f"  {description}\n"
         f"Shorten it. The longer explanation belongs in the comments above the field, or in the "
         f"action's own documentation, where no limit applies.")
+
+
+class TestOurOwnEvidenceIsNotCalledForeign:
+    """`senbonzakura check evidence/` said "not a result artefact" of this project's own file.
+
+    WHAT PROMPTED IT, 2026-10-01
+
+    A sweep item, driven. Pointed at the committed `evidence/` tree, the checker reports
+    `k-sweep-2026-08-13/drift-per-seed.json` as "not a result artefact, skipped". That file
+    declares `schema: senbonzakura-evidence/1` in its first field.
+
+    **Skipping it is right.** It carries per-seed lists for two arms (`drift_kl.k1`,
+    `drift_kl.k2`) rather than one measurement with an estimator, so there is no single figure
+    any check can read, and `_OUR_METRICS` finds no top-level scalar because there is not one.
+    Verified by reading the file rather than inferring it from the message.
+
+    **The words were wrong**, and wrong in the direction that matters: they say a file carrying
+    our own schema is foreign to us, so a reader checking our published evidence cannot tell a
+    collection from a stranger's file. The verdict and the exit status are unchanged; only the
+    sentence is.
+    """
+
+    COLLECTION: ClassVar[dict] = {"schema": "senbonzakura-evidence/1", "what": "per-seed drift",
+                                  "drift_kl": {"k1": [0.04, 0.02], "k2": [0.06, 0.07]}}
+
+    def _said(self, tmp_path, doc, name="thing.json"):
+        import io
+
+        _write(tmp_path, name, doc)
+        out = io.StringIO()
+        cli.main([str(tmp_path)], out=out)
+        return out.getvalue()
+
+    def test_an_evidence_collection_is_named_as_one(self, tmp_path):
+        said = self._said(tmp_path, self.COLLECTION)
+        assert "senbonzakura evidence collection" in said, said
+        assert "not a result artefact" not in said, (
+            "a file carrying our own schema is still described as foreign")
+
+    def test_the_reason_it_cannot_be_checked_is_given(self, tmp_path):
+        """Naming the file kind without saying why nothing read it leaves the reader where they were."""
+        said = self._said(tmp_path, self.COLLECTION)
+        assert "not a single measurement" in said, said
+
+    def test_a_genuinely_foreign_file_keeps_the_general_wording(self, tmp_path):
+        """The guard must not relabel everything it sweeps.
+
+        A file with no schema, or somebody else's schema, is exactly what the original sentence
+        was written for.
+        """
+        said = self._said(tmp_path, {"hello": 1})
+        assert "not a result artefact" in said, said
+        assert "senbonzakura evidence" not in said, said
+
+    def test_another_tools_schema_is_not_claimed_as_ours(self, tmp_path):
+        said = self._said(tmp_path, {"schema": "someone-elses-harness/3", "value": 1})
+        assert "not a result artefact" in said, said
+
+    def test_the_verdict_and_the_status_are_unchanged(self, tmp_path):
+        """Only the sentence moved. A swept non-result still costs nothing and still exits 0.
+
+        Asserted because a reworded disposition that also changed the count or the status would
+        be a behaviour change dressed as a readability fix.
+        """
+        import io
+
+        _write(tmp_path, "collection.json", self.COLLECTION)
+        out = io.StringIO()
+        assert cli.main([str(tmp_path)], out=out) == 0
+        said = out.getvalue()
+        assert "1 not a result" in said, said
+        assert "0 unchecked" in said, said
+
+    def test_naming_it_explicitly_is_still_unchecked_and_still_exits_two(self, tmp_path):
+        """Naming a file is a claim about it, and that rule does not bend for our own schema.
+
+        The sweep wording is about a file the user did not vouch for. Somebody who types the path
+        asserted it was a result, and the answer to that is still UNCHECKED.
+        """
+        import io
+
+        path = _write(tmp_path, "collection.json", self.COLLECTION)
+        out = io.StringIO()
+        assert cli.main([str(path)], out=out) == 2
+        assert "UNCHECKED" in out.getvalue(), out.getvalue()
+
+    def test_the_real_committed_artefact_is_the_one_this_is_about(self):
+        """Read the actual file, so this cannot pass on a fixture that drifted from it.
+
+        Skipped rather than failed if the evidence tree moves: its layout is not this test's
+        subject, and a skip here is honest where an assertion would be about the wrong thing.
+        """
+        import json
+        from pathlib import Path
+
+        path = (Path(__file__).resolve().parent.parent
+                / "evidence" / "k-sweep-2026-08-13" / "drift-per-seed.json")
+        if not path.is_file():
+            pytest.skip("the k-sweep evidence is no longer where this test expects it")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        assert str(doc.get("schema", "")).startswith("senbonzakura-evidence/"), (
+            "the committed artefact no longer declares our schema, so the wording this class "
+            "guards would not fire on the file it was written for")
+        assert not any(isinstance(v, (int, float)) and k != "prompts_per_score"
+                       for k, v in doc.items()), (
+            "the artefact now carries a top-level numeric metric, so an adapter may claim it and "
+            "this whole class needs re-reading")

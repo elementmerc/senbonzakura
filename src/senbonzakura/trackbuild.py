@@ -151,6 +151,52 @@ def check_licences(sources, *, skip=False, log=print):
             + bundled.doc_url("evaluation-track-card"))
 
 
+def _hub_refusal(head, diagnosis, error, *, repo=None):
+    """A Hub failure as a refusal somebody can act on, rather than as `(ClassName: str(e))`.
+
+    WHAT PROMPTED IT, 2026-10-01
+
+    Five refusals in this module ended `({type(e).__name__}: {e})`, which hands the reader two
+    things they cannot use. The class name is ours to know and theirs to ignore:
+    `HfHubHTTPError` tells somebody with a mistyped repository id nothing. And `str(e)` from
+    `huggingface_hub` is up to five paragraphs including a request id, a link to the
+    authentication docs, the `repo_id` and `repo_type` keyword arguments of a function the reader
+    is not calling, and, for an id that was simply mistyped, the sentence "Invalid username or
+    password."
+
+    `hubmessage` exists for exactly this and this module never imported it, so the one command
+    whose whole job is fetching from the Hub was the one command not using the project's Hub
+    vocabulary. That is the duplicated-fact shape in reverse: not two copies disagreeing, one copy
+    and a surface that never found it.
+
+    `repo` asks the stronger question where it is askable. Both revision refusals said "a pinned
+    revision that has been deleted upstream is the likeliest cause", which is a guess, and when
+    the repository itself has gone or was never there it is the wrong guess: it sends somebody to
+    re-pin a revision inside a repository that does not exist. `repo_is_missing` answers that
+    positively or not at all, so a machine with no network never gets told its id is wrong.
+    """
+    from . import hubmessage, say
+
+    if repo and hubmessage.repo_is_missing(repo):
+        diagnosis = hubmessage.no_such_model(repo, thing="dataset")
+    useful = hubmessage.useful_lines(error)
+    paragraphs = [diagnosis]
+    if useful:
+        # KEPT, and kept last. The upstream text is the only thing here that knows what actually
+        # went wrong, so dropping it would trade one unusable refusal for a confident wrong one.
+        # Under a heading, because without one it reads as this tool's own prose.
+        paragraphs.append("What the Hub said:")
+        paragraphs.extend(f"    {line}" for line in useful[:_HUB_LINES])
+        if len(useful) > _HUB_LINES:
+            paragraphs.append(f"    ... and {len(useful) - _HUB_LINES} more line(s)")
+    return SystemExit(say.refusal_text(f"build-track: {head}", *paragraphs))
+
+
+#: How many lines of an upstream Hub error are shown. Enough for a cause, bounded because
+#: `huggingface_hub` can produce five paragraphs and the count is stated when it cuts.
+_HUB_LINES = 6
+
+
 def _repo_files(src):
     """Every file the dataset repository holds at its pinned revision.
 
@@ -169,11 +215,12 @@ def _repo_files(src):
         return list(list_repo_files(
             src["repo"], repo_type="dataset", revision=src["revision"]))
     except Exception as e:
-        raise SystemExit(
-            f"build-track: could not list {src['repo']} at revision {src['revision'][:12]} "
-            f"({type(e).__name__}: {e}). A pinned revision that has been deleted upstream is the "
-            f"likeliest cause; the recipe is then no longer reproducible and SOURCES needs "
-            f"re-pinning against a revision that exists.") from e
+        raise _hub_refusal(
+            f"could not list {src['repo']} at revision {src['revision'][:12]}.",
+            "A pinned revision that has been deleted upstream is the likeliest cause; the recipe "
+            "is then no longer reproducible and SOURCES needs re-pinning against a revision that "
+            "exists.",
+            e, repo=src["repo"]) from e
 
 
 #: The layouts a Hub dataset puts one split's parquet shards in, in the order they are tried.
@@ -212,11 +259,11 @@ def _download(src, name):
         return hf_hub_download(repo_id=src["repo"], filename=name, repo_type="dataset",
                                revision=src["revision"])
     except Exception as e:
-        raise SystemExit(
-            f"build-track: could not download {name} from {src['repo']} at revision "
-            f"{src['revision'][:12]} ({type(e).__name__}: {e}). Check the network and the Hub's "
-            f"status; if the revision itself has gone, SOURCES needs re-pinning against one that "
-            f"exists.") from e
+        raise _hub_refusal(
+            f"could not download {name} from {src['repo']} at revision {src['revision'][:12]}.",
+            "Check the network and the Hub's status; if the revision itself has gone, SOURCES "
+            "needs re-pinning against one that exists.",
+            e, repo=src["repo"]) from e
 
 
 def _read_parquet(src, shards, log=print):
@@ -234,10 +281,11 @@ def _read_parquet(src, shards, log=print):
         try:
             handle = pq.ParquetFile(path)
         except Exception as e:
-            raise SystemExit(
-                f"build-track: {name} from {src['repo']} is not a readable parquet file "
-                f"({type(e).__name__}: {e}). A download that stopped early is the likeliest "
-                f"cause; clear the HuggingFace cache and run this again.") from e
+            raise _hub_refusal(
+                f"{name} from {src['repo']} is not a readable parquet file.",
+                "A download that stopped early is the likeliest cause; clear the HuggingFace "
+                "cache and run this again.",
+                e) from e
         names = list(handle.schema_arrow.names)
         if TEXT_COLUMN not in names:
             raise SystemExit(
@@ -249,11 +297,12 @@ def _read_parquet(src, shards, log=print):
             for batch in handle.iter_batches(columns=[TEXT_COLUMN]):
                 rows.extend(batch.column(0).to_pylist())
         except Exception as e:
-            raise SystemExit(
-                f"build-track: {name} from {src['repo']} could not be read to the end "
-                f"({type(e).__name__}: {e}). A truncated shard would give a pool shorter than "
-                f"the one the manifest describes, so the build stops rather than recording a "
-                f"count it cannot stand behind.") from e
+            raise _hub_refusal(
+                f"{name} from {src['repo']} could not be read to the end.",
+                "A truncated shard would give a pool shorter than the one the manifest "
+                "describes, so the build stops rather than recording a count it cannot stand "
+                "behind.",
+                e) from e
         log(f"    {name}: {len(rows) - before} rows")
     return rows
 
@@ -277,11 +326,12 @@ def _read_with_datasets(src, files):
     try:
         ds = load_dataset(src["repo"], split=src["split"], revision=src["revision"])
     except Exception as e:
-        raise SystemExit(
-            f"build-track: could not fetch {src['repo']} at revision {src['revision'][:12]} "
-            f"({type(e).__name__}: {e}). A pinned revision that has been deleted upstream is the "
-            f"likeliest cause; the recipe is then no longer reproducible and SOURCES needs "
-            f"re-pinning against a revision that exists.") from e
+        raise _hub_refusal(
+            f"could not fetch {src['repo']} at revision {src['revision'][:12]}.",
+            "A pinned revision that has been deleted upstream is the likeliest cause; the recipe "
+            "is then no longer reproducible and SOURCES needs re-pinning against a revision that "
+            "exists.",
+            e, repo=src["repo"]) from e
     if TEXT_COLUMN not in ds.column_names:
         raise SystemExit(
             f"build-track: {src['repo']} has columns {sorted(ds.column_names)} and no "

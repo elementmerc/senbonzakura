@@ -750,8 +750,71 @@ def default_output(model_dir, outtype):
     return d.parent / f"{d.name}-{outtype}.gguf"
 
 
+#: The flags that only mean something with `--quantise`, and what each one would have done.
+#: A table rather than two `if` statements, so a third dependent flag is a row and the message
+#: below cannot be written for two of three.
+#:
+#: The third field says whether the flag carries a value, because the worked command in the
+#: refusal has to echo `--imatrix cal.imatrix` rather than a bare `--imatrix`, which would be
+#: an argparse error if the reader pasted it. A refusal offering a command that does not run is
+#: worse than one offering none.
+_NEEDS_QUANTISE = {
+    "imatrix": ("--imatrix", "apply an importance matrix to the quantisation", True),
+    "keep_intermediate": ("--keep-intermediate",
+                          ("keep the full-precision GGUF beside the quantised one"), False),
+}
+
+
+def refuse_dependent_flags(a):
+    """Refuse a flag that only means something with `--quantise`, before any work is done.
+
+    WHAT PROMPTED IT, 2026-10-01
+
+    `--imatrix FILE` and `--keep-intermediate` both say "with --quantise" in their own help text,
+    and both were accepted and then ignored without `--quantise`. So
+
+        senbonzakura convert ./edited --imatrix cal.imatrix
+
+    converted the checkpoint, reported DONE, and applied no importance matrix. The command did
+    something the user did not ask for and reported success, which is the failure shape this
+    project spends its time finding in other tools: not a crash, a number produced by a run that
+    was not the run requested.
+
+    `--keep-intermediate` is the quieter half and the nastier one. Without `--quantise` there is no
+    intermediate, so the flag is not merely ignored, it describes a file that does not exist.
+    Somebody passing both flags and finding one GGUF has no way to tell whether the quantisation
+    happened and the intermediate was dropped or neither happened at all.
+
+    Decidable from the command line, so it goes ahead of the announcement, which is where
+    `quantise.refuse_what_the_command_line_already_shows` puts the same class of check.
+    """
+    if a.quantise:
+        return
+    given, as_typed, does = [], [], []
+    for attr, (spelling, what, takes_value) in _NEEDS_QUANTISE.items():
+        value = getattr(a, attr)
+        if not value:
+            continue
+        given.append(spelling)
+        as_typed.append(f"{spelling} {value}" if takes_value else spelling)
+        does.append(what)
+    if not given:
+        return
+    names = " and ".join(given)
+    raise SystemExit(say.refusal_text(
+        f"{names} only {'mean' if len(given) > 1 else 'means'} something with --quantise, which "
+        f"was not given.",
+        f"Without it this command converts and stops, so nothing here would "
+        f"{', and nothing would '.join(does)}. Refused rather than ignored: a run that quietly "
+        f"drops a flag reports success for a job nobody asked for.",
+        "Either add the quantisation you wanted:",
+        f"    senbonzakura convert MODEL --quantise Q4_K_M {' '.join(as_typed)}",
+        f"or drop {names} and convert on its own."))
+
+
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
+    refuse_dependent_flags(a)
     out = Path(a.out) if a.out else default_output(a.model, a.outtype)
 
     try:

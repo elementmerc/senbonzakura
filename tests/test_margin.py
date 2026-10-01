@@ -1123,34 +1123,119 @@ def test_the_threshold_is_recorded_so_a_reader_can_disagree_with_it():
     assert out["suspect_threshold"] == margin.READOUT_SUSPECT_MASS
 
 
-def test_both_arms_are_checked_not_just_the_harmful_one():
+def _margin_lines(loaded, tmp_path, capsys, extra=()):
+    """A whole `compass` run's stdout, as a list of lines, with its result record.
+
+    THIS HELPER REPLACED A SOURCE-TEXT CHECK, 2026-10-01
+
+    The two tests below used to read `inspect.getsourcelines(margin.main)` and grep the text for
+    `for arm in ("harmful", "harmless")`. Three things were wrong with that, and only the first
+    was ever fixed:
+
+    1. `inspect.getsource` includes the comment block immediately above a function, so adding a
+       constant and two comment lines above `def main` once made the window be that comment and
+       the test failed with nothing to do with its subject. Removing a blank line elsewhere made
+       it pass again. **A source-reading check whose window depends on blank lines can pass while
+       reading the wrong region as easily as it can fail while reading the right one, and the
+       passing direction is the one nobody investigates.** That was narrowed in September by
+       starting the window at the `def` line, which treated the symptom.
+    2. It asserted on a loop header. Rewriting the same behaviour as two explicit calls, or as a
+       comprehension, breaks the test while improving the code, which is how a test teaches
+       people to delete it.
+    3. It could not fail for the real defect. The defect was that the harmless arm was computed,
+       stored in the JSON and never printed. A grep for the loop header cannot tell a loop that
+       prints from a loop that does not.
+
+    So the property is asserted where it lives: in what a person running the command sees.
+    """
+    bad, good = _track(tmp_path)
+    res = margin.main(["--model", "x", "--harmful", bad, "--harmless", good,
+                       "--out", str(tmp_path / "r.json"), "--n", "3", "--device", "cpu",
+                       "--skip-harmful", "0", "--skip-harmless", "0", "--bootstrap", "0",
+                       "--label", "after", *extra])
+    return capsys.readouterr().out.splitlines(), res
+
+
+def test_both_arms_reach_the_output_not_just_the_harmful_one(loaded, tmp_path, capsys):
     """The AUC compares harmful margins AGAINST harmless ones, so a read-out taken from the wrong
     position on either arm makes the comparison meaningless.
 
     The first version printed the harmful arm and stored the harmless one in the JSON where
-    nothing looked at it, which is half a check wearing the shape of a whole one.
-
-    IT READS FROM THE `def` LINE ONWARDS, 2026-09-27, and the reason is a near miss worth keeping.
-    `inspect.getsource` includes the comment block immediately above a function, so when a constant
-    and its two comment lines were added just above `def main` this test failed with the whole of
-    `src` being that comment. Removing one blank line elsewhere made it pass again. A source-reading
-    check whose window depends on blank lines can as easily pass while reading the wrong region as
-    fail while reading the right one, and the passing direction is the one nobody investigates.
-
-    The narrow fix is below. The broader point stands in the ledger: what this wants to assert is
-    that both arms REACH the output, which is a property of a run rather than of a source file.
+    nothing looked at it, which is half a check wearing the shape of a whole one. A number nobody
+    is shown is not a check; it is a field.
     """
-    import inspect
+    lines, res = _margin_lines(loaded, tmp_path, capsys)
+    readouts = [line for line in lines if line.startswith("MARGIN_READOUT ")]
+    arms = {line.split("arm=")[1].split()[0] for line in readouts}
+    assert arms == {"harmful", "harmless"}, (
+        f"the run printed read-outs for {sorted(arms)}; both arms decide the AUC, so both have to "
+        f"be visible to whoever is reading it. Lines were: {readouts}")
+    # And the record agrees with the screen, which is the half that was already true and is worth
+    # pinning: the defect was the two disagreeing about what the run had looked at.
+    assert res["readout"]["harmful"] and res["readout"]["harmless"]
 
-    lines, _start = inspect.getsourcelines(margin.main)
-    body = [line for line in lines if not line.lstrip().startswith("#")]
-    first_def = next(i for i, line in enumerate(body) if line.lstrip().startswith("def main"))
-    src = "".join(body[first_def:])
 
-    assert src.lstrip().startswith("def main"), (
-        "the window this test reads does not begin at the function it names")
-    assert 'for arm in ("harmful", "harmless")' in src, "only one arm is reported"
-    assert "suspect_arms" in src, "the suspect check does not consider both arms"
+def test_a_suspect_harmless_arm_is_named_rather_than_left_in_the_json(
+        loaded, tmp_path, capsys, monkeypatch):
+    """The exact defect, driven: harmless suspect and harmful clean.
+
+    `readout` is stubbed rather than `suspect_readout_arms`, because what is under test is
+    `main`'s consumption of the verdict and stubbing the consumer would assert nothing. The stub
+    marks only the harmless arm, which is the case the old code could not report: it read
+    `res["readout"]["harmful"]` for its message and would have printed a clean arm's numbers under
+    a suspect heading, or said nothing at all.
+    """
+    real = margin.readout
+    calls = []
+
+    def only_harmless_is_suspect(rows, verdict_ids, decode, top=margin.READOUT_TOP_TOKENS):
+        out = real(rows, verdict_ids, decode, top=top)
+        calls.append(out)
+        # The harmless arm is the SECOND call for the main read-out position, per `main`'s own
+        # ordering. Marked by call count rather than by inspecting the rows, so this does not
+        # need to know what a harmless row looks like.
+        out["suspect"] = len(calls) % 2 == 0
+        return out
+
+    monkeypatch.setattr(margin, "readout", only_harmless_is_suspect)
+    lines, res = _margin_lines(loaded, tmp_path, capsys)
+    suspect = [line for line in lines if line.startswith("MARGIN_READOUT_SUSPECT")]
+    assert suspect, (
+        f"the harmless arm was marked suspect and the run said nothing about it. The AUC above it "
+        f"is then quoted as a measurement. Lines were: {lines}")
+    assert "harmless" in suspect[0], suspect
+    assert margin.suspect_readout_arms(res) == ["harmless"], (
+        "the arm list itself no longer reports the harmless arm, so the printing is not the only "
+        "thing that would need fixing")
+
+
+def test_no_test_in_this_file_greps_the_module_source():
+    """A guard on the guard, and on this file's own habit.
+
+    `inspect.getsourcelines` here was a check that could pass while reading the wrong region.
+    Nothing stops the next one being written, so this says so once, where somebody adding it will
+    see the failure.
+
+    `inspect` has legitimate uses (signatures, parameter names) and none of them need the source
+    text, which is why the ban is on `getsource` rather than on the module.
+    """
+    import ast
+    from pathlib import Path
+
+    # PARSED RATHER THAN GREPPED, because this file's own docstrings name the thing they are
+    # arguing against, and a substring count would have to be tuned to how many times they do.
+    # A test whose threshold moves when prose moves is the same fragility one level up.
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    banned = {"getsource", "getsourcelines", "getsourcefile"}
+    found = sorted({
+        f"{node.attr} at line {node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr in banned})
+    assert not found, (
+        "a test in this file reads the module's source text again: " + ", ".join(found)
+        + ". Assert on what a run does instead. The window such a check reads depends on blank "
+          "lines and on the comments above the function, so it can pass while reading the wrong "
+          "region as easily as it can fail while reading the right one.")
 
 
 # ── the second read-out position, through main ─────────────────────────────────────

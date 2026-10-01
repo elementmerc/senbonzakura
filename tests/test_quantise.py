@@ -194,12 +194,38 @@ def test_pruning_removes_the_source_only_after_the_output_verifies(tmp_path):
     assert (tmp_path / "tiny-Q4_K_M.gguf").is_file()
 
 
-@needs_binary
-def test_keep_source_overrides_pruning(tmp_path):
+# NO `@needs_binary`, UNLIKE THE TEST THIS REPLACES. The refusal happens in the pre-flight, before
+# `llama-quantize` is looked for at all, so this now runs on every machine instead of being skipped
+# wherever the vendored binary is absent. The old test needed the binary because it ran a real
+# quantisation to see which flag won.
+def test_the_two_source_flags_together_are_refused_rather_than_ranked(tmp_path):
+    """REPLACES `test_keep_source_overrides_pruning`, and the replacement is a behaviour change.
+
+    WHAT THIS TEST USED TO SAY. Passing `--prune-source --keep-source` kept the source, because
+    `--keep-source` won by precedence. It asserted `src.is_file()` after a successful run.
+
+    WHY IT CHANGED, AND WHY THAT NEEDED SAYING OUT LOUD. On 2026-10-01 `_preflight_arguments`
+    learned to refuse the pair, as one of a batch of pre-flight contradictions moved from "resolved
+    somewhere in the middle of a function" to "refused at the boundary". The reasoning is in that
+    function: the source is usually the largest file on the disk, so which flag wins is not a detail
+    to settle by precedence, and a user who passed both does not know which they are getting.
+
+    **The old behaviour was pinned by this test and nowhere else.** It is not in the man page, the
+    guide or `--help`, so no reader was ever promised the precedence and no documentation needed
+    changing. That is the only reason this is a test rewrite rather than a question for the
+    operator: a precedence a user could have read and relied on would be a §17 decision, not a
+    one-function fix.
+
+    The old assertion is kept in spirit: the source still exists afterwards, because nothing ran.
+    """
     src = _tiny_gguf(tmp_path / "tiny-f32.gguf")
-    quantise.run([str(src), "--type", "Q4_K_M", "--prune-source", "--keep-source"],
-                 log=lambda _m: None)
-    assert src.is_file()
+    with pytest.raises(SystemExit) as e:
+        quantise.run([str(src), "--type", "Q4_K_M", "--prune-source", "--keep-source"],
+                     log=lambda _m: None)
+    message = " ".join(str(e.value).split())
+    assert "--keep-source and --prune-source ask for opposite things" in message, message
+    assert "Pass whichever you meant" in message, message
+    assert src.is_file(), "the refusal deleted the source it was refusing to decide about"
 
 
 @needs_binary

@@ -321,7 +321,7 @@ def test_a_shard_that_stops_partway_through_is_refused_rather_than_counted(
     monkeypatch.setattr(pq, "ParquetFile", _Dies)
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
-    assert "could not be read to the end" in str(e.value)
+    assert "could not be read to the end" in " ".join(str(e.value).split())
 
 
 def test_a_shard_that_is_not_parquet_is_a_sentence_rather_than_a_stack_trace(
@@ -331,7 +331,7 @@ def test_a_shard_that_is_not_parquet_is_a_sentence_rather_than_a_stack_trace(
     _with_hub(monkeypatch, tmp_path, {"data/train-00000-of-00001.parquet": str(half)})
     with pytest.raises(SystemExit) as e:
         bt.fetch(_src(), log=lambda *a: None)
-    assert "not a readable parquet file" in str(e.value)
+    assert "not a readable parquet file" in " ".join(str(e.value).split())
 
 
 def test_a_layout_this_reader_declines_says_which_source_needed_datasets(monkeypatch, tmp_path):

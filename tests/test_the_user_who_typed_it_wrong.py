@@ -112,6 +112,27 @@ class _Args:
         self.__dict__.update(kw)
 
 
+class _QuantiseArgs(_Args):
+    """`_Args` with every flag `quantise`'s own parser defines, taken from that parser.
+
+    WHAT BROKE, 2026-10-01. `_Args` sets only the attributes a test names, which is deliberate and
+    reads well. Then `_preflight_arguments` learned to refuse `--keep-source` with
+    `--prune-source`, and two tests in this class that had nothing to do with either flag died on
+    `'_Args' object has no attribute 'keep_source'`: a stub that lists the flags a pre-flight reads
+    has to be edited every time the pre-flight reads one more, and the failure lands nowhere near
+    the cause.
+
+    So the defaults come from `build_parser()`, the same source the real arguments come from, which
+    is the pattern `tests/conftest.py` already uses for its `every_flag` fixture and for the same
+    reason: a fixture written out by hand is a second copy of the truth, and it drifts.
+    """
+
+    def __init__(self, **kw):
+        defaults = vars(quantise.build_parser().parse_args(["placeholder.gguf"]))
+        defaults.update(kw)
+        super().__init__(**defaults)
+
+
 class TestAWorkerCountThatIsNotAWorkerCount:
     """`llama-quantize` does not decline a thread count it cannot use.
 
@@ -144,13 +165,13 @@ class TestAWorkerCountThatIsNotAWorkerCount:
         assert "serialises" in str(e.value)
 
     def test_zero_is_still_the_documented_way_to_let_it_choose(self):
-        quantise._preflight_arguments(_Args(threads=0, imatrix=None, tensor_type=[]), log=lambda *_: None)
+        quantise._preflight_arguments(_QuantiseArgs(threads=0, imatrix=None, tensor_type=[]), log=lambda *_: None)
 
     def test_a_count_above_the_core_count_warns_rather_than_refuses(self, monkeypatch):
         """Oversubscription is a real choice on a shared box. It is a warning, not a refusal."""
         monkeypatch.setattr(quantise.os, "cpu_count", lambda: 4)
         said = []
-        quantise._preflight_arguments(_Args(threads=64, imatrix=None, tensor_type=[]), log=said.append)
+        quantise._preflight_arguments(_QuantiseArgs(threads=64, imatrix=None, tensor_type=[]), log=said.append)
         assert any("4 cores" in s for s in said)
 
 

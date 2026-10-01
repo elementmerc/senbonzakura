@@ -439,6 +439,12 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
     return ("unknown", reason, None)
 
 
+#: How far a card line is indented under its label, and therefore how much of the terminal's width
+#: it does not get. Four spaces, which is `say`'s own "this is an example, pass it through" depth,
+#: because a card's identifier is something a reader copies into a bug report.
+_CARD_INDENT = 4
+
+
 def _describe(system, machine, gpus, driver, torch_version, variant, log, compute=None):
     log(f"  platform       {system} {machine}, Python {platform.python_version()}")
     if gpus is None:
@@ -448,8 +454,17 @@ def _describe(system, machine, gpus, driver, torch_version, variant, log, comput
     else:
         # A card's name is cut WITH A MARKER. Two cards whose names agree for sixty characters are
         # one card to a reader shown neither difference nor a sign that anything was removed.
-        log(f"  NVIDIA driver  {len(gpus)} GPU(s): "
-            f"{'; '.join(say.shorten(g, 60) for g in gpus)}")
+        #
+        # ONE CARD PER LINE, 2026-10-01. Joined with "; " onto the label's line, two cards measured
+        # **149 columns** at COLUMNS=80 with the real `nvidia-smi -L` strings, so the terminal
+        # reflowed the second card's text into the middle of the first's and the per-card cut
+        # markers stopped marking anything a reader could locate. The sixty was a fixed budget
+        # besides, arrived at before this module shared `say.width()`, so on a wide terminal it cut
+        # a line that would have fitted whole.
+        log(f"  NVIDIA driver  {len(gpus)} GPU(s)"
+            + (":" if len(gpus) == 1 else ", one per line:"))
+        for g in gpus:
+            log(f"    {say.shorten(g, say.width() - _CARD_INDENT)}")
     if driver:
         log(f"  driver CUDA    up to {driver[0]}.{driver[1]}")
     if compute:
@@ -505,9 +520,21 @@ def main(argv=None):
 
     # WRAPPED. The reasons are whole paragraphs by design (a verdict that does not say why sends
     # the reader to fix the wrong thing), and the longest ran to 210 characters on one line.
+    #
+    # THE WIDTH WAS 94 AND THE REST OF THE TOOL STOPS AT 79. Measured on an 80-column terminal:
+    # the blocked-CPU-build verdict came out at 90 and 95 columns, so the one message whose whole
+    # purpose is explaining a problem was the message that wrapped twice, once here and again in
+    # the terminal. `say.width()` is the terminal's own width capped at `say.CEILING`, which is
+    # what every other paragraph in this tool is held to.
+    #
+    # The indents go to textwrap rather than being added afterwards, because the old code wrapped
+    # to a budget and then prefixed two or four spaces onto the result, so the printed line was
+    # always wider than the number it had been wrapped to. Letting textwrap own both means the
+    # width in the call is the width on the screen.
     print()
-    for i, line in enumerate(textwrap.wrap(f"{verdict.upper()}: {reason}", width=94)):
-        print(f"  {line}" if i == 0 else f"    {line}")
+    for line in textwrap.wrap(f"{verdict.upper()}: {reason}", width=say.width(),
+                              initial_indent="  ", subsequent_indent="    "):
+        print(line)
     if args is None:
         # "blocked" means there is a real problem here that this command cannot fix, which is not
         # the same answer as "nothing to do". Exiting 0 on both makes them indistinguishable to

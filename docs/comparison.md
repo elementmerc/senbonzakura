@@ -100,7 +100,12 @@ An earlier draft of this page quoted "about 27% on real Qwen3-1.7B weights". Tha
 not measured by anything in this repository and has been withdrawn.
 
 This is inherited from the published method rather than invented by any of us, and none of the
-three tools reports it.
+three tools reports **how much of the direction survives**. Two of them do report whether the
+restoration is switched on, which is a different fact: OBLITERATUS records it per run as
+`method_config.norm_preserve`, and Heretic's row-normalisation setting is readable from its own
+configuration. Knowing the restoration ran tells you the leak exists. It does not tell you how
+big it is, and the size is the part that decides whether a published refusal rate means what it
+says.
 
 It was also stated here as a property of the field, and it isn't one. A fourth tool, apostate,
 bakes its projection without any per-row norm restoration, so it doesn't have this problem to

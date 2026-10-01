@@ -42,8 +42,12 @@ THE THREE OUTCOMES, because two is how a check becomes decoration
                  (or only entries the allowlist names, and the count of those is PRINTED).
     FAIL         advisories were found, or the covered surface was smaller than required, or
                  dependency collection failed under --strict.
-    DID NOT RUN  the advisory service was unreachable. Loud, and NOT red, because a gate that
-                 goes red on the network teaches people to re-run until it is green.
+    DID NOT RUN  the advisory service was unreachable. Loud, and NOT red by default, because a
+                 gate that goes red on the network teaches people to re-run until it is green.
+                 `--required` makes it red, for the day something other than a person reads the
+                 conclusion: a required status check cannot tell green-and-did-not-look from
+                 green-and-looked, so from that day the third outcome has to borrow failure
+                 rather than success. See Q-71.
 
 The caller probes reachability before invoking this, so by the time this runs the network is
 known good and no failure here has to be guessed at from an error string.
@@ -127,26 +131,49 @@ def main(argv: list[str] | None = None) -> int:
                          "green main red at 03:00 with nobody to act.")
     ap.add_argument("--skip-probe", action="store_true",
                     help="for testing this script's own guards offline")
+    # A VALUE RATHER THAN A STORE-TRUE FLAG, and the reason is the shell rather than Python. The
+    # workflow holds the decision in one env variable, and a bare flag would have to be spliced
+    # in unquoted (`$AUDIT_REQUIRED`) so that an empty value disappears, which is the expansion
+    # shellcheck refuses and actionlint reports. Taking `true` or `false` lets the call site
+    # always quote it, and an unset variable then arrives as an empty string that argparse
+    # refuses by name instead of silently selecting the permissive branch.
+    ap.add_argument("--required", choices=("true", "false"), default="false",
+                    help="'true' makes an unreachable advisory service FAIL rather than report "
+                         "green. Flip it on the day required status checks land, because a "
+                         "branch rule reads a green conclusion as 'verified' and cannot see the "
+                         "annotation saying nothing was checked.")
     args = ap.parse_args(argv)
+    required = args.required == "true"
 
     # DID NOT RUN, and deliberately not red. An unreachable advisory service is a network result,
     # and a gate that goes red on the network teaches people to re-run until it is green, which
     # is how red stops meaning anything. It is loud instead, and it says plainly that nothing was
     # checked rather than letting a green tick imply it was.
     if not args.skip_probe and not service_reachable():
-        print(
-            f"::warning::DID NOT RUN: pypi.org is unreachable, so '{args.label}' was NOT audited "
-            f"for advisories. This is a network result, not a pass."
-        )
+        # The SENTENCE is identical either way and only the annotation level and the exit status
+        # change, so a reader comparing two runs is never left wondering whether the wording
+        # shifted or the finding did.
+        sentence = (f"DID NOT RUN: pypi.org is unreachable, so '{args.label}' was NOT audited "
+                    f"for advisories. This is a network result, not a pass.")
+        level = "error" if required else "warning"
+        print(f"::{level}::{sentence}")
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
+            consequence = (
+                "This **fails** the job, because --required is on and a branch rule would "
+                "otherwise read the green tick as a verification that did not happen.\n"
+                if required else
+                "This job is **green and audited nothing**. Read the annotation rather than "
+                "the tick.\n"
+            )
             with open(summary, "a", encoding="utf-8") as handle:
                 handle.write(
                     f"### Dependency audit DID NOT RUN: {args.label}\n"
                     f"`pypi.org` was unreachable, so no advisory check happened for this "
                     f"environment in this run.\n"
+                    f"{consequence}"
                 )
-        return 0
+        return 1 if required else 0
 
     ignore, detail = accepted_advisories()
 

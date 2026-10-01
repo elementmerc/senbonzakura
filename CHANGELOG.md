@@ -46,6 +46,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   before a run starts, because each of them moves a bar rather than crashing
 
 ### Measurement
+- A null ruler that separates the two sides perfectly in the opposite direction is named as the
+  strongest one, where it used to be scored as a coin flip, so the headline control line and the
+  rule that invalidates a run now agree on the same case
+- A null panel that could not be scored at all says so instead of printing a control at chance
 - The null floor the direction filter holds candidates to is reported as the percentile it is,
   with its false keep rate, rather than as a bar every null draw fails
 

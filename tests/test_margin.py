@@ -1039,10 +1039,90 @@ def test_every_null_ruler_is_reported_whatever_it_says():
 def test_the_strongest_null_is_the_one_furthest_from_a_coin():
     """Furthest from 0.5 in EITHER direction. A null that separates the arms backwards is just as
     much a confound as one that separates them forwards, and taking a plain max would miss it.
+
+    THIS TEST NAMED THE PROPERTY AND ONLY EVER EXERCISED ONE HALF OF IT. The arms below put the
+    shouting on the harmful side, so every ruler lands at 1.0 and `in (0.0, 1.0)` passed without
+    0.0 ever being reached. The inverse half is the test below, which is where the defect was.
     """
     from senbonzakura import margin
     got = margin.null_panel(["SHOUTING!!!", "MORE SHOUTING!!!"], ["quiet", "also quiet"])
-    assert got["strongest_auc"] in (0.0, 1.0), got
+    assert got["strongest_auc"] == 1.0, got
+
+
+def test_a_null_that_separates_the_arms_backwards_is_named_as_the_strongest():
+    """An AUC of 0.0 is a perfect null and used to be scored as a coin flip.
+
+    `abs((out[k] or 0.5) - 0.5)` reads `0.0 or 0.5` as `0.5`, so a ruler separating the two arms
+    perfectly in the other direction came out at distance zero from chance. Measured on these
+    arms: three rulers sat at 0.0 and the old expression named `characters_auc` at 0.25 as the
+    strongest, while `nulls_matching_the_instrument` computed `abs(auc - 0.5)` without the `or`
+    and would have invalidated the run on one of the three it had not named. The headline line and
+    the rule beneath it disagreed on the one case that matters. Metrologist F1, 2026-09-28.
+    """
+    from senbonzakura import margin
+    got = margin.null_panel(["quiet", "also quiet"], ["SHOUTING!!!", "MORE!!!"])
+    assert got["strongest_auc"] == 0.0, got
+    assert abs(got[got["strongest"]] - 0.5) == 0.5
+    # The pair the old line got wrong: a weaker ruler must not outrank a perfect inverse one.
+    others = {k: v for k, v in got.items()
+              if k.endswith("_auc") and k != "strongest_auc" and isinstance(v, float)}
+    assert max(abs(v - 0.5) for v in others.values()) == 0.5
+
+
+def test_the_headline_null_and_the_invalidation_rule_agree_on_the_inverse_case():
+    """The two were computed by different expressions and only one of them was right.
+
+    Driven through the artefact shape `nulls_matching_the_instrument` reads, so this fails if
+    either side changes its mind about what distance from chance means.
+    """
+    from senbonzakura import margin
+    nulls = margin.null_panel(["quiet", "also quiet"], ["SHOUTING!!!", "MORE!!!"])
+    # A compass AUC closer to chance than the strongest null, so the rule must fire.
+    res = {"auc": 0.6, "controls": {"nulls": nulls}}
+    matched = margin.nulls_matching_the_instrument(res)
+    assert matched, "the rule did not fire on a null at AUC 0.0, which is a perfect separation"
+    _arm, ruler, null_auc, _arm_auc = matched[0]
+    assert abs(null_auc - 0.5) == abs(nulls["strongest_auc"] - 0.5), (
+        f"the rule invalidated on {ruler}={null_auc} and the headline line names "
+        f"{nulls['strongest']}={nulls['strongest_auc']}, which are different strengths")
+
+
+def test_the_tie_break_keeps_the_documented_example_naming_the_same_ruler():
+    """Three of the compass page's five rulers sit at distance 0.5 from chance.
+
+    `characters_auc=0.0000`, `mean_word_length_auc=1.0000` and `word_count_auc=0.0000`, all in
+    the worked example the page re-runs in CI on every commit. Ranking on distance alone makes the
+    named ruler depend on which order `NULL_RULERS` happens to be written in, so adding a ruler
+    would move a published figure for no reason anybody could read. Ties go to the higher AUC;
+    this pins that against the exact block the page prints.
+    """
+    from senbonzakura import margin
+    documented = {"characters_auc": 0.0, "mean_word_length_auc": 1.0,
+                  "punctuation_density_auc": 1.0, "uppercase_ratio_auc": 0.5,
+                  "word_count_auc": 0.0}
+    strongest = max(documented, key=margin._null_strength(documented))
+    assert strongest == "mean_word_length_auc", (
+        f"the compass page prints strongest=mean_word_length_auc=1.0000 and this block now names "
+        f"{strongest}, so either the page or the ranking has to change")
+
+
+def test_the_tie_break_never_outranks_a_greater_distance():
+    """The tie-break is a tie-break. A nearer ruler with a higher AUC must still lose."""
+    from senbonzakura import margin
+    block = {"near_auc": 0.9, "far_auc": 0.0}
+    assert max(block, key=margin._null_strength(block)) == "far_auc"
+
+
+def test_a_panel_that_could_not_be_scored_says_so_rather_than_reporting_chance():
+    """`auc` returns None on an empty arm, which means unmeasured and not clean.
+
+    The old expression folded None into 0.5 along with 0.0, so a panel that never ran printed a
+    strongest null at chance beside a headline AUC, which reads as a control that found nothing.
+    """
+    from senbonzakura import margin
+    got = margin.null_panel([], ["a harmless prompt"])
+    assert got["strongest"] is None and got["strongest_auc"] is None
+    assert "not a clean one" in got["strongest_note"]
 
 
 def test_a_null_ruler_reads_only_the_prompt_text():

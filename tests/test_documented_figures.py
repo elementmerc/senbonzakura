@@ -59,15 +59,25 @@ def test_the_null_and_the_compass_are_described_as_the_numbers_have_them():
     # the error it explains.
     prose = TEXT.split("The null panel is the loudest.")[1].split(":::")[0]
 
-    if null > compass:
+    # COMPARED AS DISTANCE FROM CHANCE, not as magnitude, which is what this read before 2026-10-02
+    # and is a narrower question than the one being asked. An AUC of 0.5 is a coin flip and 0.0 is
+    # a perfect separation in the other direction, so a null at 0.0 beats a compass at 0.9653 on
+    # the only axis that means anything, and a raw `null > compass` reads it as the weakest result
+    # on the board. The documented block has two rulers at exactly 0.0000, so this is the live
+    # case rather than a hypothetical: the day the tie-break names one of them, the old comparison
+    # would have failed the build with the opposite explanation.
+    null_strength, compass_strength = abs(null - 0.5), abs(compass - 0.5)
+
+    if null_strength > compass_strength:
         assert "better than the compass" in prose, (
-            f"the strongest null scores {null} against the compass's {compass}, so it BEATS it, "
-            f"and the prose must not say the two matched")
+            f"the strongest null scores {null} against the compass's {compass}, which is further "
+            f"from chance, so it BEATS it and the prose must not say the two matched")
         assert "exactly what the compass scored" not in prose
-    elif null == compass:
+    elif null_strength == compass_strength:
         assert "exactly what the compass scored" in prose
     else:
-        pytest.fail(f"the strongest null ({null}) is below the compass ({compass}); the page's "
+        pytest.fail(f"the strongest null ({null}, {null_strength:.4f} from chance) is nearer "
+                    f"chance than the compass ({compass}, {compass_strength:.4f}); the page's "
                     f"whole argument is that a surface ruler matches or beats it")
 
 

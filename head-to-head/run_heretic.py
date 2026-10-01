@@ -228,6 +228,33 @@ def main():
               file=sys.stderr)
         return 2
 
+    # WHAT THIS ARM IS ABOUT TO RUN ON, read before it runs rather than after.
+    #
+    # Checked here, beside the other preconditions, because the cost of discovering it late is the
+    # whole search. `benchenv.require_complete` refuses an unreadable environment rather than
+    # writing a null: a provenance field that can be silently absent is not provenance, and the
+    # reason this record exists at all is that numpy moved between the two arms' images and nothing
+    # said so. See `benchenv.verify_declared` for that history.
+    #
+    # Imported from this script's own directory, which is `/work/bench` inside the box. Standard
+    # library only, so it imports in an image that holds Heretic's dependency tree and not ours.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import benchenv
+
+    try:
+        environment = benchenv.require_complete(benchenv.environment_record())
+    except benchenv.EnvironmentRecordError as error:
+        print(f"run_heretic: {error}", file=sys.stderr)
+        return 2
+    drifted = environment.get("disagreements") or {}
+    if drifted:
+        # Said, not fatal. The image's baked freeze and what this interpreter can import should
+        # agree; when they do not, which one produced the number is a question for whoever reads
+        # the artefact and not one this script may settle by picking a side. Both are recorded.
+        print(f"run_heretic: NOTE {len(drifted)} package(s) differ between the image's baked "
+              f"freeze and what this arm can import: "
+              f"{', '.join(sorted(drifted))}. Both sets are in budget.json.", file=sys.stderr)
+
     cfg_path = write_config(a, a.out)
     print(f"run_heretic: config written to {cfg_path}")
 
@@ -265,7 +292,16 @@ def main():
         # `head-to-head/EQUAL-BUDGET.md` promises it, and a row read before that pass is applied is not
         # the matched comparison the gate asks for.
         "best_of_n_applied": False,
+        # THE ENVIRONMENT THIS ARM RAN ON, in full and from inside it. `CONTRACT.md` promises each
+        # row can name what produced it, and an image digest identifies an environment without
+        # describing one. The whole distribution set rather than a chosen few, because the package
+        # that moved was one nobody had thought to name.
+        "environment": environment,
     }
+    # Refused rather than written incomplete, at both ends of the rule. `require_complete` checked
+    # the record could be built; this checks it actually reached the artefact, because the two
+    # places a rule is spelled are the two places it can drift apart.
+    benchenv.require_recorded(budget)
     with open(os.path.join(a.out, "budget.json"), "w", encoding="utf-8") as f:
         json.dump(budget, f, indent=2)
 

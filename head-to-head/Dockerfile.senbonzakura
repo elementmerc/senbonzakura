@@ -6,11 +6,24 @@
 # argument our own arms did not need one: we wrote the code, and it runs on the host venv. Running
 # them there anyway would have left a difference underneath the table that no column showed.
 #
-# The host venv carries torch 2.13.0+cu130. The benchmark base pins torch 2.5.1+cu124, because
-# that is what the competing tools are pinned to. Two arms on two torch builds are two sets of
-# kernels, two sets of numerics, and a KL divergence measured against a slightly different
-# baseline. `head-to-head/EQUAL-BUDGET.md` said "Card: same", which was true and which quietly meant
-# less than a reader would take it to mean.
+# The host venv carries torch 2.13.0+cu130. The benchmark base pins torch 2.5.1+cu124. Two arms on
+# two torch builds are two sets of kernels, two sets of numerics, and a KL divergence measured
+# against a slightly different baseline. `head-to-head/EQUAL-BUDGET.md` said "Card: same", which was
+# true and which quietly meant less than a reader would take it to mean.
+#
+# WHY 2.5.1, CORRECTED 2026-10-01. This paragraph used to say the base pins that version "because
+# that is what the competing tools are pinned to", and **that is false**. Read first-hand from the
+# upstream trees: Heretic v1.4.0's `pyproject.toml` deliberately leaves torch unspecified, abliterix
+# declares no direct torch dependency at all and takes it transitively, and nothing in either chain
+# declares a torch upper bound. No competing tool is pinned to 2.5.1 or to anything else.
+#
+# The real reason is the one `Dockerfile.tool` gives and it is sound: 2.5 is the floor this
+# project's own code enforces (`crashsafe.MIN_TORCH`, because transformers' MoE path imports
+# `torch.distributed.tensor.DTensor`), and the cu124 wheels match the driver on the card. So the
+# pin is right and one of its two stated reasons was not.
+#
+# Recorded rather than deleted, because a reader who checked the old claim against either rival's
+# metadata would have found it wrong and had no way to tell whether the pin was wrong with it.
 #
 # So both tools now run on one image, one torch, one CUDA build, with the same flags, the same
 # read-only mounts and the same absent network. It also means our own arm is audited by the same
@@ -41,16 +54,63 @@ USER root
 # development environment runs, so they are the set the test suite is green against rather than
 # whatever a resolver picks on build day.
 #
-# The torch assertion is the load-bearing line. Any of these packages may pull a different torch
-# as a dependency, and it would look like a successful build while silently undoing the whole
-# reason this image exists.
+# THE ASSERTION WAS LOAD-BEARING AND TOO NARROW, and this is the correction rather than a tidy-up.
+#
+# This comment used to end "The torch assertion is the load-bearing line. Any of these packages may
+# pull a different torch as a dependency, and it would look like a successful build while silently
+# undoing the whole reason this image exists." The diagnosis was right and the scope was wrong:
+# the package that actually moved was **numpy**, not torch, and it moved in the sibling image.
+#
+# `Dockerfile.tool` pinned `numpy==2.1.3`; Heretic v1.4.0 declares `numpy~=2.2`; so the Heretic
+# layer upgraded numpy on every build while this image's pins left it alone, and the two arms of a
+# published comparison ran on different numpy by construction. A one-package assertion cannot see
+# a second package move, whichever package it happens to name.
+#
+# So numpy is pinned HERE too, at the same version, rather than inherited. This arm does not need
+# the upgrade the way Heretic's does, and that is exactly why it has to be written down: an arm
+# whose numeric stack is whatever an earlier layer happened to leave behind cannot state its own
+# environment, and `CONTRACT.md` presents these arms as one environment.
+#
+# `--verify-pins` holds every declared pin and every required package from one string, so extending
+# the check is editing `BENCH_PINS` or `BENCH_REQUIRED` and not editing an assertion.
+ARG TORCH_PIN=2.5.1
+ARG NUMPY_PIN=2.4.6
+ARG TRANSFORMERS_PIN=5.14.1
+ARG ACCELERATE_PIN=1.14.0
+ARG DATASETS_PIN=5.0.1
+ARG OPTUNA_PIN=4.9.0
+# Built up in steps rather than as one line with a backslash continuation inside a quoted default.
+# That form is valid and it is also the kind of quoting nobody can check by reading, and this file
+# cannot be test-built on the machine it is edited on. Three short lines verify by inspection.
+ARG BENCH_PINS_CORE="torch==$TORCH_PIN numpy==$NUMPY_PIN"
+ARG BENCH_PINS_STACK="transformers==$TRANSFORMERS_PIN accelerate==$ACCELERATE_PIN"
+ARG BENCH_PINS="$BENCH_PINS_CORE $BENCH_PINS_STACK datasets==$DATASETS_PIN optuna==$OPTUNA_PIN"
+# `tokenizers` is NOT pinned, and it is named here so the gap is visible rather than absent. It
+# arrives with transformers, it decides what the model is shown, and the comment above calls a
+# moving tokenisation stack disqualifying. Pinning the whole transitive closure is a separate
+# decision (it risks a missing package that only a run finds); requiring it present and recording
+# its resolved version is what lands now.
+ARG BENCH_REQUIRED="tokenizers safetensors huggingface-hub pyarrow"
+ENV BENCH_DECLARED_PINS=$BENCH_PINS \
+    BENCH_REQUIRED_PRESENT=$BENCH_REQUIRED
+
 RUN pip install --no-cache-dir \
-      transformers==5.14.1 \
-      accelerate==1.14.0 \
-      datasets==5.0.1 \
-      optuna==4.9.0 \
- && python -c "import torch; assert torch.__version__.startswith('2.5.1'), torch.__version__" \
+      "transformers==$TRANSFORMERS_PIN" \
+      "accelerate==$ACCELERATE_PIN" \
+      "datasets==$DATASETS_PIN" \
+      "optuna==$OPTUNA_PIN" \
+      "numpy==$NUMPY_PIN" \
+ && python /opt/benchenv.py --verify-pins \
  && python -c "import transformers, datasets, optuna, accelerate; print('senbonzakura deps ready')"
+
+# RE-BAKED, because the freeze inherited from the base describes the base and this layer installed
+# a dependency tree on top of it.
+RUN pip freeze > /opt/bench-env.txt \
+ && echo "bench-env.txt: $(wc -l < /opt/bench-env.txt) distributions"
+
+LABEL org.senbonzakura.bench.declared-pins=$BENCH_PINS \
+      org.senbonzakura.bench.required-present=$BENCH_REQUIRED \
+      org.senbonzakura.bench.freeze="/opt/bench-env.txt"
 
 USER bench
 WORKDIR /work

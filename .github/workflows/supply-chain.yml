@@ -198,6 +198,34 @@ jobs:
               ;;
           esac
 
+      # Q-73, and it is the same shape of claim one layer down: a container base image pinned by
+      # tag is a build nobody can reproduce, because a tag is a name the registry can repoint.
+      # Offline and blocking, like the pin-comment check above, because reading a FROM line needs
+      # no network and a gate that needs one is a gate that fails on a train.
+      #
+      # `--expect` is the count assertion every gate in this file makes. A check that discovers
+      # its own inputs and finds none exits 0 having verified nothing, so a renamed or moved
+      # Dockerfile would otherwise turn this green by emptying it. If a stage or a file goes,
+      # lower the number in the same commit.
+      - name: Container base images are pinned by digest
+        run: |
+          set -uo pipefail
+          set +e
+          python3 tools/ci/check_base_images.py --check --expect 5
+          status=$?
+          set -e
+          case "$status" in
+            0) ;;
+            1)
+              echo "::error::A container base image is pinned by tag rather than by digest, or the scope this gate reads has shrunk. The annotations above name the file and line. Baseline section 5: base images are pinned by digest, never by tag."
+              exit 1
+              ;;
+            *)
+              echo "::error::DID NOT RUN: the base image check exited ${status}, so it did not reach a verdict. That is never a pass."
+              exit 1
+              ;;
+          esac
+
   # ---------------------------------------------------------------------------------------------
   # Item 2. Make the hashes in requirements.lock load-bearing.
   #
@@ -624,6 +652,60 @@ jobs:
               )
           PY
           cat drift.md >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------------------------
+  # Q-73, the other half of digest pinning.
+  #
+  # A digest cannot move, which is the point, and that is also its cost: the pin freezes at
+  # whatever was current the day somebody wrote it, and a frozen base stops receiving the patches
+  # the moving tag was delivering. `python:3.13-slim` is rebuilt roughly weekly as Debian patches
+  # land, so without this job the published image would quietly age.
+  #
+  # IT IS COOLDOWN AWARE, and that is the whole reason it is not three lines of shell. Baseline
+  # section 5 says adopt nothing younger than seven days, because most compromised releases are
+  # caught within days. So a newer digest is reported as COOLING until it has aged and only then
+  # proposed as a refresh. Proposing every newer digest the moment it appeared would be a
+  # cooldown violation wearing the costume of diligence.
+  #
+  # IT REPORTS AND NEVER REWRITES. A tag being repointed is the visible footprint of exactly what
+  # digest pinning exists to survive, so a job that re-pinned by itself would erase the evidence
+  # of the one case that matters and call it success. Same rule as the action pin drift job above,
+  # for the same reason.
+  #
+  # Scheduled rather than on push, because a base image moving has nothing to do with a commit
+  # and a weekly answer matches the rate at which anybody acts on it.
+  # ---------------------------------------------------------------------------------------------
+  base-image-drift:
+    name: Base image pins still resolve as recorded (reporting only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, as pinned in ci.yml
+
+      - name: Re-resolve every base image tag and compare with the pin
+        run: |
+          set -uo pipefail
+          set +e
+          python3 tools/ci/check_base_images.py --drift
+          status=$?
+          set -e
+          case "$status" in
+            0) ;;
+            2)
+              # DID NOT RUN. The registry answered for nothing, so no pin was compared. Routed
+              # through the shared helper so this job's posture is the same one decision as every
+              # other DID NOT RUN in this file. See REQUIRE_EVERY_CHECK_TO_RUN at the top.
+              if ! tools/ci/did_not_run.sh "the container registry" \
+                   "no base image pin was compared against what its tag resolves to today."; then
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::The base image drift check exited ${status}, which means the tool failed rather than that the pins are current. An exit status it does not define is never a pass."
+              exit 1
+              ;;
+          esac
 
   # ---------------------------------------------------------------------------------------------
   # Q-51 option B. The sampled, budgeted mutation report, with a ratchet that cannot fire for

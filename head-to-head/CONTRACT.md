@@ -172,23 +172,62 @@ spec asks for 24 GB dense and 80 GB for mixture-of-experts. **This benchmark say
 how these tools behave at the sizes they are usually used at.** Results at 2B may not survive at
 8B, and we would not be surprised either way.
 
-**First version.** Two tools, two models, done properly, rather than four tools measured
-carelessly:
+**First version, revised 2026-10-01.** This section used to say *"Two tools, two models, done
+properly, rather than four tools measured carelessly."* **That is withdrawn, and the sentence below
+replaces it.** Four tools, four models:
 
 | | |
 |---|---|
-| Tools | senbonzakura, Heretic |
-| Models | Qwen3-1.7B, Llama-3.2-1B |
+| Tools | senbonzakura, Heretic, abliterix, OBLITERATUS |
+| Models | Qwen2.5-1.5B-Instruct, Qwen3-1.7B, OLMo-2-0425-1B-Instruct, Qwen2.5-0.5B-Instruct |
 | Corpora | ours, abliterix |
 | Seeds | 5 per arm |
 
-Abliterix and OBLITERATUS are next, as additional rows under the same contract.
+**Why the earlier commitment is withdrawn rather than quietly updated.** It was published here, so a
+reader who met it is owed the replacement in the same place. The reasoning behind it was not wrong:
+four tools measured carelessly is worse than two done properly, and that remains true. What changed
+is that three of the four now have a *mechanistic* reason to differ rather than a hoped-for one, so
+the extra arms buy an answer rather than a bigger table.
 
-**Gemma is excluded from the first version, and the reason is ours.** Until 2026-08-05 our own
-weight edit did not reach the residual stream on Gemma-family models, because they normalise each
-sublayer's output before adding it to the stream and we edited upstream of that step. It is fixed,
-and Gemma is excluded until our own numbers there have been re-measured, so that a bug of ours is
-not published as a property of a model.
+That reason is the model set, and it is the substantive change here. OLMo 2 applies
+`post_attention_layernorm` and `post_feedforward_layernorm` to each sublayer's output before the
+residual add, the same shape as the Gemma family. A source read of Heretic, abliterix and
+OBLITERATUS on 2026-10-01 found no norm-gain handling in any of them, and abliterix ships
+`olmo2_7b.toml` and `olmo2_13b.toml`, so the claim is theirs and testing it is fair. On a Qwen row
+expect four near-ties at zero refusal; on the OLMo 2 row a difference is predicted by mechanism.
+**A table of four ties is not worth anyone's GPU time, and that is what two Qwen models alone would
+most likely have produced.**
+
+Llama-3.2-1B is dropped from the model set. It is gated `manual` on the Hub, so a reader cannot
+reproduce a row of this table without accepting Meta's terms and holding a token, which contradicts
+the invitation this document opens with. Every model above is Apache-2.0 and ungated.
+
+**Two limits on the revised set, stated here rather than discovered later.** Every model is small
+enough that all four tools run at full precision, which is deliberate: senbonzakura refuses 4-bit on
+its editing path and all three rivals permit or default to nf4, so without that cap the tools would
+not be doing the same thing. And OLMo 2's baseline refusal rate was unmeasured when this was
+written; if it falls below the floor our own tool refuses to edit, the row cannot exist and this
+table loses the one row that justified widening it.
+
+**Our own post-norm fix is not yet confirmed on a real model.** It landed in 0.4.0 covered only by
+unit tests over synthetic norms, and the changelog still describes Gemma as unmeasured rather than
+wrong. The OLMo 2 row therefore tests our code as much as anyone else's, and if it fails it fails
+against us.
+
+**Gemma is excluded, and the reason is ours.** Until 2026-08-05 our own weight edit did not reach
+the residual stream on Gemma-family models, because they normalise each sublayer's output before
+adding it to the stream and we edited upstream of that step. It is fixed, and Gemma stays excluded
+until our own numbers there have been re-measured, so that a bug of ours is not published as a
+property of a model. OLMo 2 covers the same architecture with none of this history, which is why it
+takes the slot.
+
+There is a second reason, and it is not the one above. The Gemma Prohibited Use Policy, incorporated
+into §3.2 of its terms, prohibits attempts to override or circumvent safety filters under an opening
+that binds both using and allowing others to use. On the most natural reading **the run itself is
+the act**, whatever leaves the machine, so this is not something publishing no weights would solve.
+This project has run Gemma under a recorded accepted risk and may do so again for research; a
+recurring public benchmark is a larger and continuing exposure, and it is not one this table needs
+to take when another architecture answers the same question.
 
 ## 4. Results
 

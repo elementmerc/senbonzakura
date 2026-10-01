@@ -20,7 +20,7 @@ own provenance record, and every check described here is something a reader can 
 | Source | Side | Rows it contributes | Declared licence | Revision read |
 |---|---|---|---|---|
 | `Bahushruth/abliteration-harmful-enriched` | harmful | most of the harmful side | apache-2.0, in `cardData` and tagged | `f29c0b77` |
-| `mlabonne/harmful_behaviors`, reached through the above | harmful | about 430 | **none declared** | `02c6a92c`-era, unchanged since 2024-05-30 |
+| `mlabonne/harmful_behaviors`, reached through the above | harmful | 176, measured 2026-10-01 | **none declared** | `01cead01` |
 | `mlabonne/harmless_alpaca` | harmless | the harmless side | **none declared** | `02c6a92c` |
 
 Two of the three declare no licence at all. The card explains what we believe the true position
@@ -28,6 +28,10 @@ is for each, and why that is a belief rather than a fact. The short version: the
 `mlabonne/harmful_behaviors` are, by row count and by inspection, AdvBench's
 `harmful_behaviors.csv` from the `llm-attacks` repository, which is MIT licensed. That is an
 inference from the contents, and neither dataset card says so.
+
+Of those 520 upstream rows, **176 rows of this track's harmful side carry one of their requests**,
+measured template-aware on 2026-10-01. An earlier estimate of "about 430" circulated in this
+project's docs and was not supported by measurement; it has been corrected everywhere it appeared.
 
 We distribute the track under **CC BY-NC 4.0**, the most restrictive licence in the chain.
 
@@ -74,14 +78,40 @@ into the measurement rows.
 
 ## What is not recorded, and the size of the gap
 
-**The harmless top-ups cannot be reproduced.** Rows were added to the harmless side by hand in
-August 2026 and the addition was not recorded: not the source, not the count, not the revision.
-So `senbonzakura track build` reproduces a corpus of the same shape from the same upstreams, and
-it does not reproduce these rows.
+**Part of the harmless side cannot be reproduced.** Rows were added to the harmless side after the
+first build and the addition was not recorded: not the source, not the count, not the revision. So
+`senbonzakura track build` reproduces a corpus of the same shape from the same upstreams, and it
+does not reproduce these rows.
 
-**The size of that gap has not been measured.** Nobody has counted how many rows of the shipped
-`good_ds` have no recorded source. Until that count exists, treat the harmless side as partly
-unreproducible and do not assume a rebuild will give you the same corpus.
+**The gap was measured on 2026-10-01 and it is large.** Of the 4,982 rows in the shipped `good_ds`,
+**2,036 (40.87%) have no request present in `mlabonne/harmless_alpaca`**, the only harmless
+upstream this track declares. They are spread through all three partitions rather than appended as
+a tail:
+
+| Partition | Rows with no recorded source | Of |
+|---|---|---|
+| `fit` | 106 | 257 |
+| `search` | 58 | 128 |
+| `measure` | 1,872 | 4,597 |
+| **total** | **2,036** | **4,982** |
+
+**Those 2,036 rows are 386 distinct requests, not 2,036 independent ones.** Each appears about
+five times under a different template. The 2,946 rows that do trace to `harmless_alpaca` are 2,946
+distinct requests, one row each, with no template expansion. So the unreproducible part of the
+harmless side is a second source of 386 requests that was template-expanded and then mixed in
+before partitioning, which is why it is distributed evenly rather than sitting at the end.
+
+Two things follow, and the second is the one that matters for anybody planning a rebuild. The gap
+to close is 386 requests rather than 2,036 rows, which is a tractable recovery job rather than a
+hopeless one. And the harmless side is 41% template-expanded against a harmful side that is
+expanded throughout, so the two sides of this track do not have the same internal structure. Treat
+the harmless side as partly unreproducible and do not assume a rebuild will give you the same
+corpus.
+
+How to reproduce this measurement: read `good_ds` and `mlabonne/harmless_alpaca`, key both with
+`senbonzakura.track.request_key` over templates discovered across the union of the two, and count
+`good_ds` rows whose key is absent upstream. Matching by raw string instead gives a different and
+wrong answer, for the reason the contamination checker documents.
 
 Every track built after that point carries a manifest recording its sources and revisions, so
 this cannot happen again. It did happen once, and it happened to the corpus behind the published
@@ -93,6 +123,13 @@ AdvBench is inside this track, arriving through `mlabonne/harmful_behaviors`. If
 sit in the `fit` or `search` partitions, then a model tuned with this track was tuned on requests
 AdvBench would later mark it against, and any AdvBench score from it is in-sample rather than held
 out.
+
+**That check has now been run, and the answer is that this track is contaminated.** Measured
+2026-10-01: of AdvBench's 508 distinct requests, 8 are in `fit`, 3 are in `search`, 159 are in
+`measure` and 338 are absent. So 11 requests were fitted or searched on, and an AdvBench figure
+over the whole benchmark from this track is in-sample. A clean figure is still available over the
+497 requests that are either in `measure` or were never held, and a figure reported that way has to
+say so in those words. The card carries the table and the caveats on how it was measured.
 
 The same applies to any other public set assembled from these upstreams, which is most of them.
 Check before you rely on a figure:

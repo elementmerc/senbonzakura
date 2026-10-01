@@ -250,3 +250,26 @@ change.
   **The rule this sets, so it does not have to be rediscovered:** every quoted upstream default,
   filename or behaviour in this file names the ref it was read at and the date it was read. A
   figure without a ref is a figure that cannot be checked and cannot be noticed going wrong.
+
+- **2026-10-01, which prompt budget each published figure actually used, and the shortfall against
+  400.** The table above says 256 direction-fit prompts per side, and that is what every published
+  arm in this directory ran at. It needs stating next to the other number a reader will meet,
+  because Heretic's shipped default is **400 per side** and this track cannot serve it.
+
+  Measured on the bundled track on 2026-09-11 and re-read from `track.json` on 2026-10-01, the
+  `fit + search` partitions hold **385 rows on the harmless side and 391 on the harmful side**. So
+  a run asking for 400 a side is refused rather than quietly reading into the measurement rows,
+  which is `flag_violations` doing its job. The shortfall against the 400 the pre-registration
+  asked for is **15 rows, or 3.75%, on the harmless side** and 9 rows, or 2.25%, on the harmful
+  side. The harmless figure is the binding one.
+
+  The decision (D32) is to accept 385 and 391 as the instrument, being the most this track serves,
+  and to disclose the 3.75% rather than report the smaller number without saying it is smaller.
+  **So there are two budgets in play and they belong to different runs:** every figure published in
+  this directory used 256 a side, and any future run on this track uses 385 and 391. Neither is
+  400, and no figure here should be read as a 400-prompt result.
+
+  **Nothing in any published number changes.** This correction names the budget behind figures that
+  already existed and records the ceiling that binds the next run. It is written here rather than
+  only in the decision log because the budget is a property of the instrument, and this is the file
+  a sceptic reads to find out what the instrument was.

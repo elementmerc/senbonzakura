@@ -47,6 +47,30 @@ def test_a_script_gets_the_flags_rather_than_a_menu(session, tmp_path):
     assert "--help" in combined, "a refusal that names no way forward is half a refusal"
 
 
+@pytest.mark.journey("command:interactive", "state:fake-tty")
+def test_a_fake_terminal_that_says_so_is_refused_rather_than_asked(session):
+    """The case the journey above cannot reach, because this harness is a real terminal.
+
+    `isatty` is an inference. The journey above pipes `/dev/null` in, which the inference gets
+    right. This one runs through the harness's own pseudo-terminal with **no answers queued**,
+    which is what `docker run -t`, `expect` and some CI agents give the command: something that
+    satisfies `isatty` with nobody behind it. Without `--no-interactive` that walks into the menu
+    and waits, and a waiting job is how this gets found the expensive way.
+
+    No answers are passed on purpose, which makes the failure mode worth stating. If the flag ever
+    stops being read, the walk stops at its first question with nothing left to answer it, and the
+    harness now **proves** that rather than waiting it out: the kernel reports the child blocked
+    reading its terminal, every answer is already sent, so nobody is ever going to type anything.
+    Measured at 0.4s against the 120s it used to cost, and the message names the one cause instead
+    of offering two.
+    """
+    result = session("interactive", "--no-interactive", env=NO_CARD)
+    result.exited(2)
+    result.says("--no-interactive")
+    result.never_says("Choose 1 to")
+    result.carried_no_traceback()
+
+
 @pytest.mark.journey("command:-i", "state:nothing-cached", "state:cancelled-at-confirm")
 def test_the_whole_walk_and_then_changing_your_mind(session):
     """The commonest session there is: answer everything, read the command, and decline.

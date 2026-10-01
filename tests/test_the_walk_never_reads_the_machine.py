@@ -56,6 +56,10 @@ TESTS = Path(__file__).parent
 #: cost is one line per function added to the module; the thing it buys is that nobody discovers
 #: the answer from a red macOS job three weeks later.
 DOES_NOT_READ_THE_MACHINE = frozenset({
+    # `_no_terminal` prints a refusal and `_rule` draws a line to `say.width()`. Neither touches
+    # the install; `_rule` reads COLUMNS, which is a terminal property rather than a machine one and
+    # is what every width test in this project sets deliberately.
+    "_no_terminal", "_rule",
     "_argv_for", "_board", "_bundled_entries", "_duration", "_log_bug_line", "_machine_rows",
     "_next_steps", "_probe_budget", "_say", "_size", "_what_it_cost", "_what_survived", "_wrap",
     "ask", "ask_output", "ask_trials", "by_side", "cached_models", "choose", "confirm",
@@ -118,12 +122,43 @@ def test_the_fixture_answers_for_every_probe_it_claims(a_machine_with_nothing_on
     assert interactive.bundled.is_available() is True
 
 
+#: Calls that mean a test file has reached the walk.
+#:
+#: `run(` AND `log_failure(` WERE BOTH MISSING, and the first is the walk's own front door.
+#: Found on 2026-10-01 by predicting what the real `conftest.py` would do to two new test files
+#: rather than by this guard firing. `interactive.run` is what `senbonzakura interactive` calls and
+#: it reaches `plan_abliteration` one line in, so a file that drives the entry point drives every
+#: probe, and this list did not mention it: a guard against reading the machine that could not see
+#: the commonest way of doing it.
+#:
+#: `log_failure` is the other kind. It calls `_what_survived`, which READS THE OUTPUT DIRECTORY off
+#: the filesystem and is right to, so a test giving it a relative `--out` asks whatever directory
+#: the runner was started in. One of the two new files did exactly that and the screen changed
+#: branch when an unrelated `./out` existed.
+_WALK_CALLS = ("plan_abliteration", "offer_resume", "pick_model", "pick_device", "pick_track",
+               "pick_eval", "present(", "finished(", "log_failure(", "ask_output(")
+
+#: The entry point, matched through whatever name the file imported the module under.
+#:
+#: `.run(` ON ITS OWN WAS TOO WIDE, which is the other way to get a guard wrong. A first attempt
+#: used the bare substring and immediately claimed five files that have nothing to do with the
+#: walk, because `subprocess.run(` and `cli.run(` match it too. A guard that fires on unrelated
+#: files gets a blanket exemption added to it, and then it guards nothing. So the alias is read out
+#: of the import rather than guessed.
+_IMPORT_ALIAS = re.compile(
+    r"^\s*from\s+senbonzakura\s+import\s+interactive(?:\s+as\s+(\w+))?"
+    r"|^\s*from\s+\.\s+import\s+interactive(?:\s+as\s+(\w+))?", re.MULTILINE)
+
+
 def _drives_a_walk(path):
     """Whether a test file reaches the walk, which is what makes the machine matter to it."""
     text = path.read_text(encoding="utf-8")
-    return "interactive" in text and any(
-        call in text for call in ("plan_abliteration", "offer_resume", "pick_model", "pick_device",
-                                  "pick_track", "pick_eval", "present(", "finished("))
+    if "interactive" not in text:
+        return False
+    if any(call in text for call in _WALK_CALLS):
+        return True
+    aliases = {m.group(1) or m.group(2) or "interactive" for m in _IMPORT_ALIAS.finditer(text)}
+    return any(f"{alias}.run(" in text for alias in aliases)
 
 
 def test_every_file_that_drives_the_walk_pins_the_machine():

@@ -26,6 +26,16 @@ class _NotTty:
         return False
 
 
+def _flat(said):
+    """Everything printed, with runs of whitespace collapsed to one space.
+
+    `say` wraps to the terminal width, so a phrase that used to sit on one hand-wrapped line can
+    now straddle a break. Asserting on the unwrapped spelling is asserting on where the wrap falls,
+    which is not what any of these tests are about and changes with COLUMNS.
+    """
+    return " ".join(" ".join(said).split())
+
+
 def _answers(*values):
     seq = iter(values)
     return lambda _prompt: next(seq)
@@ -496,7 +506,7 @@ def test_a_run_from_before_the_record_asks_rather_than_guessing(tmp_path):
                            log=said.append)
     assert plan["options"]["--model"] == "MODEL"
     assert plan["options"]["--track"] == "TRACK"
-    assert any("does not say which model" in s for s in said)
+    assert "does not say which model" in _flat(said)
 
 
 @pytest.mark.reads_the_real_install("resumable_runs")
@@ -569,7 +579,7 @@ def test_a_failure_before_the_search_does_not_promise_completed_trials(monkeypat
     said = []
     it.run(ask_fn=_answers("1", "M", "2", "1", "1", "mytrack", "2", "OUT", "5", "y"),
            log=said.append, stdin=_Tty())
-    joined = "\n".join(said)
+    joined = _flat(said)
     assert "no partial run to recover" in joined
     assert "completed trials are not lost" not in joined
 
@@ -991,7 +1001,7 @@ def test_a_track_build_failure_still_says_there_is_nothing_to_recover():
             "licence": None}
     said = []
     it.log_failure(plan, "boom", step=plan["first"], log=said.append)
-    assert "no partial run to recover" in "\n".join(said)
+    assert "no partial run to recover" in _flat(said)
 
 
 # ── the questions that were not checked ──────────────────────────────────────────

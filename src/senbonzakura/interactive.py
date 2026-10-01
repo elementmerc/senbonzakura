@@ -322,11 +322,13 @@ def warn_if_unbundled(log=print):
     log("")
     log("  NOTE: no bundled track is installed here.")
     if bundled.running_from_a_checkout():
-        log("        It is packed at release time, so a source checkout carries none until")
-        log("        `python tools/packaging/pack_track.py --track <dir>` has been run.")
+        _say("It is packed at release time, so a source checkout carries none until "
+             "`python tools/packaging/pack_track.py --track <dir>` has been run.",
+             log=log, indent="        ")
     else:
-        log("        A wheel is supposed to ship one, so its absence in an installed copy is a")
-        log("        packaging fault rather than something you can fix here. Please report it.")
+        _say("A wheel is supposed to ship one, so its absence in an installed copy is a "
+             "packaging fault rather than something you can fix here. Please report it.",
+             log=log, indent="        ")
     return True
 
 
@@ -715,9 +717,9 @@ def resume_plan(path, record, ask_fn=input, log=print):
         options["--model"] = record["model"]
     else:
         log("")
-        log(f"  {path} does not say which model it was editing, so it predates the record runs")
-        log("  now keep. Resuming with the wrong one would continue this search against a")
-        log("  different model, so it has to be named.")
+        _say(f"{path} does not say which model it was editing, so it predates the record runs "
+             f"now keep. Resuming with the wrong one would continue this search against a "
+             f"different model, so it has to be named.", log=log, indent="  ")
         options["--model"] = ask("  Which model was it?", ask_fn=ask_fn, log=log)
     if record.get("track"):
         options["--track"] = record["track"]
@@ -768,16 +770,18 @@ def resume_plan(path, record, ask_fn=input, log=print):
 
     log("")
     if baking:
-        log(f"  {path} holds a winning configuration and no study, so this bakes that")
-        log("  configuration straight out rather than searching for it again.")
+        _say(f"{path} holds a winning configuration and no study, so this bakes that "
+             f"configuration straight out rather than searching for it again.",
+             log=log, indent="  ")
     else:
         log("  The completed trials in the study are kept and the search carries on from them.")
     # HONESTY ABOUT WHAT IS WRITTEN OVER. This screen used to open with "Nothing there is
     # overwritten", which is false of every resume: the run record, the winning config and the
     # saved weights are all rewritten in that directory as the run goes on. What survives is the
     # completed trials, which is the thing worth saying, and saying it accurately costs nothing.
-    log("  The run record, the winning config and any saved weights in that directory are")
-    log("  written over as it goes; the completed trials are what is preserved.")
+    _say("The run record, the winning config and any saved weights in that directory are "
+         "written over as it goes; the completed trials are what is preserved.",
+         log=log, indent="  ")
     if notes:
         log("")
         log("  Taken from what that run recorded, so this leg matches the last one:")
@@ -789,8 +793,8 @@ def resume_plan(path, record, ask_fn=input, log=print):
     # model baked and no GGUF, with nothing saying a step is missing. It cannot be added silently
     # and there is no recorded answer to read, so the command is named instead.
     log("")
-    log("  This edits and saves the model; it converts nothing. If this run was headed for a")
-    log("  GGUF, that is a second command once it finishes:")
+    _say("This edits and saves the model; it converts nothing. If this run was headed for a "
+         "GGUF, that is a second command once it finishes:", log=log, indent="  ")
     log("")
     log(f"    {render_command('convert', {path: True, '--quantise': 'Q4_K_M'})}")
 
@@ -855,8 +859,9 @@ def ask_output(ask_fn=input, log=print, *, chosen=None):
         log(f"\n  {out} already holds a previous run:")
         for name in found:
             log(f"    {name}")
-        log("  Writing over it would replace some of those files and leave others, and the")
-        log("  artefact would then describe two runs with nothing saying so.")
+        _say("Writing over it would replace some of those files and leave others, and the "
+             "artefact would then describe two runs with nothing saying so.",
+             log=log, indent="  ")
         pick = choose("What should happen?", [
             ("Choose a different directory", "keeps both runs"),
             ("Continue that run", "resumes the search where it stopped, adds --resume"),
@@ -870,9 +875,9 @@ def ask_output(ask_fn=input, log=print, *, chosen=None):
             for field, was, now in clash:
                 log(f"    --{field}: it used {was!r}, and you chose {now!r}"
                     f" ({runrecord.PINNED[field]}).")
-            log("  Carrying on its completed trials under your answers would score one corpus's")
-            log("  trials against another, so the tool refuses that outright. One of the two")
-            log("  has to give, and it is your choice which.")
+            _say("Carrying on its completed trials under your answers would score one "
+                 "corpus's trials against another, so the tool refuses that outright. One of "
+                 "the two has to give, and it is your choice which.", log=log, indent="  ")
             keep = choose("Which should this run use?", [
                 (f"What {out} recorded", ("the answers above change to match it, and the trials "
                                           "already in that study are kept")),
@@ -988,10 +993,11 @@ def plan_abliteration(ask_fn=input, log=print):
             log("")
             log("  This install cannot finish that recipe: it is missing " + " and ".join(missing)
                 + ".")
-            log("  Both are fetched at build time by `python tools/packaging/vendor_llama.py`, so")
-            log("  a source checkout has neither until that has run. An installed copy missing")
-            log("  them is a packaging fault worth reporting. `senbonzakura doctor` says which.")
-            log("  The abliteration itself needs neither and would still work.")
+            _say("Both are fetched at build time by `python tools/packaging/vendor_llama.py`, "
+                 "so a source checkout has neither until that has run. An installed copy "
+                 "missing them is a packaging fault worth reporting. `senbonzakura doctor` says "
+                 "which. The abliteration itself needs neither and would still work.",
+                 log=log, indent="  ")
             if choose("What would you like to do?", [
                 ("Abliterate anyway, and convert later",
                  "the edit runs now; the GGUF is a second command once the tools are there"),
@@ -1040,8 +1046,9 @@ def plan_abliteration(ask_fn=input, log=print):
                 # and it would do it on disk, before the abliteration was refused for using it.
                 build = None
                 log("")
-                log("  The track build is dropped with it: the completed trials were scored on")
-                log(f"  {track}, so building another corpus would produce one this run cannot use.")
+                _say(f"The track build is dropped with it: the completed trials were scored "
+                     f"on {track}, so building another corpus would produce one this run "
+                     f"cannot use.", log=log, indent="  ")
     trials = ask_trials(ask_fn=ask_fn, log=log)
 
     options = {
@@ -1477,6 +1484,18 @@ RECOVERABLE = (
 )
 
 
+#: The failure screen's frame. A function rather than two literals, because the literals were
+#: 61 characters on a page whose own ledger item says it is "laid out for 79": on a 52-column
+#: terminal the rule wrapped onto a second line and the box had three sides. `say.width` is the
+#: one place that knows how wide the terminal is.
+def _rule(title=None):
+    width = say.width()
+    if not title:
+        return "─" * width
+    head = f"── {title} "
+    return head + "─" * max(0, width - len(head))
+
+
 def log_failure(plan, reason, *, step=None, log=print, crashed=False):
     """What a person needs when a guided run dies partway: what is kept, and the way back in.
 
@@ -1499,19 +1518,20 @@ def log_failure(plan, reason, *, step=None, log=print, crashed=False):
     "this is not the main command", which is true of both of them, so the conversion step got the
     sentence written for the track build and every word of it was wrong.
     """
-    log("── the run stopped ───────────────────────────────────────────")
+    log(_rule("the run stopped"))
     if reason:
         log(f"  {reason}")
     log("")
     named = (step or {}).get("command")
     out = plan.get("options", {}).get("--out")
     if step is not None and named == (plan.get("first") or {}).get("command"):
-        log(f"  It was the '{named}' step that failed, before the search began, so")
-        log("  there is no partial run to recover. Once the cause is fixed, this is the command:")
+        _say(f"It was the '{named}' step that failed, before the search began, so there is no "
+             f"partial run to recover. Once the cause is fixed, this is the command:",
+             log=log, indent="  ")
         log("")
         log(f"    {render_command(step['command'], step['options'])}")
         _log_bug_line(log, crashed)
-        log("──────────────────────────────────────────────────────────────")
+        log(_rule())
         return
     if step is not None and named == (plan.get("then") or {}).get("command"):
         # THE BRANCH THAT USED TO GIVE THE OPPOSITE ADVICE. The test was "this is not the main
@@ -1519,8 +1539,9 @@ def log_failure(plan, reason, *, step=None, log=print, crashed=False):
         # sit on opposite sides of the expensive part. A conversion runs after the abliteration has
         # finished and saved, so telling that person there is no partial run to recover writes off
         # a model that is on their disk and invites them to run the whole search again.
-        log(f"  It was the '{named}' step that failed, and that runs after the abliteration, so")
-        log("  the edit itself finished and the model was saved. Only the conversion is missing.")
+        _say(f"It was the '{named}' step that failed, and that runs after the abliteration, "
+             f"so the edit itself finished and the model was saved. Only the conversion is "
+             f"missing.", log=log, indent="  ")
         if out:
             log(f"  The edited model is in {out}.")
         log("")
@@ -1528,7 +1549,7 @@ def log_failure(plan, reason, *, step=None, log=print, crashed=False):
         log("")
         log(f"    {render_command(step['command'], step['options'])}")
         _log_bug_line(log, crashed)
-        log("──────────────────────────────────────────────────────────────")
+        log(_rule())
         return
     kept = _what_survived(out)
     if kept:
@@ -1540,20 +1561,20 @@ def log_failure(plan, reason, *, step=None, log=print, crashed=False):
         log("")
         log(f"    {render_command(plan['command'], {**plan['options'], '--resume': True})}")
         log("")
-        log("  That continues the search rather than starting it again, and if the search had")
-        log("  already finished it goes straight to baking and saving.")
+        _say("That continues the search rather than starting it again, and if the search had "
+             "already finished it goes straight to baking and saving.", log=log, indent="  ")
     elif out:
         # THE CASE THAT USED TO BE TOLD A COMFORTING LIE. A refusal before the search starts, a
         # device pre-flight being the one actually seen, left `--out` empty; the old text still
         # announced a persisted study and offered `--resume`, which would refuse identically and
         # cost the user a second go at nothing. Now the directory is read.
-        log(f"  Nothing recoverable was written to {out}, so the run stopped before the search")
-        log("  had anything to save. Fix the cause above and run the same command again;")
-        log("  --resume would have nothing to resume.")
+        _say(f"Nothing recoverable was written to {out}, so the run stopped before the search "
+             f"had anything to save. Fix the cause above and run the same command again; "
+             f"--resume would have nothing to resume.", log=log, indent="  ")
     else:
         log("  Nothing was written, so there is nothing to recover.")
     _log_bug_line(log, crashed)
-    log("──────────────────────────────────────────────────────────────")
+    log(_rule())
 
 
 def _what_survived(out):
@@ -1583,7 +1604,8 @@ def _log_bug_line(log, crashed):
     if crashed:
         log("  If this looks like a bug, the traceback above is the useful part of a report.")
     else:
-        log("  This was a refusal, not a crash, so the reason above is the whole story.")
+        _say("This was a refusal, not a crash, so the reason above is the whole story.",
+             log=log, indent="  ")
 
 
 def _argv_for(plan):
@@ -1612,7 +1634,39 @@ def _argv_for(plan):
 #: run to 93, which re-wraps into ragged half-lines on an 80-column terminal. The usage line names
 #: `[-h]` because this command accepts it, and a usage line that omits a flag the command takes is
 #: wrong in the one place a reader trusts it.
-HELP = """usage: senbonzakura interactive [-h]
+#: The flag that says, rather than infers, that nothing is going to answer a question.
+#:
+#: `is_tty` is an INFERENCE, and it is wrong in one direction that matters. Anything that
+#: allocates a pseudo-terminal (`docker run -t`, `expect`, several CI agents) satisfies
+#: `isatty()` with no human behind it, so the inference says "terminal", the menu is printed,
+#: and the run hangs on the first question until something kills it. The flag is stated intent,
+#: and stated intent beats inferred intent on the one case the inference cannot see.
+NO_INTERACTIVE = "--no-interactive"
+
+#: Accepted spellings, so an unrecognised flag can be refused rather than ignored.
+#:
+#: Ignoring it was the old behaviour and it was the hang dressed differently: with no parser here,
+#: `interactive --no-interactve` (one letter short) silently dropped the flag and printed the menu,
+#: which is exactly the outcome the flag is there to prevent, reached by typing it almost right.
+_FLAGS = frozenset({"-h", "--help", NO_INTERACTIVE})
+
+
+def _no_terminal(reason, log):
+    """The one refusal, reached two ways, with its advice written once.
+
+    The head line names the cause because the two causes need different things from the reader:
+    an inferred non-terminal is usually a pipe and the fix is to use the flags, while a stated
+    `--no-interactive` means the caller already knows and is checking. The paragraph under it is
+    identical for both, since the way back in does not depend on how the refusal was reached.
+    """
+    log(f"senbonzakura: {reason}")
+    _say("A script wants the flags rather than the menu. `senbonzakura --help` lists them, "
+         "and `senbonzakura interactive` on a terminal prints the command for any run.",
+         log=log, indent="  ")
+    return 2
+
+
+HELP = """usage: senbonzakura interactive [-h] [--no-interactive]
 
 A guided walk through the few choices that decide whether a run means
 anything.
@@ -1626,9 +1680,17 @@ It never runs anything without first printing the exact command it is
 equivalent to, so the run is reproducible and the second time you can type
 that command instead.
 
-It takes no options beyond -h, and it needs a terminal, because it reads
-answers. A script wants the flags rather than the menu; `senbonzakura --help`
-lists them."""
+It needs a terminal, because it reads answers. A script wants the flags
+rather than the menu; `senbonzakura --help` lists them.
+
+options:
+  -h, --help        show this help and exit
+  --no-interactive  refuse instead of asking, and exit 2. For a caller that
+                    looks like a terminal and has nobody behind it: `docker
+                    run -t`, `expect` and some CI agents allocate a
+                    pseudo-terminal, so this command cannot tell them from a
+                    person, and without this flag the menu waits forever for
+                    an answer."""
 
 
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):
@@ -1639,12 +1701,29 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     if argv and ("-h" in argv or "--help" in argv):
         log(HELP)
         return 0
-    if not is_tty(stdin or sys.stdin):
-        log("senbonzakura: guided mode needs a terminal, and this input is not one.")
-        _say("A script wants the flags rather than the menu. `senbonzakura --help` lists them, "
-             "and `senbonzakura interactive` on a terminal prints the command for any run.",
-             log=log, indent="  ")
+    # Refused rather than ignored, and after `--help` so a reader can still ask what the flag is.
+    unknown = [a for a in (argv or []) if a not in _FLAGS]
+    if unknown:
+        log(f"senbonzakura interactive: unrecognised argument{'s' if len(unknown) > 1 else ''}: "
+            f"{', '.join(unknown)}.")
+        _say(f"This command takes only -h and {NO_INTERACTIVE}; it asks for everything else. "
+             f"`senbonzakura interactive --help` lists them, and `senbonzakura --help` lists the "
+             f"flags for a run you want to type yourself.", log=log, indent="  ")
         return 2
+    # Before the terminal check, and the reason is smaller than it looks. A pseudo-terminal passes
+    # `is_tty`, so the branch below does not fire there and this one is reached whichever order
+    # they sit in: the case the flag exists for works either way. The order decides one thing only,
+    # which is what a caller that is BOTH piped and explicit gets told, and stated intent should be
+    # reported over inferred intent. `test_a_pipe_that_also_passes_the_flag_is_told_about_the_flag`
+    # is the only test that can see this, and it was written after a mutation run reordered the two
+    # blocks and nothing noticed.
+    if argv and NO_INTERACTIVE in argv:
+        return _no_terminal(
+            f"guided mode was asked to run with {NO_INTERACTIVE}, so it is not asking anything.",
+            log)
+    if not is_tty(stdin or sys.stdin):
+        return _no_terminal(
+            "guided mode needs a terminal, and this input is not one.", log)
     try:
         plan = plan_abliteration(ask_fn=ask_fn, log=log)
         line = present(plan, ask_fn=ask_fn, log=log)

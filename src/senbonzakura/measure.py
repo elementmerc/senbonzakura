@@ -495,9 +495,10 @@ def build_parser():
                     help="the model this one was edited from. Given, the coherence cost is also "
                          "measured against it on one ruler, which is the comparable number; "
                          "without it that stage is skipped rather than guessed at")
-    ap.add_argument("--n", type=int, default=200,
+    ap.add_argument("--n", type=argresolve.whole_number("--n", minimum=1), default=200,
                     help="prompts per instrument for refusal and harm recognition (default: 200)")
-    ap.add_argument("--capability-n", type=int, default=40, dest="capability_n",
+    ap.add_argument("--capability-n", default=40, dest="capability_n",
+                    type=argresolve.whole_number("--capability-n", minimum=0),
                     help="graded questions for the capability probe (default: 40). It generates "
                          "long answers, so this is the stage that decides how long the run takes")
     ap.add_argument("--hf-token", default=None, dest="hf_token",

@@ -152,26 +152,26 @@ def build_args(argv=None):
                          "model with no template of its own is refused without this.")
     ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
                     help="some architectures ship their modelling code with the weights")
-    ap.add_argument("--max-directions", type=int, default=8,
+    ap.add_argument("--max-directions", type=argresolve.whole_number("--max-directions", minimum=1), default=8,
                     help="the largest K the sweeps go up to (default: 8). A CEILING, not a pin: "
                          "e3 and e4 measure every K from 1 up to it, which is the whole point of "
                          "a sweep. Setting it to 2 does not run a K=2 arm, it runs K=1 and K=2")
-    ap.add_argument("--direction-clusters", type=int, default=8,
+    ap.add_argument("--direction-clusters", type=argresolve.whole_number("--direction-clusters", minimum=1), default=8,
                     help="how many clusters the extractor splits the harmful prompts into before "
                          "taking a direction from each (default: 8). This is the supply of "
                          "candidate directions; --max-directions is how many of them get used")
-    ap.add_argument("--dir-prompts", type=int, default=128,
+    ap.add_argument("--dir-prompts", type=argresolve.whole_number("--dir-prompts", minimum=1), default=128,
                     help="contrast prompts per side used to extract the directions (default: 128)")
-    ap.add_argument("--eval-refusal", type=int, default=64,
+    ap.add_argument("--eval-refusal", type=argresolve.whole_number("--eval-refusal", minimum=1), default=64,
                     help="how many held-out harmful prompts each arm is scored for refusal on "
                          "(default: 64). Small numbers make arms look different when they are not: "
                          "at 64, two arms have to differ by about 17 percentage points before the "
                          "gap clears sampling noise at 95%%, so raise this before trusting a close "
                          "call between direction counts")
-    ap.add_argument("--eval-kl", type=int, default=64,
+    ap.add_argument("--eval-kl", type=argresolve.whole_number("--eval-kl", minimum=1), default=64,
                     help="how many harmless prompts each arm's KL divergence is measured on "
                          "(default: 64)")
-    ap.add_argument("--seed", type=int, default=42,
+    ap.add_argument("--seed", type=argresolve.whole_number("--seed", minimum=0), default=42,
                     help="seed for the random-direction controls and the prompt sampling "
                          "(default: 42). One seed is one draw: a single run cannot separate a "
                          "real gap from a lucky one, so vary this before believing a close result")

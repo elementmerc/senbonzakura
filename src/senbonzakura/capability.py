@@ -1021,7 +1021,7 @@ def build_parser():
                     help="a previous run's output, typically the stock model. Adds the PAIRED "
                          "change with its interval, which is much tighter than comparing two "
                          "separate runs by eye and is the number that says what the edit cost")
-    ap.add_argument("--seed", type=int, default=0,
+    ap.add_argument("--seed", type=argresolve.whole_number("--seed", minimum=0), default=0,
                     help="seed for the bootstrap resampling behind the reported interval "
                          "(default: 0). Generation itself is greedy, so this changes the "
                          "interval, not the answers")

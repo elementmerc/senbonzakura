@@ -28,6 +28,7 @@ defect `entry.py` exists to prevent. The standard library is the whole budget.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 
@@ -64,6 +65,38 @@ def whole_number(what, *, minimum=0):
                 f"negative one slices from the END of the set, so the run would measure rows "
                 f"nobody asked for and report them under the rows they did. Pass {minimum} or "
                 f"more.")
+        return number
+    return parse
+
+
+def real_number(what, *, minimum=None, maximum=None):
+    """An argparse `type=` for a measurement: a real number inside a stated range.
+
+    The companion to `whole_number` for the handful of flags that are genuinely continuous: a
+    tolerance, a fraction, a weight. Same reasoning and the same refusal shape, so a reader meets
+    one voice whichever flag they mistyped.
+
+    `None` on either side means unbounded there, and a bound is declared only where a value past
+    it is MEANINGLESS rather than merely large. A negative tolerance is not a strict comparison,
+    it is a bar nothing can clear, and a run that quietly reports nothing matched is worse than
+    one that refuses the flag.
+    """
+    def parse(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(
+                f"{what} wants a number and got {value!r}.") from None
+        if not math.isfinite(number):
+            raise argparse.ArgumentTypeError(
+                f"{what} is {value!r}, which is not a finite number. Every comparison against it "
+                f"would be false, so the run would report nothing and look like it had measured.")
+        if minimum is not None and number < minimum:
+            raise argparse.ArgumentTypeError(
+                f"{what} is {number:g} and cannot be below {minimum:g}.")
+        if maximum is not None and number > maximum:
+            raise argparse.ArgumentTypeError(
+                f"{what} is {number:g} and cannot be above {maximum:g}.")
         return number
     return parse
 

@@ -108,6 +108,24 @@ the dataset cards make.** They are recorded here rather than quietly relied on. 
 a licensing decision that depends on either, verify it yourself rather than taking this card's
 word for it. If an upstream maintainer tells us this is wrong, we will correct the card.
 
+### The decision on the licence gap
+
+**Accepted, 2026-10-01, reviewed by Daniel Iwugo.** The licence terms above are accepted as the
+position this project redistributes under. This is a recorded acceptance rather than a line of
+reasoning, so it does not need re-deriving every time somebody reads the card.
+
+What supports it is the evidence in the two subsections above, which stays evidence rather than
+becoming the claim: `mlabonne/harmful_behaviors` holds exactly the 520 rows of AdvBench's
+`harmful_behaviors.csv` and matches it on inspection, and `mlabonne/harmless_alpaca` points at
+`tatsu-lab/alpaca` by name, by origin and by shape. The track is distributed under the strictest
+term in the chain, so the acceptance costs a reader nothing even where an inference is wrong.
+
+What the acceptance does **not** claim: `mlabonne/harmful_behaviors` and `mlabonne/harmless_alpaca`
+still declare no licence at all, and that fact is not resolved by anybody accepting anything. It
+stays on this card because a reader doing their own diligence needs it. Asking the upstream
+maintainer for a statement remains worth doing as a courtesy and would let the table read through
+to a declared term rather than an inferred one; it is no longer a blocker on anything here.
+
 ### What this track is distributed under, and why
 
 Every licence in the chain permits redistribution; they differ in what they attach to it. Taking

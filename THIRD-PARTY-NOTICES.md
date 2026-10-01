@@ -158,9 +158,16 @@ Citations:
 Licence texts: <https://creativecommons.org/licenses/by-nc/4.0/legalcode> for
 CC BY-NC 4.0; Apache-2.0 is reproduced in full beside this file.
 
+**These terms were accepted on 2026-10-01, reviewed by Daniel Iwugo.** Two of the
+direct upstreams declare no licence at all, which the card records and which the
+acceptance does not change; the track ships under the strictest term in the chain
+so that the gap costs a reader nothing.
+
 The full provenance, including the per-source commit hashes and the reasoning
 behind the inferred licence on the harmless side, is in the dataset card at
-<https://elementmerc.github.io/senbonzakura/evaluation-track-card>.
+<https://elementmerc.github.io/senbonzakura/evaluation-track-card>. Where the rows
+came from, and which of them cannot be reproduced, is in
+<https://elementmerc.github.io/senbonzakura/corpus-provenance>.
 
 ## The bundled capability probe
 

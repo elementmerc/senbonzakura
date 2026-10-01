@@ -54,8 +54,8 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   with its false keep rate, rather than as a bar every null draw fails
 
 ### Documentation
-- The page explaining how the tool works said the direction filter rejects nothing, which stopped
-  being true when the filter gained a held out score and a measured floor
+- The page explaining how the tool works now describes the direction filter as it behaves, with
+  a held out score and a measured floor, matching the two pages that already did
 - The capability probe is described as five grading rules over one bundled dataset, not as five
   datasets, on every page that counts them
 - The GPU requirements table and the prose above it gave different answers for a 6 GB card, and

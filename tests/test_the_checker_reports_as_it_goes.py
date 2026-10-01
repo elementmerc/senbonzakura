@@ -245,13 +245,22 @@ class TestTheHeartbeat:
     def test_the_interval_is_inside_the_range_the_baseline_asks_for(self):
         assert 30 <= cli.HEARTBEAT_SECONDS <= 60, cli.HEARTBEAT_SECONDS
 
-    def test_stderr_is_the_default_and_not_only_what_these_tests_pass_in(self):
+    def test_stderr_is_the_default_and_not_only_what_these_tests_pass_in(self, capsys):
         """The tests above hand it a stream of their own so they can read it, which means they
         would pass over an implementation whose default was stdout. So the default is asserted
         directly: it is the only part of this a consumer's CI depends on.
+
+        ASSERTED ON WHERE THE TEXT LANDS rather than on which object the heartbeat is holding.
+        Comparing against `sys.stderr` by identity passes alone and fails inside a larger run,
+        because pytest swaps the stream per test and the object captured at construction is no
+        longer the one the assertion reads. A test that depends on how it was invoked is not a
+        measurement of anything.
         """
-        beat = cli._Heartbeat(1)
-        assert beat._stream is sys.stderr, beat._stream
+        beat = cli._Heartbeat(1, clock=iter([0, 60]).__next__, every=30)
+        assert beat.tick("somewhere") is True
+        captured = capsys.readouterr()
+        assert "checked, now at somewhere" in captured.err, captured
+        assert "checked, now at" not in captured.out, captured.out
 
     def test_it_counts_towards_a_total_a_reader_can_use(self, tmp_path):
         """"still working" without a denominator does not tell anybody whether to wait."""

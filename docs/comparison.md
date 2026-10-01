@@ -36,7 +36,7 @@ corrects the claims it touches and gets no column until somebody has run it.
 
 | | Heretic | abliterix | Senbonzakura |
 |---|---|---|---|
-| Measures what the edit cost | Yes, 11 lm-eval benchmarks | Yes, lm-eval plus a GSM8K "capability tax" | Yes, 5 graded tasks |
+| Measures what the edit cost | Yes, 11 lm-eval benchmarks | Yes, lm-eval plus a GSM8K "capability tax" | Yes, but on one bundled dataset: a 256 row GSM8K subset, read by whichever of five grading rules fits it |
 | Reports its grader's agreement above chance | No | No | **Yes, and it refuses a grader that fails** |
 | Puts an interval on the number | No | Yes in its A/B scripts, no in the interactive table | Yes on every measurement, and the refusal rate's lives in the result file rather than on the terminal line |
 
@@ -188,9 +188,16 @@ The checking commands no longer do, which helps, and it does not change the fact
 the tool is named for needs a card.
 
 **Breadth of benchmark.** Eleven standard benchmarks with a harness everybody already trusts
-beats five tasks graded by our own code, for the specific purpose of convincing a stranger.
-Ours are chosen so they can be graded without a judge at all, which is a different trade, but
-it is a trade and not a win.
+beats one dataset graded by our own code, for the specific purpose of convincing a stranger.
+
+Worth being exact about, because the row above reads better than it is. "Five graded tasks" is
+five **grading rules**, not five datasets: `numeric`, `multiple-choice`, `tool-call`, `exact` and
+`constraints` are five ways to read an answer, and a run uses whichever one fits the dataset it
+was given. What ships in the package is a single dataset, a 256 row subset of GSM8K, which is
+the same benchmark the table credits abliterix with under another name. The other four rules
+exist for a benchmark you bring yourself. So the honest comparison is eleven datasets against
+one, and what we have instead is that ours can be graded without a judge at all. That is a
+different trade, and it is a trade rather than a win.
 
 **Breadth of attack, where we have nothing at all.** abliterix carries helpers for JALMBench
 (single-turn jailbreak success), MTJ-Bench and Crescendo (multi-turn), and TamperBench, which

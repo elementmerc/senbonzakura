@@ -195,7 +195,7 @@ For editing a model, yes, realistically. For everything else, no.
 
 | What you're doing | What it needs |
 |---|---|
-| Abliterating a model | A CUDA card. 6 GB gets you to about 2B parameters |
+| Abliterating a model | A CUDA card. 6 GB has been measured at 1.7B, and 3B wants 8 to 12 GB |
 | Scoring a model that already exists | A card, or a lot of patience on CPU |
 | Running the test suite | Nothing. CPU, no downloads, no card |
 | Building the corpus, checking contamination | Nothing |
@@ -203,7 +203,8 @@ For editing a model, yes, realistically. For everything else, no.
 The 6 GB figure isn't a recommendation, it's a confession: this whole project is built
 around one 6 GB laptop card, which is exactly why every model it's ever been run on is
 under 3B parameters. [Limits](/guide/limits) is blunt about what that means for the
-numbers.
+numbers, and the table in [what size card](#what-size-card) is where the figure comes
+from. 1.7B is the only row anybody has run; everything above it is arithmetic.
 
 ## What size card {#what-size-card}
 

@@ -448,7 +448,11 @@ class _Heartbeat:
     def __init__(self, total, *, stream=None, clock=None, every=HEARTBEAT_SECONDS):
         import time
         self._clock = clock or time.monotonic
-        self._stream = stream if stream is not None else sys.stderr
+        # STDERR IS RESOLVED AT WRITE TIME, not here. Holding the object from construction means
+        # a caller who redirects the stream afterwards, which is what every test harness and
+        # several of this project's own commands do, gets the heartbeat on the stream that was
+        # current when the sweep started rather than the one in effect when it writes.
+        self._stream = stream
         self._every = every
         self._total = total
         self._last = self._clock()
@@ -462,7 +466,7 @@ class _Heartbeat:
             return False
         self._last = now
         print(f"... {self._done} of {self._total} checked, now at {path}",
-              file=self._stream, flush=True)
+              file=self._stream if self._stream is not None else sys.stderr, flush=True)
         return True
 
 

@@ -501,6 +501,36 @@ class ResourceGovernor:
         return False
 
     # ── the driver ───────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _checked(res, expected, offset):
+        """Refuse a batch whose result count does not match the chunk it came from.
+
+        THE CONTRACT WAS DECLARED AND NOT ENFORCED. `run`'s own docstring says `fn` returns a list
+        of the same length, and both call sites used to extend the output and advance the cursor by
+        the chunk size regardless. A short or long return therefore shifted every LATER result
+        against its item by a drifting offset, silently, because the cursor moved by the chunk size
+        while the output grew by something else.
+
+        That is the worst failure this file can have. Callers pair prompts with results by index, so
+        a misalignment does not look like an error, it looks like a refusal rate: one prompt's
+        generation scored against another prompt's label, for the rest of the run. This project has
+        the scar already, in a manifest whose partition boundaries were read loosely and sliced
+        every published number off the wrong rows.
+
+        A check rather than trust, although §6 says trust internal code, because `fn` is supplied by
+        the caller and crosses out of this module, the failure is silent rather than loud, and the
+        length is the one property the contract names.
+        """
+        res = list(res)
+        if len(res) != expected:
+            raise RuntimeError(
+                f"a batched worker returned {len(res)} result(s) for a chunk of {expected} "
+                f"item(s), at item {offset}. Results are paired with items by position, so "
+                f"continuing would score every later item against the wrong one and report a "
+                f"number rather than an error. The worker passed to ResourceGovernor.run must "
+                f"return exactly one result per item, in order.")
+        return res
+
     def run(self, fn, items):
         """Process ``items`` through ``fn`` in adaptive, OOM-safe, pause-aware chunks.
 
@@ -515,9 +545,10 @@ class ResourceGovernor:
             # but skip the pause/shrink/grow machinery entirely.
             out = []
             for i in range(0, len(items), self.max_batch):
-                bs = len(items[i:i + self.max_batch])
+                chunk = items[i:i + self.max_batch]
+                bs = len(chunk)
                 self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
-                out.extend(fn(items[i:i + self.max_batch]))
+                out.extend(self._checked(fn(chunk), bs, i))
             return out
         self._calibrate_once()
         out = []
@@ -550,7 +581,7 @@ class ResourceGovernor:
                     # too full for one item, so wait for a clear margin before trying again.
                     self._forced_pause()
                 continue
-            out.extend(res)
+            out.extend(self._checked(res, bs, i))
             # Progress, so the streak of hopeless retries is over. Reset rather than decay: what
             # the cap is counting is consecutive failures on an item nothing can make smaller.
             batch1_ooms = 0

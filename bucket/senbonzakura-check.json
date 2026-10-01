@@ -1,5 +1,5 @@
 {
-    "version": "0.4.0",
+    "version": "0.4.1",
     "description": "Read an evaluation result file and report how the number could be wrong. No model, no GPU, no network.",
     "homepage": "https://github.com/elementmerc/senbonzakura",
     "license": "AGPL-3.0-or-later",
@@ -12,9 +12,9 @@
     "suggest": {
         "Python": "python"
     },
-    "url": "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.4.0.zip",
-    "hash": "63ac91ca8ec1a55f014d81770a97d05f7e354e92c310acaa6fc085e681d407f5",
-    "extract_dir": "senbonzakura-0.4.0\\checker",
+    "url": "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.4.1.zip",
+    "hash": "409de2c3e9c9ec994666621b65449a962413e2af1d907e1024f21ee23868590c",
+    "extract_dir": "senbonzakura-0.4.1\\checker",
     "installer": {
         "script": [
             "python -m pip install --quiet --upgrade --target \"$dir\\lib\" \"$dir\"",

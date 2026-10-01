@@ -915,6 +915,64 @@ def dataset_digest(path):
     return h.hexdigest()
 
 
+def revision_entry(spec):
+    """Name a corpus AND pin it, as `{"id", "revision", "kind"}`, or None if it cannot be pinned.
+
+    `evidence/README.md` has required a pinned dataset revision since the 2026-09-25 panel, and on
+    2026-10-01 not one artefact in the tree carried it: 41 candidates from two unrelated runs, zero
+    hits, because nothing ever produced the field. The name on its own was never enough, since a
+    corpus can be rebuilt in place under a name that does not change, and that is the failure the
+    rule exists to catch.
+
+    **The resolution order here mirrors `dataset.paths` deliberately, including the order.** That
+    function resolves the bundled alias and the bundled corpus names BEFORE looking at the
+    filesystem, so a stray directory called `default` cannot shadow the packed track. A pin that
+    resolved in a different order would describe a different corpus from the one the number came
+    from, which is worse than no pin: it would be a wrong answer wearing the clothes of a right
+    one. Two mechanisms deriving one fact is this project's most repeated defect, so if `dataset`'s
+    order ever changes, this moves with it.
+
+    Returns None rather than raising when the corpus is something this cannot digest, such as a
+    Hub dataset spec whose revision only the Hub knows. None means the artefact carries no track
+    block at all, which is exactly what it carried before, so nothing regresses; what it does not
+    do is write a null revision, because a present-but-empty field satisfies a presence check while
+    telling a reader nothing.
+    """
+    body, _split, _slice = dataset.parse_spec(str(spec))
+
+    if body == dataset.BUNDLED_ALIAS or body.startswith(dataset.BUNDLED_ALIAS + "/"):
+        from . import bundled
+        try:
+            return {"id": str(spec), "kind": "bundled-track",
+                    "revision": bundled.manifest()["sha256_of_tar"]}
+        except (ValueError, KeyError, bundled.BundledTrackError):
+            # An unreadable or manifest-less blob is a real problem, but it is the caller's to
+            # report when it tries to READ the corpus, with a message about the corpus. Failing
+            # here would turn it into a provenance error, which sends the reader to the wrong place.
+            return None
+
+    from . import corpora
+    if body in corpora.CORPORA:
+        from . import bundled
+        blob = Path(bundled.data_path()).parent / corpora.CORPORA_BLOB
+        if not blob.is_file():
+            return None
+        return {"id": body, "kind": "bundled-corpus",
+                "revision": hashlib.sha256(blob.read_bytes()).hexdigest()}
+
+    path = Path(body).expanduser()
+    if path.is_dir():
+        # A spec may name a partition inside a track (`<track>/bad_eval_ds`), and the thing worth
+        # pinning is the track, because the partition boundaries live in its manifest and a
+        # partition digested alone cannot tell you whether the boundary moved under it.
+        root = path if (path / "track.json").is_file() else path.parent
+        if not (root / "track.json").is_file():
+            root = path
+        return {"id": body, "kind": "track-directory", "revision": dataset_digest(root)}
+
+    return None
+
+
 def promote(track, *, labels=None, force=False, now=None, log=print):
     """Re-verify a built track and stamp it as the one measurements may come from.
 

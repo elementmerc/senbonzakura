@@ -721,11 +721,28 @@ def git_commit(repo_root=None, env=None):
     return None
 
 
-def provenance(device=None, accelerator=None, extra=None):
-    """Everything needed to tell whether a re-run is comparable to this one."""
+def provenance(device=None, accelerator=None, extra=None, track=None):
+    """Everything needed to tell whether a re-run is comparable to this one.
+
+    `track` names the corpus a figure came from AND pins it, as
+    `{"id": ..., "revision": ...}`. `evidence/README.md` has required a pinned dataset revision
+    since the 2026-09-25 panel and nothing produced one, so every artefact in the tree failed the
+    project's own rule: measured on 2026-10-01 across 41 candidate artefacts from two unrelated
+    runs, not one carried it. A corpus can be rebuilt in place under a name that does not change,
+    which is the failure the rule exists to catch, so the name alone was never the answer. Built by
+    `track.revision_entry` rather than here, because pinning it means reading the corpus and this
+    module stays free of anything heavy.
+    """
     import platform
 
     from . import __version__
+    if track is not None:
+        # Fail loud on a malformed entry rather than writing a half-pinned artefact, which would
+        # satisfy the gate's presence check while recording nothing a reader could fetch.
+        missing = [k for k in ("id", "revision") if not (isinstance(track, dict) and track.get(k))]
+        if missing:
+            raise ValueError(f"a track provenance entry needs a non-empty {' and '.join(missing)}; "
+                             f"got {track!r}. Build it with track.revision_entry().")
     return {
         "senbonzakura": {"version": __version__, "git": git_commit()},
         "python": platform.python_version(),
@@ -735,5 +752,6 @@ def provenance(device=None, accelerator=None, extra=None):
         # deliberately does not import it.
         "accelerator": accelerator,
         "packages": resolved_versions(),
+        **({"track": track} if track is not None else {}),
         **(extra or {}),
     }

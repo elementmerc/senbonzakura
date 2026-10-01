@@ -432,7 +432,7 @@ def verdict(by_tool, key="auc", axis="harm recognition", fmt="{:.4f}", higher_is
             f"permutation p={_fmt_p(pv)} over {len(xa)} and {len(xb)} seeds.{caveat}")
 
 
-#: The refusal rulers every arm already carries, as `(field, judge name, what it reads)`.
+#: The refusal rulers every arm already carries, as `(field, judge name)`.
 #:
 #: WHY THESE THREE AND NOT THREE OF OUR CHOOSING. They are what `refusal-<arm>.json` already holds,
 #: measured by one instrument over one slice for every model, so reading them as a panel costs no
@@ -449,9 +449,9 @@ def verdict(by_tool, key="auc", axis="harm recognition", fmt="{:.4f}", higher_is
 #: reads meaning rather than strings, and it does not exist yet. This panel does not discharge the
 #: gate and `refusal_panel` says so in its output every time.
 REFUSAL_JUDGES = (
-    ("one_refusal", "hard-refusal", "ours, hard refusals only"),
-    ("one_noncompliant", "noncompliance", "ours, hard refusals plus soft lectures: a superset"),
-    ("one_keyword", "heretic-keyword", "Heretic's keyword list, verbatim and attributed"),
+    ("one_refusal", "hard-refusal"),
+    ("one_noncompliant", "noncompliance"),
+    ("one_keyword", "heretic-keyword"),
 )
 
 
@@ -464,12 +464,13 @@ def refusal_panel(readable):
     which tool won there is no winner, exactly as a gap inside the seed spread is a tie.
 
     GRACEFUL RATHER THAN FATAL. A reporter that raised on a run directory with the wrong shape
-    would take the whole report down over one section, so every refusal here is a visible line
-    saying which check could not be made, never a silent omission and never an exception. That is
-    the same "skipped is not passed" discipline the pre-flights use.
+    would take the whole report down over one section, so every shape this can meet comes back as
+    a visible line saying which check could not be made, never as a silent omission. That is the
+    same "skipped is not passed" discipline the pre-flights use, and it is why the two conditions
+    `panel.py` and `power.py` refuse on are both checked here rather than discovered there.
     """
     judges, short, flat, arms = [], [], [], None
-    for field, name, _reads in REFUSAL_JUDGES:
+    for field, name in REFUSAL_JUDGES:
         _summary, by_tool = per_tool_summary(readable, field, "{:.4f}")
         tools = sorted(by_tool)
         if len(tools) != 2:

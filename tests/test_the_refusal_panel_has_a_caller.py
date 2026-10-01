@@ -312,7 +312,7 @@ def test_the_panel_module_now_has_a_caller(tmp_path):
         f"{_text(out)}")
 
 
-@pytest.mark.parametrize("field", [f for f, _n, _r in rh.REFUSAL_JUDGES])
+@pytest.mark.parametrize("field", [f for f, _n in rh.REFUSAL_JUDGES])
 def test_every_declared_ruler_is_a_field_the_collector_actually_produces(tmp_path, field):
     """A ruler named here that `one_ruler_refusal` never writes would drop out on every run.
 

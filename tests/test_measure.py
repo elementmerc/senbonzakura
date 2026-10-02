@@ -489,6 +489,53 @@ def test_a_stage_that_invalidated_its_own_figure_is_not_reported_as_a_number():
     assert "not a measurement of" in row.note
 
 
+def test_a_stage_that_invalidated_itself_counts_as_one_that_produced_no_number(tmp_path,
+                                                                              monkeypatch):
+    """One run cannot say two things about itself, and the table was the half that was right.
+
+    The row has read "not a measurement" since the field existed, while `failed` stayed empty and
+    the command exited 0, so a pipeline collected the number and carried on. That was unreachable
+    for every stage but the compass until the other three writers started setting the field, which
+    makes this the layer where the same defect would have come back.
+    """
+    (tmp_path / measure.OUTPUTS["score"]).write_text(json.dumps(
+        {"refusal": 0.5, "self_invalidated": "the replies carried no verdict"}), encoding="utf-8")
+    said = []
+    monkeypatch.setattr(measure, "run_stage", lambda *a, **k: (tmp_path / measure.OUTPUTS[a[0]])
+                        .write_text(json.dumps(
+                            {"kl": 0.06, "self_invalidated": "the divergence came out as nan"}),
+                            encoding="utf-8"))
+    results, failures = measure.run(
+        _args(out=str(tmp_path), only=["score", "coherence"]), log=said.append)
+
+    # The resumed stage, read off a file that was already there, and the freshly run one.
+    assert failures == ["score", "coherence"], (
+        "a stage that disowned its own figure has not produced a number")
+    assert results["score"]["refusal"] == 0.5, "the artefact is still carried, for the table"
+    reasons = [m for m in said if "NOT A MEASUREMENT" in m]
+    assert len(reasons) == 2
+    assert "carried no verdict" in reasons[0], "the stage's own reason, not a restatement of it"
+    assert str(tmp_path / "score.json") in reasons[0], "and where to read the rest of it"
+
+
+def test_a_stage_whose_figure_is_fine_is_not_counted_as_a_failure(tmp_path, monkeypatch):
+    """The guard must not swallow every run: absent, false and null are the normal case."""
+    for marker in ({}, {"self_invalidated": False}, {"self_invalidated": None}):
+        (tmp_path / measure.OUTPUTS["score"]).write_text(
+            json.dumps({"refusal": 0.5, **marker}), encoding="utf-8")
+        _results, failures = measure.run(_args(out=str(tmp_path), only=["score"]),
+                                         log=lambda _m: None)
+        assert failures == [], f"a good run was failed with marker {marker}"
+
+
+@pytest.mark.parametrize("doc", [None, "a stage's failure message", 17, {}])
+def test_the_invalidation_reader_survives_whatever_a_stage_left_behind(doc):
+    """`results` holds a dict for a stage that wrote one and a string for a stage that failed, so
+    this is asked about both and must not assume either.
+    """
+    assert measure.invalidated(doc) is None
+
+
 def test_an_ordinary_stage_is_still_reported_as_a_number():
     """The guard must not swallow every figure: `self_invalidated` absent or false is the normal
     case and is what every good run writes.

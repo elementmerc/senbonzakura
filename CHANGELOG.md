@@ -71,6 +71,17 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - A null panel that could not be scored at all says so instead of printing a control at chance
 - The null floor the direction filter holds candidates to is reported as the percentile it is,
   with its false keep rate, rather than as a bar every null draw fails
+- `capability`, `drift` and the compass pass of `score` now record inside their own result file
+  that a figure is not a measurement, which is the field `measure` and the checker already read,
+  so a run that could not measure anything no longer reads like one that measured a zero
+- `drift` refuses a divergence that came back as NaN or as infinity, one that came back
+  materially below zero, and one averaged over a single prompt, naming the likely cause each time
+- `score --harm-recognition` refuses a rate over fewer than thirty replies, which is the floor
+  every other rate in the tool is already reported through
+- `capability` exits non-zero when the run it is compared against could not grade its own
+  answers, a case it has always printed as not quotable and then reported as a success
+- A drift below the bfloat16 floor stays a caveat beside the number rather than becoming a
+  refusal, because the measured gap to float32 is under one percent at the figures published here
 
 ### Documentation
 - The page explaining how the tool works now describes the direction filter as it behaves, with

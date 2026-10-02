@@ -41,6 +41,7 @@ ten models against the wrong reference and never find out.
 """
 import hashlib
 import json
+import math
 import os
 import shutil
 
@@ -180,6 +181,44 @@ def precision_verdict(value, dtype_name, *, floor=BF16_KL_FLOOR):
         f"the pair in float32 if the exact number matters.")
 
 
+def validity_verdict(value, n_prompts, *, floor=BF16_KL_FLOOR):
+    """Why this drift figure is not a measurement at all, or None when it is one.
+
+    DELIBERATELY NOT THE PRECISION VERDICT, and keeping the two apart is the whole design. A KL
+    below the bfloat16 floor is a DEGRADATION: the same edit measured in float32 and in bfloat16
+    diverges by 0.7% at 0.0007 and by under 0.1% at 0.01, so the figure is still a true statement
+    about the model, it just cannot carry four decimal places. That is reported as a caveat beside
+    the number, which is what `precision_verdict` is for.
+
+    What is collected here is the other kind: conditions under which the number means nothing,
+    whatever the model did. All three are about the arithmetic or the sample rather than about
+    precision, and none of them is recoverable by reading the figure more cautiously.
+
+    Pure, so every branch is testable without a model or a card.
+    """
+    if not math.isfinite(value):
+        return (f"the divergence came out as {value} rather than as a number, so there is nothing "
+                f"here to read about this model. Logits that overflow or carry a NaN do this, and "
+                f"a model loaded in float16 on a long prompt is the usual cause: re-run the pair "
+                f"in float32, and delete any --base-cache file first in case the cached "
+                f"distributions are the half that is broken.")
+    if value < -floor:
+        return (f"the divergence came out at {value:.4e}, and this quantity cannot be negative: "
+                f"every per prompt value it averages is a divergence between two probability "
+                f"distributions, which is zero at best. A value further below zero than the "
+                f"{floor:.0e} this arithmetic can resolve means "
+                f"the two sets of distributions were not lined up row for row, so each prompt was "
+                f"compared against a different prompt. A --base-cache file built from a different "
+                f"prompt order is the usual cause: delete it and run this again.")
+    if n_prompts < 2:
+        return (f"this drift was averaged over {n_prompts} prompt, so nothing separates the model "
+                f"from the prompt. There is no interval either, because an interval needs at "
+                f"least two observations to resample, and the interval is the part that says how "
+                f"much of a figure is noise. Give --prompts a file with many lines; the published "
+                f"figures use 64 and the same file for every model compared.")
+    return None
+
+
 def kl_interval(base_lp, cand_lp, *, seed=0, draws=BOOTSTRAP_DRAWS):
     """A seeded bootstrap interval over PROMPT sampling, for the drift figure.
 
@@ -288,6 +327,16 @@ def main(argv=None):
 
     dtype_name = logits_dtype_of(cand)
     precise, note = precision_verdict(value, dtype_name)
+    # WHETHER THIS RUN PRODUCED A FIGURE AT ALL, decided before the file is written and recorded
+    # in it. `entry.exit_status` turns `self_invalidated` into a non-zero exit for every entry
+    # point at once, `measure`'s table prints "not a measurement" for a stage that set it, and the
+    # checker's own adapter reads it off the artefact. None of those three could see this command,
+    # because this command never set it: a KL of NaN printed `kl=nan` and exited 0.
+    #
+    # Written into the artefact rather than only printed, for the reason `margin` records beside
+    # the same field: a verdict that lives in the terminal reaches the one person watching and
+    # never reaches the file the number gets quoted out of months later.
+    not_a_measurement = validity_verdict(value, len(prompts))
 
     res = {
         "label": a.label,
@@ -320,6 +369,10 @@ def main(argv=None):
         "kl_ci": None if kl_lo is None else [kl_lo, kl_hi],
         "kl_ci_method": f"seeded percentile bootstrap over prompts, {BOOTSTRAP_DRAWS} draws",
     }
+    # Set only when it fires, which is the shape `margin` established and the shape every consumer
+    # was written against: absent means this run makes no claim that its own figure is invalid.
+    if not_a_measurement:
+        res["self_invalidated"] = not_a_measurement
     # THE SAME NUMBER, WITH ITS IDENTITY, IN THE PLACE EVERY COMMAND PUTS IT.
     #
     # Additive: `kl` and `instrument` above are untouched, because the 2026-09-10 arms are
@@ -351,6 +404,14 @@ def main(argv=None):
     span = "" if kl_lo is None else f" [{kl_lo:.4f}, {kl_hi:.4f}]"
     print(f"DRIFT_DONE {a.label} kl={value:.4f}{span} n={len(prompts)} batch={a.batch} "
           f"dtype={dtype_name}{'' if precise else ' PRECISION-LIMITED'}")
+    # LAST, so it is the line still on the screen, and beside the file so there is something to
+    # paste into a bug report. The figure above is left where it is deliberately: hiding it would
+    # leave a reader comparing this run against one that printed a number, with nothing to say
+    # which of the two was the broken one.
+    if not_a_measurement:
+        print(f"DRIFT_NOT_A_MEASUREMENT {a.label}: {not_a_measurement} THE FIGURE ABOVE IS NOT A "
+              f"MEASUREMENT OF COHERENCE COST on this run: do not quote it. The run's own record, "
+              f"including this reason, is in {a.out}.")
     return res
 
 

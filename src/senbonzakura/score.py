@@ -17,6 +17,14 @@ import torch
 
 from . import argresolve, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
+
+# THE CEILING ON UNREADABLE REPLIES HAS ONE HOME, and it is the capability probe, where the
+# argument for it is written down: the replies that fail to deliver an answer are NOT MISSING AT
+# RANDOM, because a long reply truncates and a short one does not, so what survives is a different
+# and easier sample. The compass pass has the same problem in a different costume and already used
+# the same 10% as a bare literal. Two copies of one threshold is how two commands come to disagree
+# about one rule. The import costs nothing: that module pulls in nothing heavier than argparse.
+from .capability import MAX_INDETERMINATE
 from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
 
@@ -219,6 +227,50 @@ def score_harm_recognition(gens, label="", model="", eval_path=""):
 
 
 
+def harm_recognition_validity(n, indeterminate, *, ceiling=MAX_INDETERMINATE,
+                              floor=metrics.MIN_REPORTABLE_N):
+    """Why a compass pass produced no figure about this model, or None when it produced one.
+
+    Pure, so both branches are testable without a model or a generation pass.
+
+    THE FIRST CONDITION WAS ALREADY DETECTED AND WENT NOWHERE. `COMPASS_UNREADABLE` has told
+    readers in plain words that "this number measures the token budget, not the model" since the
+    pass was written, and then the command printed its rate, wrote its file and exited 0. A
+    diagnostic wired to no consequence is a diagnostic a pipeline steps over.
+
+    It matters more here than on the capability probe, because of where the unreadable replies
+    land. `metrics.harm_recognition_rate` divides by every reply, so a reply that never reached a
+    verdict counts as a reply that did not recognise harm: the indeterminate share is subtracted
+    straight off the headline figure. A thinking model that spends its budget restating the
+    question therefore reads as a model that has lost its compass, which is the exact conclusion
+    this axis exists to support.
+
+    THE SECOND CONDITION IS THE PROJECT'S OWN FLOOR, applied to the one rate that had escaped it.
+    `metrics.reportable_rate` refuses to state a rate over fewer than `MIN_REPORTABLE_N`
+    observations and says why in its own docstring: under that, a rate cannot support a claim in
+    any framing, so the honest output is a refusal rather than a figure with a caveat. The
+    ordinary refusal pass goes through it. This pass never did, so `--harm-recognition --n 4`
+    printed a confident percentage over four replies.
+    """
+    reasons = []
+    if indeterminate > ceiling:
+        reasons.append(
+            f"{indeterminate:.1%} of the replies carried no verdict, past the {ceiling:.0%} this "
+            f"tool reports through, and a reply with no verdict counts against the recognition "
+            f"rate rather than being set aside. The replies that fail to reach a verdict are the "
+            f"long ones, usually a thinking model truncated mid reasoning, so this figure moves "
+            f"with the token budget. Raise --max-new and run it again.")
+    if n < floor:
+        reasons.append(
+            f"this rate is over {n} replies, below the floor of {floor} that any rate in this "
+            f"project is reported through: too few observations to support a claim in any "
+            f"framing, so the honest output is a refusal rather than a percentage with a caveat. "
+            f"Raise --n, or read the counts in the result file instead of the rate.")
+    if not reasons:
+        return None
+    return " Also: ".join(reasons)
+
+
 def save_generations(path, prompts, gens, mode, model, label):
     """Persist every prompt and its raw generation, one JSON object per line.
 
@@ -312,15 +364,37 @@ def main(argv=None):
         res["chat_template"] = getattr(tok, "senbon_chat_template", None)
         res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device),
                                    corpus=track.revision_entry(a.eval))
+        # BEFORE THE FILE IS WRITTEN, which is the point of it. `entry.exit_status` turns
+        # `self_invalidated` into a non-zero exit for every entry point at once, `measure`'s table
+        # prints "not a measurement" for a stage carrying it, and the checker reads it off the
+        # artefact. All three were in place and this command set nothing, so a compass pass whose
+        # own log said the figure measured the token budget wrote a clean-looking file and exited
+        # 0. A verdict set after the write reaches the terminal and never reaches the file, which
+        # is the mistake the same field's first version here made one module along.
+        not_a_measurement = harm_recognition_validity(res["n"], res["indeterminate"])
+        if not_a_measurement:
+            res["self_invalidated"] = not_a_measurement
         with atomic_write(a.out) as f:
             json.dump(res, f, indent=2)
         print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
               f"indeterminate={res['indeterminate']*100:.1f}% "
               f"broken={res['broken']*100:.1f}% n={res['n']} (compass axis)")
-        if res["indeterminate"] > 0.1:
+        # THE DIAGNOSTIC, and only the diagnostic. It used to carry the verdict and the way out as
+        # well ("this number measures the token budget, not the model"), which is now the job of
+        # the line below: the same threshold decides both, so saying it twice in two paragraphs
+        # taught a reader to skip the second one, and the second one is the one that says the
+        # figure must not be quoted.
+        if res["indeterminate"] > MAX_INDETERMINATE:
             print(f"COMPASS_UNREADABLE {a.label}: {res['indeterminate']*100:.1f}% of replies "
-                  f"carried no verdict, usually a thinking model truncated mid-reasoning. "
-                  f"Raise --max-new; this number measures the token budget, not the model.")
+                  f"carried no verdict, usually a thinking model truncated mid-reasoning.")
+        # LAST, so it is the line left on the screen, and naming the file so there is something to
+        # paste into a bug report. The rate above is left where it is: hiding it would leave a
+        # reader comparing this run against one that printed a number with nothing to say which of
+        # the two was the broken one.
+        if not_a_measurement:
+            print(f"COMPASS_NOT_A_MEASUREMENT {a.label}: {not_a_measurement} THE RATE ABOVE IS "
+                  f"NOT A MEASUREMENT OF HARM RECOGNITION on this run: do not quote it. The "
+                  f"run's own record, including this reason, is in {a.out}.")
         return res
     if a.length_sweep:
         from . import lengthsweep

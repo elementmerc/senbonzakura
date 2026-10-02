@@ -154,6 +154,26 @@ paths with a regex rather than a person choosing them. Without that, a config fi
 |---|---|
 | `setup` | Look at this machine and put the right build of torch on it. pip cannot: there is no environment marker for a GPU, and PyPI cannot depend on PyTorch's index. Prints the command; `--apply` runs it. |
 | `doctor` | Check this install can actually do the job, and say so loudly when it cannot. |
+| `budget` | Will this model fit on this machine, and roughly how long would a run take? Reads the checkpoint's headers, measures the card, the memory, the free disk and whether a laptop is plugged in, and refuses a run that cannot finish. |
+
+`budget` reads headers and never a weight, so it costs about a second on a 61 GB checkpoint and
+needs no card and no network. It names every figure it used, including the ones it could not
+measure: a pool this machine will not report is marked skipped rather than passed, and the
+verdict says so too, because a check that could not run is not a check that passed.
+
+```
+senbonzakura budget --model ./Qwen3-4B --trials 64 --prompts 48 --tokens 48
+```
+
+It exits 0 when the run fits, 1 when this machine is short of something, and 2 when the directory
+is not a checkpoint it can read. Two of its figures are worth knowing about:
+
+- **The time estimate assumes 1.95 GB/s** of sustained reading, which was measured on one machine
+  and one disk. Pass `--read-rate` with your own number rather than inheriting ours.
+- **The page-locked ceiling is a design constraint, not a tuning note.** A host side store above
+  it loses the overlap between copying and computing, so the run gets much slower for a reason
+  that has nothing to do with streaming. The report says which side of the ceiling your store
+  falls on, and `--no-pinned-probe` skips the measurement, which is the only part that allocates.
 
 ## The corpus
 

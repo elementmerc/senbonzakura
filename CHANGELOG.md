@@ -5,6 +5,25 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
+### New command: `budget`
+- Answers "will this model fit on this machine, and roughly how long would a run take" before
+  anything is downloaded or loaded, from the checkpoint's headers alone
+- Names each thing the run needs, separately: the widest layer, the float32 working set the
+  rewrite holds, the key and value cache, the captured activations, the writable copies on disk
+  and the per layer markers
+- Reports the page-locked memory ceiling and which side of it the host side store falls on,
+  because a store above the ceiling loses the overlap between copying and computing and the run
+  then looks slow for a reason that is not the streaming
+- Says whether the machine is on battery, since a laptop card on battery clocks to about a third
+  and turns a five day estimate into a fortnight with nothing in any log to say why
+- Prints the write total as a fraction of a typical drive's rated lifetime, so the wear is a
+  decision rather than a surprise
+- Refuses a run this machine cannot finish, naming the resource and the shortfall, and a resource
+  this machine will not report is marked skipped rather than passed, in the verdict as well as in
+  the line above it
+- Writes the whole budget as JSON with `--out`, through a temporary file and a rename, so a
+  truncated file can never read as a complete one
+
 ### GitHub Action
 - Give the step a baseline and a measurement and it also runs the regression gate, so a property
   that moves outside its interval fails the build

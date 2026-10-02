@@ -91,6 +91,12 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # nobody can run is the same claim made by assertion, which is what the format exists to
     # replace.
     "prereg": ("prereg", "main"),
+    # THE FIFTH THAT NEEDS NOTHING, and the one that answers a question people ask before they
+    # install anything: will this model fit on my machine, and how long would it take? It reads
+    # the checkpoint's safetensors headers, measures the card, the memory, the disk and whether
+    # the laptop is plugged in, and refuses a run that cannot finish. Headers only, so it costs
+    # about a second on a 61 GB model and never holds a weight.
+    "budget": ("streaming", "main"),
 }
 
 

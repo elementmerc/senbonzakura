@@ -35,7 +35,31 @@ from senbonzakura.crashsafe import provenance
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
+def requires_the_packed_track():
+    """Skip where there is no packed track to pin, which is a real and supported state.
+
+    THE PACKED TRACK IS NOT IN GIT. `tools/packaging/pack_track.py` produces it at build time, so a
+    tree obtained with `git archive` has every tracked file and no track, which is exactly what the
+    "suite runs outside a git checkout" job tests and exactly what a tarball consumer gets.
+
+    `revision_entry` returns None there, by design and by its own docstring: it declines to write a
+    null revision, because a present-but-empty field satisfies a presence check while telling a
+    reader nothing. So None is the correct answer and subscripting it is the test's error, not the
+    code's. These three assertions did that and failed with `TypeError: 'NoneType' object is not
+    subscriptable`, which blamed the pin for the absence of the thing being pinned.
+
+    Skipping rather than asserting None, because "no track here" is not evidence either way about
+    whether a track that exists is pinned, and a test that passes by confirming an absence is the
+    narrower-question defect this project keeps finding.
+    """
+    from senbonzakura import bundled
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree, so there is no pin to check; "
+                    "run tools/packaging/pack_track.py to make one")
+
+
 def test_the_bundled_track_is_pinned_by_the_digest_its_own_manifest_records():
+    requires_the_packed_track()
     entry = track.revision_entry("default")
     assert entry["kind"] == "bundled-track"
     from senbonzakura import bundled
@@ -49,6 +73,7 @@ def test_naming_a_partition_pins_the_track_rather_than_the_partition():
     cannot tell a reader whether the boundary moved underneath it, which is the one thing the
     boundary is there to prove.
     """
+    requires_the_packed_track()
     whole = track.revision_entry("default")
     partition = track.revision_entry("default/bad_eval_ds")
     assert partition["revision"] == whole["revision"]
@@ -56,6 +81,12 @@ def test_naming_a_partition_pins_the_track_rather_than_the_partition():
 
 
 def test_a_bundled_corpus_is_pinned_by_the_blob_that_carries_it():
+    from senbonzakura import corpora
+    blob = pathlib.Path(__import__("senbonzakura.bundled", fromlist=["x"]).data_path()).parent \
+        / corpora.CORPORA_BLOB
+    if not blob.is_file():
+        pytest.skip("no corpora blob in this tree, so there is no pin to check; it is built at "
+                    "packaging time and a `git archive` export carries neither it nor the track")
     entry = track.revision_entry("advbench")
     assert entry["kind"] == "bundled-corpus"
     from senbonzakura import bundled, corpora

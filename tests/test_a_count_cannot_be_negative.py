@@ -361,6 +361,15 @@ BACKSTOP_EXEMPT = {
     "--split-max-tensors": "vendored llama.cpp converter, fetched verbatim at the pinned tag",
 }
 
+#: Where the vendored converter lands. `src/senbonzakura/vendor/` tracks only `pins.json` and
+#: `corpora-pins.json`; the Python itself is FETCHED AT BUILD TIME against those pins, so it is
+#: absent from a `git archive` export and from a fresh clone that has not run the vendor step.
+VENDORED_TREE = PACKAGE / "vendor" / "src"
+
+#: Exemptions whose declaring code is a build-time artefact rather than a tracked file. Kept as a
+#: set rather than inferred from the reason string, because a prose reason is not a predicate.
+VENDOR_SOURCED_EXEMPTIONS = frozenset({"--split-max-tensors"})
+
 
 def _package_sources():
     return sorted(p for p in PACKAGE.rglob("*.py") if "__pycache__" not in p.parts)
@@ -443,7 +452,23 @@ def test_the_backstop_accepts_every_bounded_spelling():
 
 
 def test_no_backstop_exemption_names_a_flag_the_package_no_longer_declares():
-    """A stale exemption is a hole held open for the next flag of that name."""
+    """A stale exemption is a hole held open for the next flag of that name.
+
+    WHY THE VENDORED EXEMPTIONS ARE SET ASIDE WHEN THE VENDORED TREE IS ABSENT, 2026-10-02.
+
+    This failed in CI's "suite runs outside a git checkout" job, which exports the tree with
+    `git archive` and so carries every TRACKED file and nothing built. The vendored converter is
+    fetched at build time, so the sweep found no `--split-max-tensors` declaration and the
+    exemption read as stale. It is not stale: the flag exists, upstream declares it, and the file
+    declaring it had simply not been fetched.
+
+    **The distinction this preserves is the one the test is for.** Where the vendored tree IS
+    present, a vendored exemption is checked exactly as before, so an exemption that outlives its
+    flag is still caught. Where it is absent, the sweep cannot tell "stale" from "not fetched", and
+    reporting the first when it means the second is the narrower-question defect this project keeps
+    finding. Our OWN exemptions are never set aside, because their declarations are tracked and
+    their absence really would be staleness.
+    """
     declared = set()
     for path in _package_sources():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -453,5 +478,15 @@ def test_no_backstop_exemption_names_a_flag_the_package_no_longer_declares():
                 flag = _declared_flag(node)
                 if flag:
                     declared.add(flag)
-    stale = sorted(set(BACKSTOP_EXEMPT) - declared)
-    assert not stale, f"BACKSTOP_EXEMPT names flags no declaration has: {stale}"
+    checkable = set(BACKSTOP_EXEMPT)
+    if not any(VENDORED_TREE.rglob("*.py")):
+        set_aside = sorted(checkable & VENDOR_SOURCED_EXEMPTIONS)
+        checkable -= VENDOR_SOURCED_EXEMPTIONS
+        print(f"vendored tree not fetched, so these exemptions were not checked: {set_aside}")
+
+    stale = sorted(checkable - declared)
+    assert not stale, (
+        f"BACKSTOP_EXEMPT names flags no declaration has: {stale}. Each is a hole held open for "
+        f"the next flag of that name, so either the flag came back under a different name or the "
+        f"exemption should go. If one of these is vendored, add it to VENDOR_SOURCED_EXEMPTIONS "
+        f"rather than widening this check")

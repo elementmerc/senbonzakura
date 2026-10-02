@@ -371,15 +371,13 @@ class LayerIndex:
                 f"{len(self.shared)} shared tensor(s))")
 
 
-def layer_count(model_dir):
-    """How many layers the CONFIG says there are, and which key said so.
+def _layer_scope(model_dir):
+    """`(scope, key)` for the config section that declares the layer count, or `(None, None)`.
 
-    From the config rather than from the weights, deliberately. Counting distinct indices in the
-    tensor names would agree on every checkpoint that is already understood and would quietly
-    agree with itself on one that is not: a checkpoint whose last layer is stored under a name
-    this reader does not match would report one fewer layer and edit one fewer, and nothing
-    anywhere would say so. The config is a second, independent account, which is the whole point
-    of consulting it.
+    SEPARATED FROM `layer_count` so that everything else read out of a config is read out of the
+    SAME section. A multimodal checkpoint nests the text model's settings under `text_config`, and
+    a reader that took the layer count from there and the hidden size from the top level would
+    build a budget out of two different models and look perfectly consistent doing it.
     """
     model_dir = pathlib.Path(model_dir)
     for cfg_path in sorted(model_dir.rglob("config.json")):
@@ -396,7 +394,23 @@ def layer_count(model_dir):
                 continue
             for key in LAYER_COUNT_KEYS:
                 if isinstance(scope.get(key), int) and scope[key] > 0:
-                    return scope[key], key
+                    return scope, key
+    return None, None
+
+
+def layer_count(model_dir):
+    """How many layers the CONFIG says there are, and which key said so.
+
+    From the config rather than from the weights, deliberately. Counting distinct indices in the
+    tensor names would agree on every checkpoint that is already understood and would quietly
+    agree with itself on one that is not: a checkpoint whose last layer is stored under a name
+    this reader does not match would report one fewer layer and edit one fewer, and nothing
+    anywhere would say so. The config is a second, independent account, which is the whole point
+    of consulting it.
+    """
+    scope, key = _layer_scope(model_dir)
+    if scope is not None:
+        return scope[key], key
     raise ShardError(
         f"{model_dir}: no config declares a layer count under any of {list(LAYER_COUNT_KEYS)}. "
         f"A streaming run has to know how many layers it is walking before it starts, and "
@@ -589,3 +603,232 @@ def load_layer(index, i, *, only=None, log=None):
                     only is None or _n in only)
         log(f"  layer {i}: {len(out)} tensors, {total / 1024 ** 2:.1f} MB")
     return out
+
+
+# ── describing a checkpoint for the memory budget ────────────────────────────────────────────────
+
+
+#: Where each config spells the geometry the key/value cache and the activation cloud are sized
+#: from. Several spellings each, because this reader has to work across every architecture the
+#: tool supports and a missing key here is a term silently dropped from a budget.
+_HIDDEN_KEYS = ("hidden_size", "n_embd", "d_model", "model_dim")
+_KV_HEAD_KEYS = ("num_key_value_heads", "num_kv_heads", "n_head_kv", "multi_query_group_num")
+_ATTN_HEAD_KEYS = ("num_attention_heads", "n_head", "num_heads")
+
+
+def _first_int(scope, keys):
+    for key in keys:
+        value = scope.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
+def geometry(model_dir):
+    """`(hidden, kv_heads, head_dim)` from the config, each None when the config does not say.
+
+    None rather than a guess. The key/value cache is 98 kB a token on a 30B and the budget that
+    omits it is wrong by 400 MB on a 6 GB card, so the term matters; a term invented from a
+    default would be wrong by an unknown amount instead, which is worse because it looks right.
+    The report names any term it could not size.
+
+    `num_key_value_heads` absent means no grouped-query attention, so every attention head owns
+    its own keys and values and the attention head count is the right number. That is the
+    transformers default and not a guess.
+    """
+    scope, _key = _layer_scope(model_dir)
+    if scope is None:
+        return None, None, None
+    hidden = _first_int(scope, _HIDDEN_KEYS)
+    attn_heads = _first_int(scope, _ATTN_HEAD_KEYS)
+    kv_heads = _first_int(scope, _KV_HEAD_KEYS) or attn_heads
+    head_dim = _first_int(scope, ("head_dim",))
+    if head_dim is None and hidden and attn_heads and hidden % attn_heads == 0:
+        head_dim = hidden // attn_heads
+    return hidden, kv_heads, head_dim
+
+
+def describe(model_dir, *, ablate_conv=True):
+    """A `resources.Checkpoint` for `model_dir`, read from headers and the config only.
+
+    THE FILLER FOR THE BUDGET'S CONTRACT, and the only one. Baseline Section 12 asks for a
+    boundary between logic and storage: the arithmetic is in `resources`, which reads nothing, and
+    the reading is here, which computes nothing. Everything below is a sum or a maximum over
+    metadata, so this costs one pass over the shard headers and holds no weights, which is the
+    property that makes a preflight on a 61 GB checkpoint take about a second.
+    """
+    index = index_layers(model_dir)
+    _widest_i, widest_layer = index.widest()
+
+    total = sum(t.nbytes for _shard, t in index.shared.values())
+    for i in range(index.count):
+        total += index.nbytes(i)
+
+    widest_writer, writer_total, writer_width, experts = 0, 0, 0, 0
+    for i in range(index.count):
+        for _shard, tensor in index.writers(i, ablate_conv).values():
+            writer_total += tensor.nbytes
+            if tensor.nbytes > widest_writer:
+                widest_writer = tensor.nbytes
+                writer_width = DTYPE_BYTES[tensor.dtype]
+                # A fused expert stack is [E, out, in] and the expert axis is the first. A dense
+                # writer is [out, in] and has no expert axis, which is reported as zero rather
+                # than one: "no experts" and "one expert" budget the same and mean different
+                # things, and the rewrite's block loop only exists for the first case.
+                experts = int(tensor.shape[0]) if len(tensor.shape) == 3 else 0
+    if not widest_writer:
+        raise ShardError(
+            f"{model_dir}: no residual-writing tensor was recognised in any of "
+            f"{index.count} layers, so there is nothing to budget a bake for. This is an "
+            f"architecture this reader does not know rather than a model without writers")
+
+    largest_shard, reading = 0, None
+    try:
+        for shard in index.shards():
+            reading = shard
+            largest_shard = max(largest_shard, shard.stat().st_size)
+    except OSError as exc:
+        raise ShardError(f"{reading}: indexed and then unreadable ({exc})") from exc
+
+    hidden, kv_heads, head_dim = geometry(model_dir)
+    from .resources import Checkpoint
+    return Checkpoint(layers=index.count, total_bytes=total, widest_layer_bytes=widest_layer,
+                      widest_writer_bytes=widest_writer, writer_bytes=writer_total,
+                      largest_shard_bytes=largest_shard, shards=len(index.shards()),
+                      writer_width=writer_width, experts=experts,
+                      kv_heads=kv_heads, head_dim=head_dim, hidden=hidden)
+
+
+# ── the `budget` command ─────────────────────────────────────────────────────────────────────────
+
+#: Exit codes. 0 the run fits, 1 it does not, 2 the checkpoint could not be read at all. The
+#: middle one is a verdict rather than a crash, so a script can branch on it.
+BUDGET_OK, BUDGET_SHORT, BUDGET_UNREADABLE = 0, 1, 2
+
+
+def build_budget_parser():
+    from . import argresolve
+
+    p = argresolve.ParserThatNamesUnknownFlags(
+        allow_abbrev=False,
+        prog="senbonzakura budget",
+        description="Work out whether a streaming run fits on this machine, before it starts.",
+        epilog="""\
+examples:
+  senbonzakura budget --model ./Qwen3-4B
+      measure this machine, read the checkpoint's headers, and say whether a search
+      would fit and roughly how long it would take
+
+  senbonzakura budget --model ./Qwen3-4B --trials 64 --prompts 48 --tokens 48
+      the same, for the run you are actually about to launch
+
+Reads the checkpoint's headers and no weights, so this costs about a second on a 61 GB
+model. Nothing is loaded, nothing is written, and no network is touched.
+
+Exits 0 when the run fits, 1 when this machine is short of something, and 2 when the
+checkpoint could not be read.
+""",
+        formatter_class=__import__("argparse").RawDescriptionHelpFormatter)
+    # EVERY COUNT BOUNDED AT ITS DECLARATION, minimum 1 throughout. Not one of these has a
+    # meaning at zero: a budget for zero trials is a budget for no run, a batch of zero is
+    # `range(0, n, 0)`, and a read rate of zero divides. `--gen-batch` in particular has to agree
+    # with the abliterate parser's flag of the same name, which bounds at 1; two spellings of one
+    # flag disagreeing about whether a batch of zero is a thing is the defect the count gate
+    # exists to catch, and a negative count here would silently produce a budget for a run
+    # nobody could launch.
+    p.add_argument("--model", required=True,
+                   help="directory holding the checkpoint's safetensors shards and config.json")
+    p.add_argument("--trials", type=argresolve.whole_number("--trials", minimum=1), default=64,
+                   help="search trials the run would take (default: 64)")
+    p.add_argument("--prompts", type=argresolve.whole_number("--prompts", minimum=1), default=48,
+                   help="prompts scored per trial (default: 48)")
+    p.add_argument("--tokens", type=argresolve.whole_number("--tokens", minimum=1), default=48,
+                   help="tokens generated per prompt (default: 48)")
+    p.add_argument("--gen-batch", type=argresolve.whole_number("--gen-batch", minimum=1),
+                   default=16,
+                   help="prompts generated at once, which sets the chunk count (default: 16)")
+    p.add_argument("--expert-block", type=argresolve.whole_number("--expert-block", minimum=1),
+                   default=8,
+                   help="experts the rewrite converts to float32 at once (default: 8)")
+    p.add_argument("--sparsity", action="store_true",
+                   help="budget for sparse surgery, which holds one more float32 tensor live")
+    p.add_argument("--read-rate", type=argresolve.real_number("--read-rate", minimum=0.001),
+                   default=None,
+                   help="sustained read rate in GB/s for the time estimate. Measure your own disk "
+                        "rather than inheriting ours (default: 1.95, measured on one machine)")
+    p.add_argument("--no-pinned-probe", action="store_true",
+                   help="skip the page-locked ceiling probe, which is the one check that "
+                        "allocates. The report then says the ceiling is unknown")
+    p.add_argument("--out", default=None,
+                   help="write the budget to this path as JSON as well as printing it")
+    return p
+
+
+def _budget_json(budget):
+    return {
+        "layers": budget.checkpoint.layers,
+        "shards": budget.checkpoint.shards,
+        "checkpoint_bytes": budget.checkpoint.total_bytes,
+        "widest_layer_bytes": budget.checkpoint.widest_layer_bytes,
+        "read_bytes": budget.read_bytes,
+        "write_bytes": budget.write_bytes,
+        "estimated_seconds": round(budget.seconds, 3),
+        "passes_per_trial": budget.run.passes_per_trial,
+        "read_bytes_s": budget.run.read_bytes_s,
+        "fits": budget.fits,
+        "unmeasured": budget.unmeasured,
+        "on_mains": budget.machine.on_mains,
+        "host_store_bytes": budget.host_store_bytes,
+        "page_locked": dict(zip(("side", "ceiling_bytes", "store_bytes"),
+                                budget.pinned_verdict, strict=True)),
+        "pools": [{"name": pool.name, "needs": [{"label": label, "bytes": n}
+                                                for label, n in pool.needs],
+                   "total_bytes": pool.total, "available_bytes": pool.available,
+                   "fits": pool.fits} for pool in budget.pools],
+    }
+
+
+def main(argv=None):
+    from . import resources, say
+
+    a = build_budget_parser().parse_args(argv)
+    try:
+        checkpoint = describe(a.model)
+    except ShardError as exc:
+        # A SENTENCE, NOT A TRACEBACK. "This directory is not a checkpoint I can read" is an
+        # ordinary answer to a reasonable question and the reader needs the reason, not the frames.
+        say.say(f"budget refused: {exc}", indent="  ")
+        return BUDGET_UNREADABLE
+    except OSError as exc:
+        say.say(f"budget refused: cannot read {a.model}: {exc}", indent="  ")
+        return BUDGET_UNREADABLE
+
+    run = resources.Run(
+        prompts=a.prompts, tokens=a.tokens, trials=a.trials,
+        passes_per_trial=resources.passes_per_trial(
+            eval_refusal=a.prompts, eval_kl=a.prompts, gen_batch=a.gen_batch,
+            gen_tokens=a.tokens),
+        expert_block=a.expert_block, sparsity=a.sparsity,
+        read_bytes_s=None if a.read_rate is None else a.read_rate * 1e9)
+    machine = resources.Machine.measure(path=a.model, pinned=not a.no_pinned_probe)
+    budget = resources.plan(checkpoint, run, machine)
+
+    # WRAPPED LIKE EVERYTHING ELSE. A checkpoint path on a real machine is long, and this line
+    # read to 81 columns on a test's temporary directory, which is shorter than most.
+    say.say(f"budget for {a.model}")
+    resources.report(budget)
+    if a.out:
+        payload = json.dumps(_budget_json(budget), indent=2, sort_keys=True) + "\n"
+        tmp = pathlib.Path(a.out).with_name(pathlib.Path(a.out).name + ".part")
+        # Written through a sibling and renamed, like every other artefact this tool emits, so a
+        # crash mid write cannot leave a truncated budget that reads as a complete one.
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, a.out)
+        print(f"  written to {a.out}")
+
+    say.say(f"verdict: {budget.verdict}", indent="  ")
+    if budget.fits:
+        return BUDGET_OK
+    say.say("Nothing has been loaded and nothing has been written, so stopping here costs you "
+            "only this message.", indent="  ")
+    return BUDGET_SHORT

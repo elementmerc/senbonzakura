@@ -697,3 +697,698 @@ class SearchProgress:
         note = f" (+{fmt_duration(paused)} paused)" if paused > 0 else ""
         self.log(f"  progress {self.done}/{self.total} | {fmt_duration(active)} active{note} | "
                  f"ETA {fmt_duration(remaining)}")
+
+
+# ── the streaming run's memory budget ────────────────────────────────────────────────────────────
+#
+# WHAT THIS SECTION IS FOR. A streaming abliteration reads a checkpoint off disk one layer at a
+# time and may run for days. Everything that can stop it is knowable in about a second from the
+# checkpoint's headers and four readings off the machine, and every one of them is a thing that
+# otherwise announces itself hours in: the card is too small for the widest layer, the host store
+# crosses the page-locked ceiling and the copies stop overlapping, the disk fills while a shard is
+# half rewritten, the laptop is on battery and clocked to a third.
+#
+# WHY THE ARITHMETIC LIVES HERE AND THE READING DOES NOT. Baseline Section 12 asks for a boundary
+# between logic and storage. `Checkpoint` below is the whole contract: anything that can fill in
+# those numbers can drive the budget, and `streaming.describe` is today's one filler. So the
+# budget is testable with no checkpoint, no card and no torch, which is the machine most of this
+# project's tests run on.
+#
+# WHAT IT DELIBERATELY DOES NOT DO. It allocates nothing proportional to the model. Every figure
+# is a sum over header metadata, and the one probe that allocates (the page-locked ceiling) is
+# bounded by its own argument and frees what it took. A preflight whose own footprint grew with
+# the input would be answering its question by becoming it.
+
+
+#: Sustained cold read rate assumed for the time estimate, in bytes per second.
+#:
+#: MEASURED, 2026-09-23, `tools/research/layer_read_spike.py`: a mixture-of-experts layer read by
+#: `pread` off the ROG's ext4 NVMe, cache evicted and the eviction confirmed, reached 1.95 GB/s.
+#: That is the slowest of the three layouts measured and the one the streaming path exists for, so
+#: it is the honest constant for an estimate rather than the best of them.
+#:
+#: ONE MACHINE, ONE DISK. The report says so wherever it uses this number, and `Run.read_bytes_s`
+#: overrides it, because an estimate carrying somebody else's disk as if it were yours is worse
+#: than no estimate.
+STREAMING_READ_BYTES_S = 1.95e9
+
+#: Rated write endurance assumed for the wear note, in bytes. 600 TB is the typical figure for a
+#: 1 TB consumer TLC drive. Reported as a fraction of a run rather than as a verdict: it is the
+#: user's drive and the user's decision, and the plan's loophole 13 asks only that the number be
+#: visible before they spend it.
+WRITE_ENDURANCE_BYTES = 600e12
+
+#: Disk a resumable run spends per layer on its completion marker and the digest of what it wrote.
+#: Small, and counted anyway, because a budget that silently omits a term is a budget nobody can
+#: check against what the run actually used.
+CHECKPOINT_BYTES_PER_LAYER = 4096
+
+#: How many float32 tensors of the block's shape `orthogonalize_np_3d_` holds live at its peak,
+#: without and with `--sparsity`. From reading the routine: the float32 cast, the row norms, the
+#: two einsum results and the accumulating output, plus the boolean row mask and the magnitudes it
+#: ranks when sparsity is on. An estimate of a peak, named as one, and the number the exit gate's
+#: "peak memory is asserted by a test" item is the thing that will eventually pin.
+FP32_LIVE_TENSORS = 5
+FP32_LIVE_TENSORS_SPARSE = 6
+
+#: The fraction of a measured resource the budget will plan into, leaving the rest for everything
+#: that is not the run. The same 0.9 the resident snapshot guard has always used, kept the same on
+#: purpose: two preflights over the same machine disagreeing about what "full" means is how an
+#: operator learns to ignore both.
+BUDGET_HEADROOM = 0.9
+
+
+def fmt_span(seconds):
+    """A duration that may be measured in days, which `fmt_duration` is not.
+
+    `fmt_duration` is the governor's ETA format and tops out at hours, which is right for a pause
+    and wrong for a five-day search: "110h 00m" is a number a reader has to do arithmetic on. This
+    adds the days tier and delegates everything below a day, so there is one implementation of the
+    hours and minutes and no chance of the two drifting.
+    """
+    try:
+        s = int(max(0, round(seconds)))
+    except (ValueError, OverflowError):
+        return "0s"
+    if s < 86400:
+        return fmt_duration(s)
+    return f"{s // 86400}d {(s % 86400) // 3600:02d}h"
+
+
+def fmt_bytes(n):
+    """Bytes as a figure with a unit, because a bare count of bytes is not a quantity anyone reads."""
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "unknown"
+    # PB and EB are here because a search's read total genuinely reaches them: a deliberately
+    # absurd prompt count printed "6017.5 TB", which is a number a reader has to count the digits
+    # of to understand. A unit table that stops one tier below what the arithmetic produces is a
+    # table that stops being readable exactly where the figure starts being alarming.
+    for unit, scale in (("EB", 1e18), ("PB", 1e15), ("TB", 1e12), ("GB", 1e9), ("MB", 1e6),
+                        ("kB", 1e3)):
+        if abs(n) >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{int(n)} B"
+
+
+# ── reading the machine ──────────────────────────────────────────────────────────────────────────
+
+
+def host_ram_available():
+    """Available host RAM in bytes, or None on a platform that will not say.
+
+    None means UNMEASURED, never zero and never "plenty". Both probes are POSIX: `/proc/meminfo`
+    is Linux only and `SC_AVPHYS_PAGES` is absent on Windows and unreliable on macOS, so a caller
+    that treats None as a pass has to say out loud that it skipped the check.
+
+    UNDER WSL2 THIS IS THE VIRTUAL MACHINE, NOT THE HOST. `/proc/meminfo` inside WSL2 reports the
+    ballooned VM's memory, which is a fraction of the Windows machine's and moves while the run
+    is going. It is still the right number, because it is the memory this process can actually
+    get, but a report that prints it beside "your laptop has 32 GB" needs to say which it means.
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import os
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_AVPHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def free_disk(path):
+    """Free bytes on the filesystem that would hold `path`, or None.
+
+    WALKS UP TO AN EXISTING ANCESTOR, because the output directory of a run that has not started
+    does not exist yet, and `disk_usage` on a missing path raises. Asking about the parent answers
+    the same question: a preflight that refused to estimate because the destination was not there
+    would decline exactly when it is wanted.
+    """
+    import pathlib
+    import shutil
+    try:
+        here = pathlib.Path(path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    for candidate in (here, *here.parents):
+        if candidate.is_dir():
+            break
+    else:
+        return None
+    try:
+        return int(shutil.disk_usage(candidate).free)
+    except (OSError, ValueError):
+        return None
+
+
+def on_mains_power(root="/sys/class/power_supply"):
+    """True on mains, False on battery, None when the machine will not say.
+
+    WHY A MEMORY BUDGET ASKS ABOUT POWER. A laptop discrete GPU on battery clocks to roughly a
+    third, so a five-day estimate becomes a fortnight and nothing in any log says why. The plan's
+    loophole 9 asks for it to be preflighted rather than discovered.
+
+    Reads `/sys/class/power_supply`, which is the kernel's own account: a supply of type `Mains`
+    reporting `online` is the answer, and a machine with no battery at all has no supply of type
+    `Battery`, which is itself a reliable mains. Desktops, containers and non-Linux return None,
+    and None is reported as unknown rather than assumed to be fine.
+
+    `root` is a parameter for the same reason every other dependency in this module is injectable:
+    a test for "this laptop is on battery" that has to patch `pathlib.Path` globally is a test
+    that breaks whatever else the interpreter was doing with paths.
+    """
+    import pathlib
+    root = pathlib.Path(root)
+    try:
+        supplies = sorted(root.iterdir())
+    except OSError:
+        return None
+    mains, battery = None, False
+    for supply in supplies:
+        try:
+            kind = (supply / "type").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if kind == "Battery":
+            battery = True
+        elif kind == "Mains":
+            try:
+                online = (supply / "online").read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            # Any mains supply that is online is enough. A dock and a charger both present means
+            # two supplies and one of them offline, and "one of them is plugged in" is the answer.
+            mains = bool(mains) or online == "1"
+    if mains is not None:
+        return mains
+    if supplies and not battery:
+        return True                 # supplies exist and none of them is a battery: not a laptop
+    return None
+
+
+def probe_pinned_ceiling(max_bytes=None):
+    """`(bytes, hit_limit)` for the page-locked ceiling, or None when it cannot be measured.
+
+    ONE IMPLEMENTATION, CALLED FROM TWO PLACES. `doctor.check_pinned_memory` reports this number
+    as a diagnostic and this reports it as a design constraint, and the measurement is the same
+    measurement. A second copy of a probe that allocates gigabytes is not a thing to keep.
+
+    `hit_limit` False means the probe stopped because it ran out of budget, so the figure is a
+    floor and the report must say "at least" rather than naming a ceiling that was never found.
+    """
+    try:
+        from .doctor import PINNED_SHALLOW_STEPS, PINNED_STEP_BYTES, _measure_pinned_ceiling
+    except ImportError:
+        return None
+    budget = PINNED_STEP_BYTES * PINNED_SHALLOW_STEPS if max_bytes is None else int(max_bytes)
+    try:
+        reached, hit_limit, _note = _measure_pinned_ceiling(budget)
+    except Exception:
+        # A diagnostic probe must never be the reason a run does not start. Unmeasured is a
+        # reportable state and the report carries it as one.
+        return None
+    return int(reached), bool(hit_limit)
+
+
+# ── the contract the budget is computed over ─────────────────────────────────────────────────────
+
+
+class Checkpoint:
+    """What the budget needs to know about a model on disk, and nothing about how it was read.
+
+    Every field is a sum or a maximum over safetensors header metadata, so filling this in costs
+    one pass over the headers and reads no weights. `streaming.describe` is the filler; a test
+    builds one by hand, which is the point of the boundary.
+
+    `widest_layer_bytes` rather than a mean, because the memory budget is set by the WORST layer:
+    an architecture that puts a dense mixture-of-experts block on some layers and not others
+    exists, and budgeting the average fits every layer but one and fails hours in.
+    """
+
+    __slots__ = ("experts", "head_dim", "hidden", "kv_heads", "largest_shard_bytes", "layers",
+                 "shards", "total_bytes", "widest_layer_bytes", "widest_writer_bytes",
+                 "writer_bytes", "writer_width")
+
+    def __init__(self, *, layers, total_bytes, widest_layer_bytes, widest_writer_bytes,
+                 writer_bytes, largest_shard_bytes, shards, writer_width,
+                 experts=0, kv_heads=None, head_dim=None, hidden=None):
+        self.layers = int(layers)
+        self.total_bytes = int(total_bytes)
+        self.widest_layer_bytes = int(widest_layer_bytes)
+        self.widest_writer_bytes = int(widest_writer_bytes)
+        self.writer_bytes = int(writer_bytes)
+        self.largest_shard_bytes = int(largest_shard_bytes)
+        self.shards = int(shards)
+        self.writer_width = int(writer_width)
+        self.experts = int(experts or 0)
+        self.kv_heads = None if kv_heads is None else int(kv_heads)
+        self.head_dim = None if head_dim is None else int(head_dim)
+        self.hidden = None if hidden is None else int(hidden)
+
+
+class Run:
+    """The knobs that change what a streaming run costs.
+
+    Defaults are deliberately absent for the counts: a budget computed against numbers the caller
+    did not choose is a budget for a different run, and this project has shipped a figure measured
+    on a slice nobody picked before.
+    """
+
+    __slots__ = ("expert_block", "passes_per_trial", "prompts", "read_bytes_s", "sparsity",
+                 "tokens", "trials")
+
+    def __init__(self, *, prompts, tokens, trials, passes_per_trial, expert_block=8,
+                 sparsity=False, read_bytes_s=None):
+        self.prompts = int(prompts)
+        self.tokens = int(tokens)
+        self.trials = int(trials)
+        self.passes_per_trial = int(passes_per_trial)
+        self.expert_block = max(1, int(expert_block))
+        self.sparsity = bool(sparsity)
+        self.read_bytes_s = float(read_bytes_s or STREAMING_READ_BYTES_S)
+
+
+class Machine:
+    """Four readings and a power state. Every one of them may be None, meaning unmeasured.
+
+    None is NOT zero and NOT fine. A pool whose availability is None is reported as skipped rather
+    than passed, which is the discipline the resident snapshot preflight already holds: an
+    operator who believes a guard ran when none did is worse off than one told it could not.
+    """
+
+    __slots__ = ("disk_free", "on_mains", "pinned_ceiling", "pinned_is_floor", "ram_available",
+                 "vram_free", "vram_total")
+
+    def __init__(self, *, vram_free=None, vram_total=None, ram_available=None,
+                 disk_free=None, pinned_ceiling=None, pinned_is_floor=False, on_mains=None):
+        self.vram_free = vram_free
+        self.vram_total = vram_total
+        self.ram_available = ram_available
+        self.disk_free = disk_free
+        self.pinned_ceiling = pinned_ceiling
+        self.pinned_is_floor = bool(pinned_is_floor)
+        self.on_mains = on_mains
+
+    @classmethod
+    def measure(cls, *, device="cuda:0", path=".", pinned=True, pinned_max_bytes=None):
+        """Read this machine. Nothing here raises: every probe returns None when it cannot answer.
+
+        `pinned=False` skips the one probe that allocates, which is what a caller wants when it is
+        asking the budget a hypothetical rather than preparing to launch.
+        """
+        vram = cuda_free_total(device)
+        ceiling, is_floor = (None, False)
+        if pinned:
+            probed = probe_pinned_ceiling(pinned_max_bytes)
+            if probed is not None:
+                ceiling, hit_limit = probed
+                is_floor = not hit_limit
+        return cls(vram_free=None if vram is None else vram[0],
+                   vram_total=None if vram is None else vram[1],
+                   ram_available=host_ram_available(),
+                   disk_free=free_disk(path),
+                   pinned_ceiling=ceiling, pinned_is_floor=is_floor,
+                   on_mains=on_mains_power())
+
+
+# ── the arithmetic ───────────────────────────────────────────────────────────────────────────────
+
+
+def kv_cache_bytes(*, layers, kv_heads, head_dim, width, prompts, tokens):
+    """Bytes the key/value cache holds at the end of a generation of `tokens` over `prompts`.
+
+    `2 *` because there is a key and a value. Per layer, per attention head that owns its own
+    key/value (grouped-query attention shares them, which is why this takes `kv_heads` and not
+    the query head count), per token, in the cache's dtype.
+
+    WHY IT IS ITS OWN TERM. The cache is the one structure in a streaming run that cannot be
+    evicted with its layer: every layer's keys and values have to survive until the generation
+    finishes, so it sits on the card for the whole of a decode while layers come and go around it.
+    The plan's memory model omitted it entirely. For Qwen3-30B-A3B (48 layers, 4 key/value heads,
+    head dimension 128, bfloat16) this is 98 kB a token, which is 402 MB at 16 prompts of 256
+    tokens: not the dominant term and far too big to leave out of a 6 GB budget.
+    """
+    return 2 * int(layers) * int(kv_heads) * int(head_dim) * int(width) * int(prompts) * int(tokens)
+
+
+def activation_cache_bytes(*, layers, hidden, prompts, width=4):
+    """Bytes the captured residual cloud holds: one vector per layer boundary, per prompt.
+
+    NOT STREAMED, DELIBERATELY. At the largest preset's 192 prompts on a 48-layer model with a
+    hidden size of 2048 this is 77 MB a side, so there is nothing worth streaming, and an
+    incremental covariance rewrite would break the axis-separation score, which needs both
+    complete clouds to judge a candidate. It is budgeted rather than bounded for the same reason:
+    it is small, and a term left out of a budget is a term nobody can check.
+
+    float32 by default because the capture promotes: the clouds are what an SVD runs over.
+    """
+    return (int(layers) + 1) * int(prompts) * int(hidden) * int(width)
+
+
+def passes_per_trial(*, eval_refusal, eval_kl, gen_batch, gen_tokens, coherence_prompts=16):
+    """Full-model forward passes one search trial costs, which is what sets the time estimate.
+
+    FROM THE OBJECTIVE AS WRITTEN, not from the plan's prose. `Abliterator.objective` does three
+    things that touch the model: generate over the harmful evaluation slice, generate over a small
+    harmless slice for coherence, and take first-token log probabilities over the KL slice. Both
+    generations are chunked by the governor at `--gen-batch`, and each chunk costs one prefill
+    plus one pass per new token, because every decode step needs every layer again. The log
+    probabilities are prefill only, one pass a chunk.
+
+    This is the quantity streaming is bad at and the reason the spike exists: amortising a layer
+    load across a batch suits a single forward pass and is pathological for decode.
+
+    WORTH A NOTE WHERE THE TWO ACCOUNTS DIFFER. The plan recounted this as 198 passes for a
+    48-prompt evaluation at batch 16 and 48 tokens; the formula here gives 199, and the extra one
+    is the KL slice's third chunk, which the plan's count appears to have taken as a single pass.
+    The code is the authority and the gap is one pass in two hundred, so the plan's five-day
+    headline stands.
+    """
+    def chunks(n):
+        n = max(0, int(n))
+        return -(-n // max(1, int(gen_batch)))          # ceiling division, no float anywhere
+
+    decode = 1 + max(0, int(gen_tokens))                # the prefill, then one pass per new token
+    return (chunks(eval_refusal) * decode
+            + chunks(min(int(coherence_prompts), int(eval_kl))) * decode
+            + chunks(eval_kl))
+
+
+def rewrite_working_bytes(checkpoint, run):
+    """Peak float32 working set of the on-disk rewrite, for one block of experts.
+
+    `orthogonalize_np_3d_` works in float32 and holds several tensors of the block's shape live at
+    once, so the peak is set by the widest residual-writing tensor, scaled down by the expert
+    block and up by the width ratio between float32 and whatever the checkpoint stores. On a dense
+    checkpoint there is no expert axis and the block does not divide anything.
+
+    THIS PASS SETS THE FLOOR, NOT THE CAPTURE. A fused expert stack is the largest thing the run
+    ever holds, and it is held at four bytes an element rather than two.
+    """
+    live = FP32_LIVE_TENSORS_SPARSE if run.sparsity else FP32_LIVE_TENSORS
+    block = checkpoint.widest_writer_bytes
+    if checkpoint.experts > 0:
+        block = block * min(run.expert_block, checkpoint.experts) / checkpoint.experts
+    return int(live * block * (4.0 / max(1, checkpoint.writer_width)))
+
+
+def streaming_read_bytes(checkpoint, run):
+    """Bytes read off disk across a whole run, which is the time estimate's numerator.
+
+    Four phases, and the search dominates by three orders of magnitude:
+
+      capture   one pass over the model
+      search    per trial, one restore from the source shards plus `passes_per_trial` forwards
+      bake      one pass to read what is being rewritten
+      rescore   one final pass over the model
+
+    THE RESTORE IS A READ NOW, AND IT USED NOT TO BE. Dropping the 20 GB resident snapshot means
+    the pristine weights come back off the source shards, which recovers 20 GB of host RAM and
+    costs one model read a trial. For a 61 GB checkpoint over 64 trials that is 3.9 TB of extra
+    reads. It is the right trade against what 20 GB of resident snapshot does to the page cache,
+    and it is a trade rather than a free recovery, so it is a named term here.
+    """
+    per_trial = run.passes_per_trial + 1                # the forwards, plus the restore
+    return int(checkpoint.total_bytes * (2 + run.trials * per_trial))
+
+
+def streaming_write_bytes(checkpoint, run):
+    """Bytes written to disk across a whole run, which is the wear note's numerator.
+
+    Per trial the bake rewrites the residual-writing tensors and nothing else, and at the end the
+    output checkpoint is written once in full. The plan's loophole 13 put this at roughly 10.5 TB
+    for a 30B search, which assumed a full model round trip every trial; this counts the tensors
+    the rewrite actually touches, so it is the smaller and more defensible figure.
+    """
+    return int(checkpoint.writer_bytes * run.trials + checkpoint.total_bytes)
+
+
+# ── the verdict ──────────────────────────────────────────────────────────────────────────────────
+
+
+class Pool:
+    """One resource, what each part of the run wants from it, and whether that fits.
+
+    `needs` is a list of `(label, bytes)` rather than one total, because a refusal that says
+    "6.4 GB needed, 5.8 GB free" tells an operator nothing they can act on, and one that names the
+    widest layer, the rewrite's working set and the key/value cache tells them which flag to move.
+    """
+
+    __slots__ = ("available", "headroom", "name", "needs", "unit")
+
+    def __init__(self, name, needs, available, headroom=BUDGET_HEADROOM):
+        self.name = name
+        self.needs = list(needs)
+        self.available = available
+        self.headroom = float(headroom)
+
+    @property
+    def total(self):
+        return sum(int(n) for _label, n in self.needs)
+
+    @property
+    def budget(self):
+        """What the pool will plan into, or None when availability was never measured."""
+        return None if self.available is None else int(self.available * self.headroom)
+
+    @property
+    def measured(self):
+        return self.available is not None
+
+    @property
+    def fits(self):
+        """True, False, or None for unmeasured. None is never True: a skipped check is not a pass."""
+        return None if not self.measured else self.total <= self.budget
+
+    @property
+    def shortfall(self):
+        return 0 if not self.measured else max(0, self.total - self.budget)
+
+
+class Budget:
+    """Everything the preflight worked out, as data, so the report and the refusal share one source.
+
+    Deliberately not a printer. `report` renders it and `preflight` decides on it; keeping the
+    verdict as data is what lets a test assert the numbers without reading prose, and lets the
+    guided mode draw the same figures its own way.
+    """
+
+    __slots__ = ("checkpoint", "machine", "pools", "read_bytes", "run", "seconds", "write_bytes")
+
+    def __init__(self, *, checkpoint, run, machine, pools, read_bytes, write_bytes, seconds):
+        self.checkpoint = checkpoint
+        self.run = run
+        self.machine = machine
+        self.pools = list(pools)
+        self.read_bytes = int(read_bytes)
+        self.write_bytes = int(write_bytes)
+        self.seconds = float(seconds)
+
+    @property
+    def fits(self):
+        """False if any MEASURED pool does not fit. Unmeasured pools cannot make it fit or not."""
+        return not any(pool.fits is False for pool in self.pools)
+
+    @property
+    def unmeasured(self):
+        return [pool.name for pool in self.pools if not pool.measured]
+
+    @property
+    def verdict(self):
+        """The headline sentence, and it may not say "fits" when a pool was never measured.
+
+        FOUND BY RUNNING IT. On a machine with no card, a run needing 84 GB of key/value cache
+        printed "this run fits on this machine", because the video memory pool was unmeasured and
+        an unmeasured pool cannot refuse. Every individual line was right and the headline was
+        false, which is this project's most recurring defect shape: a check that answered a
+        narrower question than the one asked, reporting clean.
+
+        So the headline carries its own scope. The pool lines already say SKIPPED; this stops the
+        last line of the report from quietly overruling them.
+        """
+        short = [pool.name for pool in self.pools if pool.fits is False]
+        if short:
+            return f"this machine is short of {', '.join(short)}, so the run would not finish"
+        if self.unmeasured:
+            return (f"this run fits everything that could be measured here, and "
+                    f"{', '.join(self.unmeasured)} could not be read on this machine, so that "
+                    f"much is unchecked rather than passed")
+        return "this run fits on this machine"
+
+    @property
+    def host_store_bytes(self):
+        """The host-side layer store, which is the quantity the page-locked ceiling bounds.
+
+        Two layers, because the point of a host store is that the next layer is already in host
+        memory when the current one finishes, and a single buffer cannot be filled and read at the
+        same time.
+        """
+        return 2 * self.checkpoint.widest_layer_bytes
+
+    @property
+    def pinned_verdict(self):
+        """`(side, ceiling, store)` where side is "under", "over" or None for unmeasured.
+
+        WHY THIS IS A VERDICT AND NOT A NOTE. Measured on the ROG on 2026-09-22, a store above the
+        page-locked ceiling does not degrade: pinned transfers hid 99.9% of their cost behind
+        compute and pageable ones hid 1.8%, at the balance the loader actually runs at. So
+        crossing the line forfeits essentially the whole benefit of streaming, quietly, and the
+        run then looks slow for a reason that has nothing to do with streaming.
+        """
+        ceiling = self.machine.pinned_ceiling
+        if ceiling is None:
+            return None, None, self.host_store_bytes
+        if self.machine.pinned_is_floor and self.host_store_bytes <= ceiling:
+            # The probe stopped at its own budget, so the real ceiling is at least this and the
+            # store is under it either way. Reported as "under" because that much is known.
+            return "under", ceiling, self.host_store_bytes
+        return ("under" if self.host_store_bytes <= ceiling else "over",
+                ceiling, self.host_store_bytes)
+
+    @property
+    def wear_fraction(self):
+        return self.write_bytes / WRITE_ENDURANCE_BYTES
+
+
+def plan(checkpoint, run, machine):
+    """Work out what a streaming run needs and whether this machine has it.
+
+    Reads nothing and allocates nothing: three records in, one verdict out. The probing happened
+    in `Machine.measure`, which is a separate call precisely so that a test, the guided mode and a
+    hypothetical ("would a 30B fit if I had 32 GB?") all drive the same arithmetic.
+    """
+    kv = 0
+    if checkpoint.kv_heads and checkpoint.head_dim:
+        kv = kv_cache_bytes(layers=checkpoint.layers, kv_heads=checkpoint.kv_heads,
+                            head_dim=checkpoint.head_dim, width=checkpoint.writer_width,
+                            prompts=run.prompts, tokens=run.tokens)
+    acts = 0
+    if checkpoint.hidden:
+        acts = activation_cache_bytes(layers=checkpoint.layers, hidden=checkpoint.hidden,
+                                      prompts=run.prompts)
+
+    card = [("the widest layer, resident", checkpoint.widest_layer_bytes),
+            ("the rewrite's float32 working set", rewrite_working_bytes(checkpoint, run))]
+    if kv:
+        card.append(("the key and value cache", kv))
+    if acts:
+        card.append(("the captured activations", acts))
+
+    host = [("the host side layer store, double buffered",
+             2 * checkpoint.widest_layer_bytes)]
+
+    disk = [("a writable working copy of the checkpoint", checkpoint.total_bytes),
+            ("the output checkpoint", checkpoint.total_bytes),
+            ("one shard, while it is being rewritten", checkpoint.largest_shard_bytes),
+            ("per layer markers and digests",
+             checkpoint.layers * CHECKPOINT_BYTES_PER_LAYER)]
+
+    read = streaming_read_bytes(checkpoint, run)
+    write = streaming_write_bytes(checkpoint, run)
+    return Budget(checkpoint=checkpoint, run=run, machine=machine,
+                  pools=[Pool("video memory", card, machine.vram_free),
+                         Pool("host memory", host, machine.ram_available),
+                         Pool("free disk", disk, machine.disk_free)],
+                  read_bytes=read, write_bytes=write,
+                  seconds=read / max(1.0, run.read_bytes_s))
+
+
+class BudgetRefusedError(MemoryError):
+    """A run this machine cannot finish, with the reason and what to change.
+
+    A MemoryError subclass because that is what the resident snapshot guard raises for the same
+    class of problem, and a caller catching one should catch both.
+    """
+
+
+def report(budget, log=print):
+    """Print the budget as a person reads it: what it needs, what is there, and the verdict.
+
+    Every unmeasured pool says it was SKIPPED rather than passed, because an operator who believes
+    a check ran when none did is worse off than one who knows it could not run.
+
+    WRAPPED THROUGH `say`, because several of these lines run past 100 characters and the first
+    terminal this will be read on is a laptop beside the card. The need lines keep their own
+    six-space indent, which `say` leaves verbatim, so the column stays a column.
+    """
+    from . import say
+    ck, run = budget.checkpoint, budget.run
+
+    def tell(text):
+        say.say(text, indent="  ", log=log)
+
+    tell(f"{ck.layers} layers, {ck.shards} shard(s), {fmt_bytes(ck.total_bytes)} on disk; "
+         f"widest layer {fmt_bytes(ck.widest_layer_bytes)}")
+    for pool in budget.pools:
+        if not pool.measured:
+            tell(f"{pool.name}: needs {fmt_bytes(pool.total)}, and this machine will not report "
+                 f"what it has, so the check was SKIPPED rather than passed")
+        else:
+            outcome = "fits" if pool.fits else f"SHORT by {fmt_bytes(pool.shortfall)}"
+            tell(f"{pool.name}: needs {fmt_bytes(pool.total)}, "
+                 f"{fmt_bytes(pool.available)} free ({fmt_bytes(pool.budget)} planned into), "
+                 f"{outcome}")
+        for label, nbytes in pool.needs:
+            log(f"      {fmt_bytes(nbytes):>10}  {label}")
+
+    side, ceiling, store = budget.pinned_verdict
+    if side is None:
+        tell(f"page-locked ceiling: not measured, so whether the {fmt_bytes(store)} host store "
+             f"keeps its copy and compute overlap is unknown")
+    elif side == "under":
+        at_least = "at least " if budget.machine.pinned_is_floor else ""
+        tell(f"page-locked ceiling: {at_least}{fmt_bytes(ceiling)}, and the host store is "
+             f"{fmt_bytes(store)}, so the copies overlap with compute")
+    else:
+        tell(f"page-locked ceiling: {fmt_bytes(ceiling)}, and the host store is "
+             f"{fmt_bytes(store)}, which is OVER it. Above the ceiling the copies stop overlapping "
+             f"and the run looks slow for a reason that is not streaming")
+
+    tell(f"reads {fmt_bytes(budget.read_bytes)} over {run.trials} trial(s) at "
+         f"{run.passes_per_trial} forward passes each, so about {fmt_span(budget.seconds)} at "
+         f"{run.read_bytes_s / 1e9:.2f} GB/s (measured on one machine and one disk, 2026-09-23)")
+    tell(f"writes {fmt_bytes(budget.write_bytes)}, about "
+         f"{budget.wear_fraction * 100:.2f}% of a typical consumer drive's rated lifetime")
+
+    if budget.machine.on_mains is False:
+        tell("power: on battery. A laptop card on battery clocks to roughly a third, so this "
+             "estimate is optimistic by about three times until it is plugged in")
+    elif budget.machine.on_mains is None:
+        tell("power: unknown on this machine, so nothing checked that a multi day run is not "
+             "about to be done on battery")
+
+
+def preflight(checkpoint, run, machine=None, *, log=print):
+    """Plan the run, report it, and refuse one that cannot finish.
+
+    REFUSES BEFORE THE RUN, which is the whole point: everything above is readable from the
+    checkpoint's headers in about a second, and the alternative is learning it hours into a job
+    that is holding a card.
+
+    An unmeasured pool never refuses. A machine that will not say how much memory it has is not a
+    small machine, and a preflight that hard-failed on a platform it could not read would be worse
+    than the problem it solves. The report says which pools were skipped.
+    """
+    from . import say
+    machine = machine if machine is not None else Machine.measure()
+    budget = plan(checkpoint, run, machine)
+    report(budget, log=log)
+    say.say(budget.verdict, indent="  ", log=log)
+    short = [pool for pool in budget.pools if pool.fits is False]
+    if short:
+        lines = "\n".join(
+            f"  {pool.name}: needs {fmt_bytes(pool.total)} and has {fmt_bytes(pool.available)}, "
+            f"short by {fmt_bytes(pool.shortfall)}" for pool in short)
+        raise BudgetRefusedError(
+            "this machine cannot finish this run, and here is what it is short of:\n"
+            f"{lines}\n"
+            "  Nothing has been loaded and nothing has been written, so stopping here costs you "
+            "only this message.\n"
+            "  Lower the prompt count or the generated token count to shrink the cache, pick a "
+            "smaller model, or free the resource named above.")
+    return budget

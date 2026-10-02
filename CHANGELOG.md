@@ -82,6 +82,8 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   answers, a case it has always printed as not quotable and then reported as a success
 - A drift below the bfloat16 floor stays a caveat beside the number rather than becoming a
   refusal, because the measured gap to float32 is under one percent at the figures published here
+- `measure` counts an instrument that disowned its own figure as one that produced no number, so
+  the table, the failure list in `measure.json` and the exit status now agree about the same run
 
 ### Documentation
 - The page explaining how the tool works now describes the direction filter as it behaves, with

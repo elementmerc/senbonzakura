@@ -250,6 +250,22 @@ def read_result(path):
         return None
 
 
+def invalidated(doc):
+    """A stage's own reason for saying its figure is not a measurement, or None.
+
+    A STAGE THAT INVALIDATED ITSELF HAS NOT PRODUCED A NUMBER, which is what this command's
+    failure list counts. The table has printed "not a measurement" for such a stage since the
+    field was introduced, and the status and `measure.json` disagreed with it: `failed: []`, exit
+    0, and a pipeline collecting the number and carrying on. One run cannot say two things about
+    itself, and the table is the one that was right.
+
+    Read off the artefact rather than off the return value, because `run_stage` calls each stage
+    in process and two of them return a status rather than their result. The file is the one
+    place every stage says it.
+    """
+    return doc.get("self_invalidated") if isinstance(doc, dict) else None
+
+
 #: Which STAMPED metric to read out of each stage's result, and what it means in one line. The
 #: caveat is not decoration: every one of these is a figure this project has had to qualify in
 #: public.
@@ -574,6 +590,11 @@ def run(args, *, log=print):
                 failures.append(name)
             else:
                 results[name] = got
+                why = invalidated(got)
+                if why:
+                    log(f"  NOT A MEASUREMENT: {path} records that its own figure is not one. "
+                        f"{why}")
+                    failures.append(name)
             continue
         log(f"{name}:")
         started = time.monotonic()
@@ -588,6 +609,11 @@ def run(args, *, log=print):
         got = read_result(path)
         results[name] = got if got is not None else "the stage reported success and wrote no file"
         if got is None:
+            failures.append(name)
+            continue
+        why = invalidated(got)
+        if why:
+            log(f"  NOT A MEASUREMENT: {path} records that its own figure is not one. {why}")
             failures.append(name)
     return results, failures
 

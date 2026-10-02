@@ -301,11 +301,26 @@ def test_an_unknown_git_state_is_also_refused(monkeypatch):
     assert mutate.main([]) == 2
 
 
+def _every_case_count():
+    """How many cases `--list` should report, DERIVED from the rosters rather than written down.
+
+    THIS WAS THE LITERAL `21` AND A THIRD ROUND BROKE IT, 2026-10-02. `ROUND_THREE` was added for
+    the night five lanes committed into one tree, so `--list` correctly reported 27 while two
+    assertions here still demanded 21, and CI went red over the harness having grown.
+
+    The `21` elsewhere in this file is a DIFFERENT number and stays a literal on purpose: it is
+    provenance, because the recorded 29% miss rate is 6 of 21, and a figure whose denominator moves
+    silently is uncomparable. So the historical roster keeps its literal and the live output gets
+    derived, which is the distinction the two assertions had collapsed.
+    """
+    return sum(len(cases) for cases in mutate.ROUNDS.values())
+
+
 def test_listing_changes_nothing_and_needs_no_clean_tree(capsys):
     """`--list` is the only mode safe to run while working, so it must not consult the tree."""
     assert mutate.main(["--list"]) == 0
     out = capsys.readouterr().out
-    assert "21 case(s)" in out
+    assert f"{_every_case_count()} case(s)" in out
     assert "Nothing was changed." in out
 
 
@@ -317,7 +332,7 @@ def test_the_harness_runs_as_a_script_and_lists_its_cases():
         [sys.executable, str(ROOT / "tools" / "research" / "mutate.py"), "--list"],
         capture_output=True, text=True, timeout=120, check=False)
     assert done.returncode == 0, done.stderr
-    assert "21 case(s)" in done.stdout
+    assert f"{_every_case_count()} case(s)" in done.stdout
 
 
 def test_the_provenance_is_recorded_in_the_file_rather_than_in_a_handoff():

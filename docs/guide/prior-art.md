@@ -56,10 +56,18 @@ the capability probe, are the ones that could price it. That's a thing to do, no
 ## So why does this project measure the opposite?
 
 Our own comparison found two directions costing about **1.9 times** the coherence damage
-of one at matched refusal, and buying nothing. That range is the mean over five seeds: 1.9 with
-every seed, 1.4 dropping the one outlying two-direction seed that carries much of the gap. The
-direction of the result is sturdier than its size. Both papers above report multi-direction
-winning.
+of one at matched refusal, and buying nothing this design could have detected. **The 95% interval
+on that 1.9 is 1.2 to 3.1**, a percentile bootstrap over the five seeds a side.
+
+This page used to call 1.4 to 1.9 "that range", with 1.4 being the figure after dropping the one
+outlying two-direction seed. **That was not an interval and it is withdrawn.** Dropping a seed is
+a sensitivity check, so joining it to the estimate with "to" gave a reader a span four times
+narrower than the real one and invited them to read a confidence the five arms do not support.
+The honest interval is the wide one, and it is the one published here because a reader who
+distrusts us would compute it themselves.
+
+The direction of the result is sturdier than its size: one direction beats two in 24 of 25
+pairwise seed comparisons. Both papers above report multi-direction winning.
 
 ::: warning Our arms did not choose their directions, and theirs did
 This is the first thing to say about the disagreement, because it means the two sides are not

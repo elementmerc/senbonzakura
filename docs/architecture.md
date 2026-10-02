@@ -16,8 +16,9 @@ Senbonzakura's one difference from the single-direction method is that it can tr
 refusal as a small *subspace* rather than one direction, finding several at once and
 orthogonalising all of them out. **Whether that helps is a question this project has
 now answered, against itself:** on Qwen3-1.7B, two directions cost about 1.9 times the
-coherence damage of one at the same refusal rate, on the mean over five seeds, and bought
-nothing. Those arms predate the held-out direction selection, so their second directions came
+coherence damage of one at the same refusal rate, on the mean over five seeds, with a 95%
+interval of 1.2 to 3.1 from a percentile bootstrap, and bought nothing this design could have
+detected. Those arms predate the held-out direction selection, so their second directions came
 from a filter since found to accept every candidate it was shown, and what they price is an
 *arbitrary* second direction rather than a chosen one. The capability stays
 because the question is open on architectures we cannot yet measure, but the default

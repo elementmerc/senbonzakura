@@ -236,6 +236,20 @@ KNOWN_TEXT_FILES = frozenset({
     "constraints.txt",
     "constraints/ci.txt",
     "constraints/floors.txt",
+    # BASE MODELS' LICENCES, retained because their own terms oblige it: Gemma section 3.1 and
+    # Llama section 1(b)(i)(A) each require a distributor to provide a copy to recipients. Added
+    # 2026-10-02 alongside `APACHE-2.0.txt`, which is the same kind of file and the precedent here.
+    #
+    # Recorded BY EXACT PATH rather than by a `docs/licences/*` rule, deliberately. A directory
+    # rule would clear whatever anybody later put there, and this gate is the one control between a
+    # harmful prompt and a public push, so it is widened by naming a file and never by opening a
+    # location. A third base model's licence costs one line and that line is the review.
+    #
+    # Neither file is a corpus and neither can become one: both are legal prose fetched from a
+    # published page, and a test asserts their required notice strings verbatim, so a substitution
+    # would fail that test rather than pass this gate.
+    "docs/licences/gemma-terms-of-use.txt",
+    "docs/licences/meta-llama-3-community-license.txt",
 })
 
 

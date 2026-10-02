@@ -108,6 +108,36 @@ def _sweep_failure(accepted, failures):
             f"flag:\n{detail}")
 
 
+def _sweep_incomplete(failures):
+    """Why this file cannot speak for the WHOLE documented surface, or None when it can.
+
+    SEPARATE FROM `_sweep_failure`, AND THE DISTINCTION IS THE WHOLE POINT (D46, operator
+    2026-10-02). That function answers "did the sweep happen at all", and it answers by counting:
+    below `SWEEP_FLOOR` the sweep plainly did not run, and failing loudly is right.
+
+    THE PARTIAL CASE SLIPPED STRAIGHT THROUGH IT. `SWEEP_FLOOR` is satisfied by the commands that
+    CAN start without torch, so the floor passes while the commands that could not start
+    contribute nothing, and every flag belonging to one of them reads as a flag the tool rejects.
+    Measured: `--no-margins`, `--skip-harmful` and `--skip-harmless` are real flags that read as
+    rejected this way. Two agents misread this file in one night on the strength of it, which is
+    what moved it from a patch to a decision.
+
+    A SKIP RATHER THAN A FAILURE, and rather than refusing the file outright. Refusing was the
+    cleaner option and was declined for one reason: it would make this test unrunnable on every
+    development machine here, none of which has torch, and a test nobody can run locally goes
+    stale without anybody noticing. The count of uncovered invocations goes IN the skip reason, so
+    a partial run cannot be read as a clean pass.
+    """
+    if not failures:
+        return None
+    detail = "\n".join(f"  `senbonzakura {words}` exited {rc}\n    {err}"
+                       for words, rc, err in failures)
+    return (f"the help sweep ran but {len(failures)} invocation(s) could not start, so the flags "
+            f"those commands declare are absent from the accepted set and would read as flags the "
+            f"tool rejects. This file can only speak for the commands that answered, which is why "
+            f"this is a skip and not a pass:\n{detail}")
+
+
 def _documented():
     found = {}
     for page in DOCS:
@@ -123,8 +153,13 @@ def _documented():
 def test_a_flag_the_docs_name_is_a_flag_the_tool_takes(flag, page):
     if flag in NOT_OURS:
         pytest.skip(f"{flag} is documented as not ours, see NOT_OURS")
-    if reason := _sweep_failure(*_sweep()):
+    accepted, failures = _sweep()
+    if reason := _sweep_failure(accepted, failures):
         pytest.fail(reason)
+    if flag not in accepted and (reason := _sweep_incomplete(failures)):
+        # Only when the flag is MISSING. A flag the sweep did find is a real pass, and skipping it
+        # because some other command failed would throw away the coverage this file does have.
+        pytest.skip(reason)
     assert flag in _accepted(), (
         f"{page} tells the reader to pass {flag}, and no command accepts it. Either the flag was "
         f"removed and the page was not, or the page describes a flag that belongs to a different "
@@ -155,6 +190,21 @@ def test_the_sweep_guard_catches_a_sweep_that_found_nothing():
     quiet = _sweep_failure(set(), ())
     assert quiet and "every invocation exited 0" in quiet
     assert _sweep_failure({f"--flag{n}" for n in range(SWEEP_FLOOR)}, ()) is None
+
+
+def test_a_partial_sweep_is_reported_rather_than_blamed_on_the_documentation():
+    """The floor passing is not the same as the sweep being complete, which is D46.
+
+    A sweep that met `SWEEP_FLOOR` while some invocations failed used to return None from every
+    guard here, so a documented flag belonging to a command that could not start was reported as
+    a flag the tool rejects. These two assertions are the ones that would have caught it.
+    """
+    partial = _sweep_incomplete((("score --help", 1, "ModuleNotFoundError: torch"),))
+    assert partial, "a failed invocation must be reported even when the floor is met"
+    assert "score --help" in partial and "ModuleNotFoundError" in partial, \
+        "the reason must name the invocation and its real cause, not the documentation"
+    assert "1 invocation" in partial, "the count belongs in the reason so a skip is not read as a pass"
+    assert _sweep_incomplete(()) is None, "a complete sweep must not skip anything"
 
 
 # ── the short help and the long one ──────────────────────────────────────────────

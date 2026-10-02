@@ -589,6 +589,59 @@ def report(summary, change=None):
     return lines
 
 
+def not_a_measurement(summary, change=None, *, ceiling=MAX_INDETERMINATE):
+    """Why this run produced no figure about this model, or None when it produced one.
+
+    THE VERDICT WAS ALREADY BEING MADE, THREE TIMES, AND IT WENT NOWHERE A MACHINE COULD READ IT.
+    `report` has printed all three of these in capitals since before the ledger entry, and
+    `main`'s exit status covered two of them, and the artefact said nothing at all. So
+    `senbonzakura measure`, which reads the file rather than the exit status, printed the accuracy
+    from a run whose own log said not to quote any figure from it, and the checker's rule for a
+    figure a file calls invalid could not fire because no capability file ever carried the field.
+    This returns the reason in the one vocabulary every consumer already speaks.
+
+    Pure, and deliberately reading only the summary and the change dicts, so each branch is
+    testable without a model, a card or a generation pass.
+
+    WHAT IS NOT IN HERE, and why each one is a caveat rather than a refusal:
+
+      - An accuracy withheld because fewer than `metrics.MIN_REPORTABLE_N` items could be graded.
+        `summarise` already withholds the rate itself and records why, so there is no figure to
+        misquote: the counts go out as counts. A run that grades 12 of 12 items has measured
+        something real about 12 items and saying so is honest.
+      - A comparison whose pairing could not be verified, which is `change["items_verified"]`
+        false. That is an unchecked claim rather than a known-false one, it is already recorded in
+        the artefact and printed as a NOTE, and every reference artefact written before the exam
+        fingerprint existed would trip it, including this project's own published arms. A refusal
+        that fires on correct historical runs is a refusal somebody switches off.
+      - A change whose interval spans zero. That is a result.
+    """
+    if not summary.get("graded"):
+        return (f"nothing in this run could be graded, so there is no accuracy here and no "
+                f"figure about this model: {summary.get('n')} items were asked and not one came "
+                f"back with a readable answer in it. The budget or the prompt is the cause far "
+                f"more often than the model is. Raise --max-new, and keep --save-generations on "
+                f"the next run so you can read what the model actually said.")
+    if summary.get("budget_suspect"):
+        rate = summary.get("indeterminate_rate")
+        return (f"{summary.get('indeterminate')} of {summary.get('n')} answers never finished, "
+                f"which is past the {ceiling:.0%} this tool reports through"
+                f"{'' if rate is None else f' (this run: {rate:.1%})'}. The answers that fail to "
+                f"finish are the long ones, so what was graded is an easier exam than the one "
+                f"that was set, and an accuracy over it is a statement about the budget rather "
+                f"than about the model. Raise --max-new and run it again.")
+    reference_rate = (change or {}).get("reference_indeterminate_rate")
+    if reference_rate is not None and reference_rate > ceiling:
+        return (f"the run this one is compared against left {reference_rate:.1%} of its own "
+                f"answers ungraded, past the {ceiling:.0%} ceiling. A pair is dropped when either "
+                f"arm failed to grade it, and the ones that fail are the long answers, so the "
+                f"surviving pairs are dominated by the reference's easy items and the change "
+                f"understates the cost in the flattering direction. This run's own accuracy "
+                f"stands; the change figure beside it does not. Re-run the reference with a "
+                f"larger --max-new before reading the comparison.")
+    return None
+
+
 def load_reference(path):
     """A previous run's verdicts AND its summary, for the paired comparison.
 
@@ -1191,6 +1244,13 @@ def main(argv=None):
               # this one did not, so a night of arm results came back citable everywhere except
               # the capability figures, which are the ones the whole experiment exists for.
               "provenance": provenance(device=a.device)}
+    # IN THE FILE, not only in the exit status. The status is read by a shell; the artefact is read
+    # by `measure`, by the checker and by whoever opens it in six months, and those three were the
+    # ones quoting the number. Set only when it fires, which is the shape `margin` established and
+    # every consumer was written against.
+    invalid = not_a_measurement(summary, change)
+    if invalid:
+        result["self_invalidated"] = invalid
     # The canonical metrics block, beside the fields this command has always written rather than
     # instead of them. Withheld deliberately when the accuracy was: a run whose graded subset is
     # too small to report is a run with no capability number, and stamping `None` under a
@@ -1227,7 +1287,17 @@ def main(argv=None):
     # Non-zero when the budget ate too much of the sample, so a pipeline cannot collect the
     # number and carry on. `tools/research/e2_arms.sh` did exactly that: three arms of capability figures
     # at 20.5% indeterminate, on every arm including the unedited reference.
-    return 0 if summary["graded"] and not summary.get("budget_suspect") else 1
+    #
+    # Read off `not_a_measurement` rather than recomputed here, so the status, the artefact and
+    # the printed verdict cannot say three different things. It adds one case the status used to
+    # miss: a comparison against a reference that could not grade its own answers, which `report`
+    # has always printed as NOT QUOTABLE and which exited 0.
+    if invalid:
+        print(f"  CAPABILITY_NOT_A_MEASUREMENT: this run has recorded, in {a.out}, that its own "
+              f"figure is not a measurement of this model's capability, for the reason above. It "
+              f"exits non-zero so a pipeline cannot collect the number and carry on.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":   # pragma: no cover

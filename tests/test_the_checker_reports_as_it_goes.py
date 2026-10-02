@@ -262,6 +262,40 @@ class TestTheHeartbeat:
         assert "checked, now at somewhere" in captured.err, captured
         assert "checked, now at" not in captured.out, captured.out
 
+    def test_a_redirect_after_construction_still_reaches_the_new_stream(self):
+        """FOUND BY A SURVIVING MUTANT, 2026-10-02, and the mutant's lesson was about the comment.
+
+        `_Heartbeat.__init__` holds `stream` as given and resolves `sys.stderr` at write time
+        instead of at construction. Reverting that to the pre-fix
+        `stream if stream is not None else sys.stderr` left this whole file green, so the fix was
+        unguarded, and the reason recorded beside it said construction-time resolution breaks
+        under "every test harness". That reason is false, and its falseness is why nothing noticed:
+        pytest installs its capture BEFORE a test body runs, so an object built inside the body
+        captures the already-replaced stream and the text lands where the assertion looks.
+
+        So the sequence has to be built on purpose. Construct first, redirect second, write third.
+        Only write-time resolution sends the line to the stream that is current at the write;
+        construction-time resolution sends it to the one that was current at the construction.
+        Checked both ways round, because an assertion that the line arrived says nothing unless
+        the stream it was NOT supposed to reach is also examined.
+        """
+        at_construction, after_redirect = io.StringIO(), io.StringIO()
+        real = sys.stderr
+        sys.stderr = at_construction
+        try:
+            beat = cli._Heartbeat(1, clock=iter([0, 60]).__next__, every=30)
+            sys.stderr = after_redirect
+            assert beat.tick("somewhere") is True
+        finally:
+            sys.stderr = real
+
+        assert "checked, now at somewhere" in after_redirect.getvalue(), (
+            "the heartbeat wrote to the stream that was current when it was built, not the one "
+            "current when it wrote, so `sys.stderr` is being resolved at construction again")
+        assert at_construction.getvalue() == "", (
+            f"the heartbeat also wrote to the stream it was constructed under: "
+            f"{at_construction.getvalue()!r}")
+
     def test_it_counts_towards_a_total_a_reader_can_use(self, tmp_path):
         """"still working" without a denominator does not tell anybody whether to wait."""
         errors = io.StringIO()

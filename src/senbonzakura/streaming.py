@@ -47,6 +47,7 @@ import os
 import pathlib
 import re
 import struct
+import sys
 
 #: safetensors pads its header to this boundary. Writing a header that is not padded produces a
 #: file every reader still accepts, which is worse than one they reject: it diverges quietly.
@@ -832,3 +833,18 @@ def main(argv=None):
     say.say("Nothing has been loaded and nothing has been written, so stopping here costs you "
             "only this message.", indent="  ")
     return BUDGET_SHORT
+
+
+# THE GUARD IS LOAD-BEARING, AND THIS MODULE SHIPPED WITHOUT IT FOR AN HOUR.
+#
+# Without it, `python -m senbonzakura.streaming` imports this file, runs nothing, prints nothing and
+# exits 0, while `senbonzakura budget` on the same arguments exits 2. So a script gating on the
+# module form is handed success for a run that never happened, which is this project's most repeated
+# defect shape and the reason `tests/test_exit_status.py` exists: eight modules had no guard at all,
+# and running them that way executed nothing while reporting that it had worked.
+#
+# `sys.exit(main())` rather than a bare `main()`, because calling it and discarding the result is
+# the same failure wearing a guard: `doctor` did exactly that, and an exit code nobody propagates
+# is an exit code nobody can gate on.
+if __name__ == "__main__":
+    sys.exit(main())

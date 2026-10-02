@@ -455,10 +455,16 @@ def index_layers(model_dir):
     for shard in sorted(model_dir.rglob("*.safetensors")):
         for tensor in tensors(shard):
             if tensor.name in located:
+                # THE PATH, NOT THE BASENAME. `rglob` descends, so pointing this at a directory
+                # holding two checkpoints is the common way to reach here, and both of them are
+                # called `model.safetensors`. The first version of this message printed the
+                # basename twice and read "appears in more than one shard (model.safetensors and
+                # model.safetensors)", which tells the reader nothing about what to fix.
+                first = located[tensor.name][0]
                 raise ShardError(
                     f"{model_dir}: {tensor.name!r} appears in more than one shard "
-                    f"({located[tensor.name][0].name} and {shard.name}). Editing it would leave "
-                    f"the other copy behind, and a loader may read either")
+                    f"({first.relative_to(model_dir)} and {shard.relative_to(model_dir)}). "
+                    f"Editing it would leave the other copy behind, and a loader may read either")
             located[tensor.name] = (shard, tensor)
     if not located:
         raise ShardError(f"{model_dir}: no safetensors shards, so there is nothing to index")

@@ -202,7 +202,7 @@ detected, and they were less predictable seed to seed (the spread is nearly thre
 
 **Both halves of that need saying precisely, and until 2026-09-28 neither did.**
 
-The cost. 1.9 is the ratio of the means over five seeds a side, and the 95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side is 1.2 to 3.1. This page used to give the figure as a range
+The cost. 1.9 is the ratio of the means over five seeds a side, and its 95% interval is 1.2 to 3.1, a percentile bootstrap over the five seeds a side. This page used to give the figure as a range
 running from the dropped-seed ratio up to this one, which is a sensitivity check at one end and the
 estimate at the other. Printing the two joined by "to" invited every reader to take it for an
 interval, when the real interval is four times wider. The CHANGELOG's 0.4.0 entry carries the old

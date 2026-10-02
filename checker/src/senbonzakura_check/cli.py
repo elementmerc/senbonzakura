@@ -448,10 +448,17 @@ class _Heartbeat:
     def __init__(self, total, *, stream=None, clock=None, every=HEARTBEAT_SECONDS):
         import time
         self._clock = clock or time.monotonic
-        # STDERR IS RESOLVED AT WRITE TIME, not here. Holding the object from construction means
-        # a caller who redirects the stream afterwards, which is what every test harness and
-        # several of this project's own commands do, gets the heartbeat on the stream that was
-        # current when the sweep started rather than the one in effect when it writes.
+        # STDERR IS RESOLVED AT WRITE TIME, not here, so a caller who redirects the stream after
+        # the sweep has started still gets the heartbeat on the stream in effect when it writes.
+        #
+        # THE REASON FIRST RECORDED HERE WAS WRONG and a surviving mutant found it, 2026-10-02. It
+        # said construction-time resolution breaks under "every test harness", which is false:
+        # pytest's capture replaces `sys.stderr` before a test body runs, so resolving at
+        # construction picks up the already-replaced stream and lands in the right place. That is
+        # why reverting this line left the checker's own tests green. What it really protects is a
+        # redirect entered BETWEEN construction and the write, which no caller in this tree does
+        # today, which is exactly why the guard has to construct that sequence deliberately. See
+        # `test_a_redirect_after_construction_still_reaches_the_new_stream`.
         self._stream = stream
         self._every = every
         self._total = total

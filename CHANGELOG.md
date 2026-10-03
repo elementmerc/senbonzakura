@@ -5,6 +5,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
+### Security
+
+- A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.
+
 ### New command: `budget`
 - Answers "will this model fit on this machine, and roughly how long would a run take" before
   anything is downloaded or loaded, from the checkpoint's headers alone

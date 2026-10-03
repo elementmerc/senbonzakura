@@ -32,6 +32,7 @@ from pathlib import Path
 
 from . import argresolve, say
 from ._version import __version__
+from .measure import REDACTED, SECRET_FLAGS
 
 #: Sections a complete card carries. Missing ones are declared rather than dropped, because the
 #: gap is information: a reader can tell "measured and fine" from "never looked at".
@@ -250,8 +251,36 @@ def corpus_section(abl):
     return lines or [NOT_MEASURED]
 
 
-def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
-    """The card, as markdown lines."""
+#: A flag's value as a command line carries it: bare, or quoted either way.
+_FLAG_VALUE = r"""(?:"[^"]*"|'[^']*'|\S+)"""
+
+
+def redact_command(command, secrets=()):
+    """The command line with every secret taken out, for a page that is meant to be published.
+
+    AT THE SINK RATHER THAN AT A CALLER. The card had two sources of a command, the run's own
+    `sys.argv` and `senbonzakura report --command`, which is text somebody pasted, and the run's
+    copy put `--hf-token <value>` into the README beside the weights from 0.4.0 to 0.4.1. Redacting
+    here covers both, and any third that arrives later.
+
+    Two rules covering each other, as `measure._shown` does for its own record: the value after a
+    secret flag goes whatever it is, and a secret the caller knows goes wherever it sits on the
+    line. The flag itself stays, because a reader reproducing the run needs to know one was used.
+    """
+    for flag in SECRET_FLAGS:
+        command = re.sub(rf"({re.escape(flag)})(=|\s+){_FLAG_VALUE}", rf"\1\2{REDACTED}", command)
+    for secret in secrets:
+        # Skipping an empty one is not tidiness: `replace("", ...)` inserts between every
+        # character of the line.
+        if secret:
+            command = command.replace(secret, REDACTED)
+    return command
+
+
+def build(abl=None, cap=None, command=None, licence=None, licence_link=None, secrets=()):
+    """The card, as markdown lines. `secrets` are values to keep off the page wherever they
+    appear in `command`, on top of the flags `redact_command` always strips.
+    """
     out = front_matter(abl, licence or "other", licence_link)
     out += ["# Abliteration report", ""]
     if abl and abl.get("model"):
@@ -274,7 +303,7 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None):
             *licence_section(abl, licence, licence_link, measured=bool(cap)), ""]
     out += ["## Reproducing it", ""]
     if command:
-        out += ["```sh", command, "```", ""]
+        out += ["```sh", redact_command(command, secrets), "```", ""]
     else:
         out += [
             ("**NOT RECORDED.** No command was supplied, so this run cannot be reproduced from "

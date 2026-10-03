@@ -4501,7 +4501,11 @@ class Abliterator:
             lines = modelcard.build(
                 modelcard.load(f"{args.out}/abliteration.json"), None,
                 command=" ".join(sys.argv),
-                licence=licence, licence_link=getattr(args, "base_licence_link", "") or None)
+                licence=licence, licence_link=getattr(args, "base_licence_link", "") or None,
+                # The values themselves as well as the flag, so a token a shell expanded into
+                # some other argument is still kept off a page made to be uploaded.
+                secrets=(getattr(args, "hf_token", None), os.environ.get("HF_TOKEN"),
+                         os.environ.get("HUGGING_FACE_HUB_TOKEN")))
             with atomic_write(f"{args.out}/README.md") as f:
                 f.write("\n".join(lines) + "\n")
             log(f"  model card: {args.out}/README.md")

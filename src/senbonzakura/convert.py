@@ -745,6 +745,21 @@ def without_tied_head(model_dir, workdir, shard, log=print):
     return work
 
 
+#: The config key declaring multi-token-prediction (NextN) layers. GLM-4.7-Flash carries one.
+MTP_LAYERS_KEY = "num_nextn_predict_layers"
+
+
+def mtp_layers(cfg):
+    """How many NextN prediction layers the config declares. 0 when it declares none.
+
+    A positive integer only. A string, a float or a negative is a malformed declaration, and
+    guessing at one would be a silent correction, which is the failure this whole check exists
+    to prevent.
+    """
+    n = cfg.get(MTP_LAYERS_KEY)
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+
+
 def default_output(model_dir, outtype):
     d = Path(model_dir).resolve()
     return d.parent / f"{d.name}-{outtype}.gguf"
@@ -828,7 +843,9 @@ def run(argv=None, log=print):
     log(f"  using the vendored converter at {pre['script']}")
 
     source = Path(a.model)
-    tmp_view = None
+    # A LIST, because a checkpoint can need two views and the previous single
+    # variable would have leaked the second one into the output directory.
+    tmp_views = []
     verdict, shard, detail = tied_head_state(a.model)
     if verdict == "contradicts":
         raise SystemExit(
@@ -840,16 +857,35 @@ def run(argv=None, log=print):
         log(f"  NOTE: {detail}, and --keep-tied-head was given, so it is kept. The embedding will "
             f"be quantised as an ordinary embedding rather than as an output projection.")
     elif verdict == "redundant":
-        tmp_view = Path(tempfile.mkdtemp(prefix="senbonzakura-tied-", dir=out.parent))
+        tied_view = Path(tempfile.mkdtemp(prefix="senbonzakura-tied-", dir=out.parent))
+        tmp_views.append(tied_view)
         # The VIEW keeps the source's own directory name. The converter derives `general.name`
         # from the directory it is pointed at, so converting from `senbonzakura-tied-zkxhdz01/`
         # stamped that into the model's metadata: a published GGUF called
         # "Senbonzakura Tied Zkxhdz01". The random part is the parent and the name is the leaf.
-        source = without_tied_head(a.model, tmp_view / Path(a.model).resolve().name, shard,
+        source = without_tied_head(a.model, tied_view / Path(a.model).resolve().name, shard,
                                    log=log)
 
     argv_c = [sys.executable, str(pre["script"]), str(source),
               "--outfile", str(out), "--outtype", a.outtype]
+
+    # NextN layers are DECLARED in the config and NOT SAVED by transformers, so a checkpoint
+    # that carries them converts into a GGUF whose header promises a block its tensors do not
+    # provide. Measured 2026-10-04 on GLM-4.7-Flash: the header declared 4 blocks, the tensors
+    # covered 3, and `llama-imatrix` LOADED IT and ran a chunk without complaint. Nothing
+    # downstream catches that, so the first symptom is wrong output from a model that appeared
+    # to convert cleanly.
+    #
+    # The vendored converter already has the flag for this and was simply never given it. The
+    # draft head is not discarded by converting without it: `--mtp` on a second run publishes
+    # the head as its own GGUF, which is what it is for.
+    n_mtp = mtp_layers(read_config(source))
+    if n_mtp:
+        argv_c.append("--no-mtp")
+        log(f"  NOTE: the config declares {MTP_LAYERS_KEY}={n_mtp}, and transformers does not "
+            f"save those layers. Converting with --no-mtp so the header does not promise a "
+            f"block the tensors lack. Run again with --mtp to publish the draft head "
+            f"separately.")
     if a.use_temp_file:
         argv_c.append("--use-temp-file")
 
@@ -868,11 +904,12 @@ def run(argv=None, log=print):
             _matched, tail = vendored.relay(proc.stdout, verbose=a.verbose, log=log)
         r = proc
     finally:
-        if tmp_view is not None:
-            # Symlinks and one rewritten shard. Removed on every path, including a converter crash,
-            # because a stray view of a checkpoint is confusing to find later and it sits beside
-            # the output rather than in a temp directory someone would think to clear.
-            shutil.rmtree(tmp_view, ignore_errors=True)
+        for view in tmp_views:
+            # Symlinks and at most one rewritten shard. Removed on every path, including a
+            # converter crash, because a stray view of a checkpoint is confusing to find later
+            # and it sits beside the output rather than in a temp directory someone would think
+            # to clear.
+            shutil.rmtree(view, ignore_errors=True)
     took = time.monotonic() - started
 
     if r.returncode != 0:

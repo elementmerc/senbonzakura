@@ -446,8 +446,12 @@ def test_the_sidecar_lands_beside_the_output_and_names_the_toolchain(tmp_path):
     sidecar = Path(str(out) + quantise.SIDECAR_SUFFIX)
     assert sidecar.is_file(), "the quantisation recorded nothing about what produced it"
     rec = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert rec["schema"] == "senbonzakura-quantisation/2"
+    assert rec["schema"] == "senbonzakura-quantisation/3"
     assert rec["quant_type"] == "Q4_K_M"
+    # Present on a run that did not use --like, because a reader who cannot tell "no reference" from
+    # "the field was not written" cannot rely on it. Same argument as the hashes below.
+    assert "schedule_reference" in rec
+    assert rec["schedule_reference"] is None
     assert rec["quantiser"]["tool"] == "llama-quantize"
     assert rec["quantiser"]["reported_build"]["build"] > 0
     assert rec["quantiser"]["sha256"]

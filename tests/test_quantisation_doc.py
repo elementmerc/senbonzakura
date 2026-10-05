@@ -99,7 +99,26 @@ def test_the_page_says_what_the_unsloth_prefix_is():
     text = DOC.read_text(encoding="utf-8")
     assert "UD-" in text
     assert "Unsloth" in text
-    assert "**No.**" in text, "the page has to answer 'can we reproduce it' for UD- plainly"
+
+
+def test_the_page_splits_the_unsloth_answer_into_the_half_we_can_and_the_half_we_cannot():
+    """IT USED TO SAY PLAINLY "**No.**" AND THAT WAS WRONG, corrected 2026-10-05.
+
+    A GGUF records a precision for every tensor in its own header, so the layer-by-layer plan of a
+    published `UD-` build is readable out of the file and `--like` replays it. The importance matrix
+    is not readable and is not published, so the output is that plan with our own matrix or none.
+
+    Both halves have to be on the page, and the failure mode runs in both directions. Saying "no"
+    sends somebody off to find a file they could have built. Saying "yes" lets them believe a score
+    measured on Unsloth's file carries over to theirs, which is the confound this whole page exists
+    to prevent.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    assert "--like" in text, "the page must name the flag that does it"
+    assert "never the file" in text, "the UD- row has to answer with the split, not with yes or no"
+    assert "importance matrix" in text
+    assert "copied-schedule" in text, "the page must say what the output is called"
+    assert "not published" in text, "the page must say WHY the other half cannot be copied"
 
 
 def test_the_page_explains_the_confound_that_actually_happened():

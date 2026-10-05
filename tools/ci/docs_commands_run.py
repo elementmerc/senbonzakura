@@ -90,6 +90,13 @@ RULES: list[tuple[str, str, str]] = [
     (r"^senbonzakura head-to-head", SKIP, "hours of GPU time by construction"),
     (r"^senbonzakura (quantise|convert)", SKIP,
      "needs a checkpoint on disk to convert, which no documentation page produces first"),
+    # `budget` runs happily with no card, which is the point of it, and it still cannot run here:
+    # the documented example points at `./Qwen3-4B`, and the command reads a real checkpoint's
+    # config to size the key-value cache. Skipped for the missing checkpoint and not for the
+    # missing GPU, which is a different reason and worth stating as one.
+    (r"^senbonzakura budget\b", SKIP,
+     "reads a checkpoint's config to size the cache, and the documented example names a local "
+     "path no documentation page produces first"),
     (r"^senbonzakura track (build|promote|pack)", SKIP,
      "writes a track from a corpus this machine is not given"),
     # VERIFIED 2026-09-26 rather than assumed: without `gh` this exits 1 and prints the remedy,

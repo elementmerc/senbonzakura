@@ -15,6 +15,17 @@ to compare two numbers, which is a measurement of behaviour rather than a readin
 own normalisation is lowercase plus whitespace collapse, which is the obvious thing and not
 anybody's invention.
 
+THE CONTROL, AND RUN IT WHENEVER THE DERIVATION CHANGES:
+
+    tools/research/derive_refusal_markers.py <generations.jsonl> --control shuffled
+
+That permutes the refusal labels and derives against the permutation, so the markers are selected
+against noise. **It is not a formality.** With the labels shuffled this method still reaches an
+in-sample kappa of 0.5923, because a greedy search over every n-gram in 259 replies can find
+phrases that separate any labelling at all. So the real run's in-sample 0.9920 is not a result: the
+floor for pure noise is 0.59, and only a HELD-OUT comparison between the real and shuffled runs
+says whether anything was measured.
+
 GROUND TRUTH IS OUR OWN SEMANTIC METRIC, `metrics.is_refusal`, not a human label. That is a real
 limitation and it is stated here rather than hidden: a list distilled from `is_refusal` can at best
 approximate `is_refusal` cheaply, and cannot be independent evidence that `is_refusal` is right.
@@ -163,9 +174,27 @@ def main(argv=None) -> int:
                     help="reject a marker that fires on more than N compliant replies")
     ap.add_argument("--limit", type=int, default=40, help="most markers to keep")
     ap.add_argument("--out", type=Path, help="write the chosen list here as JSON")
+    ap.add_argument("--control", choices=("shuffled",),
+                    help="BREAK THE COMPARISON ON PURPOSE. 'shuffled' permutes the refusal labels "
+                         "before deriving, so the markers are selected against noise. A kappa that "
+                         "survives that is not measuring refusal, it is measuring the method's "
+                         "ability to fit any labelling, and the real run's number would mean "
+                         "nothing. Run this whenever the derivation changes.")
     a = ap.parse_args(argv)
 
     rows = load(a.generations)
+    if a.control == "shuffled":
+        # Permute the LABELS and leave the replies alone, so the refusal rate is identical and the
+        # only thing destroyed is which reply carries which label. Seeded, because a control whose
+        # result moves run to run cannot be compared with the run it is controlling.
+        import random as _random
+        labels = [r["is_refusal"] for r in rows]
+
+        # it MUST be seeded and reproducible, which is the opposite of what a CSPRNG gives.
+        _random.Random(20261005).shuffle(labels)  # noqa: S311
+        for r, lab in zip(rows, labels, strict=True):
+            r["is_refusal"] = lab
+        print("CONTROL: refusal labels shuffled. A high kappa here means the method fits noise.\n")
     n_ref = sum(r["is_refusal"] for r in rows)
     print(f"replies: {len(rows)}   our metric calls {n_ref} of them refusals "
           f"({n_ref / len(rows):.1%})")
@@ -182,7 +211,9 @@ def main(argv=None) -> int:
         print(f"   {hr:4d} refusals  {ho:2d} false  {m!r}")
 
     ours = kappa(rows, markers, a.head_chars)
-    print("\nTHE DERIVED LIST against our own semantic metric:")
+    print("\nTHE DERIVED LIST against " +
+          ("SHUFFLED labels (this is the control, not a result):" if a.control
+           else "our own semantic metric:"))
     print(f"   kappa {ours['kappa']:.4f}   precision {ours['precision']:.4f}   "
           f"recall {ours['recall']:.4f}   rate {ours['rate']:.4f}")
     print(f"   tp {ours['tp']}  fp {ours['fp']}  fn {ours['fn']}  tn {ours['tn']}")

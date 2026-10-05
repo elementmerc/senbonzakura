@@ -47,6 +47,14 @@ NEEDS_A_CONTROL = {
         "its whole output is whether a statistic separates two labelled groups, which is the same "
         "shape of claim: a separation that is really an artefact of the split looks identical",
         "SHUFFLED control"),
+    "derive_refusal_markers.py": (
+        "its whole output is Cohen's kappa between a derived marker list and our semantic refusal "
+        "metric, so it is an agreement by construction. And the control was not a formality: with "
+        "the labels shuffled it still reaches an IN-SAMPLE kappa of 0.5923, because a greedy search "
+        "over every n-gram in 259 replies can find phrases that separate any labelling at all. "
+        "Without the control, the real run's in-sample 0.9920 reads as a result when the floor for "
+        "pure noise is 0.59",
+        "--control shuffled"),
 }
 
 #: Everything else under `tools/research/`, each with why a breaking control would mean nothing
@@ -66,6 +74,11 @@ NO_AGREEMENT_TO_BREAK = {
     "rdo.py": "an optimiser; its output is a chosen configuration and a score, not an agreement",
     "report_bands.py": "formats bands for a report; it computes no verdict",
     "shard_spike.py": "a timing and memory spike; its output is a measurement",
+    "check_glm_lite_convert.py": "asks whether ONE checkpoint converts to a GGUF that llama.cpp "
+                                 "will load, and whether its declared block count matches the "
+                                 "tensors it actually saved. Both are self-consistency properties "
+                                 "of a single artefact rather than an agreement between two, so "
+                                 "there is no comparison for a control to break",
 }
 
 

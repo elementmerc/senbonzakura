@@ -199,8 +199,16 @@ def _public_docs():
         # that broke this guard. A 2026-09-26 release staged a copy of the CHANGELOG under
         # `dist-release/` so the artefacts could be attached to the GitHub Release, and the suite
         # then failed on a developer machine and nowhere else.
+        #
+        # `.claude/` ADDED 2026-10-05, and it is the same shape a third time. A git worktree under
+        # `.claude/worktrees/` is a second checkout of this repository, so it holds its own
+        # CHANGELOG, `paper.md`, `what-we-know.md` and `prior-art.md`, frozen at whatever commit
+        # the worktree sits on. Those copies failed this guard while the real surfaces passed,
+        # which is the worst possible reading: a stale snapshot nobody can reach reported as a
+        # published surface quoting an uncaveated figure. **A worktree copy is not a surface.**
         if rel.startswith(("private/", "docs/.vitepress/", "node_modules/", ".venv/",
-                           "dist/", "dist-", "build/", "htmlcov/", ".tox/", "site/")):
+                           "dist/", "dist-", "build/", "htmlcov/", ".tox/", "site/",
+                           ".claude/")):
             continue
         # ANYTHING GIT IGNORES CANNOT REACH A READER, so scanning it can only produce failures
         # that depend on what happens to be lying around. On 2026-09-26 a staging directory

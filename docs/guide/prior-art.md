@@ -59,10 +59,12 @@ Our own comparison found two directions costing about **1.9 times** the coherenc
 of one at matched refusal, and buying nothing this design could have detected. **The 95% interval
 on that 1.9 is 1.2 to 3.1**, a percentile bootstrap over the five seeds a side.
 
-This page used to call 1.4 to 1.9 "that range", with 1.4 being the figure after dropping the one
-outlying two-direction seed. **That was not an interval and it is withdrawn.** Dropping a seed is
-a sensitivity check, so joining it to the estimate with "to" gave a reader a span four times
-narrower than the real one and invited them to read a confidence the five arms do not support.
+This page used to give the figure as a span running from the dropped-seed ratio up to the
+estimate, and **that was not an interval and it is withdrawn.** Dropping the one outlying
+two-direction seed is a sensitivity check, so joining it to the estimate with "to" gave a reader a
+span four times narrower than the real one and invited a confidence the five arms do not support.
+The withdrawn wording is not reprinted here: a page that quotes the form it is retiring hands the
+next reader the same misreading in a sentence that looks like a correction.
 The honest interval is the wide one, and it is the one published here because a reader who
 distrusts us would compute it themselves.
 

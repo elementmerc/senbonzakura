@@ -405,6 +405,15 @@ def figure(reported):
 def generation_settings(a):
     """Everything about how the replies were produced, because every one of it moves the number.
 
+    IT IS STAMPED UNDER `generation_settings` AND NEVER `generation`, which is not a style
+    preference. `generation` is a banned key name in `tools/ci/check_prompt_artefacts.py`, the one
+    control between a harmful prompt and a public push, so an artefact carrying that key is refused
+    for commit however innocent its contents. This block is settings and not a reply, and the fix
+    for a shape collision in this project is to rename the field in the data rather than to teach
+    that gate to inspect values: the same resolution `text` got under decision Q-33 when twelve of
+    our own artefacts used it for single decoded tokens. `generation_settings` is also what the
+    abliteration record has always called this, so there is one name rather than two.
+
     THE BATCH SIZE IS IN HERE AND IT IS NOT DECORATION. Left padding, batch composition and the
     attention mask mean two batch sizes over the same prompts can produce different tokens, so a
     figure whose batch size is unrecorded cannot be compared with another figure.
@@ -581,7 +590,7 @@ def main(argv=None):
         "benign_set": None if benign_corpus is None else set_block(benign_corpus, benign["n"]),
         "attack": attack, "benign": benign,
         "model_identity": stamps.model_identity(model, a.model),
-        "generation": generation_settings(a),
+        "generation_settings": generation_settings(a),
         "chat_template": getattr(tok, "senbon_chat_template", None),
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "provenance": provenance(device=a.device,

@@ -961,7 +961,7 @@ def main(argv=None):
             "recovered fraction is strong evidence of tamper resistance and a HIGH one is weak "
             "evidence of vulnerability."),
         "model_identity": edited["identity"],
-        "generation": {**jailbreak.generation_settings(a), "arms_reload_the_checkpoint": True},
+        "generation_settings": {**jailbreak.generation_settings(a), "arms_reload_the_checkpoint": True},
         "chat_template": edited["chat_template"],
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "provenance": provenance(device=a.device,

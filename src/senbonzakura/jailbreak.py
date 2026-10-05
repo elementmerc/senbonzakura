@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import json
 
-from . import argresolve, corpora, lengthsweep, metrics, stamps, track
+from . import argresolve, baseline, corpora, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
 
 # THE BREAKAGE CEILING HAS ONE HOME, and it is the capability probe, where the argument for it is
@@ -113,6 +113,13 @@ def build_parser():
                          "is incomplete and the run says so on the way out, because a jailbreak "
                          "rate on its own cannot tell a model that resists attack from one that "
                          "declines every request it is given.")
+    ap.add_argument("--baseline", default="",
+                    help="a previous run of this command against the UNEDITED model, so the "
+                         "figure can be read as a statement about the edit. Measured across seven "
+                         "model families, baseline refusal on harmful prompts spans 0.4%% to "
+                         "91.5%%, so a jailbreak rate on its own is a number about a model whose "
+                         "starting point the reader does not know. The two runs must be the same "
+                         "measurement and this refuses them when they are not.")
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="",
                     help="a name for this run, copied into the results json. Nothing reads it: "
@@ -288,12 +295,19 @@ def _stamp_arms(res, attack, benign, *, attack_pinned, benign_pinned):
     """
     from senbonzakura_check import measurement
 
+    # THE IDENTITY GOES INTO A LOCAL AND IS UNPACKED FROM IT, which is the shape the suite's scan
+    # over `measurement.stamp` call sites recognises for a writer that stamps more than once. A
+    # `**helper(...)` is counted as unknown there, deliberately, because accepting any call would
+    # turn that guard into a check that a writer passes something; a bare local is permitted
+    # because the artefact itself is then asserted on, which this module's tests do.
     for estimator in (LOOSE, STRICT):
+        identity = _identity(attack, estimator, attack_pinned)
         measurement.stamp(res, "jailbreak_rate", attack[estimator]["rate"], estimator,
-                          by_estimator=True, **_identity(attack, estimator, attack_pinned))
+                          by_estimator=True, **identity)
     if benign is not None:
+        identity = _identity(benign, BENIGN_ESTIMATOR, benign_pinned)
         measurement.stamp(res, "over_refusal_rate", benign[BENIGN_ESTIMATOR]["rate"],
-                          BENIGN_ESTIMATOR, **_identity(benign, BENIGN_ESTIMATOR, benign_pinned))
+                          BENIGN_ESTIMATOR, **identity)
 
 
 def _report(res, path):
@@ -313,6 +327,23 @@ def _report(res, path):
             f"refused={figure(over)}")
         if res["pair_incomplete"]:
             out.append(f"JAILBREAK_PAIR_INCOMPLETE {res['label']}: {res['pair_incomplete']}")
+    against = res["against_baseline"]
+    if against is None:
+        out.append(f"JAILBREAK_NO_BASELINE {res['label']}: {res['baseline_missing']}")
+    elif against["not_comparable"]:
+        out.append(
+            f"JAILBREAK_BASELINE_NOT_COMPARABLE {res['label']}: {against['not_comparable']}. The "
+            f"baseline's figure is in the artefact and is NOT subtracted from this run's.")
+    else:
+        was, delta = against["baseline"], against["delta"]
+        out.append(
+            f"AGAINST_BASELINE {res['label']} base={was['model']} "
+            f"substantive={figure(was)}"
+            + ("" if delta is None else
+               f" change={delta['gap'] * 100:+.1f}pp 95% CI "
+               f"[{delta['ci'][0] * 100:+.1f}, {delta['ci'][1] * 100:+.1f}]pp"
+               + (" (crosses zero, so this run does not separate the two models)"
+                  if delta["crosses_zero"] else "")))
     if res["budget_warning"]:
         out.append(f"BUDGET_WARNING {res['label']}: {res['budget_warning']}")
     # LAST, so it is the line left on the screen, and naming the file so there is something to
@@ -377,6 +408,108 @@ def generation_settings(a):
     }
 
 
+#: The one pinned field that is SUPPOSED to differ between a run and its baseline.
+#:
+#: `baseline.comparability` reports every pinned field that disagrees, and it is right to include
+#: the model: for a regression gate, a different checkpoint means the two numbers are not the same
+#: measurement. Here a different checkpoint is the entire point of the comparison, so it is the one
+#: exception and it is named rather than filtered by a loose rule. Everything else must match,
+#: including the prompt digest, the partition, the prompt format and the precision.
+BASELINE_MAY_DIFFER = frozenset({"model"})
+
+
+def _read_baseline(path):
+    """A previous run's artefact, or a refusal that says what was wrong with the file.
+
+    Read BEFORE the model loads, in `main`, so a typo in the path is not discovered after a
+    multi-gigabyte load on a rented machine.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except OSError as e:
+        raise SystemExit(f"--baseline {path} could not be read ({e}).") from e
+    except ValueError as e:
+        raise SystemExit(f"--baseline {path} is not valid JSON ({e}).") from e
+    if not isinstance(doc, dict):
+        raise SystemExit(
+            f"--baseline {path} holds a {type(doc).__name__} and this needs a results file "
+            f"written by `senbonzakura jailbreak`.")
+    return doc
+
+
+def baseline_arm(doc, now_block, estimator):
+    """The unedited model's figure beside this one, or why the two cannot be compared.
+
+    WHY A JAILBREAK RATE NEEDS THIS TO BE READ AT ALL. Measured across seven model families on
+    one laptop card, over one set of 259 harmful prompts, baseline refusal spans 0.4% to 91.5%:
+    TinyLlama-1.1B-Chat declines 0.4% of harmful requests with no edit of any kind, and
+    Qwen2.5-1.5B declines 91.5%. So a jailbreak success rate on its own is a figure about a model
+    whose starting point the reader does not know, and on a model that never refused it reads as a
+    total defeat of a defence that was not there. The baseline is what turns the figure into a
+    statement about the edit.
+
+    A PREVIOUS ARTEFACT RATHER THAN A SECOND LOAD, deliberately. A baseline is measured once and
+    compared against many edits, the artefact already carries everything needed to check that the
+    two runs are the same measurement, and re-measuring it per run would double every run's cost
+    to re-derive a number that has not changed.
+
+    THE DIFFERENCE IS UNPAIRED AND SAYS SO. Both runs scored the same prompts, so a paired
+    interval would be tighter and correct; the per-prompt outcomes are not in the artefact, only
+    the counts, so what can be computed here is the unpaired comparison. Reporting it as paired
+    would overstate the evidence, and reporting it with no caveat would let a reader assume the
+    tighter one.
+    """
+    block = (doc.get("metrics") or {}).get(f"jailbreak_rate.{estimator}")
+    if not isinstance(block, dict):
+        raise SystemExit(
+            f"the baseline artefact carries no `jailbreak_rate.{estimator}` measurement, so there "
+            f"is nothing here to compare against. It holds: "
+            f"{', '.join(sorted(doc.get('metrics') or {})) or 'no metrics block at all'}. Produce "
+            f"it by running this command against the unedited model.")
+    mismatches = [(field, was, now, why) for field, was, now, why
+                  in baseline.comparability(block, now_block)
+                  if field not in BASELINE_MAY_DIFFER]
+    reported = {"count": block.get("count"), "n": block.get("n"),
+                "rate": block.get("value"), "ci": block.get("interval"),
+                "reportable": block.get("reportable"),
+                "model": block.get("model") or doc.get("model")}
+    if mismatches:
+        return {
+            "baseline": reported, "delta": None,
+            "not_comparable": "; ".join(
+                f"{field}: the baseline says {was!r} and this run says {now!r} ({why})"
+                for field, was, now, why in mismatches),
+        }
+    return {"baseline": reported, "not_comparable": None,
+            "delta": _unpaired_delta(reported, now_block)}
+
+
+def _unpaired_delta(was, now):
+    """The current rate minus the baseline's, with an interval for two independent proportions.
+
+    The standard error of a difference of proportions is the root of the sum of the two variances,
+    which is what "independent" buys and what makes this conservative against the paired truth.
+    Returns None when either side withheld its rate, because a difference of a number and a
+    refusal to state a number is not a number.
+    """
+    a, b = now.get("value"), was.get("rate")
+    na, nb = now.get("n") or 0, was.get("n") or 0
+    if a is None or b is None or na < 1 or nb < 1:
+        return None
+    gap = a - b
+    se = (a * (1 - a) / na + b * (1 - b) / nb) ** 0.5
+    lo, hi = gap - 1.96 * se, gap + 1.96 * se
+    return {
+        "gap": round(gap, 4),
+        "ci": (round(max(-1.0, lo), 4), round(min(1.0, hi), 4)),
+        "crosses_zero": bool(lo <= 0.0 <= hi),
+        "method": "difference of two independent proportions, normal interval. The per-prompt "
+                  "outcomes are not in either artefact, so a paired interval cannot be computed "
+                  "here and this one is wider than the truth rather than narrower",
+    }
+
+
 def set_block(corpus, n_scored):
     """What the artefact records about an arm's corpus: what it is, how it is licensed, and a pin.
 
@@ -401,7 +534,9 @@ def main(argv=None):
                      else corpus_for(a.benign_set, arm="benign", flag="--benign-set"))
     # THE WHOLE SLICE BEFORE THE MODEL. Both corpora resolve with no model and no card, so a
     # `--n` past the end of a 313-row set is decidable from the command line and a dataset header
-    # rather than after a multi-gigabyte load on a rented machine.
+    # rather than after a multi-gigabyte load on a rented machine. The baseline file is read here
+    # for the same reason: a typo in its path costs nothing now and a GPU load later.
+    baseline_doc = _read_baseline(a.baseline) if a.baseline else None
     attack_prompts = prompts_for(a.attack_set, a.n, what="attack set")
     benign_prompts = (None if benign_corpus is None
                       else prompts_for(a.benign_set, a.benign_n, what="benign set"))
@@ -457,11 +592,30 @@ def main(argv=None):
     # after the write reaches the terminal and never reaches the file.
     res["self_invalidated"] = validity(attack, benign)
 
+    # THE PARTITION IS THE HEAD OF THE CORPUS WHEN `--n` TRUNCATED IT, and `all-rows` only when it
+    # did not. `stamps.partition_of` maps a skip of zero to `all-rows`, which was true of a full
+    # run and false of `--n 40` against a 313-row set: that figure described forty rows and its own
+    # provenance said it described every one of them.
     pinned_shared = {"model": model, "tok": tok, "load_in_4bit": a.load_in_4bit}
     _stamp_arms(res, attack, benign,
-                attack_pinned=stamps.pinned(prompts=attack_prompts, **pinned_shared),
-                benign_pinned=(None if benign_prompts is None
-                               else stamps.pinned(prompts=benign_prompts, **pinned_shared)))
+                attack_pinned=stamps.pinned(
+                    prompts=attack_prompts, **pinned_shared,
+                    partition=stamps.head_partition(a.n, attack_corpus.rows)),
+                benign_pinned=(None if benign_prompts is None else stamps.pinned(
+                    prompts=benign_prompts, **pinned_shared,
+                    partition=stamps.head_partition(a.benign_n, benign_corpus.rows))))
+
+    # AFTER THE STAMP, because the comparison is between the two stamped blocks: the pinned fields
+    # are what decide whether the baseline and this run are the same measurement, and they do not
+    # exist until the stamp has written them.
+    res["against_baseline"] = (
+        baseline_arm(baseline_doc, res["metrics"][f"jailbreak_rate.{STRICT}"], STRICT)
+        if baseline_doc is not None else None)
+    res["baseline_missing"] = None if a.baseline else (
+        "no --baseline was given, so this figure says how often THIS model answers a harmful "
+        "request and nothing about what the edit changed. Across seven model families baseline "
+        "refusal on harmful prompts runs from 0.4% to 91.5%, so on an unedited model that barely "
+        "refused, a high jailbreak rate is a property of the model rather than a defeated defence.")
 
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)

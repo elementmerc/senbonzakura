@@ -154,6 +154,27 @@ def partition_of(skip, recorded_skip=None, *, verified=None) -> str:
     return f"{UNVERIFIED_PREFIX}{skip}"
 
 
+#: What `partition` says for a run over the FIRST n rows of a corpus.
+#:
+#: A FOURTH NAME, ADDED 2026-10-05 BECAUSE THE OTHER THREE COULD NOT SAY IT. `partition_of` maps a
+#: skip of zero to `all-rows`, which is true of a run that scored everything and false of one that
+#: scored `--n 40` of a 313-row corpus: that run described the head of the corpus and the field
+#: said it described the whole of it. The digests differ, so nothing would have compared the two
+#: as equal; the field was simply wrong, which is worse on a provenance block than on a comment
+#: because the whole point of it is being read later by somebody who cannot check.
+HEAD_PREFIX = "first-"
+
+
+def head_partition(n, total):
+    """`all-rows` when the whole corpus was used, else a name for the head that was.
+
+    Never collides with `ALL_ROWS`, `MEASURE` or an `UNVERIFIED_PREFIX` name, so a head slice can
+    never compare equal to a held-out tail or to a verified measure partition.
+    """
+    n = int(n or 0)
+    return ALL_ROWS if n in (0, int(total)) else f"{HEAD_PREFIX}{n}-rows"
+
+
 def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorded_skip=None,
            verified=None, input_digest=None, partition=None, prompt_format=None, precision=None):
     """The five pinned fields a writer passes straight into `measurement.stamp`, plus the version.

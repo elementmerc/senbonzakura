@@ -125,6 +125,7 @@ def _res(**over):
         "label": "x", "attack_set": {"key": "strongreject"}, "benign_set": {"key": "xstest-safe"},
         "attack": _arm(n_answer=30), "benign": _arm(n_refusal=30),
         "budget_warning": None, "pair_incomplete": None, "self_invalidated": None,
+        "against_baseline": None, "baseline_missing": "no --baseline was given",
     }
     res.update(over)
     return res
@@ -172,7 +173,7 @@ def test_no_bare_percentage_reaches_a_terminal_from_either_command():
                 bare.append(f"{rate!r} in {line[:90]!r}")
     assert not bare, (
         "a rate reached the terminal without its counts and its interval; route it through "
-        f"`jailbreak.figure`:\n  " + "\n  ".join(bare))
+        "`jailbreak.figure`:\n  " + "\n  ".join(bare))
 
 
 def test_a_withheld_rate_prints_not_available_rather_than_zero():
@@ -212,6 +213,114 @@ def test_the_invalidation_is_the_last_line_and_names_the_file():
     assert "out/r.json" in lines[-1]
 
 
+# ── the baseline, without which the figure is not interpretable ───────────────────────
+def _stamped(value, n, count, **over):
+    """A stamped metrics block as this command writes one, which is what a baseline file holds."""
+    block = {
+        "metric": "jailbreak_rate", "estimator": jailbreak.STRICT, "model": "base/model",
+        "value": value, "n": n, "count": count, "interval": [0.1, 0.3], "reportable": True,
+        "input_digest": "abc123", "partition": "all-rows", "prompt_format": "raw",
+        "precision": "bfloat16", "tool_version": "0.4.1",
+    }
+    block.update(over)
+    return block
+
+
+def _baseline_doc(value=0.2, **over):
+    return {"model": "base/model",
+            "metrics": {f"jailbreak_rate.{jailbreak.STRICT}": _stamped(value, 100, 20, **over)}}
+
+
+def test_a_baseline_measured_the_same_way_is_compared_and_the_change_reported():
+    """Across seven model families baseline refusal on harmful prompts runs 0.4% to 91.5%, so the
+    change from the unedited model is the part that is about the edit.
+    """
+    now = _stamped(0.8, 100, 80, model="edited/model")
+    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)
+    assert got["not_comparable"] is None
+    assert got["baseline"]["rate"] == 0.2
+    assert got["delta"]["gap"] == pytest.approx(0.6)
+    assert got["delta"]["crosses_zero"] is False
+    assert "wider than the truth" in got["delta"]["method"]
+
+
+def test_a_different_model_is_the_point_and_not_a_mismatch():
+    """`baseline.comparability` reports the model as a disagreement, correctly, for a regression
+    gate. Here a different checkpoint is the whole comparison, so it is the one named exception.
+    """
+    now = _stamped(0.8, 100, 80, model="a completely different checkpoint")
+    assert jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)["not_comparable"] is None
+
+
+@pytest.mark.parametrize("field", ["input_digest", "partition", "prompt_format", "precision"])
+def test_a_baseline_measured_differently_is_refused_and_names_the_field(field):
+    """Two rates taken on different prompts, different partitions, different prompt formats or
+    different precisions are not a comparison, and subtracting them would look like one.
+    """
+    now = _stamped(0.8, 100, 80, **{field: "something else"})
+    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)
+    assert field in got["not_comparable"]
+    assert got["delta"] is None, "it subtracted two numbers it had just refused to compare"
+    assert got["baseline"]["rate"] == 0.2, "the baseline figure is still reported"
+
+
+def test_a_baseline_with_no_such_measurement_is_refused_and_says_what_it_holds():
+    with pytest.raises(SystemExit, match="nothing here to compare") as e:
+        jailbreak.baseline_arm({"metrics": {"refusal_rate.heretic-keyword": {}}},
+                               _stamped(0.8, 100, 80), jailbreak.STRICT)
+    assert "refusal_rate.heretic-keyword" in str(e.value)
+    with pytest.raises(SystemExit, match="no metrics block at all"):
+        jailbreak.baseline_arm({}, _stamped(0.8, 100, 80), jailbreak.STRICT)
+
+
+def test_a_withheld_rate_on_either_side_is_not_subtracted():
+    """A difference of a number and a refusal to state a number is not a number."""
+    assert jailbreak.baseline_arm(
+        _baseline_doc(value=None), _stamped(0.8, 100, 80), jailbreak.STRICT)["delta"] is None
+    assert jailbreak.baseline_arm(
+        _baseline_doc(), _stamped(None, 100, 80), jailbreak.STRICT)["delta"] is None
+    assert jailbreak.baseline_arm(
+        _baseline_doc(), _stamped(0.8, 0, 0), jailbreak.STRICT)["delta"] is None
+
+
+def test_a_change_inside_its_interval_says_the_run_does_not_separate_the_models():
+    now = _stamped(0.22, 100, 22)
+    delta = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)["delta"]
+    assert delta["crosses_zero"] is True
+    lines = jailbreak._report(
+        _res(against_baseline=jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)),
+        "r.json")
+    assert any("crosses zero" in ln for ln in lines)
+
+
+def test_a_missing_baseline_is_announced_with_the_reason_it_matters():
+    lines = jailbreak._report(_res(), "r.json")
+    assert any(ln.startswith("JAILBREAK_NO_BASELINE") for ln in lines)
+
+
+def test_an_incomparable_baseline_is_announced_and_not_subtracted():
+    lines = jailbreak._report(
+        _res(against_baseline={"not_comparable": "input_digest differs",
+                               "baseline": {}, "delta": None}), "r.json")
+    assert any("NOT_COMPARABLE" in ln and "NOT subtracted" in ln for ln in lines)
+
+
+@pytest.mark.parametrize(("content", "says"), [
+    ("{not json", "not valid JSON"),
+    ('["a"]', "holds a list"),
+])
+def test_a_baseline_file_that_is_not_a_results_file_is_refused(tmp_path, content, says):
+    p = tmp_path / "b.json"
+    p.write_text(content, encoding="utf-8")
+    with pytest.raises(SystemExit, match=says):
+        jailbreak._read_baseline(str(p))
+
+
+def test_an_absent_baseline_file_is_refused(tmp_path):
+    with pytest.raises(SystemExit, match="could not be read"):
+        jailbreak._read_baseline(str(tmp_path / "absent.json"))
+
+
 # ── the whole command ─────────────────────────────────────────────────────────────────
 class _Tok:
     senbon_chat_template = None
@@ -246,12 +355,40 @@ def test_the_command_writes_both_arms_and_stamps_both_metrics(monkeypatch, tmp_p
         f"jailbreak_rate.{jailbreak.LOOSE}", f"jailbreak_rate.{jailbreak.STRICT}",
         "over_refusal_rate"}
     # Every stamped number carries the interval and the counts, which is the thing no competitor
-    # puts on this figure.
-    for block in doc["metrics"].values():
-        assert block["interval"] and block["count"] is not None
+    # puts on this figure, AND all five pinned fields, without which `baseline.comparability`
+    # reports the figure as incomparable with every other one and the gate refuses it silently.
+    #
+    # ASSERTED ON THE ARTEFACT, not on the source text. The suite's AST scan over
+    # `measurement.stamp` call sites skips a writer that unpacks a local, which is what this one
+    # does because it stamps three times, so this is the half of that pair that checks the result.
+    for key, block in doc["metrics"].items():
+        assert block["interval"] and block["count"] is not None, key
+        missing = [f for f in ("input_digest", "partition", "prompt_format", "tool_version",
+                               "precision") if block.get(f) in (None, "")]
+        assert not missing, f"{key} is missing {missing}, so it can never be gated"
     # And both arms are pinned by their own digest, not by one shared one.
     assert (doc["metrics"]["over_refusal_rate"]["input_digest"]
             != doc["metrics"][f"jailbreak_rate.{jailbreak.LOOSE}"]["input_digest"])
+
+
+def test_a_truncated_run_does_not_claim_to_have_scored_the_whole_corpus(monkeypatch, tmp_path):
+    """`stamps.partition_of` maps a skip of zero to `all-rows`, which is true of a full run and
+    false of `--n 40` against a 313-row set: that figure described forty rows and its own
+    provenance said it described every one of them.
+    """
+    from senbonzakura import stamps
+
+    out = str(tmp_path / "r.json")
+    _drive(monkeypatch, ["--model", "m", "--device", "cpu", "--out", out, "--n", "30"])
+    with open(out) as f:
+        doc = json.load(f)
+    assert doc["metrics"][f"jailbreak_rate.{jailbreak.STRICT}"]["partition"] == "first-30-rows"
+
+    full = str(tmp_path / "full.json")
+    _drive(monkeypatch, ["--model", "m", "--device", "cpu", "--out", full], prompts=30)
+    with open(full) as f:
+        whole = json.load(f)
+    assert whole["metrics"][f"jailbreak_rate.{jailbreak.STRICT}"]["partition"] == stamps.ALL_ROWS
 
 
 def test_both_corpora_are_recorded_with_their_licence_and_a_revision(monkeypatch, tmp_path):
@@ -314,6 +451,51 @@ def test_the_generations_of_each_arm_go_to_their_own_file(monkeypatch, tmp_path)
     assert benign[0]["mode"] == "jailbreak-benign"
     assert attack[0]["generation"] == ANSWER
     assert benign[0]["generation"] == REFUSAL
+
+
+def test_the_command_compares_itself_against_a_previous_run_of_itself(monkeypatch, tmp_path):
+    """The baseline path end to end: one run writes the artefact, the next reads it.
+
+    THE SHAPES HAVE TO AGREE and nothing but this would notice if they stopped. The reader looks
+    up `metrics["jailbreak_rate.<estimator>"]` and the pinned fields inside it, and both the key
+    and the fields are written by the stamping code in this same module, so a test that built the
+    baseline by hand would pass through a rename that broke every real file.
+    """
+    base = str(tmp_path / "base.json")
+    _drive(monkeypatch, ["--model", "unedited", "--device", "cpu", "--out", base],
+           attack=[REFUSAL] * 30)
+    res, _ = _drive(monkeypatch, ["--model", "edited", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json"), "--baseline", base])
+    against = res["against_baseline"]
+    assert against["not_comparable"] is None, against["not_comparable"]
+    assert against["baseline"]["rate"] == 0.0, "the unedited arm answered nothing"
+    assert against["delta"]["gap"] == pytest.approx(1.0)
+    assert res["baseline_missing"] is None
+
+
+def test_a_baseline_scored_on_different_prompts_is_refused_end_to_end(monkeypatch, tmp_path):
+    base = str(tmp_path / "base.json")
+    _drive(monkeypatch, ["--model", "unedited", "--device", "cpu", "--out", base,
+                         "--attack-set", "advbench"], attack=[REFUSAL] * 30)
+    res, _ = _drive(monkeypatch, ["--model", "edited", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json"), "--baseline", base,
+                                  "--attack-set", "strongreject"])
+    assert "input_digest" in res["against_baseline"]["not_comparable"]
+    assert res["against_baseline"]["delta"] is None
+
+
+def test_a_bad_baseline_path_is_refused_before_the_model_loads(monkeypatch, tmp_path):
+    """On a rented machine a typo in a path must not cost a multi-gigabyte load first."""
+    from senbonzakura import score
+
+    loaded = []
+    monkeypatch.setattr(score, "load_model_and_tokenizer",
+                        lambda *a, **k: loaded.append(1) or (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for", lambda key, limit, what: ["p"] * 30)
+    with pytest.raises(SystemExit, match="could not be read"):
+        jailbreak.main(["--model", "m", "--device", "cpu", "--out", str(tmp_path / "r.json"),
+                        "--baseline", str(tmp_path / "absent.json")])
+    assert not loaded, "the model was loaded before the baseline path was checked"
 
 
 def test_two_runs_on_the_same_input_produce_the_same_artefact(monkeypatch, tmp_path):

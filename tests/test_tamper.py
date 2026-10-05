@@ -493,11 +493,19 @@ def test_a_missing_peft_is_a_refusal_naming_the_alternative(monkeypatch):
         tamper.prepare(_Trainable(), recipe)
 
 
-def test_freeing_a_model_does_not_need_a_card():
-    """`free` runs between arms on whichever device the model was on, and the command tests
-    replace it, so this is what exercises it.
+def test_releasing_does_not_need_a_card_and_reports_what_is_held():
+    """`release` runs between arms on whichever device the models were on.
+
+    It takes no model, which is the fix: the version that took one did `del` on its own parameter,
+    dropped one reference of several, and could not release anything. The signature is the guard.
     """
-    tamper.free(_Trainable())
+    import inspect
+
+    assert not inspect.signature(tamper.release).parameters, (
+        "`release` takes an argument again. A function that is handed a model can only drop its "
+        "own reference to it, which is the defect that put a 135M model run into swap.")
+    held = tamper.release()
+    assert held is None or held > 0
 
 
 def test_an_adapter_that_can_attach_to_nothing_is_refused_rather_than_trained():
@@ -640,6 +648,68 @@ def test_a_real_lora_adapter_attaches_to_a_real_small_model():
 
 
 @needs_corpora
+def test_the_footprint_does_not_grow_across_the_arms(monkeypatch, tmp_path):
+    """THE DEFECT THIS WAS WRITTEN FOR, measured on 2026-10-05 and found by somebody watching the
+    machine rather than by anything in this run's own log.
+
+    `free(model)` did `del model` on its own parameter, which drops one reference of several, so
+    `main`'s own binding kept every checkpoint it had ever loaded. Two terms compounded:
+
+        a bfloat16 load adds about 29 MB of resident set, because the weights are mmapped
+        the float32 training cast adds about 397 MB, because it materialises them
+
+    so each retained arm cost roughly 400 MB rather than the 29 MB a casual look suggests. Three
+    arms plus the base reached 1.8 GB and were still climbing at three hours fifty two minutes, by
+    which point the working set was in swap and the box was thrashing rather than failing.
+
+    Every checkpoint now lives inside a function whose frame dies on return. This drives five real
+    loads and asserts the footprint does not climb; the finetune is stubbed because the retention
+    was in the loading, and the real finetune is proven by the tests above.
+    """
+    pytest.importorskip("transformers")
+    from senbonzakura import resources, score
+
+    if resources.own_footprint() is None:          # pragma: no cover - not Linux
+        pytest.skip("this platform does not report a resident set, so there is nothing to compare")
+    try:
+        score.load_model_and_tokenizer("HuggingFaceTB/SmolLM2-135M-Instruct", device="cpu")
+    except Exception as e:                         # pragma: no cover - no local cache
+        pytest.skip(f"the small instruct model is not cached here: {e}")
+
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: [f"p{i}" for i in range(80)])
+    monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
+    monkeypatch.setattr(score, "generate",
+                        lambda m, t, prompts, d, batch=16, max_new=64: [REFUSAL] * len(prompts))
+
+    # THE STUB DOES THE FLOAT32 CAST AND NOTHING ELSE, which is what makes this test sensitive to
+    # the failure that happened. The first version stubbed the finetune away entirely, so no arm
+    # was ever cast and a retained checkpoint cost the 29 MB of an mmapped bfloat16 load instead
+    # of the 400 MB of a materialised float32 one. A planted retention survived it. The optimiser
+    # work is not what leaked and is proven elsewhere; the allocation is, so the allocation stays.
+    def _cast_only(model, tok, pairs, recipe, device, log=print):
+        model.to(dtype=torch.float32)
+        return tamper.loss_trace([2.0, 1.0])
+
+    monkeypatch.setattr(tamper, "train", _cast_only)
+    seen = []
+    real = tamper.footprint_line
+    monkeypatch.setattr(tamper, "footprint_line",
+                        lambda what: seen.append(resources.own_footprint()) or real(what))
+
+    tamper.main(["--model", "HuggingFaceTB/SmolLM2-135M-Instruct",
+                 "--base", "HuggingFaceTB/SmolLM2-135M-Instruct", "--device", "cpu",
+                 "--train-n", "40", "--resamples", "50", "--out", str(tmp_path / "r.json")])
+    assert len(seen) == 5, f"five loads were expected, {len(seen)} were measured"
+    # A tolerant bound on purpose. The defect was roughly 400 MB per arm against a baseline under
+    # half a gigabyte, so it fails this by a wide margin; a tight bound would fail on allocator
+    # noise and be deleted within a fortnight, which is how a guard stops guarding.
+    assert seen[-1] < seen[0] * 1.5, (
+        f"the footprint grew across the arms: {[round(v / 1e6) for v in seen]} MB. Something is "
+        f"holding a checkpoint after its arm finished.")
+
+
+@needs_corpora
 def test_the_same_seed_gives_the_same_adapter(monkeypatch):
     """THE DEFECT THIS WAS WRITTEN FOR. `lora_A` is randomly initialised inside `get_peft_model`,
     from the global torch generator, so seeding only inside `train` left the adapter's starting
@@ -692,7 +762,6 @@ def _drive(monkeypatch, argv, *, before=None, after=None, loss=(2.0, 1.0), rows=
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
     monkeypatch.setattr(tamper, "train",
                         lambda *a, **k: tamper.loss_trace(list(loss)))
-    monkeypatch.setattr(tamper, "free", lambda model: None)
     passes = []
 
     def _generate(model, tok, prompts, device, batch=16, max_new=64):

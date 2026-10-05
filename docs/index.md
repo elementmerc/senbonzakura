@@ -4,7 +4,7 @@ hero:
   name: Senbonzakura
   text: Precision uncensoring, with receipts
   tagline: >
-    Refusal abliteration for open-weight language models, and the instruments to tell you
+    Refusal removal for open-weight language models, and the instruments to tell you
     whether it worked. Including the runs where the answer was no.
   image:
     src: /mark.svg

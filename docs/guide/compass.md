@@ -8,7 +8,7 @@ That's the compass. It's the half of this project I think is actually novel, and
 
 ## The question
 
-Abliteration removes a *reflex*. The model no longer reaches for "I can't help with that".
+Uncensoring removes a *reflex*. The model no longer reaches for "I can't help with that".
 
 But the reflex and the understanding are not obviously the same thing. Maybe refusal was a thin
 layer on top of a model that still knows perfectly well what you're asking for. Or maybe you've
@@ -29,8 +29,8 @@ Request: <the prompt>
 
 Show it 200 harmful requests and 200 harmless ones and see whether it can still sort them.
 
-- If abliteration removed the **knowledge**, it'll fail this. It can't tell them apart any more.
-- If abliteration removed a **reflex**, it'll still get it right. It knows exactly what you're
+- If uncensoring removed the **knowledge**, it'll fail this. It can't tell them apart any more.
+- If uncensoring removed a **reflex**, it'll still get it right. It knows exactly what you're
   asking. It just isn't going to stop you.
 
 I called it the compass because it shows whether the model still knows which way is bad.
@@ -96,7 +96,7 @@ that changes every time isn't much of a measurement.
 
 ## Held out, which sounds pedantic and isn't
 
-The prompts the compass scores on are **not** the prompts the abliteration was fitted on, and not
+The prompts the compass scores on are **not** the prompts the uncensoring was fitted on, and not
 the ones the search picked a winner on.
 
 If they were, you'd be marking your own homework: the configuration was selected *because* it did
@@ -109,7 +109,7 @@ now prevents it.
 
 ## Run it yourself in one command, on data that ships with the repository
 
-No corpus to build, no model to abliterate first. The toy track is committed, and any small
+No corpus to build, no model to uncensor first. The toy track is committed, and any small
 instruct model with a chat template will do:
 
 ```sh

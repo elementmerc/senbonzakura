@@ -1,7 +1,7 @@
 # The guide
 
 ::: danger Read this one first
-[What it is](/guide/what-it-is) describes what abliteration does to a model and what it hands
+[What it is](/guide/what-it-is) describes what uncensoring does to a model and what it hands
 whoever runs it. Everything else on this page assumes you've read it.
 :::
 

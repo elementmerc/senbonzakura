@@ -30,11 +30,14 @@
 Senbonzakura removes the refusal behaviour from an open-weight language model, and measures what
 that removal cost.
 
-Removing it is the easy half. Any abliterator can stop a model saying "I can't help with that".
-The hard part is knowing whether you also took out its reasoning, and a tool that cannot tell the
-difference will report a lobotomy as a success. So every number here arrives with its conditions:
-what it was measured on, on rows nothing was fitted or selected on, with an interval, and with a
-control that would expose it if it were measuring the wrong thing.
+The technique's name in the literature is abliteration, and this page calls it uncensoring
+because that's what people looking for it call it.
+
+Removing it is the easy half. Any uncensoring tool can stop a model saying "I can't help with
+that". The hard part is knowing whether you also took out its reasoning, and a tool that cannot
+tell the difference will report a lobotomy as a success. So every number here arrives with its
+conditions: what it was measured on, on rows nothing was fitted or selected on, with an
+interval, and with a control that would expose it if it were measuring the wrong thing.
 
 Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand blades.
 
@@ -92,8 +95,8 @@ prints the command that fixes it, changing nothing unless you add `--apply`.
 [Install](https://elementmerc.github.io/senbonzakura/guide/install) has the full table.
 
 Editing a model wants a CUDA card, and **how much of one scales with the model**: the weights have
-to be resident in full precision, because abliteration rewrites them in place. 6 GB is enough for
-the sizes this project has actually measured, all under 3B.
+to be resident in full precision, because the uncensoring edit rewrites them in place. 6 GB is
+enough for the sizes this project has actually measured, all under 3B.
 [What size card](https://elementmerc.github.io/senbonzakura/guide/install#what-size-card) does the
 arithmetic, including the trap that a mixture-of-experts model needs room for *all* its experts and
 not just the active ones. The measuring commands run on CPU.
@@ -216,7 +219,7 @@ Qwen3-0.6B scores **0.6616 against that same 0.6564**, which is not a measuremen
 
 By design, this is methods and results, not a loaded weapon:
 
-- **No model weights in this git tree.** Abliterated checkpoints are published separately, on the
+- **No model weights in this git tree.** Uncensored checkpoints are published separately, on the
   Hub, and they are public and ungated: each one under its base model's own licence, which travels
   with the weights and is not ours to loosen. **The evaluation numbers on most of those cards are
   withdrawn**, for the reasons in the changelog, so read the card before trusting a figure on it.
@@ -248,7 +251,7 @@ By design, this is methods and results, not a loaded weapon:
   only reachable by counting those 250 benign controls as harmful.
 - **No harmful outputs.**
 
-Abliteration removes safety guardrails wholesale. That is both the point and the danger. Use it
+Uncensoring removes safety guardrails wholesale. That is both the point and the danger. Use it
 accordingly.
 
 **Disclaimer.** This software is provided without warranty of any kind, on its correctness, its
@@ -263,7 +266,7 @@ Note on licences, and there are three separate ones in play:
   AGPL). **If you run a modified version of this code as a network service, the AGPL's section 13
   obliges you to offer your modified source to the people using it over that network.** That is
   the clause that distinguishes the AGPL from the GPL, and it is the one that bites an
-  abliteration-as-a-service business rather than an internal user: running it privately, however
+  uncensoring-as-a-service business rather than an internal user: running it privately, however
   commercially, triggers nothing. Two readers with no knowledge of this project went looking for
   this in 2026-09 and found it stated nowhere but the licence file itself, which is the wrong place
   for the one licence fact a commercial reader most needs.
@@ -272,8 +275,8 @@ Note on licences, and there are three separate ones in play:
   licence expression and that expression describes the code, so if you are using this
   commercially, supply your own corpus with `--track` rather than using `--track default`. Full
   attribution is in `THIRD-PARTY-NOTICES.md`, which is installed beside the package.
-- **A model you abliterate** keeps the **base model's** licence and use restrictions:
-  redistributing an abliterated checkpoint is governed by that upstream licence (Qwen, Llama,
+- **A model you uncensor** keeps the **base model's** licence and use restrictions:
+  redistributing an uncensored checkpoint is governed by that upstream licence (Qwen, Llama,
   Gemma and so on), not by this repository's.
 
 ## Credit

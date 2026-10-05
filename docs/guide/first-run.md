@@ -52,7 +52,7 @@ codebase and I've made peace with not knowing which.
 
 ## What it's doing while you wait
 
-It runs a few hundred attempts at abliterating your model, each with different settings, and scores
+It runs a few hundred attempts at uncensoring your model, each with different settings, and scores
 every one on three things at once: how many refusals are left, how far the model has drifted from
 the original, and whether the output has turned to mush.
 
@@ -139,8 +139,8 @@ You get a model directory you can load with `transformers` like any other, plus 
 `abliteration.json` next to it recording exactly what was done: the winning configuration, the
 seed, how many trials actually ran, the package versions, the commit.
 
-That file matters more than it looks. It's the difference between "this model is abliterated" and
-"this model was abliterated on 2026-08-14 with these settings, and here's how to do it again".
+That file matters more than it looks. It's the difference between "this model is uncensored" and
+"this model was uncensored on 2026-08-14 with these settings, and here's how to do it again".
 
 **One thing to know about the other files.** This run's output directory holds the weights and
 `abliteration.json`, and no prompt text or model replies.

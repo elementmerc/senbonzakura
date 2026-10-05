@@ -56,6 +56,9 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # once and gives way when the request is simply put again costs an attacker one keystroke.
     # The command word carries a hyphen and the module may not.
     "multi-turn": ("multiturn", "main"),
+    # Whether the edit survives a safety-recovery finetune, with the two controls that decide
+    # whether the number is about safety at all. The only command here that takes a gradient.
+    "tamper": ("tamper", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

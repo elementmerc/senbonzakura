@@ -67,9 +67,71 @@ Some popular filenames look like quantisation types and are not.
 
 | Name | What it actually is | Can we reproduce it? |
 |---|---|---|
-| `UD-Q4_K_XL`, `UD-IQ2_M` | Unsloth Dynamic. A per-model recipe that varies precision layer by layer, not a llama.cpp type | **No.** The recipe is what makes it, and it lives outside the format |
+| `UD-Q4_K_XL`, `UD-IQ2_M` | Unsloth Dynamic. A per-model recipe that varies precision layer by layer, not a llama.cpp type | **Most of the recipe, never the file.** We can copy the layer-by-layer precisions, because the file records them; on a real `UD-Q3_K_XL` that was 290 of 310 tensors. We cannot copy the importance matrix, because it is not published: see below |
 | `i1-Q4_K_M` | Ordinary `Q4_K_M` built with an importance matrix | **Yes**, though not bit for bit: see below |
 | `Q4_K_M-GGUF` | A repository naming habit, not a type | Yes, it is just `Q4_K_M` |
+
+## Copying a layer-by-layer recipe: `--like`
+
+A `UD-` build is two things glued together, and only one of them is a secret.
+
+```
+        a UD- build
+        ├── which precision each tensor got  ──  written in the file. Readable.
+        └── the importance matrix that chose  ──  a calibration run. Not in the
+            them                                 file, and not published.
+```
+
+**The first half is in the file.** A GGUF stores a precision for every tensor in its own header, so
+you can read the exact recipe out of any published build without being told it. Think of a shop
+selling a cake: you cannot get the recipe, but you can weigh each layer of the one you bought.
+
+```
+senbonzakura quantise mymodel-BF16.gguf --like Qwen3-0.6B-UD-Q3_K_XL.gguf
+```
+
+That reads the reference's per-tensor precisions and applies the same ones to your model. The run
+refuses if the two files are not the same model, because a recipe aimed at the wrong model lands on
+the layers whose names happen to match and quietly leaves the rest alone.
+
+**The second half is not in the file.** An importance matrix is a recording made by running the
+model over some text (see the section below). It changes which weights keep their precision, it
+leaves no trace in the file it produced, and Unsloth does not publish the text they use. So your
+output has their layer plan and your own matrix, or none.
+
+That is why the output is never named `UD-` anything. It is called
+`mymodel-Q3_K_M-copied-schedule.gguf`, and the run prints a `NOT COPIED:` line saying which half is
+missing, because **that missing half is exactly what decides whether a score measured on their file
+carries over to yours**. The `.provenance.json` beside the output records the reference's name and
+sha256, the precisions that were copied, and a plain `"importance_matrix_copied": false`.
+
+### What it actually gets you
+
+After the run, the output is read back and compared tensor by tensor against the reference, and the
+count is printed. Here is a real run of `Qwen3-0.6B-BF16.gguf` against Unsloth's own
+`Qwen3-0.6B-UD-Q3_K_XL.gguf`:
+
+```
+schedule: 290 of 310 tensors carry the reference's type, 20 differ.
+```
+
+**The twenty are told to you before the run starts, not discovered afterwards.** They are the
+tensors Unsloth stored as `IQ3_S` and `IQ3_XXS`, and `llama-quantize` will not take those as a
+per-tensor instruction, so they fall back to the base recipe. The run says so up front:
+
+```
+20 of 310 tensors in the reference carry a type llama-quantize will not accept as a
+per-tensor override, so they take the base recipe instead and the output is NOT this
+reference's schedule on those tensors (IQ3_S, IQ3_XXS; for example blk.3.attn_k.weight).
+```
+
+The other 290 came out at exactly the reference's precision, and the finished file was 357.4 MB
+against the reference's 356.6 MB.
+
+The count is printed rather than hidden because `llama-quantize` will accept an instruction, ignore
+it, and produce a file anyway. The count is the only evidence either way, so **read it before you
+read any number measured on the file**. Two things, in order: how much of the plan landed, and the
+fact that the matrix never does.
 
 ## The one that catches people out
 

@@ -110,6 +110,21 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - `--pair` checks that it was given two files before reading any of them
 
 ### Command line
+- `quantise --like <reference.gguf>` copies the per-tensor precision schedule out of a finished
+  GGUF and applies it to the model being quantised, which makes the layer-by-layer half of an
+  Unsloth Dynamic (`UD-`) build reproducible: a GGUF records a type for every tensor in its own
+  header, so the plan is readable out of the artefact
+- The importance matrix behind such a build is not copied, because it leaves no trace in the file
+  it produced and is generally not published. Every `--like` run says so in the terminal, the
+  output is named `-copied-schedule` rather than after the reference, and `.provenance.json`
+  records the reference's sha256, the schedule that was copied, and a plain
+  `"importance_matrix_copied": false`
+- A `--like` run refuses a reference that is not the same model as the source, by architecture and
+  by tensor-name agreement, because a schedule aimed at the wrong model lands on the tensors whose
+  names happen to match and leaves the rest alone without failing
+- After a `--like` run the output is read back and compared tensor by tensor against the reference,
+  and the count that matched is printed. `llama-quantize` will accept a per-tensor instruction,
+  ignore it, and produce a file anyway, and that count is the only evidence either way
 - A negative or zero count is refused at the flag on every command rather than on some of them,
   so a mistyped minus can no longer measure the last five prompts and report them as the first
 - `--inspect` refuses a fractional layer index instead of truncating it, and a negative strength

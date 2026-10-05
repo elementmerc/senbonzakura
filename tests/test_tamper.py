@@ -701,12 +701,20 @@ def test_the_footprint_does_not_grow_across_the_arms(monkeypatch, tmp_path):
                  "--base", "HuggingFaceTB/SmolLM2-135M-Instruct", "--device", "cpu",
                  "--train-n", "40", "--resamples", "50", "--out", str(tmp_path / "r.json")])
     assert len(seen) == 5, f"five loads were expected, {len(seen)} were measured"
-    # A tolerant bound on purpose. The defect was roughly 400 MB per arm against a baseline under
-    # half a gigabyte, so it fails this by a wide margin; a tight bound would fail on allocator
-    # noise and be deleted within a fortnight, which is how a guard stops guarding.
-    assert seen[-1] < seen[0] * 1.5, (
-        f"the footprint grew across the arms: {[round(v / 1e6) for v in seen]} MB. Something is "
-        f"holding a checkpoint after its arm finished.")
+    # THE FIRST READING IS A WARM-UP AND IS NOT THE BASELINE, which the first version of this
+    # assertion got wrong and which made it pass alone and fail inside the suite. Measured there:
+    # [374, 639, 641, 642, 642] MB. Readings two to five are flat, so the property held; the
+    # first was taken before the allocator had settled, and how low it reads depends on what ran
+    # in the process beforehand. Comparing against it compares against the one number here that
+    # is not a steady state.
+    #
+    # A tolerant bound on purpose. A retained arm is roughly 400 MB against a steady state near
+    # 640 MB, so three of them fail this by a factor of two; a tight bound would fail on
+    # allocator noise and be deleted within a fortnight, which is how a guard stops guarding.
+    assert seen[-1] < seen[1] * 1.5, (
+        f"the footprint grew across the arms: {[round(v / 1e6) for v in seen]} MB, measured after "
+        f"each load. The first is a warm-up; the rest should be flat. Something is holding a "
+        f"checkpoint after its arm finished.")
 
 
 @needs_corpora

@@ -405,6 +405,20 @@ def safety_specific(recovery_flags, neutral_flags, pre_flags, *, seed,
             "IS ABOUT SAFETY DATA. Benign data of the same size, trained the same way, moved "
             "refusal by an amount this run cannot distinguish from the safety data's. Do not "
             "report the recovery figure as safety recovery.")
+    elif out["point"] < 0:
+        # THE THIRD CASE, AND IT WAS MISSING UNTIL 2026-10-05. The branch above asked only whether
+        # the interval excluded zero and the branch below then claimed the safety data had moved
+        # refusal further, which is false when the difference is negative: there the CONTROL moved
+        # it further, and a reader was being handed the flattering sentence over a result that
+        # contradicts it. The project's most repeated defect shape, in the one sentence this
+        # command exists to write.
+        out["reading"] = (
+            "the interval on the difference excludes zero AND THE DIFFERENCE IS NEGATIVE, so "
+            "BENIGN data moved refusal FURTHER than the safety data did. That does not merely "
+            "fail to support the safety framing, it contradicts it: whatever this finetune did to "
+            "the edit, the safety content of the data is not what did it. Report the recovery "
+            "figure as an effect of finetuning and check whether the two arms were trained "
+            "comparably before reading anything else into it.")
     else:
         out["reading"] = (
             "the interval on the difference excludes zero, so the safety data moved refusal by "

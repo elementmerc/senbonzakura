@@ -53,6 +53,10 @@ from .vendored import VendorError, find_binary
 QUANT_TYPES = ("Q2_K", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_K_S", "Q4_K_M", "Q5_K_S", "Q5_K_M",
                "Q6_K", "Q8_0", "Q4_0", "Q5_0", "IQ4_XS", "IQ4_NL", "F16", "BF16")
 
+#: The base recipe when nobody names one. Spelled once, because `--like` can also supply it and a
+#: default written out twice is a default that drifts.
+DEFAULT_TYPE = "Q4_K_M"
+
 #: How much bigger than the source the output could conceivably be. Quantisation shrinks, so this
 #: is a sanity floor for the disk check rather than an estimate: asking for F16 output from an F32
 #: input is the one case where "smaller" is the wrong assumption.
@@ -190,9 +194,18 @@ def build_parser():
     # 136 columns wide, which wraps into four lines of quantisation names on any real terminal and
     # buries the two positional arguments a reader is actually looking for. The choices are still
     # enforced, and listed in the help below where there is room for them.
-    ap.add_argument("--type", default="Q4_K_M", choices=QUANT_TYPES, metavar="TYPE",
-                    help="target quantisation (default: Q4_K_M). One of: "
-                         + ", ".join(QUANT_TYPES))
+    # `default=None` rather than the literal, so `--like` can supply the base recipe from the
+    # reference's own header when the user has not named one. `resolved_type` turns None into
+    # DEFAULT_TYPE, and nothing downstream of it ever sees None.
+    ap.add_argument("--type", default=None, choices=QUANT_TYPES, metavar="TYPE",
+                    help=f"target quantisation (default: {DEFAULT_TYPE}, or the reference's own "
+                         f"type when --like is given). One of: " + ", ".join(QUANT_TYPES))
+    ap.add_argument("--like", default=None, metavar="REFERENCE.gguf",
+                    help="copy the per-tensor precision schedule out of REFERENCE and replay it "
+                         "onto this run. A GGUF records a type per tensor, so the schedule of a "
+                         "published build is readable out of the file. Its importance matrix is "
+                         "NOT, so the output is that schedule with your own matrix or none, and is "
+                         "not the reference. The output is never named after the reference's label")
     ap.add_argument("--threads", type=int, default=0,
                     help="worker threads; 0 lets llama-quantize choose")
     ap.add_argument("--allow-requantize", action="store_true",
@@ -322,6 +335,14 @@ def _preflight_arguments(a, log=print):
     if a.imatrix and not Path(a.imatrix).is_file():
         raise SystemExit(
             f"no importance matrix at {a.imatrix}. Build one with `senbonzakura imatrix`.")
+    # Same argument as the imatrix above, and the same shape: decidable from the command line, so it
+    # belongs in front of the announcement rather than after the conversion.
+    if a.like and not Path(a.like).is_file():
+        raise SystemExit(say.refusal_text(
+            "there is no reference GGUF at the path given to --like.",
+            f"Nothing is at {a.like}. --like reads that file's per-tensor schedule and replays it, "
+            f"so the run cannot start without it.",
+            "Point --like at a finished GGUF whose precision schedule you want copied."))
     # THE TWO FLAGS CONTRADICT EACH OTHER AND BOTH WERE ACCEPTED, 2026-10-01. `--keep-source` says
     # do not remove the source and `--prune-source` says delete it, so giving both asks for two
     # opposite things about somebody's largest file. The code resolved it by precedence rather than
@@ -451,6 +472,434 @@ def _verify_overrides(out, a, pairs, log):
             f"general.file_type, so the file verifies against its own name either way.")
     return {"requested": {**wanted, **dict(pairs)},
             "census": gguf_io.type_census(out)}
+
+
+# ── --like: replaying one file's per-tensor schedule, and saying what is still missing ──────
+#
+# WHAT IS COPYABLE AND WHAT IS NOT, because the whole honesty of this feature is the difference.
+#
+# A GGUF stores a ggml type for EVERY tensor in its own header (`gguf_io.read_tensor_info` reads
+# it without touching a byte of tensor data), and `llama-quantize --tensor-type NAME=TYPE` applies
+# an arbitrary per-tensor type. So the per-tensor SCHEDULE of any published build, Unsloth Dynamic
+# included, is recoverable out of the artefact and replayable. That is a fact about the format, not
+# a reverse-engineering guess.
+#
+# The IMPORTANCE MATRIX is not recoverable. It is a calibration pass over a corpus, it leaves no
+# record in the output file, and Unsloth does not publish the corpus they use. So a `--like` output
+# carries the reference's schedule and OUR importance matrix, or none, and the two files are
+# different builds of the same recipe shape.
+#
+# That distinction decides whether a figure measured on the reference transfers to the file we
+# would actually ship, which is the entire reason anybody asked for this. It is therefore stated in
+# the terminal on every run, recorded in the sidecar on every run, and kept out of the filename on
+# every run, rather than left in this comment where only a maintainer meets it.
+
+#: Stamped into the output name in place of the reference's own label. A name like `UD-Q3_K_XL` is a
+#: claim about who built the file and what they calibrated it on, and this is not that file. The
+#: filename is what travels furthest and is read by the most people, so it is the last place the
+#: claim may appear. The base recipe stays in the name so `gguf_io.claimed_quant` and `verify` still
+#: have something to check the file against, which a bare `-like` suffix would have taken away.
+SCHEDULE_MARKER = "copied-schedule"
+
+#: How much the two tensor-name sets must coincide before a schedule is replayed, as a Jaccard
+#: ratio over the two sets rather than as a containment check.
+#:
+#: CONTAINMENT WAS TRIED FIRST AND IS WRONG. The dangerous pair is one model's schedule replayed
+#: onto a smaller model of the SAME architecture: a 4B's tensor names are a strict subset of a 27B's
+#: because the difference is the block count, so "every name I have is in yours" scores a perfect
+#: 1.0 on exactly the mismatch that matters most. Jaccard counts the names only ONE side has, which
+#: is where a block-count difference lives, and scores that pair around 0.58.
+#:
+#: 0.95 rather than 1.0 because two honest builds of one model legitimately differ by a tensor or
+#: two: `rope_freqs.weight` is written by some converter versions and not others, and a tied-
+#: embedding export has no `output.weight`. Refusing those would refuse the normal case.
+MIN_NAME_AGREEMENT = 0.95
+
+#: How many differing tensors to name in the terminal before summarising the rest. A whole-file
+#: schedule is hundreds of tensors and a wall of them is a wall nobody reads; the full list goes in
+#: the sidecar, which is where a reader who wants all of it can get all of it.
+_SCHEDULE_DIFFS_SHOWN = 8
+
+
+def _named_type(tensor):
+    """A tensor's type as a string, NEVER None, matching `gguf_io.type_census`'s own convention.
+
+    `read_tensor_info` reports `None` for a type id it does not know, which is the right answer
+    there: naming an unknown number would make a wrong answer look like an answer. It is the wrong
+    SHAPE here, because a None flows into a `', '.join(...)` of the types a bucket holds and crashes
+    the explanation of why those tensors were skipped. A reference carrying a tensor type newer than
+    the pinned `gguf` package is a file this will meet, not a hypothetical.
+
+    An unknown type is not in `OVERRIDE_TYPES`, so it lands in `not-passable` and is reported, which
+    is the honest outcome: a type this cannot name is a type it cannot replay.
+    """
+    return tensor["type"] or f"unknown type {tensor['type_id']}"
+
+
+def read_schedule(reference):
+    """The per-tensor type of a reference GGUF, as {name: type}. The whole of what --like copies.
+
+    Reads the header only, so pointing this at a 20 GB file costs a few hundred kilobytes.
+    """
+    try:
+        info = gguf_io.read_tensor_info(reference)
+    except gguf_io.GGUFError as e:
+        raise SystemExit(say.refusal_text(
+            "the file passed to --like could not be read as a GGUF.",
+            str(e),
+            "--like wants a finished GGUF whose per-tensor schedule you want copied. Only its "
+            "header is read, so a truncated download fails here rather than halfway through a "
+            "quantisation.")) from e
+    return {t["name"]: _named_type(t) for t in info}
+
+
+def schedule_disagreement(reference, source, *, reference_head, source_head,
+                          reference_names, source_names):
+    """Why this reference's schedule must not be replayed onto this source, or None if it may be.
+
+    A schedule applied to the wrong model is worse than no feature at all: llama-quantize matches
+    `--tensor-type` by pattern, so a 27B's schedule aimed at a 4B does not fail, it lands on the
+    blocks that happen to share a name and leaves the rest on the base recipe. The result is a file
+    that is neither the reference's schedule nor the base recipe, produced silently.
+
+    Two tests, and both have to pass. The architecture, because one architecture's tensor names mean
+    different things from another's even where they coincide. Then the name sets, because the same
+    architecture at a different size shares every name it has.
+    """
+    ref_arch, src_arch = reference_head.get("architecture"), source_head.get("architecture")
+    if not ref_arch or not src_arch:
+        unnamed = Path(reference).name if not ref_arch else Path(source).name
+        return say.refusal_text(
+            "--like cannot check the reference against the source, because one of them does not "
+            "say what architecture it is.",
+            f"{unnamed} records no readable general.architecture, so there is no way to tell "
+            f"whether its tensor names mean the same thing as the other file's. Replaying a "
+            f"schedule on that basis would be a guess wearing a receipt.",
+            "Convert the file again with the pinned converter, which writes the key, or pick a "
+            "reference that carries it.")
+    if ref_arch != src_arch:
+        return say.refusal_text(
+            "--like was given a reference from a different architecture.",
+            f"{Path(reference).name} is {ref_arch} and {Path(source).name} is {src_arch}. Tensor "
+            f"names that look alike across two architectures do not hold the same thing, and "
+            f"llama-quantize would apply the overlapping ones rather than refuse.",
+            "Pass a reference built from the same architecture as the source.")
+
+    shared = reference_names & source_names
+    union = reference_names | source_names
+    agreement = len(shared) / len(union) if union else 0.0
+    if agreement < MIN_NAME_AGREEMENT:
+        only_ref = sorted(reference_names - source_names)
+        only_src = sorted(source_names - reference_names)
+        return say.refusal_text(
+            "--like was given a reference whose tensors do not correspond to the source's.",
+            f"{len(shared)} names are shared out of {len(union)}, which is "
+            f"{agreement * 100:.0f}% agreement, below the {MIN_NAME_AGREEMENT * 100:.0f}% this "
+            f"will replay a schedule on. Both files say they are {ref_arch}, so the usual cause is "
+            f"two different SIZES of the same architecture: the smaller one's names are a subset of "
+            f"the larger one's, and the schedule would land on the blocks they share and leave the "
+            f"rest alone.",
+            f"{len(only_ref)} tensors are only in the reference"
+            + (f" (for example {only_ref[0]})" if only_ref else "")
+            + f" and {len(only_src)} only in the source"
+            + (f" (for example {only_src[0]})" if only_src else "") + ".",
+            "Pass a reference built from the same model as the source.")
+    return None
+
+
+def plan_schedule(schedule, source_names, *, patterns=(), exactly=()):
+    """Which of the reference's tensors this run can actually pin, and what it has to leave behind.
+
+    Returns (pairs, skipped), where `pairs` is [(name, type)] for llama-quantize and `skipped` is
+    {reason: [names]} for the record and for the terminal. Nothing is dropped quietly: every tensor
+    the schedule names and this run will not pin appears in one of those buckets.
+
+    Three reasons a tensor is left out, and they are different facts rather than one:
+
+      `absent`         the source has no such tensor, so the pattern would match nothing. The
+                       commonest honest case: a reference carrying `rope_freqs.weight` replayed onto
+                       a source converted without it.
+      `not-passable`   the type is real and `llama-quantize` will not take it as a per-tensor
+                       override. A UD-IQ2_M reference holds IQ2_S and IQ2_XXS tensors, and
+                       `gguf_io.OVERRIDE_TYPES` deliberately does not include them, so those tensors
+                       take the base recipe and the output is NOT that reference's schedule.
+      `spoken-for`     the user named this tensor themselves, with --tensor-type,
+                       --output-tensor-type or --token-embedding-type.
+
+    The last of those exists so the schedule and the user's own flags never both describe one
+    tensor. llama-quantize's precedence between two matching patterns is its business and not
+    something this should depend on, so the conflict is removed rather than resolved: the explicit
+    flag wins because it is the more specific statement of intent, and the schedule entry is dropped.
+
+    `patterns` AND `exactly` ARE SEPARATE, and collapsing them into one substring test was a real
+    defect in the first version of this function. `--tensor-type NAME` is matched by llama-quantize
+    as a pattern, so `attn_v` legitimately claims every layer's value projection. The other two
+    flags act on ONE hard-coded tensor each, and `output.weight` tested as a substring also matches
+    `blk.0.attn_output.weight`: `--output-tensor-type F16` would then have dropped every attention
+    output projection out of the copied schedule and left it on the base recipe, silently, with the
+    `spoken-for` bucket reporting the loss as the user's own choice.
+    """
+    pairs, skipped = [], {}
+    exactly = set(exactly)
+
+    def leave(reason, name):
+        skipped.setdefault(reason, []).append(name)
+
+    for name in sorted(schedule):
+        kind = schedule[name]
+        if name not in source_names:
+            leave("absent", name)
+        elif name in exactly or any(pattern in name for pattern in patterns):
+            leave("spoken-for", name)
+        elif kind not in gguf_io.OVERRIDE_TYPES:
+            leave("not-passable", name)
+        else:
+            pairs.append((name, kind))
+    return pairs, skipped
+
+
+def describe_skipped(skipped, schedule, log):
+    """Say out loud which of the reference's tensors this run is not pinning, and why.
+
+    Each bucket is a different statement about how far the output is from the reference, and
+    `not-passable` is the one that changes the answer: those tensors take the base recipe, so the
+    file is the reference's schedule only where the schedule could be expressed.
+    """
+    reasons = {
+        "absent": "are not in the source at all, so the schedule has nothing to pin there",
+        "spoken-for": "were named by your own flags, which win over the copied schedule",
+        "not-passable": "carry a type llama-quantize will not accept as a per-tensor override, so "
+                        "they take the base recipe instead and the output is NOT this reference's "
+                        "schedule on those tensors",
+    }
+    for reason, names in sorted(skipped.items()):
+        kinds = sorted({schedule[n] for n in names})
+        say.say(f"{len(names)} of {len(schedule)} tensors in the reference {reasons[reason]} "
+                f"({', '.join(kinds)}; for example {names[0]}).", indent="  ", log=log)
+
+
+def verify_schedule(out, schedule, log):
+    """Read the finished file back and compare every tensor against the reference's schedule.
+
+    THE ONLY THING STANDING BETWEEN THIS FEATURE AND A CONFIDENT LIE. llama-quantize accepts a flag,
+    does nothing with it, and produces a file anyway: that is why `_verify_overrides` above exists
+    and why `--output-tensor-type` is refused up front on a tied-embedding model. A whole-file
+    schedule is the same exposure several hundred times over, and the exit code says nothing about
+    any of it.
+
+    WHY A DIFFERENCE IS REPORTED RATHER THAN REFUSED, unlike `_verify_overrides`. A hand-picked
+    override is a tensor the operator chose, so not getting it is a failed request. A whole-file
+    schedule includes tensors the recipe genuinely cannot honour, block dimensions the quantiser's
+    block size does not divide being the common one, and refusing those would refuse every honest
+    run on a real model. So the COUNT is printed and the full difference is recorded, because the
+    count is the thing that decides whether a figure transfers, and a reader can act on a number
+    they can see.
+
+    Zero matches IS refused, because that is not a partial honouring: it means the overrides were
+    not applied at all.
+    """
+    # `_named_type` on BOTH sides, so an unknown type id is compared as the same string here as it is
+    # in the schedule. Comparing a None against an "unknown type 99" would report a difference
+    # between a tensor and itself.
+    got = {t["name"]: _named_type(t) for t in gguf_io.read_tensor_info(out)}
+    honoured, differed = {}, {}
+    for name, kind in sorted(schedule.items()):
+        if name not in got:
+            continue
+        (honoured if got[name] == kind else differed)[name] = {"reference": kind, "output": got[name]}
+
+    checked = len(honoured) + len(differed)
+    if checked and not honoured:
+        raise SystemExit(say.refusal_text(
+            "not one tensor in the output carries the type the reference has for it.",
+            f"All {checked} tensors compared against {Path(out).name} came out at a different "
+            f"precision from the reference's. llama-quantize reported success, so the overrides "
+            f"were accepted and then had no effect at all rather than partially landing.",
+            f"The file is left at {out} for inspection. Re-run with --verbose to see what the "
+            f"quantiser said about each tensor."))
+
+    log(f"  schedule: {len(honoured)} of {checked} tensors carry the reference's type, "
+        f"{len(differed)} differ.")
+    for name in list(differed)[:_SCHEDULE_DIFFS_SHOWN]:
+        d = differed[name]
+        log(f"    {name}: the reference has {d['reference']} and this file has {d['output']}")
+    if len(differed) > _SCHEDULE_DIFFS_SHOWN:
+        log(f"    and {len(differed) - _SCHEDULE_DIFFS_SHOWN} more, all of them in the sidecar.")
+    return {"honoured": len(honoured), "compared": checked, "differed": differed}
+
+
+def schedule_output_name(source, quant, reference):
+    """Where a `--like` run writes when the user has not said: the base type, plus the marker.
+
+    `model-BF16.gguf` with `--type Q3_K_M --like X-UD-Q3_K_XL.gguf` becomes
+    `model-Q3_K_M-copied-schedule.gguf`. The reference's own label never appears, for the reason
+    `SCHEDULE_MARKER` gives; which reference it was is in the sidecar, with its hash.
+    """
+    plain = default_output(source, quant)
+    # `reference` is taken so the signature says this name depends on there being one, and so a
+    # future scheme can use it without every caller changing. Deliberately unused for now.
+    del reference
+    return plain.with_name(f"{plain.name[:-len(GGUF_SUFFIX)]}-{SCHEDULE_MARKER}{GGUF_SUFFIX}")
+
+
+def _preflight_schedule(a, source_head, log):
+    """Read the reference, refuse a mismatched pair, and work out what this run can pin.
+
+    Returns (schedule, pairs, skipped), all three empty when `--like` was not given, so the caller
+    has no branch to forget. Everything expensive about `--like` happens here, before the quantiser
+    is started: a mismatched pair is the one failure that would otherwise produce a plausible file.
+    """
+    if not a.like:
+        return {}, [], {}
+
+    schedule = read_schedule(a.like)
+    try:
+        reference_head = gguf_io.read_header(a.like)
+        source_names = {t["name"] for t in gguf_io.read_tensor_info(a.source)}
+    except gguf_io.GGUFError as e:
+        raise SystemExit(
+            f"the tensor lists needed to check --like against the source could not be read: {e}"
+        ) from e
+
+    refusal = schedule_disagreement(
+        a.like, a.source, reference_head=reference_head, source_head=source_head,
+        reference_names=set(schedule), source_names=source_names)
+    if refusal:
+        raise SystemExit(refusal)
+
+    # Every tensor the user named themselves, so the schedule never describes a tensor one of their
+    # own flags already describes. `--tensor-type` is a pattern and the other two name exactly one
+    # tensor each; see `plan_schedule` for why that distinction is load-bearing.
+    patterns = [name for name, _ in (parse_tensor_type(s) for s in a.tensor_type)]
+    exactly = ([OUTPUT_TENSOR] if a.output_tensor_type else []) \
+        + ([EMBED_TENSOR] if a.token_embedding_type else [])
+
+    pairs, skipped = plan_schedule(schedule, source_names, patterns=patterns, exactly=exactly)
+    say.say(f"--like {Path(a.like).name}: {len(schedule)} tensors in the reference, "
+            f"{len(pairs)} of them pinned onto this run ({a.type} underneath).",
+            indent="  ", log=log)
+    describe_skipped(skipped, schedule, log)
+    if not pairs:
+        raise SystemExit(say.refusal_text(
+            "nothing in the reference's schedule can be replayed onto this source.",
+            f"All {len(schedule)} tensors in {Path(a.like).name} were skipped for the reasons "
+            f"above, so --like would have no effect and the output would be a plain {a.type} under "
+            f"a name saying a schedule had been copied.",
+            "Drop --like and ask for the base recipe directly, or pick a reference whose types "
+            "this tool can pass on."))
+    return schedule, pairs, skipped
+
+
+def schedule_record(a, schedule, pairs, skipped, verified, log=print):
+    """The `--like` half of the provenance sidecar, and the honesty of the feature lives here.
+
+    WRITTEN ON EVERY RUN, `null` when `--like` was not used. A field that appears only when
+    somebody remembered to ask for it is a field nothing downstream can rely on, which is the same
+    argument the source and output hashes above are always recorded under.
+
+    `importance_matrix_copied` is always `false` and is recorded anyway, which looks redundant and
+    is the point. The reference's importance matrix is not in the reference: it is a calibration
+    pass over a corpus that leaves no trace in the file, and Unsloth does not publish theirs. So the
+    one question a reader of this record will have, "is this the same build as the reference", has a
+    fixed answer, and a fixed answer stated explicitly is worth more than an absent field a reader
+    has to infer from.
+    """
+    if not a.like:
+        return None
+    head = gguf_io.read_header(a.like)
+    return {
+        "path": str(a.like),
+        "name": Path(a.like).name,
+        "sha256": digest_for_the_record(a.like, what="--like reference", log=log),
+        "architecture": head.get("architecture"),
+        "file_type": head.get("file_type"),
+        # The schedule that was READ, and the subset that was actually PINNED. Two different facts:
+        # the first is what the reference is, the second is what this run could express.
+        "schedule": schedule,
+        "pinned": dict(pairs),
+        "skipped": skipped,
+        "verified": verified,
+        # THE GAP, stated rather than left to be worked out from what is absent.
+        "importance_matrix_copied": False,
+        "bit_identical_to_reference": False,
+        "difference_from_reference":
+            "the per-tensor type schedule was copied out of the reference's header, which is where "
+            "a GGUF records it. The reference's importance matrix was NOT copied, because a "
+            "calibration pass leaves no trace in the file it produced and the corpus behind a "
+            "published build is generally not published with it. This file therefore carries the "
+            "reference's schedule and this run's own importance matrix, or none, and is not "
+            "bit-identical to the reference. A figure measured on the reference does not transfer "
+            "to this file on the strength of the matching schedule alone.",
+    }
+
+
+def say_what_is_still_different(a, log):
+    """The sentence the operator actually needs, in the terminal, on every `--like` run.
+
+    They are weighing a checkpoint against a number benched on a `UD-` build. The schedule matching
+    is what they asked for; the importance matrix not matching is what decides whether the number
+    carries over, and that half is invisible in the file, the filename and the census. So it is said
+    here, where somebody reading the run meets it, rather than only in the sidecar.
+    """
+    if not a.like:
+        return
+    mine = (f"the importance matrix at {Path(a.imatrix).name}" if a.imatrix
+            else "NO importance matrix")
+    # Through `say` rather than one `log` call, because this is the longest thing a `--like` run
+    # prints and an unwrapped paragraph is a wall, and a wall is what a reader skips. That is the
+    # finding `say` was written for, and skipping it here would be skipping it on the one message
+    # whose whole purpose is to be read.
+    say.say(f"NOT COPIED: {Path(a.like).name}'s importance matrix. A calibration pass leaves no "
+            f"trace in the file it produced, so there is nothing in the reference to read it out "
+            f"of, and the corpus behind a published build is generally not published with it. This "
+            f"output is that reference's SCHEDULE built with {mine}, which is a different build of "
+            f"the same recipe shape rather than the same file. A figure measured on the reference "
+            f"does not transfer here on the matching schedule alone. Recorded in the sidecar "
+            f"beside it.", indent="  ", log=log)
+
+
+def resolved_type(a):
+    """`--type`, or the base recipe this run should use when the user did not name one.
+
+    With `--like` that is the REFERENCE'S OWN file-level type, because the point of the flag is to
+    land as close to the reference as the format allows and the base recipe decides every tensor the
+    schedule could not pin. A reference whose type this tool cannot produce is a refusal rather than
+    a silent fall back to Q4_K_M: quietly overlaying a Q3_K schedule on a Q4_K_M base would produce
+    a file nobody asked for under a name that looked deliberate.
+    """
+    if a.type:
+        return a.type
+    if not getattr(a, "like", None):
+        return DEFAULT_TYPE
+    try:
+        head = gguf_io.read_header(a.like)
+    except gguf_io.GGUFError as e:
+        raise SystemExit(say.refusal_text(
+            "the file passed to --like could not be read as a GGUF.", str(e),
+            "--like reads only the header, so this fails before any work rather than after it."
+        )) from e
+    claimed = head.get("file_type")
+    if claimed in QUANT_TYPES:
+        return claimed
+    return _refuse_an_unproducible_base(a.like, claimed)
+
+
+def _refuse_an_unproducible_base(reference, claimed):
+    """`--like <something whose own file type we cannot make>` needs an explicit --type.
+
+    `UD-IQ2_M` declares IQ2_M, which `gguf_io` can read and `QUANT_TYPES` cannot produce. There is
+    no honest default here: the base recipe decides every tensor the schedule does not pin, so
+    choosing one for the operator would decide part of the output's quality for them.
+    """
+    raise SystemExit(say.refusal_text(
+        "--like needs a --type here, because the reference's own type is not one this tool can "
+        "produce.",
+        f"{Path(reference).name} declares {claimed or 'no readable general.file_type'}, and "
+        f"`quantise` can make: {', '.join(QUANT_TYPES)}. The base recipe decides every tensor the "
+        f"copied schedule cannot pin, so picking one for you would decide part of the output "
+        f"without saying so.",
+        "Name the base recipe yourself, for example:\n"
+        f"  senbonzakura quantise <source> --like {reference} --type Q4_K_M"))
 
 
 def source_conversion_record(source):
@@ -615,7 +1064,13 @@ def checkpoint_output_path(a):
     """
     if a.out:
         return Path(a.out)
-    return default_output(str(Path(a.source)) + GGUF_SUFFIX, a.type)
+    # `resolved_type` rather than `a.type`, because `--type` defaults to None so `--like` can supply
+    # it. Called here as well as in `run` so a direct caller of this function gets a real name.
+    quant = resolved_type(a)
+    source = str(Path(a.source)) + GGUF_SUFFIX
+    if a.like:
+        return schedule_output_name(source, quant, a.like)
+    return default_output(source, quant)
 
 
 def preflight_a_checkpoint(a, log=print):
@@ -772,6 +1227,9 @@ def _forwardable_quantiser_flags(a):
 
 def run(argv=None, log=print):
     a = build_parser().parse_args(argv)
+    # Resolved once, here, before anything reads it. `--type` defaults to None so `--like` can
+    # supply the base recipe from the reference's header, and nothing below this line sees None.
+    a.type = resolved_type(a)
 
     # A CHECKPOINT, NOT A GGUF. `convert --quantise` has always done both steps in one command,
     # and this is the name people reach for when they want a quantised model: they typed
@@ -793,12 +1251,23 @@ def run(argv=None, log=print):
         return _quantise_a_checkpoint(a, log=log)
 
     _preflight_arguments(a, log=log)
-    out = Path(a.out) if a.out else default_output(a.source, a.type)
+    if a.out:
+        out = Path(a.out)
+    elif a.like:
+        out = schedule_output_name(a.source, a.type, a.like)
+    else:
+        out = default_output(a.source, a.type)
 
     head = preflight(a.source, out, a.type, allow_requantize=a.allow_requantize, force=a.force)
     log(f"quantise {Path(a.source).name} ({head['file_type']}, {head['tensor_count']} tensors, "
         f"{head['architecture']}) -> {out.name} [{a.type}]")
     pairs = _preflight_overrides(a.source, a, log)
+    # Kept SEPARATE from `pairs` rather than appended to it, and the difference is the verification.
+    # `_verify_overrides` treats every pair as a pattern the operator chose and raises on anything
+    # that did not land, which is right for a hand-picked override and wrong for a whole-file
+    # schedule: see `verify_schedule`. Appending here would also print one "verified" line per
+    # tensor, several hundred of them, which buries the one line that matters.
+    schedule, schedule_pairs, skipped = _preflight_schedule(a, head, log)
 
     try:
         exe, source_of = find_binary("llama-quantize", log=log)
@@ -840,6 +1309,11 @@ def run(argv=None, log=print):
     for name, kind in pairs:
         argv_q += ["--tensor-type", f"{name}={kind}"]
         log(f"  pinning tensors matching {name!r} to {kind}")
+    # The copied schedule, after the user's own pairs so the command line reads in the order the
+    # choices were made. Not announced per tensor: `_preflight_schedule` has already said how many
+    # there are, and several hundred lines naming one tensor each is noise, not observability.
+    for name, kind in schedule_pairs:
+        argv_q += ["--tensor-type", f"{name}={kind}"]
 
     argv_q += [str(a.source), str(out), a.type]
     if a.threads:
@@ -885,6 +1359,21 @@ def run(argv=None, log=print):
             f"the output quantised and its tensor list could not be read back to confirm the "
             f"per-tensor precision that was asked for: {e}\nThe file is left at {out}.") from e
 
+    # The copied schedule's own receipt, tensor for tensor against the reference. Separate from
+    # both checks above for the reason `verify_schedule` gives: `verify` judges the file against its
+    # own name, `_verify_overrides` refuses anything the operator picked and did not get, and this
+    # one reports a count because a whole-file schedule legitimately does not land everywhere.
+    schedule_verified = None
+    if a.like:
+        try:
+            schedule_verified = verify_schedule(out, schedule, log)
+        except gguf_io.GGUFError as e:
+            raise SystemExit(
+                f"the output quantised and its tensor list could not be read back to compare it "
+                f"against the schedule copied from {Path(a.like).name}: {e}\nThe file is left at "
+                f"{out}, and whether it carries that schedule is unknown rather than confirmed."
+            ) from e
+
     src_size, out_size = Path(a.source).stat().st_size, out.stat().st_size
     log(f"  wrote {out.name}: {out_size / 1e9:.2f} GB from {src_size / 1e9:.2f} GB "
         f"({out_size / src_size * 100:.0f}%), {got['tensor_count']} tensors, {took:.0f}s")
@@ -908,17 +1397,26 @@ def run(argv=None, log=print):
             f"model was not trained on, and it will look like a weak model rather than a broken "
             f"export. Recorded in the sidecar beside it.")
 
+    say_what_is_still_different(a, log)
+
     sidecar = Path(str(out) + SIDECAR_SUFFIX)
     record = {
         # /2 CARRIES THE sha256 OF THE SOURCE AND THE OUTPUT; /1 did not, and a reader cannot tell
         # a /1 record from a /2 one where the hash happened to fail unless the version says so. The
         # field is additive, so a /1 reader loses nothing, and the bump is what lets anything
         # downstream REQUIRE the hash rather than hope for it.
-        "schema": "senbonzakura-quantisation/2",
+        #
+        # /3 CARRIES `schedule_reference`, on the same argument: a reader cannot tell a /2 record
+        # from a /3 one that happened to have no `--like` unless the version says so, and the field
+        # is the only place the importance-matrix gap is written down.
+        "schema": "senbonzakura-quantisation/3",
         "created": _now(),
         "quantiser": identity,
         "quant_type": a.type,
         "imatrix": imatrix_record,
+        # ALWAYS PRESENT, `null` when `--like` was not used. See `schedule_record`.
+        "schedule_reference": schedule_record(a, schedule, schedule_pairs, skipped,
+                                              schedule_verified, log=log),
         # What was asked for AND what the finished file actually holds. A recipe name is a
         # statement about intent; the census is a statement about the file.
         "tensor_overrides": overrides,

@@ -12,7 +12,7 @@ name = "senbonzakura"
 # tree still saying 0.3.0 across 344 commits that included withdrawn measurements and a rewritten
 # search, which made two very different trees indistinguishable in every artefact they produced.
 dynamic = ["version"]
-description = "Precision abliteration, with receipts. Refusal abliteration for transformer language models, with the instruments to measure what the edit cost."
+description = "Precision uncensoring, with receipts. Refusal removal for transformer language models, with the instruments to measure what the edit cost."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later AND CC-BY-NC-4.0"
@@ -32,7 +32,7 @@ license = "AGPL-3.0-or-later AND CC-BY-NC-4.0"
 license-files = ["LICENSE", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-CORPORA.md",
                  "APACHE-2.0.txt", "ACCEPTABLE-USE.md"]
 authors = [{ name = "Daniel Iwugo", email = "ops@themalwarefiles.com" }]
-keywords = ["abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
+keywords = ["uncensored", "uncensoring", "abliteration", "refusal-direction", "interpretability", "ai-safety", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",

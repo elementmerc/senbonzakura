@@ -60,7 +60,7 @@ GLOW_PURPLE = (139, 71, 145)
 
 #: The line under the wordmark. This is the project's tagline, already shipped on five surfaces, so
 #: it is quoted rather than reinvented: `pyproject.toml`'s description opens with it.
-TAGLINE = "Precision abliteration, with receipts."
+TAGLINE = "Precision uncensoring, with receipts."
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MARK = ROOT / "assets" / "brand" / "mark.svg"

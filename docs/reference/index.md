@@ -1,6 +1,6 @@
 # Reference
 
-The three pages here answer "what exists and what does it take". For why any of it works the way
+The pages here answer "what exists and what does it take". For why any of it works the way
 it does, the [guide](/guide/) is the other half.
 
 `--help` on any command is authoritative. These pages are the map, and a map that disagrees with
@@ -11,6 +11,7 @@ the ground is the map's fault.
 | [Commands](/reference/cli) | Every command, what it does, and which ones need a card |
 | [Flags worth knowing](/reference/flags) | The handful that change what a number means, out of the full set |
 | [Which models it can open](/reference/models) | Architectures, and how to find out before anything downloads |
+| [Tuned presets](/reference/presets) | What a preset is, how a pack supplies one, and what the tool does with none installed |
 
 ## If you are looking for
 

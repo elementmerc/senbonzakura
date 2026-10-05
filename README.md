@@ -6,7 +6,7 @@
        alt="Senbonzakura">
 </picture>
 
-**Precision abliteration, with receipts.**
+**Precision uncensoring, with receipts.**
 
 <p>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=dev&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI" /></a>

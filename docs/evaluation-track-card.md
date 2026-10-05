@@ -87,7 +87,7 @@ revision each was read at is recorded so a later reader can tell a changed card 
 | `mlabonne/harmful_behaviors`, reached through the above | 176 harmful rows, measured | **None.** No `license` field, no `cardData` licence, no tag | `01cead01` |
 | `mlabonne/harmless_alpaca` | the harmless side | **None.** No `license` field, no `cardData` licence, no tag | `02c6a92c` |
 | `tatsu-lab/alpaca`, the probable root of the above | the harmless side, indirectly | **cc-by-nc-4.0**, declared and tagged | `dce01c9b` |
-| The harmless top-ups | 2,036 rows, being 386 requests, measured 2026-10-01 | **Unrecorded.** See the reproducibility limitation below | not recorded |
+| The harmless top-ups | 2,036 rows, being 386 requests, measured 2026-10-01 | **Authored for this project**, stated by the operator 2026-10-05. No copyright claim, see below | no upstream, so nothing to pin |
 
 ### The two inferred links, stated plainly
 
@@ -138,6 +138,25 @@ non-commercial use only.
 | Most of the harmful side | Apache-2.0 | Carry the notice |
 | 176 harmful rows | MIT, inferred | Attribute Zou et al. |
 | The harmless side | CC BY-NC 4.0, inferred | Attribute, and non-commercial |
+
+The harmless top-ups were the one row in that table with no answer at all until 2026-10-05, when
+the operator recorded that he generated them himself with a proprietary assistant he holds and
+that it carries no Llama lineage. That is recorded as his statement, because it is the only form
+this answer can take: there is no dataset to fetch and no seed to replay, so nobody can check it
+and nobody can regenerate those 386 requests. **Saying so is the point.** A reader can confirm the
+rows are present and hash them, and cannot rebuild them, which is a weaker property than the rest
+of this track has and one that cannot be fixed after the fact.
+
+**Commercial use of the harmless side rests on a permission rather than on the public licence.**
+Those 386 requests are the minority; the other 2,946 harmless rows trace to Alpaca, which declares
+CC BY-NC 4.0. The owner of this project records that he obtained Alpaca's approval to use the
+material commercially and without attribution (2026-10-05). **So a reader who checks only the
+public licence tags will conclude this track is non-commercial, and will be reading the tags
+correctly.** The permission is what differs, it is specific to this project, and it does not travel
+to anybody who copies the track: if you want to use this corpus commercially, seek your own.
+
+Attribution is kept here regardless of the waiver, because withdrawing a citation would make the
+chain harder to audit for no gain, and this page exists to be audited.
 
 Two of the direct upstreams declare nothing at all, which is why the table reads through to the
 roots rather than stopping at them. Most of this corpus is also machine-generated (Bahushruth's

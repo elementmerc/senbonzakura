@@ -498,6 +498,91 @@ def test_a_bad_baseline_path_is_refused_before_the_model_loads(monkeypatch, tmp_
     assert not loaded, "the model was loaded before the baseline path was checked"
 
 
+def test_no_artefact_these_commands_write_carries_a_key_the_leak_gate_bans(monkeypatch, tmp_path):
+    """FOUND BY RUNNING THE GATE AGAINST A REAL ARTEFACT, 2026-10-05.
+
+    `tools/ci/check_prompt_artefacts.py` is the one control between a harmful prompt and a public
+    push, and it refuses a banned key name at any depth. It is right to: reading values instead
+    would need a denylist of what a harmful reply says, which this project has considered and
+    refused. So an artefact carrying `generation` is unpublishable even when the value is a block
+    of settings, which is what the first version of all three of these commands wrote.
+
+    The resolution is to rename the field in the data, never to widen the gate. That is the
+    precedent `text` set under decision Q-33, when twelve of our own artefacts used it for single
+    decoded tokens and were renamed rather than exempted.
+
+    All three commands are walked here rather than one, because a rule enforced on one of three
+    writers is how the next one ships without it.
+    """
+    banned = _banned_keys()
+    assert "generation" in banned and "prompt" in banned, (
+        "the gate's banned key list no longer looks the way this test assumes; read it again "
+        "rather than deleting this")
+
+    written = []
+    jb, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                 "--out", str(tmp_path / "jb.json")])
+    written.append(("jailbreak", jb))
+    written.append(("multi-turn", _drive_multiturn(monkeypatch, tmp_path)))
+    written.append(("tamper", _drive_tamper(monkeypatch, tmp_path)))
+
+    for name, doc in written:
+        for key in _every_key(doc):
+            assert key not in banned, (
+                f"the {name} artefact carries the key {key!r}, which the leak gate bans at any "
+                f"depth, so the artefact cannot be committed. Rename the field in the data.")
+
+
+def _banned_keys():
+    """The gate's own list, read from the gate rather than copied into this file."""
+    import importlib.util
+    from pathlib import Path
+
+    gate = Path(__file__).resolve().parent.parent / "tools" / "ci" / "check_prompt_artefacts.py"
+    spec = importlib.util.spec_from_file_location("_leak_gate", gate)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.BANNED_KEYS
+
+
+def _every_key(value):
+    """Every mapping key at any depth, which is the depth the gate reads at."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            yield key
+            yield from _every_key(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from _every_key(inner)
+
+
+def _drive_multiturn(monkeypatch, tmp_path):
+    from senbonzakura import multiturn, score
+
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: [f"p{i}" for i in range(40)])
+    monkeypatch.setattr(multiturn, "generate_turn",
+                        lambda model, tok, conversations, device, **k:
+                        ([REFUSAL] * len(conversations), []))
+    return multiturn.main(["--model", "m", "--device", "cpu",
+                           "--out", str(tmp_path / "mt.json")])
+
+
+def _drive_tamper(monkeypatch, tmp_path):
+    from senbonzakura import score, tamper
+
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: [f"p{i}" for i in range(80)])
+    monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
+    monkeypatch.setattr(tamper, "train", lambda *a, **k: tamper.loss_trace([2.0, 1.0]))
+    monkeypatch.setattr(score, "generate",
+                        lambda m, t, prompts, d, batch=16, max_new=64: [REFUSAL] * len(prompts))
+    return tamper.main(["--model", "m", "--device", "cpu", "--train-n", "40",
+                        "--resamples", "50", "--out", str(tmp_path / "tamper.json")])
+
+
 def test_two_runs_on_the_same_input_produce_the_same_artefact(monkeypatch, tmp_path):
     """Decoding is greedy and nothing here samples, so a second run must agree byte for byte.
 

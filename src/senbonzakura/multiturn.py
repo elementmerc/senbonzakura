@@ -574,7 +574,7 @@ def main(argv=None):
         "refused_at_turn_one": len(refused),
         "arm": arm_blocks["arm"], "control": arm_blocks["control"],
         "model_identity": stamps.model_identity(model, a.model),
-        "generation": jailbreak.generation_settings(a),
+        "generation_settings": jailbreak.generation_settings(a),
         "overflowed": len(overflowed),
         "chat_template": getattr(tok, "senbon_chat_template", None),
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),

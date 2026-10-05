@@ -438,6 +438,19 @@ def test_the_transcripts_of_every_turn_go_to_one_file(monkeypatch, tmp_path):
         multiturn.REFRAME.name, multiturn.CONTROL.name}
 
 
+def test_two_runs_on_the_same_input_produce_the_same_artefact(monkeypatch, tmp_path):
+    """Decoding is greedy and the escalation is a fixed list, so a second run must agree byte for
+    byte. The thing most likely to break it is a future field holding a timestamp, a set iteration
+    or a dict ordered by something other than insertion.
+    """
+    first, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                    "--out", str(tmp_path / "a.json")])
+    second, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                     "--out", str(tmp_path / "b.json")])
+    assert json.dumps(first, sort_keys=True, default=str) == json.dumps(
+        second, sort_keys=True, default=str)
+
+
 def test_the_ruler_is_checked_before_a_single_prompt_is_sent(monkeypatch, tmp_path):
     monkeypatch.setattr(metrics, "validate_ruler",
                         lambda: (_ for _ in ()).throw(RuntimeError("the ruler misreads")))

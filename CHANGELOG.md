@@ -9,6 +9,55 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 - A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.
 
+### New command: `jailbreak`
+- Reports single-turn jailbreak success on one of the bundled attack sets, with a Wilson interval
+  and the raw counts on every figure, including the one printed to the terminal
+- Reports it beside the over-refusal rate on a benign set, in the same run, because a model that
+  declines every request scores perfectly on jailbreak resistance and is useless. Measuring one
+  arm without the other is the mistake the command is shaped to prevent, and an artefact missing
+  one of them says so
+- Reads the attack set by name rather than by path, and refuses a benign corpus in the attack
+  slot: the safe half of XSTest used as an attack set reports near-total success on a model that
+  refused nothing it should have, and nothing downstream can see it
+- Gives two readings of the same thing: one minus the refusal rate, which is what the field
+  usually quotes, and the share of replies that actually delivered an answer, which excludes
+  evasions and the garbage a damaged model emits. A large gap between them is the finding
+- Takes `--baseline`, a previous run against the unedited model, so the figure can be read as a
+  statement about the edit. Baseline refusal on harmful prompts varies enormously between models,
+  so a jailbreak rate on its own is a number about a starting point the reader does not know
+- Refuses to call the run a measurement when more than a tenth of the replies are unreadable,
+  because a damaged model reads as a win under either reading taken alone
+
+### New command: `multi-turn`
+- Asks whether a refusal holds when the conversation continues, and reports the turn at which it
+  first gives way rather than only a rate
+- Runs the plain-repetition control over the same refused prompts, so an escalation that does no
+  better than asking the same question again is visible as such. Where the two intervals overlap,
+  the run says it cannot separate them rather than reporting the difference
+- Records the escalation by name and by digest, so a figure can be traced to the exact turns.
+  Bring your own with `--strategy-file`, and its text is deliberately kept out of the artefact
+- Refuses the run when a conversation outgrew the context window, because the model then answered
+  a follow-up without having been shown the original request and the reply scores the same either
+  way
+
+### New command: `tamper`
+- Measures whether an abliteration survives a brief safety-recovery finetune: refusal before, the
+  finetune, refusal after, on the held-out half of the corpus so no evaluated row was trained on
+- Runs the neutral-data control in the same command. If refusal recovers as much after training
+  on benign task data, the result is about finetuning rather than about safety, and the artefact
+  states no safety-specific figure without that arm
+- Runs the same recipe on the unedited model as a ceiling, so a recovered fraction is read against
+  what the recipe can achieve rather than against a perfect score
+- Records the whole recipe: method, adapter shape, learning rate, schedule, optimiser, steps,
+  batch size, gradient clip, dtype, seed, a digest of the training pairs and the loss at every
+  step. A finetune whose loss did not fall is refused rather than reported, because it leaves
+  refusal unchanged and that reads as a perfect result
+- Trains either an adapter or every weight, and says which, because they answer different
+  questions: one tests whether an adapter can route around the edit and the other whether the edit
+  itself is undone
+- States which way its own bias runs: the recovery data teaches the model the phrases the refusal
+  ruler looks for, so a low recovered fraction is strong evidence and a high one is weak
+
 ### New command: `budget`
 - Answers "will this model fit on this machine, and roughly how long would a run take" before
   anything is downloaded or loaded, from the checkpoint's headers alone

@@ -94,7 +94,7 @@ def test_every_case_names_a_file_and_a_test_that_exist():
 
 
 def test_the_harness_points_at_this_checkout_rather_than_one_machine():
-    """The originals hardcoded `/home/daniel/the-factory/senbonzakura`, so they ran on exactly one
+    """The originals hardcoded one person's absolute checkout path, so they ran on exactly one
     box. That is half the reason the evidence nearly evaporated.
     """
     assert mutate.ROOT == ROOT

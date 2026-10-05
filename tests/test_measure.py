@@ -205,7 +205,7 @@ def test_every_reading_names_a_metric_its_command_actually_stamps():
     The first read a plain top-level key and asserted only that the string appeared SOMEWHERE in
     the module that writes the file. It caught `drift` being read for a `delta_ppl` that module
     never mentions, and then passed `capability`'s `accuracy`, which that module does write, one
-    level down under `summary`. So a real run on the ROG printed "not reported" for a model that
+    level down under `summary`. So a real run on a GPU laptop printed "not reported" for a model that
     had scored 29 of 39 in the log two lines above.
 
     This asserts against the stamp instead: `measurement.stamp(result, "<name>", ...)` is the one
@@ -259,7 +259,7 @@ def test_a_stamped_figure_is_read_from_its_value():
 # ── the table's numbers fit in the table ─────────────────────────────────────────
 
 def test_a_long_float_is_cut_to_something_a_column_can_hold():
-    """FOUND BY RUNNING IT on the ROG, 2026-09-23. `coherence` reported
+    """FOUND BY RUNNING IT on a 6 GB laptop card, 2026-09-23. `coherence` reported
     `13.613728595914115` beside a refusal rate of `0.2083`, which is fifteen decimal places of a
     perplexity nobody can use and a column that no longer lines up.
     """

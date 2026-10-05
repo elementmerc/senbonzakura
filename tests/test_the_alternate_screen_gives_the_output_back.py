@@ -262,7 +262,7 @@ def test_the_capture_is_bounded_and_drops_the_oldest_lines():
 
 
 def test_the_truncation_notice_says_how_much_went_and_what_was_kept():
-    """Line 689, which coverage on atlas showed nothing reached.
+    """Line 689, which coverage on a CPU-only box showed nothing reached.
 
     The notice only prints when the cap has engaged, so it needs a buffer big enough to engage it.
     It is user-facing text about missing output, which is the worst kind to leave unasserted: a

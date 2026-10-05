@@ -4,9 +4,9 @@
 # Comment: Christ is King  # noqa: ERA001
 """A source that yields no rows must refuse, not measure nothing and report a number.
 
-WHY THIS EXISTS, and it is not hypothetical. On 2026-09-25, while preparing an overnight run, the
-ROG was found holding a Hugging Face cache entry for the evaluation track that contained a bare
-`refs/main` and nothing behind it: no snapshot, no blobs, 12 KB in total. A directory listing says
+WHY THIS EXISTS, and it is not hypothetical. On 2026-09-25, while preparing an overnight run, a
+GPU laptop was found holding a Hugging Face cache entry for the evaluation track that contained a
+bare `refs/main` and nothing behind it: no snapshot, no blobs, 12 KB in total. A directory listing says
 the track is cached. There is no track.
 
 That is the shape this project keeps finding in its own code, arriving from outside it: a thing
@@ -75,7 +75,7 @@ def test_an_empty_labelled_source_is_refused(tmp_path):
 
 
 def test_a_directory_with_no_rows_is_refused(tmp_path):
-    """The case the ROG actually presented: the container exists and holds nothing usable."""
+    """The case that machine actually presented: the container exists and holds nothing usable."""
     d = tmp_path / "track"
     d.mkdir()
     (d / "rows.jsonl").write_text("", encoding="utf-8")

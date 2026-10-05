@@ -460,7 +460,7 @@ class TestTheTemplateSurvivedTheExport:
         assert convert.chat_template_lost(d, _ok_header(metadata={})) is None
 
     def test_the_template_is_found_where_a_modern_checkpoint_actually_keeps_it(self, tmp_path):
-        """THE DEFECT THIS CHECK SHIPPED WITH, found on the ROG against a real checkpoint.
+        """THE DEFECT THIS CHECK SHIPPED WITH, found on a GPU laptop against a real checkpoint.
 
         Transformers used to keep the template under `chat_template` in `tokenizer_config.json`
         and now writes raw Jinja to `chat_template.jinja` beside it, leaving no key in the

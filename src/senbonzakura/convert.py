@@ -180,7 +180,7 @@ def source_chat_template(model_dir):
     That made this function return False, meaning "definitely none", for checkpoints carrying a
     perfectly good template. False is the answer that switches the whole check off: `chat_template_lost`
     only fires when the source is a definite True, so the export verification was a no-op on
-    exactly the checkpoints anyone would convert today. Found on the ROG against LFM2.5-350M,
+    exactly the checkpoints anyone would convert today. Found on a GPU laptop against LFM2.5-350M,
     whose template is 5,487 bytes in `chat_template.jinja` and absent from the tokeniser config.
 
     A guard returning a confident negative is worse than one returning None, because None is

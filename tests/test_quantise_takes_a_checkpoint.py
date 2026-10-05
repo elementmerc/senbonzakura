@@ -94,7 +94,7 @@ def test_the_output_path_names_the_quantised_file_not_the_intermediate(tmp_path,
     Handing the whole job to `convert --quantise` meant the converter's positional named the
     INTERMEDIATE and the quantised file took a name derived from it. A run given an explicit
     output path wrote 0.73 GB into a directory the user had not named, under a log line saying
-    it would be somewhere else. Measured on the ROG, 2026-09-23.
+    it would be somewhere else. Measured on a GPU laptop, 2026-09-23.
     """
     seen = {}
     run = _stub_convert_and_quantise(monkeypatch, tmp_path, seen)

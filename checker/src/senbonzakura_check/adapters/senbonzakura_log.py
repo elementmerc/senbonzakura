@@ -488,7 +488,7 @@ def _older_shapes(doc) -> dict:
 
     # THE COHERENCE PROBE, WRITTEN BEFORE THE STAMP EXISTED. Three of these are the only coherence
     # evidence this project has ever produced: the base, Heretic and senbonzakura arms of the
-    # 2026-07-14 head-to-head, sitting on the ROG with `nll`, `ppl`, `n_tokens`, `label` and
+    # 2026-07-14 head-to-head, carrying `nll`, `ppl`, `n_tokens`, `label` and
     # `model` and nothing else. Without this the checker declines them outright, which is honest
     # but leaves a published comparison permanently unreadable by the tool whose job is reading it.
     #

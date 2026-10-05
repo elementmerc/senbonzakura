@@ -841,7 +841,7 @@ def test_two_metrics_rendered_differently_leave_the_record_unable_to_answer():
 # ── the coherence probe, written before the stamp existed ────────────────────────────────────
 
 #: The 2026-07-14 head-to-head coherence arms, byte-for-byte in shape. Three of these sit on the
-#: ROG at `track2/bench-h2h/` and are the only coherence evidence this project has produced.
+#: GPU laptop at `track2/bench-h2h/` and are the only coherence evidence this project has produced.
 OLD_COHERENCE = {
     "label": "base",
     "model": "/models/Qwen3-1.7B",

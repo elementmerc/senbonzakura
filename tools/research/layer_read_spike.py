@@ -51,7 +51,7 @@ BOTH NUMBERS ARE REPORTED, because both are real. The capture pass reads each la
 cold. The search re-reads the same layers every trial, and on a model that fits in RAM those are
 warm. A tool that knew only one of them would mis-estimate one of the two phases badly.
 
-WHAT IT MEASURED, 2026-09-23, on the ROG's ext4 NVMe, best of 3, GB/s of the layer's own bytes:
+WHAT IT MEASURED, 2026-09-23, on a laptop's ext4 NVMe, best of 3, GB/s of the layer's own bytes:
 
     Qwen3-4B      layer 0  192 MB  dense    cold  pread 0.96  mmap 0.90  span 0.86
     LFM2.5-8B-A1B layer 0  116 MB  dense    cold  pread 1.67  mmap 1.15  span 0.93

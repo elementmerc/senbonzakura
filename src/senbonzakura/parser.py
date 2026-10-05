@@ -457,7 +457,7 @@ def build_parser(full=False):
             model_required=False)])
     # THE ONE-COMMAND FORM: `senbonzakura Qwen/Qwen2.5-0.5B-Instruct`, with everything else defaulted.
     #
-    # `--model` still works and is what every run spec, every README example and every holst job
+    # `--model` still works and is what every run spec, every README example and every batch job
     # already passes, so nothing that exists breaks. This is an additional way to say the same
     # thing, for the case where somebody has just installed the tool and wants to see it do
     # something. `entry.main` already routes anything that is not a subcommand here, so the only

@@ -3260,7 +3260,7 @@ class Abliterator:
         unqualified. On 2026-09-25 the capability probe was moved to after the save, so that an
         out-of-memory in the hungriest generation of the run could not lose a baked model. Correct
         on its own terms, and it put that probe on the far side of the line below, which takes the
-        weights off the card. Measured on the ROG on 2026-09-26: the same sixteen items took 604
+        weights off the card. Measured on 2026-09-26 on a 6 GB laptop card: the same sixteen items took 604
         seconds with the model on the host against 25 to 37 on the card, a twenty-fold penalty, with
         the GPU sitting at 187 MiB. Two hours per arm for a measurement that takes six minutes.
         `restore_device_after_save` puts them back, and this docstring says which measurements are
@@ -3299,7 +3299,7 @@ class Abliterator:
         run and an out-of-memory there used to throw away a baked model. The probe then ran wherever
         the weights happened to be, which was the host.
 
-        MEASURED, on the ROG, 2026-09-26: sixteen probe items took 604 seconds with the weights on
+        MEASURED, on a 6 GB laptop card, 2026-09-26: sixteen probe items took 604 seconds with the weights on
         the host and 25 to 37 seconds with them on the card, while `nvidia-smi` read 187 MiB. Twenty
         times slower, for a default `--capability-n 200`, which turns a six minute measurement into
         two hours and makes a ten arm comparison a day's work instead of an evening's.
@@ -3860,8 +3860,8 @@ class Abliterator:
         # The check above runs on the first probe of a run, which on an abliterate run is the
         # baseline, taken while the model is still resident. The post-bake probe happens after the
         # save, and `free_before_save` parks a resident model in host RAM for the write, so between
-        # the two checks the weights moved and nothing looked again. Measured on the ROG on
-        # 2026-09-26: 604 seconds for sixteen items against 25 to 37, with the GPU at 187 MiB.
+        # the two checks the weights moved and nothing looked again. Measured on 2026-09-26 on a
+        # 6 GB laptop card: 604 seconds for sixteen items against 25 to 37, with the GPU at 187 MiB.
         #
         # `restore_device_after_save` fixes the cause. This is the backstop, and it re-checks on
         # PLACEMENT rather than on a flag, so it fires whenever the weights move rather than once
@@ -4429,8 +4429,8 @@ class Abliterator:
         # AND THE WEIGHTS GO BACK ON THE CARD FIRST. Moving the probe after the save put it after
         # `free_before_save`, which parks a resident model in host RAM for the write, so the probe
         # ran on the host: 604 seconds for sixteen items against 25 to 37 on the card, measured on
-        # the ROG on 2026-09-26 with the GPU at 187 MiB. The save still gets its headroom, because by
-        # here the write is finished and the VRAM is free again.
+        # 2026-09-26 on a 6 GB laptop card with the GPU at 187 MiB. The save still gets its headroom,
+        # because by here the write is finished and the VRAM is free again.
         # ONLY WHEN SOMETHING NEEDS THE CARD. This was unconditional, and `cap_items` is empty
         # whenever `--capability-n 0` or `--capability-eval ""` is set, which is what the low-memory
         # advice and the Colab probe's reduced budget both do. Those runs moved a whole model back

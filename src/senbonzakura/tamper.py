@@ -40,6 +40,18 @@ The evaluation prompts are disjoint from the training prompts by construction, s
 is generalisation rather than memorisation; the generosity is in the target phrasing, not in the
 rows.
 
+WHAT DECIDES WHETHER A REPLY REFUSED
+
+The same refusal ruler, with the same disclosure, and it has one extra edge here. `validate_ruler`
+runs before a single gradient is taken; it checks the ruler against its own canonical cases, which
+is not a validation against human labels and is not a kappa. See `jailbreak`'s module docstring for
+the full statement.
+
+The extra edge is that the recovery targets are strings this ruler keys on, so the measurement and
+the training data share a vocabulary. That is not circular (the evaluation rows were never trained
+on, so what is measured is generalisation) but it is a reason the recipe is generous, which the
+next section states as a direction rather than leaving to be discovered.
+
 WHAT A COMPLETE RECIPE MEANS HERE
 
 An unrecorded recipe makes the number uncomparable with anybody else's, including our own next

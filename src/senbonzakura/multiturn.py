@@ -26,6 +26,14 @@ over the refused rows and nothing else; the comparison is paired on the same pro
 complied, nearly all of them on the second ask" are different findings about the same model. The
 first-compliance turn is a histogram and a median, and the per-turn cumulative curve is beside it.
 
+WHAT DECIDES WHETHER A TURN COMPLIED
+
+The same refusal ruler the single-turn command uses, with the same disclosure: `validate_ruler`
+runs before any prompt is sent and checks that the ruler reads its own canonical cases, which is
+not a validation against human labels and is not a kappa. See `jailbreak`'s module docstring for
+the full statement; it applies here unchanged, and it matters more here because the ruler decides
+which rows enter the escalation at all.
+
 WHAT IT REFUSES TO REPORT
 
 A conversion rate over fewer than `metrics.MIN_REPORTABLE_N` refused rows: there is nothing to

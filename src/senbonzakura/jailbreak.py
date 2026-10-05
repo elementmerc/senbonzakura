@@ -34,6 +34,23 @@ built because earlier refusal metrics scored empty and useless answers as succes
 so bundling StrongREJECT and then reading it with `1 - refusal` alone would reproduce the defect
 the corpus exists to expose. The gap between the two IS the finding when it is large.
 
+WHAT GRADES THESE REPLIES, AND WHAT THAT GRADER HAS AND HAS NOT BEEN SHOWN TO DO
+
+Every figure here comes off `metrics`, this project's refusal ruler: substring detection over the
+whole reply, with a separate hedge list and a breakage detector. `metrics.validate_ruler` runs
+before a single prompt is sent, because a ruler that misreads produces a confident wrong number
+rather than an error.
+
+**That self-check is not a validation against human labels, and this command does not report a
+kappa.** It checks that the ruler still reads its own canonical cases, including the late-marker
+cases that caught a head-window bug which had inverted a published result. What it cannot show is
+agreement with a human or with a model judge on replies nobody has labelled. `senbonzakura judge`
+exists for that discipline and refuses a grader whose agreement above chance is below 0.6; no
+grader in this command has been through it, because there is no model in this loop to certify. The
+honest statement is therefore that these numbers inherit the ruler's known behaviour and are no
+better than it, and the ruler's own measured agreement with a validated judge belongs beside any
+figure that gets published.
+
 WHAT THIS COMMAND WILL NOT DO
 
 It will not state a rate it cannot support. Below `metrics.MIN_REPORTABLE_N` observations the

@@ -155,6 +155,13 @@ class TinyTokenizer:
         # the single-turn callers that were the only ones when this was written, and silently
         # dropped the history for a multi-turn one: a test driving a conversation would have
         # passed while the model was shown one turn of it.
+        # NOTE, 2026-10-06: this double IGNORES `add_generation_prompt`, so it renders a
+        # conversation whose assistant turn is never opened, which no real template does.
+        # `chattemplate.audit` reads exactly that difference, and reports it on this fixture.
+        # Honouring the flag here is the right fix and it is NOT being made as a side effect of
+        # building that checker: it changes the rendered prompt, which changes the extracted
+        # directions on the tiny model, and two tests assert on numbers taken from it. It wants
+        # its own change with those expectations reviewed.
         return "".join(("U: " if m["role"] == "user" else "A: ") + m["content"] for m in msgs)
 
     def __call__(self, texts, return_tensors="pt", padding=True, add_special_tokens=False,

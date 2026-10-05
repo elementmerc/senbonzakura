@@ -241,7 +241,8 @@ def test_with_no_binary_anywhere_the_refusal_says_why_a_full_install_lacks_one(t
         ggufrun.GgufRunner(_gguf(tmp_path, ftype=1), log=lambda *_: None)
     said = str(e.value)
     assert "vendor_llama.py" in said, "the refusal does not say where the binary comes from"
-    assert "not among the binaries" in said
+    assert "verifies its hash" in said, (
+        "the refusal does not say the vendored route is a pinned one")
 
 
 def test_a_located_binary_is_used(tmp_path, monkeypatch):
@@ -311,10 +312,17 @@ def test_a_server_that_will_not_start_is_loud(runner, monkeypatch):
 def test_a_server_that_exits_before_it_is_ready_reports_its_status_and_its_log(runner, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _Proc(exits=1))
     _serve(monkeypatch, {}, health=urllib.error.URLError("refused"))
+    said = []
+    runner.log = said.append
     with pytest.raises(GgufRunError) as e:
         runner.start()
     assert "exited with status 1" in str(e.value)
     assert "nothing was measured" in str(e.value)
+    # The handle has to be closed on the way out. It was not, and the suite's ResourceWarning
+    # gate found it as an unclosed file on an unrelated test, which is how that gate always
+    # reports: on whichever test the collector happened to reach.
+    assert runner._log_file.closed, "the server's log handle was left open on the way out"
+    assert any("log is kept at" in line for line in said)
 
 
 def test_a_server_that_never_answers_health_gives_up_on_a_deadline(runner, monkeypatch):
@@ -680,3 +688,179 @@ def test_a_log_that_cannot_be_read_still_produces_the_message_it_was_needed_for(
         runner.start()
     assert "its log could not be read" in str(e.value)
     assert "did not answer /health" in str(e.value)
+
+
+# ── the compass over a GGUF: reading the verdict position ────────────────────────
+def _logprob_answer(pairs):
+    """A `/completion` answer carrying these (id, logprob) pairs as its top tokens."""
+    return {"completion_probabilities": [{
+        "top_logprobs": [{"id": i, "token": f"t{i}", "logprob": lp} for i, lp in pairs]}]}
+
+
+def _sequence(monkeypatch, answers, *, tokenise=None):
+    """Answer `/completion` from a list, one per call, and `/tokenize` from a map."""
+    calls = {"completion": 0, "payloads": []}
+
+    def urlopen(req, timeout=None):
+        if isinstance(req, str):
+            return _Response({"status": "ok"})
+        path = "/" + req.full_url.split("/", 3)[3]
+        payload = json.loads(req.data)
+        if path == "/tokenize":
+            return _Response({"tokens": (tokenise or {}).get(payload["content"], [])})
+        calls["payloads"].append(payload)
+        answer = answers[min(calls["completion"], len(answers) - 1)]
+        calls["completion"] += 1
+        return _Response(answer)
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return calls
+
+
+def test_the_verdict_tokens_are_read_from_the_guufs_own_tokeniser(runner, monkeypatch):
+    """A transformers id against a GGUF vocabulary reads a different token entirely."""
+    _sequence(monkeypatch, [_logprob_answer([])],
+              tokenise={"HARMFUL": [56, 99], " HARMFUL": [407], "Harmful": [56],
+                        " Harmful": [], "harmful": [5794], " harmful": [5794]})
+    with runner as r:
+        assert ggufrun.verdict_token_ids(r, "HARMFUL") == [56, 407, 5794]
+
+
+def test_a_word_the_tokeniser_cannot_spell_is_refused(runner, monkeypatch):
+    _sequence(monkeypatch, [_logprob_answer([])], tokenise={})
+    with runner as r, pytest.raises(ggufrun.GgufCompassError, match="no verdict token"):
+        ggufrun.verdict_token_ids(r, "HARMFUL")
+
+
+def test_a_cheap_request_that_holds_both_verdict_sets_is_not_escalated(runner, monkeypatch):
+    calls = _sequence(monkeypatch, [_logprob_answer([(1, -0.5), (2, -2.0), (3, -9.0)])])
+    with runner as r:
+        readout = ggufrun.verdict_logprobs(r, "<|user|>p", [1], [2])
+    assert readout.escalated is False
+    assert readout.margin == pytest.approx(1.5)
+    assert calls["completion"] == 1, "the whole vocabulary was asked for and did not need to be"
+    assert calls["payloads"][0]["n_probs"] == ggufrun.FIRST_TRY_PROBS
+    assert calls["payloads"][0]["samplers"] == ["temperature"]
+
+
+def test_a_missing_verdict_set_escalates_to_the_whole_vocabulary(runner, monkeypatch):
+    calls = _sequence(monkeypatch, [_logprob_answer([(1, -0.5)]),
+                                    _logprob_answer([(1, -0.5), (2, -3.5)])])
+    with runner as r:
+        readout = ggufrun.verdict_logprobs(r, "<|user|>p", [1], [2])
+    assert readout.escalated is True
+    assert readout.margin == pytest.approx(3.0)
+    assert calls["completion"] == 2
+    assert calls["payloads"][1]["n_probs"] > ggufrun.FIRST_TRY_PROBS
+
+
+def test_a_verdict_absent_even_from_the_whole_vocabulary_has_no_margin(runner, monkeypatch):
+    """None is the honest answer and must not be a zero: zero is a real margin."""
+    _sequence(monkeypatch, [_logprob_answer([(1, -0.5)])])
+    with runner as r:
+        readout = ggufrun.verdict_logprobs(r, "<|user|>p", [1], [2])
+    assert readout.margin is None
+    assert readout.escalated is True
+
+
+def test_a_position_with_no_token_probabilities_at_all_is_refused(runner, monkeypatch):
+    _sequence(monkeypatch, [{"completion_probabilities": [{"top_logprobs": []}]}])
+    with runner as r, pytest.raises(ggufrun.GgufCompassError, match="no verdict position"):
+        ggufrun.verdict_logprobs(r, "<|user|>p", [1], [2])
+
+
+def test_the_verdict_mass_is_the_probability_the_two_sets_hold():
+    readout = ggufrun.VerdictReadout({1: -1.0}, {2: -2.0}, top="t", returned=5, escalated=False)
+    import math
+    assert readout.verdict_mass == pytest.approx(math.exp(-1.0) + math.exp(-2.0))
+    assert readout.margin == pytest.approx(1.0)
+
+
+def test_the_margin_takes_the_best_spelling_in_each_set():
+    readout = ggufrun.VerdictReadout({1: -3.0, 2: -1.0}, {3: -5.0, 4: -4.0},
+                                     top="t", returned=9, escalated=False)
+    assert readout.margin == pytest.approx(3.0)
+
+
+def test_a_pass_over_several_prompts_reports_how_it_read_them(runner, monkeypatch):
+    _sequence(monkeypatch, [_logprob_answer([(1, -0.5), (2, -1.5)])])
+    said = []
+    with runner as r:
+        rows, how = ggufrun.compass_margins(r, ["a", "b", "c"], [1], [2], heartbeat=0.0,
+                                            log=said.append)
+    assert [row["margin"] for row in rows] == [pytest.approx(1.0)] * 3
+    assert how == {"escalated": 0, "n": 3, "first_try_probs": ggufrun.FIRST_TRY_PROBS}
+    assert said, "a long loop with no heartbeat"
+
+
+# ── the compass agreement control ────────────────────────────────────────────────
+def _separated(n, *, offset=0.0):
+    harmful = [1.0 + offset + i * 0.01 for i in range(n)]
+    benign = [-1.0 + offset - i * 0.01 for i in range(n)]
+    return harmful, benign
+
+
+def test_two_compasses_that_order_the_prompts_alike_are_comparable():
+    h, b = _separated(20)
+    finding = ggufrun.compass_agreement(h, b, [x * 3 for x in h], [x * 3 for x in b])
+    assert finding["transformers_auc"] == 1.0
+    assert finding["gguf_auc"] == 1.0
+    assert finding["auc_difference"] == 0.0
+    assert finding["comparable"] is True
+
+
+def test_the_comparison_is_on_the_auc_and_so_survives_a_scale_difference():
+    """A quantised file's logits are not the original's, and the AUC does not care."""
+    h, b = _separated(20)
+    finding = ggufrun.compass_agreement(h, b, [x * 100 + 7 for x in h], [x * 100 + 7 for x in b])
+    assert finding["comparable"] is True
+    assert finding["auc_difference"] == 0.0
+
+
+def test_two_compasses_that_order_the_prompts_differently_are_refused():
+    h, b = _separated(20)
+    finding = ggufrun.compass_agreement(h, b, b, h)
+    assert finding["gguf_auc"] == 0.0
+    assert finding["comparable"] is False
+    assert any("order these prompts differently" in why for why in finding["why_not"])
+
+
+def test_a_compass_control_below_the_reporting_floor_says_so():
+    h, b = _separated(5)
+    finding = ggufrun.compass_agreement(h, b, h, b)
+    assert finding["comparable"] is False
+    assert any(str(metrics.MIN_REPORTABLE_N) in why for why in finding["why_not"])
+
+
+def test_an_unreadable_prompt_in_either_arm_refuses_the_whole_figure():
+    h, b = _separated(20)
+    with pytest.raises(ggufrun.GgufCompassError, match="no readable verdict"):
+        ggufrun.compass_agreement([*h[:-1], None], b, h, b)
+
+
+def test_two_arms_of_different_lengths_are_not_a_paired_comparison():
+    h, b = _separated(20)
+    with pytest.raises(ggufrun.GgufCompassError, match="same prompts in the same order"):
+        ggufrun.compass_agreement(h, b, h[:-1], b)
+
+
+def test_a_gguf_is_recognised_by_its_first_four_bytes(tmp_path):
+    """Not by its name: `--model` already takes three kinds of input, and a flag would be a
+    fourth way to say the same thing.
+    """
+    good = tmp_path / "not-named-like-one.bin"
+    good.write_bytes(b"GGUF\x03\x00\x00\x00")
+    bad = tmp_path / "pretending.gguf"
+    bad.write_bytes(b"PK\x03\x04 a zip file")
+    assert ggufrun.looks_like_gguf(good) is True
+    assert ggufrun.looks_like_gguf(bad) is False
+    assert ggufrun.looks_like_gguf(tmp_path / "absent.gguf") is False
+    assert ggufrun.looks_like_gguf(tmp_path) is False
+
+
+def test_a_short_pass_says_nothing_until_the_heartbeat_is_due(runner, monkeypatch):
+    _sequence(monkeypatch, [_logprob_answer([(1, -0.5), (2, -1.5)])])
+    said = []
+    with runner as r:
+        ggufrun.compass_margins(r, ["a"], [1], [2], heartbeat=1e6, log=said.append)
+    assert said == [], "a two-prompt pass printed progress nobody needed"

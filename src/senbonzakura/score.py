@@ -11,11 +11,12 @@ incomparable. Reports the full breakdown (hard refusal / soft refusal / noncompl
 broken / heretic-keyword) so we can see WHICH axis a lever moves. Getting hard-refusal down
 is easy; the residual is usually soft refusal + evasion (noncompliance), the real wall.
 """
+import hashlib
 import json
 
 import torch
 
-from . import argresolve, lengthsweep, metrics, stamps, track
+from . import argresolve, ggufrun, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
 
 # THE CEILING ON UNREADABLE REPLIES HAS ONE HOME, and it is the capability probe, where the
@@ -95,6 +96,24 @@ def build_parser():
                          "BENIGN rather than to carry it out, and report the fraction it still "
                          "flags. Run it beside an ordinary score to tell a model that knows and "
                          "complies from one that no longer knows.")
+    # THE GGUF CONTROL, and the reason it is a flag while the GGUF itself is not. A GGUF is
+    # detected from the file's own magic bytes, because `--model` already means "the model" and a
+    # second flag for the same thing is how two commands come to report "the refusal rate". This
+    # is a different question: which safetensors checkpoint is the SAME model, so the two paths
+    # can be run on the same prompts and their agreement reported. Nothing can infer that.
+    ap.add_argument("--agree-with", dest="agree_with", default=None, metavar="MODEL",
+                    help="only with a GGUF --model: the safetensors checkpoint of the same model, "
+                         "scored on the same prompts through the ordinary path so the two can be "
+                         "compared. Decision Q-88 makes this control the condition on quoting a "
+                         "GGUF figure beside a transformers one: without it the artefact records "
+                         "that no agreement was measured, which is not the same as passing.")
+    ap.add_argument("--gguf-threads", dest="gguf_threads",
+                    type=whole_number("--gguf-threads", minimum=1), default=None,
+                    help=f"only with a GGUF --model: how many CPU threads llama.cpp may use "
+                         f"(default {ggufrun.DEFAULT_THREADS}). Fixed rather than taken from the "
+                         f"machine, because the default would make the same command a different "
+                         f"measurement on a box with a different core count, and it is recorded "
+                         f"in the artefact either way.")
     return ap
 
 
@@ -289,6 +308,129 @@ def save_generations(path, prompts, gens, mode, model, label):
     print(f"SAVED_GENERATIONS {path} n={len(gens)}")
 
 
+def _gguf_template_record(runner, rendered_probe):
+    """Which prompt format the GGUF itself applied, recorded the way the loader records one.
+
+    The template lives inside the file, so there is no `--chat-template` to name and no tokeniser
+    to read it off. What can be recorded is the file's own metadata key and a digest of the text
+    the model actually read for the first prompt, which is the thing two runs have to share
+    before their numbers can be compared.
+    """
+    from . import gguf_io
+
+    source = "gguf:absent"
+    try:
+        header = gguf_io.read_header(runner.gguf)
+        if gguf_io.has_chat_template(header):
+            source = f"gguf:{gguf_io.CHAT_TEMPLATE_KEY}"
+    except (gguf_io.GGUFError, OSError):
+        source = "gguf:unreadable"
+    digest = (hashlib.sha256(rendered_probe.encode("utf-8")).hexdigest()[:16]
+              if rendered_probe else None)
+    return {"source": source, "rendered_sha256": digest}
+
+
+def _agreement_against_transformers(a, prompts, gguf_replies, rendered, lossless):
+    """Run the same prompts through the ordinary path and report whether the two agree.
+
+    THE RENDERING IS CHECKED FIRST AND IS NOT A TOLERANCE. If the two paths send the model
+    different text, the comparison is between prompt formats rather than between runners, which is
+    the defect `firsttoken.render_chat` was extracted to end. `chattemplate.compare_renderings`
+    names the first character where they part company.
+    """
+    from . import chattemplate
+
+    model, tok = load_model_and_tokenizer(
+        a.agree_with, device=a.device, load_in_4bit=a.load_in_4bit,
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+    hf_rendered = [render_chat(tok, p) for p in prompts]
+    hf_replies = generate(model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
+    finding = ggufrun.agreement(hf_replies, gguf_replies, lossless=lossless, prompts=prompts)
+    finding["against"] = a.agree_with
+    divergence = next(
+        (chattemplate.compare_renderings(h, g, left_label="transformers", right_label="the GGUF")
+         for h, g in zip(hf_rendered, rendered, strict=True) if h != g), None)
+    finding["renderings_identical"] = divergence is None
+    if divergence is not None:
+        finding["comparable"] = False
+        finding["why_not"].append(divergence.what)
+    return finding
+
+
+def _score_a_gguf(a, prompts, boundary_verified):
+    """The refusal pass and the textual compass pass, generated by the pinned llama.cpp server.
+
+    ONE SCORER, TWO WAYS OF GETTING THE REPLIES. Everything below the generation call is the
+    ordinary path: the same `metrics` detectors, the same artefact fields, the same thresholds. A
+    second scoring function would be a second instrument, which is the thing decision Q-88's
+    control exists to prevent, so there is not one.
+    """
+    if a.length_sweep:
+        raise SystemExit(
+            "--length-sweep cannot run on a GGUF. The sweep generates once at the longest budget "
+            "and reads the reply back at every shorter one, which needs the tokeniser that "
+            "produced it; the server returns finished text and nothing to cut it with. Score the "
+            "safetensors checkpoint for a sweep, or pick one budget with --max-new.")
+    judged = [JUDGE_TEMPLATE.format(p) for p in prompts] if a.harm_recognition else list(prompts)
+    with ggufrun.GgufRunner(a.model, binary=None, max_new=a.max_new,
+                            threads=a.gguf_threads or ggufrun.DEFAULT_THREADS) as runner:
+        rendered = [runner.rendered(p) for p in judged]
+        gens = runner.replies(rendered, render=False)
+        prov = runner.provenance()
+        template = _gguf_template_record(runner, rendered[0] if rendered else "")
+        lossless = runner.model["lossless"]
+    agreement = None
+    if a.agree_with:
+        agreement = _agreement_against_transformers(a, judged, gens, rendered, lossless)
+    save_generations(a.save_generations, judged, gens,
+                     "harm_recognition" if a.harm_recognition else "refusal", a.model, a.label)
+    scorer = score_harm_recognition if a.harm_recognition else score
+    res = scorer(gens, label=a.label, model=a.model, eval_path=a.eval)
+    res["chat_template"] = template
+    res["runner"] = prov
+    # ABSENT IS NOT PASSED, and the field says which. A GGUF figure quoted beside a transformers
+    # figure is a claim that the two are one measurement, and that claim is earned by this control
+    # or not at all. Recorded in the artefact rather than only printed, because the artefact is
+    # what somebody reads months later.
+    res["agreement"] = agreement or {
+        "measured": False,
+        "why": "no agreement control was run, so whether this figure matches a transformers "
+               "figure for the same model is unknown. Pass --agree-with <safetensors checkpoint> "
+               "to measure it. Unknown is not the same as agreeing.",
+    }
+    res["provenance"] = provenance(device="cpu", accelerator="llama.cpp server",
+                                   corpus=track.revision_entry(a.eval))
+    if a.harm_recognition:
+        not_a_measurement = harm_recognition_validity(res["n"], res["indeterminate"])
+        if not_a_measurement:
+            res["self_invalidated"] = not_a_measurement
+    else:
+        res["budget_warning"] = lengthsweep.budget_warning(a.max_new, flag="--max-new")
+    with atomic_write(a.out) as f:
+        json.dump(res, f, indent=2)
+    if a.harm_recognition:
+        print(f"SCORE_DONE {a.label} harm_recognition={res['harm_recognition']*100:.1f}% "
+              f"indeterminate={res['indeterminate']*100:.1f}% n={res['n']} "
+              f"(compass axis, through the GGUF runner)")
+    else:
+        print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "
+              f"soft={res['soft_refusal']*100:.1f}% noncompliant={res['noncompliant']*100:.1f}% "
+              f"broken={res['broken']*100:.1f}% heretic={res['heretic']*100:.1f}% n={res['n']} "
+              f"(through the GGUF runner)")
+    if agreement is None:
+        print(f"GGUF_AGREEMENT_NOT_MEASURED {a.label}: this figure was produced by the llama.cpp "
+              f"runner and no agreement control was run, so it must not be quoted beside a "
+              f"transformers figure for the same model. Pass --agree-with to measure it.")
+    else:
+        for line in ggufrun.describe(agreement):
+            print(f"  {line}")
+        if not agreement["comparable"]:
+            print(f"GGUF_NOT_COMPARABLE {a.label}: the two paths do not measure the same thing on "
+                  f"these prompts, so this figure stands for the GGUF alone. The reasons are in "
+                  f"{a.out}.")
+    return res
+
+
 def main(argv=None):
     a = build_parser().parse_args(argv)
     # Before a single prompt is sent. A ruler that misreads yields a confident wrong
@@ -346,6 +488,17 @@ def main(argv=None):
         if a.n > len(prompts):
             raise SystemExit(f"--n {a.n} exceeds the {len(prompts)} prompts available after --skip")
         prompts = prompts[:a.n]
+    if ggufrun.looks_like_gguf(a.model):
+        return _score_a_gguf(a, prompts, boundary_verified)
+    if a.agree_with or a.gguf_threads is not None:
+        # Named rather than ignored. A flag that silently does nothing is a setting the operator
+        # believes they applied, which is the defect `tests/test_dead_flags.py` exists for; here
+        # it would be worse, because `--agree-with` is the control a GGUF figure depends on and
+        # its silence would read as a control that passed.
+        flag = "--agree-with" if a.agree_with else "--gguf-threads"
+        raise SystemExit(
+            f"{flag} only means something when --model is a GGUF, and {a.model} is not one. "
+            f"Drop the flag, or point --model at a .gguf file.")
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)

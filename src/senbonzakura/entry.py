@@ -503,7 +503,7 @@ def short_help(columns=None):
 
     out = [f"    senbonzakura {__version__}"]
     out.extend(f"    {line}" for line in
-               say.lines("Precision abliteration, with receipts.", columns=columns - 4))
+               say.lines("Precision uncensoring, with receipts.", columns=columns - 4))
     out.extend(["", ""])
     for group, rows in WAYS_IN:
         out.append(f"  {group}")

@@ -723,7 +723,7 @@ class SearchProgress:
 #: Sustained cold read rate assumed for the time estimate, in bytes per second.
 #:
 #: MEASURED, 2026-09-23, `tools/research/layer_read_spike.py`: a mixture-of-experts layer read by
-#: `pread` off the ROG's ext4 NVMe, cache evicted and the eviction confirmed, reached 1.95 GB/s.
+#: `pread` off a laptop's ext4 NVMe, cache evicted and the eviction confirmed, reached 1.95 GB/s.
 #: That is the slowest of the three layouts measured and the one the streaming path exists for, so
 #: it is the honest constant for an estimate rather than the best of them.
 #:
@@ -1263,7 +1263,7 @@ class Budget:
     def pinned_verdict(self):
         """`(side, ceiling, store)` where side is "under", "over" or None for unmeasured.
 
-        WHY THIS IS A VERDICT AND NOT A NOTE. Measured on the ROG on 2026-09-22, a store above the
+        WHY THIS IS A VERDICT AND NOT A NOTE. Measured on 2026-09-22 on a 6 GB laptop card, a store above the
         page-locked ceiling does not degrade: pinned transfers hid 99.9% of their cost behind
         compute and pageable ones hid 1.8%, at the balance the loader actually runs at. So
         crossing the line forfeits essentially the whole benefit of streaming, quietly, and the

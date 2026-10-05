@@ -90,6 +90,14 @@ RULES: list[tuple[str, str, str]] = [
     (r"^senbonzakura head-to-head", SKIP, "hours of GPU time by construction"),
     (r"^senbonzakura (quantise|convert)", SKIP,
      "needs a checkpoint on disk to convert, which no documentation page produces first"),
+    # The three robustness commands, and the reason is the pair rather than the card. Each one
+    # names `--model edited` against `--base unedited` or `--baseline`, so what they need is an
+    # abliterated checkpoint AND the unedited one it came from, which no documentation page
+    # produces and which this runner cannot make. `tamper` additionally trains a finetune, so
+    # even given the pair it is minutes of work rather than seconds.
+    (r"^senbonzakura (jailbreak|multi-turn|tamper)\b", SKIP,
+     ("measures an edited checkpoint against the unedited one it came from, and no "
+      "documentation page produces that pair first")),
     # `budget` runs happily with no card, which is the point of it, and it still cannot run here:
     # the documented example points at `./Qwen3-4B`, and the command reads a real checkpoint's
     # config to size the key-value cache. Skipped for the missing checkpoint and not for the

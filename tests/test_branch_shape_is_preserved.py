@@ -39,7 +39,7 @@ import pytest
 WORKFLOWS = sorted((Path(__file__).resolve().parent.parent / ".github" / "workflows").glob("*.yml"))
 
 #: A push of a ref to a remote, as written in a run step. Matches `git push origin HEAD:main`,
-#: `git push origin "HEAD:${GITHUB_REF_NAME}"` and `git push olympus dev`.
+#: `git push origin "HEAD:${GITHUB_REF_NAME}"` and `git push mirror dev`.
 #: A BARE `git push` COUNTS, and missing it was the hole. The pattern required an argument after
 #: `push`, so it saw `git push origin dev` and was blind to `git push` on its own, which is the
 #: form that pushes whatever branch is checked out. `distribute.yml` ends its manifest refresh with

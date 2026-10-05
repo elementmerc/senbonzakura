@@ -23,7 +23,7 @@ two-mechanisms-deriving-one-fact defect this project keeps finding
 Pretending the first is the second would be dishonest in the direction that flatters us: 21
 chosen cases that were all fixed the day they were found is not a sample of the tree.
 
-THE NUMBER THAT WAS NEVER MEASURED, measured 2026-10-01 on chronos
+THE NUMBER THAT WAS NEVER MEASURED, measured 2026-10-01 on an 8 core CPU-only box
 
     mutants over our own code, vendor/ excluded    48,822   (63 modules, 25,427 executable lines)
     mutant generation for the whole package        53.6 s   (0.85 s per module, a fixed cost)

@@ -48,7 +48,7 @@ from senbonzakura import fetch, hubmessage, say
 REPO = "Nonexistent-Owner-xyz/definitely-not-a-real-repo-xyz"
 FILENAME = "model.gguf"
 
-#: The real shape of what `huggingface_hub` raises, reproduced on atlas on 2026-09-27.
+#: The real shape of what `huggingface_hub` raises, reproduced on a CPU-only box on 2026-09-27.
 THEIRS = (
     "401 Client Error. (Request ID: Root=1-6ab9552c-64feb10467035dd1310d3112;568a7158-123e)\n"
     "\n"

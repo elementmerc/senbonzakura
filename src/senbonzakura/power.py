@@ -10,8 +10,8 @@ The v0.7 exit gate asks for *"at least five seeds per configuration, with the sp
 a stated effect size that five seeds can actually resolve"*. Nothing in this repository computed
 that number, so the requirement was met by writing "five seeds" in a plan and hoping.
 
-The cost of not having it is not theoretical and it arrived from next door. The hephaestus session
-compared three KV configurations at n=200 and got what looked like a clean ordering across ECE
+The cost of not having it is not theoretical and it arrived from next door. A peer session on a
+sister project compared three KV configurations at n=200 and got what looked like a clean ordering across ECE
 0.123 to 0.140. Then it ran the SAME configuration twice: 0.103 and 0.157. Replication moved the
 number by 0.054 while the whole spread between arms was 0.017, so **the noise floor was three
 times the effect** and all three arms were indistinguishable. Every remaining v0.4 comparison here

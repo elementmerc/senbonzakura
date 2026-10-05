@@ -730,7 +730,7 @@ def test_the_dogfooding_above_is_not_vacuous():
 # possibly speak about, the report says PASSED and a reader counting examined checks is being told
 # a question was asked. Three checks were fixed for it on the morning of 2026-09-21 and four more
 # were found that afternoon, by running the checker over three real coherence artefacts recovered
-# from the ROG: six checks examined them and only two could have fired.
+# from a GPU laptop: six checks examined them and only two could have fired.
 #
 # WHAT THESE TWO DO NOT CATCH, said here rather than discovered as a fifth spelling. They cover
 # the two shapes actually found and no more. A rule gated by an `all_of` over a field, rather

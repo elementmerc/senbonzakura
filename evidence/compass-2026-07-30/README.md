@@ -114,8 +114,8 @@ recorded skips, and the decoded token ids that were scored. Two things to note a
   That is a claim rather than a measurement, and `dirty` is `null` because nothing could check
   the tree against it.
 
-  **This line said `558a237` until 2026-09-25**, which is a docs commit about the holst specs and
-  not the code that produced these numbers. Both artefacts declare `d5a16e0`, "fix(compass): the
+  **This line said `558a237` until 2026-09-25**, which is a docs commit about the job runner's run
+  specs and not the code that produced these numbers. Both artefacts declare `d5a16e0`, "fix(compass): the
   verdict was read where the model puts `<think>`", which is the fix this whole evidence set
   exists to record, so the artefacts are right and the prose was wrong. The two commits are four
   apart and one of them straddles the defect that moved the headline figure from 0.9636 to 0.9887,

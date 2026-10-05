@@ -16,7 +16,7 @@ That was also right, and its docstring said it "runs after the post-bake measure
 true when it was written.
 
 Putting the two together left the probe on the far side of the line that takes the weights off the
-card. MEASURED ON THE ROG, 2026-09-26, from the run's own log: sixteen probe items took **604
+card. MEASURED ON A 6 GB LAPTOP CARD, 2026-09-26, from the run's own log: sixteen probe items took **604
 seconds** with the weights on the host against **25 to 37 seconds** with them on the card, while
 `nvidia-smi` read **187 MiB**. At the default 200 items that turns a six minute measurement into
 two hours, per arm, and a ten arm comparison from an evening's work into a day's.
@@ -125,7 +125,7 @@ class TestTheWeightsComeBack:
         obj.restore_device_after_save()
         assert obj.model.moves == ["cpu", "cuda"], (
             "the weights were not put back, so the probe after the save generates on the host: "
-            "604 seconds for sixteen items against 25 to 37, measured on the ROG")
+            "604 seconds for sixteen items against 25 to 37, measured on a 6 GB laptop card")
         assert cli._weights_live_on(obj.model) == "cuda"
 
     def test_putting_them_back_twice_moves_them_once(self):

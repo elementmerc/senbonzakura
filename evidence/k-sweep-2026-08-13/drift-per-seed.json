@@ -46,5 +46,5 @@
       0.005
     ]
   },
-  "hard_refusal_note": "Per seed, in the order of `seeds`, as a fraction. Recovered on 2026-09-25 from the run's own holst database after the panel found that the 0.1% and 0.3% means were published with no artefact behind them, although they are the premise that makes this comparison readable: the argument is drift AT MATCHED REFUSAL. The means are 0.001 and 0.003, which is what the published 0.1% and 0.3% state. Measured by `senbonzakura score` on 200 held-out prompts per arm, the same rows and the same ruler as every other figure in this file."
+  "hard_refusal_note": "Per seed, in the order of `seeds`, as a fraction. Recovered on 2026-09-25 from the job runner's own database for this run after the panel found that the 0.1% and 0.3% means were published with no artefact behind them, although they are the premise that makes this comparison readable: the argument is drift AT MATCHED REFUSAL. The means are 0.001 and 0.003, which is what the published 0.1% and 0.3% state. Measured by `senbonzakura score` on 200 held-out prompts per arm, the same rows and the same ruler as every other figure in this file."
 }

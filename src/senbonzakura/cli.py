@@ -4761,14 +4761,17 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
             # given, which inside a sealed container is a mount point rather than an
             # identity; `model_id` is what the checkpoint calls itself, which is the
             # part a stranger can look up.
-            "model": args.model,
-            "model_id": getattr(getattr(run.model, "config", None), "_name_or_path", None),
             # WHICH REVISION, not just which name. A Hub id resolves to whatever the
             # Hub serves on the day, so a third party redoing this next year gets a
             # different checkpoint under the same string and no artefact says so.
             # transformers has already resolved it, so this costs an attribute read.
-            "model_revision": getattr(getattr(run.model, "config", None),
-                                      "_commit_hash", None),
+            #
+            # Derived in `stamps` since 2026-10-05, because the jailbreak and multi-turn
+            # commands need the same three fields and a second copy of this derivation is
+            # how two artefacts come to disagree about one checkpoint.
+            "model": args.model,
+            **{f"model_{k}": v for k, v in
+               stamps.model_identity(run.model, args.model).items() if k != "given"},
             # And WHICH corpus. `--track` is recorded as a path, which is a fact about
             # somebody else's disk; the digest is the part that can be checked from
             # anywhere. The function already exists and stamps track promotion.

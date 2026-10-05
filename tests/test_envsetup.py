@@ -261,7 +261,7 @@ class _Proc:
         self.stdout, self.returncode, self.stderr = stdout, returncode, ""
 
 
-SMI_L = ("GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-633f1990)\n"
+SMI_L = ("GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-0e1d2c3b)\n"
          "GPU 1: NVIDIA GeForce RTX 4090 (UUID: GPU-aaaa)\n")
 
 SMI_FULL = """Thu Sep 10 12:00:00 2026

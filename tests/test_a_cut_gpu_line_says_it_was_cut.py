@@ -8,12 +8,13 @@ WHAT PROMPTED IT, 2026-09-27
 
 Audit finding 15: values truncated to a column budget with no ellipsis. The occurrence in
 `envsetup._describe` could only be seen on a machine with an NVIDIA card, which is why it survived
-several passes on hardware that has none, and it was confirmed on the ROG on 2026-09-27. What
-`nvidia_gpus` returns is the whole `nvidia-smi -L` line, which on that machine is 90 characters:
+several passes on hardware that has none, and it was confirmed on 2026-09-27 on a 6 GB laptop
+card. What `nvidia_gpus` returns is the whole `nvidia-smi -L` line, which on that machine is 90
+characters:
 
-    GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-633f1990-0faf-53a0-cfcb-f1a382526659)
+    GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-0e1d2c3b-4a59-5867-7564-8a9b0c1d2e3f)
 
-Cut to sixty with `g[:60]`, the reader was shown `... (UUID: GPU-633f1990-0f` and no sign that
+Cut to sixty with `g[:60]`, the reader was shown `... (UUID: GPU-0e1d2c3b-4a` and no sign that
 anything had been removed, so a truncated identifier read as a complete one. That is the worst case
 of the whole finding: two cards whose names agree for sixty characters differ only in the UUID, so
 cutting it makes them the same card on screen.
@@ -43,12 +44,15 @@ import pytest
 
 from senbonzakura import envsetup, say
 
-#: Verbatim from `nvidia-smi -L` on the ROG, 2026-09-27. 90 characters.
-ROG = "GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-633f1990-0faf-53a0-cfcb-f1a382526659)"
+#: The shape `nvidia-smi -L` really emitted on a 6 GB laptop card, 2026-09-27, with the card's own
+#: UUID swapped for a synthetic one of identical length. The length is what this test measures, so
+#: the substitution costs the test nothing, and a hardware identifier is nobody's business in a
+#: public repository.
+CARD_LINE = "GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU (UUID: GPU-0e1d2c3b-4a59-5867-7564-8a9b0c1d2e3f)"
 
 #: Two cards of the same model. Their names agree far past any sensible budget, and only the UUID
 #: tells them apart, which is the whole argument for marking the cut.
-TWINS = [ROG, ROG.replace("GPU 0", "GPU 1").replace("633f1990", "911a2b3c")]
+TWINS = [CARD_LINE, CARD_LINE.replace("GPU 0", "GPU 1").replace("0e1d2c3b", "911a2b3c")]
 
 
 def _block(gpus):
@@ -77,7 +81,7 @@ def _cards(gpus):
 
 def test_a_card_line_longer_than_the_budget_says_it_was_cut(monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
-    line, = _cards([ROG])
+    line, = _cards([CARD_LINE])
     assert say.CUT in line, (
         f"a card's identifier was cut with nothing to show it, so a partial UUID reads as a whole "
         f"one: {line!r}")
@@ -118,7 +122,7 @@ def test_no_card_line_exceeds_the_ceiling(columns, count, monkeypatch):
     fail here. 40 is the floor `say.width()` clamps to.
     """
     monkeypatch.setenv("COLUMNS", str(columns))
-    gpus = [ROG.replace("GPU 0", f"GPU {i}") for i in range(count)]
+    gpus = [CARD_LINE.replace("GPU 0", f"GPU {i}") for i in range(count)]
     for line in _block(gpus):
         assert len(line) <= say.CEILING, (
             f"{len(line)} columns with {count} card(s) at COLUMNS={columns}: {line!r}")
@@ -145,7 +149,7 @@ def test_a_card_gets_more_of_a_wide_terminal_than_sixty_columns(monkeypatch):
     number, so moving `CEILING` or the indent does not make this test wrong.
     """
     monkeypatch.setenv("COLUMNS", "80")
-    line, = _cards([ROG])
+    line, = _cards([CARD_LINE])
     assert len(line.strip()) > 60, (
         f"the card line is still inside the old sixty-column budget: {line!r}")
     assert len(line) <= say.CEILING

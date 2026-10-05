@@ -35,8 +35,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from . import gguf_read
-from .adapters import gguf_file, leaderboard_row
+from . import cardread, gguf_read
+from .adapters import gguf_file, leaderboard_row, model_card
 from .registry import read_json_bounded
 
 
@@ -46,6 +46,13 @@ class LoaderError(Exception):
 
 #: Suffixes read as delimited rows. A leaderboard publishes a CSV; a few publish tab-separated.
 _DELIMITED = {".csv": ",", ".tsv": "\t"}
+
+#: Suffixes read as a model card. A card is a README in Markdown; `.markdown` is the long spelling.
+_CARD = {".md", ".markdown"}
+
+#: A ceiling on a card's size. A model card is prose and the largest real ones run to tens of
+#: kilobytes, so this is ample and it stops a mis-named large file being scanned by regex.
+MAX_CARD_BYTES = 4 * 1024 * 1024
 
 #: A ceiling on rows read from a delimited file. The UGI data file is 1,326 rows, so this is ample,
 #: and it stops a mis-named multi-gigabyte file being walked line by line.
@@ -107,6 +114,36 @@ def _load_delimited(path: Path, *, row_select: str | None) -> dict:
         "source": path.stem,
         "source_path": str(path),
         "rows_available": len(rows),
+    }
+
+
+def _load_card(path: Path) -> dict:
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        # FOUND BY ITS OWN TEST. `stat` on a missing path raises before the read below ever runs,
+        # so without this the refusal was a FileNotFoundError traceback rather than a sentence.
+        raise LoaderError(f"could not read it: {e}") from e
+    if size > MAX_CARD_BYTES:
+        raise LoaderError(
+            f"it is {size:,} bytes and a model card is prose; this reads at most "
+            f"{MAX_CARD_BYTES:,}. A file this large is something else.")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise LoaderError(f"could not read it: {e}") from e
+    except UnicodeDecodeError as e:
+        raise LoaderError(
+            f"it is not text this tool can decode: {e}. A model card should be UTF-8 "
+            f"Markdown.") from e
+    if not text.strip():
+        raise LoaderError(
+            "this file is empty, so there is no claim in it to check. An empty card is reported "
+            "as unchecked rather than as clean.")
+    return {
+        model_card.FORMAT_KEY: model_card.FORMAT_VALUE,
+        "card": cardread.read_card(text, name=path.stem),
+        "source_path": str(path),
     }
 
 
@@ -176,7 +213,9 @@ def load_document(path, *, row_select: str | None = None) -> dict:
         return _load_gguf(p)
     if p.suffix.lower() in _DELIMITED:
         return _load_delimited(p, row_select=row_select)
+    if p.suffix.lower() in _CARD:
+        return _load_card(p)
     return read_json_bounded(p)
 
 
-__all__ = ["MAX_ROWS", "LoaderError", "load_document"]
+__all__ = ["MAX_CARD_BYTES", "MAX_ROWS", "LoaderError", "load_document"]

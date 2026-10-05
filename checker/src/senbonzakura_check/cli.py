@@ -58,7 +58,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import adapters
+from . import adapters, family
 from ._version import __version__
 from .adapters import UnknownArtefactError, normalise
 from .loaders import LoaderError, load_document
@@ -136,11 +136,30 @@ def build_parser():
     ap.add_argument("--skip-unknown", action="store_true",
                     help="treat a named file that is not a result artefact the way a swept one "
                          "is treated: report it and carry on, rather than exiting 2")
-    ap.add_argument("--row", default=None, metavar="MODEL",
+    ap.add_argument("--family", default=None, metavar="METRIC",
+                    help="read the paths as members of ONE family and report what can be said "
+                         "about that metric across them, instead of checking each file. The "
+                         "answer is a verdict rather than an average: either a single value is "
+                         "consistent with every member, or the family is not one thing and the "
+                         "pairs that are actually separated are named. Needs at least three "
+                         "members, because two is a comparison and --pair reads those")
+    ap.add_argument("--size", action="append", default=[], metavar="MODEL=PARAMS",
+                    help="a parameter count for one member, repeatable, for example "
+                         "--size Qwen3.5-27B=27B. Supplied rather than parsed, because no "
+                         "artefact records a size and a model name routinely carries two numbers "
+                         "with nothing to say which is which. Only used with --family --trend")
+    ap.add_argument("--trend", action="store_true",
+                    help="with --family, also report whether the members the evidence can order "
+                         "move one way as size rises. Reads only the pairs that are actually "
+                         "separated, so it never finds a direction in noise, and it reports a "
+                         "direction rather than a slope")
+    ap.add_argument("--row", action="append", default=None, metavar="MODEL",
                     help="which row of a leaderboard export to check, matched against any column "
                          "that names the model. A file holding one row needs no --row; a file "
                          "holding many is refused without one, because checking whichever row "
-                         "happened to be first would report on a model nobody chose")
+                         "happened to be first would report on a model nobody chose. Repeatable "
+                         "ONLY with --family, where several rows of one ranking are the members "
+                         "of the lineage being read")
     return ap
 
 
@@ -490,6 +509,152 @@ class _Heartbeat:
         return True
 
 
+#: Multipliers a parameter count may be written with. A size is read for ordering only, so the
+#: exact scale never reaches a figure; what matters is that `8B` and `27B` sort correctly and that
+#: `8` and `8B` cannot silently mean different things in one invocation.
+_SIZE_SUFFIXES = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
+
+
+def _parse_sizes(values):
+    """`MODEL=PARAMS` pairs as `{model: float}`, or a sentence saying which one is wrong."""
+    sizes = {}
+    for raw in values:
+        model, sep, size = str(raw).partition("=")
+        if not sep or not model.strip() or not size.strip():
+            return None, (f"--size {raw!r} is not MODEL=PARAMS. The model is the name the artefact "
+                          f"records and the size is a number, optionally with k, M, B or T, for "
+                          f"example --size Qwen3.5-27B=27B.")
+        text = size.strip()
+        multiplier = _SIZE_SUFFIXES.get(text[-1].lower(), 1.0)
+        if multiplier != 1.0:
+            text = text[:-1]
+        try:
+            value = float(text)
+        except ValueError:
+            return None, (f"--size {raw!r} has {size.strip()!r} where a number belongs. A size "
+                          f"that cannot be read is refused rather than dropped, because a trend "
+                          f"computed over fewer points than were supplied would look stronger "
+                          f"than the evidence behind it.")
+        if value <= 0:
+            return None, f"--size {raw!r} is not a positive parameter count."
+        if model.strip() in sizes:
+            return None, (f"--size names {model.strip()!r} twice, so which size applies would "
+                          f"depend on argument order.")
+        sizes[model.strip()] = value * multiplier
+    return sizes, None
+
+
+def _family_report(args, files, out):
+    """Read every path as one family and write the verdict. Returns the exit status.
+
+    THE UNREADABLE FILE IS FATAL HERE, which is the opposite of the sweep's posture and is
+    deliberate. A sweep over a directory reports an unreadable file and carries on, because the
+    other files' findings are still true. A family aggregate computed over four of five supplied
+    artefacts is a statement about a family the caller did not name, and nothing in its output
+    would say so.
+    """
+    sizes, problem = _parse_sizes(args.size)
+    if problem:
+        print(problem, file=out)
+        return 2
+
+    rows = args.row or [None]
+    # SEVERAL ROWS OF ONE RANKING ARE SEVERAL MEMBERS. A published ranking lists a whole lineage in
+    # one file, so the family's members are rows rather than files, and the loader deliberately
+    # refuses to guess which row it was handed. Naming them is therefore the only way this reaches
+    # a leaderboard at all, which is the case that needs no compute and so is the one most likely
+    # to be used.
+    if len(rows) > 1 and len(files) != 1:
+        print(f"--row was given {len(rows)} times and {len(files)} files were named. Several rows "
+              f"are the members of ONE ranking, so name one file; several files are members "
+              f"already and need no --row.", file=out)
+        return 2
+
+    documents = []
+    for path, _named in files:
+        for row in rows:
+            normalised, why = read_artefact(path, row_select=row)
+            if why is not None:
+                where = f"{path}" + (f" --row {row!r}" if row else "")
+                print(f"{where}: {why}\n  Nothing was aggregated. A family figure over some of "
+                      f"the artefacts you named would describe a family you did not choose.",
+                      file=out)
+                return 2
+            label = f"{path}" + (f" [{row}]" if len(rows) > 1 else "")
+            documents.append((label, normalised))
+
+    try:
+        result = family.aggregate(documents, metric=args.family, sizes=sizes,
+                                  want_trend=args.trend)
+    except family.FamilyError as e:
+        print(f"{e}", file=out)
+        return 2
+
+    if args.json:
+        json.dump(_family_entry(result), out, indent=2)
+        print(file=out)
+        return 0
+
+    _render_family(result, out)
+    return 0
+
+
+def _family_entry(result):
+    """The machine-readable form, carrying the verdict rather than only the numbers."""
+    return {
+        "metric": result.metric, "estimator": result.estimator, "units": result.units,
+        "verdict": family.verdict_sentence(result),
+        "one_figure_defensible": result.one_figure_defensible,
+        "common_range": ([result.common_low, result.common_high]
+                         if result.common_low is not None else None),
+        "members": [{"model": m.model, "source": m.source, "value": m.value, "n": m.n,
+                     "interval": [m.low, m.high] if m.has_interval else None,
+                     "interval_basis": m.interval_basis, "size": m.size}
+                    for m in result.members],
+        "separated": [{"lower": lo.model, "higher": hi.model, "gap": gap}
+                      for lo, hi, gap in result.separated],
+        "pooled": result.pooled,
+        "trend": result.trend,
+        "notes": list(result.notes),
+    }
+
+
+def _render_family(result, out):
+    """The report a person reads, with the verdict first."""
+    print(f"{len(result.members)} members, {result.metric}"
+          f"{f' ({result.estimator})' if result.estimator else ''}", file=out)
+    print(file=out)
+    _wrapped(family.verdict_sentence(result), out, indent="  ")
+    print(file=out)
+    for m in sorted(result.members, key=lambda m: m.value):
+        interval = (f"[{m.low:.4g}, {m.high:.4g}] {m.interval_basis}"
+                    if m.has_interval else "no interval")
+        n = f"n={m.n}" if m.n else "n unstated"
+        print(f"  {m.model:<34} {m.value:>10.4g}  {interval:<28} {n}", file=out)
+
+    if result.separated:
+        print(file=out)
+        print("  Differences the evidence supports:", file=out)
+        for lo, hi, gap in result.separated:
+            print(f"    {lo.model} below {hi.model}, by at least {gap:.4g}", file=out)
+
+    if result.pooled:
+        p = result.pooled
+        print(file=out)
+        print(f"  Pooled: {p['count']}/{p['n']} = {p['value']:.4g} "
+              f"[{p['low']:.4g}, {p['high']:.4g}]", file=out)
+        _wrapped(p["means"], out, indent="    ")
+
+    if result.trend:
+        print(file=out)
+        print(f"  Size trend: {result.trend['verdict']}", file=out)
+        _wrapped(result.trend["why"], out, indent="    ")
+
+    for note in result.notes:
+        print(file=out)
+        _wrapped(note, out, indent="  ")
+
+
 def main(argv=None, out=None, clock=None):
     args = build_parser().parse_args(argv)
     out = out or sys.stdout
@@ -510,12 +675,31 @@ def main(argv=None, out=None, clock=None):
     # after half the output has been written is a refusal nobody can act on, and reading every
     # file before saying "this needed exactly two" was work spent to reach a conclusion that was
     # available from the arguments alone. Pre-flight, per baseline section 2.1.
+    if args.pair and args.family:
+        print("--pair and --family ask two different questions of the same files. --pair reads "
+              "two arms of one experiment; --family reads many models as one lineage. Run them "
+              "separately.", file=out)
+        return 2
+
     if args.pair and (len(files) != 2 or not all(named for _, named in files)):
         print("--pair needs exactly two result files, named on the command line. Which two "
               "artefacts are arms of one comparison is a claim only you can make: sweeping a "
               "directory and pairing everything in it would report findings about "
               "comparisons nobody ran.", file=out)
         return 2
+
+    if args.family:
+        return _family_report(args, files, out)
+
+    # ONE ROW OUTSIDE FAMILY MODE. Checking a file once per named row would print several reports
+    # for one path, and the exit status would mix them, so the caller could not tell which row
+    # carried the finding. Refused rather than silently reading the first.
+    if args.row is not None and len(args.row) > 1:
+        print(f"--row was given {len(args.row)} times, and outside --family exactly one row is "
+              f"checked. Several reports for one file would share one exit status, so which row "
+              f"carried a finding would be unreadable.", file=out)
+        return 2
+    row_select = args.row[0] if args.row else None
 
     # ── the report is written as the sweep goes, not accumulated and rendered afterwards ────────
     #
@@ -574,7 +758,7 @@ def main(argv=None, out=None, clock=None):
 
     for path, was_named in files:
         named = was_named and claimed
-        findings, skipped, problem = inspect_file(path, checks, row_select=args.row)
+        findings, skipped, problem = inspect_file(path, checks, row_select=row_select)
         if not was_named and problem is not None and not isinstance(problem, Unrecognised):
             # UNREADABLE IS NOT A MATTER OF WHO CLAIMED WHAT. The sweep discount exists for a file
             # that is simply not a result; a file that could not be parsed at all is broken whether
@@ -601,7 +785,7 @@ def main(argv=None, out=None, clock=None):
     # the ones that do not.
     if args.pair:
         pair_findings, pair_skipped, pair_problem = inspect_pair(
-            files[0][0], files[1][0], checks, row_select=args.row)
+            files[0][0], files[1][0], checks, row_select=row_select)
         pair_applied = 0 if pair_problem else n_pair_checks - len(pair_skipped)
         pair_label = f"{files[0][0]} vs {files[1][0]}"
         emit(pair_label, pair_findings, pair_skipped, pair_problem, True, pair_applied)

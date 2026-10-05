@@ -49,6 +49,7 @@ from .gguf_file import GgufAdapter
 from .inspect_log import InspectAdapter
 from .leaderboard_row import LeaderboardRowAdapter
 from .lm_eval_log import LmEvalAdapter
+from .model_card import ModelCardAdapter
 from .senbonzakura_log import SenbonzakuraAdapter
 
 #: Tried in order. The first whose `detects` answers true owns the document.
@@ -63,7 +64,7 @@ from .senbonzakura_log import SenbonzakuraAdapter
 #: field this package itself stamped. That makes them both the most specific detectors here and
 #: the only ones that cannot misfire on a stranger's file, so nothing is risked by trying them
 #: first and a structural detector can never steal a document the loader already identified.
-ADAPTERS = (GgufAdapter, LeaderboardRowAdapter,
+ADAPTERS = (GgufAdapter, LeaderboardRowAdapter, ModelCardAdapter,
             LmEvalAdapter, InspectAdapter, SenbonzakuraAdapter)
 
 
@@ -142,5 +143,5 @@ def _instrument_identity(metrics) -> dict:
     }
 
 
-__all__ = ["ADAPTERS", "GgufAdapter", "LeaderboardRowAdapter", "UnknownArtefactError",
-           "detect", "normalise"]
+__all__ = ["ADAPTERS", "GgufAdapter", "LeaderboardRowAdapter", "ModelCardAdapter",
+           "UnknownArtefactError", "detect", "normalise"]

@@ -199,12 +199,36 @@ exist for a benchmark you bring yourself. So the honest comparison is eleven dat
 one, and what we have instead is that ours can be graded without a judge at all. That is a
 different trade, and it is a trade rather than a win.
 
-**Breadth of attack, where we have nothing at all.** abliterix carries helpers for JALMBench
-(single-turn jailbreak success), MTJ-Bench and Crescendo (multi-turn), and TamperBench, which
-asks whether an abliterated model stays compliant after a small safety-recovery finetune
-(`src/abliterix/external_eval.py:10`). We measure whether refusal went away and what it cost;
-we do not measure whether the result survives being attacked or repaired. Those are real
-questions about an abliterated model and this tool cannot answer any of them.
+**Breadth of attack, where we have nothing at all, and this paragraph overstated a rival until
+2026-10-05.** It said abliterix "carries helpers for JALMBench, MTJ-Bench and Crescendo, and
+TamperBench". **Reading the clone says otherwise**, and the correction cuts both ways.
+
+What is real, and it is a genuine gap on our side: `evaluate_jailbreak` and `evaluate_multi_turn`
+in `src/abliterix/external_eval.py` are **working attack-scoring loops**. They take a
+caller-supplied generator, run prompts through it, and classify the replies, and the multi-turn one
+walks a dialogue history turn by turn. **We have nothing equivalent.** That is the part of this row
+that stands.
+
+What is not real: its `pyproject.toml` **depends on none of JALMBench, MTJ-Bench, TamperBench or
+StrongREJECT**, there is no vendored copy and no optional extra, and `grep -RIn tamperbench` over
+the whole clone returns four hits, three of them docstrings in that one file and one a test title.
+The file's own docstring says these are "**library helpers, they are not auto-wired into the CLI run
+loop**". And **it ships no attack prompts**: the docstring says "prompts in whatever format the
+generator expects", so the corpus is the caller's problem. A harness without its corpus is less than
+a benchmark integration and more than nothing.
+
+**On tamper resistance specifically, neither tool measures it.** `compute_tamper_resistance` is
+three lines of arithmetic over two floats the caller must already hold: it computes
+`1.0 - (post - pre) / (1.0 - pre)`, clipped, and its own docstring calls it an "Abliterix-specific
+normalized recovery metric (inspired by recovery evaluations such as TamperBench)". It generates
+nothing, loads nothing and trains nothing, so **a user must run the safety-recovery finetune
+themselves by means abliterix does not provide**. That is the same position we are in, with a
+formula on top.
+
+So the honest statement of this row: **they have the scoring loops and we have the corpora**, since
+six prompt sets ship inside our wheel under MIT and CC-BY. Neither of us measures whether an
+abliteration survives repair, and that question is open for the whole field rather than answered by
+somebody else.
 
 **Single-model evidence.** Most of the numbers here come from Qwen3-1.7B, because that is
 what fits on the card this was built on. A claim measured on one model is a claim about one

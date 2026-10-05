@@ -308,12 +308,17 @@ def report(s):
     return lines
 
 
-def budget_warning(budget, converged_at=None):
+def budget_warning(budget, converged_at=None, flag="--gen-tokens"):
     """The line a run prints when its generation budget is too short to trust, or None.
 
     Deliberately a warning and not a refusal. What counts as enough is a property of the model and
     is not known before the run; refusing on a guess would block correct runs to prevent a
     mistake that a sentence can prevent instead.
+
+    `flag` is the knob the reader has to turn, and it is a parameter because it is not the same
+    knob on every path. The abliterator's budget is `--gen-tokens`; the scorer's and the jailbreak
+    command's is `--max-new`. The sentence named `--gen-tokens` for all three, so the one piece of
+    advice it gives ended with a flag `senbonzakura score` rejects.
     """
     if converged_at is not None:
         if budget >= converged_at:
@@ -327,4 +332,4 @@ def budget_warning(budget, converged_at=None):
             f"measured at a median of character 306 on defended replies, which is past this "
             f"budget, so a refusal can be cut off before it is emitted and the rate will read low. "
             f"Measure the model with `senbonzakura score --length-sweep` before quoting the "
-            f"number, or raise --gen-tokens.")
+            f"number, or raise {flag}.")

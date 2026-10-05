@@ -424,7 +424,7 @@ def main(argv=None):
     warning = None
     if not a.harm_recognition:
         from . import lengthsweep
-        warning = lengthsweep.budget_warning(a.max_new)
+        warning = lengthsweep.budget_warning(a.max_new, flag="--max-new")
     # Which prompt format produced these numbers. Two runs under different formats are
     # not comparable, and this is what lets a reader tell.
     res["chat_template"] = getattr(tok, "senbon_chat_template", None)

@@ -139,6 +139,9 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   the table, the failure list in `measure.json` and the exit status now agree about the same run
 
 ### Documentation
+- A new guide page covers whether an edit holds up: what each of the three new commands measures,
+  the control each one runs, which way the tamper measurement's bias runs, and the conditions
+  under which a run refuses to give you a number at all
 - The page explaining how the tool works now describes the direction filter as it behaves, with
   a held out score and a measured floor, matching the two pages that already did
 - The capability probe is described as five grading rules over one bundled dataset, not as five

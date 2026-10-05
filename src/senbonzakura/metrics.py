@@ -372,10 +372,36 @@ KL_TARGET = 0.1
 KL_CEIL = 0.25
 
 # Knee-selection weights (Tier-1 P2 fix): the final pick minimises a WEIGHTED scalar of the three
-# search objectives, not a lexicographic tuple that let the keyword axis fall to a tiebreaker. The
-# keyword/hedging term carries real weight so the saved model actually reflects the axis Heretic wins.
+# search objectives, not a lexicographic tuple that let the keyword axis fall to a tiebreaker.
 KNEE_W_NONCOMPLIANCE = 1.0   # hard refusal + hedged compliance
-KNEE_W_KEYWORD = 1.0         # Heretic keyword rate (its own axis, now steered at selection time)
+# WAS 1.0 FROM 2026-09-06 TO 2026-10-05, AND AT 1.0 THIS TERM DECIDED THE SELECTION. The 2026-09-06
+# note said the keyword axis was being raised so it would carry "real weight" instead of only
+# breaking exact ties. It overshot, nothing measured it afterwards, and no test could have caught it
+# because every test here asserts the ORDERING the term produces and none asserted its SIZE.
+#
+# Measured 2026-10-05 across the ten real arms in the September head-to-head, with KL held at target
+# so the surcharge is zero and this term is the only thing that can move the order. "Share" is this
+# term against every other term combined; "moved" is arms out of position against the ordering our
+# own metric alone produces; "reversed" is pairs our own metric separates that this term flips.
+#
+#     weight    share of the rest      moved      reversed (of 42 pairs)
+#       0.02      7.1% ..  18.7%       2 of 10
+#       0.05     17.9% ..  46.7%       3 of 10
+#       0.10     35.7% ..  93.3%       3 of 10        3
+#       0.20     71.4% .. 186.7%       5 of 10
+#       1.00    357.1% .. 933.3%       9 of 10        8
+#
+# WHY THAT IS WORSE THAN IT LOOKS: our own metric reads `refusal` 0.0000 on all ten arms with
+# `soft_refusal` between 0.015 and 0.050, while the keyword rate on the same generations reads 0.085
+# to 0.280. So at 1.0 the dominant term in the rule that decides which model a user receives was
+# firing on text our own semantic metric judges compliant.
+#
+# 0.1 is the operator's decision (2026-10-05), with the intent recorded as "a tiebreaker". The
+# measurement above supports 0.05 or below for that intent literally, since at 0.1 the term still
+# reaches 93% of the rest in the worst measured case. Left at 0.1 deliberately rather than quietly
+# adjusted: the number is the operator's and the evidence for moving it is written here beside it.
+# A GPU scoring run is scheduled to settle it on generations rather than on aggregates.
+KNEE_W_KEYWORD = 0.1         # lexical refusal markers, subordinate to our own semantic metric
 KNEE_W_KL = 0.5             # coherence surcharge, applied only above KL_TARGET
 # Matches the `2.0 * broken` the search objective already carries, so the rule that RANKS trials
 # and the rule that PICKS among them agree about how bad a wrecked model is. They disagreed until

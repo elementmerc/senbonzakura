@@ -743,21 +743,53 @@ def build_parser():
     return ap
 
 
-def free(model):
-    """Drop a model and give the allocator the memory back, on whichever device it was on.
+def release():
+    """Give the allocator back whatever has just gone out of scope, and say how much is still held.
 
-    Between arms rather than at the end. Three checkpoints resident at once is an out-of-memory
-    error on the card this is for, and on CPU it is the machine's swap, which is slower than the
-    finetune it was meant to make room for.
+    IT TAKES NO MODEL, AND THAT IS THE FIX. This was `free(model)`, which did `del model` on its
+    own parameter: Python drops one reference and the caller's binding keeps the object alive, so a
+    function whose docstring said it prevented three checkpoints being resident at once could not
+    release even one. `main` held the first checkpoint it loaded for the whole run, then loaded two
+    or three more beside it.
+
+    Measured on 2026-10-05: a run on a 135M model, whose steady state should be about 600 MB with
+    an adapter and its optimiser state, reached 1.8 GB and was still climbing at three hours fifty
+    two minutes, by which point the working set was in swap and the machine was thrashing rather
+    than failing. On a rented card that is money spent on paging.
+
+    It is this project's most repeated defect shape in a new costume: a mechanism that answered a
+    narrower question than the one asked (drop MY reference, not THE reference) and read as the
+    wide one. So the narrow version is gone rather than fixed, and every checkpoint now lives
+    inside a function whose frame dies, which leaves nothing for a caller to forget.
+
+    Returns the resident set in bytes, or None where the platform will not say, so the caller can
+    put it in the log. A footprint nobody prints is a footprint somebody else measures.
     """
     import gc
 
     import torch
 
-    del model
+    from . import resources
+
     gc.collect()
     if torch.cuda.is_available():            # pragma: no cover - no card in the test environment
         torch.cuda.empty_cache()
+    return resources.own_footprint()
+
+
+def footprint_line(what):
+    """One heartbeat naming what this process holds and what the machine has left.
+
+    Both halves, because a footprint is only readable against the box: 1.8 GB is unremarkable on a
+    29 GB machine and is the whole of a 7 GB one. Printed after every arm, which is the frequency
+    at which this run's memory actually changes.
+    """
+    from . import resources
+
+    held, available = release(), resources.host_ram_available()
+    return (f"TAMPER_MEMORY after {what}: holding "
+            f"{'unmeasured' if held is None else f'{held / 1e9:.2f} GB'}, machine has "
+            f"{'unmeasured' if available is None else f'{available / 1e9:.2f} GB'} available")
 
 
 def _report(res, path):
@@ -845,30 +877,54 @@ def main(argv=None):
                                           gens, f"tamper-{which}", a.model, a.label)
         return refusal_block(gens)
 
-    # EVERY ARM RELOADS THE CHECKPOINT. See the module docstring: three arms sharing one loaded
-    # model share whatever the previous arm left in it, and with an adapter in the picture the
-    # unwrapping is an API detail to get wrong rather than a property to rely on.
-    model, tok = load(a.model)
-    identity = stamps.model_identity(model, a.model)
-    template = getattr(tok, "senbon_chat_template", None)
-    before = measure(model, tok, "before")
-    free(model)
+    # EVERY ARM RELOADS THE CHECKPOINT, AND NO CHECKPOINT IS EVER BOUND IN THIS SCOPE.
+    #
+    # The reload is for correctness: three arms sharing one loaded model share whatever the
+    # previous arm left in it, and with an adapter in the picture the unwrapping is an API detail
+    # to get wrong rather than a property to rely on.
+    #
+    # The scoping is for memory, and it is the fix for a measured defect. `main` used to bind
+    # `model` and `base_model` and call `free(model)`, which dropped only the callee's reference,
+    # so every checkpoint the run had loaded stayed resident and a 135M model run reached 1.8 GB
+    # and climbing. Each checkpoint now lives inside a function whose frame dies on return, which
+    # leaves no reference for this scope to forget. `release` takes no model so the old mistake
+    # cannot be written again.
+    def scored(checkpoint, which):
+        """Load, score, and let the checkpoint die with this frame.
+
+        Everything the artefact needs about the model is read out HERE, while the model is in
+        scope, and returned as data. Nothing in the caller's scope ever holds a tensor, which is
+        what makes the memory behaviour a property of the structure rather than of remembering.
+        """
+        model, tok = load(checkpoint)
+        out = {
+            "refusal": measure(model, tok, which),
+            "identity": stamps.model_identity(model, checkpoint),
+            "chat_template": getattr(tok, "senbon_chat_template", None),
+            "prompt_format": stamps.prompt_format_of(tok),
+        }
+        del model, tok
+        return out
 
     def finetuned(checkpoint, pairs, which, log=print):
+        """Load, finetune, score, and let the checkpoint die with this frame."""
         model, tok = load(checkpoint)
         trace = train(prepare(model, recipe, log=log), tok, pairs, recipe, a.device, log=log)
         after = measure(model, tok, which)
-        free(model)
+        del model, tok
         return trace, after
+
+    edited = scored(a.model, "before")
+    before = edited["refusal"]
+    print(footprint_line("the before pass"))
 
     plan = [("recovery", a.model, recovery, before)]
     if neutral is not None:
         plan.append(("neutral", a.model, neutral, before))
     base_before = None
     if a.base:
-        base_model, base_tok = load(a.base)
-        base_before = measure(base_model, base_tok, "base-before")
-        free(base_model)
+        base_before = scored(a.base, "base-before")["refusal"]
+        print(footprint_line("the base model's before pass"))
         plan.append(("ceiling", a.base, recovery, base_before))
 
     # THE FLAG VECTORS STAY IN MEMORY AND OUT OF THE ARTEFACT. Every paired interval here needs
@@ -877,6 +933,7 @@ def main(argv=None):
     arms, flags = {}, {}
     for name, checkpoint, pairs, reference in plan:
         trace, after = finetuned(checkpoint, pairs, name)
+        print(footprint_line(f"the {name} arm"))
         flags[name] = after["flags"]
         arms[name] = {
             **arm_figures(reference["flags"], after["flags"], seed=a.seed,
@@ -903,9 +960,9 @@ def main(argv=None):
             "safety-recovery data is and makes this recipe generous to recovery. So a LOW "
             "recovered fraction is strong evidence of tamper resistance and a HIGH one is weak "
             "evidence of vulnerability."),
-        "model_identity": identity,
+        "model_identity": edited["identity"],
         "generation": {**jailbreak.generation_settings(a), "arms_reload_the_checkpoint": True},
-        "chat_template": template,
+        "chat_template": edited["chat_template"],
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "provenance": provenance(device=a.device,
                                  accelerator=score_module.accelerator_name(a.device),
@@ -938,7 +995,7 @@ def main(argv=None):
     # own `--train-n` and no track manifest confirms it.
     pinned = stamps.pinned(prompts=eval_prompts, model=None, tok=None,
                            load_in_4bit=a.load_in_4bit, skip=len(train_prompts), verified=False,
-                           prompt_format=stamps.prompt_format_of(tok),
+                           prompt_format=edited["prompt_format"],
                            precision=recipe.dtype)
     res["refusal_eval"] = {
         "partition": pinned["partition"],

@@ -589,6 +589,33 @@ def test_host_ram_available_falls_through_to_the_posix_probe(monkeypatch):
     assert nbytes is None or nbytes > 0
 
 
+def test_own_footprint_reports_a_positive_number_on_this_machine():
+    nbytes = resources.own_footprint()
+    assert nbytes is None or nbytes > 0
+
+
+def test_own_footprint_says_unmeasured_rather_than_zero_without_proc(monkeypatch):
+    """None means UNMEASURED and never "small".
+
+    A caller that reads a missing footprint as zero prints a reassuring line about a run that
+    could be anywhere, which is worse than printing nothing: the whole reason this probe exists
+    is that a run growing in the background was found by somebody watching the machine instead of
+    by the run's own log.
+
+    Only `/proc/self/statm` is made to fail, because patching `open` for everything would break
+    whatever else the interpreter was reading at the time.
+    """
+    import builtins
+    real = builtins.open
+
+    def refuse_statm(path, *args, **kwargs):
+        if str(path) == "/proc/self/statm":
+            raise OSError("no /proc here")
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(builtins, "open", refuse_statm)
+    assert resources.own_footprint() is None
+
+
 def test_free_disk_walks_up_to_a_directory_that_exists(tmp_path):
     """The output directory of a run that has not started does not exist yet."""
     deep = tmp_path / "not" / "created" / "yet"

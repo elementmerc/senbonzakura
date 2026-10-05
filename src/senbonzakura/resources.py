@@ -821,6 +821,35 @@ def host_ram_available():
         return None
 
 
+def own_footprint():
+    """The calling process's resident set in bytes, or None where the platform will not say.
+
+    WHY A RUN SHOULD REPORT ITS OWN SIZE. On 2026-10-05 a tamper run on a 135M model grew to
+    1.8 GB and kept climbing, took nearly four hours for about two minutes of arithmetic, and was
+    found by somebody else measuring the machine rather than by anything in its own log. The cause
+    was a `free(model)` that deleted its own parameter and nothing else, so every checkpoint the
+    run had loaded stayed resident; by the time it mattered the working set was in swap and the
+    box was thrashing rather than failing, which is the mode that looks survivable and is not.
+
+    A number in the log every few steps is what turns that into a line somebody reads at minute
+    two. `MemAvailable` beside it answers the other half: a footprint that is fine on a 29 GB box
+    and fatal on a 7 GB one is the same number.
+
+    RESIDENT RATHER THAN PEAK, deliberately. `ru_maxrss` is a high-water mark and never comes
+    back down, so it cannot show a leak being fixed or a model being released. The question here
+    is "how much is held right now", which is the one that grows.
+
+    None means UNMEASURED, never zero. `/proc/self/statm` is Linux only, which includes WSL2, and
+    a caller that treats None as "small" has to say out loud that it did not measure.
+    """
+    try:
+        import os
+        with open("/proc/self/statm", encoding="utf-8") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
 def free_disk(path):
     """Free bytes on the filesystem that would hold `path`, or None.
 

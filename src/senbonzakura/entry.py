@@ -52,6 +52,10 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # with the benign arm left off is the narrower answer this project keeps catching itself
     # reporting as the wider one.
     "jailbreak": ("jailbreak", "main"),
+    # The same question over several turns, which is a different property: a refusal that holds
+    # once and gives way when the request is simply put again costs an attacker one keystroke.
+    # The command word carries a hyphen and the module may not.
+    "multi-turn": ("multiturn", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

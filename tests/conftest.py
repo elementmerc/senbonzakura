@@ -151,7 +151,11 @@ class TinyTokenizer:
     def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kw):
         if "enable_thinking" in kw:
             raise TypeError("enable_thinking not accepted")   # forces chat()'s retry-without-it path
-        return "U: " + msgs[0]["content"]
+        # EVERY MESSAGE, not just the first. It rendered `msgs[0]` alone, which is identical for
+        # the single-turn callers that were the only ones when this was written, and silently
+        # dropped the history for a multi-turn one: a test driving a conversation would have
+        # passed while the model was shown one turn of it.
+        return "".join(("U: " if m["role"] == "user" else "A: ") + m["content"] for m in msgs)
 
     def __call__(self, texts, return_tensors="pt", padding=True, add_special_tokens=False,
                  truncation=False, max_length=None):

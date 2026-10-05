@@ -59,7 +59,21 @@ def render_chat(tok, content):
     mean that guarantee broke, and inventing a prompt format to paper over it is what made a
     whole class of numbers incomparable.
     """
-    msgs = [{"role": "user", "content": content}]
+    return render_conversation(tok, [{"role": "user", "content": content}])
+
+
+def render_conversation(tok, msgs):
+    """A whole message list rendered into a prompt, under the same format as one turn.
+
+    THE SAME TEMPLATE CALL, NOT A SECOND ONE, which is the entire reason this is here rather than
+    in the multi-turn module. A dialogue scored under a different prompt format from the
+    single-turn run it is compared against is the defect this function's single-turn sibling was
+    extracted to end, and a multi-turn rate that is not comparable with the single-turn rate from
+    the same model answers nothing: the whole claim is the difference between them.
+
+    `msgs` is a list of `{"role", "content"}` in order, alternating user and assistant, ending on
+    a user turn so that `add_generation_prompt=True` asks the model to answer it.
+    """
     try:
         return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
                                        enable_thinking=False)

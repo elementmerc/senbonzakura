@@ -61,10 +61,10 @@ from pathlib import Path
 from . import adapters
 from ._version import __version__
 from .adapters import UnknownArtefactError, normalise
+from .loaders import LoaderError, load_document
 from .registry import (
     ArtefactTooLargeError,
     load_checks,
-    read_json_bounded,
     run_checks,
     run_pair_checks,
 )
@@ -136,6 +136,11 @@ def build_parser():
     ap.add_argument("--skip-unknown", action="store_true",
                     help="treat a named file that is not a result artefact the way a swept one "
                          "is treated: report it and carry on, rather than exiting 2")
+    ap.add_argument("--row", default=None, metavar="MODEL",
+                    help="which row of a leaderboard export to check, matched against any column "
+                         "that names the model. A file holding one row needs no --row; a file "
+                         "holding many is refused without one, because checking whichever row "
+                         "happened to be first would report on a model nobody chose")
     return ap
 
 
@@ -187,7 +192,7 @@ class Unrecognised(str):
     __slots__ = ()
 
 
-def read_artefact(path):
+def read_artefact(path, *, row_select=None):
     """One file in the canonical vocabulary, or (None, why not).
 
     Split out of `inspect_file` because `--pair` needs the same three refusals (unreadable,
@@ -196,9 +201,12 @@ def read_artefact(path):
 
     The unrecognised one is returned as `Unrecognised`, which reads as its own sentence everywhere
     and lets the sweep tell "not a result" from "not readable". See that class.
+
+    `row_select` reaches the leaderboard loader, which refuses rather than guessing when a file
+    holds many rows and nothing says which one to check.
     """
     try:
-        doc = read_json_bounded(path)
+        doc = load_document(path, row_select=row_select)
     except OSError as e:
         return None, f"could not read it: {e}"
     except json.JSONDecodeError as e:
@@ -207,6 +215,11 @@ def read_artefact(path):
         # A third refusal beside the other two, in the same shape, because this path reads files
         # nobody here wrote. SECURITY.md puts a crafted result file in scope in those words.
         return None, f"this tool declines to read it: {e}"
+    except LoaderError as e:
+        # A fourth, same shape. A binary file whose header is truncated, a CSV with no rows, or a
+        # --row that matches nothing all land here, and every one of them is a fact about the file
+        # rather than a claim anybody made, so it reads as unchecked and never as clean.
+        return None, f"could not read it as an artefact: {e}"
 
     try:
         return normalise(doc), None
@@ -214,20 +227,20 @@ def read_artefact(path):
         return None, Unrecognised(str(e))
 
 
-def inspect_file(path, checks):
+def inspect_file(path, checks, *, row_select=None):
     """Check one file. Returns (findings, skipped, problem).
 
     `problem` is a sentence when the file could not be checked at all, and is the outcome that
     must never be confused with a clean one.
     """
-    normalised, problem = read_artefact(path)
+    normalised, problem = read_artefact(path, row_select=row_select)
     if problem is not None:
         return [], [], problem
     findings, skipped = run_checks(normalised, checks, artefact=str(path))
     return findings, skipped, None
 
 
-def inspect_pair(path_a, path_b, checks):
+def inspect_pair(path_a, path_b, checks, *, row_select=None):
     """Compare two artefacts. Returns (findings, skipped, problem).
 
     A pair with one unreadable arm is a PROBLEM rather than an empty result, for the same reason
@@ -236,7 +249,7 @@ def inspect_pair(path_a, path_b, checks):
     """
     arms = []
     for path in (path_a, path_b):
-        doc, problem = read_artefact(path)
+        doc, problem = read_artefact(path, row_select=row_select)
         if problem is not None:
             return [], [], f"{path}: {problem}"
         arms.append(doc)
@@ -561,7 +574,7 @@ def main(argv=None, out=None, clock=None):
 
     for path, was_named in files:
         named = was_named and claimed
-        findings, skipped, problem = inspect_file(path, checks)
+        findings, skipped, problem = inspect_file(path, checks, row_select=args.row)
         if not was_named and problem is not None and not isinstance(problem, Unrecognised):
             # UNREADABLE IS NOT A MATTER OF WHO CLAIMED WHAT. The sweep discount exists for a file
             # that is simply not a result; a file that could not be parsed at all is broken whether
@@ -588,7 +601,7 @@ def main(argv=None, out=None, clock=None):
     # the ones that do not.
     if args.pair:
         pair_findings, pair_skipped, pair_problem = inspect_pair(
-            files[0][0], files[1][0], checks)
+            files[0][0], files[1][0], checks, row_select=args.row)
         pair_applied = 0 if pair_problem else n_pair_checks - len(pair_skipped)
         pair_label = f"{files[0][0]} vs {files[1][0]}"
         emit(pair_label, pair_findings, pair_skipped, pair_problem, True, pair_applied)

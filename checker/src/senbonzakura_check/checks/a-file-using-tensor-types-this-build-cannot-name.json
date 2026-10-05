@@ -1,0 +1,33 @@
+{
+  "id": "a-file-using-tensor-types-this-build-cannot-name",
+  "title": "Some of the file's tensors use a precision this build does not recognise",
+  "detects": "A GGUF containing tensor type numbers that are not in this build's table. The file may be perfectly sound and simply newer than the tool reading it, which is the common case. What it means for the reader is narrower and worth stating: the precision census for this file is incomplete, so any sentence about what precision the file is at is partly unverified rather than confirmed.",
+  "incident": "The type numbering is an enum that grows: removed formats leave gaps and are never reused, so a number outside the table means either a format added after this build or a corrupt field. Guessing which, or naming the nearest neighbour, is how a tool reports a confident wrong precision. This check exists so the gap is visible instead of being quietly rounded to the types the build happens to know.",
+  "remedy": "Update to a build whose table covers the file, then read the census again. If the numbers are still unrecognised after updating, the header is more likely corrupt than novel, and the file should be re-downloaded and its checksum compared with the publisher's before anything is concluded from it.",
+  "confidence": "high",
+  "severity": "notes",
+  "false_positive": "An entirely healthy file published with a format newer than this tool fires here, and that is the intended behaviour rather than a false positive: the statement being made is about what this build could verify, not about the file being wrong. It says nothing about the tensors it DID name, which are read from the same table and are as reliable as the table is. A file whose every type is recognised never fires, so silence here means the census is complete.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "equals", "path": "artefact_kind", "value": "gguf"},
+      {"op": "present", "path": "unknown_tensor_type_count"}
+    ]
+  },
+
+  "rule": {
+    "op": "truthy",
+    "path": "unknown_tensor_type_count"
+  },
+
+  "control": {
+    "fires_on": [
+      {"artefact_kind": "gguf", "unknown_tensor_type_count": 4},
+      {"artefact_kind": "gguf", "unknown_tensor_type_count": 1}
+    ],
+    "passes_on": [
+      {"artefact_kind": "gguf", "unknown_tensor_type_count": 0}
+    ]
+  }
+}

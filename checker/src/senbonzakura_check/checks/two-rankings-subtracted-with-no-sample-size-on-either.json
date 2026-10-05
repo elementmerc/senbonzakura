@@ -1,0 +1,130 @@
+{
+  "id": "two-rankings-subtracted-with-no-sample-size-on-either",
+  "title": "Two leaderboard rows are being compared and neither says how many items its score came from",
+  "arity": "pair",
+  "detects": "A comparison between two rows of a public ranking where neither row carries a sample size. The subtraction is arithmetic that always succeeds and a result it cannot support: with no sample size on either side there is no interval on either score, so there is no interval on the difference, and nothing distinguishes a real gap between two models from the ordinary variation between two runs of one model. This is the most common way a public ranking is misread, because the two numbers sit in the same table and look built to be subtracted.",
+  "incident": "The pattern this exists to stop was found in our own outreach research on 2026-10-05. Three pairs of rows on one ranking showed a third party's edit of a publisher's own model scoring above the publisher's: on one the general-reasoning column fell by 1.68, on another by 1.09, and on a third it ROSE by 3.08. Same ranking, same column, same class of edit, and the direction was not consistent. With no sample size published anywhere, there is no way to tell whether that is a real difference between the edits or noise in all three, and every one of those gaps was small enough to be either.",
+  "remedy": "Do not quote the difference. The two rows establish an ordering on that ranking on the dates they were tested, and nothing more. If the difference matters, measure the property on a set you can rerun, both models under identical settings, and report the interval on the difference rather than the two point scores. A paired bootstrap over the same items is the cheap way to get it and needs no extra model runs.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "It fires on any two rows of a ranking shaped this way, which is accurate rather than noisy, but it does mean the finding is about the publication and not about these two models in particular. It does not look at the SIZE of the difference, so it fires just as hard on a 20-point gap that is obviously real as on a 0.1-point gap that obviously is not, and a reader should weigh those differently. It cannot see a sample size published somewhere this adapter does not read, and if a ranking does publish one the fix is to teach the adapter rather than to loosen this.",
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {
+        "op": "equals",
+        "path": "arm_a.artefact_kind",
+        "value": "leaderboard-row"
+      },
+      {
+        "op": "equals",
+        "path": "arm_b.artefact_kind",
+        "value": "leaderboard-row"
+      },
+      {
+        "op": "truthy",
+        "path": "arm_a.metric_count"
+      },
+      {
+        "op": "truthy",
+        "path": "arm_b.metric_count"
+      },
+      {
+        "op": "intersects",
+        "paths": [
+          "arm_a.metric_names",
+          "arm_b.metric_names"
+        ]
+      }
+    ]
+  },
+  "rule": {
+    "op": "all_of",
+    "rules": [
+      {
+        "op": "falsy",
+        "path": "arm_a.any_metric_carries_n"
+      },
+      {
+        "op": "falsy",
+        "path": "arm_b.any_metric_carries_n"
+      }
+    ]
+  },
+  "control": {
+    "fires_on": [
+      [
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": false
+        },
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": false
+        }
+      ]
+    ],
+    "passes_on": [
+      [
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": true
+        },
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": false
+        }
+      ],
+      [
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": false
+        },
+        {
+          "artefact_kind": "gguf",
+          "metric_count": 0,
+          "metric_names": [],
+          "any_metric_carries_n": false
+        }
+      ],
+      [
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "UGI"
+          ],
+          "any_metric_carries_n": false
+        },
+        {
+          "artefact_kind": "leaderboard-row",
+          "metric_count": 2,
+          "metric_names": [
+            "Writing"
+          ],
+          "any_metric_carries_n": false
+        }
+      ]
+    ]
+  }
+}

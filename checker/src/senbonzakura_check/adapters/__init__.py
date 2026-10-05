@@ -45,7 +45,9 @@ artefact in that vocabulary so the SAME checks run over it, rather than to write
 of checks per harness, which is the maintenance treadmill the artefact-level rule exists to
 avoid.
 """
+from .gguf_file import GgufAdapter
 from .inspect_log import InspectAdapter
+from .leaderboard_row import LeaderboardRowAdapter
 from .lm_eval_log import LmEvalAdapter
 from .senbonzakura_log import SenbonzakuraAdapter
 
@@ -53,7 +55,16 @@ from .senbonzakura_log import SenbonzakuraAdapter
 #:
 #: Ours is LAST on purpose. A foreign artefact that happens to carry a field we also use must be
 #: read as what it is, and the two foreign detectors are far more specific than ours.
-ADAPTERS = (LmEvalAdapter, InspectAdapter, SenbonzakuraAdapter)
+#:
+#: THE TWO LOADER-STAMPED ADAPTERS GO FIRST, and for a different reason from the harness ones.
+#: `GgufAdapter` and `LeaderboardRowAdapter` read inputs that are not JSON documents at all, a
+#: binary file and a CSV row, so the loader parses them and presents the result under an explicit
+#: `artefact_format` key. Their detectors are therefore exact rather than structural: they match a
+#: field this package itself stamped. That makes them both the most specific detectors here and
+#: the only ones that cannot misfire on a stranger's file, so nothing is risked by trying them
+#: first and a structural detector can never steal a document the loader already identified.
+ADAPTERS = (GgufAdapter, LeaderboardRowAdapter,
+            LmEvalAdapter, InspectAdapter, SenbonzakuraAdapter)
 
 
 class UnknownArtefactError(Exception):
@@ -131,4 +142,5 @@ def _instrument_identity(metrics) -> dict:
     }
 
 
-__all__ = ["ADAPTERS", "UnknownArtefactError", "detect", "normalise"]
+__all__ = ["ADAPTERS", "GgufAdapter", "LeaderboardRowAdapter", "UnknownArtefactError",
+           "detect", "normalise"]

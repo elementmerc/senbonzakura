@@ -72,11 +72,16 @@ class TestTheOutputArrivesBeforeTheEnd:
         real = cli.inspect_file
         seen = []
 
-        def give_up_on_the_fourth(path, checks):
+        def give_up_on_the_fourth(path, checks, **kw):
+            # `**kw` rather than a pinned signature: `inspect_file` gained an optional
+            # `row_select` when the leaderboard adapter landed, and a double that hardcodes the
+            # exact parameter list fails with a TypeError the moment the real function grows one.
+            # The TypeError then surfaces here as "the run was not interrupted", which points at
+            # the streaming behaviour this test is about rather than at the stub.
             seen.append(path)
             if len(seen) == 4:
                 raise KeyboardInterrupt
-            return real(path, checks)
+            return real(path, checks, **kw)
 
         monkeypatch.setattr(cli, "inspect_file", give_up_on_the_fourth)
         out = io.StringIO()
@@ -94,11 +99,16 @@ class TestTheOutputArrivesBeforeTheEnd:
         real = cli.inspect_file
         seen = []
 
-        def give_up_on_the_fourth(path, checks):
+        def give_up_on_the_fourth(path, checks, **kw):
+            # `**kw` rather than a pinned signature: `inspect_file` gained an optional
+            # `row_select` when the leaderboard adapter landed, and a double that hardcodes the
+            # exact parameter list fails with a TypeError the moment the real function grows one.
+            # The TypeError then surfaces here as "the run was not interrupted", which points at
+            # the streaming behaviour this test is about rather than at the stub.
             seen.append(path)
             if len(seen) == 4:
                 raise KeyboardInterrupt
-            return real(path, checks)
+            return real(path, checks, **kw)
 
         monkeypatch.setattr(cli, "inspect_file", give_up_on_the_fourth)
         out = io.StringIO()
@@ -119,11 +129,16 @@ class TestTheOutputArrivesBeforeTheEnd:
         real = cli.inspect_file
         seen = []
 
-        def give_up_on_the_fourth(path, checks):
+        def give_up_on_the_fourth(path, checks, **kw):
+            # `**kw` rather than a pinned signature: `inspect_file` gained an optional
+            # `row_select` when the leaderboard adapter landed, and a double that hardcodes the
+            # exact parameter list fails with a TypeError the moment the real function grows one.
+            # The TypeError then surfaces here as "the run was not interrupted", which points at
+            # the streaming behaviour this test is about rather than at the stub.
             seen.append(path)
             if len(seen) == 4:
                 raise KeyboardInterrupt
-            return real(path, checks)
+            return real(path, checks, **kw)
 
         monkeypatch.setattr(cli, "inspect_file", give_up_on_the_fourth)
         out = io.StringIO()

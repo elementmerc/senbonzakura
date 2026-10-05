@@ -90,6 +90,33 @@ def model_precision(model, load_in_4bit) -> str:
     return str(dtype).removeprefix("torch.") if dtype is not None else "unknown"
 
 
+def model_identity(model, given):
+    """Which checkpoint a number came from: the string typed, the name it calls itself, and the pin.
+
+    THREE FIELDS BECAUSE THEY ANSWER THREE QUESTIONS AND ONLY ONE OF THEM IS AN IDENTITY. `given`
+    is the path or id as typed, which inside a container is a mount point and on a laptop is
+    somebody else's disk. `id` is what the checkpoint calls itself, which is the part a stranger
+    can look up. `revision` is the commit the Hub actually served, because a Hub id resolves to
+    whatever is there on the day: a third party redoing this next year gets a different checkpoint
+    under the same string, and without this field no artefact says so.
+
+    ONE HOME, and it was nearly two. The abliteration record has derived these three inline since
+    2026-09, correctly, and this is that derivation moved rather than copied: two mechanisms
+    deriving one fact is the defect this project repeats most, and a second copy in a new command
+    would have been the next instance of it.
+
+    `getattr` throughout because a fake, a wrapped or a locally loaded model may carry none of
+    these, and an absent revision must read as unknown rather than crash a measurement that has
+    already been paid for.
+    """
+    config = getattr(model, "config", None)
+    return {
+        "given": given,
+        "id": getattr(config, "_name_or_path", None),
+        "revision": getattr(config, "_commit_hash", None),
+    }
+
+
 def prompt_format_of(tok) -> str:
     """Which prompt format produced a number: the chat template's name, or `raw`.
 

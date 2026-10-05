@@ -1,0 +1,95 @@
+{
+  "id": "a-perfect-score-on-a-sample-too-small-to-show-it",
+  "title": "The card reports a perfect score on a sample small enough that a clearly worse model would have scored the same",
+  "detects": "A model card evidencing a claim with a saturated score, every item correct, on a sample so small that materially worse results cannot be told apart from it. A score nothing can fail carries no information about how good the model is; it tells you the test was not hard. The arithmetic is the finding: with a perfect 50 out of 50, a model that got 43 right has an overlapping interval, so the card's own evidence cannot distinguish a flawless model from one that lost seven answers in fifty, which is one in seven.",
+  "incident": "The worked example is a public release claiming zero intelligence loss for an edited 31B model, evidenced by a 100-prompt suite scoring 50 out of 50 on capability and 50 out of 50 on refusal removal, with the refusals detected by pattern matching on phrases like \"I cannot\". Its repository carried no issues at all, so nobody had told them. The claim may well be true. The evidence offered cannot show it either way, and that is worth knowing before a reader relies on the number or a competitor points at it.",
+  "remedy": "Report the interval beside the score, which turns a bare 100% into \"at least about 93%\" and is honest without being weaker. Then make the test hard enough to fail: if every item passes, add items until some do not, because a suite that saturates has stopped measuring. Where the claim is about capability specifically, a benchmark with a published baseline gives a reader something to compare against, which a bespoke prompt suite cannot.",
+  "confidence": "high",
+  "severity": "qualifies",
+  "false_positive": "The threshold is five percentage points of doubt, and that number is a judgement rather than arithmetic, so it is here to be argued with. It was chosen against the field's own published costs: an independent catalogue of abliterated models reports general knowledge falling between 0.5 and 3 points and truthfulness between 5 and 11, so a suite whose doubt is wider than five points cannot see a loss the size of the losses this field actually reports. At a perfect 50 out of 50 the doubt is 14 points and this fires; at 200 it is 3.5 and it does not. A PERFECT SCORE OVERLAPS SOMETHING LOWER AT EVERY SAMPLE SIZE, measured, so the check is about the width of the doubt and never about the perfection: firing on overlap alone would fire on a flawless hundred thousand. It reads the biggest saturated claim on the card, which is the publisher's strongest evidence and the generous reading. It cannot tell which benchmark a fraction belongs to and does not try, so the line is carried verbatim for a reader to judge. A line that counts rather than scores, 'trials completed 60/60', is excluded by a word list, because a real card was misread that way before the list existed.",
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {
+        "op": "equals",
+        "path": "artefact_kind",
+        "value": "model-card"
+      },
+      {
+        "op": "truthy",
+        "path": "saturated_total"
+      },
+      {
+        "op": "any_entry",
+        "path": "saturation",
+        "all": [
+          {
+            "field": "gap_pp",
+            "is": "number"
+          }
+        ]
+      }
+    ]
+  },
+  "rule": {
+    "op": "any_outside",
+    "path": "saturation",
+    "field": "gap_pp",
+    "max": 5.0
+  },
+  "control": {
+    "fires_on": [
+      {
+        "artefact_kind": "model-card",
+        "saturated_total": 50,
+        "saturation": {
+          "claim": {
+            "gap_pp": 14.0,
+            "total": 50,
+            "lowest_count": 43
+          }
+        }
+      },
+      {
+        "artefact_kind": "model-card",
+        "saturated_total": 100,
+        "saturation": {
+          "claim": {
+            "gap_pp": 7.0,
+            "total": 100,
+            "lowest_count": 93
+          }
+        }
+      }
+    ],
+    "passes_on": [
+      {
+        "artefact_kind": "model-card",
+        "saturated_total": 200,
+        "saturation": {
+          "claim": {
+            "gap_pp": 3.5,
+            "total": 200,
+            "lowest_count": 193
+          }
+        }
+      },
+      {
+        "artefact_kind": "model-card",
+        "saturated_total": 1000,
+        "saturation": {
+          "claim": {
+            "gap_pp": 0.7,
+            "total": 1000,
+            "lowest_count": 993
+          }
+        }
+      },
+      {
+        "artefact_kind": "model-card",
+        "saturated_total": null,
+        "saturation": {}
+      }
+    ]
+  }
+}

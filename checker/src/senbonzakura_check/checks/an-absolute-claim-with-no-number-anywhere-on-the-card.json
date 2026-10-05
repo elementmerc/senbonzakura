@@ -1,0 +1,38 @@
+{
+  "id": "an-absolute-claim-with-no-number-anywhere-on-the-card",
+  "title": "The card claims no capability was lost and offers no measurement at all",
+  "detects": "A model card asserting an absolute, that nothing was lost or that quality is fully preserved, with no score, fraction or percentage anywhere in it. The claim is the strongest kind available and the card supplies nothing a reader could check it against. This is not the same finding as a weak measurement: a weak measurement can be argued with, and an absent one leaves a reader with only the publisher's word.",
+  "incident": "Refusal removal reliably costs something and the published range is wide: an independent catalogue of the field reports general knowledge dropping between 0.5 and 3 points while truthfulness falls between 5 and 11, and suggests the refusal direction is geometrically linked to broader pushback against false premises. Against that background, a bare assertion that nothing was lost is a claim against the grain of the field's own published results, which makes the absence of a number more conspicuous rather than less.",
+  "remedy": "Put one number on the card. A single benchmark the reader already knows, run on the edited model and on the model it came from, with the sample size and the interval, is enough to turn an assertion into evidence. Reporting a small loss honestly is stronger than claiming none: a reader who sees a measured 1.2 point drop with an interval believes the rest of the card, and a reader who sees an unevidenced zero does not.",
+  "confidence": "high",
+  "severity": "qualifies",
+  "false_positive": "A card whose numbers live somewhere else, in a linked report or a separate results file, reads as bare here and the fault is then the link rather than the work: the check cannot follow one and does not pretend to. It matches a closed list of absolute phrases, so a publisher who words the same claim differently does not fire, which means silence here is not evidence that no such claim was made. It says nothing about whether the claim is TRUE. A model that genuinely lost nothing fires exactly as hard as one that lost a great deal, because what is being reported is the absence of evidence and not the presence of a defect.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "equals", "path": "artefact_kind", "value": "model-card"},
+      {"op": "present", "path": "absolute_claim_without_any_number"}
+    ]
+  },
+
+  "rule": {
+    "op": "truthy",
+    "path": "absolute_claim_without_any_number"
+  },
+
+  "control": {
+    "fires_on": [
+      {"artefact_kind": "model-card", "absolute_claim_without_any_number": true,
+       "absolute_claim_count": 1, "claim_count": 0},
+      {"artefact_kind": "model-card", "absolute_claim_without_any_number": true,
+       "absolute_claim_count": 3, "claim_count": 0}
+    ],
+    "passes_on": [
+      {"artefact_kind": "model-card", "absolute_claim_without_any_number": false,
+       "absolute_claim_count": 1, "claim_count": 4},
+      {"artefact_kind": "model-card", "absolute_claim_without_any_number": false,
+       "absolute_claim_count": 0, "claim_count": 0}
+    ]
+  }
+}

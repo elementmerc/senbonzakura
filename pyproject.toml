@@ -530,6 +530,12 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # has to reach the path before the import.
 "tools/packaging/build_corpora.py" = ["E402"]
 
+# S310 is the URL-scheme audit, and every URL this module opens is built from a literal
+# `http://127.0.0.1:` plus a port the kernel handed us, talking to a subprocess this module
+# started itself. No caller can influence the scheme or the host, so there is no `file:` to
+# audit; the rule is describing a shape this code does not have.
+"src/senbonzakura/ggufrun.py" = ["S310"]
+
 [tool.pytest.ini_options]
 # Coverage runs on a bare `pytest`, so the gate is something you meet while working
 # rather than something CI tells you about after you push.

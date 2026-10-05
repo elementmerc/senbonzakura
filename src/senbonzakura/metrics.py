@@ -357,6 +357,77 @@ def wilson_interval(count: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - spread), min(1.0, centre + spread))
 
 
+#: Resamples for a paired interval. 2000 is what `margin` already uses for its AUC interval, so a
+#: reader meeting two bootstrap intervals in this project's artefacts meets the same instrument.
+DEFAULT_RESAMPLES = 2000
+
+
+def paired_rate_bootstrap(flags, statistic, *, seed=0, resamples=DEFAULT_RESAMPLES, alpha=0.05):
+    """An interval on any quantity derived from several rates measured ON THE SAME ITEMS.
+
+    THE PAIRING IS THE WHOLE POINT, and it is the same argument `margin.paired_bootstrap_delta_ci`
+    makes for the AUC. Two independent Wilson intervals that overlap do NOT mean the difference
+    between them is uncertain: a before and an after measured on the same prompts share every
+    prompt, so the prompt-to-prompt variation cancels and the paired interval is far tighter than
+    subtracting two unpaired ones suggests. A command that reported two Wilson intervals and left
+    the reader to compare them by eye would understate its own evidence, which is as much a
+    misreport as overstating it.
+
+    `flags` maps a name to a list of booleans, one per item, ALL THE SAME LENGTH and aligned by
+    item. `statistic` receives `{name: rate}` for one resample and returns a float, or None when
+    the quantity is undefined on that resample. A recovered fraction divides by `1 - pre`, so a
+    resample in which the model already refused everything has no headroom to recover and the
+    fraction is genuinely undefined there; those draws are counted and excluded rather than
+    clamped to a number, because clamping invents a value and the count is what tells a reader how
+    often it happened.
+
+    `random.Random` rather than torch, because this module imports nothing by design and the head
+    of the file says why. The seed is returned so an interval can be reproduced.
+
+    Returns None when the shapes do not line up or there is nothing to resample, which a caller is
+    expected to have refused already.
+    """
+    import random
+
+    names = sorted(flags)
+    if not names:
+        return None
+    lengths = {len(flags[k]) for k in names}
+    n = next(iter(lengths))
+    if len(lengths) != 1 or n < 2:
+        return None
+    point = statistic({k: sum(1 for f in flags[k] if f) / n for k in names})
+    rng = random.Random(int(seed))  # noqa: S311  # resampling a statistic, not a key
+    draws, undefined = [], 0
+    for _ in range(resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        value = statistic({k: sum(1 for i in idx if flags[k][i]) / n for k in names})
+        if value is None:
+            undefined += 1
+        else:
+            draws.append(value)
+    if not draws:
+        return {"point": point, "ci": None, "crosses_zero": None, "resamples": resamples,
+                "undefined_resamples": undefined, "seed": int(seed),
+                "why_no_interval": (
+                    f"the quantity was undefined on all {resamples} resamples, so there is "
+                    f"nothing to take an interval over")}
+    draws.sort()
+    lo = draws[int((alpha / 2) * (len(draws) - 1))]
+    hi = draws[int((1 - alpha / 2) * (len(draws) - 1))]
+    return {
+        "point": None if point is None else round(point, 4),
+        "ci": (round(lo, 4), round(hi, 4)),
+        # A sign that is not consistent across the resamples is the honest way to say "this is not
+        # distinguishable from no change", without reaching for a p-value.
+        "crosses_zero": bool(lo <= 0.0 <= hi),
+        "resamples": resamples,
+        "undefined_resamples": undefined,
+        "seed": int(seed),
+        "why_no_interval": None,
+    }
+
+
 def reportable_rate(count: int, n: int, floor: int = MIN_REPORTABLE_N) -> dict:
     """A rate with its interval, or a refusal to state one.
 

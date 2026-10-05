@@ -965,7 +965,13 @@ class _NoTemplate:
     def apply_chat_template(self, msgs, tokenize=False, add_generation_prompt=True, **kw):
         if not self.chat_template:
             raise ValueError("cannot use apply_chat_template: no chat template is set")
-        return "".join(f"<|{m['role']}|>{m['content']}" for m in msgs) + "<|assistant|>"
+        # `add_generation_prompt` IS HONOURED, and it was not until 2026-10-06. This double
+        # appended the assistant marker whichever way the flag was passed, which no real template
+        # does, and `chattemplate.audit` reads exactly that difference to decide whether a model
+        # is ever told it is its turn. A double that ignores the flag cannot stand in for a
+        # template, so it was the double that was wrong rather than the check.
+        body = "".join(f"<|{m['role']}|>{m['content']}" for m in msgs)
+        return body + ("<|assistant|>" if add_generation_prompt else "")
 
 
 def test_a_model_with_no_chat_template_is_refused_not_guessed():
@@ -1005,6 +1011,31 @@ def test_the_digest_changes_with_the_template(tmp_path):
 def test_a_models_own_template_is_reported_as_its_own(tiny_tok):
     got = cli.ensure_chat_template(tiny_tok)
     assert got["source"] == "tokenizer"
+
+
+def test_the_record_carries_what_the_template_actually_did(tmp_path):
+    """Item 7: a figure has to arrive beside the findings about the format that produced it."""
+    f = tmp_path / "t.jinja"
+    f.write_text(_TEMPLATE, encoding="utf-8")
+    got = cli.ensure_chat_template(_NoTemplate(), str(f))
+    assert set(got["audit"]) == {"verdict", "trustworthy", "findings"}
+    assert got["audit"]["trustworthy"] is True
+    assert isinstance(got["audit"]["findings"], list)
+
+
+def test_a_template_with_a_finding_says_so_in_the_log_and_in_the_record(tiny_tok):
+    """`tiny_tok` renders a conversation whose assistant turn is never opened.
+
+    That is a defect in the DOUBLE rather than in the tool, recorded in `conftest.py` beside it,
+    and it makes a convenient fixture for the reporting path: the run is not stopped, the finding
+    reaches the log, and the record a figure is stamped with carries it.
+    """
+    said = []
+    got = cli.ensure_chat_template(tiny_tok, None, said.append)
+    assert got["audit"]["trustworthy"] is False
+    assert [f["code"] for f in got["audit"]["findings"]] == ["generation_prompt", "roles_marked"]
+    assert any("NOT TRUSTWORTHY" in line for line in said)
+    assert any("generation_prompt" in line for line in said)
 
 
 @pytest.mark.parametrize(("body", "match"), [

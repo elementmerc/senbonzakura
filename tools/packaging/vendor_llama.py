@@ -87,7 +87,23 @@ BACKOFF_BASE_S = 4
 #:
 #: It needs no per-tool implementation library of its own (there is no `libllama-imatrix-impl.so`
 #: in the archive); it links against libllama directly, which is already here.
-WANT_BINS = ("llama-quantize", "llama-imatrix")
+#: `llama-server` was added on 2026-10-06 for the GGUF runner (decision Q-88). `score` reads a
+#: model through transformers, transformers cannot read a GGUF, and GGUF is how most people run
+#: these models, so a measurement tool without it cannot open the artefact people are arguing
+#: about. `senbonzakura.ggufrun` drives this binary over loopback and reads replies back.
+#:
+#: THE COST, MEASURED AT b11046 RATHER THAN ESTIMATED: `llama-server` is 18 KB and its
+#: implementation library `libllama-server-impl.so` is 7.2 MB, so a platform wheel grows by about
+#: 7.2 MB against the 35 MB of object code it already carries. `libllama-server-impl` therefore
+#: comes OUT of `DROP_IMPL` below, and getting that pairing wrong fails at vendor time rather
+#: than at use, because `smoke` runs every binary in this tuple afterwards.
+#:
+#: WHY THE SERVER AND NOT `llama-cli`. The runner needs three things: a reply to a rendered
+#: prompt, the prompt as the model's own template renders it, and the full next-token
+#: distribution. The server answers all three over one interface (`/completion`,
+#: `/apply-template`, and `n_probs` set to the vocabulary size), where the command line tool can
+#: do only the first and would need its output scraped out of a terminal transcript.
+WANT_BINS = ("llama-quantize", "llama-imatrix", "llama-server")
 
 #: Shared libraries to keep. Matched by prefix because the exact set changes between releases and
 #: a hardcoded list silently ships a binary that cannot start.
@@ -103,9 +119,18 @@ _SONAME = re.compile(r"\.(so|dylib|dll)(\.\d+)*$")
 #: `libllama-quantize-impl.so`; the server, cli, bench, perplexity and multimodal ones are weight
 #: in every wheel for a binary nobody here invokes. Trimming is only safe because the smoke check
 #: below runs the binary afterwards, so getting this wrong fails at vendor time rather than at use.
+#: `libllama-server-impl` AND `libmtmd` ARE NO LONGER DROPPED, since 2026-10-06. `llama-server`
+#: is in `WANT_BINS` above and is 18 KB of dispatch that does nothing without its 7.2 MB of
+#: implementation, and the implementation links `libmtmd`, llama.cpp's multimodal library, which
+#: this project has no use for and the server will not start without.
+#:
+#: MEASURED, NOT ASSUMED, and the smoke check is what measured it: with `libmtmd` still dropped
+#: the extraction succeeded, hashed correctly, and produced a `llama-server` that exited 127 on
+#: `error while loading shared libraries: libmtmd.so.0`. That is the exact defect this file's
+#: smoke check was written for, firing on the first change to this list since it was written.
+#: `libmtmd.so.0.4.1` is 1.9 MB, so the server costs about 9.1 MB in all.
 DROP_IMPL = ("libllama-batched-bench-impl", "libllama-bench-impl", "libllama-cli-impl",
-             "libllama-completion-impl", "libllama-fit-params-impl", "libllama-perplexity-impl",
-             "libllama-server-impl", "libmtmd")
+             "libllama-completion-impl", "libllama-fit-params-impl", "libllama-perplexity-impl")
 
 
 class VendorFetchError(Exception):

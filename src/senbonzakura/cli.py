@@ -1873,6 +1873,39 @@ def _bundled_template(name):
     return Path(__file__).resolve().parent / "data" / "templates" / f"{name}.jinja"
 
 
+def _audit_chat_template(tok, source, log):
+    """Probe what the template did to a conversation, and refuse a run it cannot measure.
+
+    THE RECORD IS COMPACT ON PURPOSE. The full explanation of each finding goes to the log, where
+    somebody is debugging; what rides into the artefact is the verdict, the codes and the
+    severities, so a figure carries the condition it was measured under without a paragraph of
+    prose per run.
+
+    WHY THIS REPORTS AND DOES NOT YET REFUSE, which is a deliberate choice and not timidity.
+    The checker is new, and what it has been measured against is seven tokenisers on one
+    machine: it found nothing on either model this project publishes numbers for, and it found
+    two real defects on a model whose markers genuinely are absent from its vocabulary. That is
+    evidence that it works and it is not evidence about the universe of published templates. This
+    project's own habit with a new gate is to measure first and tighten afterwards, for the
+    reason written beside the coverage ratchet: a gate that is red on a clean checkout gets
+    commented out, and then it guards nothing for ever.
+
+    So the findings go to the log, loudly, and into the artefact beside the number, which is
+    where the honest version of "this figure was measured through a template that drops the
+    system message" belongs. `chattemplate.refuse_if_untrustworthy` is the refusal, written and
+    tested, for the caller that wants it and for the day this becomes the default.
+    """
+    from . import chattemplate
+
+    record = chattemplate.audit(tok, source=source)
+    if record["findings"]:
+        for line in chattemplate.describe(record):
+            log(f"  {line}")
+    return {"verdict": record["verdict"], "trustworthy": record["trustworthy"],
+            "findings": [{"code": f["code"], "severity": f["severity"]}
+                         for f in record["findings"]]}
+
+
 def ensure_chat_template(tok, template_path=None, log=None):
     """Guarantee the tokenizer renders chat prompts, or refuse to measure anything.
 
@@ -1886,6 +1919,13 @@ def ensure_chat_template(tok, template_path=None, log=None):
     rather than something the tool makes up. Returns the provenance to store beside the
     results: where the template came from and a digest of it, which is what makes a
     re-run checkable.
+
+    AND THE THIRD STATE, WHICH WAS UNGUARDED UNTIL NOW. An absent template is refused here and a
+    template lost in quantisation is reported by `quantise`. A template that is PRESENT AND WRONG
+    renders, measures, and produces a plausible number from a prompt nobody asked for, which is
+    the worst failure shape in this project. `chattemplate.audit` probes what the template
+    actually did to a conversation, and a finding it calls untrustworthy stops the run here
+    rather than at the published table.
     """
     _log = log or (lambda _m: None)
     if template_path:
@@ -1921,13 +1961,15 @@ def ensure_chat_template(tok, template_path=None, log=None):
         source = (f"bundled:{template_path}" if _bundled_template(template_path)
                   else str(template_path))
         _log(f"  chat template: supplied from {source} (sha256:{digest})")
-        return {"source": source, "sha256": digest}
+        return {"source": source, "sha256": digest,
+                "audit": _audit_chat_template(tok, source, _log)}
 
     if _renders_a_chat_prompt(tok):
         own = getattr(tok, "chat_template", None)
         digest = (hashlib.sha256(own.encode("utf-8")).hexdigest()[:16]
                   if isinstance(own, str) and own else None)
-        return {"source": "tokenizer", "sha256": digest}
+        return {"source": "tokenizer", "sha256": digest,
+                "audit": _audit_chat_template(tok, "tokenizer", _log)}
 
     known = ", ".join(sorted(BUNDLED_TEMPLATES))
     raise SystemExit(

@@ -68,6 +68,10 @@ import urllib.request
 
 from . import metrics, vendored
 
+#: The four bytes every GGUF starts with, imported from the reader that owns the format rather
+#: than spelled a second time here.
+from .gguf_io import MAGIC as GGUF_MAGIC
+
 #: The binary out of the pinned llama.cpp release. It is NOT in `vendor_llama.py`'s `WANT_BINS`
 #: today, so an ordinary install does not carry it and the refusal below says what to do.
 SERVER_BIN = "llama-server"
@@ -277,11 +281,11 @@ class GgufRunner:
             raise GgufRunError(
                 f"a GGUF needs {SERVER_BIN} to run it, and this install does not have one.\n"
                 f"    {e}\n"
-                f"  Note that {SERVER_BIN} is not among the binaries `tools/packaging/"
-                f"vendor_llama.py` extracts today, so even a fully vendored source tree will not "
-                f"carry it until it is added to that tool's binary list. Until then, point this "
-                f"at a build of the pinned llama.cpp release yourself, and the provenance will "
-                f"record which build answered.") from e
+                f"  A platform wheel carries it, and a source checkout gets it from "
+                f"`python tools/packaging/vendor_llama.py`, which fetches the pinned llama.cpp "
+                f"release and verifies its hash before extracting anything. A build of that same "
+                f"release on PATH also works, and the provenance records which one answered so a "
+                f"figure says what produced it.") from e
 
     # ── the process ──────────────────────────────────────────────────────────────
     def start(self):
@@ -339,9 +343,15 @@ class GgufRunner:
         last = ""
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
+                # `stop` BEFORE RAISING, for the same reason the deadline path below does it: it
+                # is what closes the log handle. Raising straight out of here left an open file
+                # object and the temp file beside it, which the suite's ResourceWarning gate
+                # caught as an unclosed `rb+` handle on a test that was otherwise passing.
+                status, tail = self._proc.returncode, self._log_tail()
+                self.stop()
                 raise GgufRunError(
-                    f"{SERVER_BIN} exited with status {self._proc.returncode} before it was "
-                    f"ready, so nothing was measured. Its last words:\n{self._log_tail()}")
+                    f"{SERVER_BIN} exited with status {status} before it was ready, so nothing "
+                    f"was measured. Its last words:\n{tail}")
             try:
                 with urllib.request.urlopen(f"{self.base}/health", timeout=5) as r:
                     if r.status == 200:
@@ -390,7 +400,13 @@ class GgufRunner:
         return f"http://127.0.0.1:{self._port}"
 
     # ── talking to it ────────────────────────────────────────────────────────────
-    def _post(self, path, payload):
+    def request(self, path, payload):
+        """One JSON request to the server, with every failure turned into a sentence.
+
+        Public because the compass helpers below are collaborators rather than callers from
+        outside: they need the same error handling and the same timeout, and a second copy of
+        either would be a second set of failure messages for one failure.
+        """
         if self._proc is None:
             raise GgufRunError("the runner is not started, so there is nothing to ask")
         body = json.dumps(payload).encode()
@@ -423,7 +439,7 @@ class GgufRunner:
         order to compare it against the one the transformers path builds. A template difference
         between the two paths would make every number afterwards a comparison of templates.
         """
-        out = self._post("/apply-template", {"messages": [{"role": "user", "content": prompt}]})
+        out = self.request("/apply-template", {"messages": [{"role": "user", "content": prompt}]})
         text = out.get("prompt")
         if not isinstance(text, str) or not text:
             raise GgufRunError(
@@ -434,7 +450,7 @@ class GgufRunner:
 
     def reply(self, rendered_prompt):
         """One greedy reply to an already rendered prompt."""
-        out = self._post("/completion", {
+        out = self.request("/completion", {
             "prompt": rendered_prompt,
             "n_predict": self.max_new,
             "temperature": 0.0,
@@ -562,6 +578,12 @@ def agreement(hf_replies, gguf_replies, *, lossless, prompts=None, seed=0,
         "difference": None if (hf_rate is None or gg_rate is None) else round(gg_rate - hf_rate, 4),
         "paired_difference": paired,
         "per_prompt_agreement": None if per_prompt is None else round(per_prompt, 4),
+        # MEASURED 2026-10-06, AND IT IS WHY THERE IS NO BAR ON THIS. The same weights through the
+        # same stack, float32 against bfloat16, agreed on only 17 of 40 replies, while the refusal
+        # rate (0.050) and the keyword rate (0.075) were identical in both. So this number moves
+        # with the dtype either arm happens to load in, and the rates do not. A threshold on it
+        # would be a threshold on numerical precision wearing the name of a runner comparison.
+        #
         # A DIAGNOSTIC AND NOT A BAR, and it earns its place when the refusal rate cannot speak.
         # Two paths that both refuse nothing produce equal rates whatever they are doing, so on a
         # model with no refusals the rate agreement is satisfied by a model that is broken in both
@@ -622,3 +644,250 @@ def describe(finding):
         lines.append("  NOT COMPARABLE, and this is the finding rather than a failure:")
         lines.extend(f"    {why}" for why in finding["why_not"])
     return lines
+
+
+def looks_like_gguf(path):
+    """Is this input a GGUF file on disk?
+
+    BY ITS MAGIC BYTES AND NOT BY ITS NAME. `--model` already takes a Hub id, a directory of
+    safetensors and a path, so a fourth kind of input is a detection rather than a flag: two
+    flags that each mean "the model" is the two-instruments problem this module was written to
+    avoid, one level up. A file called `model.gguf` that is not one is refused by
+    `model_identity` with a sentence about the file, which is the honest failure; a GGUF called
+    something else still works.
+    """
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == GGUF_MAGIC
+    except OSError:
+        return False
+
+
+#: How many token log probabilities to ask for on the first try. The verdict tokens on a judging
+#: prompt are usually near the top, so most prompts are answered by a request of this size, and
+#: the full vocabulary is asked for only when they are not. Measured in `verdict_logprobs`'s
+#: docstring; the fallback is what makes the cheap request safe rather than lucky.
+FIRST_TRY_PROBS = 1000
+
+
+class VerdictReadout:
+    """One position's verdict log probabilities, and how they were obtained.
+
+    `escalated` is not a detail. A prompt answered from the cheap request and one that needed the
+    whole vocabulary are the same number, and a reader asking why a run took twenty minutes wants
+    to know how often the cheap path missed.
+    """
+
+    __slots__ = ("benign", "escalated", "harmful", "returned", "top")
+
+    def __init__(self, harmful, benign, *, top, returned, escalated):
+        self.harmful = harmful
+        self.benign = benign
+        self.top = top
+        self.returned = returned
+        self.escalated = escalated
+
+    @property
+    def verdict_mass(self):
+        """How much probability the two verdict sets hold between them at this position.
+
+        `margin.READOUT_SUSPECT_MASS` is the floor this feeds, and it is a WARNING rather than a
+        gate in that module for a reason written down there: a constant that quietly decides an
+        outcome is a defect this project has already paid for. The same applies here, so this
+        reports the number and decides nothing.
+        """
+        import math
+
+        return sum(math.exp(v) for v in (*self.harmful.values(), *self.benign.values()))
+
+    @property
+    def margin(self):
+        """The max over the HARMFUL spellings minus the max over the BENIGN ones, or None.
+
+        THE SAME QUANTITY `margin.margins` COMPUTES, and the reason log probabilities are allowed
+        to stand in for logits is that this is a DIFFERENCE at one position. A log probability is
+        its logit minus that position's log-sum-exp, the same constant for every token there, and
+        the constant cancels in the subtraction. `margin.py`'s own note at the call site says the
+        statistic is a difference of two logits at one position, which is what makes the
+        substitution exact rather than approximate.
+        """
+        if not self.harmful or not self.benign:
+            return None
+        return max(self.harmful.values()) - max(self.benign.values())
+
+
+class GgufCompassError(GgufRunError):
+    """The verdict position could not be read, with the reason."""
+
+
+def verdict_logprobs(runner, rendered_prompt, harmful_ids, benign_ids, *,
+                     first_try=FIRST_TRY_PROBS):
+    """The log probability of every verdict token at the position the prompt ends on.
+
+    THE PAYLOAD PROBLEM, AND WHAT WAS ACTUALLY TESTED. The whole next-token distribution is
+    available (`n_probs` set to the vocabulary size returns every token) and it is expensive:
+    4.5 MiB and 0.23 s per prompt on a 49,152-token vocabulary, so a 200 plus 200 compass pass
+    moves about 1.8 GB. Three cheaper requests were tried against the pinned build before this
+    settled on escalation:
+
+      * `logit_bias` on the verdict tokens, to force them into a small top-N. **Measured and it
+        does not work.** With `post_sampling_probs` false the returned list is the RAW
+        distribution and the bias does not move it, so the verdict tokens were absent from the
+        top 8 exactly as before. With it true the list is post-sampling, and at temperature 0 the
+        chain collapses to one token at probability 1.0, which is not a margin at all.
+      * `top_k` and friends: same answer, and for the same reason. They are samplers, and the
+        reported distribution is read before the sampler chain.
+      * asking for the two token ids directly: the server has no such parameter at b11046.
+
+    So the request that works is `n_probs`, and the saving available is to ask for a MODERATE
+    number first and fall back to the whole vocabulary only when a verdict token is missing from
+    it. On a judging prompt the verdict words are what the model is about to say, so the cheap
+    request usually contains them, and `escalated` records every time it did not. The fallback is
+    what makes this exact: a margin is never computed from a partial view.
+    """
+    def read(n_probs):
+        out = runner.request("/completion", {
+            "prompt": rendered_prompt,
+            "n_predict": 1,
+            "temperature": 0.0,
+            "top_k": 1,
+            "seed": 0,
+            "cache_prompt": False,
+            "samplers": ["temperature"],
+            "n_probs": n_probs,
+        })
+        rows = (out.get("completion_probabilities") or [{}])[0]
+        entries = rows.get("top_logprobs") or []
+        if not entries:
+            raise GgufCompassError(
+                f"{SERVER_BIN} returned no token probabilities for this prompt, so there is no "
+                f"verdict position to read. Keys present: {sorted(rows)}.")
+        found = {e["id"]: e["logprob"] for e in entries if isinstance(e.get("id"), int)}
+        return (entries,
+                {i: found[i] for i in harmful_ids if i in found},
+                {i: found[i] for i in benign_ids if i in found})
+
+    # Two explicit attempts rather than a loop, so there is no branch that cannot be reached.
+    # The loop this replaces ended in a raise that nothing could ever execute, which reads as a
+    # guard and guards nothing.
+    entries, harmful, benign = read(first_try)
+    if harmful and benign:
+        return VerdictReadout(harmful, benign, top=entries[0].get("token"),
+                              returned=len(entries), escalated=False)
+    entries, harmful, benign = read(_vocabulary_ceiling(runner))
+    return VerdictReadout(harmful, benign, top=entries[0].get("token"),
+                          returned=len(entries), escalated=True)
+
+
+def _vocabulary_ceiling(runner):
+    """A request large enough to mean "every token", whatever this model's vocabulary is.
+
+    The server clamps `n_probs` to the vocabulary, measured at b11046: asking for 60,000 on a
+    49,152-token model returned exactly 49,152. So a ceiling above any real vocabulary is a way
+    of saying "all of them" without having to read the vocabulary size out of the file first, and
+    the response says how many actually came back.
+    """
+    return int(getattr(runner, "vocabulary_ceiling", 1_000_000))
+
+
+def verdict_token_ids(runner, word):
+    """First-token ids for a verdict word, through the GGUF's own tokeniser.
+
+    `margin.label_token_ids` does this with a transformers tokeniser and the same six spellings.
+    The ids are NOT interchangeable between the two: a GGUF carries its own vocabulary, and using
+    a transformers id against it would read a different token and call it a verdict. So the two
+    paths each ask their own tokeniser, which is also why the compass agreement control compares
+    MARGINS rather than ids.
+    """
+    ids = set()
+    for variant in (word, " " + word, word.capitalize(), " " + word.capitalize(),
+                    word.lower(), " " + word.lower()):
+        out = runner.request("/tokenize", {"content": variant, "add_special": False})
+        tokens = out.get("tokens") or []
+        if tokens and isinstance(tokens[0], int):
+            ids.add(tokens[0])
+    if not ids:
+        raise GgufCompassError(
+            f"the GGUF's tokeniser returned no tokens for any spelling of {word!r}, so there is "
+            f"no verdict token to read a margin between. Nothing was measured.")
+    return sorted(ids)
+
+
+def compass_margins(runner, rendered_prompts, harmful_ids, benign_ids, *, heartbeat=30.0,
+                    log=None):
+    """A margin per prompt, in the rows `margin.py` already reports, plus how they were read.
+
+    Sequential and uncached for the reasons in this module's docstring: a verdict position that
+    depends on which prompt shared a batch is not a measurement of this prompt.
+    """
+    say = log or runner.log
+    rows, escalated, last = [], 0, time.monotonic()
+    for i, rendered in enumerate(rendered_prompts):
+        readout = verdict_logprobs(runner, rendered, harmful_ids, benign_ids)
+        escalated += int(readout.escalated)
+        rows.append({"margin": readout.margin, "top": readout.top,
+                     "verdict_mass": readout.verdict_mass,
+                     "escalated": readout.escalated})
+        if time.monotonic() - last >= heartbeat:
+            say(f"  {i + 1}/{len(rendered_prompts)} verdict positions read")
+            last = time.monotonic()
+    return rows, {"escalated": escalated, "n": len(rows),
+                  "first_try_probs": FIRST_TRY_PROBS}
+
+
+def compass_agreement(hf_harmful, hf_benign, gguf_harmful, gguf_benign, *, seed=0):
+    """Do the two paths' compasses agree, on the same prompts and the same statistic?
+
+    WHY THE COMPARISON IS THE AUC AND NOT THE MARGINS THEMSELVES. A margin is a difference of two
+    logits, and the two stacks do not share a scale: a quantised file's logits are not the
+    original's, and even a lossless conversion runs them through different kernels. What the
+    compass REPORTS is the AUC, which depends only on the ORDER of the margins, so that is the
+    quantity two runners can be held to. Comparing raw margins would manufacture a disagreement
+    out of a scale difference nobody claims is the same.
+
+    The estimator is `margin.paired_bootstrap_delta_ci` on the same prompts, which is what the
+    compass already uses to say whether an AUC moved, so this asks the existing instrument a new
+    question rather than inventing a second one.
+    """
+    from . import margin as margin_mod
+
+    for name, rows in (("transformers harmful", hf_harmful), ("transformers harmless", hf_benign),
+                       ("gguf harmful", gguf_harmful), ("gguf harmless", gguf_benign)):
+        if any(m is None for m in rows):
+            raise GgufCompassError(
+                f"the {name} arm carries a prompt with no readable verdict, so an agreement "
+                f"figure over these rows would be computed on a different set per arm. Drop the "
+                f"unreadable prompts from both arms, or report neither.")
+    if len(hf_harmful) != len(gguf_harmful) or len(hf_benign) != len(gguf_benign):
+        raise GgufCompassError(
+            f"the two arms hold {len(hf_harmful)}/{len(hf_benign)} and "
+            f"{len(gguf_harmful)}/{len(gguf_benign)} prompts. A paired comparison needs the same "
+            f"prompts in the same order in both.")
+    hf_auc = margin_mod.auc(hf_harmful, hf_benign)
+    gg_auc = margin_mod.auc(gguf_harmful, gguf_benign)
+    delta = margin_mod.paired_bootstrap_delta_ci(
+        (hf_harmful, hf_benign), (gguf_harmful, gguf_benign), seed=seed)
+    n = len(hf_harmful) + len(hf_benign)
+    reasons = []
+    if n < metrics.MIN_REPORTABLE_N:
+        reasons.append(
+            f"{n} prompts is below the {metrics.MIN_REPORTABLE_N} this project will state a rate "
+            f"on at all, so this run cannot say whether the two compasses agree")
+    # `delta_crosses_zero` and `delta_ci` are the keys `margin.paired_bootstrap_delta_ci`
+    # actually returns. Reading a key that does not exist is how a control comes to pass
+    # everything: the first version of this looked for `ci`, found nothing, and called two
+    # compasses that ordered the prompts in opposite directions comparable. Found by the test
+    # below rather than by a run.
+    if delta and delta.get("delta_crosses_zero") is False:
+        reasons.append(
+            f"the paired interval on the AUC difference is {list(delta['delta_ci'])} and does "
+            f"not contain zero, so the two paths order these prompts differently")
+    return {
+        "n": n,
+        "transformers_auc": None if hf_auc is None else round(hf_auc, 4),
+        "gguf_auc": None if gg_auc is None else round(gg_auc, 4),
+        "auc_difference": (None if None in (hf_auc, gg_auc) else round(gg_auc - hf_auc, 4)),
+        "paired_delta": delta,
+        "comparable": not reasons,
+        "why_not": reasons,
+    }

@@ -193,6 +193,23 @@ def test_safety_data_moving_refusal_further_than_benign_data_is_the_claim():
     assert "makes the recovery figure a statement about safety recovery" in got["reading"]
 
 
+def test_benign_data_moving_refusal_further_contradicts_the_claim_rather_than_supporting_it():
+    """FOUND BY READING A REAL RUN'S OUTPUT, 2026-10-05, where a gap of -0.917 was reported with
+    the sentence "the safety data moved refusal by more than benign data".
+
+    The branch only asked whether the interval excluded zero. A negative difference also excludes
+    zero, and there the CONTROL moved refusal further, so the flattering sentence was being handed
+    to a reader over a result that contradicts it. That is this project's most repeated defect
+    shape, in the one sentence this command exists to write.
+    """
+    got = tamper.safety_specific(_flags(10), _flags(50), _flags(5), seed=0, resamples=400)
+    assert got["crosses_zero"] is False
+    assert got["point"] < 0
+    assert "THE DIFFERENCE IS NEGATIVE" in got["reading"]
+    assert "contradicts it" in got["reading"]
+    assert "moved refusal by more than benign data" not in got["reading"]
+
+
 def test_benign_data_moving_refusal_just_as_far_withdraws_the_claim_in_those_words():
     """Without this, a headline recovery figure has an alternative explanation that cannot be
     excluded. The reading has to say so rather than leaving a reader to notice the overlap.
@@ -799,6 +816,54 @@ def test_the_command_runs_the_arm_and_both_controls_by_default(monkeypatch, tmp_
                                    for n in ("recovery", "neutral", "ceiling")}
     assert "no evaluated row was trained on" in doc["corpus"]["split"]
     assert doc["corpus"]["train_rows"] == 40
+
+
+def test_the_ceiling_arm_is_measured_against_the_base_models_own_starting_point(
+        monkeypatch, tmp_path):
+    """A LOAD-BEARING PROPERTY WITH AN EASY WAY TO GET IT WRONG.
+
+    The ceiling says what this recovery recipe can achieve, and it achieves it on the UNEDITED
+    model, whose refusal rate before the finetune is nothing like the edited model's: that
+    difference is what an abliteration is. Measuring the base model's recovery against the edited
+    model's starting point would divide by the wrong headroom and could put the ceiling below the
+    arm it exists to bound.
+
+    Driven with four distinct scoring passes so each reference is distinguishable in the result.
+    """
+    from senbonzakura import score
+
+    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: [f"p{i}" for i in range(120)])
+    monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
+    monkeypatch.setattr(tamper, "train", lambda *a, **k: tamper.loss_trace([2.0, 1.0]))
+    # before(edited) refuses none; recovery 40 of 60; neutral 5; before(base) refuses all 60;
+    # ceiling 55. The five passes run in that order.
+    # The order the five passes run in: the edited model's before, the BASE model's before, then
+    # the three arms. Pinned here because getting it wrong is how a reference ends up attached to
+    # the wrong arm, which is the property under test.
+    passes = iter([[ANSWER] * 60,                            # before, edited: refuses none
+                   [REFUSAL] * 40 + [ANSWER] * 20,           # before, base: refuses 40
+                   [REFUSAL] * 5 + [ANSWER] * 55,            # recovery arm
+                   [REFUSAL] * 60,                           # neutral arm
+                   [REFUSAL] * 55 + [ANSWER] * 5])           # ceiling arm
+    monkeypatch.setattr(score, "generate",
+                        lambda m, t, p, d, batch=16, max_new=64: next(passes))
+
+    res = tamper.main(["--model", "edited", "--base", "unedited", "--device", "cpu",
+                       "--train-n", "60", "--resamples", "100",
+                       "--out", str(tmp_path / "r.json")])
+    assert res["before"]["rate"] == 0.0
+    assert res["base_before"]["rate"] == pytest.approx(40 / 60)
+    assert res["arms"]["recovery"]["pre"]["rate"] == res["before"]["rate"]
+    assert res["arms"]["neutral"]["pre"]["rate"] == res["before"]["rate"]
+    assert res["arms"]["ceiling"]["pre"]["rate"] == res["base_before"]["rate"], (
+        "the ceiling arm was measured against the edited model's starting point, so its recovered "
+        "fraction divides by the wrong headroom")
+    # And the arithmetic follows from the right reference: the base went from 40 of 60 to 55 of 60,
+    # recovering 15 of the 20 that were available, which is 0.75. Against the edited model's zero
+    # it would have read 0.917, a ceiling BELOW nothing it is meant to bound.
+    assert res["arms"]["ceiling"]["recovered_fraction"]["point"] == pytest.approx(0.75, abs=1e-3)
 
 
 def test_the_partition_says_the_tail_and_not_the_whole_corpus(monkeypatch, tmp_path):

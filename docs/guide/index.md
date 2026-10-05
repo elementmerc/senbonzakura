@@ -32,6 +32,7 @@ sidebar has the same links in the same order.
 
 - [The compass](/guide/compass) — whether the model still recognises harm, which is a different
   question from whether it still refuses.
+- [Does the edit hold up](/guide/robustness) — whether the edited model answers an attack, holds a refusal over several turns, and survives being finetuned.
 - [Failing a build on a regression](/guide/gating) — recording a measurement as a baseline, and
   the three exit codes a CI step has to tell apart.
 - [Benchmarking against another tool](/guide/benchmark) — the equal-budget head to head.

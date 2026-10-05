@@ -39,9 +39,12 @@ corrects the claims it touches and gets no column until somebody has run it.
 | Measures what the edit cost | Yes, 11 lm-eval benchmarks | Yes, lm-eval plus a GSM8K "capability tax" | Yes, but on one bundled dataset: a 256 row GSM8K subset, read by whichever of five grading rules fits it |
 | Reports its grader's agreement above chance | No | No | **Yes, and it refuses a grader that fails** |
 | Puts an interval on the number | No | Yes in its A/B scripts, no in the interactive table | Yes on every measurement, and the refusal rate's lives in the result file rather than on the terminal line |
+| Measures whether the edit survives an attack | No | Scoring loops for single-turn and multi-turn, not wired into its run loop, and no prompts shipped | Yes: single-turn, multi-turn and a safety-recovery finetune, each with a control arm and an interval, with the prompt sets in the wheel |
+| Runs the safety-recovery finetune itself | No | No, it provides the formula and the caller provides the finetune | Yes, trained end to end, scored on a held-out split, against a neutral-finetune control |
 
-Read that last row carefully, because an earlier version of this page got it wrong in our
-favour and it was the page's headline claim. Only the first two rows are a clear lead.
+Read the interval row carefully, because an earlier version of this page got it wrong in our
+favour and it was the page's headline claim. Four of these five rows are a clear lead, and the
+last two became true on 2026-10-05 rather than having been true all along.
 
 ## What everyone does, including us
 
@@ -199,15 +202,31 @@ exist for a benchmark you bring yourself. So the honest comparison is eleven dat
 one, and what we have instead is that ours can be graded without a judge at all. That is a
 different trade, and it is a trade rather than a win.
 
-**Breadth of attack, where we have nothing at all, and this paragraph overstated a rival until
-2026-10-05.** It said abliterix "carries helpers for JALMBench, MTJ-Bench and Crescendo, and
-TamperBench". **Reading the clone says otherwise**, and the correction cuts both ways.
+**Breadth of attack, which this paragraph got wrong twice in one week and is worth reading as a
+record of both corrections.** It first said abliterix "carries helpers for JALMBench, MTJ-Bench and
+Crescendo, and TamperBench". **Reading the clone said otherwise.** It then said we had nothing
+equivalent to the attack loops abliterix does have, and **that stopped being true on 2026-10-05**,
+when `senbonzakura jailbreak`, `senbonzakura multi-turn` and `senbonzakura tamper` landed.
 
-What is real, and it is a genuine gap on our side: `evaluate_jailbreak` and `evaluate_multi_turn`
-in `src/abliterix/external_eval.py` are **working attack-scoring loops**. They take a
-caller-supplied generator, run prompts through it, and classify the replies, and the multi-turn one
-walks a dialogue history turn by turn. **We have nothing equivalent.** That is the part of this row
-that stands.
+What is real on their side: `evaluate_jailbreak` and `evaluate_multi_turn` in
+`src/abliterix/external_eval.py` are **working attack-scoring loops**. They take a caller-supplied
+generator, run prompts through it, and classify the replies, and the multi-turn one walks a
+dialogue history turn by turn.
+
+What is real on ours, and the difference is the uncertainty rather than the loop: all three of our
+commands report a **Wilson interval on every rate**, including the terminal summary lines, and
+each ships the control that tells a result from an artefact of the method. `jailbreak` runs a
+**paired over-refusal arm** on harmless prompts, because a model that complies with everything
+scores perfectly on attack prompts and is useless; it offers two estimators, and `--baseline`
+**refuses to subtract** a run that was not the same measurement. `multi-turn` records the
+escalation by name and digest, runs a **plain-repetition control** by default to show the gain came
+from the escalation rather than from asking twice, and reports **"cannot tell"** when the two
+intervals overlap rather than quoting a difference. `tamper` runs **a real safety-recovery finetune
+end to end**, with a neutral-finetune control arm and a base-model ceiling arm, on a positional
+split so the held-out prompts were never trained on.
+
+So the row inverts: **the loops are no longer the gap, the intervals and the controls are the
+difference**, and that is a claim a reader can check by running the commands.
 
 What is not real: its `pyproject.toml` **depends on none of JALMBench, MTJ-Bench, TamperBench or
 StrongREJECT**, there is no vendored copy and no optional extra, and `grep -RIn tamperbench` over
@@ -217,18 +236,25 @@ loop**". And **it ships no attack prompts**: the docstring says "prompts in what
 generator expects", so the corpus is the caller's problem. A harness without its corpus is less than
 a benchmark integration and more than nothing.
 
-**On tamper resistance specifically, neither tool measures it.** `compute_tamper_resistance` is
-three lines of arithmetic over two floats the caller must already hold: it computes
-`1.0 - (post - pre) / (1.0 - pre)`, clipped, and its own docstring calls it an "Abliterix-specific
-normalized recovery metric (inspired by recovery evaluations such as TamperBench)". It generates
-nothing, loads nothing and trains nothing, so **a user must run the safety-recovery finetune
-themselves by means abliterix does not provide**. That is the same position we are in, with a
-formula on top.
+**On tamper resistance specifically, this was the row we were losing and is now the row we are
+clearly ahead on.** `compute_tamper_resistance` is three lines of arithmetic over two floats the
+caller must already hold: it computes `1.0 - (post - pre) / (1.0 - pre)`, clipped, and its own
+docstring calls it an "Abliterix-specific normalized recovery metric (inspired by recovery
+evaluations such as TamperBench)". It generates nothing, loads nothing and trains nothing, so **a
+user must run the safety-recovery finetune themselves by means abliterix does not provide**. The
+formula is the easy half; the finetune is the measurement.
 
-So the honest statement of this row: **they have the scoring loops and we have the corpora**, since
-six prompt sets ship inside our wheel under MIT and CC-BY. Neither of us measures whether an
-abliteration survives repair, and that question is open for the whole field rather than answered by
-somebody else.
+`senbonzakura tamper` **runs that finetune**, which is why this row moved. It trains the recovery
+arm, scores held-out prompts the training never saw, and reports the recovered fraction with an
+interval. It runs a **neutral finetune as a control arm**, so a recovery number cannot be the
+result of finetuning on anything at all, and a **base-model arm** for the ceiling. The run is
+**pre-registered before it executes**, and `prereg --run` checks the executed run against the
+registration by machine rather than by trust.
+
+So the honest statement of this row: **we have the corpora and now the loops as well**, since six
+prompt sets ship inside our wheel under MIT and CC-BY. The open question is no longer whether
+anybody measures repair survival; it is how far the numbers generalise, and ours so far come from
+a small number of models on modest hardware.
 
 **Single-model evidence.** Most of the numbers here come from Qwen3-1.7B, because that is
 what fits on the card this was built on. A claim measured on one model is a claim about one

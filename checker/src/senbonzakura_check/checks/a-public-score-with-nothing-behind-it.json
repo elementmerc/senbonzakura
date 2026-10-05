@@ -1,0 +1,44 @@
+{
+  "id": "a-public-score-with-nothing-behind-it",
+  "title": "This ranking publishes a score with no sample size and no uncertainty, so no difference read off it can be called real",
+  "detects": "A row from a public leaderboard whose scores carry no sample size, no standard error and no interval. The number is still the number; what cannot be done with it is the thing readers do with it constantly, which is compare two of them. Without a sample size there is no interval, and without an interval there is no way to tell a real gap between two models from the ordinary variation between two runs of the same model.",
+  "incident": "Measured on the UGI Leaderboard's own published data file on 2026-10-05: 1,326 rows, 71 columns, and not one confidence interval, standard error or sample size among them. The leaderboard keeps its question set confidential, which is a sound choice that stops publishers training against the test, and the cost of it falls here: nobody outside the project can rerun it, so nobody can establish the variation either. A nearby project supplies the scale of the problem. Three configurations compared at 200 items looked like a clean ordering across a spread of 0.017, and then the same configuration run twice moved by 0.054, so the noise was three times the effect and all three arms were indistinguishable.",
+  "remedy": "Treat the score as a position and not as a measurement. Do not quote a difference between two rows as a result, and do not quote a change in your own model's position across two test dates as an improvement or a regression. To make a claim about either, measure the property yourself on a set you can rerun, with the sample size and the interval recorded beside the figure. This checker's own `score` and `capability` commands do that, and so does any harness that reports a standard error.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "It fires on every row of every leaderboard shaped this way, which is accurate rather than noisy: the property it reports is a property of the publication and not of the model, and it is the same news for every row. That does make it unsuitable as a gate, and it is a note to a reader rather than something to fail a build on. It says nothing about whether the scores are any good: a carefully built benchmark with no published interval and a careless one with none are indistinguishable here, and this check does not attempt to tell them apart. If a leaderboard does publish a sample size in a column this adapter does not read, the fault is ours and the fix is to teach the adapter rather than to loosen the check.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "equals", "path": "artefact_kind", "value": "leaderboard-row"},
+      {"op": "present", "path": "any_metric_carries_n"},
+      {"op": "truthy", "path": "metric_count"}
+    ]
+  },
+
+  "rule": {
+    "op": "all_of",
+    "rules": [
+      {"op": "falsy", "path": "any_metric_carries_n"},
+      {"op": "falsy", "path": "any_metric_carries_uncertainty"}
+    ]
+  },
+
+  "control": {
+    "fires_on": [
+      {"artefact_kind": "leaderboard-row", "metric_count": 3,
+       "any_metric_carries_n": false, "any_metric_carries_uncertainty": false},
+      {"artefact_kind": "leaderboard-row", "metric_count": 1,
+       "any_metric_carries_n": false, "any_metric_carries_uncertainty": false}
+    ],
+    "passes_on": [
+      {"artefact_kind": "leaderboard-row", "metric_count": 3,
+       "any_metric_carries_n": true, "any_metric_carries_uncertainty": false},
+      {"artefact_kind": "leaderboard-row", "metric_count": 3,
+       "any_metric_carries_n": false, "any_metric_carries_uncertainty": true},
+      {"artefact_kind": "leaderboard-row", "metric_count": 0,
+       "any_metric_carries_n": false, "any_metric_carries_uncertainty": false}
+    ]
+  }
+}

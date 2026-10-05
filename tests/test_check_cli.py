@@ -138,9 +138,22 @@ def test_the_summary_says_how_many_checks_applied(tmp_path):
     "3 of 13 applied", reusing the count that did NOT apply as the denominator of those that did.
     Three numbers on one screen and one of them meaning two things. "3 of 16 checks applied" says
     the same thing and reconciles with the line below it.
+
+    THE COUNT IS NO LONGER WRITTEN HERE, 2026-10-06. It was `16`, and adding four checks broke this
+    test while the property it describes held perfectly. A literal that has to be edited every time
+    the check set grows is a literal that will eventually be edited without anybody re-reading what
+    it was for. What this asserts now is the property the docstring actually states: the denominator
+    of "applied" is the number of checks AVAILABLE, and it reconciles with the line below it.
     """
     _, text = _run([str(_write(tmp_path, "ok.json", GOOD))])
-    assert "of 16 checks applied" in text
+    applied = re.search(r"of (\d+) checks applied", text)
+    available = re.search(r"(\d+) checks available", text)
+    assert applied, f"no 'N of M checks applied' line in the output:\n{text}"
+    assert available, f"no 'M checks available' summary line in the output:\n{text}"
+    assert applied.group(1) == available.group(1), (
+        f"the applied line says 'of {applied.group(1)} checks applied' while the summary says "
+        f"'{available.group(1)} checks available'. Those have to be the same number: the defect "
+        f"this test exists for was the denominator being the count that did NOT apply.")
 
 
 def test_a_clean_report_refuses_to_read_as_a_certificate(tmp_path):

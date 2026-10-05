@@ -1,0 +1,39 @@
+{
+  "id": "a-file-whose-name-disagrees-with-its-own-metadata",
+  "title": "The filename claims one quantisation and the file's own metadata says another",
+  "detects": "A GGUF whose filename says one recipe while the `general.file_type` field inside it says a different one. The name is what a person picks from a download list and what gets quoted in a comparison; the metadata is what the runtime reads. When they disagree, every reader downstream is working from whichever one they happened to look at, and the two groups will reach different conclusions about the same file while both believing they agree.",
+  "incident": "The ordinary cause is a pipeline that renames on the way out, or a file quantised twice and labelled once. It is also what a mirror does when it republishes somebody else's build under its own naming scheme. Nothing warns, because both halves of the file are internally valid: the tensors are fine, the metadata is fine, and only the pair of them is wrong.",
+  "remedy": "Trust the metadata and rename the file, or re-quantise to whatever the name promised. Do not edit the metadata to match the name: the metadata is what llama.cpp, Ollama and vLLM actually read, so changing it to agree with a filename would make the file lie to the runtime instead of to the reader. Any published comparison that identified this file by its name needs rechecking against what is inside it.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "A filename that carries a recipe name for a different reason, for example a directory named after the recipe used for its other files, reads as a claim here and is not one. The check stays quiet when the filename names no recipe at all, so a file called `model.gguf` never fires. It compares the two LABELS and not the contents, so a file whose name and metadata agree with each other while the tensors inside are a different mixture passes cleanly, and nothing here catches that. Deliberately: the recipe's own nominal type is a minority of the tensors on essentially every real file, measured at 5.9% on a Q4_K_M and 11.0% on a Q6_K, so a check on that would fire on sound files constantly. The census is reported beside the finding instead, for a reader to look at.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "equals", "path": "artefact_kind", "value": "gguf"},
+      {"op": "present", "path": "name_matches_metadata"},
+      {"op": "not_equals", "path": "name_matches_metadata", "value": null}
+    ]
+  },
+
+  "rule": {
+    "op": "falsy",
+    "path": "name_matches_metadata"
+  },
+
+  "control": {
+    "fires_on": [
+      {"artefact_kind": "gguf", "name_matches_metadata": false,
+       "claimed_quant_from_name": "Q4_K_M", "declared_file_type": "Q8_0"}
+    ],
+    "passes_on": [
+      {"artefact_kind": "gguf", "name_matches_metadata": true,
+       "claimed_quant_from_name": "Q4_K_M", "declared_file_type": "Q4_K_M"},
+      {"artefact_kind": "gguf", "name_matches_metadata": null,
+       "claimed_quant_from_name": null, "declared_file_type": "Q4_K_M"},
+      {"artefact_kind": "gguf", "name_matches_metadata": null,
+       "claimed_quant_from_name": "Q4_K_M", "declared_file_type": null}
+    ]
+  }
+}

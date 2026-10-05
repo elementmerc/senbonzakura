@@ -46,6 +46,12 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "head-to-head": ("headtohead", "main"),
     "compass": ("margin", "main"),
     "score": ("score", "main"),
+    # Single-turn jailbreak success on a bundled attack set, PAIRED with the over-refusal rate on
+    # a benign one. Registered as its own command rather than a flag on `score` because the thing
+    # it adds is that both arms run together: a flag could be left off, and a resistance figure
+    # with the benign arm left off is the narrower answer this project keeps catching itself
+    # reporting as the wider one.
+    "jailbreak": ("jailbreak", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

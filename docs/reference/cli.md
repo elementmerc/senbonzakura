@@ -21,6 +21,7 @@ exactly the same arguments.
 | `measure` | Every instrument against one model, into one directory, as one table: refusal, harm recognition, fluency and capability, plus the coherence cost when `--baseline` names the model it was edited from. It measures nothing itself; each row is the command below it, run with the arguments you would have typed. |
 | `compass`<br>(or `harm-recognition`) | Harm recognition: does the edited model still know a harmful request when it sees one? Reports an AUC with a seeded bootstrap interval and its null controls. |
 | `score` | Refusal and compliance rates over an evaluation set. |
+| `multi-turn` | Whether a refusal holds when the conversation continues, and the turn at which it gives way. Runs a named escalation and the plain-repetition control over the same refused prompts, so an escalation that does no better than asking again is visible as such. |
 | `jailbreak` | Single-turn jailbreak success on a bundled attack set, with a Wilson interval and the raw counts, reported beside the over-refusal rate on a benign set. Both arms run in one command, because a model that declines every request scores perfectly on jailbreak resistance. |
 | `coherence` | Perplexity against a reference, so a model that stopped refusing because it stopped working is visible as such. |
 | `drift` | One coherence ruler applied to any model after the fact, so a model edited by any tool lands on the same scale. First-token KL, one position per prompt. This is the comparable coherence number. |

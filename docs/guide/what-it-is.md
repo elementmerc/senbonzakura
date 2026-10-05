@@ -32,7 +32,8 @@ changes it, once.
 ::: tip New word: abliteration
 The name for the technique. It's *ablate* (to remove tissue, usually surgically) welded to
 *obliterate* (to destroy utterly). Somebody on the internet coined it and it stuck, which is how
-approximately every name in this field has happened.
+approximately every name in this field has happened. These pages mostly say **uncensoring**,
+which is the same thing in the words most people use for it.
 :::
 
 ## The finding this is all built on
@@ -71,7 +72,7 @@ measurement is worth something; one that does not is worth saying so about.
 
 ## So what is it for?
 
-**The best-measured abliteration we can manage.** That is the aim, and everything else here is in
+**The best-measured uncensoring we can manage.** That is the aim, and everything else here is in
 service of it.
 
 Removing refusals is the part that has worked since the beginning: the single-direction method of
@@ -96,9 +97,9 @@ The instruments that do that are features rather than the point:
 
 ## What you are actually making
 
-Abliteration removes safety guardrails wholesale. That is both the point and the danger.
+Uncensoring removes safety guardrails wholesale. That is both the point and the danger.
 
-An abliterated model will answer things the original declined to answer, and the change is in the
+An uncensored model will answer things the original declined to answer, and the change is in the
 weights: it does not come back by loading the model differently or by prompting it politely. That
 is the whole purpose, and it is also the reason this is research tooling rather than something to
 put in front of other people without thinking about it.
@@ -132,7 +133,7 @@ it reaches:
 | Running an unmodified copy as a service | No, there is nothing modified to offer |
 | Running a **modified** copy as a service other people use over a network | **Yes.** Your modifications have to be offered to those users |
 
-So it bites an abliteration-as-a-service business, and it does not bite an internal user. The
+So it bites an uncensoring-as-a-service business, and it does not bite an internal user. The
 licence is AGPL rather than something more permissive because the code embeds a keyword metric
 copied from [Heretic](https://github.com/p-e-w/heretic), which is AGPL.
 
@@ -151,10 +152,10 @@ describes the code.
 the package, and the provenance is in the
 [evaluation track card](/evaluation-track-card).
 
-### A model you abliterate: whatever the base model says
+### A model you uncensor: whatever the base model says
 
 Covered above, and repeated here because it belongs in the same list. Redistributing an
-abliterated checkpoint is governed by the upstream licence (Qwen, Llama, Gemma and so on), never
+uncensored checkpoint is governed by the upstream licence (Qwen, Llama, Gemma and so on), never
 by this repository's.
 
 None of this is legal advice. It is a map of which document to read.

@@ -9,7 +9,7 @@ gets a page.
 ## Why the split is the whole thing
 
 Suppose you fit your refusal directions on 500 harmful prompts, then measure how well the
-abliteration worked using those same 500 prompts.
+uncensoring worked using those same 500 prompts.
 
 You'll get a spectacular result. You have also learned nothing, because you tested the model on
 the exact questions it was tuned against. It's revising from the answer sheet.
@@ -31,7 +31,7 @@ So a track is split three ways, and the tool enforces it:
 | `measure` | 4,504 | 4,597 | **Every published number, and nothing else** |
 
 Note the sizes. The part that does the work is small. The part that's protected is 92% of the
-corpus, and the abliteration never sees it.
+corpus, and the uncensoring never sees it.
 
 ## Getting the prompts in the first place
 

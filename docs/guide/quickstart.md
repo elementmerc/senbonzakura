@@ -23,7 +23,7 @@ You need a GPU with 6 GB or more, and Python 3.10 or newer. No card? Jump to
 pip install senbonzakura
 ```
 
-That pulls `senbonzakura-check` with it, because the abliterator depends on it by name.
+That pulls `senbonzakura-check` with it, because the uncensoring tool depends on it by name.
 
 **The prompts come with it.** The wheel carries six research corpora and the packed evaluation
 track, so `--track default` works with nothing else to fetch or build. That is roughly 6,200

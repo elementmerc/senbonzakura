@@ -195,7 +195,7 @@ For editing a model, yes, realistically. For everything else, no.
 
 | What you're doing | What it needs |
 |---|---|
-| Abliterating a model | A CUDA card. 6 GB has been measured at 1.7B, and 3B wants 8 to 12 GB |
+| Uncensoring a model | A CUDA card. 6 GB has been measured at 1.7B, and 3B wants 8 to 12 GB |
 | Scoring a model that already exists | A card, or a lot of patience on CPU |
 | Running the test suite | Nothing. CPU, no downloads, no card |
 | Building the corpus, checking contamination | Nothing |
@@ -208,7 +208,7 @@ from. 1.7B is the only row anybody has run; everything above it is arithmetic.
 
 ## What size card {#what-size-card}
 
-Abliteration rewrites real weight matrices in place, so **the weights have to be resident and in
+Uncensoring rewrites real weight matrices in place, so **the weights have to be resident and in
 full precision**. That fixes the floor by arithmetic rather than by preference: 16-bit weights are
 two bytes per parameter, and you need headroom on top for activations and for the reference copy
 the divergence measurement compares against.
@@ -226,21 +226,21 @@ shape of the answer rather than a benchmark.
 ::: warning A mixture-of-experts model needs room for every expert, not the active ones
 This is the one that catches people, because the headline number invites the opposite reading. A
 model described as "30B total, 3B active" routes each token through a small fraction of itself, so
-it *runs* like a 3B model. Abliteration is not inference: it edits the weights, and it has to edit
+it *runs* like a 3B model. Uncensoring is not inference: it edits the weights, and it has to edit
 **all** of them, because refusal does not politely confine itself to the experts that happen to be
 active. Size the card for the total, 30B, not the 3B it advertises.
 :::
 
 **`--load-in-4bit` does not help here and the tool refuses it on the editing path.** A 4-bit
-tensor cannot be rewritten in place, which is the same reason a GGUF cannot be abliterated. It is
+tensor cannot be rewritten in place, which is the same reason a GGUF cannot be uncensored. It is
 accepted on the measuring commands, where nothing is being rewritten.
 
 **What happens if you try it anyway on too small a card:** `accelerate` will place what fits and
 push the rest to host RAM or to disk. Host RAM is slow and works. Disk **does not work**, and the
 tool refuses rather than pretending: a disk-offloaded tensor hands back a fresh copy on every read,
 so the edit would be written into something discarded before the next forward pass and the model
-would come out unabliterated with nothing reporting it. The refusal names the weight and tells you
-to load with more VRAM or more host-RAM headroom.
+would come out unedited, still refusing, with nothing reporting it. The refusal names the weight
+and tells you to load with more VRAM or more host-RAM headroom.
 
 Worth knowing about *when* that refusal arrives: it fires as the first edit is applied, which is
 after the download and the load. On a large model that is a long wait before being told the card is
@@ -300,11 +300,11 @@ model that's too big to sit on your card in full precision:
 senbonzakura score --load-in-4bit
 ```
 
-Note the word "score". This is a measurement option, not an abliteration one, and you can't
-use it for the editing half. The reason is a bit lovely: abliteration works by rewriting
+Note the word "score". This is a measurement option, not an uncensoring one, and you can't
+use it for the editing half. The reason is a bit lovely: uncensoring works by rewriting
 weights so they no longer point along the refusal direction, and that rewrite is a
 multiplication done in place. A 4-bit tensor isn't a grid of numbers you can multiply, it's
-a compressed sketch of one, and you can't do surgery on a sketch. So the abliterator loads
+a compressed sketch of one, and you can't do surgery on a sketch. So the editor loads
 in full precision and there's no flag to talk it out of that.
 
 **`pip install "senbonzakura[completion]"`** gets you tab completion for bash, zsh and tcsh. It's

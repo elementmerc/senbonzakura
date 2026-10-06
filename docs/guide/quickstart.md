@@ -123,6 +123,12 @@ that: the behaviour is gone from the weights. **The base model's licence still g
 this tool cannot loosen those terms. If you publish it, `senbonzakura report` writes the card that
 should travel beside the weights.
 
+The refusal rates in `abliteration.json` come from the rows the search chose its winner by
+scoring, so they are the best of all those attempts rather than a reading of the model. Score the
+rows it held back with `senbonzakura score` and pass that file to `senbonzakura report --refusal`:
+the card then publishes the figure with its sample size and its interval, and says which rows it
+came from.
+
 `abliteration.json` records settings and numbers, no prompts and no replies. The command that
 keeps per-prompt rows is `senbonzakura compass`, and it takes `--no-margins` if you would rather
 it did not.

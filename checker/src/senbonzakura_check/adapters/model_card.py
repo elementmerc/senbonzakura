@@ -101,9 +101,15 @@ class ModelCardAdapter:
                 "total": card.get("saturated_total"),
                 "lowest_count": card.get("lowest_indistinguishable_count"),
             }} if card.get("saturated_total") else {}),
-            # Deliberately absent: a card never says which rows a figure came from, which is
-            # itself part of the gap.
-            "eval_split": None,
+            # READ RATHER THAN ASSUMED ABSENT, since 2026-10-06. This was hardcoded to None under a
+            # comment saying a card never says which rows a figure came from, which was true of
+            # every card that existed when it was written and stopped being true the day
+            # `senbonzakura report` began printing the partition. The consequence was not a missing
+            # field: `a-rate-with-no-partition-beside-it` needs a rate with a denominator, so the
+            # first card to publish BOTH its counts and its row set was the first card able to fire
+            # a check saying it published neither. Still None for the cards that genuinely say
+            # nothing, which is still part of the gap.
+            "eval_split": card.get("stated_partition"),
             "limit": None,
             "source_path": doc.get("source_path"),
         }

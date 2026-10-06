@@ -342,3 +342,311 @@ def test_the_refusal_reaches_the_shell(tmp_path):
     with pytest.raises(SystemExit) as e:
         modelcard.main(["--abliteration", str(abl), "--base-licence", "Apache 2.0"])
     assert "not an identifier the HuggingFace Hub renders" in " ".join(str(e.value).split())
+
+
+# ── the buyer-facing half: what was measured, and what the page does not cover ──────────
+# THE GAP THESE EXIST FOR. The card printed `refusal before: 39.1%` and `after: 1.2%` and nothing
+# else: no sample size, no interval, no instrument, none of the five fields that decide whether two
+# such numbers describe the same experiment, and not one of the artefact's own sentences saying the
+# figure should not be quoted. Every one of those was already in the file the card was reading.
+
+from senbonzakura_check import measurement  # noqa: E402
+
+#: What `cli.Run.eval_provenance` writes, which is where the row count and the disqualifying
+#: sentence have been sitting all along.
+SELECTION_EVAL = {
+    "track": "default", "dataset": "bad_eval_ds", "rows_scored": 131, "partition": "search",
+    "search_partition_rows": 131, "held_out": False,
+    "note": "These are SELECTION-SET figures: the search chose its winner by scoring these rows.",
+}
+
+
+def _stamped_score(n=128, refusal=0.0234, **over):
+    """A `senbonzakura score` artefact, stamped exactly as `score._stamp_refusal` stamps one."""
+    res = {"label": "held-out", "model": "edited", "eval": "bad_eval_ds", "n": n,
+           "refusal": refusal, "soft_refusal": 0.0, "noncompliant": refusal, "broken": 0.0,
+           "heretic": 0.031, "chat_template": "qwen3", "budget_warning": None}
+    res.update(over)
+    from senbonzakura import metrics as _m
+
+    for estimator, value in (("senbonzakura-ruler", res["refusal"]),
+                             ("heretic-keyword", res["heretic"])):
+        reported = _m.reportable_rate(round(value * n), n)
+        measurement.stamp(res, "refusal_rate", value, estimator, n=n, by_estimator=True,
+                          interval=list(reported["ci"]) if reported["ci"] else None,
+                          interval_method="Wilson score interval on the refusal count",
+                          reportable=reported["reportable"],
+                          input_digest="a1b2c3d4e5f60718", partition="measure",
+                          prompt_format="qwen3", precision="bfloat16", tool_version="0.4.1")
+    return res
+
+
+class TestWhatWasMeasured:
+
+    def test_the_sample_size_reaches_the_page(self):
+        """A rate over nine replies read exactly like a rate over three thousand."""
+        text = _text(abl=_abl(refusal_eval=SELECTION_EVAL))
+        assert "replies the refusal figures rest on: **131**" in text
+
+    def test_an_unrecorded_sample_says_so_rather_than_being_left_out(self):
+        assert modelcard.NOT_RECORDED in _text(abl=_abl())
+
+    def test_every_pinned_field_is_named_even_when_absent(self):
+        """The five fields that decide comparability. Silence about them was the old behaviour."""
+        text = _text(abl=_abl())
+        for _field, label in modelcard.PINNED_LABELS:
+            assert label in text, f"{label} is not on the page"
+
+    def test_the_pinned_fields_come_from_the_artefact_that_took_the_measurement(self):
+        text = _text(abl=_abl(refusal_eval=SELECTION_EVAL), ref=_stamped_score())
+        assert "`a1b2c3d4e5f60718`" in text
+        assert "which rows of it: `measure`" in text
+        assert "numerical precision: `bfloat16`" in text
+
+    def test_a_separations_partition_is_not_printed_under_a_refusal_rate(self):
+        """The subtlety worth a test. An abliteration record stamps the separation statistic,
+        whose partition is `search` because the directions are fitted on half the rows. True, and
+        true about a different number; the refusal figures' partition is in `refusal_eval`.
+        """
+        abl = _abl(refusal_eval=SELECTION_EVAL,
+                   metrics={"separation": {"metric": "separation", "partition": "search",
+                                           "precision": "nf4"}})
+        assert modelcard.pinned_fields(abl)["partition"] == "search"
+        held = modelcard.pinned_fields(abl, _stamped_score())["partition"]
+        assert held == "measure", "the held out figure's own partition was overridden"
+
+    def test_the_estimator_is_read_off_the_stamp_rather_than_assumed(self):
+        text = _text(abl=_abl(), ref=_stamped_score())
+        assert "`senbonzakura-ruler`" in text and "`heretic-keyword`" in text
+        assert "Wilson score interval on the refusal count" in text
+
+    def test_an_unstamped_artefact_says_the_estimator_is_undeclared(self):
+        """Hardcoding "this project's ruler" would be a second home for that fact."""
+        text = _text(abl=_abl())
+        assert "do not declare which estimator produced their figures" in text
+
+    def test_the_interval_is_explained_in_plain_language(self):
+        text = _text(abl=_abl())
+        assert "How to read the intervals" in text
+        assert "have not been shown to differ" in text
+
+    def test_the_generation_budget_reaches_the_page(self):
+        text = _text(abl=_abl(generation_settings={"max_new_tokens": 192, "greedy": True}))
+        assert "tokens each reply was allowed: **192**" in text
+        assert "no sampling noise" in text
+
+    def test_a_card_with_no_artefacts_declares_the_section_unmeasured(self):
+        assert modelcard.measured_section() == [modelcard.NOT_MEASURED]
+
+    def test_a_capability_only_card_does_not_describe_refusal_figures_it_has_none_of(self):
+        """Six fields of "not recorded" would describe a measurement nobody asked this card for."""
+        section = "\n".join(modelcard.measured_section(None, _cap(), None))
+        assert "replies the refusal figures rest on" not in section
+        assert "Why the rows matter" not in section
+        assert "How to read the intervals" in section
+
+    def test_a_stamp_with_no_interval_method_names_the_estimator_anyway(self):
+        """An older artefact stamped before intervals were required still gets its instrument named."""
+        ref = {"n": 40, "refusal": 0.1}
+        measurement.stamp(ref, "refusal_rate", 0.1, "senbonzakura-ruler", n=40, by_estimator=True)
+        section = "\n".join(modelcard.measured_section(None, None, ref))
+        assert "`senbonzakura-ruler`" in section
+        assert "the doubt beside it" not in section
+
+    def test_a_chat_template_recorded_under_either_key_is_read(self):
+        assert modelcard.pinned_fields(_abl(chat_template={"name": "qwen3"}))[
+            "prompt_format"] == "qwen3"
+        assert modelcard.pinned_fields(_abl(chat_template={"source": "tokenizer"}))[
+            "prompt_format"] == "tokenizer"
+        assert modelcard.pinned_fields(_abl(chat_template="llama3"))["prompt_format"] == "llama3"
+
+    def test_the_readings_come_out_in_a_fixed_order(self):
+        """Two runs over one artefact have to produce the same page, byte for byte."""
+        ref = _stamped_score()
+        assert _text(abl=_abl(), ref=ref) == _text(abl=_abl(), ref=ref)
+
+
+class TestTheRateCarriesItsCountsAndItsDoubt:
+
+    def test_a_rate_with_a_known_denominator_gets_both(self):
+        text = _text(abl=_abl(baseline_refusals=0.391, refusal_eval=SELECTION_EVAL))
+        assert "refusal before: **51/131 = 38.9%**" in text and "95% CI" in text
+
+    def test_a_rate_with_no_denominator_says_so_on_the_same_line(self):
+        """A caveat under the figure is a caveat that gets quoted away from the figure."""
+        line = next(ln for ln in modelcard.refusal_section(_abl(baseline_refusals=0.4))
+                    if "refusal before" in ln)
+        assert "no interval can be put on it" in line
+
+    def test_an_unreportable_rate_with_no_count_falls_back_rather_than_saying_none_replies(self):
+        ref = {"refusal": 0.1}
+        measurement.stamp(ref, "refusal_rate", 0.1, "senbonzakura-ruler", by_estimator=True,
+                          reportable=False)
+        line = "\n".join(modelcard.refusal_section(None, ref))
+        assert "None replies" not in line
+        assert "no interval can be put on it" in line
+
+    def test_a_sample_too_small_to_carry_a_rate_refuses_to_state_one(self):
+        ref = _stamped_score(n=9, refusal=0.1111)
+        text = _text(abl=_abl(), ref=ref)
+        assert "below the floor this project will state a rate over" in text
+
+    def test_the_heretic_comparable_figure_is_no_longer_dropped(self):
+        text = _text(abl=_abl(post_bake_heretic=0.031))
+        assert "Heretic's keyword metric" in text
+
+    def test_kl_keeps_its_own_units_and_gains_no_counts(self):
+        line = next(ln for ln in modelcard.refusal_section(_abl(post_bake_kl=0.041))
+                    if "KL drift" in ln)
+        assert line == "- KL drift: **0.041**"
+
+    def test_the_count_is_recovered_exactly_at_the_sizes_this_project_runs(self):
+        assert modelcard._count_from(0.0234, 128) == 3
+        assert modelcard._count_from(0.391, 131) == 51
+
+    def test_a_sample_beyond_the_recoverable_size_gets_no_invented_numerator(self):
+        assert modelcard._count_from(0.5, modelcard.COUNT_RECOVERABLE_N + 1) is None
+        assert modelcard._count_from(0.5, 0) is None
+
+
+class TestTheArtefactsOwnWarningsReachTheReader:
+
+    def test_the_selection_set_note_is_published_beside_the_rate(self):
+        """The sharpest of the three. The record says in its own words that the figure is the best
+        of however many trials rather than a measurement, and the card dropped the sentence while
+        publishing the figure it disqualifies in bold.
+        """
+        section = "\n".join(modelcard.refusal_section(_abl(refusal_eval=SELECTION_EVAL)))
+        assert "SELECTION-SET" in section
+        assert "Read the search's own figures with this" in section
+
+    def test_a_budget_warning_travels_with_the_number(self):
+        abl = _abl(generation_settings={"max_new_tokens": 48, "greedy": True,
+                                        "budget_warning": "the budget is 48 tokens"})
+        assert "the budget is 48 tokens" in "\n".join(modelcard.refusal_section(abl))
+
+    def test_the_older_budget_block_spelling_is_read_too(self):
+        abl = _abl(reply_budget={"max_new_tokens": 48, "budget_warning": "too short"})
+        assert "too short" in "\n".join(modelcard.refusal_section(abl))
+
+    def test_a_self_invalidated_run_says_so(self):
+        ref = _stamped_score(self_invalidated="this figure measures the token budget")
+        assert any("token budget" in w for _whose, w in modelcard.artefact_warnings(None, ref))
+
+    def test_one_warning_is_not_printed_twice(self):
+        ref = _stamped_score(budget_warning="too short",
+                             generation_settings={"budget_warning": "too short"})
+        texts = [w for _whose, w in modelcard.artefact_warnings(None, ref)]
+        assert texts == ["too short"]
+
+    def test_the_selection_note_is_dropped_once_a_held_out_figure_is_supplied(self):
+        """Repeating it would warn about a problem the reader has already fixed."""
+        warnings = modelcard.artefact_warnings(_abl(refusal_eval=SELECTION_EVAL), _stamped_score())
+        assert not any("SELECTION-SET" in w for _whose, w in warnings)
+
+    def test_a_string_where_a_dict_was_expected_is_not_read_as_provenance(self):
+        """Older artefacts wrote `refusal_eval` as a sentence. Fail safe, not fail confident."""
+        assert modelcard.eval_provenance({"refusal_eval": "rows 0 to 131"}) == {}
+
+
+class TestTheHeldOutFigureIsTheOneThatMayBePublished:
+
+    def test_the_scored_artefact_supplies_the_headline(self):
+        text = _text(abl=_abl(refusal_eval=SELECTION_EVAL), ref=_stamped_score())
+        assert "refusal after the edit, by `senbonzakura-ruler`: **3/128 = 2.3%**" in text
+
+    def test_the_searchs_own_figures_are_labelled_as_not_publishable(self):
+        text = _text(abl=_abl(baseline_refusals=0.391), ref=_stamped_score())
+        assert "not because they are publishable" in text
+
+    def test_the_lecture_and_breakage_rates_come_through_too(self):
+        text = _text(abl=_abl(refusal_eval=SELECTION_EVAL), ref=_stamped_score())
+        assert "lectured rather than helped" in text and "came out broken" in text
+
+    def test_a_scored_artefact_with_no_figures_in_it_says_so(self):
+        text = _text(ref={"n": 40})
+        assert "carries no refusal figures" in text
+
+    def test_a_stamp_with_no_interval_falls_back_to_the_rate_and_the_counts(self):
+        ref = {"n": 40, "refusal": 0.1}
+        measurement.stamp(ref, "refusal_rate", 0.1, "senbonzakura-ruler", n=40, by_estimator=True)
+        assert "4/40 = 10.0%" in "\n".join(modelcard.refusal_section(None, ref))
+
+    def test_a_card_built_from_the_scored_artefact_alone_still_renders(self):
+        text = _text(ref=_stamped_score())
+        assert modelcard.NOT_MEASURED in text          # the abliteration sections
+        assert "2.3%" in text                           # and the figure that was supplied
+
+
+class TestWhatThisDoesNotCover:
+
+    def test_the_section_is_always_there(self):
+        for kw in ({}, {"abl": _abl()}, {"abl": _abl(), "cap": _cap()}):
+            assert "What this does not cover" in _text(**kw)
+
+    def test_the_standing_limits_are_not_conditional_on_the_figures_looking_good(self):
+        text = _text(abl=_abl(), cap=_cap(), ref=_stamped_score())
+        for claim in ("Whether the model is safe to deploy", "What a refusal is",
+                      "One corpus, one language", "A conversation that continues",
+                      "Whether the writing is any good"):
+            assert claim in text
+
+    def test_an_unmeasured_capability_is_named_as_a_gap(self):
+        assert "What the edit cost" in _text(abl=_abl())
+        assert "What the edit cost" not in "\n".join(modelcard.limits_section(_abl(), _cap()))
+
+    def test_a_selection_set_figure_is_named_as_a_gap_with_the_way_out(self):
+        text = "\n".join(modelcard.limits_section(_abl(refusal_eval=SELECTION_EVAL)))
+        assert "Whether the refusal figures are a measurement" in text
+        assert "senbonzakura report --refusal" in text
+
+    def test_an_unestablished_partition_is_its_own_gap(self):
+        abl = _abl(refusal_eval=dict(SELECTION_EVAL, held_out=None, note=None))
+        assert "Whether the refusal figures were held back" in \
+            "\n".join(modelcard.limits_section(abl))
+
+    def test_a_held_out_figure_closes_the_partition_gap(self):
+        text = "\n".join(modelcard.limits_section(_abl(refusal_eval=SELECTION_EVAL),
+                                                 ref=_stamped_score()))
+        assert "Whether the refusal figures are a measurement" not in text
+
+    def test_an_unrecorded_sample_is_named_as_a_gap(self):
+        assert "How much evidence is behind the refusal figures" in \
+            "\n".join(modelcard.limits_section(_abl()))
+
+    def test_a_sample_under_the_floor_is_named_with_the_floor(self):
+        from senbonzakura.metrics import MIN_REPORTABLE_N
+
+        text = "\n".join(modelcard.limits_section(_abl(), ref=_stamped_score(n=9)))
+        assert f"fewer than {MIN_REPORTABLE_N}" in text
+
+    def test_a_healthy_sample_raises_no_sample_gap(self):
+        text = "\n".join(modelcard.limits_section(_abl(), ref=_stamped_score()))
+        assert "Enough replies to state a rate" not in text
+        assert "How much evidence is behind" not in text
+
+
+class TestTheCommandTakesTheScoredArtefact:
+
+    def test_the_scored_artefact_alone_is_enough_to_ask_for_a_card(self, tmp_path, capsys):
+        path = tmp_path / "score.json"
+        path.write_text(json.dumps(_stamped_score()), encoding="utf-8")
+        assert modelcard.main(["--refusal", str(path), "--base-licence", "mit"]) == 0
+        assert "2.3%" in capsys.readouterr().out
+
+    def test_the_refusal_flag_is_named_when_nothing_was_supplied(self):
+        with pytest.raises(SystemExit) as e:
+            modelcard.main(["--base-licence", "mit"])
+        assert "--refusal" in str(e.value)
+
+    def test_a_named_scored_artefact_that_is_absent_refuses(self, tmp_path):
+        with pytest.raises(SystemExit) as e:
+            modelcard.main(["--refusal", str(tmp_path / "nope.json"),
+                            "--base-licence", "mit"])
+        assert "not a file" in str(e.value)
+
+
+def test_a_digest_of_several_splits_is_several_facts_not_a_dict_repr():
+    text = _text(abl=_abl(track_digest={"bad_ds": "39cc", "good_ds": "6b2b"}))
+    assert "`bad_ds` `39cc`, `good_ds` `6b2b`" in text
+    assert "{'bad_ds'" not in text

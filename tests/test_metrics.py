@@ -366,3 +366,184 @@ def test_the_descriptive_markers_are_demoted_rather_than_deleted():
     assert "is a crime" in metrics.HEDGE_DESCRIPTIVE
     assert "is a crime" not in metrics.HEDGE_DIRECTIVE
     assert set(metrics.HEDGE) == set(metrics.HEDGE_DIRECTIVE) | set(metrics.HEDGE_DESCRIPTIVE)
+
+
+# ── the graded degradation measures, on fixed strings only ───────────────────────────
+# NO GENERATION ANYWHERE IN THIS SECTION. GPU is per customer for the prose work, so every case
+# here is a literal written to exercise one branch, and that is also what makes them regressions:
+# a string cannot drift the way a sampled reply can.
+
+class TestIsBrokenIsUntouched:
+    """The binary verdict is a SHIPPED number and these tests are the pin on it.
+
+    The published head-to-head arms are committed to this repository, tests recompute their
+    figures, and `knee_scalar` weights brokenness at 2.0. The graded measures were added beside
+    `is_broken`, so the thing most worth asserting is that the old one still answers exactly as it
+    did.
+    """
+
+    def test_the_head_window_is_still_two_hundred_and_forty(self):
+        """Repetition past the window is still invisible to the binary verdict, on purpose.
+
+        The graded `repetition_rate` is what sees it. If this ever starts failing, a shipped
+        figure has moved.
+        """
+        head = "Here is a completely ordinary and varied English sentence about pans. " * 4
+        assert len(head) > 240
+        assert m.is_broken(head + " loop loop loop loop loop loop loop loop") is False
+
+    def test_a_single_token_on_repeat_is_still_broken(self):
+        assert m.is_broken("loop loop loop loop loop loop loop loop") is True
+
+    def test_a_normal_reply_is_still_not_broken(self):
+        assert m.is_broken("Sure, warm the pan and then add the butter.") is False
+
+
+class TestRepetitionRate:
+
+    def test_a_reply_that_says_nothing_twice_scores_zero(self):
+        assert m.repetition_rate("warm the pan and then add butter before the eggs go in") == 0.0
+
+    def test_a_repeated_run_is_graded_rather_than_flagged(self):
+        """Six word runs, four of which have been seen before: 0.4, not True."""
+        assert m.repetition_rate("the cat sat on the mat the cat sat on the mat") == 0.4
+
+    def test_a_loop_approaches_one(self):
+        assert m.repetition_rate("loop " * 20) > 0.8
+
+    def test_a_reply_too_short_to_have_a_run_is_not_scored_zero(self):
+        """Zero would say measured and none found. There was nothing to measure."""
+        assert m.repetition_rate("hello there") is None
+        assert m.repetition_rate("") is None
+
+    def test_repetition_past_the_binary_window_is_visible_here(self):
+        """The whole reply, which is the point of the graded measure."""
+        text = "Here is a completely ordinary and varied English sentence about pans. " * 4
+        tail = text + " " + "loop " * 40
+        assert m.is_broken(tail) is False
+        assert m.repetition_rate(tail) > 0.4
+
+    def test_punctuation_and_case_do_not_make_a_run_distinct(self):
+        assert m.repetition_rate("Warm the pan. warm the pan!") == 0.25
+
+    def test_a_run_length_below_one_is_refused(self):
+        with pytest.raises(ValueError, match="at least one word"):
+            m.repetition_rate("warm the pan and add butter", n=0)
+
+
+class TestTypeTokenRatio:
+
+    def test_every_word_distinct_is_one(self):
+        assert m.type_token_ratio("warm the pan add butter") == 1.0
+
+    def test_vocabulary_collapse_falls_toward_zero(self):
+        assert m.type_token_ratio("loop " * 20) == pytest.approx(0.05)
+
+    def test_an_empty_reply_has_no_ratio_rather_than_a_ratio_of_zero(self):
+        assert m.type_token_ratio("") is None
+        assert m.type_token_ratio("   ") is None
+
+    def test_non_latin_words_count_as_words(self):
+        """A tokeniser that dropped them would report coherent Chinese as having no vocabulary."""
+        assert m.type_token_ratio("你好 世界 你好") == pytest.approx(2 / 3)
+
+    def test_the_window_form_is_the_one_that_survives_a_length_difference(self):
+        """The confound this knob exists for, measured rather than asserted in prose.
+
+        The same vocabulary, repeated: the whole-reply ratio collapses as the reply grows while
+        the windowed one holds, so only the second can compare two replies of different lengths.
+        """
+        short = " ".join(f"w{i}" for i in range(50))
+        long = " ".join(f"w{i % 50}" for i in range(500))
+        assert m.type_token_ratio(short) == 1.0
+        assert m.type_token_ratio(long) == pytest.approx(0.1)
+        assert m.type_token_ratio(short, window=50) == 1.0
+        assert m.type_token_ratio(long, window=50) == 1.0
+
+    def test_a_reply_shorter_than_the_window_has_no_windowed_ratio(self):
+        assert m.type_token_ratio("warm the pan", window=50) is None
+
+    def test_a_window_below_one_is_refused(self):
+        with pytest.raises(ValueError, match="at least one word"):
+            m.type_token_ratio("warm the pan", window=0)
+
+
+class TestLengthError:
+
+    def test_a_reply_that_used_its_whole_budget_has_no_shortfall(self):
+        assert m.length_error(48, 48)["shortfall"] == 0.0
+
+    def test_running_into_the_cap_is_flagged_separately_from_the_shortfall(self):
+        """A shortfall of zero because the reply was cut off is not length control."""
+        assert m.length_error(48, 48)["truncated"] is True
+        assert m.length_error(47, 48)["truncated"] is False
+
+    def test_giving_up_early_is_graded(self):
+        assert m.length_error(10, 100)["shortfall"] == pytest.approx(0.9)
+
+    def test_overrunning_the_budget_is_not_a_negative_shortfall(self):
+        """A decoder that emitted one past the cap is truncated, not better than asked."""
+        row = m.length_error(49, 48)
+        assert row["shortfall"] == 0.0 and row["truncated"] is True
+
+    def test_a_budget_of_zero_is_refused_rather_than_dividing(self):
+        with pytest.raises(ValueError, match="at least one token"):
+            m.length_error(0, 0)
+
+    def test_a_negative_production_is_refused(self):
+        with pytest.raises(ValueError, match="cannot have produced"):
+            m.length_error(-1, 48)
+
+    def test_the_budget_notion_is_the_one_lengthsweep_already_controls(self):
+        """One answer to what a budget is, not two. See `lengthsweep.DEFAULT_BUDGET`."""
+        from senbonzakura import lengthsweep
+
+        row = m.length_error(lengthsweep.DEFAULT_BUDGET, lengthsweep.DEFAULT_BUDGET)
+        assert row["truncated"] is True
+
+
+class TestLengthControl:
+
+    def test_the_two_failures_are_reported_apart(self):
+        summary = m.length_control([(48, 48), (10, 100)])
+        assert summary["n"] == 2
+        assert summary["truncation_rate"] == 0.5
+        assert summary["mean_shortfall"] == pytest.approx(0.45)
+
+    def test_nothing_to_summarise_is_none_rather_than_zero(self):
+        assert m.length_control([]) is None
+
+
+class TestDegradation:
+
+    def test_it_carries_the_binary_verdict_beside_the_graded_ones(self):
+        out = m.degradation("loop " * 20)
+        assert out["broken"] is True
+        assert out["repetition_rate"] > 0.8
+        assert out["type_token_ratio"] == pytest.approx(0.05)
+
+    def test_a_missing_budget_leaves_the_length_measure_absent_rather_than_invented(self):
+        assert m.degradation("warm the pan and add butter")["length"] is None
+        assert m.degradation("warm the pan", produced_tokens=4)["length"] is None
+        assert m.degradation("warm the pan", budget=48)["length"] is None
+
+    def test_a_supplied_budget_is_measured(self):
+        out = m.degradation("warm the pan and add butter", produced_tokens=12, budget=48)
+        assert out["length"]["shortfall"] == pytest.approx(0.75)
+        assert out["words"] == 6
+
+    def test_a_reply_with_nothing_to_measure_reports_absence_not_zero(self):
+        out = m.degradation("")
+        assert out["repetition_rate"] is None and out["type_token_ratio"] is None
+        assert out["words"] == 0
+
+    def test_the_docstring_says_these_do_not_measure_writing_quality(self):
+        """The honesty constraint, asserted rather than trusted to survive an edit.
+
+        The whole justification for these measures is that they are adjacent to what a creative
+        writing vendor sells rather than the same thing, and a docstring that quietly loses that
+        sentence is how a mail comes to overstate them.
+        """
+        doc = m.degradation.__doc__.lower()
+        assert "mechanical" in doc
+        assert "not evidence about writing quality" in doc

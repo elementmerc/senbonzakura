@@ -103,6 +103,59 @@ COUNTING_WORDS = (
 )
 
 
+#: Labels a card uses to say which rows a figure was taken on. A CLOSED LIST, for the same reason
+#: `FRONTMATTER_KEYS` is closed: the question is narrow, and a line this misread would assert a
+#: partition the publisher never stated, which is worse than reporting the gap.
+#:
+#: WHY THIS EXISTS AT ALL, 2026-10-06. `a-rate-with-no-partition-beside-it` fires on a rate whose
+#: artefact names no row set, and the model-card adapter answered that question with a hardcoded
+#: "none", under a comment saying a card never says which rows a figure came from. That premise
+#: stopped being true the day `senbonzakura report` began printing the partition, and the first
+#: card to carry both a denominator and the rows it came from was reported as carrying neither. A
+#: checker that fires on the one card doing the right thing is the failure this package's own
+#: `COUNTING_WORDS` list exists because of, one layer along.
+PARTITION_LABELS = (
+    "which rows of it",
+    "evaluation split",
+    "eval split",
+    "partition",
+    "split",
+)
+
+#: Values that are a statement of absence rather than the name of a row set. Matched after the
+#: markdown is stripped, so `**not recorded in this artefact**` is read as the gap it is instead of
+#: becoming a partition called "not recorded in this artefact".
+_NO_PARTITION = ("not recorded", "not stated", "not known", "unknown", "unmeasured", "n/a",
+                 "none", "-", "")
+
+# Where a label has to sit for its value to be the card's own statement: at the start of a line,
+# after any list, quote or table punctuation, optionally emphasised. Anchored, so a sentence
+# EXPLAINING what the row set field means is prose about the field rather than the field, and is
+# not read as one.
+def _partition_pattern(label: str) -> re.Pattern[str]:
+    return re.compile(r"^[\s>*|_-]*`?" + re.escape(label) + r"`?(?:\*\*)?\s*[:|]\s*(.+)$",
+                      re.IGNORECASE | re.MULTILINE)
+
+
+def stated_partition(text: str) -> str | None:
+    """Which rows the card says its figures were taken on, or None when it does not say.
+
+    Labels are tried in `PARTITION_LABELS` order rather than in document order, so an explicit
+    wording wins over a bare `split:` somewhere else on the page. None is returned for a label
+    whose value is itself a statement of absence, because reading "not recorded" as the name of a
+    partition would turn the gap into a reassurance.
+    """
+    for label in PARTITION_LABELS:
+        match = _partition_pattern(label).search(text)
+        if not match:
+            continue
+        value = match.group(1).strip().strip("|").strip().strip("*`").strip()
+        if value.lower() not in _NO_PARTITION and not any(
+                p in value.lower() for p in ("not recorded", "not stated", "unmeasured")):
+            return value
+    return None
+
+
 def wilson_interval(count: int, n: int, z: float = Z) -> tuple[float, float]:
     """A confidence interval for a proportion that behaves at small n.
 
@@ -201,9 +254,20 @@ def extract_claims(text: str) -> list[dict]:
     identical matches from one line and a claim count inflated by formatting is not a count of
     claims. The real example: a card's total row reading `| **Total** | **50/50 (100%)** |
     **50/50 (100%)** |` produced four identical entries.
+
+    ONE FIGURE WRITTEN TWICE IS ONE CLAIM, which is the same rule applied across the two forms.
+    `0/128 = 0.0%` is a fraction and a percentage of the same thing, and reading it as two claims
+    produced a second entry with no denominator from a line that plainly carries one. That is not
+    only a count being inflated: `null-reported-as-zero` fires on a zero with no sample size
+    beside it, so a card that started stating its denominators became the first card able to fire
+    a check about not stating them. The percentage is dropped and the fraction kept, because the
+    fraction is the form that carries the sample size.
     """
     claims = []
     seen = set()
+    # Fraction values already claimed on each line, so a percentage restating one can be
+    # recognised. Keyed on the line text, which is what `_context` returns.
+    fractions_by_line: dict[str, list[float]] = {}
     for m in _FRACTION.finditer(text):
         count, total = int(m.group(1)), int(m.group(2))
         if not (MIN_TOTAL <= total <= MAX_TOTAL) or count > total:
@@ -226,6 +290,7 @@ def extract_claims(text: str) -> list[dict]:
             continue
         seen.add(key)
         claims.append(claim)
+        fractions_by_line.setdefault(context, []).append(claim["value"])
     for m in _PERCENT.finditer(text):
         value = float(m.group(1))
         if not (0.0 <= value <= 100.0):
@@ -233,6 +298,11 @@ def extract_claims(text: str) -> list[dict]:
         context = _context(text, m.start(), m.end())
         key = ("percent", value, context)
         if key in seen:
+            continue
+        # The same figure already read in the form that carries its sample size. Compared at the
+        # precision the percentage is printed to, so `3/128 = 2.3%` matches and a genuinely
+        # different percentage on the same line does not.
+        if any(round(f * 100.0, 1) == round(value, 1) for f in fractions_by_line.get(context, ())):
             continue
         seen.add(key)
         claims.append({
@@ -275,6 +345,9 @@ def read_card(text: str, *, name: str | None = None) -> dict:
     return {
         "card_name": name,
         "frontmatter": _frontmatter(text),
+        # Which rows the card says its figures came from, or None. Read rather than assumed: see
+        # `PARTITION_LABELS` for the premise that stopped being true.
+        "stated_partition": stated_partition(text),
         "claims": claims,
         "claim_count": len(claims),
         "absolute_claims": absolutes,
@@ -307,8 +380,9 @@ def read_card(text: str, *, name: str | None = None) -> dict:
 
 
 __all__ = [
-    "ABSOLUTE_CLAIMS", "COUNTING_WORDS", "FRONTMATTER_KEYS", "MAX_TOTAL", "MIN_TOTAL", "Z",
+    "ABSOLUTE_CLAIMS", "COUNTING_WORDS", "FRONTMATTER_KEYS", "MAX_TOTAL", "MIN_TOTAL",
+    "PARTITION_LABELS", "Z",
     "extract_claims", "find_absolute_claims", "looks_like_a_count",
-    "lowest_indistinguishable", "read_card",
+    "lowest_indistinguishable", "read_card", "stated_partition",
     "wilson_interval",
 ]

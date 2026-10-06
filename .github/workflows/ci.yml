@@ -1376,6 +1376,29 @@ jobs:
       # `senbonzakura` from the index and run its gate, so an action whose install line cannot
       # produce a working command fails here rather than on a stranger's runner. That was the
       # 2026-09-28 defect exactly.
+      # HALF A GATE GOES FIRST, AND THE ORDER IS LOAD-BEARING. It used to sit last and the job
+      # failed on it from 2026-10-02, reporting `gate-status='2'` for a step that correctly
+      # refused before installing anything.
+      #
+      # The action was right and the assertion was wrong. All four of these invocations are the
+      # same composite action, whose internal gate step carries the id `gate` in every instance.
+      # When this instance stops at its first step, that inner step is SKIPPED and never writes
+      # an output, so `steps.gate_half.outputs.gate-status` resolves to the last value any
+      # instance wrote in this job. Sitting directly after `gate_refused`, it read that step's
+      # `2`, which is why the number was always exactly the preceding verdict.
+      #
+      # So "produced no gate-status at all" is only observable where nothing has written one yet,
+      # and that is here. Moving this block back down does not silently weaken the check: it
+      # re-reads whichever verdict now precedes it and fails the build, which is the right
+      # failure rather than a false green.
+      - id: gate_half
+        name: Half a gate stops the run rather than checking nothing
+        uses: ./
+        continue-on-error: true
+        with:
+          path: fx/clean
+          baseline: tests/fixtures/gate/baseline-refusal-rate.json
+
       - id: gate_pass
         name: A measurement inside its interval passes the gate
         uses: ./
@@ -1401,14 +1424,6 @@ jobs:
           path: fx/clean
           baseline: tests/fixtures/gate/baseline-refusal-rate.json
           measurement: tests/fixtures/gate/measurement-incomparable.json
-
-      - id: gate_half
-        name: Half a gate stops the run rather than checking nothing
-        uses: ./
-        continue-on-error: true
-        with:
-          path: fx/clean
-          baseline: tests/fixtures/gate/baseline-refusal-rate.json
 
       - name: The gate's three verdicts are three different outcomes
         run: |

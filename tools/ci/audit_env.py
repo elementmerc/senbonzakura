@@ -110,6 +110,28 @@ def accepted_advisories() -> tuple[list[str], dict[str, dict]]:
     return ignore, detail
 
 
+def declared_unauditable() -> dict[str, dict]:
+    """Packages the advisory service cannot match, each with a written reason.
+
+    This is the half of `--strict` worth keeping. pip-audit marks a dependency it could not look
+    up with a `skip_reason` and, under `--strict`, turns that into a hard error with no JSON at
+    all, which reports nothing about the rest of the environment either. So the strictness lives
+    here instead: every skip is read back, and a skip that is not declared below is refused by
+    name.
+
+    Keyed by the canonical package name, lowercased with underscores folded to hyphens, because a
+    distribution is named either way in the wild and the two must not be a different entry.
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_bytes().decode("utf-8"))
+    entries = (data.get("tool", {}).get("senbonzakura", {})
+               .get("security", {}).get("unauditable_packages", []))
+    return {_canonical(entry["package"]): entry for entry in entries}
+
+
+def _canonical(name: str) -> str:
+    return name.strip().lower().replace("_", "-")
+
+
 def service_reachable(timeout: float = 20.0) -> bool:
     """Probe the advisory service before auditing, so no failure after this has to be guessed at.
 
@@ -207,7 +229,12 @@ def main(argv: list[str] | None = None) -> int:
             "absent scanner must never be reported as a clean scan."
         )
         return 1
-    cmd += ["--strict", "--format", "json", "--progress-spinner", "off"]
+    # NO `--strict`, and the reason is in `[tool.senbonzakura.security] unauditable_packages`.
+    # It made a package pip-audit could not look up into a hard error printing no JSON, so one
+    # unmatchable package (the CPU torch build, whose `+cpu` local version is not on PyPI) meant
+    # nothing was reported about the other sixty. The skip check below is the same strictness
+    # applied where it can name which package it is talking about.
+    cmd += ["--format", "json", "--progress-spinner", "off"]
     for advisory in ignore:
         cmd += ["--ignore-vuln", advisory]
 
@@ -231,8 +258,36 @@ def main(argv: list[str] | None = None) -> int:
     deps = payload.get("dependencies", [])
     findings = [(d["name"], d["version"], v) for d in deps for v in d.get("vulns", [])]
 
+    # THE SKIP CHECK, which is what `--strict` used to do and does it by name instead.
+    #
+    # A dependency pip-audit could not look up carries a `skip_reason` and NO vulns, so it would
+    # otherwise sail through as clean. Refusing an undeclared skip is the whole point: an
+    # unauditable package reported as audited is the shape this file exists to prevent.
+    allowed = declared_unauditable()
+    skipped = [d for d in deps if d.get("skip_reason")]
+    undeclared = [d for d in skipped if _canonical(d["name"]) not in allowed]
+    if undeclared:
+        for d in undeclared:
+            print(f"  {d['name']}: {d['skip_reason']}")
+        print(
+            f"::error::{len(undeclared)} package(s) in '{args.label}' could not be audited and are "
+            f"not declared: {', '.join(sorted(d['name'] for d in undeclared))}. An unauditable "
+            f"package counted as clean is a hole with nothing to find it. Either install it from "
+            f"an index the advisory service knows, or record it in [tool.senbonzakura.security] "
+            f"unauditable_packages with a reason and a condition for revisiting."
+        )
+        return 1
+
     print(f"environment: {args.label}")
     print(f"packages audited: {len(deps)} (floor {args.min_packages})")
+    # Named rather than swallowed, so "audited" and "audited except these" read differently.
+    if skipped:
+        print(f"packages the advisory service cannot match: {len(skipped)}")
+        for d in skipped:
+            entry = allowed[_canonical(d["name"])]
+            print(f"  {d['name']}  not advisory-scanned by this gate")
+            print(f"      reason:  {entry['reason']}")
+            print(f"      revisit: {entry['revisit']}")
     # The ignored count is printed rather than swallowed, so "clean" and "clean because we
     # accepted something" are different sentences. Verified 2026-10-01: a single
     # `--ignore-vuln PYSEC-2026-3804` turns exit 1 into exit 0 and prints "1 ignored" on the pypi

@@ -684,3 +684,24 @@ audit_ignore = ["PYSEC-2026-3804"]
 accepted_advisories = [
   { id = "PYSEC-2026-3804", package = "accelerate", assessed_version = "1.14.0", mitigation = "senbonzakura.checkpoint refuses an escaping index on both the local and the Hub path", revisit = "when accelerate ships a fixed release, or when this pin moves" },
 ]
+
+# PACKAGES THE ADVISORY SERVICE CANNOT MATCH, each named with why.
+#
+# pip-audit was run with `--strict`, which turns a package it cannot look up into a hard error
+# with no JSON on stdout. Every CI job installs the CPU build of torch from
+# download.pytorch.org/whl/cpu, and a local version like `2.13.0+cpu` does not exist on PyPI, so
+# from 2026-10-02 every dependency-advisory step died on exactly that and reported DID NOT RUN.
+#
+# THE COST OF LEAVING IT WAS THE WHOLE AUDIT, NOT ONE PACKAGE. A step that cannot produce JSON
+# reports nothing about the other sixty-odd packages either, so the strictness bought no coverage
+# and lost all of it. The strictness now lives in `tools/ci/audit_env.py` instead, which reads
+# pip-audit's own `skip_reason` for every dependency and refuses unless the skip is declared here.
+# That is narrower than the flag in the direction that matters: the flag could not say WHICH
+# package it could not audit, and this names it, with a reason and a condition for revisiting.
+#
+# What is still true, because an accepted gap described as a closed one is worse than no note:
+# torch is not advisory-scanned by this gate. The pin is exact, the index is declared, and the
+# supply-chain workflow checks the channel separately, but no advisory feed is consulted for it.
+unauditable_packages = [
+  { package = "torch", reason = "installed from download.pytorch.org/whl/cpu, and a local version such as 2.13.0+cpu has no PyPI release for the advisory service to match", revisit = "if the CPU build is ever published to PyPI, or if the jobs stop installing from the PyTorch index" },
+]

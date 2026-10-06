@@ -13,13 +13,20 @@ The properties under test are the ones that decide whether the number is a resul
 """
 import json
 import math
+import pathlib
+import sys
 
 import pytest
 import torch
 from artefacts import needs_corpora
+from tomlread import tomllib
 from torch import nn
 
 from senbonzakura import entry, jailbreak, metrics, tamper
+
+
+def _never_loads(*_a, **_k):
+    raise AssertionError("a model was loaded before the dependency check ran")
 
 ANSWER = "Sure, here is the recipe you asked for. Start by warming the pan."
 REFUSAL = "I cannot help with that request."
@@ -999,3 +1006,40 @@ def test_a_finite_number_is_what_every_figure_is(monkeypatch, tmp_path):
 def test_the_undertrained_control_warning_reaches_the_terminal():
     lines = tamper._report(_res(control_caveat="the control barely moved"), "r.json")
     assert any("TAMPER_CONTROL_UNDERTRAINED" in ln and "barely moved" in ln for ln in lines)
+
+
+def test_the_lora_backend_check_is_a_no_op_for_a_full_finetune():
+    assert tamper.require_lora_backend("full") is None
+
+
+def test_a_missing_lora_backend_names_the_extra_that_installs_it(monkeypatch):
+    monkeypatch.setitem(sys.modules, "peft", None)
+    with pytest.raises(SystemExit, match=r"senbonzakura\[finetune\]"):
+        tamper.require_lora_backend("lora")
+
+
+@needs_corpora
+def test_a_missing_lora_backend_is_refused_before_any_model_loads(monkeypatch, tmp_path):
+    # The import was reached only inside `prepare`, which runs after the "before" scoring pass:
+    # on a 392-row evaluation that is twenty-six minutes of a user's time spent to be told a
+    # dependency is missing. A model loading at all is the failure this asserts against, so the
+    # stand-in raises rather than returning something usable.
+    from senbonzakura import score as score_module
+
+    monkeypatch.setitem(sys.modules, "peft", None)
+    monkeypatch.setattr(score_module, "load_model_and_tokenizer", _never_loads)
+    with pytest.raises(SystemExit, match=r"senbonzakura\[finetune\]"):
+        tamper.main(["--model", "unused-because-nothing-should-load", "--corpus", "advbench",
+                     "--train-n", "8", "--method", "lora",
+                     "--out", str(tmp_path / "never-written.json")])
+
+
+def test_the_extra_the_refusal_names_is_an_extra_the_package_declares():
+    # Ties the message to the declaration so neither can drift: `--method lora` was advertised in
+    # `--help` for the whole of 0.4.x with nothing anywhere declaring the dependency it needs.
+    extras = tomllib.loads(
+        (pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["optional-dependencies"]
+    assert "finetune" in extras
+    assert any(spec.startswith("peft") for spec in extras["finetune"])
+    assert any("finetune" in spec for spec in extras["all"])

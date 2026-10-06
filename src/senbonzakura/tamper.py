@@ -540,6 +540,26 @@ def attach_targets(present, targets):
         f"same measurement as a run where all of them attached.")
 
 
+def require_lora_backend(method):
+    """Return peft's two entry points, or refuse with the install command.
+
+    Called once at pre-flight and again where the adapter is built. The second call is what
+    actually guards `prepare`, and the first exists because the import used to be reached only
+    after the "before" scoring pass: on a 392-row evaluation that is twenty-six minutes of a
+    user's time spent to be told a dependency is missing.
+    """
+    if method != "lora":
+        return None
+    try:
+        from peft import LoraConfig, get_peft_model
+    except ImportError as e:
+        raise SystemExit(
+            "--method lora needs `peft`, which is not installed in this environment. Install it "
+            "with `pip install 'senbonzakura[finetune]'`, or run --method full, which rewrites "
+            "the weights and answers the stronger question at a higher memory cost.") from e
+    return LoraConfig, get_peft_model
+
+
 def prepare(model, recipe, log=print):
     """The module to train, which for LoRA is an adapter around the frozen weights.
 
@@ -553,13 +573,7 @@ def prepare(model, recipe, log=print):
         for p in model.parameters():
             p.requires_grad_(True)
         return model
-    try:
-        from peft import LoraConfig, get_peft_model
-    except ImportError as e:
-        raise SystemExit(
-            "--method lora needs `peft`, which is not installed in this environment. Install it, "
-            "or run --method full, which rewrites the weights and answers the stronger question "
-            "at a higher memory cost.") from e
+    LoraConfig, get_peft_model = require_lora_backend(recipe.method)
     present = {name.rsplit(".", 1)[-1] for name, _ in model.named_modules()}
     attachable, note = attach_targets(present, recipe.targets)
     if note:
@@ -875,6 +889,7 @@ def main(argv=None):
             "--lr 0 trains nothing, so refusal after the finetune would equal refusal before it "
             "and the run would report perfect tamper resistance over a finetune that never "
             "happened.")
+    require_lora_backend(a.method)
 
     from . import score as score_module
 

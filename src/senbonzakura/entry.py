@@ -170,6 +170,8 @@ _INSTALL_HINT = {
     "datasets": "pip install 'senbonzakura[hub]'",
     "bitsandbytes": "pip install 'senbonzakura[quant]'",
     "shtab": "pip install 'senbonzakura[completion]'",
+    # Only `tamper --method lora` needs it; `--method full` trains without it.
+    "peft": "pip install 'senbonzakura[finetune]'",
 }
 
 

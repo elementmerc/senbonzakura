@@ -860,26 +860,28 @@ def main(argv=None, out=None, clock=None):
     # code as a healthy run. The step in our own CI that runs the checker over our own published
     # evidence could not have failed for that reason, which makes it a gate that proves the
     # checker still runs rather than that it still checks.
-    if args.min_applied:
-        # THE DENOMINATOR IS WHAT COULD APPLY HERE, NOT EVERY CHECK THAT EXISTS.
-        #
-        # `arity: pair` checks read two arms and are skipped without evaluation on a single
-        # document. Counting them made the ceiling unreachable: 4 of the 15 checks are pair
-        # checks, so a single artefact can never exceed 11 applied, while this compared against
-        # 15 and printed "of 15". `--min-applied 12` and above could not be satisfied by a
-        # healthy run, which is the opposite of what a floor is for.
-        #
-        # SORTED AT THE BOUNDARY, not in the loop that filled it, so two runs over the same tree
-        # print the same list whatever order the filesystem handed the files over in.
-        if thin:
-            if not args.json and not args.quiet:
-                print(f"\nFEWER THAN {args.min_applied} CHECKS APPLIED to "
-                      f"{len(thin)} artefact(s):", file=out)
-                for path, applied in sorted(thin):
-                    print(f"  {path}: {applied} of {len(reachable)} applied", file=out)
-                print("Either these artefacts stopped carrying what the checks read, or the "
-                      "checks stopped recognising them. Both look like a clean run.", file=out)
-            return 1
+    # THE DENOMINATOR IS WHAT COULD APPLY HERE, NOT EVERY CHECK THAT EXISTS.
+    #
+    # `arity: pair` checks read two arms and are skipped without evaluation on a single
+    # document. Counting them made the ceiling unreachable: 4 of the 15 checks are pair
+    # checks, so a single artefact can never exceed 11 applied, while this compared against
+    # 15 and printed "of 15". `--min-applied 12` and above could not be satisfied by a
+    # healthy run, which is the opposite of what a floor is for.
+    #
+    # SORTED AT THE BOUNDARY, not in the loop that filled it, so two runs over the same tree
+    # print the same list whatever order the filesystem handed the files over in.
+    #
+    # `thin` is bound unconditionally well above this, so the `and` short-circuits on the flag
+    # rather than guarding a name that might not exist.
+    if args.min_applied and thin:
+        if not args.json and not args.quiet:
+            print(f"\nFEWER THAN {args.min_applied} CHECKS APPLIED to "
+                  f"{len(thin)} artefact(s):", file=out)
+            for path, applied in sorted(thin):
+                print(f"  {path}: {applied} of {len(reachable)} applied", file=out)
+            print("Either these artefacts stopped carrying what the checks read, or the "
+                  "checks stopped recognising them. Both look like a clean run.", file=out)
+        return 1
     return 1 if (args.fail_on_empty and not n_checked) else 0
 
 

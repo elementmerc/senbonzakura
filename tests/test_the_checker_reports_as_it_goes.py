@@ -34,7 +34,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from senbonzakura_check import cli
 
 ROOT = Path(__file__).resolve().parent.parent

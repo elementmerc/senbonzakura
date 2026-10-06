@@ -814,9 +814,31 @@ def test_the_pinned_probe_says_nothing_when_the_doctor_module_is_unreachable(mon
 
 
 def test_a_shard_that_vanishes_between_indexing_and_sizing_is_named(dense, monkeypatch):
-    """The window is real: a sync or a tidy-up can remove a file between the two reads."""
-    def vanish(_self):
-        raise OSError("gone")
+    """The window is real: a sync or a tidy-up can remove a file between the two reads.
+
+    THE PATCH IS SCOPED TO THE CHECKPOINT, and the scoping is load-bearing rather than tidiness.
+    This used to replace `pathlib.Path.stat` for the whole process with a function that raised
+    unconditionally, so for the duration of the test every `stat()` call anywhere raised, pytest's
+    own included.
+
+    Run on its own that passes, because nothing else stats anything in between. Run under `-n 4`
+    it is not a failing test but a DEAD WORKER: xdist's own bookkeeping stats files, took the
+    OSError somewhere it cannot recover from, and the session ended in INTERNALERROR on
+    `assert not crashitem`. Four CI jobs run the suite that way. Three of them never reached it
+    because they failed at an earlier step, so for a while this looked like one job's problem.
+
+    Delegating to the real `stat` for anything outside the model directory keeps what the test is
+    about, a shard that disappears between being indexed and being sized, and stops it reaching
+    the machinery that is trying to report on it.
+    """
+    real_stat = pathlib.Path.stat
+    checkpoint = str(dense)
+
+    def vanish(self, *args, **kwargs):
+        if str(self).startswith(checkpoint):
+            raise OSError("gone")
+        return real_stat(self, *args, **kwargs)
+
     monkeypatch.setattr(pathlib.Path, "stat", vanish)
     with pytest.raises(streaming.ShardError, match="indexed and then unreadable"):
         streaming.describe(dense)

@@ -303,10 +303,22 @@ completion = ["shtab>=1.6"]
 # floor resolved cleanly and then died at import, which is precisely what the dependency-floor
 # CI job exists to catch, and did, on its first ever run.
 hub = ["datasets>=5.0.1"]
+# The finetune arms of `senbonzakura tamper --method lora`, which trains an adapter beside the
+# frozen weights to measure whether a customer's adapter can route around an abliteration.
+#
+# UNDECLARED UNTIL 2026-10-06, and `--method lora` was advertised in `--help` the whole time, so
+# a fresh install could not run half of a shipped command's surface. Found by running it on a
+# machine that happened not to have `peft`, which is the only way it could be found: every
+# environment this project develops and tests in had it pulled in by something else.
+#
+# The floor is the lowest version actually exercised rather than the lowest that might work.
+# 0.20.0 and 0.21.2 are the two this project has run `tamper` against. `--method full` needs
+# nothing here, which is why this is an extra and not a base dependency.
+finetune = ["peft>=0.20.0"]
 # `datasets` is in `dev` because the test suite asserts BOTH backends read and write the same
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.
-dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=9.0.3", "pytest-cov>=4",
+dev = ["senbonzakura[abliterate,hub,completion,finetune]", "pytest>=9.0.3", "pytest-cov>=4",
        # `-n 4` in CI, measured: 13:16 to 9:38 on four CPUs, with the coverage figure and the
        # pass and skip counts identical. It is a dev dependency rather than a CI-only install so
        # that `pytest -n 4` is available to anyone working on this locally, and so CI is not the
@@ -318,7 +330,7 @@ dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=9.0.3", "pytest-cov>=
        # installs grows because of it.
        'tomli>=2.0; python_version < "3.11"']
 # Everything. For anyone who does not want to think about which half they need.
-all = ["senbonzakura[abliterate,hub,quant,completion]"]
+all = ["senbonzakura[abliterate,hub,quant,completion,finetune]"]
 
 [project.urls]
 Homepage = "https://github.com/elementmerc/senbonzakura"

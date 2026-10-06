@@ -122,6 +122,10 @@ build==1.0.0
 shtab==1.6.0
 # Test-only, and only where `tomllib` is not in the standard library.
 tomli==2.0.0
+# The adapter backend for `tamper --method lora`, declared on 2026-10-06 after being
+# advertised in `--help` with nothing declaring it. 0.20.0 is the oldest release this
+# project has actually run `tamper` against, so it is the oldest it claims.
+peft==0.20.0
 # ruff is already pinned exactly in pyproject, so it has no floor to test.
 
 # bitsandbytes (the `quant` extra) is absent: it is not installed by `[dev]`,

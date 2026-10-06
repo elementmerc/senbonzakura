@@ -210,6 +210,18 @@ jobs:
       - name: Dependency advisories, free resolve
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: |
+          # setuptools IS UPGRADED FIRST, and not for tidiness. This row audits a FREE resolve, so
+          # it also audits whatever setuptools the runner image happens to ship, which nothing in
+          # this repository pins or can pin: a constraints file cannot reach a package that is
+          # already installed in the interpreter. On 2026-10-06 that was 78.1.0, carrying
+          # CVE-2025-47273 and CVE-2026-59890, and the step failed on an advisory against a version
+          # we neither chose nor ship.
+          #
+          # Upgrading it is the honest fix rather than ignoring the finding, because the advisory is
+          # real and a user who installs into a fresh environment today gets a current setuptools.
+          # What this row is for is catching an advisory against a release newer than anything we
+          # pin; the image's build tooling is not that.
+          pip install --upgrade "setuptools>=83.0.0"
           pip install pip-audit==2.10.1
           python tools/ci/audit_env.py --label "free resolve (no constraints, python 3.12)" --min-packages 40 --required "$AUDIT_REQUIRED"
 
@@ -633,10 +645,20 @@ jobs:
       #
       # Python 3.10 here is load-bearing for a second reason: a cp310 wheel has to exist for
       # every pin in floors.txt, or pip falls back to building from source. That bit once
-      # already, with `pyarrow==14` on 3.14, and it is why the pyarrow pin that datasets 5.0.1
-      # forces is the exact 21.0.0 rather than whatever is newest.
+      # already, with `pyarrow==14` on 3.14, and it is why every pin in that file is exact rather
+      # than "whatever is newest". The pyarrow pin is 23.0.1 since 2026-10-06, raised for
+      # PYSEC-2026-113 and still above the `pyarrow>=21.0.0` that datasets 5.0.1 forces; its cp310
+      # wheel was checked against PyPI rather than assumed.
       - name: Dependency advisories, declared floors
         run: |
+          # setuptools is upgraded first for the same reason as the free-resolve row above: it is
+          # the runner image's build tooling, not a declared dependency of this project, and
+          # `constraints/floors.txt` cannot reach a package already installed in the interpreter.
+          # It was 79.0.1 here on 2026-10-06, carrying CVE-2026-59890. It is deliberately NOT
+          # pinned in the floors file, because that file tests DECLARED dependency floors and
+          # setuptools is a `[build-system]` requirement; `test_declared_floors.py` refuses a pin
+          # that nothing declares, and it was right to.
+          pip install --upgrade "setuptools>=83.0.0"
           pip install pip-audit==2.10.1
           python tools/ci/audit_env.py --label "declared floors (constraints/floors.txt, python 3.10)" --min-packages 40 --required "$AUDIT_REQUIRED"
       - name: The tool starts and reports its version

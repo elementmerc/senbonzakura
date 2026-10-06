@@ -11,6 +11,10 @@
 #   multidict  6.7.1  -> 6.9.1   CVE-2026-104874
 #   setuptools 78.1.0 -> 83.0.0  CVE-2025-47273, CVE-2026-59890
 #   urllib3    2.7.0  -> 2.8.0   CVE-2026-97687, CVE-2026-97688, CVE-2026-97689
+#   fsspec     2026.4.0 -> 2026.6.0  CVE-2026-104851 (GHSA-27vj-qcqg-25rc), found by CI on the
+#     first run after the gate was repaired, because the local venv that surfaced the other three
+#     does not pin this one. The gate reporting something its author had not already found is the
+#     whole point of having it.
 # Six advisories against the pinned set, every one with a published fix, confirmed against OSV
 # for these exact versions rather than inferred from a newer resolve.
 #
@@ -40,7 +44,7 @@ dill==0.4.1
 execnet==2.1.2
 filelock==3.29.0
 frozenlist==1.8.0
-fsspec==2026.4.0
+fsspec==2026.6.0
 greenlet==3.5.4
 h11==0.16.0
 hf-xet==1.5.2

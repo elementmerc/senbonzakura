@@ -225,9 +225,16 @@ def _findings(doc):
     return [f.check_id for f in found]
 
 
+#: A stand-in for what `stamps.pinned` derives from a real run. Fixed values rather than derived
+#: ones, because what these tests assert is that every pinned field REACHES the artefact, and a
+#: derived digest would make the assertion depend on the deriving.
+PINNED = {"input_digest": "f00dcafe", "partition": "measure", "prompt_format": "chat-template",
+          "precision": "float32", "tool_version": "0.4.1"}
+
+
 def _report(output):
     return rl.LeakReport(positions=3, leak_per_position=(1e-8, 2e-8, 1.6e-8), probe_prompts=16,
-                         output=output)
+                         pinned=dict(PINNED), output=output)
 
 
 def test_what_this_module_writes_passes_the_check_this_project_added_for_it():
@@ -250,6 +257,33 @@ def test_what_this_module_writes_passes_the_check_this_project_added_for_it():
     assert "a-removed-direction-with-no-basis-named" not in _findings(doc)
 
 
+def test_both_bases_carry_every_pinned_field_with_a_real_value():
+    """The runtime half of a gate that is otherwise only static, and this one shipped red.
+
+    `test_every_writer_stamps_the_pinned_fields` reads the SOURCE: it parses each
+    `measurement.stamp` call and checks the five fields are named. That is what caught this module
+    stamping neither of its two figures with any of them. But a static check cannot tell a real
+    digest from `None`, so a writer that names all five and passes nothing would satisfy it while
+    `baseline.comparability` still refused every comparison, reporting a mismatch without being
+    able to say which field was absent.
+
+    BOTH entries, not one. The two estimators here are the two bases, and the whole claim this
+    module makes is that the pre-norm figure and the output-basis figure are comparable readings of
+    one forward pass. If only one of them carries its provenance then only one is gateable, and the
+    comparison that is the entire point cannot be made.
+    """
+    doc = rl.stamp_report({}, _report(rl.OutputBasis(
+        along_pre_norm_direction=0.009581, along_post_norm_direction=1.2e-08,
+        norm_condition_number=3.84, norm_diagonal_agreement=1.0,
+        diagonal_from="the final norm's weight", refused_because=None)))
+    for key, block in doc["metrics"].items():
+        for name, expected in PINNED.items():
+            assert block.get(name) == expected, (
+                f"{key} carries {name}={block.get(name)!r} rather than {expected!r}. A figure "
+                f"whose provenance did not survive being stamped cannot be compared with another "
+                f"one, and the gate that refuses it cannot say why.")
+
+
 def test_a_refused_output_basis_is_recorded_as_a_refusal_and_never_as_a_figure():
     """The omission is the point.
 
@@ -270,7 +304,8 @@ def test_a_refused_output_basis_is_recorded_as_a_refusal_and_never_as_a_figure()
 
 def test_a_degraded_run_carries_its_warnings_into_the_artefact():
     doc = rl.stamp_report({}, rl.LeakReport(
-        positions=2, leak_per_position=(1e-8, 2e-8), probe_prompts=8, output=None,
+        positions=2, leak_per_position=(1e-8, 2e-8), probe_prompts=8, pinned=dict(PINNED),
+        output=None,
         warnings=("no final norm with a learned weight was found",)))
     assert doc["residual_leak_warnings"] == ["no final norm with a learned weight was found"]
     assert "residual_leak_output_basis_refused" not in doc

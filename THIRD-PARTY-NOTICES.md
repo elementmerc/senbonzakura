@@ -28,14 +28,15 @@ upstream's.
 - **Modified by:** Daniel Iwugo.
 - **First included:** 2026-07-14, in the initial package.
 - **Relicensed to AGPL-3.0-or-later for this inclusion:** 2026-07-17.
-- **Most recent modification to the file carrying it:** 2026-10-05 (this is
+- **Most recent modification to the file carrying it:** 2026-10-06 (this is
   the date the README's credit section must agree with; the two drifted by six
   weeks once, which is the one field section 5(a) is actually about). The date
   moves whenever `metrics.py` is touched, whatever the change was about,
   because the test asks what git says rather than reading the diff: on
-  2026-10-05 the file gained `is_substantive`, a ruler that reports how often a
-  reply actually delivered an answer, and the keyword metric below was not
-  altered by it.
+  2026-10-06 the file gained graded prose measures beside `is_broken`, a
+  repetition rate, a vocabulary ratio and a shortfall against the generation
+  budget, and the keyword metric below was not altered by it. `is_broken`
+  itself is unchanged, threshold and window alike.
 
 What was and was not changed, because the distinction is the whole point of the
 notice:

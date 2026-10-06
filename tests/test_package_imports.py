@@ -185,20 +185,40 @@ def test_the_modification_date_is_not_older_than_the_code_it_describes():
         f"{committed}. Section 5(a) asks for a relevant date and this one is stale.")
 
 
-def test_the_two_places_the_date_is_written_agree():
-    """It appears in the source notice and in the packaged statement, and both are distributed."""
+def test_the_three_places_the_date_is_written_agree():
+    """It appears in the source notice, the packaged statement and the README's credit.
+
+    THE README WAS THE THIRD PLACE AND NOTHING CHECKED IT. This guard covered two of the three
+    until 2026-10-06, while `THIRD-PARTY-NOTICES.md` said in its own words that the date is "the
+    date the README's credit section must agree with". It had drifted the moment the other two
+    were corrected, and the suite was green: a guard covering two of three spellings reports clean
+    on the third, which is the same shape as the bare `import tomllib` that `probe.py` warns about
+    one file over.
+
+    All three are distributed. The source notice ships in the wheel, the notices file ships beside
+    it, and the README is what anybody reads on the repository, so a reader can get three answers
+    to the one question section 5(a) is actually about.
+    """
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    src = re.search(r"last modified (\d{4}-\d{2}-\d{2})",
-                    (root / "src" / "senbonzakura" / "metrics.py").read_text(encoding="utf-8"))
-    notices = re.search(r"Most recent modification to the file carrying it:\*\* (\d{4}-\d{2}-\d{2})",
-                        (root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8"))
-    assert src and notices, "one of the two statements of modification no longer carries a date"
-    assert src.group(1) == notices.group(1), (
-        f"metrics.py says {src.group(1)} and THIRD-PARTY-NOTICES.md says {notices.group(1)}; "
-        f"an installed copy would carry two different answers to the same question")
+    found = {}
+    for label, relative, pattern in (
+            ("metrics.py", "src/senbonzakura/metrics.py",
+             r"last modified (\d{4}-\d{2}-\d{2})"),
+            ("THIRD-PARTY-NOTICES.md", "THIRD-PARTY-NOTICES.md",
+             r"Most recent modification to the file carrying it:\*\* (\d{4}-\d{2}-\d{2})"),
+            ("README.md", "README.md",
+             r"most recently modified (\d{4}-\d{2}-\d{2})")):
+        m = re.search(pattern, (root / relative).read_text(encoding="utf-8"))
+        assert m, f"{label} no longer carries a statement of modification with a date in it"
+        found[label] = m.group(1)
+
+    assert len(set(found.values())) == 1, (
+        f"the three statements of modification disagree: {found}. An installed copy and the "
+        f"repository would carry different answers to the same question, and section 5(a) is "
+        f"about exactly this field.")
 
 
 def test_no_user_facing_document_calls_the_adapted_function_a_verbatim_copy():

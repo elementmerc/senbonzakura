@@ -1,7 +1,7 @@
 # Author:  Daniel Iwugo
 # Comment: Christ is King
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -102,7 +102,7 @@ dependencies = [
   # 14 is the floor because it is the release that removed `pyarrow.PyExtensionType`, and
   # every pyarrow this project has ever run against is newer. Nothing here uses an API added
   # since 8, so the floor is about the ecosystem around it rather than about our own calls.
-  "pyarrow>=14",
+  "pyarrow>=23.0.1",
   # DECLARED DIRECTLY under Q-36 rather than leaned on transitively through transformers, which
   # is where it already comes from. `preflight_snapshot_ram` reads a checkpoint's safetensors
   # headers to size the reversible snapshot BEFORE anything is downloaded, and on rented hardware
@@ -114,7 +114,7 @@ dependencies = [
   # `get_safetensors_metadata`, and the preflight imports both in one statement and treats an
   # ImportError as "skipped, not passed", so an older hub degrades to no preflight rather than to
   # a crash. The floor is what has been measured, not the oldest that might work.
-  "huggingface_hub>=0.34",
+  "huggingface_hub>=1.5.0",
   # THE EDITOR, in the base install since 2026-09-10 (Q-27). These were the base dependencies until
   # 2026-09-08, moved out to the `abliterate` extra under Q-3 so a checker could install
   # torch-free, and moved back because the split served the wrong reader: somebody who types
@@ -142,7 +142,7 @@ dependencies = [
   "torch>=2.5; python_version < '3.13'",
   "torch>=2.6; python_version == '3.13'",
   "torch>=2.9; python_version >= '3.14'",
-  "transformers>=4.56",
+  "transformers>=5.10.1",
   "accelerate>=0.26",
   # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
   # it ("assert version is not None"), which took out 17 tests in the floors job.
@@ -211,7 +211,7 @@ dependencies = [
   # `protobuf`, which upstream lists beside it, is deliberately NOT here: the conversion path was
   # run end to end without it and does not need it. Upstream's constraint is also `<5.0.0` while
   # PyPI is at 7.x, so adopting it would have meant carrying a pin nobody had shown was necessary.
-  "sentencepiece>=0.1.98,<0.3.0",
+  "sentencepiece>=0.2.1,<0.3.0",
   # THE CHECKER, AS ITS OWN DISTRIBUTION (decision Q-29). It has no dependencies of its own, so
   # this adds a few kilobytes and nothing transitive, and it is what makes `senbonzakura check`
   # work from a full install as well as from `pip install senbonzakura-check`.
@@ -306,7 +306,7 @@ hub = ["datasets>=5.0.1"]
 # `datasets` is in `dev` because the test suite asserts BOTH backends read and write the same
 # bytes, and a suite that can only exercise the backend it happens to have installed is how a
 # fallback path rots into something nobody has ever run.
-dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=7", "pytest-cov>=4",
+dev = ["senbonzakura[abliterate,hub,completion]", "pytest>=9.0.3", "pytest-cov>=4",
        # `-n 4` in CI, measured: 13:16 to 9:38 on four CPUs, with the coverage figure and the
        # pass and skip counts identical. It is a dev dependency rather than a CI-only install so
        # that `pytest -n 4` is available to anyone working on this locally, and so CI is not the

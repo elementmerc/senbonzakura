@@ -36,8 +36,8 @@ from .measure import REDACTED, SECRET_FLAGS
 
 #: Sections a complete card carries. Missing ones are declared rather than dropped, because the
 #: gap is information: a reader can tell "measured and fine" from "never looked at".
-SECTIONS = ("what was done", "what was measured", "refusal", "capability", "corpus",
-            "what this does not cover", "licence and use", "reproducing it")
+SECTIONS = ("what was done", "what was measured", "refusal", "capability", "tamper resistance",
+            "corpus", "what this does not cover", "licence and use", "reproducing it")
 
 NOT_MEASURED = "**NOT MEASURED.** Nothing in the supplied artefacts covers this."
 
@@ -182,6 +182,109 @@ def capability_section(cap):
     if change["items_fixed"] and change["items_broken"]:
         lines.append("  Items moved in both directions, so this is a model that answers "
                      "differently rather than one that is uniformly worse.")
+    return lines
+
+
+def _sentence(text):
+    """A field's text as a sentence, so it reads after a bold lead-in or a full stop.
+
+    The artefacts phrase these as clause fragments, which is right where they are logged and wrong
+    where they are prose: "**How to read these.** the recovery targets..." is the sort of seam that
+    tells a reader a machine assembled the page.
+    """
+    text = str(text).strip()
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _recipe_lines(arm):
+    """The finetune a resistance figure is a statement about.
+
+    Without it the section says a model survived "a finetune", which is not a claim: a customer
+    who does something heavier than what was run here is told nothing by this page. The artefact
+    also records what the chosen method does and does not test, which is the difference between
+    "an adapter could not route around the edit" and "the edit cannot be undone".
+    """
+    r = arm.get("recipe") or {}
+    if not r:
+        return [("- **the recipe is not recorded in this artefact**, so these figures are not a "
+                 "statement about any particular finetune and cannot be compared with anybody "
+                 "else's")]
+    shown = (("method", "method `{}`"), ("steps", "{} steps"),
+             ("learning_rate", "learning rate {}"), ("train_batch", "batch {}"),
+             ("train_pairs", "{} training pairs"), ("train_dtype", "{}"))
+    parts = [tpl.format(r[key]) for key, tpl in shown if r.get(key) is not None]
+    lines = [f"- the finetune it survived, or did not: {', '.join(parts)}"]
+    if r.get("what_the_method_tests"):
+        lines.append(f"- what that method does and does not test: "
+                     f"{_sentence(r['what_the_method_tests'])}")
+    if r.get("train_digest"):
+        lines.append(f"- digest of the training pairs: `{r['train_digest']}`")
+    return lines
+
+
+def tamper_section(tam):
+    """Whether the removed refusal comes back after a brief finetune, with its controls.
+
+    THE ORDER HERE IS DELIBERATE AND IT IS NOT THE ORDER OF INTEREST. The bias direction comes
+    before any number, because the recipe trains on text containing the phrases the refusal ruler
+    keys on: that makes a low recovered fraction strong evidence and a high one weak evidence, and
+    a reader who meets the figure first has already drawn the wrong conclusion from it.
+    """
+    if not tam:
+        return [
+            NOT_MEASURED,
+            "",
+            ("Nothing here says whether the removed refusal comes back. A customer who finetunes "
+             "these weights, on anything, may be handed back a model that refuses again, and no "
+             "figure on this page would have predicted it. `senbonzakura tamper` measures that."),
+        ]
+    if tam.get("self_invalidated"):
+        return [
+            f"**THE RUN DISOWNED ITS OWN FIGURES.** {_sentence(tam['self_invalidated'])}",
+            "",
+            ("No resistance figure is quoted here, deliberately. A run that invalidated itself has "
+             "numbers in its artefact, and reporting them because they exist is how an invalid "
+             "measurement becomes a published claim."),
+        ]
+    lines = []
+    if tam.get("bias_direction"):
+        lines += [f"**How to read these.** {_sentence(tam['bias_direction'])}", ""]
+    arms = tam.get("arms") or {}
+    recovery = arms.get("recovery") or {}
+    lines += _recipe_lines(recovery)
+    ev = tam.get("refusal_eval") or {}
+    if ev.get("partition"):
+        lines.append(f"- measured on partition `{ev['partition']}`, {ev.get('n', 0)} rows, "
+                     f"none of which was trained on in any arm")
+    frac = recovery.get("recovered_fraction") or {}
+    if frac.get("point") is not None:
+        lo, hi = frac.get("ci") or (None, None)
+        interval = f", 95% CI [{lo:+.1%}, {hi:+.1%}]" if lo is not None else ""
+        lines.append(f"- refusal recovered by the safety finetune: "
+                     f"**{frac['point']:+.1%}** of what there was to recover{interval}")
+    # WITHOUT THE CEILING THE FIGURE ABOVE READS AGAINST 100%, which is the specific misreading
+    # the ceiling arm exists to prevent: it is the same recipe on the UNEDITED checkpoint, so it
+    # says what this recipe can achieve at all. A 40% recovery against a 95% ceiling and the same
+    # 40% against a 45% ceiling are opposite results.
+    ceiling = (arms.get("ceiling") or {}).get("recovered_fraction") or {}
+    if ceiling.get("point") is not None:
+        lines.append(f"- what this recipe achieved on the UNEDITED model, which is the ceiling "
+                     f"the figure above should be read against: **{ceiling['point']:+.1%}**")
+    gap = tam.get("safety_specific") or {}
+    if gap.get("point") is not None:
+        lo, hi = gap.get("ci") or (None, None)
+        interval = f", 95% CI [{lo:+.1%}, {hi:+.1%}]" if lo is not None else ""
+        lines += ["", (f"**Is it about safety, or about finetuning at all?** The safety data moved "
+                       f"refusal **{gap['point']:+.1%}** further than benign data of the same size "
+                       f"trained the same way{interval}.")]
+        if gap.get("reading"):
+            lines.append(_sentence(gap["reading"]))
+    for key, prefix in (("control_missing", "**No control was run.**"),
+                        ("ceiling_missing", "**No ceiling was run.**"),
+                        ("control_caveat", "**Read the gap with this.**"),
+                        ("budget_warning", "**Budget.**")):
+        if tam.get(key):
+            lines += ["", f"{prefix} {_sentence(tam[key])}"]
     return lines
 
 
@@ -560,7 +663,7 @@ def measured_section(abl=None, cap=None, ref=None):
     ]
 
 
-def limits_section(abl=None, cap=None, ref=None):
+def limits_section(abl=None, cap=None, ref=None, tam=None):
     """What this page does not cover, which is the section that makes the rest of it credible.
 
     NOT SOFTENED AND NOT BURIED, and the order is deliberate: the gaps that apply to THIS run come
@@ -617,10 +720,18 @@ def limits_section(abl=None, cap=None, ref=None):
          "the corpus named above, in English, with one deterministic reply each. A deployment that "
          "samples at a temperature will not reproduce them exactly, and no figure here covers "
          "another language or another set of requests."),
-        ("**A conversation that continues.** Every figure here comes from a single request. A "
-         "refusal that holds on the first ask and gives way on the third is invisible to all of "
-         "them, and so is a refusal that a finetune brings back. `senbonzakura multiturn` and "
-         "`senbonzakura tamper` measure those, and their artefacts are not read by this page."),
+        # The bullet is conditional because a static disclaimer that outlives the gap it
+        # describes is worse than none: it tells a reader the page is silent on something the
+        # page now reports, and they believe the disclaimer over the section.
+        (("**A conversation that continues.** Every figure here comes from a single request. A "
+          "refusal that holds on the first ask and gives way on the third is invisible to all of "
+          "them. `senbonzakura multiturn` measures that and its artefact is not read by this "
+          "page. What a finetune brings back IS reported above.")
+         if tam else
+         ("**A conversation that continues.** Every figure here comes from a single request. A "
+          "refusal that holds on the first ask and gives way on the third is invisible to all of "
+          "them, and so is a refusal that a finetune brings back. `senbonzakura multiturn` and "
+          "`senbonzakura tamper` measure those, and their artefacts are not read by this page.")),
         ("**Whether the writing is any good.** Nothing here reads the prose. A model can hold "
          "every number on this page and still write badly."),
     ]
@@ -695,13 +806,18 @@ def redact_command(command, secrets=()):
 
 
 def build(abl=None, cap=None, command=None, licence=None, licence_link=None, secrets=(),
-          ref=None):
+          ref=None, tam=None):
     """The card, as markdown lines. `secrets` are values to keep off the page wherever they
     appear in `command`, on top of the flags `redact_command` always strips.
 
     `ref` is a `senbonzakura score` artefact holding the refusal figures taken after the edit on
     rows nothing was fitted on. It is optional because a card is better than no card, and it is
     the only input that makes the refusal section publishable.
+
+    `tam` is a `senbonzakura tamper` artefact. Until 2026-10-06 this page said in its own limits
+    section that tamper artefacts "are not read by this page", which for a reader whose question
+    is whether a finetune brings the refusals back made the page silent on the thing they came
+    for.
     """
     out = front_matter(abl, licence or "other", licence_link)
     out += ["# Abliteration report", ""]
@@ -718,8 +834,10 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
     out += ["## What was measured", "", *measured_section(abl, cap, ref), ""]
     out += ["## Refusal and coherence", "", *refusal_section(abl, ref), ""]
     out += ["## Capability, which is what the edit cost", "", *capability_section(cap), ""]
+    out += ["## Tamper resistance, which is whether it comes back", "",
+            *tamper_section(tam), ""]
     out += ["## Corpus", "", *corpus_section(abl), ""]
-    out += ["## What this does not cover", "", *limits_section(abl, cap, ref), ""]
+    out += ["## What this does not cover", "", *limits_section(abl, cap, ref, tam), ""]
     out += ["## Licence, and what this model is", "",
             # `measured` is what the evidence sections actually resolved to, not what was asked
             # for: a capability artefact that exists but says nothing still leaves the dual-use
@@ -904,6 +1022,13 @@ def build_parser():
     ap.add_argument("--capability", default="",
                     help="a capability run's output, ideally one with --compare-to so the card "
                          "can state what the edit cost rather than only an absolute score")
+    ap.add_argument("--tamper", default="",
+                    help="a `senbonzakura tamper` artefact, which says whether the removed refusal "
+                         "comes back after a brief finetune and whether that is about the safety "
+                         "content of the data or about finetuning at all. Without it the card "
+                         "states plainly that nobody looked, because a customer who finetunes "
+                         "these weights may be handed back a model that refuses again and no "
+                         "other figure on the page would have predicted it")
     ap.add_argument("--base-licence", dest="base_licence", default="",
                     help="the base model's licence, as an SPDX identifier where one exists "
                          "(apache-2.0, mit, gemma, llama3.2, other). Required, and not inferred: a "
@@ -921,7 +1046,7 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    if not a.abliteration and not a.capability and not a.refusal:
+    if not a.abliteration and not a.capability and not a.refusal and not a.tamper:
         # SHAPE, NOT REASONING. This said "A card with no artefacts behind it would be a template,
         # and this exists to stop those being published", which explains the refusal to somebody
         # who has not asked why and never shows them what to type.
@@ -930,6 +1055,7 @@ def main(argv=None):
             "  --abliteration FILE   an abliteration.json from a run\n"
             "  --refusal FILE        a `senbonzakura score` run's output, scored on held back rows\n"
             "  --capability FILE     a capability run's output\n"
+            "  --tamper FILE         a `senbonzakura tamper` run's output\n"
             "  --base-licence NAME   the base model's licence, which is not inferred\n"
             "\n"
             "  senbonzakura report --abliteration edited/abliteration.json \\\n"
@@ -948,7 +1074,7 @@ def main(argv=None):
         raise SystemExit(bad)
     lines = build(load(a.abliteration), load(a.capability), a.command or None,
                   licence=a.base_licence or None, licence_link=a.base_licence_link or None,
-                  ref=load(a.refusal))
+                  ref=load(a.refusal), tam=load(a.tamper))
     text = "\n".join(lines)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

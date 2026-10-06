@@ -241,6 +241,16 @@ class LeakReport:
     leak_per_position: tuple[float, ...]
     #: How many probe prompts the means are over.
     probe_prompts: int
+    #: The five fields that decide whether this figure may be compared with another one, exactly as
+    #: `stamps.pinned` returns them.
+    #:
+    #: CARRIED ON THE REPORT RATHER THAN DERIVED WHEN IT IS STAMPED, and that is the point. The
+    #: digest, the prompt format and the precision are facts about the run that produced these
+    #: numbers, so they are taken from the model, the tokeniser and the prompts that were actually
+    #: measured. Deriving them later, from arguments handed separately to the writer, lets a figure
+    #: and its own provenance disagree, and `baseline.comparability` reports an absent or wrong
+    #: pinned field as a mismatch without being able to say which.
+    pinned: dict
     #: The output, in both bases, or None when there is no final norm to speak of.
     output: OutputBasis | None = None
     #: Everything the run degraded on, each phrased for a person.
@@ -332,8 +342,20 @@ def stamp_report(doc, report):
     """
     from senbonzakura_check import measurement
 
+    # THE FIVE PINNED FIELDS ARE NAMED RATHER THAN SPREAD, which the guard on this allows in those
+    # words: name them explicitly where the writer knows better than the derivation does. It does
+    # here, because `report.pinned` was derived from the model, tokeniser and prompts that produced
+    # these very numbers, while a `stamps.pinned(...)` call at this point would re-derive them from
+    # whatever a caller happened to hand the writer. The one spelling this deliberately avoids is
+    # `**a_local`, which the guard skips on the strength of a dedicated test that `score` has and
+    # this writer does not, so using it would be passing the gate rather than satisfying it.
     measurement.stamp(doc, "residual_leak", report.mean, "pre-norm-residual-per-position",
                       n=report.probe_prompts, by_estimator=True,
+                      input_digest=report.pinned["input_digest"],
+                      partition=report.pinned["partition"],
+                      prompt_format=report.pinned["prompt_format"],
+                      precision=report.pinned["precision"],
+                      tool_version=report.pinned["tool_version"],
                       basis=PRE_NORM_BASIS, measured_at=AT_POSITION,
                       per_position=list(report.leak_per_position),
                       positions=report.positions)
@@ -341,6 +363,11 @@ def stamp_report(doc, report):
     if out is not None and out.along_post_norm_direction is not None:
         measurement.stamp(doc, "residual_leak", out.along_post_norm_direction,
                           "post-norm-output-basis", n=report.probe_prompts, by_estimator=True,
+                          input_digest=report.pinned["input_digest"],
+                          partition=report.pinned["partition"],
+                          prompt_format=report.pinned["prompt_format"],
+                          precision=report.pinned["precision"],
+                          tool_version=report.pinned["tool_version"],
                           basis=POST_NORM_BASIS, measured_at=AT_OUTPUT,
                           norm_condition_number=out.norm_condition_number,
                           norm_diagonal_agreement=out.norm_diagonal_agreement,
@@ -464,6 +491,7 @@ def measure_leak(model, tok, prompts, direction, *, log=print):
     a pad position unless the padding side is managed, which is the defect `firsttoken.py` owns.
     One prompt at a time needs no padding and is correct.
     """
+    from . import stamps
     from .firsttoken import render_chat
 
     if not prompts:
@@ -551,6 +579,7 @@ def measure_leak(model, tok, prompts, direction, *, log=print):
         if output.refused_because is not None:
             log(f"  residual leak: NO OUTPUT-BASIS FIGURE. {output.refused_because}")
     return LeakReport(positions=NL + 1, leak_per_position=profile, probe_prompts=n,
+                      pinned=stamps.pinned(prompts=prompts, model=model, tok=tok),
                       output=output, warnings=tuple(degraded))
 
 

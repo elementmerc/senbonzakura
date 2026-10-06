@@ -243,6 +243,170 @@ def noncompliance_rate(texts: list[str]) -> float:
 def broken_rate(texts: list[str]) -> float:
     return sum(is_broken(t) for t in texts) / max(1, len(texts))
 
+# --- Graded prose degradation, over the whole reply ------------------------------
+# `is_broken` above answers one question with a yes or a no, over the first 240 characters, and it
+# is deliberately left exactly as it was. The published head-to-head arms are committed to this
+# repository and tests recompute their figures from the generations; the search objective weights
+# brokenness at 2.0 and `knee_scalar` weights it at 2.0 again. Moving that threshold or that window
+# would change a shipped number rather than annotate it, so these sit BESIDE it, additively, the
+# way `score._stamp_refusal` sits beside the fields that command has always written.
+#
+# WHAT THESE MEASURE, AND WHAT THEY DO NOT. They are mechanical: how much of the reply repeats
+# itself, how much of its vocabulary is distinct, and whether it produced roughly the length it was
+# allowed. That is adjacent to what somebody shipping a creative writing model cares about and it
+# is not the same thing. A model can score perfectly on every one of these and still write dull,
+# flat, lifeless prose, and no figure in this section is evidence about writing quality. Nothing
+# built on top of them may claim otherwise.
+#
+# No import, for the reason the head of this file gives: the head-to-head reads these rulers inside
+# a sealed container holding a competing tool's dependency tree, so a module that imports nothing
+# can be read there without dragging anything else in.
+
+#: Length of the repeated run these measures look for, in words. Three, because a one-word repeat
+#: is ordinary English ("the", "to") and a three-word repeat is the model looping.
+REPETITION_NGRAM = 3
+
+#: Words per window for the vocabulary measure that survives a length difference. Fifty is short
+#: enough that a reply of a few sentences still yields windows, and long enough that the ratio is
+#: not dominated by one repeated function word.
+DEFAULT_TTR_WINDOW = 50
+
+
+def _words(text):
+    """The reply as lowercase words, with punctuation treated as a separator.
+
+    `isalnum` rather than an ASCII range, for the same reason `_is_garbage_char` does not flag
+    ordinary non-ASCII: legitimate CJK, Cyrillic, Arabic and accented Latin are words, and a
+    tokeniser that drops them would report a coherent Chinese reply as having no vocabulary at all.
+    """
+    kept = "".join(c if (c.isalnum() or c == "'") else " " for c in (text or "").lower())
+    return kept.split()
+
+
+def repetition_rate(text, n=REPETITION_NGRAM):
+    """What share of the reply's word runs it has already said, or None when it is too short.
+
+    THE GRADED VERSION OF `is_broken`'s REPETITION TEST, and the two answer different questions.
+    That one asks whether the first 240 characters are a single token on repeat, which catches a
+    wrecked model and nothing milder. This one reads the whole reply and returns a number, so a
+    model that loops for its last two sentences is visible rather than being scored as intact.
+
+    None rather than 0.0 for a reply shorter than one run. Zero would say "measured, none found",
+    and a four-word reply has no repetition to find; the caller has to know the difference, which
+    is the same rule `reportable_rate` applies to a sample too small to carry a rate.
+    """
+    if n < 1:
+        raise ValueError(f"repetition_rate needs a run length of at least one word, not {n}")
+    words = _words(text)
+    if len(words) < n:
+        return None
+    runs = [tuple(words[i:i + n]) for i in range(len(words) - n + 1)]
+    return (len(runs) - len(set(runs))) / len(runs)
+
+
+def type_token_ratio(text, window=None):
+    """How much of the reply's vocabulary is distinct, as distinct words over total words.
+
+    THE LENGTH CONFOUND IS REAL AND IS WHY `window` EXISTS. Over a whole reply this ratio falls
+    mechanically as the reply gets longer, because English runs out of new words long before it
+    runs out of sentences. So a whole-reply ratio compares two replies of the same length and
+    nothing else, and comparing a 40-word answer against a 400-word one on it measures which was
+    longer. Passing `window` instead averages the ratio over every run of that many words, which
+    is the form that stays comparable across lengths.
+
+    None when there are no words at all, or when the reply is shorter than one window: both are
+    "there was nothing to measure", which is not the same statement as a low ratio.
+    """
+    words = _words(text)
+    if not words:
+        return None
+    if window is None:
+        return len(set(words)) / len(words)
+    if window < 1:
+        raise ValueError(f"type_token_ratio needs a window of at least one word, not {window}")
+    if len(words) < window:
+        return None
+    windows = range(len(words) - window + 1)
+    return sum(len(set(words[i:i + window])) for i in windows) / (window * len(windows))
+
+
+def length_error(produced_tokens, budget):
+    """How far a reply fell short of the budget it was generated under, and whether it hit the cap.
+
+    BUDGET MEANS WHAT `lengthsweep` ALREADY MEANS BY IT: the generation budget in tokens, the
+    `max_new_tokens` a reply was allowed. That module exists because this project measured its own
+    refusal rate at a budget too short to see a refusal, and it treats the budget as a controlled
+    variable with a measured default and a visibility floor. A second notion of length here would
+    be a second answer to one question, which is the defect this codebase repeats most.
+
+    Two numbers and they are not interchangeable. `shortfall` is how much of the budget went
+    unused, as a fraction, so 0.0 is a reply that ran to the cap and 0.9 is one that gave up after
+    a tenth of it. `truncated` says the reply ran INTO the cap, which means its length is a fact
+    about the budget rather than about the model, and a shortfall of 0.0 therefore must never be
+    read as perfect length control.
+
+    Takes the counts rather than the text because the caller already has them: the generation loop
+    knows how many tokens it produced, and counting words here instead would be a tokeniser of our
+    own disagreeing with the model's.
+    """
+    produced, budget = int(produced_tokens), int(budget)
+    if budget < 1:
+        raise ValueError(f"a generation budget is at least one token, not {budget}")
+    if produced < 0:
+        raise ValueError(f"a reply cannot have produced {produced} tokens")
+    return {
+        "produced": produced,
+        "budget": budget,
+        "shortfall": max(0.0, (budget - produced) / budget),
+        "truncated": produced >= budget,
+    }
+
+
+def length_control(produced_and_budgets):
+    """Length behaviour over many replies, or None when there are none.
+
+    The truncation share is reported separately rather than folded into the mean, because the two
+    failures point opposite ways: replies that stop far short of the budget are a model that has
+    lost the thread, and replies that all run into the cap are a budget too small to have measured
+    anything. One mean cannot say which happened.
+    """
+    rows = [length_error(p, b) for p, b in produced_and_budgets]
+    if not rows:
+        return None
+    return {
+        "n": len(rows),
+        "mean_shortfall": sum(r["shortfall"] for r in rows) / len(rows),
+        "truncation_rate": sum(r["truncated"] for r in rows) / len(rows),
+    }
+
+
+def degradation(text, produced_tokens=None, budget=None):
+    """The graded mechanical measures for one reply, as a dict.
+
+    MECHANICAL, AND THAT IS THE WHOLE CAVEAT. These say whether a reply repeats itself, how varied
+    its vocabulary is, and whether it used the room it was given. None of them reads the writing.
+    A model whose prose has gone flat, generic and boring scores exactly as well here as one whose
+    prose is excellent, so a number from this function is evidence about mechanical damage and is
+    not evidence about writing quality. Anything that reports these has to say so.
+
+    `broken` is carried alongside, unchanged, so a caller meets the binary verdict and the graded
+    numbers together rather than reaching for whichever is to hand. A measure is None when the
+    reply gave it nothing to measure, which a caller must not render as zero.
+    """
+    out = {
+        "broken": is_broken(text),
+        "repetition_rate": repetition_rate(text),
+        "type_token_ratio": type_token_ratio(text),
+        "windowed_type_token_ratio": type_token_ratio(text, window=DEFAULT_TTR_WINDOW),
+        "words": len(_words(text)),
+    }
+    # Only when the caller supplied both. Defaulting a budget would invent the controlled variable
+    # this measure is defined against, which is exactly what `length_error` refuses to do.
+    out["length"] = (None if produced_tokens is None or budget is None
+                     else length_error(produced_tokens, budget))
+    return out
+
+
 # NO `substantive_rate` BESIDE THE OTHER FOUR, deliberately. Its one caller needs the COUNT and
 # not the rate, because a jailbreak figure is reported through `reportable_rate`, which withholds
 # a rate the sample cannot carry. A rate helper added for symmetry would be the easy thing to

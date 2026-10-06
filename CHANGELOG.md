@@ -132,7 +132,35 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - The governor's free memory fraction, the pause ceiling and the divergence ceiling are checked
   before a run starts, because each of them moves a bar rather than crashing
 
+### Report
+- `senbonzakura report` takes `--refusal`, a `senbonzakura score` artefact holding the figures
+  taken after the edit on rows the search never scored, and publishes those as the headline rates
+  with the search's own figures kept below and labelled as not publishable
+- Every rate on the card now carries its counts and a 95% interval, so a figure over nine replies
+  no longer reads exactly like a figure over three thousand
+- A new "What was measured" section names the estimator behind each figure, the number of replies
+  it rests on, and the five fields that decide whether two such figures describe the same
+  experiment, with an absent field said out loud rather than left off the page
+- A new "What this does not cover" section lists the gaps this run actually has, then the standing
+  limits of the instruments: what a refusal is here, one corpus and one language, one reply per
+  prompt, nothing about a conversation that continues, and nothing about whether the writing is
+  good
+- The sentences an artefact writes about its own figures now reach the reader: a generation budget
+  too short for a refusal to appear, a run that disowned its own number, and the note saying the
+  refusal rates came from the rows the search chose its winner by scoring. All three were in the
+  file and none of them reached the page
+- The card reports the Heretic comparable keyword figure, which the run has always recorded and the
+  card always dropped
+- An interval explanation and a note on why the rows matter are written for a reader who is not a
+  statistician
+
 ### Measurement
+- Graded prose measures beside `is_broken`, over the whole reply rather than its first 240
+  characters: a repetition rate, a vocabulary ratio with a windowed form that survives a length
+  difference, and a shortfall against the generation budget with truncation reported separately.
+  They are mechanical and are not a measure of whether the writing is any good
+- `is_broken` itself is unchanged, threshold and window alike, so every published figure that
+  rests on it still holds
 - A null ruler that separates the two sides perfectly in the opposite direction is named as the
   strongest one, where it used to be scored as a coin flip, so the headline control line and the
   rule that invalidates a run now agree on the same case

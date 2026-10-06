@@ -415,3 +415,119 @@ def test_a_card_with_numbers_does_not_fire_the_unevidenced_check(tmp_path):
         write_card(tmp_path, SATURATED_CARD), load_checks())
     assert "an-absolute-claim-with-no-number-anywhere-on-the-card" not in [
         f.check_id for f in findings]
+
+
+# ── which rows a figure came from, which a card could not say until it could ────────────
+# THE PREMISE THAT STOPPED BEING TRUE, 2026-10-06. The adapter answered "which partition" with a
+# hardcoded None under a comment saying a card never states it. `a-rate-with-no-partition-beside-it`
+# needs a rate carrying a denominator, so the first card to publish BOTH its counts and its row set
+# was the first card able to fire a check saying it published neither.
+
+#: As `senbonzakura report` writes it, which is the shape that exposed both defects.
+RECEIPTED_CARD = """# Abliteration report
+
+## What was measured
+
+- replies the refusal figures rest on: **128**
+- corpus the figures were taken on: `a1b2c3d4e5f60718`
+- which rows of it: `measure`
+
+## Refusal and coherence
+
+- refusal after the edit: **3/128 = 2.3%**, 95% CI [0.8%, 6.7%]
+- replies that came out broken: **0/128 = 0.0%**, 95% CI [0.0%, 2.9%]
+"""
+
+
+def test_the_partition_a_card_states_is_read():
+    assert cardread.stated_partition(RECEIPTED_CARD) == "measure"
+
+
+def test_a_card_that_says_nothing_about_its_rows_still_reports_the_gap():
+    """The honest answer for every card that genuinely does not say, which is most of them."""
+    assert cardread.stated_partition(PLAIN_CARD) is None
+    assert cardread.stated_partition(SATURATED_CARD) is None
+
+
+def test_a_field_recorded_as_absent_is_not_read_as_a_partition():
+    """"not recorded in this artefact" is the gap, and reading it as a row set hides the gap."""
+    card = "- which rows of it: **not recorded in this artefact**\n"
+    assert cardread.stated_partition(card) is None
+
+
+def test_prose_about_the_field_is_not_read_as_the_field():
+    """The card explains what the row set means. That sentence is not a statement of one."""
+    prose = ("**Why the rows matter.** `which rows of it` says whether the figures come from "
+             "prompts the edit was chosen by.\n")
+    assert cardread.stated_partition(prose) is None
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("Split: test\n", "test"),
+    ("| partition | held back |\n", "held back"),
+    ("- eval split: `measure`\n", "measure"),
+    ("**Evaluation split:** validation\n", "validation"),
+])
+def test_the_other_spellings_a_publisher_might_use(line, expected):
+    assert cardread.stated_partition(line) == expected
+
+
+def test_an_explicit_wording_wins_over_a_bare_split_elsewhere():
+    """Label order rather than document order, so the specific statement is the one read."""
+    card = "Split: everything\n\n- which rows of it: `measure`\n"
+    assert cardread.stated_partition(card) == "measure"
+
+
+def test_the_partition_reaches_the_normalised_document():
+    doc = {"format": "model-card", "card": cardread.read_card(RECEIPTED_CARD)}
+    assert ModelCardAdapter.normalise(doc)["eval_split"] == "measure"
+
+
+def test_a_card_with_no_partition_normalises_to_none():
+    doc = {"format": "model-card", "card": cardread.read_card(PLAIN_CARD)}
+    assert ModelCardAdapter.normalise(doc)["eval_split"] is None
+
+
+class TestOneFigureWrittenTwiceIsOneClaim:
+    """`0/128 = 0.0%` is a fraction and a percentage of the same thing.
+
+    Reading it as two claims produced a second entry with NO denominator from a line that plainly
+    carries one, and `null-reported-as-zero` fires on exactly that: a zero with no sample size
+    beside it. So a card that started stating its denominators became the first card able to fire a
+    check about not stating them.
+    """
+
+    def test_the_percentage_restating_a_fraction_is_dropped(self):
+        claims = cardread.extract_claims("- broken: **0/128 = 0.0%**, 95% CI [0.0%, 2.9%]")
+        kinds = [(c["kind"], c["value"]) for c in claims]
+        assert ("fraction", 0.0) in kinds
+        assert ("percent", 0.0) not in kinds
+
+    def test_the_form_that_carries_the_sample_size_is_the_one_kept(self):
+        (claim,) = [c for c in cardread.extract_claims("- refusal: **3/128 = 2.3%**")
+                    if c["value"] == pytest.approx(3 / 128)]
+        assert claim["kind"] == "fraction" and claim["total"] == 128
+
+    def test_a_genuinely_different_percentage_on_the_same_line_survives(self):
+        """The rule drops a restatement, not every percentage near a fraction."""
+        claims = cardread.extract_claims("- refusal 3/128 = 2.3%, over-refusal 44.0%")
+        assert any(c["kind"] == "percent" and c["value"] == pytest.approx(0.44) for c in claims)
+
+    def test_the_same_percentage_twice_on_one_line_is_one_claim(self):
+        """A table row printing one figure in two columns is formatting, not two claims."""
+        claims = cardread.extract_claims("| **Total** | **44.0%** | **44.0%** |")
+        assert len([c for c in claims if c["kind"] == "percent"]) == 1
+
+    def test_a_percentage_on_its_own_still_carries_no_denominator(self):
+        (claim,) = [c for c in cardread.extract_claims("scored 2.3% overall")
+                    if c["kind"] == "percent"]
+        assert claim["total"] is None
+
+    def test_a_receipted_card_no_longer_fires_the_zero_check(self):
+        """End to end: the card with counts and a partition produces neither finding."""
+        doc = {"format": "model-card", "card": cardread.read_card(RECEIPTED_CARD)}
+        norm = ModelCardAdapter.normalise(doc)
+        zeros_without_n = [k for k, v in norm["metrics"].items()
+                           if v["value"] == 0.0 and v["n"] is None]
+        assert zeros_without_n == []
+        assert norm["eval_split"] == "measure"

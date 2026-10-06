@@ -198,6 +198,32 @@ METRICS = {
                    "this project's refusal ruler on a benign set of minimal contrasts of the "
                    "harmful ones, so the two arms are topic-matched by construction",
            }),
+        # THE ONE METRIC HERE THAT IS NOT BEHAVIOURAL, and the estimator names carry the whole
+        # caveat rather than a comment. Every other entry in this registry answers "did the model
+        # change"; this one answers the prior question, "did the direction leave the residual
+        # stream", and it is only readable if the artefact says in which BASIS. The two
+        # estimators are two bases, not two procedures for one number: the same state on the same
+        # forward pass reads 0.0096 along the pre-norm direction at the output and 1.2e-08 along
+        # the post-norm one, measured on SmolLM2-135M-Instruct on 2026-10-06. A figure under this
+        # metric with no basis beside it is six orders of magnitude from being readable, which is
+        # why `a-removed-direction-with-no-basis-named` exists.
+        _m("residual_leak",
+           "how much of the residual stream still lies along a direction an edit was meant to "
+           "remove, as a fraction of the residual norm at the last token",
+           "fraction-of-residual-norm",
+           {
+               "pre-norm-residual-per-position":
+                   "the mean over probe prompts of the component along the direction over the "
+                   "residual norm, at the last token, taken in the PRE-norm residual stream, "
+                   "which is the space every residual writer writes into, and reported once per "
+                   "residual-stream position up to and including what the last decoder block "
+                   "writes",
+               "post-norm-output-basis":
+                   "the same quantity at the model's output, after the final norm, read along "
+                   "the direction divided elementwise by the norm's learned weight, which is the "
+                   "normal of the hyperplane that norm maps the pre-norm one onto and the only "
+                   "direction in the output space the pre-norm claim is about",
+           }),
         _m("compass_auc", "whether the model still recognises harm, as opposed to refusing it",
            "auc",
            {

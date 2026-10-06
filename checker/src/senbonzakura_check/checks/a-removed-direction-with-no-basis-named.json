@@ -1,0 +1,71 @@
+{
+  "id": "a-removed-direction-with-no-basis-named",
+  "title": "A direction is claimed removed from the residual stream and nothing says in which basis",
+  "detects": "A residual-leak figure, the share of the residual norm still lying along a direction an edit was meant to remove, carrying no field that names the basis it was read in; or one read at the model's output while naming the pre-norm direction as its basis. A claim that a direction was removed from the residual stream is a claim about a basis, because the final norm multiplies the residual by a learned per-dimension weight, and a diagonal map does not preserve orthogonality to a fixed vector. The state can be exactly on the hyperplane the edit put it on and still read about 1% of the residual norm when measured along the pre-norm normal after the norm has moved that hyperplane.",
+  "incident": "Ours, 2026-10-06, and it is the measurement rather than an argument. On SmolLM2-135M-Instruct with every residual writer ablated, so that the component along the direction is 1.6e-08 of the norm at every position, the same state on the same forward pass reads 0.009581 at the output along the pre-norm direction and 1.2e-08 along the post-norm one. Two rulers, six orders of magnitude, and the naive reading of the first is that the ablation failed. The published project this metric was read from states its claim as holding across depth, which is sound; the figure is unsafe only where the basis is dropped. Our own research note then dropped it: its mean for a fully ablated model reads 0.000290 rather than 1e-08, because one post-norm value of 0.0090 was averaged in with thirty pre-norm ones.",
+  "remedy": "Record the basis beside the figure, as a field and not as prose, and record where in the stack it was taken. Report the per-position profile in the pre-norm residual stream up to and including what the last decoder block writes, which needs no division and is the space the writers write into. If the output is reported at all, read it along the direction divided elementwise by the final norm's weight and label it as that. Where the norm is too ill conditioned for that division to mean anything, say so and report no output figure rather than a confident wrong one.",
+  "confidence": "high",
+  "severity": "withdraws",
+  "false_positive": "It reads one unit string and two field names, so a third party's leak figure arriving through an adapter that does not carry a basis fires here, and the fault is then the adapter rather than the artefact: the fix is to teach the adapter. It checks whether a basis was NAMED and not whether it was named correctly, so an artefact that records the wrong basis confidently passes. It cannot see a leak figure reported as a bare top-level number, in a filename or in prose, which is where most of them live today, so silence here is usually evidence that the question could not be asked rather than that the answer was good. A per-position figure quoted at the embedding output or at a middle block is unaffected by the norm and is correct in either basis; naming one is still required, because the reader cannot tell from the file which position they are holding.",
+
+  "applies_to": {
+    "op": "any_entry",
+    "path": "metrics",
+    "all": [{"field": "units", "equals": "fraction-of-residual-norm"}]
+  },
+
+  "rule": {
+    "op": "any_of",
+    "rules": [
+      {"op": "any_entry", "path": "metrics",
+       "all": [{"field": "units", "equals": "fraction-of-residual-norm"},
+               {"field": "basis", "is": "unset_or_falsy"}]},
+      {"op": "any_entry", "path": "metrics",
+       "all": [{"field": "units", "equals": "fraction-of-residual-norm"},
+               {"field": "measured_at", "is": "unset_or_falsy"}]},
+      {"op": "any_entry", "path": "metrics",
+       "all": [{"field": "units", "equals": "fraction-of-residual-norm"},
+               {"field": "measured_at", "equals": "model-output"},
+               {"field": "basis", "equals": "pre-norm-direction"}]}
+    ]
+  },
+
+  "control": {
+    "fires_on": [
+      {"metrics": {"residual_leak": {"value": 1.2e-08, "units": "fraction-of-residual-norm"}}},
+      {"metrics": {"residual_leak": {"value": 1.2e-08, "units": "fraction-of-residual-norm",
+                                     "basis": null, "measured_at": "model-output"}}},
+      {"metrics": {"residual_leak": {"value": 1.2e-08, "units": "fraction-of-residual-norm",
+                                     "basis": "post-norm-direction"}}},
+      {"metrics": {"residual_leak": {"value": 0.009581, "units": "fraction-of-residual-norm",
+                                     "basis": "pre-norm-direction",
+                                     "measured_at": "model-output"}}},
+      {"metrics": {"kl": {"value": 0.031, "units": "nats", "n": 200},
+                   "residual_leak.post-norm-output-basis":
+                       {"value": 1.2e-08, "units": "fraction-of-residual-norm",
+                        "measured_at": "model-output"}}}
+    ],
+    "passes_on": [
+      {"metrics": {"residual_leak": {"value": 1.6e-08,
+                                     "units": "fraction-of-residual-norm",
+                                     "estimator": "pre-norm-residual-per-position",
+                                     "basis": "pre-norm-direction",
+                                     "measured_at": "residual-stream-position"}}},
+      {"metrics": {"residual_leak": {"value": 1.2e-08,
+                                     "units": "fraction-of-residual-norm",
+                                     "estimator": "post-norm-output-basis",
+                                     "basis": "post-norm-direction",
+                                     "measured_at": "model-output"}}},
+      {"metrics": {"residual_leak.pre-norm-residual-per-position":
+                       {"value": 0.0796, "units": "fraction-of-residual-norm",
+                        "basis": "pre-norm-direction",
+                        "measured_at": "residual-stream-position"},
+                   "residual_leak.post-norm-output-basis":
+                       {"value": 1.2e-08, "units": "fraction-of-residual-norm",
+                        "basis": "post-norm-direction", "measured_at": "model-output"}}},
+      {"metrics": {"kl": {"value": 0.031, "units": "nats", "n": 200},
+                   "refusal_rate.senbonzakura-ruler":
+                       {"value": 0.0, "units": "proportion", "n": 132}}}
+    ]
+  }
+}

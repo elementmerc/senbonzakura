@@ -6,6 +6,20 @@
 #
 # Generated 2026-07-29 on Python 3.14.4, linux-x86_64.
 #   torch from https://download.pytorch.org/whl/cpu
+#
+# THREE PINS WERE RAISED BY HAND ON 2026-10-06, FOR ADVISORIES, NOT FOR FEATURES:
+#   multidict  6.7.1  -> 6.9.1   CVE-2026-104874
+#   setuptools 78.1.0 -> 83.0.0  CVE-2025-47273, CVE-2026-59890
+#   urllib3    2.7.0  -> 2.8.0   CVE-2026-97687, CVE-2026-97688, CVE-2026-97689
+# Six advisories against the pinned set, every one with a published fix, confirmed against OSV
+# for these exact versions rather than inferred from a newer resolve.
+#
+# NOBODY HAD SEEN THEM, and that is the part worth keeping. Every dependency-advisory step had
+# been failing since 2026-10-02 with DID NOT RUN, because pip-audit ran under `--strict` and
+# could not look up the CPU torch build, so it exited printing no JSON at all. A gate that cannot
+# report anything reports nothing about the other sixty packages either. The six were found the
+# day that gate was repaired. All three fixes are well past the section 5 cooldown window (93, 20
+# and 14 days at the time of the bump).
 
 accelerate==1.14.0
 aiohappyeyeballs==2.7.1
@@ -41,7 +55,7 @@ markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
 mpmath==1.3.0
-multidict==6.7.1
+multidict==6.9.1
 multiprocess==0.70.19
 networkx==3.6.1
 numpy==2.5.1
@@ -64,7 +78,7 @@ requests==2.34.2
 rich==15.0.0
 ruff==0.16.0
 safetensors==0.8.0
-setuptools==78.1.0
+setuptools==83.0.0
 shellingham==1.5.4
 shtab==1.8.1
 six==1.17.0
@@ -76,6 +90,6 @@ tqdm==4.70.0
 transformers==5.14.1
 typer==0.27.0
 typing_extensions==4.15.0
-urllib3==2.7.0
+urllib3==2.8.0
 xxhash==3.8.1
 yarl==1.24.5

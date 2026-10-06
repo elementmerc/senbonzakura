@@ -650,3 +650,143 @@ def test_a_digest_of_several_splits_is_several_facts_not_a_dict_repr():
     text = _text(abl=_abl(track_digest={"bad_ds": "39cc", "good_ds": "6b2b"}))
     assert "`bad_ds` `39cc`, `good_ds` `6b2b`" in text
     assert "{'bad_ds'" not in text
+
+
+def _tam(**over):
+    """A tamper artefact with the fields the section reads, shaped as `tamper` writes them."""
+    doc = {
+        "bias_direction": "the recovery targets contain the phrases the refusal ruler keys on",
+        "refusal_eval": {"partition": "rows-from-128", "n": 392},
+        "arms": {
+            "recovery": {
+                "recipe": {"method": "lora", "steps": 60, "learning_rate": 0.0001,
+                           "train_batch": 4, "train_pairs": 128, "train_dtype": "bfloat16",
+                           "train_digest": "deadbeef0000",
+                           "what_the_method_tests": "an adapter beside the frozen weights"},
+                "recovered_fraction": {"point": 0.12, "ci": [0.05, 0.2]},
+            },
+            "ceiling": {"recovered_fraction": {"point": 0.88, "ci": [0.8, 0.94]}},
+        },
+        "safety_specific": {"point": 0.1, "ci": [0.03, 0.18],
+                            "reading": "the interval excludes zero"},
+    }
+    doc.update(over)
+    return doc
+
+
+def test_a_card_with_no_tamper_evidence_says_nobody_looked():
+    out = "\n".join(modelcard.tamper_section(None))
+    assert modelcard.NOT_MEASURED in out
+    assert "may be handed back a model that refuses again" in out
+
+
+def test_a_tamper_run_that_disowned_itself_quotes_no_figure():
+    # The artefact still holds numbers when it self-invalidates, and publishing them because they
+    # are there is how an invalid measurement becomes a published claim.
+    out = "\n".join(modelcard.tamper_section(
+        _tam(self_invalidated="the neutral arm's loss rose")))
+    assert "DISOWNED ITS OWN FIGURES" in out
+    assert "12.0%" not in out
+    assert "88.0%" not in out
+
+
+def test_the_bias_direction_is_stated_before_any_number():
+    lines = modelcard.tamper_section(_tam())
+    body = "\n".join(lines)
+    assert body.index("How to read these") < body.index("12.0%")
+
+
+def test_the_ceiling_is_reported_so_the_recovery_figure_is_not_read_against_one():
+    out = "\n".join(modelcard.tamper_section(_tam()))
+    assert "+88.0%" in out
+    assert "UNEDITED model" in out
+
+
+def test_a_recipe_the_artefact_did_not_record_is_said_rather_than_implied():
+    doc = _tam()
+    doc["arms"]["recovery"].pop("recipe")
+    out = "\n".join(modelcard.tamper_section(doc))
+    assert "the recipe is not recorded in this artefact" in out
+
+
+def test_an_injected_field_reads_as_a_sentence_after_a_bold_lead_in():
+    out = "\n".join(modelcard.tamper_section(_tam()))
+    assert "**How to read these.** The recovery targets" in out
+
+
+def test_the_limits_bullet_stops_claiming_the_tamper_artefact_is_unread():
+    # A disclaimer that outlives the gap it describes is worse than none: a reader believes the
+    # disclaimer over the section it contradicts.
+    without = "\n".join(modelcard.limits_section())
+    assert "`senbonzakura tamper` measure those, and their artefacts are not read" in without
+    with_tam = "\n".join(modelcard.limits_section(tam=_tam()))
+    assert "`senbonzakura multiturn` measures that" in with_tam   # multiturn still is not read
+    assert "its artefact is not read by this page" in with_tam
+    assert "What a finetune brings back IS reported above" in with_tam
+    assert "`senbonzakura tamper` measure those" not in with_tam
+
+
+def test_a_tamper_artefact_alone_is_enough_to_build_a_card(tmp_path):
+    path = tmp_path / "tamper.json"
+    path.write_text(json.dumps(_tam()), encoding="utf-8")
+    out = tmp_path / "card.md"
+    assert modelcard.main(["--tamper", str(path), "--base-licence", "mit",
+                           "--out", str(out)]) == 0
+    assert "Tamper resistance" in out.read_text(encoding="utf-8")
+
+
+def test_the_card_offers_the_tamper_flag_when_it_refuses_for_want_of_artefacts():
+    with pytest.raises(SystemExit, match=r"--tamper FILE"):
+        modelcard.main(["--base-licence", "mit"])
+
+
+def test_a_bare_tamper_artefact_reports_what_it_has_and_claims_nothing_it_does_not():
+    # Every optional field absent at once: the section must still be a section rather than raising
+    # or quietly emitting an empty one, because `tamper` writes these fields conditionally.
+    out = "\n".join(modelcard.tamper_section({"arms": {"recovery": {}}}))
+    assert "the recipe is not recorded in this artefact" in out
+    assert "How to read these" not in out
+    assert "UNEDITED model" not in out
+    assert "Is it about safety" not in out
+
+
+def test_a_figure_with_no_interval_is_reported_without_inventing_one():
+    doc = _tam()
+    doc["arms"]["recovery"]["recovered_fraction"] = {"point": 0.12, "ci": None}
+    doc["safety_specific"] = {"point": 0.1, "ci": None}
+    out = "\n".join(modelcard.tamper_section(doc))
+    assert "**+12.0%** of what there was to recover" in out
+    assert "95% CI" not in out
+
+
+def test_a_safety_gap_with_no_reading_states_the_number_and_stops():
+    doc = _tam()
+    doc["safety_specific"].pop("reading")
+    out = "\n".join(modelcard.tamper_section(doc))
+    assert "Is it about safety" in out
+    assert "the interval excludes zero" not in out
+
+
+def test_a_recipe_without_the_method_note_or_a_digest_omits_both_lines():
+    doc = _tam()
+    doc["arms"]["recovery"]["recipe"] = {"method": "full", "steps": 60}
+    out = "\n".join(modelcard.tamper_section(doc))
+    assert "method `full`, 60 steps" in out
+    assert "what that method does and does not test" not in out
+    assert "digest of the training pairs" not in out
+
+
+@pytest.mark.parametrize(("key", "lead"), [
+    ("control_missing", "No control was run."),
+    ("ceiling_missing", "No ceiling was run."),
+    ("control_caveat", "Read the gap with this."),
+    ("budget_warning", "Budget."),
+])
+def test_each_caveat_the_artefact_carries_reaches_the_page(key, lead):
+    out = "\n".join(modelcard.tamper_section(_tam(**{key: "something was wrong with the run"})))
+    assert lead in out
+    assert "Something was wrong with the run" in out
+
+
+def test_an_empty_sentence_field_stays_empty_rather_than_raising():
+    assert modelcard._sentence("") == ""

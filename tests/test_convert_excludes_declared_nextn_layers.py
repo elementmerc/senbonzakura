@@ -54,7 +54,7 @@ def test_true_is_not_one():
 
 def test_the_hidden_layer_count_is_left_alone(tmp_path):
     """The fix must not touch `num_hidden_layers`, which is what the first attempt got wrong."""
-    import senbonzakura.convert as convert
+    from senbonzakura import convert
 
     src = tmp_path / "GLM-4.7-Flash"
     src.mkdir()

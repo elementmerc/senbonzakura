@@ -63,7 +63,20 @@ import pathlib
 import subprocess
 import sys
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:   # Python 3.10, where `tomllib` is not yet in the standard library.
+    # THE THIRD SPELLING OF THE SAME DEFECT, and `probe.py` predicted it in its own words: "a guard
+    # that covers one spelling of a defect reports clean on the others." `tests/tomlread.py` was
+    # written to fix it, `probe.py` then hit it again one file over, and this file still imported
+    # the 3.11 name directly. `requires-python` is ">=3.10", CI runs a 3.10 job, and on that job
+    # every dependency-advisory step died here before pip-audit was ever read, which the gate
+    # correctly refused to report as clean.
+    #
+    # `tomli` is the same parser under its pre-adoption name. It is present here because the CI
+    # step installs pip-audit, which depends on it below 3.11, and because the `dev` extra declares
+    # it for that interpreter alone.
+    import tomli as tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 

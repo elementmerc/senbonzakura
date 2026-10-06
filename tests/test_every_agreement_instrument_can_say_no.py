@@ -44,16 +44,16 @@ NEEDS_A_CONTROL = {
         "its whole output is whether two runs describe the same subspace",
         "--control"),
     "measure_separation.py": (
-        "its whole output is whether a statistic separates two labelled groups, which is the same "
-        "shape of claim: a separation that is really an artefact of the split looks identical",
+        ("its whole output is whether a statistic separates two labelled groups, which is the same "
+         "shape of claim: a separation that is really an artefact of the split looks identical"),
         "SHUFFLED control"),
     "derive_refusal_markers.py": (
-        "its whole output is Cohen's kappa between a derived marker list and our semantic refusal "
-        "metric, so it is an agreement by construction. And the control was not a formality: with "
-        "the labels shuffled it still reaches an IN-SAMPLE kappa of 0.5923, because a greedy search "
-        "over every n-gram in 259 replies can find phrases that separate any labelling at all. "
-        "Without the control, the real run's in-sample 0.9920 reads as a result when the floor for "
-        "pure noise is 0.59",
+        ("its whole output is Cohen's kappa between a derived marker list and our semantic refusal "
+         "metric, so it is an agreement by construction. And the control was not a formality: with "
+         "the labels shuffled it still reaches an IN-SAMPLE kappa of 0.5923, because a greedy "
+         "search over every n-gram in 259 replies can find phrases that separate any labelling at "
+         "all. Without the control, the real run's in-sample 0.9920 reads as a result when the "
+         "floor for pure noise is 0.59"),
         "--control shuffled"),
 }
 

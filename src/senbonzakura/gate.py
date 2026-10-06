@@ -231,8 +231,8 @@ def run(argv=None, log=print):
         log(f"  Checked: {recorded.get('metric')} on the {recorded.get('partition')} partition, "
             f"n={recorded.get('n')}, seeds {recorded.get('seeds')}, "
             f"estimator {recorded.get('estimator')!r} at {recorded.get('precision')}.")
-        log(f"  Not checked: every other property, every other partition, and anything this "
-            f"metric does not measure.")
+        log("  Not checked: every other property, every other partition, and anything this "
+            "metric does not measure.")
         # THE CAVEAT IS WORDED FOR THE VERDICT IT FOLLOWS. It used to read "a pass means ..."
         # under a FAIL as well, which is a sentence about an outcome that did not happen sitting
         # directly beneath the one that did.

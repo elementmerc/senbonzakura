@@ -102,8 +102,8 @@ class TestItRefusesRatherThanRepairingItself:
 
 class TestWhoseFaultAQuantiserThatWillNotStartIs:
     @pytest.mark.parametrize("verdict", [
-        "✗ llama-quantize  present at /x/llama-quantize and cannot start: a shared library "
-        "is missing (libgomp.so.1)",
+        ("✗ llama-quantize  present at /x/llama-quantize and cannot start: a shared library "
+         "is missing (libgomp.so.1)"),
         "✗ llama-quantize  error while loading shared libraries: libgomp.so.1",
         "✗ llama-quantize  CANNOT OPEN SHARED OBJECT file",
     ])

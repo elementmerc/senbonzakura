@@ -118,18 +118,17 @@ def test_every_declared_floor_is_pinned_and_tested():
 #: This is not a softening of the gate. A forced pin still has to be strictly above the declared
 #: floor (a pin BELOW it is the original defect and still fails), the forcing dependency has to
 #: be a real declared dependency, and anything not listed here still has to match exactly.
-FORCED_ABOVE_FLOOR = {
-    # `datasets` 5.0.1, the security floor raised under Q-72 to clear PYSEC-2026-3716, requires
-    # `pyarrow>=21.0.0`. The `dev` extra pulls `[hub]`, so the floors environment always holds
-    # `datasets`, so it can never hold pyarrow 14 again. The base `pyarrow>=14` claim is still
-    # correct for an install without `[hub]`; it simply has no job installing it any more, which
-    # is a ledger item rather than something this test should hide.
-    "pyarrow": (
-        "datasets",
-        ("datasets 5.0.1 requires pyarrow>=21.0.0, so the pyarrow floor of 14 cannot be "
-         "co-installed with the hub extra's floor"),
-    ),
-}
+#: EMPTY SINCE 2026-10-06, and emptied by a decision rather than by neglect.
+#:
+#: `pyarrow` lived here because `datasets` 5.0.1 requires `pyarrow>=21.0.0` while this project
+#: declared `pyarrow>=14`, so the pin had to sit above the floor it claimed to test. The floor was
+#: then raised to 23.0.1 outright, for PYSEC-2026-113 and on the operator's instruction that user
+#: security outranks compatibility with old stacks, which means the declared floor and the pin now
+#: agree and the collision that justified the entry is gone.
+#:
+#: Leaving the entry would have been worse than removing it: a registry of exceptions that outlives
+#: its exception stops being read as a list of live collisions and starts being read as noise.
+FORCED_ABOVE_FLOOR = {}
 
 
 def test_every_pin_matches_the_floor_it_claims_to_test():

@@ -14,7 +14,7 @@
 # When a floor in pyproject changes, change it here in the same commit. A
 # mismatch means the job is testing a version nothing declares.
 
-transformers==4.56
+transformers==5.10.1
 accelerate==0.26
 # NOT 14, AND THE DECLARED FLOOR IS STILL 14. This is the one pin in this file that is
 # deliberately ABOVE the floor it tests, and the reason is a collision between two declared
@@ -28,20 +28,27 @@ accelerate==0.26
 #
 # WHAT THAT COSTS, stated rather than left to be discovered: the `pyarrow>=14` claim now has no
 # job that installs it. Restoring it needs a second, hub-free floor environment, which is a
-# ledger item rather than something to pretend away here. 21.0.0 exactly, because it is the
-# release `datasets` names as its minimum and it ships a cp310 wheel, which is what this job's
-# Python 3.10 needs; an unpinned pyarrow would resolve to whatever is newest and would build
-# from source the day that stops shipping one, which is the cp314 failure this file already
-# carries a scar from.
-pyarrow==21.0.0
-huggingface_hub==0.34.0
+# ledger item rather than something to pretend away here.
+#
+# 23.0.1 since 2026-10-06, raised from 21.0.0 for PYSEC-2026-113, which was live at 21.0.0. It
+# still satisfies the `pyarrow>=21.0.0` that `datasets` 5.0.1 names as its minimum, and it ships
+# a cp310 wheel, which is what this job's Python 3.10 needs. The pin stays exact for the original
+# reason: an unpinned pyarrow resolves to whatever is newest and builds from source the day that
+# stops shipping one, which is the cp314 failure this file already carries a scar from.
+pyarrow==23.0.1
+huggingface_hub==1.5.0
 # numpy is not a declared dependency of this project and is pinned here anyway.
 #
 # THE ORIGINAL REASON NO LONGER APPLIES, and saying so is cheaper than letting the next reader
 # trust it: pyarrow 14's extension modules are compiled against numpy 1 while its metadata said
 # only `numpy>=1.16.6`, so the resolver paired it with numpy 2 and the job failed with
 # "ImportError: numpy.core.multiarray failed to import" from `pyarrow.lib`. pyarrow is pinned at
-# 21.0.0 here now, which is built for numpy 2, so that collision is gone.
+# 23.0.1 here now, built for numpy 2, so that collision is gone.
+#
+# WHAT IS NOT PROVEN, said rather than left for the job to discover: pyarrow 23.0.1 declares no
+# numpy bound at all, so nothing in the metadata forces numpy 2 and nothing proves its compiled
+# extension imports against numpy 1.26.4. The resolve is satisfiable; the import is what the
+# floors job actually tests. If it fails at `import pyarrow.lib`, this pairing is the cause.
 #
 # THE PIN STAYS ANYWAY, as a deliberate hold rather than a forced one. This environment has
 # never been exercised on numpy 2, and `accelerate==0.26` predates numpy 2 entirely. Moving the
@@ -58,10 +65,11 @@ optuna==4.0.0
 # to whatever was newest and called it the floor. `gguf` is precisely the dependency where an
 # untested floor has already bitten this project: PyPI gguf 0.19.0 and llama.cpp's own gguf-py
 # 0.19.0 are different code sharing a version number. Checked against PyPI on 2026-09-08: 0.19.0
-# ships a py3 wheel, and sentencepiece 0.1.98 ships cp310 wheels, so both install on the Python
-# this job runs.
+# ships a py3 wheel, and sentencepiece ships cp310 wheels, so both install on the Python this job
+# runs. sentencepiece is 0.2.1 since 2026-10-06, raised from 0.1.98 for PYSEC-2026-1909; 0.2.1
+# ships cp310 wheels too, checked against PyPI rather than assumed.
 gguf==0.19.0
-sentencepiece==0.1.98
+sentencepiece==0.2.1
 # The live display's dependency. Pure Python, so it installs on every runner this job uses.
 #
 # VERIFIED AT THIS EXACT VERSION on 2026-09-27, not assumed: 13.0.0 in a clean virtualenv, driving
@@ -96,7 +104,16 @@ nvidia-ml-py==12.535.108
 # is ever installed, so it is the only place the exposure was ever visible, and it is why the
 # pyarrow pin above had to move with it.
 datasets==5.0.1
-pytest==7.0.0
+# 9.0.3 since 2026-10-06, raised from 7.0.0 for PYSEC-2026-1845, which was live at 7.0.0. The two
+# pins below are deliberately NOT raised with it: neither carries an advisory, and both declare
+# bounds that 9.0.3 satisfies (pytest-cov wants pytest>=4.6, xdist wants >=6.2.0). Raising a floor
+# nothing asked to move would be testing a version nothing declares.
+#
+# WHAT THAT LEAVES UNPROVEN: pytest-cov 4.0.0 is from 2022 and pytest 9 changed internals that a
+# plugin can reach into. The metadata is satisfied; whether the plugin works is what this job runs
+# the suite to find out. If collection dies in pytest-cov, this pairing is the cause and the fix is
+# to raise pytest-cov here rather than to lower pytest.
+pytest==9.0.3
 pytest-cov==4.0.0
 # The floor for the parallel runner. `-n 4` is what every suite job uses, so the
 # oldest xdist the project permits has to be one that still understands it.

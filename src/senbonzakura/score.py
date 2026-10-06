@@ -104,9 +104,9 @@ def build_parser():
     ap.add_argument("--agree-with", dest="agree_with", default=None, metavar="MODEL",
                     help="only with a GGUF --model: the safetensors checkpoint of the same model, "
                          "scored on the same prompts through the ordinary path so the two can be "
-                         "compared. Decision Q-88 makes this control the condition on quoting a "
-                         "GGUF figure beside a transformers one: without it the artefact records "
-                         "that no agreement was measured, which is not the same as passing.")
+                         "compared. This control is the condition on quoting a GGUF figure beside "
+                         "a transformers one: without it the artefact records that no agreement "
+                         "was measured, which is not the same as passing.")
     ap.add_argument("--gguf-threads", dest="gguf_threads",
                     type=whole_number("--gguf-threads", minimum=1), default=None,
                     help=f"only with a GGUF --model: how many CPU threads llama.cpp may use "

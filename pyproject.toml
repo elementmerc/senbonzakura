@@ -153,7 +153,14 @@ dependencies = [
   "torch>=2.7; python_version == '3.13'",
   "torch>=2.9; python_version >= '3.14'",
   "transformers>=5.10.1",
-  "accelerate>=0.26",
+  # 0.32 is the first release carrying `accelerate.utils.memory.clear_device_cache`, which
+  # `peft` imports from the submodule directly. peft declares only `accelerate>=0.21`, so
+  # nothing in the metadata forces it and the floors job paired peft 0.20.0 with accelerate
+  # 0.26, where every `tamper` test died at that import. Raised here rather than in the
+  # `finetune` extra on purpose: floors.txt pins one accelerate for a job that installs
+  # `[dev]`, so a base floor of 0.26 would be a number nothing installs. Verified by running
+  # the tamper suite at 0.32.0, not by reading the changelog.
+  "accelerate>=0.32",
   # 3.0 predates SQLAlchemy 2.0 and its RDBStorage trips an internal assertion against
   # it ("assert version is not None"), which took out 17 tests in the floors job.
   # 3.1 is the first release that works with SQLAlchemy 2.x, verified directly.

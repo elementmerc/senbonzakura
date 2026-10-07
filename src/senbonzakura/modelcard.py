@@ -362,6 +362,68 @@ def multiturn_section(mt):
     return lines
 
 
+def prose_section(ref):
+    """What the edit did to the mechanics of the writing, with the quality question refused.
+
+    THE REFUSAL IS THE SECTION'S MOST IMPORTANT SENTENCE and it goes first. These measures say
+    whether a reply repeats itself, how varied its vocabulary is, and how long it ran. A model
+    whose prose has gone flat, generic and lifeless scores exactly as well on every one of them as
+    a model that writes beautifully. Somebody shipping a creative-writing model cares about the
+    second thing, and a page that reports the first without saying so invites them to read it as
+    the second.
+
+    Reads the `prose` block a `senbonzakura score` run writes. Absent for an artefact produced
+    before that block existed, which is a gap and not a zero.
+    """
+    block = (ref or {}).get("prose")
+    if not block:
+        return [
+            NOT_MEASURED,
+            "",
+            ("Nothing here says whether the edit damaged the mechanics of the writing: whether "
+             "replies repeat themselves, whether the vocabulary has collapsed, whether they still "
+             "run to a sensible length. A `senbonzakura score` artefact carries those figures."),
+        ]
+    lines = [
+        ("**What these are, and what they are not.** They are mechanical: how much of a reply "
+         "repeats itself, how much of its vocabulary is distinct, how long it ran. **None of them "
+         "reads the writing.** A model whose prose has gone flat and generic scores exactly as "
+         "well here as one whose prose is good, so nothing in this section is evidence about "
+         "writing quality."),
+        "",
+        f"- measured over **{block['n']}** replies",
+    ]
+    # THE WINDOWED RATIO IS THE ONLY VOCABULARY FIGURE QUOTED. The plain one falls mechanically
+    # as a reply gets longer, so publishing both invites a reader to compare the wrong one across
+    # two models whose replies differ in length. The artefact keeps both; the page quotes one.
+    for key, label in (("repetition_rate", "word runs the reply had already said"),
+                       ("windowed_type_token_ratio",
+                        "distinct vocabulary, averaged over 50 word windows")):
+        measure = block.get(key) or {}
+        if measure.get("mean") is None:
+            lines.append(f"- {label}: **NOT MEASURED**, no reply was long enough to carry it")
+            continue
+        line = f"- {label}: **{measure['mean']:.1%}**"
+        # The denominator, whenever it is not every reply. A mean over 3 of 400 replies is a
+        # different statement from a mean over all of them, and only one of them is quotable.
+        if measure.get("n_measured") != block["n"]:
+            line += (f", over the {measure['n_measured']} of {block['n']} replies long enough to "
+                     f"measure it")
+        lines.append(line)
+    lines.append(f"- mean reply length: **{block['mean_words']:.0f}** words")
+    if block.get("broken_rate") is not None:
+        lines.append(f"- replies that were unreadable rather than merely repetitive: "
+                     f"**{block['broken_rate']:.1%}**")
+    length = block.get("length")
+    if length:
+        lines += ["", (f"**Length control.** Replies used all but "
+                       f"**{length['mean_shortfall']:.1%}** of the budget they were given, and "
+                       f"**{length['truncation_rate']:.1%}** ran into the cap. A reply that hit "
+                       f"the cap has a length that is a fact about the budget rather than about "
+                       f"the model.")]
+    return lines
+
+
 def _reading(abl, *keys):
     """The first of these names the artefact actually carries.
 
@@ -749,6 +811,24 @@ def _reported(doc):
     return bool(doc) and not (doc or {}).get("self_invalidated")
 
 
+def _prose_bullet(mechanical_reported):
+    """The writing-quality caveat, which survives the mechanical section rather than being replaced.
+
+    The distinction is the point. Reporting repetition and vocabulary does NOT make the page able
+    to say whether the writing is good, so this bullet never goes away; what changes is that it
+    stops claiming the page is silent on prose altogether once part of it is measured. A reader
+    who meets "nothing here reads the prose" beside a section full of prose figures believes the
+    section and distrusts the page.
+    """
+    if mechanical_reported:
+        return ("**Whether the writing is any GOOD.** The mechanical measures above say whether "
+                "replies repeat themselves and whether the vocabulary has collapsed. They do not "
+                "read the writing. A model can hold every number on this page, mechanical ones "
+                "included, and still write flat, generic, lifeless prose.")
+    return ("**Whether the writing is any good.** Nothing here reads the prose. A model can hold "
+            "every number on this page and still write badly.")
+
+
 def _single_request_bullet(tam, mt):
     """The limits bullet about one reply per request, and what the page can now say about it.
 
@@ -837,8 +917,7 @@ def limits_section(abl=None, cap=None, ref=None, tam=None, mt=None):
          "samples at a temperature will not reproduce them exactly, and no figure here covers "
          "another language or another set of requests."),
         _single_request_bullet(_reported(tam), _reported(mt)),
-        ("**Whether the writing is any good.** Nothing here reads the prose. A model can hold "
-         "every number on this page and still write badly."),
+        _prose_bullet(_reported(ref) and bool((ref or {}).get("prose"))),
     ]
     return [f"- {g}" for g in gaps]
 
@@ -946,6 +1025,8 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
             *tamper_section(tam), ""]
     out += ["## A conversation that continues, which is whether it holds", "",
             *multiturn_section(mt), ""]
+    out += ["## Mechanical prose damage, which is not whether the writing is good", "",
+            *prose_section(ref), ""]
     out += ["## Corpus", "", *corpus_section(abl), ""]
     out += ["## What this does not cover", "", *limits_section(abl, cap, ref, tam, mt), ""]
     out += ["## Licence, and what this model is", "",

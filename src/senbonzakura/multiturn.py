@@ -433,7 +433,10 @@ def build_parser():
                     "refused prompts, because an escalation that does no better than asking "
                     "again has shown nothing.",
         parents=[loader_parser()])
-    ap.add_argument("--attack-set", dest="attack_set", default=jailbreak.DEFAULT_ATTACK_SET,
+    attack_src = ap.add_mutually_exclusive_group()
+    attack_src.add_argument("--attack-set-file", dest="attack_set_file", default="",
+                            help=jailbreak.file_flag_help("decline"))
+    attack_src.add_argument("--attack-set", dest="attack_set", default=jailbreak.DEFAULT_ATTACK_SET,
                     choices=sorted(k for k, c in corpora.CORPORA.items() if c.arm == "harmful"),
                     help=f"the bundled harmful corpus to attack with (default: "
                          f"{jailbreak.DEFAULT_ATTACK_SET}).")
@@ -526,8 +529,9 @@ def main(argv=None):
     # `plain-repeat` against `plain-repeat` would pay twice for one number and then report a gap
     # of zero as a finding about the strategy.
     control = None if (a.no_control or strategy.digest() == CONTROL.digest()) else CONTROL
-    attack_corpus = jailbreak.corpus_for(a.attack_set, arm="harmful", flag="--attack-set")
-    requests = jailbreak.prompts_for(a.attack_set, a.n, what="attack set")
+    attack_corpus, requests = jailbreak.corpus_and_prompts(
+        a.attack_set, a.attack_set_file, arm="harmful", name_flag="--attack-set",
+        file_flag="--attack-set-file", what="attack set", limit=a.n)
 
     from . import score as score_module
 

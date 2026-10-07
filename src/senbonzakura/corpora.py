@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -152,6 +153,84 @@ def resolve_name(name):
             f"{CORPORA[halves[0]].note.split('.')[0]}. Pick one.")
     raise CorpusError(
         f"no bundled corpus called {name!r}. Available: {', '.join(sorted(CORPORA))}.")
+
+
+#: A caller may drop one of these beside an external corpus file to supply the terms the file
+#: itself cannot carry. Read for description only; nothing in it is executed, and every field is
+#: validated at the boundary like any other untrusted input.
+MANIFEST_SUFFIX = ".corpus.json"
+
+#: What an external corpus says about its own terms when nobody supplied a manifest. It is a
+#: statement that nothing is known, NOT a statement that the file is unencumbered: a figure taken
+#: on a corpus with no recorded licence may not be one the user is free to publish, and that is
+#: their decision to make knowingly rather than ours to make silently.
+UNKNOWN_TERMS = "UNRECORDED"
+
+
+@dataclass(frozen=True)
+class ExternalCorpus:
+    """A corpus the caller supplied as a file, whose arm THEY asserted rather than this project.
+
+    THE DISTINCTION IS THE WHOLE POINT OF THE TYPE. `Corpus.arm` is declared by this project and
+    checked against a row count we verified. An external file carries no statement of what its
+    rows are, and `jailbreak`'s own help text records why that mattered enough to refuse paths
+    outright: "a benign set in this slot reports near-total jailbreak success on a model that
+    refused everything."
+
+    So the arm here is asserted by whichever flag the caller reached for, and `declared` is False
+    forever. A reader comparing two artefacts has to be able to see which kind they are holding,
+    because an asserted arm is weaker evidence than a declared one and averaging the two would
+    launder the difference away.
+    """
+
+    key: str
+    name: str
+    arm: str
+    licence: str
+    attribution: str
+    rows: int
+    #: Always False. Present so a consumer reads the same attribute on both kinds rather than
+    #: testing the type, and so the artefact can record which it was.
+    declared: bool = False
+
+
+def external_manifest(path):
+    """The sidecar manifest beside an external corpus, or an empty dict.
+
+    Only four fields are read, all of them descriptive. A malformed or unreadable manifest is a
+    refusal rather than a silent fallback to unknown terms, because a caller who wrote one is
+    relying on it to carry the attribution their licence requires.
+    """
+    sidecar = Path(str(path) + MANIFEST_SUFFIX)
+    if not sidecar.exists():
+        return {}
+    try:
+        raw = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise CorpusError(
+            f"the manifest beside this corpus could not be read: {sidecar}\n"
+            f"  {e}\n"
+            f"  Fix it or remove it. It is not ignored, because a manifest exists to carry the "
+            f"attribution a licence requires and skipping a broken one publishes a figure with "
+            f"the attribution missing.") from e
+    if not isinstance(raw, dict):
+        raise CorpusError(
+            f"the manifest beside this corpus is not a JSON object: {sidecar}. "
+            f"Expected keys: name, licence, attribution, source.")
+    return {k: str(raw[k]).strip() for k in ("name", "licence", "attribution", "source")
+            if raw.get(k) not in (None, "")}
+
+
+def external(path, *, arm, rows):
+    """An `ExternalCorpus` for a file the caller supplied, with whatever terms it could state."""
+    manifest = external_manifest(path)
+    return ExternalCorpus(
+        key=str(path),
+        name=manifest.get("name") or Path(str(path)).name,
+        arm=arm,
+        licence=manifest.get("licence") or UNKNOWN_TERMS,
+        attribution=manifest.get("attribution") or manifest.get("source") or UNKNOWN_TERMS,
+        rows=rows)
 
 
 def extract(csv_bytes, corpus):

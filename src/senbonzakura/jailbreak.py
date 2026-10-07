@@ -85,6 +85,23 @@ from .parser import loader_parser
 #: argument the strict estimator here makes, and at 313 rows it runs in minutes.
 DEFAULT_ATTACK_SET = "strongreject"
 
+
+def file_flag_help(verb):
+    """Help for a `--*-file` flag, which is identical except for which arm the slot is.
+
+    Written once because the assertion it explains is the same in all three commands, and three
+    copies of a safety explanation are three chances for one of them to drift into saying
+    something weaker than the others.
+    """
+    return (f"your own corpus, as a file, instead of a bundled name. The flag itself is the "
+            f"assertion that these rows are ones a model is expected to {verb}: a file carries "
+            f"no statement of what its rows are, and the wrong arm here inverts every figure "
+            f"taken through it with nothing downstream able to tell. The artefact records that "
+            f"the arm was asserted rather than declared. Drop a `<file>.corpus.json` beside it "
+            f"with name, licence, attribution and source to carry the terms your licence "
+            f"requires; without one the artefact records the terms as unrecorded, which says "
+            f"nothing is known rather than that the file is free to publish from.")
+
 #: The default benign arm. The only bundled set whose rows are minimal contrasts of harmful ones,
 #: so the two arms are topic-matched by construction rather than by hope.
 DEFAULT_BENIGN_SET = "xstest-safe"
@@ -111,7 +128,10 @@ def build_parser():
                     "resistance figure with no benign arm is a model that refuses everything "
                     "reading as a model that is safe.",
         parents=[loader_parser()])
-    ap.add_argument("--attack-set", dest="attack_set", default=DEFAULT_ATTACK_SET,
+    attack_src = ap.add_mutually_exclusive_group()
+    attack_src.add_argument("--attack-set-file", dest="attack_set_file", default="",
+                            help=file_flag_help("decline"))
+    attack_src.add_argument("--attack-set", dest="attack_set", default=DEFAULT_ATTACK_SET,
                     choices=sorted(k for k, c in corpora.CORPORA.items() if c.arm == "harmful"),
                     help=f"the bundled harmful corpus to attack with (default: "
                          f"{DEFAULT_ATTACK_SET}). A name rather than a path, because a path "
@@ -120,7 +140,10 @@ def build_parser():
                          f"everything. This command cannot tell whether your abliteration was "
                          f"fitted on the set you are attacking with; fit on one and attack with "
                          f"another.")
-    ap.add_argument("--benign-set", dest="benign_set", default=DEFAULT_BENIGN_SET,
+    benign_src = ap.add_mutually_exclusive_group()
+    benign_src.add_argument("--benign-set-file", dest="benign_set_file", default="",
+                            help=file_flag_help("answer"))
+    benign_src.add_argument("--benign-set", dest="benign_set", default=DEFAULT_BENIGN_SET,
                     choices=sorted(k for k, c in corpora.CORPORA.items() if c.arm == "benign"),
                     help=f"the bundled benign corpus for the over-refusal arm (default: "
                          f"{DEFAULT_BENIGN_SET}, whose rows are minimal contrasts of the unsafe "
@@ -184,6 +207,37 @@ def corpus_for(key, *, arm, flag):
             f"  Available for {flag}: "
             f"{', '.join(sorted(k for k, c in corpora.CORPORA.items() if c.arm == arm))}")
     return corpus
+
+
+def corpus_from_file(path, *, arm, flag, rows):
+    """An external corpus in a slot whose flag asserted its arm.
+
+    The arm comes from WHICH FLAG was used rather than from a value the caller typed, which is why
+    there is no `--corpus-arm`: a slot-specific flag cannot be given the wrong arm by a typo, and
+    it cannot be confused with a registry name either, so the "is this a path or a name" guess that
+    would otherwise be needed never happens.
+    """
+    try:
+        return corpora.external(path, arm=arm, rows=rows)
+    except corpora.CorpusError as e:
+        raise SystemExit(f"{flag} {path}: {e}") from e
+
+
+def corpus_and_prompts(name, file_path, *, arm, name_flag, file_flag, what="corpus", limit=0):
+    """One corpus from either a bundled name or a caller-supplied file, with its prompts.
+
+    Shared rather than repeated in each command because the decision it makes is a measurement
+    decision, and three copies of it would be three places for the arm assumption to drift.
+    """
+    if file_path:
+        # NO EMPTY-RESULT CHECK HERE, DELIBERATELY. One was written and removed on 2026-10-07 as
+        # unreachable: `prompts_for` either raises or returns rows, and an empty file is already
+        # refused by the resolver with "the corpus at ... is empty, so there is nothing to
+        # measure". The guard's own test passed against that message rather than against the
+        # guard, which is the shape of a test that proves nothing.
+        prompts = prompts_for(file_path, limit, what=what)
+        return corpus_from_file(file_path, arm=arm, flag=file_flag, rows=len(prompts)), prompts
+    return corpus_for(name, arm=arm, flag=name_flag), prompts_for(name, limit, what=what)
 
 
 def prompts_for(key, limit, *, what):
@@ -543,8 +597,16 @@ def set_block(corpus, n_scored):
     benign arm's identity would otherwise live nowhere, and a corpus can be rebuilt in place under
     a name that does not change. The licence travels with it because the attribution these terms
     require has to reach whatever is published from the figure.
+
+    `arm_source` IS NOT DECORATION. A bundled corpus's arm is declared by this project against a
+    row count we verified; an external file's is asserted by whichever flag the caller reached
+    for, and nothing can check it. Getting the arm backwards inverts every number taken through
+    the corpus with nothing downstream able to tell, so the two cannot look the same in a result
+    file that somebody may later compare, pool or publish.
     """
-    return {"key": corpus.key, "name": corpus.name, "arm": corpus.arm,
+    return {"arm_source": "declared-by-registry" if getattr(corpus, "declared", True)
+                          else "asserted-by-the-flag-that-supplied-the-file",
+            "key": corpus.key, "name": corpus.name, "arm": corpus.arm,
             "licence": corpus.licence, "attribution": corpus.attribution,
             "rows": corpus.rows, "n_scored": n_scored,
             "revision": track.revision_entry(corpus.key)}
@@ -555,17 +617,17 @@ def main(argv=None):
     # Before a single prompt is sent. A ruler that misreads yields a confident wrong number
     # rather than an error, and both arms of this measurement come off that ruler.
     metrics.validate_ruler()
-    attack_corpus = corpus_for(a.attack_set, arm="harmful", flag="--attack-set")
-    benign_corpus = (None if a.no_over_refusal
-                     else corpus_for(a.benign_set, arm="benign", flag="--benign-set"))
+    attack_corpus, attack_prompts = corpus_and_prompts(
+        a.attack_set, a.attack_set_file, arm="harmful", name_flag="--attack-set",
+        file_flag="--attack-set-file", what="attack set", limit=a.n)
+    benign_corpus, benign_prompts = (None, None) if a.no_over_refusal else corpus_and_prompts(
+        a.benign_set, a.benign_set_file, arm="benign", name_flag="--benign-set",
+        file_flag="--benign-set-file", what="benign set", limit=a.benign_n)
     # THE WHOLE SLICE BEFORE THE MODEL. Both corpora resolve with no model and no card, so a
     # `--n` past the end of a 313-row set is decidable from the command line and a dataset header
     # rather than after a multi-gigabyte load on a rented machine. The baseline file is read here
     # for the same reason: a typo in its path costs nothing now and a GPU load later.
     baseline_doc = _read_baseline(a.baseline) if a.baseline else None
-    attack_prompts = prompts_for(a.attack_set, a.n, what="attack set")
-    benign_prompts = (None if benign_corpus is None
-                      else prompts_for(a.benign_set, a.benign_n, what="benign set"))
 
     from . import score as score_module
 

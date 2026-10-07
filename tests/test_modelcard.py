@@ -943,3 +943,18 @@ def test_a_run_that_disowned_itself_is_still_a_gap_in_the_limits_section(which):
     out = "\n".join(modelcard.limits_section(**{which: doc}))
     assert "IS reported above" not in out
     assert "no figure on this page states either" in out
+
+
+def test_a_saturated_ceiling_is_stated_before_the_recovery_figure():
+    """A saturated ceiling changes what the figure means rather than qualifying it, so it cannot
+    sit in the caveat list under the number it disarms.
+    """
+    body = "\n".join(modelcard.tamper_section(
+        _tam(ceiling_saturated="the recipe refused every prompt on the unedited model")))
+    assert "THE DOSE SATURATED" in body
+    assert body.index("THE DOSE SATURATED") < body.index("12.0%")
+    assert "The recipe refused every prompt on the unedited model" in body
+
+
+def test_a_card_without_saturation_does_not_mention_the_dose():
+    assert "THE DOSE SATURATED" not in "\n".join(modelcard.tamper_section(_tam()))

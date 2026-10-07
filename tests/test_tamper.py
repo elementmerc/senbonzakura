@@ -1018,6 +1018,21 @@ def test_a_missing_lora_backend_names_the_extra_that_installs_it(monkeypatch):
         tamper.require_lora_backend("lora")
 
 
+def test_an_installed_but_unimportable_backend_is_not_reported_as_missing(monkeypatch):
+    # The shape the floors job hit: peft present, and its own `from accelerate...` failing, so
+    # the import raises ImportError rather than ModuleNotFoundError. Telling that user to
+    # install peft earns an "already satisfied" and no way forward, so the two are distinct.
+    import types
+
+    monkeypatch.setitem(sys.modules, "peft", types.ModuleType("peft"))
+    with pytest.raises(SystemExit) as caught:
+        tamper.require_lora_backend("lora")
+    said = str(caught.value)
+    assert "installed here but will not import" in said
+    assert "cannot import name" in said, "the underlying error has to reach the user"
+    assert "senbonzakura[finetune]" not in said, "the install hint is wrong for this failure"
+
+
 @needs_corpora
 def test_a_missing_lora_backend_is_refused_before_any_model_loads(monkeypatch, tmp_path):
     # The import was reached only inside `prepare`, which runs after the "before" scoring pass:

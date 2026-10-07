@@ -553,10 +553,22 @@ def require_lora_backend(method):
     try:
         from peft import LoraConfig, get_peft_model
     except ImportError as e:
+        # ABSENT AND BROKEN ARE DIFFERENT FAILURES AND THEY WERE REPORTED AS ONE. The floors job
+        # installed peft 0.20.0 beside accelerate 0.26, where peft imports a symbol accelerate
+        # did not have until 0.32, so peft was present and unimportable. The install hint below
+        # answers that with "already satisfied" and leaves the user nowhere.
+        if isinstance(e, ModuleNotFoundError) and (e.name or "").split(".")[0] == "peft":
+            raise SystemExit(
+                "--method lora needs `peft`, which is not installed in this environment. Install "
+                "it with `pip install 'senbonzakura[finetune]'`, or run --method full, which "
+                "rewrites the weights and answers the stronger question at a higher memory "
+                "cost.") from e
         raise SystemExit(
-            "--method lora needs `peft`, which is not installed in this environment. Install it "
-            "with `pip install 'senbonzakura[finetune]'`, or run --method full, which rewrites "
-            "the weights and answers the stronger question at a higher memory cost.") from e
+            f"--method lora needs `peft`, which is installed here but will not import: {e}. "
+            "That is usually one of peft's own dependencies being older than the version it "
+            "expects, rather than anything about senbonzakura, so upgrading peft and accelerate "
+            "together is the first thing to try. --method full needs no adapter library and will "
+            "run as this environment stands.") from e
     return LoraConfig, get_peft_model
 
 

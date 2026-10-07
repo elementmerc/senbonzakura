@@ -139,8 +139,18 @@ dependencies = [
   # no cp313 wheels and the first build with cp314 is 2.9 (checked against PyPI,
   # 2026-07-29). Declaring a floor nothing can install is the same class of
   # mistake as declaring one the code rejects, just further from the user.
-  "torch>=2.5; python_version < '3.13'",
-  "torch>=2.6; python_version == '3.13'",
+  #
+  # RAISED FROM 2.5 AND 2.6 TO 2.7 ON 2026-10-07, AND THE REASON IS SOMEBODY ELSE'S
+  # METADATA BEING WRONG. transformers 5.x declares `torch>=2.5` and then uses
+  # `torch.float8_e8m0fnu`, which PyTorch's own 2.7.0 release notes introduce
+  # ("Add the torch.float8_e8m0fnu dtype to PyTorch (#147466)") and 2.6.0's do not
+  # mention. So the pair transformers>=5.10.1 with torch 2.5.1 installs cleanly,
+  # satisfies both declared floors, and then dies at import with AttributeError.
+  # The dependency-floor job found it the first time it ran after the transformers
+  # floor was raised, which is the entire reason that job exists: a floor nobody
+  # installs is a floor nobody has tested.
+  "torch>=2.7; python_version < '3.13'",
+  "torch>=2.7; python_version == '3.13'",
   "torch>=2.9; python_version >= '3.14'",
   "transformers>=5.10.1",
   "accelerate>=0.26",

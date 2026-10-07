@@ -9,6 +9,7 @@ forced re-running a 34-minute search and a stale torch failed only after a 31 GB
 crashsafe.py (no heavy imports) precisely so they can be tested without torch/optuna present.
 """
 import os
+import pathlib
 import subprocess
 
 import pytest
@@ -64,22 +65,41 @@ def _needs_a_checkout():
         pytest.skip("not a git checkout")
 
 
+def _declared_torch_floor():
+    """The torch floor `pyproject.toml` declares for the interpreters MIN_TORCH guards."""
+    import re
+
+    # The shim, not `tomllib` directly: this project supports Python 3.10, where it is absent,
+    # and a direct import fails at COLLECTION, taking the whole file with it. `test_declared_
+    # floors.py` guards against exactly this and caught it here on 2026-10-07.
+    from tomlread import tomllib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    for spec in data["project"]["dependencies"]:
+        m = re.fullmatch(r"torch>=(\d+)\.(\d+)\s*;\s*python_version < '3\.13'", spec.strip())
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+    raise AssertionError(
+        "pyproject declares no `torch>=X.Y; python_version < '3.13'`, so the floor this guard "
+        "compares against cannot be found. If the marker changed, change this with it.")
+
+
 class TestTorchVersionOk:
     def test_new_enough_passes(self):
-        assert torch_version_ok("2.5.1") is True
-        assert torch_version_ok("2.6.0+cu124") is True
+        assert torch_version_ok("2.7.0") is True
+        assert torch_version_ok("2.9.0+cu124") is True
         assert torch_version_ok("3.0.0") is True
 
     def test_too_old_fails(self):
-        assert torch_version_ok("2.4.0") is False
+        assert torch_version_ok("2.6.0") is False
         assert torch_version_ok("1.13.1") is False
 
     def test_exact_minimum_passes(self):
-        assert torch_version_ok("2.5.0") is True
+        assert torch_version_ok("2.7.0") is True
 
     def test_local_and_cuda_suffix_stripped(self):
-        assert torch_version_ok("2.5.1+cpu") is True
-        assert torch_version_ok("2.4.0+cu121") is False
+        assert torch_version_ok("2.7.1+cpu") is True
+        assert torch_version_ok("2.6.0+cu121") is False
 
     def test_garbage_fails_closed(self):
         # An unparseable version must fail loud (treated as too old), not silently pass.
@@ -87,8 +107,19 @@ class TestTorchVersionOk:
         assert torch_version_ok("not-a-version") is False
         assert torch_version_ok(None) is False
 
-    def test_min_torch_is_2_5(self):
-        assert MIN_TORCH == (2, 5)
+    def test_the_runtime_guard_agrees_with_the_declared_floor(self):
+        """One fact, two homes, and until 2026-10-07 they disagreed.
+
+        This used to assert the literal `(2, 5)`, which pins the value and says nothing about
+        whether it is the right one. `pyproject.toml` was raised to 2.7 because transformers 5.x
+        uses a dtype PyTorch added in 2.7.0, and this guard stayed at 2.5, so an install on 2.5
+        would have been waved through here and then died with an AttributeError from inside
+        somebody else's package. Comparing the two is what a literal could never do.
+        """
+        assert _declared_torch_floor() == MIN_TORCH, (
+            f"crashsafe.MIN_TORCH is {MIN_TORCH} and pyproject declares "
+            f"{_declared_torch_floor()}. A runtime guard below the declared floor passes an "
+            f"install it cannot support; above it, it refuses one pip was told to allow.")
 
 
 class TestStudyDbPath:

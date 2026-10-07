@@ -129,6 +129,7 @@ export default {
           items: [
             { text: 'The compass', link: '/guide/compass' },
             { text: 'Does the edit hold up', link: '/guide/robustness' },
+            { text: 'The finetuning engine', link: '/guide/finetuning' },
             { text: 'Failing a build on a regression', link: '/guide/gating' },
             { text: 'Benchmarking against another tool', link: '/guide/benchmark' },
             { text: 'How this compares to other tools', link: '/comparison' },

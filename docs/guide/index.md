@@ -33,6 +33,7 @@ sidebar has the same links in the same order.
 - [The compass](/guide/compass) — whether the model still recognises harm, which is a different
   question from whether it still refuses.
 - [Does the edit hold up](/guide/robustness) — whether the edited model answers an attack, holds a refusal over several turns, and survives being finetuned.
+- [The finetuning engine](/guide/finetuning) — the trainer inside `tamper`, what it records, and the guards that stop a finetune that did nothing from reading as a strong result.
 - [Failing a build on a regression](/guide/gating) — recording a measurement as a baseline, and
   the three exit codes a CI step has to tell apart.
 - [Benchmarking against another tool](/guide/benchmark) — the equal-budget head to head.

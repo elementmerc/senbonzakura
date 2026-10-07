@@ -1137,3 +1137,44 @@ class TestBothSidesGoThroughOnePipeline:
 def _write(path, rows):
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     return path
+
+
+# ── Pinning a corpus that is one file ───────────────────────────────────────────────────────────
+
+def test_a_single_file_corpus_is_pinned_by_its_bytes(tmp_path):
+    # Unpinnable until 2026-10-07: the bundled blob and a track directory each had a branch and a
+    # plain file fell through to None, so every figure taken on a one-file corpus carried no
+    # revision at all.
+    f = tmp_path / "prompts.txt"
+    f.write_text("one\ntwo\n", encoding="utf-8")
+    entry = track.revision_entry(str(f))
+    assert entry["kind"] == "corpus-file"
+    assert len(entry["revision"]) == 64
+
+    f.write_text("one\nthree\n", encoding="utf-8")
+    assert track.revision_entry(str(f))["revision"] != entry["revision"]
+
+
+def test_a_file_longer_than_one_chunk_still_pins(tmp_path):
+    # Hashed in 1 MiB chunks rather than read whole, so the loop has to run more than once.
+    f = tmp_path / "big.txt"
+    f.write_bytes(b"x" * (3 * (1 << 20) + 7))
+    assert len(track.revision_entry(str(f))["revision"]) == 64
+
+
+def test_an_unreadable_corpus_file_yields_no_pin_rather_than_a_provenance_error(tmp_path,
+                                                                               monkeypatch):
+    # The caller is about to read the same file for the prompts and will report the failure with a
+    # message about the corpus. Raising here would send the reader to the wrong place.
+    f = tmp_path / "locked.txt"
+    f.write_text("one\n", encoding="utf-8")
+
+    real_open = track.Path.open
+
+    def refuse(self, *args, **kwargs):
+        if self.name == "locked.txt":
+            raise OSError("permission denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(track.Path, "open", refuse)
+    assert track.revision_entry(str(f)) is None

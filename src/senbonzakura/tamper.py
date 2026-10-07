@@ -713,12 +713,24 @@ def build_parser():
                          "here, so a recovered fraction is read against an achievable ceiling "
                          "rather than against 1.0. Without it there is no ceiling and the "
                          "artefact says so.")
-    ap.add_argument("--corpus", default=jailbreak.DEFAULT_ATTACK_SET,
+    source = ap.add_mutually_exclusive_group()
+    source.add_argument("--corpus", default=jailbreak.DEFAULT_ATTACK_SET,
                     choices=sorted(k for k, c in corpora.CORPORA.items() if c.arm == "harmful"),
                     help=f"the bundled harmful corpus (default: {jailbreak.DEFAULT_ATTACK_SET}). "
                          f"It is split: the first --train-n rows become the recovery finetune's "
                          f"prompts and the rest are the evaluation, so the rows a figure is taken "
                          f"on are rows the finetune never saw.")
+    source.add_argument("--corpus-file", dest="corpus_file", default="",
+                    help="your own harmful corpus, as a file, instead of a bundled name. The flag "
+                         "itself is the assertion that these rows are ones a model is expected to "
+                         "DECLINE: a file carries no statement of what its rows are, and a benign "
+                         "set in this slot would invert every figure taken through it with nothing "
+                         "downstream able to tell. The artefact records that the arm was asserted "
+                         "rather than declared. Drop a `<file>.corpus.json` beside it with name, "
+                         "licence, attribution and source to carry the terms your licence "
+                         "requires; without one the artefact records the terms as unrecorded, "
+                         "which is a statement that nothing is known and not that the file is "
+                         "free to publish from.")
     ap.add_argument("--train-n", dest="train_n", type=whole_number("--train-n", minimum=1),
                     default=64,
                     help="how many prompts the finetune trains on (default: 64). The neutral "
@@ -874,8 +886,9 @@ def main(argv=None):
     # Before a model loads and before a single gradient is taken. Every figure here comes off the
     # refusal ruler, including which rows count as refused.
     metrics.validate_ruler()
-    corpus = jailbreak.corpus_for(a.corpus, arm="harmful", flag="--corpus")
-    prompts = jailbreak.prompts_for(a.corpus, 0, what="corpus")
+    corpus, prompts = jailbreak.corpus_and_prompts(
+        a.corpus, a.corpus_file, arm="harmful",
+        name_flag="--corpus", file_flag="--corpus-file", what="corpus")
     train_prompts, eval_prompts = split_corpus(prompts, a.train_n)
     recovery = recovery_pairs(train_prompts)
 

@@ -484,3 +484,77 @@ def test_each_corpus_is_its_own_block():
     assert blanks >= len(corpora.CORPORA), (
         f"{blanks} blank line(s) for {len(corpora.CORPORA)} corpora, so the entries are not "
         f"separated and the block reads as one paragraph again")
+
+
+# ── A corpus the caller supplied as a file ──────────────────────────────────────────────────────
+#
+# The arm is the whole risk. `jailbreak`'s own help text records why paths were refused outright
+# until now: "a benign set in this slot reports near-total jailbreak success on a model that
+# refused everything." These guard that the relaxation kept the protection.
+
+def _corpus_file(tmp_path, rows=("pick a lock", "hotwire a car"), manifest=None):
+    path = tmp_path / "mine.txt"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    if manifest is not None:
+        (tmp_path / ("mine.txt" + corpora.MANIFEST_SUFFIX)).write_text(
+            json.dumps(manifest), encoding="utf-8")
+    return path
+
+
+def test_an_external_corpus_records_that_its_arm_was_asserted_and_not_declared(tmp_path):
+    c = corpora.external(_corpus_file(tmp_path), arm="harmful", rows=2)
+    assert c.declared is False
+    assert c.arm == "harmful"
+
+
+def test_a_bundled_corpus_still_declares_its_own_arm():
+    assert corpora.CORPORA["advbench"].arm == "harmful"
+    assert getattr(corpora.CORPORA["advbench"], "declared", True) is True
+
+
+def test_an_external_corpus_without_a_manifest_records_its_terms_as_unrecorded(tmp_path):
+    # UNRECORDED says nothing is known. It must not read as "unencumbered": a figure taken on a
+    # corpus with no recorded licence may not be one the user is free to publish.
+    c = corpora.external(_corpus_file(tmp_path), arm="harmful", rows=2)
+    assert c.licence == corpora.UNKNOWN_TERMS
+    assert c.attribution == corpora.UNKNOWN_TERMS
+    assert c.name == "mine.txt"
+
+
+def test_a_manifest_carries_the_terms_the_file_itself_cannot(tmp_path):
+    path = _corpus_file(tmp_path, manifest={
+        "name": "Acme red-team set", "licence": "CC-BY-4.0",
+        "attribution": "Acme Security 2026", "source": "https://example.invalid/set"})
+    c = corpora.external(path, arm="harmful", rows=2)
+    assert c.name == "Acme red-team set"
+    assert c.licence == "CC-BY-4.0"
+    assert c.attribution == "Acme Security 2026"
+
+
+def test_a_manifest_with_only_a_source_uses_it_for_attribution(tmp_path):
+    path = _corpus_file(tmp_path, manifest={"source": "https://example.invalid/set"})
+    assert corpora.external(path, arm="harmful", rows=2).attribution == (
+        "https://example.invalid/set")
+
+
+def test_a_broken_manifest_is_refused_rather_than_skipped(tmp_path):
+    # Skipping it would publish a figure with the attribution missing, which is the one thing the
+    # manifest exists to prevent.
+    path = _corpus_file(tmp_path)
+    (tmp_path / ("mine.txt" + corpora.MANIFEST_SUFFIX)).write_text("{not json", encoding="utf-8")
+    with pytest.raises(CorpusError, match="could not be read"):
+        corpora.external(path, arm="harmful", rows=2)
+
+
+def test_a_manifest_that_is_not_an_object_is_refused_and_names_the_keys(tmp_path):
+    path = _corpus_file(tmp_path)
+    (tmp_path / ("mine.txt" + corpora.MANIFEST_SUFFIX)).write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(CorpusError, match="not a JSON object"):
+        corpora.external(path, arm="harmful", rows=2)
+
+
+def test_a_manifest_field_that_is_blank_falls_back_rather_than_reading_as_empty(tmp_path):
+    path = _corpus_file(tmp_path, manifest={"name": "", "licence": None})
+    c = corpora.external(path, arm="harmful", rows=2)
+    assert c.name == "mine.txt"
+    assert c.licence == corpora.UNKNOWN_TERMS

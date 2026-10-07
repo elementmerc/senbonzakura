@@ -1022,6 +1022,28 @@ def revision_entry(spec):
             root = path
         return {"id": body, "kind": "track-directory", "revision": dataset_digest(root)}
 
+    # A SINGLE FILE WAS UNPINNABLE UNTIL 2026-10-07, which is the one case most in need of a pin.
+    # The branches above cover the bundled blob and a track directory; a plain file fell through to
+    # None, so every figure taken on a corpus handed over as one file carried no revision at all.
+    # That is precisely the failure this function exists to catch: a corpus rebuilt in place under
+    # a name that does not change. An external corpus a customer supplies is the most mutable one
+    # there is, and it had the weakest pin.
+    #
+    # Chunked rather than `read_bytes()`: a corpus file has no declared size bound and nothing
+    # here should decide how much memory a provenance stamp may take.
+    if path.is_file():
+        h = hashlib.sha256()
+        try:
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            # The caller is about to read this file for the prompts themselves and will report the
+            # failure with a message about the corpus. A provenance error here would send the
+            # reader to the wrong place.
+            return None
+        return {"id": body, "kind": "corpus-file", "revision": h.hexdigest()}
+
     return None
 
 

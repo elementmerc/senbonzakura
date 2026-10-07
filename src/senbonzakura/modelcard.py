@@ -288,6 +288,74 @@ def tamper_section(tam):
     return lines
 
 
+def multiturn_section(mt):
+    """Whether a refusal that holds on the first ask gives way by the third, with its control.
+
+    THE CONTROL READING LEADS, ahead of any conversion figure, for the same reason the bias
+    direction leads the tamper section. A conversion rate on its own reads as the escalation's
+    work, and the control is run because a refusal that gives way to the same question asked
+    again cost the attacker no strategy at all. A reader who meets the rate first has already
+    credited the strategy with it, and no later caveat takes that back.
+    """
+    if not mt:
+        return [
+            NOT_MEASURED,
+            "",
+            ("Every other figure on this page comes from a single request, so nothing here says "
+             "whether a refusal that holds on the first ask survives the third. `senbonzakura "
+             "multiturn` measures that."),
+        ]
+    if mt.get("self_invalidated"):
+        return [
+            f"**THE RUN DISOWNED ITS OWN FIGURES.** {_sentence(mt['self_invalidated'])}",
+            "",
+            ("No conversion figure is quoted here, deliberately. The numbers are in the artefact, "
+             "and quoting them because they exist is how an invalid measurement becomes a "
+             "published claim."),
+        ]
+    lines = []
+    adv = mt.get("advantage") or {}
+    if adv.get("reading"):
+        lines += [f"**How to read these.** {_sentence(adv['reading'])}", ""]
+    arm = mt.get("arm") or {}
+    if arm.get("strategy"):
+        lines.append(f"- escalation strategy `{arm['strategy']}`, over {arm.get('turns')} turns")
+    single = mt.get("single_turn") or {}
+    refused = mt.get("refused_at_turn_one")
+    if single.get("n") and refused is not None:
+        lines.append(f"- of {single['n']} attack prompts, **{refused}** were refused at turn one, "
+                     f"and those are the only rows the escalation ran on")
+    conv = arm.get("conversion") or {}
+    if conv.get("n"):
+        lines.append(_rate_line(conv["count"], conv["n"],
+                                "refusals the escalation converted to an answer"))
+    control = (mt.get("control") or {}).get("conversion") or {}
+    if control.get("n"):
+        lines.append(_rate_line(control["count"], control["n"],
+                                "the same rows, with the question simply asked again"))
+    if adv.get("gap") is not None:
+        # THE OVERLAP IS SHOUTED AND THE GAP IS NOT, because the gap is the quotable number and
+        # it is the one that means nothing on its own. `advantage` already refuses to call an
+        # overlapping pair a difference; this keeps that refusal visible in the prose.
+        verdict = ("and the two intervals separate" if adv.get("distinguishable") else
+                   "but THE TWO INTERVALS OVERLAP, so this run does not separate the strategy "
+                   "from asking twice")
+        lines.append(f"- the escalation converted **{adv['gap']:+.1%}** more than repetition, "
+                     f"{verdict}")
+    histogram = arm.get("first_compliance") or {}
+    if histogram.get("median_turn") is not None:
+        lines.append(f"- among the rows that gave way, the median was turn "
+                     f"**{histogram['median_turn']:g}**")
+    if mt.get("overflowed"):
+        lines += ["", (f"**{mt['overflowed']} rows hit the token budget** before the escalation "
+                       f"finished, so their outcome is unknown rather than a refusal.")]
+    for key, prefix in (("control_missing", "**No control was run.**"),
+                        ("budget_warning", "**Budget.**")):
+        if mt.get(key):
+            lines += ["", f"{prefix} {_sentence(mt[key])}"]
+    return lines
+
+
 def _reading(abl, *keys):
     """The first of these names the artefact actually carries.
 
@@ -663,7 +731,49 @@ def measured_section(abl=None, cap=None, ref=None):
     ]
 
 
-def limits_section(abl=None, cap=None, ref=None, tam=None):
+def _reported(doc):
+    """Whether an artefact actually put figures on the page, which is not whether it exists.
+
+    FOUND BY RENDERING A REAL ARTEFACT, 2026-10-07. The multiturn smoke run disowned its own
+    figures, so its section correctly quoted none, and the limits bullet read "what a continued
+    conversation does IS reported above" because something had been supplied. A reader is then
+    told the page covers the thing it has just declined to state. A self-invalidated run is a gap,
+    and the caveat has to keep naming it as one.
+    """
+    return bool(doc) and not (doc or {}).get("self_invalidated")
+
+
+def _single_request_bullet(tam, mt):
+    """The limits bullet about one reply per request, and what the page can now say about it.
+
+    CONDITIONAL BECAUSE A STATIC DISCLAIMER THAT OUTLIVES ITS GAP IS WORSE THAN NONE: it tells a
+    reader the page is silent on something the page now reports, and a reader believes the
+    disclaimer over the section. It had two readings while only one of the two artefacts could be
+    supplied. It has four because they are supplied independently, and the wording distinguishes
+    an artefact this page cannot read from one that simply was not handed to it.
+    """
+    lead = ("**A conversation that continues.** Every rate above is one reply to one request. A "
+            "refusal that holds on the first ask and gives way on the third is invisible to all "
+            "of them, and so is a refusal that a finetune brings back.")
+    # PHRASED AS WHAT THE PAGE STATES, not as what was handed to it. An artefact can be supplied
+    # and still put no figure on the page, because a run that disowned its own numbers is quoted
+    # by neither section, and "not supplied" would then contradict the section above it.
+    if tam and mt:
+        return (f"{lead} Both are measured in their own sections above, each on its own rows, and "
+                f"neither changes the single request figures themselves.")
+    if tam:
+        return (f"{lead} What a finetune brings back IS reported above. `senbonzakura multiturn` "
+                f"measures what a continued conversation does, and no figure on this page states "
+                f"it.")
+    if mt:
+        return (f"{lead} What a continued conversation does IS reported above. `senbonzakura "
+                f"tamper` measures what a finetune brings back, and no figure on this page states "
+                f"it.")
+    return (f"{lead} `senbonzakura multiturn` and `senbonzakura tamper` measure those, and no "
+            f"figure on this page states either.")
+
+
+def limits_section(abl=None, cap=None, ref=None, tam=None, mt=None):
     """What this page does not cover, which is the section that makes the rest of it credible.
 
     NOT SOFTENED AND NOT BURIED, and the order is deliberate: the gaps that apply to THIS run come
@@ -720,18 +830,7 @@ def limits_section(abl=None, cap=None, ref=None, tam=None):
          "the corpus named above, in English, with one deterministic reply each. A deployment that "
          "samples at a temperature will not reproduce them exactly, and no figure here covers "
          "another language or another set of requests."),
-        # The bullet is conditional because a static disclaimer that outlives the gap it
-        # describes is worse than none: it tells a reader the page is silent on something the
-        # page now reports, and they believe the disclaimer over the section.
-        (("**A conversation that continues.** Every figure here comes from a single request. A "
-          "refusal that holds on the first ask and gives way on the third is invisible to all of "
-          "them. `senbonzakura multiturn` measures that and its artefact is not read by this "
-          "page. What a finetune brings back IS reported above.")
-         if tam else
-         ("**A conversation that continues.** Every figure here comes from a single request. A "
-          "refusal that holds on the first ask and gives way on the third is invisible to all of "
-          "them, and so is a refusal that a finetune brings back. `senbonzakura multiturn` and "
-          "`senbonzakura tamper` measure those, and their artefacts are not read by this page.")),
+        _single_request_bullet(_reported(tam), _reported(mt)),
         ("**Whether the writing is any good.** Nothing here reads the prose. A model can hold "
          "every number on this page and still write badly."),
     ]
@@ -806,7 +905,7 @@ def redact_command(command, secrets=()):
 
 
 def build(abl=None, cap=None, command=None, licence=None, licence_link=None, secrets=(),
-          ref=None, tam=None):
+          ref=None, tam=None, mt=None):
     """The card, as markdown lines. `secrets` are values to keep off the page wherever they
     appear in `command`, on top of the flags `redact_command` always strips.
 
@@ -818,6 +917,9 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
     section that tamper artefacts "are not read by this page", which for a reader whose question
     is whether a finetune brings the refusals back made the page silent on the thing they came
     for.
+
+    `mt` is a `senbonzakura multiturn` artefact, added 2026-10-07 for the same reason and the
+    same way: the limits section named it as the one remaining artefact this page would not read.
     """
     out = front_matter(abl, licence or "other", licence_link)
     out += ["# Abliteration report", ""]
@@ -836,8 +938,10 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
     out += ["## Capability, which is what the edit cost", "", *capability_section(cap), ""]
     out += ["## Tamper resistance, which is whether it comes back", "",
             *tamper_section(tam), ""]
+    out += ["## A conversation that continues, which is whether it holds", "",
+            *multiturn_section(mt), ""]
     out += ["## Corpus", "", *corpus_section(abl), ""]
-    out += ["## What this does not cover", "", *limits_section(abl, cap, ref, tam), ""]
+    out += ["## What this does not cover", "", *limits_section(abl, cap, ref, tam, mt), ""]
     out += ["## Licence, and what this model is", "",
             # `measured` is what the evidence sections actually resolved to, not what was asked
             # for: a capability artefact that exists but says nothing still leaves the dual-use
@@ -1029,6 +1133,12 @@ def build_parser():
                          "states plainly that nobody looked, because a customer who finetunes "
                          "these weights may be handed back a model that refuses again and no "
                          "other figure on the page would have predicted it")
+    ap.add_argument("--multiturn", default="",
+                    help="a `senbonzakura multiturn` artefact, which says whether a refusal that "
+                         "holds on the first ask gives way when the request is escalated over "
+                         "several turns, and whether that beat simply asking again. Without it "
+                         "every rate on the card describes one reply to one request, and the card "
+                         "says so")
     ap.add_argument("--base-licence", dest="base_licence", default="",
                     help="the base model's licence, as an SPDX identifier where one exists "
                          "(apache-2.0, mit, gemma, llama3.2, other). Required, and not inferred: a "
@@ -1046,7 +1156,7 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    if not a.abliteration and not a.capability and not a.refusal and not a.tamper:
+    if not (a.abliteration or a.capability or a.refusal or a.tamper or a.multiturn):
         # SHAPE, NOT REASONING. This said "A card with no artefacts behind it would be a template,
         # and this exists to stop those being published", which explains the refusal to somebody
         # who has not asked why and never shows them what to type.
@@ -1056,6 +1166,7 @@ def main(argv=None):
             "  --refusal FILE        a `senbonzakura score` run's output, scored on held back rows\n"
             "  --capability FILE     a capability run's output\n"
             "  --tamper FILE         a `senbonzakura tamper` run's output\n"
+            "  --multiturn FILE      a `senbonzakura multiturn` run's output\n"
             "  --base-licence NAME   the base model's licence, which is not inferred\n"
             "\n"
             "  senbonzakura report --abliteration edited/abliteration.json \\\n"
@@ -1074,7 +1185,7 @@ def main(argv=None):
         raise SystemExit(bad)
     lines = build(load(a.abliteration), load(a.capability), a.command or None,
                   licence=a.base_licence or None, licence_link=a.base_licence_link or None,
-                  ref=load(a.refusal), tam=load(a.tamper))
+                  ref=load(a.refusal), tam=load(a.tamper), mt=load(a.multiturn))
     text = "\n".join(lines)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

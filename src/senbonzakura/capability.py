@@ -30,6 +30,22 @@ as a wrong answer, then setting `--max-new` too low would look exactly like capa
 the resulting number would be wrong in the same direction as the claim it was built to test. The
 same mistake in a different costume already reached a published figure here once, when a thinking
 model's verdict was read at the position it emits `<think>`.
+
+THE TOOL-CALL VALIDITY MEASURES ARE MECHANICAL AND ARE NOT A VERDICT ON TOOL USE
+
+`tool_call_validity` and `tool_call_validity_block` answer one question: is the reply a well-formed
+call against the schema the harness put in the prompt. Did it emit a call at all, does it name a
+function on offer, are the required arguments there, are their types the declared ones, did it
+invent a parameter. **Every one of those is about shape, and none of them reads the question.** A
+model that answers everything by calling the wrong tool, with every argument present and correctly
+typed and every value nonsense, scores a perfect 100% on all of them.
+
+Whether calling THAT tool with THOSE values was the right decision is a judgement, and a judgement
+needs a certified grader (`senbonzakura judge`, with its kappa floor) and a labelled set this
+repository does not have. The split is the point: the mechanical half needs no labels at all,
+because the schema is already in the harness's hand, so it can ship now and be believed, while the
+judgement half waits for a grader whose own reliability has been established. Anything quoting a
+figure from this block alongside the word "capable" has merged the two.
 """
 from __future__ import annotations
 
@@ -188,8 +204,22 @@ def last_line_answer(text):
 # what `senbonzakura judge` exists to stop. So these two tasks close as much of the gap as can be
 # closed without one.
 
-#: A JSON object as a model embeds one in prose or a code fence. Non-greedy from the last opening
-#: brace, because a model that reasons aloud writes its call last.
+#: KEPT, UNUSED BY `tool_call`, AND THE COMMENT IT CARRIED WAS FALSE. It read "non-greedy from the
+#: last opening brace", and `.*` is greedy while `.search` finds the FIRST brace, so it matched
+#: everything from the first `{` to the last `}`. A model that reasons aloud and writes a brace in
+#: its prose therefore had its perfect call read as NO CALL, and because the `tool-call` task sets
+#: `unparseable_is_wrong=True` that scored WRONG rather than unparsed.
+#:
+#: THE BIAS RAN ONE WAY AND IT WAS THE FLATTERING ONE, which is the same shape, direction and cause
+#: as the `choice_answer` defect documented above: a safety-tuned model reasons aloud and writes
+#: braces, an abliterated one is terser, so the stock arm collected more of these false failures
+#: and `paired_change` would have reported abliteration IMPROVING tool use.
+#:
+#: Safe to fix without a re-run, checked before fixing: `tool-call` is one of five GRADING RULES
+#: and the only dataset this package ships is a 256 row GSM8K subset, graded `numeric`. No
+#: published figure was taken through it. `docs/comparison.md` is exact about that distinction.
+#:
+#: The name survives because it is public and something may import it. Nothing here calls it.
 JSON_BLOB = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -199,24 +229,66 @@ def tool_call(text):
     Accepts the shapes models actually produce: a bare JSON object, one inside a ```json fence, or
     one embedded in prose. `arguments` may itself arrive as a JSON string rather than an object,
     which is common and is not the model getting it wrong.
+
+    Scanned for brace-balanced substrings rather than matched with a regular expression, and the
+    LAST one that parses into a call wins, because a model that reasons aloud writes its call last.
+    That is what the regular expression above claimed to do and did not.
     """
-    if text is None:
-        return None
-    m = JSON_BLOB.search(str(text))
-    if not m:
-        return None
-    try:
-        doc = json.loads(m.group())
-    except ValueError:
-        return None
+    candidates, _ = _balanced_json_objects(text)
+    for blob in reversed(candidates):
+        try:
+            doc = json.loads(blob)
+        except ValueError:
+            continue
+        call = _call_from_object(doc)
+        if call is not None:
+            return call
+    return None
+
+
+#: What an `arguments` value that could not be read as an object gets stored under, so that the
+#: failure survives into the record instead of being dropped. `__unparsed__` is an `arguments`
+#: string that is not JSON; `__value__` is an `arguments` that parsed to a list, a number or a
+#: bare string. Both mean the ARGUMENTS are malformed rather than that the model passed a
+#: parameter by those names, and `tool_call_validity` reports them as such.
+ARGS_SENTINELS = ("__unparsed__", "__value__")
+
+
+def _call_from_object(doc):
+    """(name, arguments) from an already-parsed JSON object, or None if it names no function.
+
+    The key aliases live here in one copy because two extractors read them: `tool_call`, which
+    grades against a reference call, and `emitted_tool_call`, which grades against a schema. Two
+    copies of the alias list would let the two measures disagree about what counts as a call.
+    """
     if not isinstance(doc, dict):
         return None
     name = doc.get("name") or doc.get("tool") or doc.get("function")
-    if isinstance(name, dict):                       # {"function": {"name": ...}}
-        name = name.get("name")
+    # THE ARGUMENTS LIVE BESIDE THE NAME, WHICH IS NOT ALWAYS THE TOP LEVEL. OpenAI's shape is
+    # `{"function": {"name": ..., "arguments": ...}}`, and reading the name from the nested object
+    # while reading the arguments only from the outer one returned ("f", {}) for every such call:
+    # every argument silently dropped, and `same_tool_call` compares arguments, so a correct call
+    # scored WRONG rather than unparsed. Found 2026-10-08.
+    #
+    # The nested object is PREFERRED and the outer one is a fallback, not a replacement. Models
+    # also emit `{"function": {"name": ...}, "parameters": {...}}`, with the name nested and the
+    # arguments outside it, and an existing test pins that shape. Taking the nested object
+    # wholesale broke it.
+    nested = name if isinstance(name, dict) else None
+    if nested is not None:                           # {"function": {"name": ...}}
+        name = nested.get("name")
     if not isinstance(name, str):
         return None
-    args = doc.get("arguments", doc.get("args", doc.get("parameters", {})))
+
+    def _args_from(obj):
+        for key in ("arguments", "args", "parameters"):
+            if key in obj:
+                return obj[key], True
+        return {}, False
+
+    args, found = ({}, False) if nested is None else _args_from(nested)
+    if not found:
+        args, _ = _args_from(doc)
     if isinstance(args, str):
         try:
             args = json.loads(args)
@@ -235,6 +307,302 @@ def same_tool_call(got, want):
     formatting change as a capability loss.
     """
     return got[0] == want[0] and got[1] == want[1]
+
+
+# ── mechanical validity of a tool call, which needs no judge and no labels ────────────
+# WHAT THIS BLOCK IS AND IS NOT. It answers "is this a well-formed call against the schema the
+# harness handed the model": did it emit a call at all, does it name a function the schema offers,
+# are the required arguments present, are their types the declared ones, and did it invent a
+# parameter. Every one of those is a question about SHAPE.
+#
+# NONE OF IT ASKS WHETHER CALLING THAT TOOL WAS THE RIGHT MOVE, or whether the values passed were
+# the right values. A model that answers every request by calling the wrong function with
+# beautifully typed arguments scores 100% here. That half needs a certified grader, which is what
+# `senbonzakura judge` exists for, and the labelled set this repository does not have.
+#
+# WHY IT IS WORTH HAVING ANYWAY. The schema is already in the harness's hand, because it is what
+# was put in the prompt, so this costs no annotation at all. `tool_call` above grades against a
+# REFERENCE call, so it needs a gold answer per item; this needs only the schema. That is the whole
+# difference, and it is what moves the mechanical half of the measure off the labelled-data gate.
+
+#: Why a reply carries no gradeable call. Three different failures, kept apart because collapsing
+#: them loses the only information a reader can act on: a model that answers in prose needs a
+#: different fix from one that emits a call with a comma missing.
+NO_CALL_NO_JSON = "no_json"                   # prose, with nothing object-shaped in it at all
+NO_CALL_UNPARSEABLE = "unparseable_json"      # something object-shaped that will not parse
+NO_CALL_NAMES_NOTHING = "names_no_function"   # parsed cleanly, but names no function
+
+#: What each JSON type name admits, as Python types. `boolean` is checked BEFORE the numeric names
+#: and `bool` is excluded from both of them on purpose: `isinstance(True, int)` is True in Python,
+#: so a model that passes `true` where an integer was declared would otherwise be scored as having
+#: got the type right. That is a real shape of tool-call failure and the language hides it.
+JSON_TYPES = {
+    "string": (str,),
+    "boolean": (bool,),
+    "integer": (int,),
+    "number": (int, float),
+    "array": (list,),
+    "object": (dict,),
+    "null": (type(None),),
+}
+
+
+def _balanced_json_objects(text):
+    """Every brace-balanced substring of `text`, in order, and whether any brace was seen at all.
+
+    Hand-scanned rather than matched with a regular expression because the question "was anything
+    object-shaped emitted" has to be answerable separately from "did it parse", and a regex that
+    fails to match cannot tell those apart. Quotes are only honoured once a brace is open, so a
+    quotation mark in the surrounding prose cannot swallow the call that follows it.
+    """
+    s = "" if text is None else str(text)
+    out, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(s):
+        if depth and in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if depth and ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                out.append(s[start:i + 1])
+    return out, ("{" in s)
+
+
+def emitted_tool_call(text):
+    """(name, arguments) if the reply emitted a call, else (None, why it did not).
+
+    THE LAST BALANCED OBJECT WINS, not the first. A model that reasons aloud writes its call at the
+    end, and often writes braces before it, so taking the first opening brace reads the reasoning
+    and taking everything between the first and the last reads neither.
+
+    Returns the reason as one of the `NO_CALL_*` codes when there is no call, because "answered in
+    prose", "emitted malformed JSON" and "emitted clean JSON that names no function" are three
+    different defects and a single None would merge them.
+    """
+    candidates, saw_brace = _balanced_json_objects(text)
+    parsed_any = False
+    for blob in reversed(candidates):
+        try:
+            doc = json.loads(blob)
+        except ValueError:
+            continue
+        parsed_any = True
+        call = _call_from_object(doc)
+        if call is not None:
+            return call, None
+    if parsed_any:
+        return None, NO_CALL_NAMES_NOTHING
+    return None, (NO_CALL_UNPARSEABLE if saw_brace else NO_CALL_NO_JSON)
+
+
+def tool_schema(schema):
+    """A tool schema in the shapes providers write them, as (name, declared types, required).
+
+    Returns None when the schema names no function, which makes the item ungradeable rather than
+    failed: an unusable schema is the harness's defect, and scoring the model against it would
+    report our own bug as a capability loss. `grade_one` takes the same line on an unusable dataset
+    row. A schema that names a function and declares no parameters is USABLE, not broken: a
+    zero-argument tool is a real tool, and against it every argument supplied is an undeclared one.
+    """
+    if not isinstance(schema, dict):
+        return None
+    body = schema.get("function") if isinstance(schema.get("function"), dict) else schema
+    name = body.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    params = body.get("parameters", body.get("input_schema", body))
+    if not isinstance(params, dict):
+        return None
+    props = params.get("properties", {})
+    if not isinstance(props, dict):
+        return None
+    declared = {}
+    for key, spec in props.items():
+        kind = spec.get("type") if isinstance(spec, dict) else None
+        declared[key] = kind if isinstance(kind, (str, list)) else None
+    required = params.get("required", [])
+    required = [r for r in required if isinstance(r, str)] if isinstance(required, list) else []
+    return (name, declared, required)
+
+
+def _toolbox(schema):
+    """Every usable schema in what the caller passed, keyed by function name.
+
+    One schema or a sequence of them, because a harness that offers the model a choice of tools is
+    the normal case and "named a function the schema offers" is only meaningful against the whole
+    set it was offered.
+    """
+    items = schema if isinstance(schema, (list, tuple)) else [schema]
+    out = {}
+    for one in items:
+        parsed = tool_schema(one)
+        if parsed is not None:
+            out[parsed[0]] = parsed
+    return out
+
+
+def _type_mismatch(value, declared):
+    """Whether `value` violates a declared JSON type. An undeclared type cannot be violated."""
+    if declared is None:
+        return False
+    names = [declared] if isinstance(declared, str) else list(declared)
+    admitted = tuple(t for n in names for t in JSON_TYPES.get(n, ()))
+    if not admitted:
+        # A type name this does not know is not a licence to call the value wrong. Reporting a
+        # mismatch here would turn an unsupported schema keyword into a model failure.
+        return False
+    if isinstance(value, bool):
+        return not any(n == "boolean" for n in names)
+    return not isinstance(value, admitted)
+
+
+def tool_call_validity(reply, schema, truncated=False):
+    """Whether one reply is a MECHANICALLY VALID call against `schema`. Not whether it was right.
+
+    THE CAVEAT IS THE RETURN VALUE'S FIRST KEY and it is there in every record this produces. A
+    call that names the wrong tool for the question, with every argument present, correctly typed
+    and holding a nonsense value, is `valid: True` here. Nothing in this function reads the
+    question, so nothing in it is evidence that the model chose or filled the tool well.
+
+    `truncated` says the generation ran out of token budget rather than finishing, and it is
+    REQUIRED for this to measure what it claims: a call cut off mid-object is indistinguishable
+    from malformed JSON by looking at the text, and scoring it as malformed would report a small
+    `--max-new` as a tool-use failure, in the same direction as the claim the measure exists to
+    test. A caller that holds the flag and does not pass it is measuring its own token budget.
+    """
+    out = {
+        "measures": ("mechanical validity against the schema, NOT whether calling that tool with "
+                     "those values was correct"),
+        "indeterminate": False,
+        "indeterminate_because": None,
+        "emitted_call": False,
+        "no_call_because": None,
+        "name": None,
+        "known_function": None,
+        "arguments_malformed": None,
+        "missing_required": None,
+        "wrong_typed": None,
+        "undeclared": None,
+        "valid": None,
+    }
+    if truncated:
+        out["indeterminate"] = True
+        out["indeterminate_because"] = "the generation ran out of token budget before it finished"
+        return out
+    box = _toolbox(schema)
+    if not box:
+        out["indeterminate"] = True
+        out["indeterminate_because"] = (
+            "the schema names no usable function, so there was nothing to check the reply against")
+        return out
+
+    call, why = emitted_tool_call(reply)
+    if call is None:
+        out["no_call_because"] = why
+        out["valid"] = False
+        return out
+
+    name, args = call
+    out["emitted_call"] = True
+    out["name"] = name
+    out["known_function"] = name in box
+    if not out["known_function"]:
+        # The argument checks are left as None rather than filled in against nothing. There is no
+        # schema for a function the schema does not offer, so "no arguments missing" would be true
+        # in the way that an empty list is true, and would read as a pass.
+        out["valid"] = False
+        return out
+
+    malformed = sorted(k for k in ARGS_SENTINELS if k in args)
+    out["arguments_malformed"] = malformed or []
+    if malformed:
+        # The sentinels are not parameter names and must not be reported as undeclared ones: the
+        # failure is that the `arguments` value could not be read, not that the model invented a
+        # parameter called `__unparsed__`.
+        out["valid"] = False
+        return out
+
+    declared, required = box[name][1:]
+    out["missing_required"] = sorted(k for k in required if k not in args)
+    out["undeclared"] = sorted(k for k in args if k not in declared)
+    out["wrong_typed"] = [
+        {"argument": k, "declared": declared[k], "got": type(v).__name__}
+        for k, v in sorted(args.items())
+        if k in declared and _type_mismatch(v, declared[k])
+    ]
+    out["valid"] = not (out["missing_required"] or out["undeclared"] or out["wrong_typed"])
+    return out
+
+
+def tool_call_validity_block(replies, schema, truncated=None):
+    """The mechanical validity measures over many replies, or None when there are none.
+
+    EVERY RATE CARRIES ITS OWN DENOMINATOR, and they are not the same denominator. `valid` is over
+    the replies that could be graded at all. The argument checks are over the replies that named a
+    function the schema offers, which is a smaller set, because a required argument has no meaning
+    against a function that does not exist. A single `n` across all of them would be wrong for most
+    of the rows under it.
+
+    MECHANICAL, which the per-reply record also says and which does not get weaker by repetition:
+    these say whether the calls were well formed, not whether they were the right calls. A model
+    that reaches for the wrong tool every time, with clean arguments, scores perfectly on every
+    figure in this block, so nothing here is evidence that its tool use is good.
+    """
+    from .metrics import reportable_rate
+
+    rows = list(replies)
+    if not rows:
+        return None
+    flags = [False] * len(rows) if truncated is None else list(truncated)
+    reports = [tool_call_validity(r, schema, cut) for r, cut in zip(rows, flags, strict=True)]
+
+    n = len(reports)
+    graded = [r for r in reports if not r["indeterminate"]]
+    called = [r for r in graded if r["emitted_call"]]
+    checkable = [r for r in called if r["known_function"]]
+
+    out = {
+        "measures": ("mechanical validity against the schema, NOT whether calling that tool with "
+                     "those values was correct"),
+        "n": n,
+        "indeterminate": n - len(graded),
+        "graded": len(graded),
+        # The same ceiling the accuracy measures use, and for the same reason: the replies that
+        # fail to finish are not missing at random, so past this point the rates below are a
+        # statement about the token budget rather than about the model.
+        "budget_suspect": bool(n and (n - len(graded)) / n > MAX_INDETERMINATE),
+        "budget_threshold": MAX_INDETERMINATE,
+        "valid": reportable_rate(sum(1 for r in graded if r["valid"]), len(graded)),
+        "emitted_call": reportable_rate(len(called), len(graded)),
+        # Why there was no call, as counts over the graded replies. Not rates: the interesting
+        # thing about these is which one it was, and three rates over the same small denominator
+        # invite reading a one-reply difference as a trend.
+        "no_call_because": {
+            code: sum(1 for r in graded if r["no_call_because"] == code)
+            for code in (NO_CALL_NO_JSON, NO_CALL_UNPARSEABLE, NO_CALL_NAMES_NOTHING)
+        },
+        "invented_function": reportable_rate(
+            sum(1 for r in called if not r["known_function"]), len(called)),
+    }
+    for key in ("arguments_malformed", "missing_required", "wrong_typed", "undeclared"):
+        # Over the calls that named a real function, which is the only set these are defined on.
+        # `reportable_rate` returns a None rate under the floor rather than a bare decimal, and a
+        # caller that renders that None as 0.0 has put the defect back.
+        out[key] = reportable_rate(sum(1 for r in checkable if r[key]), len(checkable))
+    out["checkable"] = len(checkable)
+    out["reports"] = reports
+    return out
 
 
 #: The constraint checks a format instruction can be graded by. Deliberately small: every one is a

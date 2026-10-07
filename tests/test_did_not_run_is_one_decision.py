@@ -35,6 +35,13 @@ import sys
 
 import pytest
 
+# SKIPPED ON WINDOWS for the same reason as the action's shell gates: the workflow invokes this
+# helper by path on ubuntu, so its POSIX mode bit is part of the contract, and Windows has no
+# mode bit to assert against.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a Linux-only CI helper, invoked by path with its mode bit load-bearing")
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HELPER = ROOT / "tools" / "ci" / "did_not_run.sh"
 AUDIT = ROOT / "tools" / "ci" / "audit_env.py"

@@ -36,10 +36,17 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import sys
 
 import pytest
 
 yaml = pytest.importorskip("yaml", reason="PyYAML is needed to read the workflow as data")
+
+# SKIPPED ON WINDOWS: the scan it drives is a shell step in a Linux-only job, and proving it
+# blocks means running that shell on a planted finding. There is no Windows equivalent to run.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the history secret scan is a shell step in a Linux-only job")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "supply-chain.yml"

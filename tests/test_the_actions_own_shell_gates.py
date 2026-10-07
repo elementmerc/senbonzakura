@@ -43,6 +43,15 @@ from pathlib import Path
 import pytest
 import yaml
 
+# SKIPPED ON WINDOWS, AND THE REASON IS WHAT IS UNDER TEST. These run the action's shell as a
+# shell, and the workflow steps that call it run only on ubuntu. Windows carries no POSIX mode
+# bit, so the executability assertions measure the runner rather than the helper, and a green
+# result there would say nothing true. Landed 2026-10-02 and never run on Windows until
+# 2026-10-07, which is how they sat red for five days.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the action's shell is invoked by path from Linux-only jobs, mode bit included")
+
 ROOT = Path(__file__).resolve().parent.parent
 ACTION = ROOT / "action.yml"
 

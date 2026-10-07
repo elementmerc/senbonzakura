@@ -19,8 +19,8 @@ const SITE = process.env.DOCS_SITE || 'https://elementmerc.github.io'
 export default {
   title: 'Senbonzakura',
   description:
-    'Precision uncensoring, with receipts. Refusal removal for transformer '
-    + 'language models, and the instruments to tell whether it worked.',
+    "The world's top open-weight AI model workshop. Measure, uncensor and audit: refusal removal for transformer "
+    + "language models, and the instruments to tell whether it worked.",
   lang: 'en-GB',
   base: BASE,
   // WHAT `cleanUrls` DOES AND DOES NOT BUY, recorded because a reader hit the gap in 2026-09.
@@ -63,8 +63,8 @@ export default {
     ['meta', { property: 'og:title', content: 'Senbonzakura' }],
     ['meta', {
       property: 'og:description',
-      content: 'Precision uncensoring, with receipts. Refusal removal, and '
-        + 'the instruments to tell whether it worked.',
+      content: "The world's top open-weight AI model workshop. Measure, uncensor and audit: refusal removal, and "
+        + "the instruments to tell whether it worked.",
     }],
     ['meta', { property: 'og:image', content: `${SITE}${BASE}social-card.png` }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],

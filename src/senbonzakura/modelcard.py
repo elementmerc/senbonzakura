@@ -272,10 +272,25 @@ def tamper_section(tam):
     # the ceiling arm exists to prevent: it is the same recipe on the UNEDITED checkpoint, so it
     # says what this recipe can achieve at all. A 40% recovery against a 95% ceiling and the same
     # 40% against a 45% ceiling are opposite results.
-    ceiling = (arms.get("ceiling") or {}).get("recovered_fraction") or {}
+    ceiling_arm = arms.get("ceiling") or {}
+    ceiling = ceiling_arm.get("recovered_fraction") or {}
     if ceiling.get("point") is not None:
-        lines.append(f"- what this recipe achieved on the UNEDITED model, which is the ceiling "
-                     f"the figure above should be read against: **{ceiling['point']:+.1%}**")
+        # NOT CALLED A CEILING WHEN IT IS NOT ONE. `recovered_fraction` divides by the arm's own
+        # headroom, so the ceiling arm's figure is a fraction of a different whole whenever the
+        # unedited model started from a different refusal rate. On the run that found this the two
+        # denominators were a factor of ten apart and the recovery arm "exceeded the ceiling",
+        # which is not a result. `tamper.headroom_mismatch` decides which of these is true.
+        if tam.get("headroom_mismatch"):
+            change = ceiling_arm.get("change") or {}
+            moved = (f", which moved refusal **{change['point']:+.1%}** in points"
+                     if change.get("point") is not None else "")
+            lines.append(f"- the same recipe on the UNEDITED model recovered "
+                         f"**{ceiling['point']:+.1%}** of ITS OWN headroom{moved}. **That is not "
+                         f"a ceiling for the figure above**: the two models did not start from the "
+                         f"same refusal rate, so the two fractions have different denominators")
+        else:
+            lines.append(f"- what this recipe achieved on the UNEDITED model, which is the ceiling "
+                         f"the figure above should be read against: **{ceiling['point']:+.1%}**")
     gap = tam.get("safety_specific") or {}
     if gap.get("point") is not None:
         lo, hi = gap.get("ci") or (None, None)
@@ -287,6 +302,7 @@ def tamper_section(tam):
             lines.append(_sentence(gap["reading"]))
     for key, prefix in (("control_missing", "**No control was run.**"),
                         ("ceiling_missing", "**No ceiling was run.**"),
+                        ("headroom_mismatch", "**The ceiling is not comparable.**"),
                         ("control_caveat", "**Read the gap with this.**"),
                         ("budget_warning", "**Budget.**")):
         if tam.get(key):

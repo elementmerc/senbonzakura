@@ -586,6 +586,17 @@ def main(argv=None):
     # Recorded in the artefact and not only printed, so a number read back months later carries
     # the caveat it was produced under rather than relying on somebody having seen a log line.
     res["budget_warning"] = warning
+    # AT THE ARTEFACT LEVEL AND NOT INSIDE `score`, deliberately. `jailbreak.arm_result` builds its
+    # published breakdown from `score(gens)`, so a key added there would change the shape of every
+    # jailbreak artefact as a side effect of a prose measure. This block belongs to this command's
+    # output, and the one place it is assembled is here.
+    #
+    # The budget is NOT passed, though `--max-new` is known: `length_error` wants the tokens each
+    # reply actually produced, and the generation loop does not hand them back. Counting words here
+    # instead would be a tokeniser of ours disagreeing with the model's, which is the reason
+    # `length_error` takes counts rather than text. Until the loop returns them, the length measure
+    # is absent rather than approximated.
+    res["prose"] = metrics.prose_degradation(gens)
     # The prompts as scored, after --skip and --n, so the digest describes the rows the number was
     # actually taken on rather than the file they were drawn from.
     _stamp_refusal(res, stamps.pinned(prompts=prompts, model=model, tok=tok,

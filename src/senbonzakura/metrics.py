@@ -407,6 +407,46 @@ def degradation(text, produced_tokens=None, budget=None):
     return out
 
 
+def prose_degradation(texts, produced_and_budgets=None):
+    """The graded mechanical measures over many replies, or None when there are none.
+
+    MEANS OVER THE REPLIES THAT YIELDED A MEASURE, with the count beside each one. The per-reply
+    measures return None for "there was nothing to measure", and folding that into a zero would
+    report a four-word reply as a reply with no repetition found. `n` is how many replies there
+    were and each `n_measured` is how many contributed, so the gap between them is readable rather
+    than hidden inside a mean.
+
+    THE WINDOWED RATIO IS THE COMPARABLE ONE and the plain one is kept for continuity.
+    `type_token_ratio` falls mechanically as a reply gets longer, so a mean of whole-reply ratios
+    over replies of different lengths partly measures which set was longer. Anything quoting one
+    vocabulary figure takes the windowed one.
+
+    MECHANICAL, which `degradation` says at more length and which does not get weaker by being
+    repeated: these say whether a reply repeats itself, how varied its vocabulary is, and whether
+    it used the room it was given. None of them reads the writing. A model whose prose has gone
+    flat and generic scores exactly as well here as one whose prose is good, so no figure in this
+    block is evidence about writing quality.
+    """
+    rows = list(texts)
+    if not rows:
+        return None
+    out = {"n": len(rows), "broken_rate": broken_rate(rows)}
+    for key, measure in (
+            ("repetition_rate", repetition_rate),
+            ("type_token_ratio", type_token_ratio),
+            ("windowed_type_token_ratio",
+             lambda t: type_token_ratio(t, window=DEFAULT_TTR_WINDOW))):
+        got = [v for v in (measure(t) for t in rows) if v is not None]
+        out[key] = {"mean": (sum(got) / len(got)) if got else None, "n_measured": len(got)}
+    words = [len(_words(t)) for t in rows]
+    out["mean_words"] = sum(words) / len(words)
+    # Only when the caller has the counts. `length_error` refuses to invent a budget and so does
+    # this: a default would fabricate the controlled variable the measure is defined against.
+    out["length"] = (None if produced_and_budgets is None
+                     else length_control(produced_and_budgets))
+    return out
+
+
 # NO `substantive_rate` BESIDE THE OTHER FOUR, deliberately. Its one caller needs the COUNT and
 # not the rate, because a jailbreak figure is reported through `reportable_rate`, which withholds
 # a rate the sample cannot carry. A rate helper added for symmetry would be the easy thing to

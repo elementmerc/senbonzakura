@@ -12,7 +12,7 @@ name = "senbonzakura"
 # tree still saying 0.3.0 across 344 commits that included withdrawn measurements and a rewritten
 # search, which made two very different trees indistinguishable in every artefact they produced.
 dynamic = ["version"]
-description = "Precision uncensoring, with receipts. Refusal removal for transformer language models, with the instruments to measure what the edit cost."
+description = "The world's top open-weight AI model workshop. Measure, uncensor and audit: refusal removal for transformer language models, with the instruments to measure what the edit cost."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later AND CC-BY-NC-4.0"

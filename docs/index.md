@@ -2,9 +2,9 @@
 layout: home
 hero:
   name: Senbonzakura
-  text: Precision uncensoring, with receipts
+  text: The world's top open-weight AI model workshop
   tagline: >
-    Refusal removal for open-weight language models, and the instruments to tell you
+    Measure, uncensor and audit.     Refusal removal for open-weight language models, and the instruments to tell you
     whether it worked. Including the runs where the answer was no.
   image:
     src: /mark.svg

@@ -6,7 +6,9 @@
        alt="Senbonzakura">
 </picture>
 
-**Precision uncensoring, with receipts.**
+**The world's top open-weight AI model workshop.**
+
+Measure, uncensor and audit.
 
 <p>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the default branch" /></a>

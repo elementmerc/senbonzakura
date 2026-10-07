@@ -117,7 +117,7 @@ RUN python -m pip install --no-cache-dir --quiet "requests>=2" \
 FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS runtime
 
 LABEL org.opencontainers.image.title="senbonzakura" \
-      org.opencontainers.image.description="Precision uncensoring, with receipts." \
+      org.opencontainers.image.description="The world's top open-weight AI model workshop. Measure, uncensor and audit." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.source="https://github.com/elementmerc/senbonzakura" \
       org.opencontainers.image.documentation="https://elementmerc.github.io/senbonzakura"

@@ -125,7 +125,7 @@ RUN pip install --no-cache-dir --quiet --upgrade pip \
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6 AS runtime
 
 LABEL org.opencontainers.image.title="senbonzakura (CUDA)" \
-      org.opencontainers.image.description="Precision uncensoring, with receipts. GPU build." \
+      org.opencontainers.image.description="The world's top open-weight AI model workshop. Measure, uncensor and audit. GPU build." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.source="https://github.com/elementmerc/senbonzakura"
 

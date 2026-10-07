@@ -43,7 +43,13 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: The one true wording. Changing the tagline means changing it here and then watching this test
 #: name every surface that still disagrees, which is the whole point of the list below.
-TAGLINE = "Precision uncensoring, with receipts"
+TAGLINE = "The world's top open-weight AI model workshop"
+
+#: The line that sits under the tagline wherever a surface has room for two. Not every surface
+#: does: a container label and the CLI banner carry both, a VitePress hero splits them across its
+#: own two fields, and the generated banner image carries only the first because the art has room
+#: for one line. So this is checked on the surfaces that take it rather than on all of them.
+SUBTITLE = "Measure, uncensor and audit"
 
 #: Every surface a stranger meets the tagline on, with what reads it, because the reason a surface
 #: matters is what consumes it rather than what language it is written in.
@@ -58,9 +64,13 @@ SURFACES = {
     "src/senbonzakura/entry.py": "the banner the tool prints to its own users",
 }
 
-#: The superseded wording. Present anywhere outside the private tree, it means a surface was
-#: missed rather than that somebody chose the old words.
-RETIRED = "Precision abliteration"
+#: The superseded wordings, newest last. Present anywhere outside the private tree, one of these
+#: means a surface was missed rather than that somebody chose the old words.
+#:
+#: A TUPLE RATHER THAN A STRING, since 2026-10-07. There have now been two renames, and a single
+#: retired string only ever catches the most recent one: after the second rename the first
+#: rename's wording would have been invisible to this test, which is the drift it exists to find.
+RETIRED = ("Precision abliteration", "Precision uncensoring")
 
 
 @pytest.mark.parametrize("path", sorted(SURFACES))
@@ -112,11 +122,10 @@ def test_the_retired_tagline_survives_nowhere_public():
         except (UnicodeDecodeError, OSError, FileNotFoundError):
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            if RETIRED in line:
-                found.append(f"{rel}:{n}")
+            found.extend(f"{rel}:{n}  ({retired})" for retired in RETIRED if retired in line)
     assert not found, (
-        f"the retired tagline {RETIRED!r} is still on {len(found)} published line(s), so a "
-        f"rename stopped part way:\n  " + "\n  ".join(found))
+        f"a retired tagline is still on {len(found)} published line(s), so a rename stopped part "
+        f"way. Retired wordings: {', '.join(map(repr, RETIRED))}\n  " + "\n  ".join(found))
 
 
 def test_the_surface_list_has_not_quietly_shrunk():
@@ -131,14 +140,23 @@ def test_the_surface_list_has_not_quietly_shrunk():
         f"lower this number in the same commit that removes it and say which one in the message.")
 
 
-def test_the_tagline_says_uncensoring_rather_than_the_technical_term():
-    """The lay-facing wording is the point of the change, so it is pinned.
+def test_the_public_line_says_uncensor_rather_than_the_technical_term():
+    """The lay-facing wording is the point, so it is pinned across the pair rather than the first.
 
     `abliteration` is the correct technical term and stays in the command name, the artefact
-    filenames and the prose that explains the method. It is not what a stranger searches for, and
-    the tagline is the one line written entirely for strangers.
+    filenames and the prose that explains the method. It is not what a stranger searches for.
+
+    WHY THE PAIR AND NOT THE TAGLINE ALONE, 2026-10-07. The tagline became a category claim,
+    "the world's top open-weight AI model workshop", and the lay verb moved into the subtitle
+    beneath it. The thing written entirely for strangers is now the two lines together, because
+    no surface carries the first without the second except the generated banner. Asserting on the
+    tagline alone would have made this rename look like the technical term creeping back in, which
+    is the opposite of what happened.
     """
-    assert re.search(r"\buncensoring\b", TAGLINE), (
-        "the tagline exists to be legible to somebody who has never heard the word abliteration. "
-        "If the technical term belongs back in it, that is a decision worth recording rather than "
-        "a test worth deleting.")
+    public = f"{TAGLINE} {SUBTITLE}"
+    assert re.search(r"\buncensor(ing)?\b", public, re.IGNORECASE), (
+        "the public line exists to be legible to somebody who has never heard the word "
+        "abliteration. If the technical term belongs back in it, that is a decision worth "
+        "recording rather than a test worth deleting.")
+    assert not re.search(r"\babliterat", public, re.IGNORECASE), (
+        "the technical term is back on the one line written for people who have never met it.")

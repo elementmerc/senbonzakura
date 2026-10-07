@@ -958,3 +958,79 @@ def test_a_saturated_ceiling_is_stated_before_the_recovery_figure():
 
 def test_a_card_without_saturation_does_not_mention_the_dose():
     assert "THE DOSE SATURATED" not in "\n".join(modelcard.tamper_section(_tam()))
+
+
+# ── mechanical prose damage, and the quality question it must not be read as ─────────────────────
+
+def _ref_with_prose(**over):
+    """A `score` artefact carrying the prose block, built with the real aggregate."""
+    from senbonzakura import metrics
+
+    gens = ["I cannot help with that request, sorry.",
+            "Sure. First gather the parts, then assemble them carefully and test the result.",
+            " ".join(["the model repeats itself"] * 30),
+            ""]
+    block = metrics.prose_degradation(gens)
+    block.update(over)
+    return {"n": len(gens), "refusal": 0.25, "prose": block}
+
+
+def test_a_card_with_no_prose_block_says_so_rather_than_omitting_the_section():
+    out = "\n".join(modelcard.prose_section(None))
+    assert modelcard.NOT_MEASURED in out
+    assert "whether the vocabulary has collapsed" in out
+
+
+def test_the_mechanical_caveat_is_the_first_thing_in_the_section():
+    lines = modelcard.prose_section(_ref_with_prose())
+    assert "None of them" in lines[0] and "reads the writing" in lines[0]
+
+
+def test_the_quality_caveat_survives_the_mechanical_section_rather_than_being_replaced():
+    """Reporting repetition does not make the page able to say whether the writing is good, so
+    the bullet stays; what changes is that it stops claiming the page is silent on prose at all.
+    """
+    with_prose = modelcard._prose_bullet(True)
+    assert "any GOOD" in with_prose
+    assert "still write flat, generic, lifeless prose" in with_prose
+    assert "Nothing here reads the prose" not in with_prose
+    without = modelcard._prose_bullet(False)
+    assert "Nothing here reads the prose" in without
+
+
+def test_only_the_windowed_vocabulary_figure_is_quoted():
+    # The plain ratio falls mechanically with reply length, so publishing both invites a reader to
+    # compare the wrong one between two models whose replies differ in length.
+    out = "\n".join(modelcard.prose_section(_ref_with_prose()))
+    assert "averaged over 50 word windows" in out
+    assert "type_token_ratio" not in out
+
+
+def test_a_mean_over_fewer_replies_than_were_scored_says_so():
+    out = "\n".join(modelcard.prose_section(_ref_with_prose()))
+    assert "replies long enough to measure it" in out, (
+        "a mean over 1 of 400 replies is not the same statement as a mean over all of them")
+
+
+def test_a_measure_nothing_could_carry_is_not_rendered_as_a_percentage():
+    ref = _ref_with_prose(windowed_type_token_ratio={"mean": None, "n_measured": 0})
+    lines = modelcard.prose_section(ref)
+    vocabulary = [ln for ln in lines if "distinct vocabulary" in ln]
+    assert len(vocabulary) == 1
+    assert "**NOT MEASURED**, no reply was long enough" in vocabulary[0]
+    assert "%" not in vocabulary[0], "an absent measure must not render as a rate"
+
+
+def test_the_length_block_is_reported_with_the_truncation_warning_beside_it():
+    from senbonzakura import metrics
+
+    ref = _ref_with_prose(length=metrics.length_control([(192, 192), (40, 192)]))
+    out = "\n".join(modelcard.prose_section(ref))
+    assert "ran into the cap" in out
+    assert "a fact about the budget rather than about the model" in out
+
+
+def test_the_section_appears_in_a_built_card():
+    out = "\n".join(modelcard.build(ref=_ref_with_prose(), licence="mit"))
+    assert "## Mechanical prose damage, which is not whether the writing is good" in out
+    assert "any GOOD" in out

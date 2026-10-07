@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -108,9 +109,22 @@ def _run_step_with_env(step_name: str, tmp_path: Path, env_values: dict) -> Resu
     return _run_step(step_name, tmp_path, supplied_env=env_values)
 
 
+#: The PATH a step gets when a test needs an absent command to be genuinely absent. The harness
+#: normally prepends its stub directory to the real PATH, which is right for a test that stubs a
+#: command and wrong for one that stubs none: on any machine where this project is installed, and
+#: that includes every CI runner, `command -v senbonzakura` then finds the real one and the step
+#: takes a branch the test was written to avoid. Found on 2026-10-07, when the "missing command"
+#: test was failing against a live gate's refusal about a missing baseline.
+BARE_PATH = "/usr/bin:/bin"
+
+
 def _run_step(step_name: str, tmp_path: Path, inputs: dict | None = None,
-              stubs: dict | None = None, supplied_env: dict | None = None) -> Result:
-    """Execute one step's script, and hand back everything a workflow would be able to read."""
+              stubs: dict | None = None, supplied_env: dict | None = None,
+              isolate_path: bool = False) -> Result:
+    """Execute one step's script, and hand back everything a workflow would be able to read.
+
+    `isolate_path` drops the ambient PATH so only the stubs and the base system are reachable.
+    """
     step = _step(step_name)
     resolved = {**DEFAULTS, **(inputs or {})}
 
@@ -134,7 +148,8 @@ def _run_step(step_name: str, tmp_path: Path, inputs: dict | None = None,
     summary_file.write_text("", encoding="utf-8")
 
     env = {
-        "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+        "PATH": (f"{binaries}{os.pathsep}{BARE_PATH}" if isolate_path
+                 else f"{binaries}{os.pathsep}{os.environ['PATH']}"),
         "HOME": str(tmp_path),
         "RUNNER_TEMP": str(runner_temp),
         "GITHUB_OUTPUT": str(out_file),
@@ -242,7 +257,12 @@ class TestTheGatesThreeVerdictsReachTheWorkflow:
         `command not found` is exit 127 from bash, and bash's message does not say which of the
         job's commands was missing. The step says it, and fails.
         """
-        res = _run_step(GATE_STEP, tmp_path, GATE_INPUTS, stubs={})
+        res = _run_step(GATE_STEP, tmp_path, GATE_INPUTS, stubs={}, isolate_path=True)
+        # THE ABSENCE IS PROVEN BEFORE IT IS RELIED ON. Without the isolated PATH this test ran
+        # against a REAL senbonzakura and asserted against its refusal about a missing baseline,
+        # so it was measuring a live gate while claiming to measure a missing one.
+        assert shutil.which("senbonzakura", path=f"{tmp_path / 'bin'}{os.pathsep}{BARE_PATH}") \
+            is None, "the command under test is reachable, so this proves nothing"
         assert res.status == 1, f"a gate that was never installed reported {res.status}:\n{res.log}"
         assert "not installed" in res.errors[0], res.errors
         assert "not a passing gate" in res.errors[0], res.errors

@@ -133,6 +133,14 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   before a run starts, because each of them moves a bar rather than crashing
 
 ### Report
+- `senbonzakura report` takes `--multiturn`, a `senbonzakura multi-turn` artefact, and reports
+  whether a refusal that holds on the first ask gives way when the request is escalated. The
+  comparison against simply asking again is stated before the conversion figure, and where the
+  two intervals overlap the card says the run cannot separate them
+- `senbonzakura report` takes `--tamper` and reports whether a brief finetune brings the removed
+  refusal back, with the ceiling that figure should be read against
+- A run that disowned its own figures is quoted nowhere on the card, and is still listed as a gap
+  in "What this does not cover" rather than being read as covered because a file was supplied
 - `senbonzakura report` takes `--refusal`, a `senbonzakura score` artefact holding the figures
   taken after the edit on rows the search never scored, and publishes those as the headline rates
   with the search's own figures kept below and labelled as not publishable

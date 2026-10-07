@@ -1,0 +1,39 @@
+{
+  "id": "an-uncertainty-that-is-not-a-number",
+  "title": "A published figure carries a placeholder where its uncertainty should be, so it reads as measured when it is not",
+  "detects": "A metric whose standard error field is filled in with something that is not a number: the string \"N/A\", a dash, \"null\" spelled out, or any other stand-in. The point estimate beside it is still published and still quoted, and because the field is occupied rather than empty, anything checking whether the figure carries an uncertainty gets yes. That is worse than the field being missing, because a missing field is legible and a placeholder is not: a reader sees a column of error bars with a gap in it only if they look at the values, and a program doing arithmetic either raises or silently coerces.",
+  "incident": "Found on 2026-10-07 in Llama-3.1-8B-Instruct's own results file in the public `open-llm-leaderboard/results` dataset. Four of fifty-three stderr fields are the string \"N/A\", on `leaderboard_ifeval`'s `inst_level_strict_acc` (0.5647) and `inst_level_loose_acc` (0.5959) and the same two aggregated into the `leaderboard` group. Their sibling metrics in the same task carry real numbers, so a reader comparing two models on instruction-level accuracy has no way to tell whether a gap is real, while the prompt-level figures beside them do. This checker read the same file and reported nothing, because no check looked at the quality of an uncertainty, only at its presence.",
+  "remedy": "Treat the figure as a point estimate with no uncertainty, which is what it is, and do not quote a difference between two models on that metric as a result. If it is your own harness, publish the field as absent rather than as a placeholder: a consumer can act on a missing value and cannot act on a string. If the uncertainty genuinely cannot be computed for that metric, say so in the file in a field that is not the uncertainty field, so the two facts stay apart.",
+  "confidence": "high",
+  "severity": "qualifies",
+  "false_positive": "It fires on a figure whose uncertainty is unavailable for a sound reason, and instruction-level accuracy in ifeval is plausibly one: the instances inside a prompt are not independent, so the ordinary standard error would be wrong and declining to publish one is defensible. The check does not claim the publisher was careless; it claims the reader cannot use the field, which is true either way. What it does not do is read the placeholder's text to guess the reason, deliberately, because every harness spells it differently and a guess would be a second claim with nothing behind it.",
+
+  "applies_to": {
+    "op": "all_of",
+    "rules": [
+      {"op": "present", "path": "metrics"},
+      {"op": "truthy", "path": "metrics"}
+    ]
+  },
+
+  "rule": {
+    "op": "any_entry",
+    "path": "metrics",
+    "all": [
+      {"field": "stderr_unpublishable", "is": "truthy"}
+    ]
+  },
+
+  "control": {
+    "fires_on": [
+      {"metrics": {"a": {"value": 0.56, "stderr": null, "stderr_unpublishable": "N/A"}}},
+      {"metrics": {"a": {"value": 0.5, "stderr": 0.01, "stderr_unpublishable": null},
+                   "b": {"value": 0.6, "stderr": null, "stderr_unpublishable": "-"}}}
+    ],
+    "passes_on": [
+      {"metrics": {"a": {"value": 0.56, "stderr": 0.02, "stderr_unpublishable": null}}},
+      {"metrics": {"a": {"value": 0.56, "stderr": null, "stderr_unpublishable": null}}},
+      {"metrics": {}}
+    ]
+  }
+}

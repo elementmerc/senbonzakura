@@ -928,3 +928,47 @@ def test_one_record_does_not_give_two_answers_about_its_budget():
            "generation": {"greedy": True, "max_new_tokens": 48}}
     got = normalise(doc)
     assert got["generation_budget"] == got["settings"]["generation_budget"] == 48
+
+
+# ── An uncertainty that is not a number ─────────────────────────────────────────────────────────
+#
+# Found on 2026-10-07 in Llama-3.1-8B-Instruct's own file in the public open-llm-leaderboard/results
+# dataset: four of fifty-three stderr fields are the STRING "N/A" beside a published accuracy. A
+# string is truthy, so the field read as an uncertainty to everything that asked whether one was
+# present, and arithmetic on it would raise or coerce.
+
+def _one_stderr(raw):
+    """One lm-eval document whose single metric carries `raw` where its stderr belongs."""
+    doc = json.loads(json.dumps(LM_EVAL))
+    doc["results"] = {"ifeval": {"inst_level_strict_acc,none": 0.5647,
+                                 "inst_level_strict_acc_stderr,none": raw}}
+    return normalise(doc)["metrics"]["ifeval.inst_level_strict_acc,none"]
+
+
+def test_a_numeric_stderr_is_carried_as_the_uncertainty_it_is():
+    got = _one_stderr(0.0213)
+    assert got["stderr"] == 0.0213
+    assert got["stderr_unpublishable"] is None
+
+
+@pytest.mark.parametrize("placeholder", ["N/A", "-", "null", "nan", "unavailable"])
+def test_a_placeholder_stderr_is_not_reported_as_an_uncertainty(placeholder):
+    got = _one_stderr(placeholder)
+    assert got["stderr"] is None, "a placeholder must never reach a consumer as an uncertainty"
+    assert got["stderr_unpublishable"] == placeholder, (
+        "what the publisher actually wrote is kept, because 'they said N/A' and 'they said "
+        "nothing' are different facts and only one of them is a finding")
+
+
+def test_an_absent_stderr_is_absent_rather_than_unpublishable():
+    got = _one_stderr(None)
+    assert got["stderr"] is None
+    assert got["stderr_unpublishable"] is None, (
+        "nothing published is not the same finding as a placeholder published")
+
+
+def test_a_boolean_stderr_is_not_read_as_the_number_one():
+    """`bool` subclasses `int`, so True would otherwise arrive as an enormous but valid error bar."""
+    got = _one_stderr(True)
+    assert got["stderr"] is None
+    assert got["stderr_unpublishable"] is True

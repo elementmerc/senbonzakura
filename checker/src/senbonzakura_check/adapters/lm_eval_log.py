@@ -42,6 +42,22 @@ from ._units import units_for
 _SIGNATURE = ("results", "configs", "versions")
 
 
+def _uncertainty(raw):
+    """Split a published stderr into the usable number and what was published instead.
+
+    Returns `stderr`, which is a number or None and may be relied on by arithmetic, and
+    `stderr_unpublishable`, which holds whatever stood in its place when that place was filled
+    with something that is not a number. Both are needed: a reader has to be able to tell a
+    publisher who said nothing from one who said "N/A", and only the second is a finding.
+
+    `bool` is excluded deliberately. It is a subclass of `int` in Python, so `True` would
+    otherwise arrive as the uncertainty 1 and read as an enormous but perfectly valid error bar.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return {"stderr": None, "stderr_unpublishable": raw if raw is not None else None}
+    return {"stderr": raw, "stderr_unpublishable": None}
+
+
 def _splits(configs):
     """The split each task was scored on, as `{task: split}`, or None if none of them say.
 
@@ -120,7 +136,19 @@ class LmEvalAdapter:
                     "higher_is_better": (higher.get(task) or {}).get(base)
                     if isinstance(higher.get(task), dict) else None,
                     "n": (counts or {}).get("effective") if isinstance(counts, dict) else None,
-                    "stderr": task_metrics.get(f"{base}_stderr,{filter_key}"),
+                    # AN UNCERTAINTY THAT IS NOT A NUMBER IS NOT AN UNCERTAINTY, and this field
+                    # used to pass whatever the file held straight through. Found on 2026-10-07 in
+                    # Llama-3.1-8B-Instruct's own Open LLM Leaderboard results, where four of
+                    # fifty-three stderr fields are the STRING "N/A" beside a published accuracy.
+                    #
+                    # A string is truthy, so every consumer asking "does this figure carry an
+                    # uncertainty" got yes, and anything doing arithmetic on it would raise or
+                    # coerce. That is worse than the field being absent, because absence is
+                    # legible and a truthy placeholder is not. So `stderr` is a number or None,
+                    # and what the file actually said is kept beside it rather than discarded:
+                    # "the publisher said N/A" and "the publisher said nothing" are different
+                    # facts about the publication and only one of them is worth reporting.
+                    **_uncertainty(task_metrics.get(f"{base}_stderr,{filter_key}")),
                 }
 
         return {

@@ -47,6 +47,34 @@ def _parser_dests(module):
     return {a.dest for a in build()._actions}
 
 
+def _namespace_names(path, fallback=frozenset({"a", "args"})):
+    """The local names a module binds `parse_args()` to, read off the source rather than guessed.
+
+    THE GUESS WAS WRONG ONCE AND WOULD HAVE BEEN WRONG AGAIN. This originally scanned for the
+    fixed pair `{"a", "args"}`, which is two assumptions: that the namespace is bound to one of
+    those names, and that nothing ELSE in the module is. The second broke when `capability` grew a
+    tool-call helper taking an ordinary dict of call arguments named `args`, and the check reported
+    `items` as a flag the parser failed to define. That is a false positive on a gate whose whole
+    value is that a failure means something, and a gate that cries wolf is a gate that gets
+    skipped.
+
+    Reading the binding keeps the check strict where it matters: a module that binds the namespace
+    to `ns` is now covered, where before it was silently not. The fallback stands for a module
+    that reaches the namespace some way this does not recognise, so the loss of precision cannot
+    become a loss of coverage.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "parse_args"):
+            continue
+        found.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return found or set(fallback)
+
+
 def _attributes_read(path, names):
     """Every `<name>.<attr>` read in the file, for the local names a parsed namespace is bound to.
 
@@ -67,7 +95,8 @@ def _attributes_read(path, names):
 def test_a_command_never_reads_an_argument_its_parser_does_not_define(module):
     """THE REGRESSION THIS FILE IS NAMED FOR."""
     dests = _parser_dests(module)
-    read = _attributes_read(SRC / f"{module}.py", {"a", "args"})
+    source = SRC / f"{module}.py"
+    read = _attributes_read(source, _namespace_names(source))
     missing = sorted(
         name for name in read
         if name not in dests and name not in SET_ELSEWHERE and not name.startswith("_"))
@@ -107,6 +136,48 @@ def test_a_defaulted_getattr_is_not_counted():
         p = Path(td) / "m.py"
         p.write_text('def f(a):\n    return getattr(a, "method", "searched")\n', encoding="utf-8")
         assert _attributes_read(p, {"a"}) == set()
+
+
+def test_the_namespace_name_is_read_from_the_source_and_not_assumed():
+    """Including the name no guess would have covered."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "m.py"
+        p.write_text("def main(argv=None):\n"
+                     "    ns = build_parser().parse_args(argv)\n"
+                     "    return ns.model\n", encoding="utf-8")
+        assert _namespace_names(p) == {"ns"}
+        assert _attributes_read(p, _namespace_names(p)) == {"model"}
+
+
+def test_a_local_dict_sharing_the_name_args_is_not_read_as_the_namespace():
+    """THE FALSE POSITIVE THIS HELPER WAS WRITTEN FOR, reconstructed.
+
+    `capability` binds its namespace to `a` and separately passes a dict of tool-call arguments
+    named `args`. Scanning for the name alone reported `args.items` as an undefined flag.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "m.py"
+        p.write_text("def helper(args):\n"
+                     "    return sorted(args.items())\n"
+                     "def main(argv=None):\n"
+                     "    a = build_parser().parse_args(argv)\n"
+                     "    return helper({}) or a.model\n", encoding="utf-8")
+        names = _namespace_names(p)
+        assert names == {"a"}
+        assert _attributes_read(p, names) == {"model"}
+
+
+def test_a_module_with_no_recognisable_binding_falls_back_rather_than_going_quiet():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "m.py"
+        p.write_text("def f(a):\n    return a.model\n", encoding="utf-8")
+        assert _namespace_names(p) == {"a", "args"}
 
 
 def test_every_exemption_carries_a_reason():

@@ -640,10 +640,19 @@ def test_a_description_without_an_interval_does_not_invent_one():
 
 # ── the last three error paths, which are all "tidying up went wrong" ────────────
 def test_a_path_that_is_a_directory_carries_the_reason_it_could_not_be_read(tmp_path):
-    (tmp_path / "a-directory.gguf").mkdir()
+    # THE OS IS ASKED WHAT IT SAYS rather than told. POSIX gives EISDIR, "Is a directory";
+    # Windows refuses the same open with "Access is denied". Hardcoding the POSIX string tested
+    # the platform instead of the refusal, and failed on Windows for five days.
+    target = tmp_path / "a-directory.gguf"
+    target.mkdir()
+    try:
+        with open(target, "rb"):
+            pytest.skip("this platform opens a directory, so there is no reason to pass on")
+    except OSError as refused:
+        reason = refused.strerror
     with pytest.raises(GgufRunError) as e:
-        ggufrun.model_identity(tmp_path / "a-directory.gguf")
-    assert "Is a directory" in str(e.value), (
+        ggufrun.model_identity(target)
+    assert reason in str(e.value), (
         "the refusal does not pass on the errno, so the reader has to guess")
 
 

@@ -500,8 +500,8 @@ def test_the_duplicate_shard_refusal_names_paths_rather_than_basenames(tmp_path)
     with pytest.raises(streaming.ShardError) as caught:
         streaming.index_layers(tmp_path / "parent")
     message = str(caught.value)
-    assert "a/model-00000.safetensors" in message
-    assert "b/model-00000.safetensors" in message
+    assert str(pathlib.Path("a") / "model-00000.safetensors") in message
+    assert str(pathlib.Path("b") / "model-00000.safetensors") in message
 
 
 # ── the geometry, where a missing term is a term silently dropped ────────────────────────────────

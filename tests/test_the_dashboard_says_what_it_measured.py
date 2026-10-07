@@ -40,7 +40,12 @@ def _args(**kw):
 
 def _panel(layout="full", width=94, total=200, baseline=0.578, height=None, **argkw):
     rich_console = pytest.importorskip("rich.console", reason="rich draws the panel")
-    console = rich_console.Console(file=io.StringIO(), width=width, force_terminal=True)
+    # `legacy_windows=False` is spelled out because rich infers it as True on a Windows runner,
+    # and then `set_alt_screen` returns False however capable the console is. The panel reads
+    # that return value deliberately, so without this the lifecycle tests assert against rich's
+    # platform detection rather than against the panel.
+    console = rich_console.Console(file=io.StringIO(), width=width, force_terminal=True,
+                                   legacy_windows=False)
     if height is not None:
         console.height = height
     return livedisplay._RichPanel(

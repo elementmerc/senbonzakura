@@ -621,11 +621,12 @@ jobs:
           cache: pip
       - name: Install at the declared minimums
         # torch is pinned here rather than in floors.txt because its CPU wheels
-        # are not on PyPI and its floor varies by Python version. 2.5.1 is the
-        # earliest patch of the declared 2.5 floor that the July environment
-        # record names, so it is the one worth holding the line at.
+        # are not on PyPI and its floor varies by Python version. It tracks the
+        # declared floor in pyproject.toml and nothing else: raised to 2.7.0 on
+        # 2026-10-07 with that floor, because transformers 5.x declares torch>=2.5
+        # and then uses a dtype PyTorch added in 2.7.0.
         run: |
-          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.7.0
           pip install -e ./checker --no-deps
           pip install -e ".[dev]" -c constraints/floors.txt --upgrade-strategy only-if-needed
 

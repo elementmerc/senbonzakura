@@ -20,7 +20,17 @@ import sys
 import time
 from pathlib import Path
 
-MIN_TORCH = (2, 5)  # transformers' MoE path imports torch.distributed.tensor.DTensor (torch >= 2.5)
+#: The torch this package refuses to start below. It must agree with the floor `pyproject.toml`
+#: declares, and on 2026-10-07 it did not: that was raised to 2.7 and this still said 2.5, which
+#: is one fact in two places disagreeing, and the disagreement falls on the user. The reason for
+#: 2.7 is transformers 5.x, which declares `torch>=2.5` and then uses `torch.float8_e8m0fnu`, a
+#: dtype PyTorch's own 2.7.0 release notes introduce. Left at 2.5, this guard would wave an
+#: install through and let it die later with an AttributeError from inside somebody else's
+#: package, which is the failure this guard exists to replace with a sentence.
+#:
+#: 2.5 was the previous reason and it still holds underneath: transformers' MoE path imports
+#: torch.distributed.tensor.DTensor, which arrived in torch 2.5.
+MIN_TORCH = (2, 7)
 
 # Fraction of the output size to keep free beyond it. safetensors writes a shard, then its
 # index, and a serialisation can hold one shard in flight, so "exactly enough" is not enough.

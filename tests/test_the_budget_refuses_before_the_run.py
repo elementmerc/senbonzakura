@@ -834,8 +834,17 @@ def test_a_shard_that_vanishes_between_indexing_and_sizing_is_named(dense, monke
     real_stat = pathlib.Path.stat
     checkpoint = str(dense)
 
+    # NARROWED TO THE SHARDS ON 2026-10-07, and the first version was a prefix match on the
+    # checkpoint directory. That also caught the DIRECTORY ITSELF, which `rglob("config.json")`
+    # stats through `is_dir()` while walking, so indexing died before it ever reached a shard.
+    #
+    # It passed on Python 3.14 and failed on 3.10, 3.12 and macOS, because `pathlib`'s globbing
+    # was rewritten and the older implementation stats the parent where the newer one does not.
+    # A monkeypatch keyed on a path PREFIX is keyed on an implementation detail of whoever walks
+    # that tree; keyed on the shard suffix it is keyed on the thing the test is about, which is a
+    # shard that disappears between being indexed and being sized.
     def vanish(self, *args, **kwargs):
-        if str(self).startswith(checkpoint):
+        if str(self).startswith(checkpoint) and self.suffix == ".safetensors":
             raise OSError("gone")
         return real_stat(self, *args, **kwargs)
 

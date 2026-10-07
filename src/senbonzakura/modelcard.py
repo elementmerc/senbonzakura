@@ -247,6 +247,12 @@ def tamper_section(tam):
              "measurement becomes a published claim."),
         ]
     lines = []
+    # BEFORE THE FIGURE, with the bias direction, and not in the caveat list at the bottom. A
+    # saturated ceiling changes what the number means rather than qualifying it, and a reader who
+    # has already met `+100.0%` has drawn the conclusion the caveat exists to prevent.
+    if tam.get("ceiling_saturated"):
+        lines += [("**THE DOSE SATURATED, so the recovery figure below cannot discriminate.** "
+                   f"{_sentence(tam['ceiling_saturated'])}"), ""]
     if tam.get("bias_direction"):
         lines += [f"**How to read these.** {_sentence(tam['bias_direction'])}", ""]
     arms = tam.get("arms") or {}

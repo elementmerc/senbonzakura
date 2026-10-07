@@ -15,7 +15,10 @@
 # mismatch means the job is testing a version nothing declares.
 
 transformers==5.10.1
-accelerate==0.26
+# 0.32.0 and not 0.26: `peft` imports `accelerate.utils.memory.clear_device_cache`, which
+# first exists at 0.32.0, while declaring only `accelerate>=0.21`. Raised in pyproject in
+# the same commit, as the header above requires.
+accelerate==0.32.0
 # NOT 14, AND THE DECLARED FLOOR IS STILL 14. This is the one pin in this file that is
 # deliberately ABOVE the floor it tests, and the reason is a collision between two declared
 # floors rather than a preference.
@@ -51,7 +54,8 @@ huggingface_hub==1.5.0
 # floors job actually tests. If it fails at `import pyarrow.lib`, this pairing is the cause.
 #
 # THE PIN STAYS ANYWAY, as a deliberate hold rather than a forced one. This environment has
-# never been exercised on numpy 2, and `accelerate==0.26` predates numpy 2 entirely. Moving the
+# never been exercised on numpy 2, and `accelerate==0.32.0` runs against numpy 1.26.4, verified
+# directly on Python 3.10 rather than inferred from its metadata. Moving the
 # datasets floor and the numpy major in one commit would make a failure unattributable, which is
 # the opposite of what a floors job is for. 1.26.4 is the last numpy 1 and supports Python 3.10.
 # Lifting it is a separate, deliberate step with its own measurement.

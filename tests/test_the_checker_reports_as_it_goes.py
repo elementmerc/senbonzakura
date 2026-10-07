@@ -27,10 +27,10 @@ from __future__ import annotations
 
 import io
 import json
-import signal
+import os
 import subprocess
 import sys
-import time
+import threading
 from pathlib import Path
 
 import pytest
@@ -147,31 +147,71 @@ class TestTheOutputArrivesBeforeTheEnd:
             json.loads(out.getvalue())
 
     def test_a_real_kill_leaves_a_partial_report_rather_than_an_empty_one(self, tmp_path):
-        """The same property through a signal, because the version above stops at a Python
+        """The same property through a kill, because the version above stops at a Python
         exception and a killed process does not get to run anything at all.
+
+        REWRITTEN 2026-10-07, and the two defects it had are worth naming because both are the
+        kind that make a suite lie rather than fail.
+
+        IT WAS FLAKY. It wrote the report to a file, polled every 50ms until the file passed 400
+        bytes, then killed. On a warm machine the whole sweep finished inside the first poll, the
+        kill landed after the run, and the assertion that the report was incomplete failed. The
+        fix is not a longer wait or a bigger margin: it is to make finishing IMPOSSIBLE rather
+        than unlikely. The report is ~1,080 bytes per artefact and nothing drains the pipe, so at
+        400 artefacts the child must block on a full pipe buffer long before it is done. That is
+        an operating-system guarantee, not a timing hope.
+
+        IT COULD NEVER HAVE PASSED ON WINDOWS. `signal.SIGKILL` does not exist there, so this
+        raised `AttributeError` on every Windows run of a suite that CI runs on Windows. The
+        environment was POSIX-only too, a bare `PATH=/usr/bin:/bin`. `Popen.kill()` is the
+        portable spelling and the environment is now inherited with only PYTHONPATH forced.
+
+        There is no sleep and no poll left. `read(PROOF)` blocks until those bytes exist, and
+        they must exist, so the sequencing is decided by the pipe rather than by the clock.
         """
-        for i in range(400):
+        artefacts = 400
+        for i in range(artefacts):
             (tmp_path / f"run-{i:03d}.json").write_text(json.dumps(GOOD), encoding="utf-8")
-        report = tmp_path / "report.json"
-        env_root = str(ROOT / "checker" / "src")
-        with report.open("w", encoding="utf-8") as fh:
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "senbonzakura_check.cli", str(tmp_path), "--json"],
-                stdout=fh, stderr=subprocess.DEVNULL, cwd=str(ROOT),
-                env={"PATH": "/usr/bin:/bin", "PYTHONPATH": env_root, "PYTHONUNBUFFERED": "1"})
-            # Wait for the report to start arriving, then kill. Bounded, so a checker that
-            # produced nothing fails this test rather than hanging it.
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline and report.stat().st_size < 400:
-                time.sleep(0.05)
-            proc.send_signal(signal.SIGKILL)
+
+        #: Enough to prove the report had started arriving, and far less than one artefact's
+        #: worth of slack against the total, so reading it cannot let the child finish.
+        proof = 2048
+
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(ROOT / "checker" / "src")
+        env["PYTHONUNBUFFERED"] = "1"
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "senbonzakura_check.cli", str(tmp_path), "--json"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=str(ROOT), env=env)
+        # BOUNDED, because `read` blocks until the bytes arrive and a checker that started and
+        # then said nothing would otherwise hang the suite rather than fail it. The original had
+        # a deadline for this reason and the rewrite has to keep one. Killing the child closes
+        # the pipe, so the read below returns short and the assertion speaks instead of the
+        # wall clock.
+        watchdog = threading.Timer(120, proc.kill)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            head = proc.stdout.read(proof)
+            assert len(head) == proof, (
+                f"the checker produced only {len(head)} byte(s) before ending, so it either "
+                f"failed to start or buffered its whole report. Either way nothing was streamed, "
+                f"which is the defect this test exists for.")
+            proc.kill()
             proc.wait(timeout=60)
-        written = report.read_text(encoding="utf-8")
+            written = (head + proc.stdout.read()).decode("utf-8", errors="replace")
+        finally:
+            watchdog.cancel()
+            proc.stdout.close()
+            if proc.poll() is None:                 # pragma: no cover - only on an assert above
+                proc.kill()
+                proc.wait(timeout=60)
+
         assert '"artefact"' in written, (
             "a killed sweep had reported nothing at all, which is the defect this streams to fix")
         assert not written.rstrip().endswith("]"), (
-            "the report was complete, so the kill landed after the run had finished and this "
-            "test measured nothing")
+            f"the report was complete, so the whole sweep fitted inside the pipe buffer and this "
+            f"test measured nothing. Raise `artefacts` above {artefacts} until it cannot.")
 
 
 class TestTheStatusIsStillDecidedAtTheEnd:

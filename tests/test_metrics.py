@@ -547,3 +547,49 @@ class TestDegradation:
         doc = m.degradation.__doc__.lower()
         assert "mechanical" in doc
         assert "not evidence about writing quality" in doc
+
+
+# ── the aggregate over many replies, which is what a command can report ──────────────────────────
+
+def test_prose_degradation_over_no_replies_is_none_rather_than_zeroes():
+    assert m.prose_degradation([]) is None
+
+
+def test_a_reply_too_short_to_measure_is_counted_but_does_not_contribute():
+    """None means "nothing to measure" and must never be averaged in as a zero: a four-word reply
+    with no room for a three-word repeat is not a reply with no repetition found.
+    """
+    block = m.prose_degradation(["one two", "the cat sat on the mat and the cat sat on the mat"])
+    assert block["n"] == 2
+    assert block["repetition_rate"]["n_measured"] == 1, "the two-word reply has no run to measure"
+    assert block["repetition_rate"]["mean"] > 0, "the looping reply repeats and must show it"
+    assert block["windowed_type_token_ratio"]["n_measured"] == 0, "neither reaches a 50-word window"
+    assert block["windowed_type_token_ratio"]["mean"] is None
+
+
+def test_a_measure_nothing_could_yield_reports_none_and_not_a_mean_of_nothing():
+    block = m.prose_degradation(["", "   "])
+    assert block["n"] == 2
+    assert block["type_token_ratio"]["mean"] is None
+    assert block["type_token_ratio"]["n_measured"] == 0
+    assert block["broken_rate"] == 1.0, "empty replies are broken and that is a separate question"
+
+
+def test_a_looping_reply_scores_higher_repetition_than_a_varied_one():
+    loop = " ".join(["the model repeats itself"] * 20)
+    varied = ("Photosynthesis converts light into chemical energy. Chloroplasts hold the pigment "
+              "responsible, and the reaction splits water to release oxygen as waste.")
+    assert (m.prose_degradation([loop])["repetition_rate"]["mean"]
+            > m.prose_degradation([varied])["repetition_rate"]["mean"])
+
+
+def test_the_length_block_is_absent_rather_than_invented_when_counts_are_not_supplied():
+    assert m.prose_degradation(["a reply with several words in it"])["length"] is None
+    with_counts = m.prose_degradation(["a reply"], produced_and_budgets=[(48, 192)])
+    assert with_counts["length"]["n"] == 1
+    assert with_counts["length"]["mean_shortfall"] == pytest.approx(0.75)
+    assert with_counts["length"]["truncation_rate"] == 0.0
+
+
+def test_the_mean_word_count_is_reported_so_a_ratio_can_be_read_against_a_length():
+    assert m.prose_degradation(["one two three", "four five"])["mean_words"] == 2.5

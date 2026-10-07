@@ -1034,3 +1034,24 @@ def test_the_section_appears_in_a_built_card():
     out = "\n".join(modelcard.build(ref=_ref_with_prose(), licence="mit"))
     assert "## Mechanical prose damage, which is not whether the writing is good" in out
     assert "any GOOD" in out
+
+
+def test_a_ceiling_from_different_headroom_is_not_called_a_ceiling():
+    """The sentence this replaces shipped on 2026-10-07 and was wrong by that evening: it told the
+    reader to read the recovery figure against the ceiling arm's, and on the run that found it the
+    two fractions had denominators a factor of ten apart.
+    """
+    doc = _tam(headroom_mismatch="the two arms did not start from the same place")
+    doc["arms"]["ceiling"]["change"] = {"point": 0.023, "ci": [0.01, 0.04]}
+    out = "\n".join(modelcard.tamper_section(doc))
+    assert "That is not a ceiling for the figure above" in out
+    assert "of ITS OWN headroom" in out
+    assert "the ceiling the figure above should be read against" not in out
+    assert "+2.3%" in out, "the comparison that survives is in points"
+    assert "**The ceiling is not comparable.**" in out
+
+
+def test_a_comparable_ceiling_is_still_presented_as_one():
+    out = "\n".join(modelcard.tamper_section(_tam()))
+    assert "the ceiling the figure above should be read against" in out
+    assert "That is not a ceiling" not in out

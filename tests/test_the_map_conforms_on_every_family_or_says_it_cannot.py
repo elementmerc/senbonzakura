@@ -1023,36 +1023,57 @@ def test_a_tensor_sitting_directly_under_the_stack_prefix_is_skipped_not_crashed
 # 7. THE STREAMING PATH'S REFUSAL, which blamed the wrong thing on 15 real models.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 
-def test_the_streaming_refusal_names_the_prediction_head_rather_than_blaming_the_naming(tmp_path):
-    """`_layer_axis` needs a position whose indices are EXACTLY 0 to count-1, and an in-stack
-    prediction head puts one more there than the config declares. So DeepSeek V3 refuses, which is
-    correct, with a message blaming "a naming layout this reader does not know", which is not.
-
-    Only the diagnosis is corrected here. Walking such a stack is a change to what the editor
-    attempts and is recorded rather than made.
-    """
+def _head_checkpoint(tmp_path, *, declared=3, head_at=3):
+    """A stack of `declared` decoder blocks plus a prediction-head block at `head_at`."""
     import struct
 
-    from senbonzakura import streaming
-
-    (tmp_path / "config.json").write_text(json.dumps({"num_hidden_layers": 3}))
+    (tmp_path / "config.json").write_text(json.dumps({"num_hidden_layers": declared}))
     tensors, offset = {}, 0
-    names = [f"model.layers.{i}.mlp.down_proj.weight" for i in range(4)]
-    names += ["model.layers.3.eh_proj.weight", "model.layers.3.enorm.weight",
-              "model.layers.3.hnorm.weight"]
+    names = [f"model.layers.{i}.mlp.down_proj.weight" for i in range(declared + 1)]
+    names += [f"model.layers.{head_at}.eh_proj.weight",
+              f"model.layers.{head_at}.enorm.weight",
+              f"model.layers.{head_at}.hnorm.weight"]
     for name in names:
         tensors[name] = {"dtype": "F32", "shape": [2, 2], "data_offsets": [offset, offset + 16]}
         offset += 16
     raw = json.dumps(tensors).encode()
     (tmp_path / "model.safetensors").write_bytes(
         struct.pack("<Q", len(raw)) + raw + b"\0" * offset)
+    return tmp_path
+
+
+def test_a_stack_with_a_trailing_prediction_head_is_now_walked_rather_than_refused(tmp_path):
+    """THE REFUSAL IS WHAT THIS USED TO ASSERT, and its own docstring said why that was temporary:
+    "walking such a stack is a change to what the editor attempts and is recorded rather than
+    made". It was made on 2026-10-08. Thirteen models in the architecture corpus were refused by
+    the old behaviour.
+
+    What is kept from the old version is the part that was always right: the declared count
+    excludes the head, so the head must not become a layer.
+    """
+    from senbonzakura import streaming
+
+    index = streaming.index_layers(_head_checkpoint(tmp_path))
+    assert index.count == 3, "the head became a fourth layer"
+    assert index.head_indices == (3,)
+    assert all("layers.3." not in n for layer in index.layers for n in layer)
+    assert any("layers.3." in n for n in index.head)
+
+
+def test_a_prediction_head_in_the_middle_of_a_stack_is_still_refused_with_the_diagnosis(tmp_path):
+    """The strictness that had to survive, and the case that keeps the hint reachable.
+
+    A head is accepted only when its blocks TRAIL the declared range. One wedged mid-stack is not
+    a layout anybody ships, and accepting it would mean applying an off-by-one to every block
+    after it. So this refuses, and the refusal still has to name the prediction head rather than
+    blaming the naming, which is what the hint is for.
+    """
+    from senbonzakura import streaming
 
     with pytest.raises(streaming.ShardError) as caught:
-        streaming.index_layers(tmp_path)
+        streaming.index_layers(_head_checkpoint(tmp_path, declared=3, head_at=1))
     message = str(caught.value)
     assert "multi-token prediction head" in message
-    assert "'model.layers'" in message
-    assert "[3]" in message
     assert "is not a decoder layer and the declared count is right to exclude it" in message
 
 

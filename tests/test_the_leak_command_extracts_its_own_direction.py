@@ -256,3 +256,27 @@ def test_the_artefact_records_the_evidence_for_its_own_choice(tmp_path, monkeypa
     assert doc["difference_norms"] == {"raw": [1.0], "relative": [0.5]}
     assert doc["caveats"] == ["a stated rule"]
     assert doc["residual_leak"]["measured"] is True
+
+
+# ── the decoy case, which is the one input that inverts the metric's meaning ─────────
+
+def test_every_run_says_a_low_figure_can_mean_the_edit_landed_on_a_decoy(monkeypatch):
+    """THE FALSE PASS, and it is a published defence rather than a hypothetical.
+
+    Decoy Direction Optimization (arXiv 2609.16204) and AMRA (arXiv 2608.18093) both target the
+    extractor instead of the refusal circuit: offer a contrastive estimator a high-magnitude feature
+    orthogonal to refusal, and a run ablates the decoy, reports a low leak, and leaves refusal
+    untouched. Nothing about variance, position or sample size touches that, because the metric
+    never measured refusal. It measures whether the direction it extracted left.
+
+    So the output has to name the other figure a reader needs, and it has to do it on every run
+    rather than on a condition, because there is no condition detectable from inside this metric.
+    """
+    _patch_means(monkeypatch, [[3.0, 0.0], [1.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]])
+    _d, _p, _n, caveats = residualleak.contrast_direction(
+        object(), object(), ["a"], ["b"], log=lambda _m: None)
+    joined = " ".join(caveats)
+    assert "decoy" in joined, "no run warns that a low figure is also a defended model's signature"
+    assert "refusal rate" in joined, "the reader is not told which other figure to read beside it"
+    assert "validate" in joined, (
+        "the command that answers 'does this direction carry refusal' is not named")

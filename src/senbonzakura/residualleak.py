@@ -677,6 +677,22 @@ def contrast_direction(model, tok, harmful, harmless, *, at=None, log=print):
          "largest RELATIVE to the residual length there. That is a stated rule and not a measured "
          "separation: a contrast confounded by vocabulary produces a large difference and a high "
          "accuracy, and this project has withdrawn a figure for exactly that reason."),
+        # THE ONE INPUT THAT MAKES THIS METRIC SAY THE OPPOSITE OF THE TRUTH, and it is a published
+        # defence rather than a hypothetical. Decoy Direction Optimization (arXiv 2609.16204) and
+        # AMRA (arXiv 2608.18093) both target the EXTRACTOR rather than the refusal circuit: DDO
+        # injects a high-magnitude feature orthogonal to refusal so a contrastive estimator finds
+        # the decoy, and a run that then ablates the decoy reports a low leak while refusal is
+        # untouched. So a low figure here is also exactly what a successfully defended checkpoint
+        # produces, and no amount of care about variance or position touches that, because the
+        # metric was never measuring refusal: it measures whether the direction IT EXTRACTED left.
+        # The pair of figures is what carries the information, which is why this names the other one.
+        ("this reports whether the direction extracted here has left the residual stream, which is "
+         "the same thing as refusal leaving the model only if that direction carried refusal. A "
+         "published defence (decoy injection) deliberately breaks that equality by offering a "
+         "contrastive estimator a high-magnitude feature orthogonal to refusal, so a LOW figure "
+         "here beside an UNCHANGED refusal rate is the signature of an edit that landed on a decoy "
+         "rather than of an edit that worked. Read this figure beside a refusal rate, never alone, "
+         "and use `validate` when the question is whether a direction carries refusal at all."),
     ]
     if at is None:
         position = max(range(len(relative)), key=relative.__getitem__)

@@ -31,6 +31,21 @@ AUC 0.99 at layer 1 against `advbench` and `xstest-safe`, which was reading VOCA
 those two corpora differ lexically as well as behaviourally. The matched pair is `xstest-unsafe`
 against `xstest-safe`, same source and same register, and that is the default here. Ask for an
 unmatched pair and the run says what it is doing.
+
+AND THE ONE CASE WHERE A GOOD FIGURE HERE MEANS THE OPPOSITE OF WHAT IT READS
+
+What this measures is whether **the direction extracted here** has left the residual stream. That is
+the same thing as refusal leaving the model only when the extracted direction carried refusal, and
+there is now a published defence built to break that equality. Decoy Direction Optimization (arXiv
+2609.16204) injects a high-magnitude feature orthogonal to refusal so that a contrastive estimator
+finds the decoy; a run then ablates the decoy, reports a LOW leak, and leaves refusal exactly where
+it was. AMRA (arXiv 2608.18093) attacks the extractor the same way by a different route.
+
+So **a low figure beside an unchanged refusal rate is the signature of an edit that landed on a
+decoy**, and the pair is what carries the information. Having no judge and no sampling makes this
+figure free of grader error and run-to-run variance; it says nothing whatever about whether the
+right direction was found. `validate` is the command for that question: leave-one-cluster-out
+generalisation is what a decoy should fail while scoring well on magnitude.
 """
 import json
 

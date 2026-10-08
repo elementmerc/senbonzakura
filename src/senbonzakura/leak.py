@@ -92,7 +92,10 @@ def build_parser():
                     type=argresolve.whole_number("--probe-n", minimum=1), default=32,
                     help="prompts the leak profile is averaged over (default: 32). One forward "
                          "pass each with no generation, so this is seconds")
-    ap.add_argument("--at", type=int, default=None,
+    # minimum=0 because position 0 is a real position, the first one. Not a bare `int`: a residual
+    # position indexes a tensor, so `--at -1` is a perfectly good slice that silently means the last
+    # position and reports a figure stamped with a position that was never asked for.
+    ap.add_argument("--at", type=argresolve.whole_number("--at", minimum=0), default=None,
                     help="take the direction at this residual-stream position rather than where "
                          "the contrast is longest. Pass this when a separation has actually been "
                          "measured; the default rule is a norm and not a test")

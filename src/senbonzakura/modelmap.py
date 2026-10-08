@@ -1255,6 +1255,18 @@ def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
     if model is None and config is None:
         raise ValueError("describe() needs a config, a model, or both; it was given neither, and "
                          "there is nothing to describe.")
+    # A CONFIG PASSED POSITIONALLY, which is the obvious mistake because `config` is the thing most
+    # callers have. Left alone it is the worst kind of wrong: a plain dict has no `.config`, so the
+    # config half resolves to empty and every reason then reads "this config states no stack depth:
+    # none of [...] is present" about a config that declares all of them. Caught while filling in a
+    # DeepSeek V2 row, where the map reported no depth and no experts for a config holding 27 and
+    # 64. A confident false reason costs more than a crash, so this one is named and refused.
+    if config is None and isinstance(model, dict):
+        raise TypeError(
+            "describe() was given a plain dict as its first argument, which is the `model` "
+            "parameter. A config goes in as `describe(config=...)`. Taken as a model this would "
+            "resolve to an empty config and then report every structural question as absent from "
+            "it, naming keys the config may well carry.")
     if config is None:
         config = _config_dict(getattr(model, "config", None))
     if not isinstance(config, dict):

@@ -64,6 +64,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # a model this tool did not edit and in some cases cannot edit: reading a model is just
     # running it, so a quantisation-aware checkpoint is measurable here and uneditable upstream.
     "leak": ("leak", "main"),
+    "stream-bake": ("streambake", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

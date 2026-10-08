@@ -423,6 +423,10 @@ def build_parser(full=False):
             "                   residual stream. Works on any checkpoint, including one\n"
             "                   this tool cannot edit, and needs no judge and no\n"
             "                   generated token.\n"
+            "  stream-bake      apply a saved direction set to a checkpoint too large to\n"
+            "                   load. Peak memory is one tensor, so the limit is disk\n"
+            "                   rather than RAM. Needs directions from a machine that\n"
+            "                   could hold the model.\n"
             "  judge            check a grading model against reference labels before\n"
             "                   letting it grade anything. Reports agreement above chance,\n"
             "                   and exits non-zero when not certified.\n"
@@ -801,6 +805,12 @@ def build_parser(full=False):
     ap.add_argument("--bake-config", default=None, dest="bake_config",
                     help="skip the search entirely: load a saved best-config.json and bake+save that "
                          "config directly. Recovers a crashed save in minutes instead of re-searching.")
+    ap.add_argument("--save-directions", default=None, dest="save_directions",
+                    metavar="PATH",
+                    help="also write the extracted directions to PATH as safetensors. A few "
+                         "megabytes whatever the model's size, and `senbonzakura stream-bake` "
+                         "applies them to a checkpoint too large to load, so the extraction can "
+                         "run on a card and the edit anywhere.")
     ap.add_argument("--version", action="version", version=f"senbonzakura {__version__}")
     ap.add_argument("--help-all", action=_HelpAll, dest="help_all",
                     # Filled in below, once every flag has been declared and can be counted. It

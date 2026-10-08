@@ -55,11 +55,23 @@ UNRESOLVED = "unresolved"          # an instance exists locally and the map gets
 UNTESTED = "untested"              # no instance on this disk, so nothing has been measured
 
 
-def local_config(repo):
-    """One repo's config from the local hub cache, or None when it is not here.
+#: The metadata corpus built by `tools/research/fetch_architecture_corpus.py`. A second place a
+#: config can come from, and for most families the ONLY place: the hub cache holds whatever
+#: happens to have been downloaded for a run, which is a handful of recent families, while the
+#: corpus holds the configs of hundreds of published models and no weights at all.
+#:
+#: It lives under `private/`, which is excluded from git, so a fresh clone has neither this nor
+#: the hub cache and every family falls through to `UNTESTED` with its reason. That is the right
+#: outcome and it is the same discipline the rest of this file turns on.
+CORPUS = (pathlib.Path(__file__).resolve().parents[1]
+          / "private" / "research" / "architecture-corpus-2026-10-08" / "models")
 
-    Never downloads. A repo that is not in the cache is a gap in the evidence and the caller
-    records it as `UNTESTED`, which is the discipline this whole file turns on.
+
+def local_config(repo):
+    """One repo's config from the local hub cache or the architecture corpus, or None.
+
+    NEVER DOWNLOADS. A repo in neither place is a gap in the evidence and the caller records it as
+    `UNTESTED`, which is what keeps an absence of evidence from reading as a pass.
     """
     if repo is None:
         return None
@@ -69,6 +81,15 @@ def local_config(repo):
             cfg = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if isinstance(cfg, dict):
+            return cfg
+    record = CORPUS / (repo.replace("/", "__") + ".json")
+    if record.is_file():
+        try:
+            doc = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        cfg = doc.get("config")
         if isinstance(cfg, dict):
             return cfg
     return None
@@ -147,8 +168,19 @@ FAMILIES = (
     #    would make the row look tested when nothing has been read.
     {"family": "kimi delta attention", "decoder_type": "Sparse MoE", "repo": None,
      "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
-    {"family": "mlstm recurrent, no self-attention", "decoder_type": "Recurrent", "repo": None,
-     "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
+    # NO LONGER A GAP. The architecture corpus carries a 2-block tiny-random xLSTM, so the
+    # catalogue's Recurrent decoder type, the one family whose mixer is not attention anywhere,
+    # now has an instance the map is measured against. Its depth is readable only through
+    # `num_blocks`, which is the key the corpus evidence justified adding.
+    {"family": "mlstm recurrent, no self-attention", "decoder_type": "Recurrent",
+     "repo": "hf-tiny-v2/tiny-random-xLSTMModel", "mechanism_values": (),
+     "count_key": "num_hidden_layers", "expect_blocks": 2, "expect_experts": None},
+    # The 7B is carried as well because it is the ONLY model in the corpus that declares
+    # `num_blocks` and no `num_hidden_layers`, so it is the only thing that exercises that key.
+    # The tiny one above happens to declare both, and therefore resolves through the first.
+    {"family": "xlstm recurrent, num_blocks only", "decoder_type": "Recurrent",
+     "repo": "NX-AI/xLSTM-7b", "mechanism_values": (), "count_key": "num_blocks",
+     "expect_blocks": 32, "expect_experts": None},
     {"family": "cca cross-layer attention", "decoder_type": "Dense", "repo": None,
      "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
     {"family": "qwen sparse attention", "decoder_type": "Sparse MoE", "repo": None,
@@ -162,9 +194,8 @@ FAMILIES = (
 #: Families whose absence is a known, recorded gap rather than an oversight. Named individually so
 #: that adding a checkpoint for one of them is a visible change to this list rather than a silent
 #: improvement nobody notices.
-EXPECTED_GAPS = ("kimi delta attention", "mlstm recurrent, no self-attention",
-                 "cca cross-layer attention", "qwen sparse attention",
-                 "mla with kv layernorm", "abliterated dense")
+EXPECTED_GAPS = ("kimi delta attention", "cca cross-layer attention",
+                 "qwen sparse attention", "mla with kv layernorm", "abliterated dense")
 
 
 def family_state(row):
@@ -620,15 +651,44 @@ def test_every_catalogue_decoder_type_appears_in_the_table():
     assert catalogue <= covered, f"no row in the table covers {sorted(catalogue - covered)}"
 
 
-def test_the_recurrent_decoder_type_is_present_and_is_honestly_untested():
-    """Named on its own because it is the type most likely to break the map: an entry reading
-    "No self-attention; mLSTM recurrent layers with matrix memory" has no attention anywhere, and
-    we have never been shown one.
+def test_the_recurrent_decoder_type_is_now_measured_rather_than_merely_named():
+    """The assertion here used to be the OPPOSITE of this one, and the change is the point.
+
+    The catalogue's `Recurrent` type is the one most likely to break the map: an entry reading
+    "No self-attention; mLSTM recurrent layers with matrix memory" has no attention anywhere. It
+    was recorded as a gap with no instance until 2026-10-08, when the architecture corpus turned
+    out to carry two xLSTM configs, so the family moved from "never shown one" to measured without
+    anything being downloaded.
+
+    Both rows are kept deliberately: the tiny-random is the cheap fixture, and the 7B is the only
+    model in the corpus that declares `num_blocks` and no `num_hidden_layers`, so it is the only
+    thing that exercises the key the corpus evidence justified adding.
     """
     recurrent = [r for r in FAMILIES if r["decoder_type"] == "Recurrent"]
-    assert recurrent, "the catalogue has a Recurrent decoder type and the table must carry it"
-    assert all(local_config(r["repo"]) is None for r in recurrent)
-    assert all(r["family"] in EXPECTED_GAPS for r in recurrent)
+    assert len(recurrent) >= 2, "the catalogue has a Recurrent decoder type and both rows matter"
+    measured = [r for r in recurrent if local_config(r["repo"]) is not None]
+    if not measured:
+        pytest.skip("UNTESTED FAMILY: neither xLSTM config is on this disk, so the Recurrent "
+                    "decoder type is a gap in the evidence again. That is the honest outcome on "
+                    "a fresh clone, where private/ is absent.")
+    for row in measured:
+        mapping = mm.describe(config=local_config(row["repo"]))
+        assert mapping.blocks.total.value == row["expect_blocks"]
+        assert row["family"] not in EXPECTED_GAPS
+
+
+def test_the_one_model_that_needs_num_blocks_resolves_only_through_it():
+    """`NX-AI/xLSTM-7b` declares `num_blocks: 32` and no `num_hidden_layers`. Strip the key and the
+    depth becomes unreadable, which is what makes the addition load-bearing rather than tidy.
+    """
+    cfg = local_config("NX-AI/xLSTM-7b")
+    if cfg is None:
+        pytest.skip("UNTESTED: NX-AI/xLSTM-7b is in neither the hub cache nor the corpus")
+    assert cfg.get("num_hidden_layers") is None
+    assert cfg["num_blocks"] == 32
+    assert mm.describe(config=cfg).blocks.total.source == "num_blocks"
+    without = {k: v for k, v in cfg.items() if k != "num_blocks"}
+    assert not mm.describe(config=without).blocks.total.known
 
 
 def test_the_table_has_no_duplicate_family_names():
@@ -651,3 +711,347 @@ def test_a_family_with_no_instance_never_claims_a_measured_expectation():
         assert row["expect_blocks"] is None, f"{row['family']} has an uncheckable expectation"
         assert row["mechanism_values"] is None, (
             f"{row['family']} records mechanism strings that nothing has verified")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 4. THE DEPTH-SPELLING RULES, settled 2026-10-08 against the 149-model architecture corpus.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def test_num_blocks_is_a_layer_count_key_because_one_real_model_uses_only_it():
+    """`NX-AI/xLSTM-7b` declares `num_blocks: 32`, no `num_hidden_layers`, and has a 32-entry
+    stack. It is the corpus's only instance of the catalogue's `Recurrent` decoder type, so
+    without this key the one family whose mixer is not attention at all has no readable depth.
+    """
+    mapping = mm.describe(config={"model_type": "xlstm", "architectures": ["xLSTMForCausalLM"],
+                                  "num_blocks": 32})
+    assert mapping.blocks.total.value == 32
+    assert mapping.blocks.total.source == "num_blocks"
+
+
+def test_depth_is_not_a_layer_count_key_and_the_reason_is_qwen3_6():
+    """THE OMISSION IS THE POINT, SO IT IS PINNED RATHER THAN LEFT TO BE HELPFULLY "FIXED".
+
+    `depth` reads like the most natural spelling of a layer count in the world. In the 149-model
+    corpus it occurs 18 times and every single one is an encoder's own depth: 16 inside
+    `vision_config`, one inside `visual_config.vq_config`, and one at the top level of
+    `Motif-Technologies/Motif-Vision-Encoder`, which is a `MotifVisionModel` and not a causal
+    language model at all.
+
+    The decisive case is a model we have locally. Qwen3.6-35B-A3B carries
+    `config.vision_config.depth = 27` while its real decoder depth is
+    `config.text_config.num_hidden_layers = 40`. Adopting `depth` would make this map report 27
+    blocks for a 40-block model, confidently.
+    """
+    assert "depth" not in mm.LAYER_COUNT_KEYS, (
+        "`depth` is a vision encoder's key. In the architecture corpus all 18 occurrences are "
+        "encoders, and on Qwen3.6-35B-A3B it is 27 against a real decoder depth of 40. Adding it "
+        "would make the map confidently wrong on a model in the local cache.")
+    assert "depth" in mm.NOT_LAYER_COUNT_KEYS, (
+        "the rule is recorded as data so it survives a reader who only greps for the key")
+
+    # The shape of the real config, reduced to the part that matters.
+    mapping = mm.describe(config={"model_type": "qwen3_5_moe",
+                                  "vision_config": {"depth": 27},
+                                  "text_config": {"num_hidden_layers": 40}})
+    assert mapping.blocks.total.value == 40
+    assert mapping.nested_under.value == "text_config"
+
+
+def test_the_vision_towers_depth_cannot_win_even_when_the_decoder_declares_nothing():
+    """The nastier version: a config whose decoder scope has no depth at all. The map must say it
+    does not know rather than reach into the vision tower for a number.
+    """
+    mapping = mm.describe(config={"vision_config": {"depth": 27}, "hidden_size": 8})
+    assert not mapping.blocks.total.known
+    assert "how many blocks does this model have" in mapping.unanswerable()
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 5. THE PREDICTION HEAD, which only tensor names can place.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def deepseek_v3_names(total=62):
+    """DeepSeek V3's own tensor names, in-stack convention, trailing block is the head."""
+    ordinary = [f"model.layers.{i}.self_attn.q_proj.weight" for i in range(total)]
+    head = total - 1
+    return [
+        *ordinary,
+        f"model.layers.{head}.eh_proj.weight",
+        f"model.layers.{head}.enorm.weight",
+        f"model.layers.{head}.hnorm.weight",
+        f"model.layers.{head}.embed_tokens.weight",
+        f"model.layers.{head}.shared_head.head.weight",
+        f"model.layers.{head}.shared_head.norm.weight",
+    ]
+
+
+def qwen_mtp_names(total=40):
+    """Qwen3.6's convention: a separate `mtp.layers` stack, plus a fusion projection beside it."""
+    return ([f"model.language_model.layers.{i}.self_attn.q_proj.weight" for i in range(total)]
+            + ["mtp.fc.weight", "mtp.layers.0.input_layernorm.weight",
+               "mtp.layers.0.self_attn.q_proj.weight"])
+
+
+def deepseek_v4_names(total=43):
+    """DeepSeek V4's convention: blocks hang directly off `mtp`, with no `layers` between."""
+    return ([f"layers.{i}.attn.wkv.weight" for i in range(total)]
+            + ["mtp.0.attn.wkv.weight", "mtp.0.attn.q_norm.weight"])
+
+
+def test_the_in_stack_prediction_head_is_found_and_the_trailing_block_is_flagged():
+    found = mm.prediction_head(deepseek_v3_names(), stack_prefix="model.layers")
+    assert found.in_stack.value == [61]
+    assert found.in_stack.source == "tensor names"
+    assert not found.own_stack.known
+    assert set(mm.PREDICTION_HEAD_MARKERS) <= set(found.markers)
+    assert mm.trailing_block_is_prediction_head(
+        deepseek_v3_names(), stack_prefix="model.layers", total=62).value is True
+
+
+def test_a_separate_prediction_head_stack_leaves_every_decoder_block_a_decoder_block():
+    found = mm.prediction_head(qwen_mtp_names(), stack_prefix="model.language_model.layers")
+    assert found.in_stack.value == []
+    assert found.own_stack.value == "mtp.layers"
+    assert mm.trailing_block_is_prediction_head(
+        qwen_mtp_names(), stack_prefix="model.language_model.layers", total=40).value is False
+
+
+def test_both_sub_conventions_of_the_separate_stack_resolve_to_a_walkable_prefix():
+    """`mtp.layers.{i}` on the Qwen family and `mtp.{i}` on DeepSeek V4. A reader handed the bare
+    marker for the first one has a prefix it cannot walk.
+    """
+    assert mm.prediction_head(qwen_mtp_names(),
+                              stack_prefix="model.language_model.layers").own_stack.value == "mtp.layers"
+    assert mm.prediction_head(deepseek_v4_names(),
+                              stack_prefix="layers").own_stack.value == "mtp"
+
+
+def test_the_weak_markers_never_decide_on_their_own():
+    """`shared_head` is on 12 of the corpus's 15 in-stack models and `embed_tokens` on only 6, so
+    neither is evidence enough by itself. A tied output head on an ordinary final block must not
+    be read as a prediction head.
+    """
+    names = ([f"model.layers.{i}.self_attn.q_proj.weight" for i in range(4)]
+             + ["model.layers.3.embed_tokens.weight", "model.layers.3.shared_head.head.weight"])
+    found = mm.prediction_head(names, stack_prefix="model.layers")
+    assert found.in_stack.value == []
+    assert "embed_tokens" in found.markers, "the evidence is still recorded"
+    assert mm.trailing_block_is_prediction_head(
+        names, stack_prefix="model.layers", total=4).value is False
+
+
+def test_no_tensor_names_is_unknown_with_a_reason_and_never_a_no():
+    """The count says whether a head EXISTS and never where. Saying "no head here" from a config
+    alone would be the confident wrong answer this whole type exists to prevent.
+    """
+    found = mm.prediction_head([], stack_prefix="model.layers")
+    assert not found.in_stack.known
+    assert not found.own_stack.known
+    assert "never where it is stored" in found.in_stack.why
+    assert found.anywhere is False
+
+
+def test_names_with_no_stack_prefix_can_still_find_a_separate_stack():
+    found = mm.prediction_head(qwen_mtp_names())
+    assert found.own_stack.value == "mtp.layers"
+    assert not found.in_stack.known
+    assert "no decoder stack prefix was given" in found.in_stack.why
+
+
+def test_the_trailing_block_question_is_unanswerable_rather_than_false_without_names():
+    got = mm.trailing_block_is_prediction_head([], stack_prefix="model.layers")
+    assert not got.known
+    assert got.why
+
+
+def test_the_trailing_index_is_counted_from_the_names_when_no_total_is_given():
+    got = mm.trailing_block_is_prediction_head(deepseek_v3_names(), stack_prefix="model.layers")
+    assert got.value is True
+
+
+def test_a_prefix_that_matches_nothing_says_so_rather_than_answering_no():
+    got = mm.trailing_block_is_prediction_head(
+        ["some.other.tree.0.weight"], stack_prefix="model.layers")
+    assert not got.known
+    assert "no trailing block to describe" in got.why
+
+
+def test_an_expert_index_is_never_mistaken_for_a_block_index():
+    assert mm.block_of("model.layers.7.mlp.experts.63.up_proj.weight", "model.layers") == 7
+    assert mm.block_of("model.embed_tokens.weight", "model.layers") is None
+    assert mm.block_of("model.layers.weight", "model.layers") is None
+    assert mm.block_of("model.layers.3.x", None) is None
+
+
+def test_the_record_carries_the_prediction_head_when_names_are_supplied():
+    mapping = mm.describe(config={"num_hidden_layers": 61, "num_nextn_predict_layers": 1},
+                          tensor_names=deepseek_v3_names())
+    assert mapping.blocks.total.value == 62
+    assert mapping.prediction_head.in_stack.value == [61]
+    assert any("not decoder blocks" in note for note in mapping.disagreements)
+
+
+def test_the_record_says_the_decoder_blocks_are_safe_when_the_head_is_elsewhere():
+    mapping = mm.describe(config={"num_hidden_layers": 40, "mtp_num_hidden_layers": 1},
+                          tensor_names=qwen_mtp_names())
+    assert mapping.prediction_head.own_stack.value == "mtp.layers"
+    assert any("all decoder blocks" in note for note in mapping.disagreements)
+
+
+def test_a_record_built_without_names_leaves_the_question_open():
+    mapping = mm.describe(config={"num_hidden_layers": 61, "num_nextn_predict_layers": 1})
+    assert mapping.blocks.extra.value == 1, "the config still says a head EXISTS"
+    assert not mapping.prediction_head.in_stack.known, "and never says where"
+
+
+def test_the_config_key_alone_cannot_place_the_head_which_is_why_names_are_needed():
+    """DeepSeek V3 and DeepSeek V4-Flash carry the SAME `num_nextn_predict_layers` key and store
+    the head in different places. The same vendor changed convention between versions, so no
+    amount of config reading distinguishes them.
+    """
+    same_key = {"num_hidden_layers": 61, "num_nextn_predict_layers": 1}
+    v3 = mm.describe(config=same_key, tensor_names=deepseek_v3_names())
+    v4 = mm.describe(config=same_key, tensor_names=deepseek_v4_names())
+    assert v3.blocks.extra.value == v4.blocks.extra.value == 1
+    assert v3.prediction_head.in_stack.value == [61]
+    assert v4.prediction_head.in_stack.value == []
+    assert v4.prediction_head.own_stack.value == "mtp"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 6. INFERRING THE STACK FROM NAMES, and the two limitations that are measured rather than feared.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def test_the_stack_prefix_is_inferred_from_names_for_a_prefix_no_path_list_knows():
+    """The index-only case a probe actually has. `language_model.model.layers` is every Kimi's
+    decoder prefix and is in nobody's hard-coded path list.
+    """
+    names = [f"language_model.model.layers.{i}.self_attn.q_proj.weight" for i in range(61)]
+    prefix, res = mm.stack_prefix_from_names(names)
+    assert prefix == "language_model.model.layers"
+    assert res.known
+
+
+def test_a_tie_is_broken_towards_the_prefix_a_loader_would_actually_build():
+    """`mistralai/Mistral-7B-Instruct-v0.3` ships BOTH conventions in one repository: a `layers.*`
+    tree and a `model.layers.*` tree, each 32 deep. The one `DECODER_STACK_PATHS` knows wins,
+    because that is the one `transformers` builds, and the record says the tie happened.
+    """
+    names = ([f"layers.{i}.attention.wq.weight" for i in range(32)]
+             + [f"model.layers.{i}.self_attn.q_proj.weight" for i in range(32)])
+    prefix, res = mm.stack_prefix_from_names(names)
+    assert prefix == "model.layers"
+    assert "tied on depth" in res.source
+    assert "layers" in res.source
+
+
+def test_a_vision_tower_can_win_the_inference_and_that_is_a_known_limitation():
+    """PINNED SO NOBODY MEETS IT BY SURPRISE. Names carry no signal for decoder against tower, so
+    on a vision-language checkpoint whose tower is deeper than its decoder the tower wins. The
+    corpus's own independently computed deepest stack agrees: on `allenai/olmOCR-2` it is
+    `visual.blocks`, and on `moonshotai/Kimi-VL-A3B-Instruct` it is `vision_tower.encoder.blocks`.
+
+    A caller holding a multi-tower checkpoint must therefore not treat this as the decoder without
+    checking. Fixing it needs a decoder-against-tower discriminator, which is not a naming
+    question and is not attempted here.
+    """
+    names = ([f"model.language_model.layers.{i}.self_attn.q_proj.weight" for i in range(12)]
+             + [f"visual.blocks.{i}.attn.qkv.weight" for i in range(32)])
+    prefix, _ = mm.stack_prefix_from_names(names)
+    assert prefix == "visual.blocks", (
+        "this is the documented limitation, not a regression: the tower is deeper, names carry no "
+        "signal for which stack is the decoder, and the docstring says so")
+
+
+def test_an_encoder_decoder_model_resolves_to_its_decoder():
+    """The T5 family carries both. The decoder is the half this tool edits, and it wins here only
+    because it is deeper; on a balanced encoder-decoder the same tie-break caveat applies.
+    """
+    names = ([f"decoder.block.{i}.layer.0.SelfAttention.q.weight" for i in range(12)]
+             + [f"encoder.block.{i}.layer.0.SelfAttention.q.weight" for i in range(8)])
+    prefix, _ = mm.stack_prefix_from_names(names)
+    assert prefix == "decoder.block"
+
+
+def test_names_with_no_index_at_all_say_so_rather_than_returning_a_prefix():
+    prefix, res = mm.stack_prefix_from_names(["embed_tokens.weight", "lm_head.weight"])
+    assert prefix is None
+    assert "no indexed stack" in res.why
+
+
+def test_an_expert_index_does_not_become_the_stack():
+    """`model.layers.{i}.mlp.experts.{e}` has two indices and only the first is the block, so the
+    expert axis must not win the longest-run contest even with 128 of them.
+    """
+    names = [f"model.layers.{b}.mlp.experts.{e}.down_proj.weight"
+             for b in range(48) for e in range(4)]
+    prefix, _ = mm.stack_prefix_from_names(names)
+    assert prefix == "model.layers"
+
+
+def test_a_tensor_sitting_directly_under_the_stack_prefix_is_skipped_not_crashed_on():
+    """Real shape: Qwen writes `mtp.fc.weight` beside `mtp.layers.{i}.…`, so a name can start with
+    a stack prefix and carry no block index at all. It belongs to no block and is passed over.
+    """
+    names = ["model.layers.weight", "model.layers.0.self_attn.q_proj.weight",
+             "model.layers.1.eh_proj.weight"]
+    found = mm.prediction_head(names, stack_prefix="model.layers")
+    assert found.in_stack.value == [1]
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 7. THE STREAMING PATH'S REFUSAL, which blamed the wrong thing on 15 real models.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def test_the_streaming_refusal_names_the_prediction_head_rather_than_blaming_the_naming(tmp_path):
+    """`_layer_axis` needs a position whose indices are EXACTLY 0 to count-1, and an in-stack
+    prediction head puts one more there than the config declares. So DeepSeek V3 refuses, which is
+    correct, with a message blaming "a naming layout this reader does not know", which is not.
+
+    Only the diagnosis is corrected here. Walking such a stack is a change to what the editor
+    attempts and is recorded rather than made.
+    """
+    import struct
+
+    from senbonzakura import streaming
+
+    (tmp_path / "config.json").write_text(json.dumps({"num_hidden_layers": 3}))
+    tensors, offset = {}, 0
+    names = [f"model.layers.{i}.mlp.down_proj.weight" for i in range(4)]
+    names += ["model.layers.3.eh_proj.weight", "model.layers.3.enorm.weight",
+              "model.layers.3.hnorm.weight"]
+    for name in names:
+        tensors[name] = {"dtype": "F32", "shape": [2, 2], "data_offsets": [offset, offset + 16]}
+        offset += 16
+    raw = json.dumps(tensors).encode()
+    (tmp_path / "model.safetensors").write_bytes(
+        struct.pack("<Q", len(raw)) + raw + b"\0" * offset)
+
+    with pytest.raises(streaming.ShardError) as caught:
+        streaming.index_layers(tmp_path)
+    message = str(caught.value)
+    assert "multi-token prediction head" in message
+    assert "'model.layers'" in message
+    assert "[3]" in message
+    assert "is not a decoder layer and the declared count is right to exclude it" in message
+
+
+def test_an_ordinary_checkpoint_gets_no_prediction_head_hint():
+    """The hint must not fire on a model that simply has an unfamiliar naming layout, or it turns
+    a correct diagnosis into a misleading one in the other direction.
+    """
+    from senbonzakura import streaming
+    names = [f"model.layers.{i}.mlp.down_proj.weight" for i in range(4)]
+    assert streaming._prediction_head_hint(names, 3) == ""
+    assert streaming._prediction_head_hint(["embed.weight"], 3) == ""
+
+
+def test_the_declared_depth_excludes_the_prediction_head_on_every_in_stack_family():
+    """The arithmetic that makes `layer_count` correct rather than lucky, checked on the shapes the
+    corpus records: DeepSeek V3 declares 61 with a 62-block stack, GLM-4.5 declares 92 with 93,
+    and Step-5-Preview declares 92 with 95 because it carries three heads.
+    """
+    for declared, stack, heads in ((61, 62, 1), (92, 93, 1), (92, 95, 3), (45, 48, 3), (42, 43, 1)):
+        assert declared == stack - heads, (
+            "the declared depth excludes the prediction head, which is why the streaming path's "
+            "count is right to be the declared one")

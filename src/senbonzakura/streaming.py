@@ -465,6 +465,37 @@ def _layer_axis(names, count):
     return None
 
 
+def _prediction_head_hint(names, count):
+    """The real reason the axis search failed, when a prediction head is what did it.
+
+    WHY THIS EXISTS. `_layer_axis` requires a position whose indices are EXACTLY `0..count-1`, and
+    a multi-token prediction head stored inside the decoder's own stack puts one more index there
+    than the config declares. So on DeepSeek V3 position 0 carries 0 to 61 against a wanted 0 to
+    60, nothing matches, and the message above blames a naming layout this reader does not know.
+    It is not a naming layout. It is a prediction head, the declared count is right to exclude it,
+    and 15 models in the architecture corpus are in exactly this position: DeepSeek V3, V3.2 and
+    R1, GLM 4.5 through 5.3, Ling, Step and Hy3.
+
+    This only corrects the DIAGNOSIS. Accepting the checkpoint and editing 0 to 60 while leaving
+    the head alone is the right behaviour and it is a change to what the editor will attempt, so
+    it is recorded in DEFERRED.md rather than made here. A wrong reason in a refusal costs an hour
+    of somebody's evening; a silent change to what gets edited costs more.
+    """
+    from . import modelmap
+    prefix, _ = modelmap.stack_prefix_from_names(names)
+    if prefix is None:
+        return ""
+    head = modelmap.prediction_head(names, stack_prefix=prefix)
+    found = head.in_stack.unwrap([])
+    if not found:
+        return ""
+    return (f".\n  The likely cause is not the naming. Block(s) {found} under {prefix!r} carry a "
+            f"multi-token prediction head's own tensors ({list(head.markers)}), so the stack "
+            f"holds {len(found)} more block(s) than the {count} the config declares. A prediction "
+            f"head is not a decoder layer and the declared count is right to exclude it; this "
+            f"reader cannot yet walk a stack that contains one.")
+
+
 def _nth_index(name, position):
     """The integer at `position` among the name's integer components, or None."""
     for i, match in enumerate(_INDEXED.finditer(name)):
@@ -507,7 +538,8 @@ def index_layers(model_dir):
             f"{model_dir}: the config declares {count} layers and no position in the tensor "
             f"names carries exactly the indices 0 to {count - 1}. This is a naming layout this "
             f"reader does not know, not a checkpoint without layers, and guessing which tensors "
-            f"belong to which layer is how a streaming run edits 47 layers of 48 in silence")
+            f"belong to which layer is how a streaming run edits 47 layers of 48 in silence"
+            + _prediction_head_hint(located, count))
 
     layers = [{} for _ in range(count)]
     shared = {}

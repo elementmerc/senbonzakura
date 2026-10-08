@@ -1052,7 +1052,21 @@ def _decoder_layers(model):
     # if nothing matches, because the editor cannot proceed without the stack, so an unsupported
     # model fails at load with a clear message instead of an opaque AttributeError deep in the
     # search. The message is unchanged.
-    return modelmap.stack_or_raise(model)
+    #
+    # THE DECLARED DEPTH IS PASSED IN AND IT IS A SAFETY CHECK, NOT AN OPTIMISATION. The path list
+    # grew in 2026-10-08 to cover the multimodal wrappers, and on one of those a shorter path can
+    # resolve to a VISION TOWER. Handing the resolver the depth the text config declares makes it
+    # pick the stack that is actually the decoder, because a tower is a different depth on every
+    # multimodal checkpoint in the architecture corpus. Editing a camera would be silent, and this
+    # is what stops it.
+    declared = modelmap.block_count(_config_dict_of(model)).declared.unwrap()
+    return modelmap.stack_or_raise(model, expect=declared)
+
+
+def _config_dict_of(model):
+    # The model's config as a plain dict, however it exposes itself. One line, but it keeps the
+    # `getattr` dance out of the resolver above.
+    return modelmap._config_dict(getattr(model, "config", None))  # noqa: SLF001
 
 
 def _real_tensor(owner, name):

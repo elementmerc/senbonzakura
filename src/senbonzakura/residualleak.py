@@ -563,6 +563,147 @@ def _block_output(out, where):
 
 
 @torch.no_grad()
+def mean_residual(model, tok, prompts, *, log=print):
+    """The mean last-token residual at every position, as a tensor `[NL + 1, H]`.
+
+    THE SAME CONVENTION AS `measure_leak`, DELIBERATELY AND IN ONE PLACE. Positions 0 to NL-1 come
+    straight off `hidden_states`, position NL comes off a forward hook on the last decoder block,
+    the token read is the last one, and the prompt is rendered through `firsttoken.render_chat`.
+
+    Why that matters more than it looks: a direction extracted under one prompt format and a leak
+    measured under another are two numbers about two different spaces, and this module's own
+    docstring records that exact defect putting the compass's read-out at a position the model
+    never emits a verdict at. The abliterator extracts its directions with its own renderer and its
+    own left-padded batching, which is right for it and is NOT this. So a caller that wants a
+    direction to hand to `measure_leak` gets it from here, not from there.
+
+    One prompt at a time for the reason `measure_leak` gives: `hidden_states` materialises every
+    position for the whole batch, the metric reads one token per prompt, and a padded batch puts
+    that token at a pad position unless the padding side is managed.
+    """
+    from .firsttoken import render_chat
+
+    if not prompts:
+        raise ValueError("no prompts, so there is no mean residual to take.")
+    layers = _decoder_layers(model)
+    NL = len(layers)
+    if NL == 0:
+        raise ValueError("the decoder stack is empty, so there are no residual-stream positions.")
+
+    caught = {}
+
+    def grab(_module, _inputs, out):
+        caught["x"] = _block_output(out, f"position {NL}, what decoder layer {NL - 1} writes into")
+
+    total = None
+    handle = layers[-1].register_forward_hook(grab)
+    beat = time.monotonic()
+    try:
+        for done, prompt in enumerate(prompts, 1):
+            enc = tok(render_chat(tok, prompt), return_tensors="pt",
+                      add_special_tokens=False).to(model.device)
+            hs = model(**enc, output_hidden_states=True, use_cache=False).hidden_states
+            if len(hs) != NL + 1:
+                raise ValueError(
+                    f"{type(model).__name__} returned {len(hs)} hidden states for {NL} decoder "
+                    f"layers, where {NL + 1} are expected, so the position vocabulary would not "
+                    f"line up with the model's own.")
+            rows = [hs[i][0, -1, :].double() for i in range(NL)]
+            rows.append(caught["x"][0, -1, :].double())
+            stacked = torch.stack(rows, 0)
+            total = stacked if total is None else total + stacked
+            if time.monotonic() - beat >= HEARTBEAT_SECONDS:      # pragma: no cover - timing
+                beat = time.monotonic()
+                log(f"  residual means: {done} of {len(prompts)} prompts")
+    finally:
+        handle.remove()
+    return total / len(prompts)
+
+
+#: How much bigger the chosen position's contrast has to be than the median across positions before
+#: the choice is worth calling a peak rather than a coin toss. 1.5 is a declared convention and not
+#: a measured threshold, which is why the output says so rather than implying a test was passed.
+PEAK_RATIO = 1.5
+
+
+def contrast_direction(model, tok, harmful, harmless, *, at=None, log=print):
+    """A refusal direction from a matched contrast, and the position it was taken at.
+
+    Returns `(direction, position, norms, caveats)`. `norms` is the length of the mean difference at
+    every position, which is the evidence for the choice, and `caveats` is what a reader has to know
+    before quoting anything downstream of it.
+
+    WHAT THIS IS NOT, AND THE DISTINCTION IS THE WHOLE POINT. A difference of means with a large
+    norm is not a validated separation. This project has already published a withdrawn figure from
+    exactly this mistake: a depth probe reported held-out AUC 0.99 at layer 1 and was measuring
+    VOCABULARY, because advbench and xstest-safe differ lexically as well as behaviourally. The
+    rigorous instrument is a held-out AUC per layer with a shuffled-label control AND a check that
+    the two prompt sets differ in the behaviour rather than in their words.
+
+    So the position is chosen by the largest difference norm, which is a stated rule rather than a
+    test, and every caller is told so in the returned caveats. `at` overrides it, which is the right
+    thing to pass when a separation HAS been measured elsewhere.
+    """
+    if at is not None and int(at) < 0:
+        raise ValueError(f"--at {at} is not a position; positions run from 0 upwards.")
+    log(f"  extracting a direction from {len(harmful)} harmful and {len(harmless)} harmless "
+        f"prompts, in the same prompt format the leak is measured in")
+    mb = mean_residual(model, tok, harmful, log=log)
+    mg = mean_residual(model, tok, harmless, log=log)
+    if mb.shape != mg.shape:
+        raise ValueError(
+            f"the two prompt sets produced residuals of different shapes ({tuple(mb.shape)} "
+            f"against {tuple(mg.shape)}), which cannot happen on one model and means the two were "
+            f"not measured on the same one.")
+    diff = mb - mg
+    norms = [float(diff[i].norm()) for i in range(diff.shape[0])]
+
+    # SCALED, BECAUSE THE RAW NORM IS DEGENERATE, and this was found by running it rather than by
+    # reading it. A transformer's residual norm grows through depth, so the length of a difference
+    # of means grows with it: on SmolLM2-135M the figures run 0.195 at position 1 to 153.2 at
+    # position 30, almost monotonically, so "take the longest difference" means "take the LAST
+    # position", on every model, always. The first version of this shipped that rule and its own
+    # output gave it away by choosing position 30 of 30.
+    #
+    # Dividing by the typical residual length there makes the positions comparable, which is what
+    # the choice needs. Same reasoning as the leak metric itself, which divides by the residual
+    # norm for the same reason.
+    scale = [max(float(mb[i].norm()) + float(mg[i].norm()), 1e-12) / 2.0
+             for i in range(diff.shape[0])]
+    relative = [n / s for n, s in zip(norms, scale, strict=True)]
+
+    caveats = [
+        ("the direction is a difference of means, chosen at the position where that difference is "
+         "largest RELATIVE to the residual length there. That is a stated rule and not a measured "
+         "separation: a contrast confounded by vocabulary produces a large difference and a high "
+         "accuracy, and this project has withdrawn a figure for exactly that reason."),
+    ]
+    if at is None:
+        position = max(range(len(relative)), key=relative.__getitem__)
+        ordered = sorted(relative)
+        median = ordered[len(ordered) // 2]
+        if median > 0 and relative[position] < PEAK_RATIO * median:
+            caveats.append(
+                f"the largest relative difference, {relative[position]:.4f} at position "
+                f"{position}, is less "
+                f"than {PEAK_RATIO} times the median across positions ({median:.4f}), so the "
+                f"positions are not well separated and this choice is close to arbitrary. Name a "
+                f"position explicitly if a separation has been measured.")
+    else:
+        position = int(at)
+        if position >= len(norms):
+            raise ValueError(
+                f"position {position} does not exist: this model has {len(norms)} positions, 0 to "
+                f"{len(norms) - 1}.")
+        caveats.append(f"position {position} was named by the caller rather than chosen here.")
+
+    log(f"  direction taken at position {position} of {len(norms) - 1}, relative difference "
+        f"{relative[position]:.4f} (raw norm {norms[position]:.4f})")
+    return (_unit(diff[position], f"the mean difference at position {position}"),
+            position, {"raw": norms, "relative": relative}, tuple(caveats))
+
+
+@torch.no_grad()
 def measure_leak(model, tok, prompts, direction, *, log=print):
     """The residual leak per position, plus the output in both bases when the norm allows it.
 

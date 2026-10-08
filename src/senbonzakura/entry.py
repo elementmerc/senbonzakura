@@ -59,6 +59,11 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # Whether the edit survives a safety-recovery finetune, with the two controls that decide
     # whether the number is about safety at all. The only command here that takes a gradient.
     "tamper": ("tamper", "main"),
+    # Whether the direction actually left the residual stream, on any checkpoint including one
+    # somebody else published. Its own command rather than a flag because the interesting case is
+    # a model this tool did not edit and in some cases cannot edit: reading a model is just
+    # running it, so a quantisation-aware checkpoint is measurable here and uneditable upstream.
+    "leak": ("leak", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

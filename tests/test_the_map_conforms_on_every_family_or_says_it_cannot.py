@@ -185,17 +185,37 @@ FAMILIES = (
      "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
     {"family": "qwen sparse attention", "decoder_type": "Sparse MoE", "repo": None,
      "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
-    {"family": "mla with kv layernorm", "decoder_type": "Sparse MoE", "repo": None,
-     "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
-    {"family": "abliterated dense", "decoder_type": "Dense", "repo": None,
-     "mechanism_values": None, "count_key": None, "expect_blocks": None, "expect_experts": None},
+    # NO LONGER A GAP, closed 2026-10-08 from the architecture corpus. Multi-head latent attention
+    # with a layernorm on the compressed key and value path, which is the DeepSeek V2 design: the
+    # config declares `kv_lora_rank` with the `qk_nope_head_dim` and `qk_rope_head_dim` split, and
+    # the tensor inventory carries `kv_a_layernorm`. VERIFIED FROM THE TENSORS RATHER THAN THE NAME,
+    # because a family named after a mechanism is not evidence that the checkpoint has it: a Qwen3
+    # Next record was the other candidate here and it turned out to be linear attention with an MoE
+    # sparsity step, carrying no sparse attention at all, so filing it under this family would have
+    # been precisely the mislabel this suite exists to catch. `q_a_layernorm` is absent, which is
+    # consistent: this checkpoint sets `q_lora_rank` to null, so the query path is not compressed.
+    {"family": "mla with kv layernorm", "decoder_type": "Sparse MoE",
+     "repo": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
+     "mechanism_values": (), "count_key": "num_hidden_layers",
+     "expect_blocks": 27, "expect_experts": 64},
+    # NO LONGER A GAP, closed 2026-10-08 from the architecture corpus, and it tests two things at
+    # once on purpose. The checkpoint is somebody else's abliteration, so its metadata is whatever a
+    # third-party repackager left behind rather than anything this project wrote, which is the case
+    # the map meets in the field. It also carries a vision tower, and the tower declares `depth: 32`
+    # while the text decoder declares `num_hidden_layers: 28`. The map answers 28. That is the
+    # `depth` exclusion earning its place: read as a depth key, the tower's 32 would replace the
+    # decoder's 28 and every layer index afterwards would point at the wrong stack.
+    {"family": "abliterated dense", "decoder_type": "Dense",
+     "repo": "huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated",
+     "mechanism_values": (), "count_key": "num_hidden_layers",
+     "expect_blocks": 28, "expect_experts": None},
 )
 
 #: Families whose absence is a known, recorded gap rather than an oversight. Named individually so
 #: that adding a checkpoint for one of them is a visible change to this list rather than a silent
 #: improvement nobody notices.
 EXPECTED_GAPS = ("kimi delta attention", "cca cross-layer attention",
-                 "qwen sparse attention", "mla with kv layernorm", "abliterated dense")
+                 "qwen sparse attention")
 
 
 def family_state(row):

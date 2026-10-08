@@ -861,3 +861,35 @@ def test_the_path_list_has_no_duplicates_and_every_entry_is_a_dotted_attribute_p
     for path in paths:
         assert path and not path.startswith(".") and not path.endswith(".")
         assert all(part.isidentifier() for part in path.split(".")), path
+
+
+# ── a config passed positionally, which is the obvious mistake ───────────────────────
+
+def test_a_config_given_as_the_first_argument_is_refused_and_named():
+    """THE FAILURE THIS REPLACES WAS A CONFIDENT WRONG ANSWER, which is worse than a crash.
+
+    `describe`'s first parameter is `model`, and a config dict is the thing most callers have. A
+    plain dict has no `.config`, so the config half used to resolve to empty and the record then
+    reported every structural question as absent, naming the exact keys it had looked for, about a
+    config that carried them. Found while filling in a DeepSeek V2 row: the map answered "no stack
+    depth and no experts" for a config declaring 27 layers and 64 routed experts, and the reasons
+    read as findings about the checkpoint rather than as a caller mistake.
+    """
+    import pytest
+
+    with pytest.raises(TypeError, match="first argument"):
+        mm.describe({"num_hidden_layers": 27, "n_routed_experts": 64})
+
+
+def test_the_refusal_says_which_keyword_to_use():
+    import pytest
+
+    with pytest.raises(TypeError, match=r"describe\(config="):
+        mm.describe({"num_hidden_layers": 12})
+
+
+def test_the_same_config_as_a_keyword_reads_normally():
+    """The other half of the pair: the refusal must not have broken the working call."""
+    mapping = mm.describe(config={"num_hidden_layers": 27, "n_routed_experts": 64})
+    assert mapping.blocks.total.value == 27
+    assert mapping.experts.routed.value == 64

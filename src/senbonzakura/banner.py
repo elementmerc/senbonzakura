@@ -131,6 +131,82 @@ def _senkaimon(version):
     ]
 
 
+# ── v0.5's five, chosen by the operator on 2026-10-08 ────────────────────────────────
+#
+# The right-hand text column of each is aligned by MEASUREMENT rather than by eye, in
+# `private/plans/render-v05-candidates.py`, which has the segment widths to hand. Four of the
+# first drafts had a column that stepped by a space or two, which is invisible while writing it
+# and obvious on a terminal, and a fifth lost its alignment on the way into this file by being
+# hand-copied. There is no automated check: see the note in `tests/test_banner.py` for why the
+# obvious one fails four correctly aligned designs.
+
+
+def _zanryu(version):
+    """What remains. The residual stream, and the metric that reads it."""
+    return [
+        [("dim", "  ·    ·     ·       "), ("text", "ZANRYŪ"), ("dim", "  残留")],
+        [("dim", "     ·     ·         "), ("dim", "what remains after the edit")],
+        [("steel", "  ───────────────"), ("dim", "    "), ("text", "the residual stream")],
+        [("petal", "     ✿     ✿"), ("dim", "         "), ("dim", "measured, never assumed")],
+        [("dim", "  ·    ·     ·       "), ("text", f"senbonzakura {version}")],
+    ]
+
+
+def _nagashi(version):
+    """One layer at a time, however large. The streaming capture this release is named for."""
+    return [
+        [("steel", "  ┌───┐"), ("text", "          NAGASHI"), ("dim", "  流し")],
+        [("steel", "  │"), ("petal", " ✿ "), ("steel", "│"), ("steel", " ──▶"),
+         ("dim", "      a layer at a time")],
+        [("steel", "  │   │"), ("dim", "          larger than memory, edited anyway")],
+        [("steel", "  │"), ("petal", " ✿ "), ("steel", "│"), ("steel", " ──▶"),
+         ("text", f"      senbonzakura {version}")],
+        [("steel", "  └───┘")],
+    ]
+
+
+def _kuchiki(version):
+    """The family crest: nine petals, because the crest is a nine-petal arrangement."""
+    return [
+        [("steel", "  ┌───────────┐")],
+        [("steel", "  │"), ("petal", "  ✿  ✿  ✿  "), ("steel", "│"),
+         ("text", "      KUCHIKI")],
+        [("steel", "  │"), ("petal", "  ✿  ✿  ✿  "), ("steel", "│"),
+         ("dim", "      noble house, sixth division")],
+        [("steel", "  │"), ("petal", "  ✿  ✿  ✿  "), ("steel", "│"),
+         ("text", f"      senbonzakura {version}")],
+        [("steel", "  └───────────┘")],
+    ]
+
+
+def _kurohitsugi(version):
+    """Hadō #90. The one design whose subject is a box that closes around something."""
+    return [
+        [("steel", "  ▛▀▀▀▀▀▀▀▀▀▀▀▜")],
+        [("steel", "  ▌"), ("petal", "  ✧  ✧  ✧  "), ("steel", "▐"),
+         ("text", "      HADŌ #90")],
+        [("steel", "  ▌"), ("petal", " ✧   "), ("text", "·"), ("petal", "   ✧ "),
+         ("steel", "▐"), ("dim", "      KUROHITSUGI")],
+        [("steel", "  ▌"), ("petal", "  ✧  ✧  ✧  "), ("steel", "▐"),
+         ("text", f"      senbonzakura {version}")],
+        [("steel", "  ▙▄▄▄▄▄▄▄▄▄▄▄▟")],
+    ]
+
+
+def _hollow(version):
+    """What is left when the heart is removed, which fits the subject uncomfortably well."""
+    return [
+        [("steel", "   ▄▄▄▄▄▄▄▄▄▄▄")],
+        [("steel", "  ▐"), ("text", " ▀▀▄   ▄▀▀ "), ("steel", "▌"),
+         ("dim", "       what is left when")],
+        [("steel", "  ▐"), ("text", "    ▀▄▀    "), ("steel", "▌"),
+         ("dim", "       the heart is removed")],
+        [("steel", "  ▐"), ("text", "  ╲_____╱  "), ("steel", "▌"),
+         ("text", f"       senbonzakura {version}")],
+        [("steel", "   ▀▀▀▀▀▀▀▀▀▀▀")],
+    ]
+
+
 #: Standing rule: every release adds at least this many NEW designs, and removes none.
 #: The set is meant to keep growing so an old favourite still turns up years later, and a
 #: rule kept only in a checklist is a rule that gets skipped on a busy release day.
@@ -144,6 +220,14 @@ DESIGNS = {
     "gokei": (_gokei, "0.4"),
     "camellia": (_camellia, "0.4"),
     "senkaimon": (_senkaimon, "0.4"),
+    # Chosen by the operator on 2026-10-08 from the draft's shortlist. Five rather than the
+    # minimum four, and nothing is removed: the pool is meant to keep growing so an old
+    # favourite still turns up years later.
+    "zanryu": (_zanryu, "0.5"),
+    "nagashi": (_nagashi, "0.5"),
+    "kuchiki": (_kuchiki, "0.5"),
+    "kurohitsugi": (_kurohitsugi, "0.5"),
+    "hollow": (_hollow, "0.5"),
 }
 
 

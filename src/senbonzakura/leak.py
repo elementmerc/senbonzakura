@@ -7,18 +7,39 @@
 WHAT THIS ANSWERS THAT NOTHING ELSE HERE DOES
 
 Every other figure this tool reports is behavioural: refusal rate, harm recognition, fluency,
-capability. Behaviour answers "did the model change". This answers the prior question, "is the
-direction still in there", and it answers it with no judge, no sampling and not one generated
-token, so it has nothing to validate a grader against and no run-to-run variance worth speaking of.
+capability. Behaviour answers "did the model change". This answers a different question, "how much
+of that direction is still in there", with no judge, no sampling and not one generated token, so it
+has nothing to validate a grader against and no run-to-run variance worth speaking of.
+
+WHAT IT IS NOT, AND THIS USED TO BE THE HEADLINE CLAIM
+
+It is **not** a verdict on whether an edit worked. The sentence that stood here, *"point it at a
+checkpoint somebody else published and it says whether their edit landed"*, did not survive its own
+field test and is withdrawn (Q-108, Q-109, `private/research/leak-field-2026-10-08/`).
+
+On `Qwen2.5-0.5B-Instruct`, two checkpoints of ours removed refusal behaviour completely, to a rate
+of zero, while 88 to 96 per cent of the base model's refusal direction remained in the residual
+stream. Measured two ways. The opposite corner arrives by a different route: a published decoy
+defence puts a direction where a contrast set will find it, so the figure falls and refusal stays.
+
+                    refusal collapsed        refusal unchanged
+    figure small    the plain case           the edit landed on a decoy
+    figure large    MEASURED, and real       the edit did not reach the model
+
+So the figure is only readable beside a refusal rate, and the pair places a checkpoint in that
+table rather than either number answering alone. Three explanations for the bottom-left cell are
+live and none is settled: the norm restore putting magnitude back (which `leak_sweep.py` measures
+at 32% and 46% for 4x and 10x row-norm spreads), the stream carrying the component by routes the
+edit does not touch, and the extracted direction not being the one that causes refusal, which is
+the question `validate` exists for.
 
 WHY IT IS A COMMAND AND NOT ONLY A FLAG
 
 `abliterate --leak-report` already reports this for a model we just edited, which is the cheap case
-because the direction is in hand by then. This is the other case, and it is the one that makes the
-metric a ruler rather than a self-assessment: **point it at a checkpoint somebody else published and
-it says whether their edit landed.** That works even on models this tool cannot edit at all, since
-reading a model is just running it, so a 1.6 bit quantisation-aware model is measurable here and
-uneditable upstream.
+because the direction is in hand by then. This is the other case: a magnitude for a checkpoint
+somebody else published, which works even on models this tool cannot edit at all, since reading a
+model is just running it, so a 1.6 bit quantisation-aware model is measurable here and uneditable
+upstream. What that buys is a comparable magnitude, not a verdict on their edit.
 
 It extracts its own direction, which is the whole cost. Nothing writes a direction to disk, so
 there is nothing to load.

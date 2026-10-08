@@ -92,7 +92,7 @@ def test_asking_what_the_streamed_extractor_is_says_both_halves(session):
     result.fits_the_window()
 
 
-@pytest.mark.journey("command:stream-extract", "state:missing-output")
+@pytest.mark.journey("command:stream-extract")
 def test_the_streamed_extractor_without_an_output_path_says_which_flag(session):
     """Its one required flag. Argparse's own message names it, which is what is wanted here: the
     point of the journey is that the refusal is one line about the flag rather than a traceback.
@@ -103,7 +103,7 @@ def test_the_streamed_extractor_without_an_output_path_says_which_flag(session):
     result.says("--out")
 
 
-@pytest.mark.journey("command:stream-extract", "state:offload-inside-the-model")
+@pytest.mark.journey("command:stream-extract", "state:failing-preflight")
 def test_an_offload_directory_inside_the_checkpoint_is_refused_in_a_sentence(session, work):
     """The mistake the flag invites: scratch space next to the weights, which is the one place it
     must not go, because accelerate writes a file per offloaded weight and the checkpoint's index

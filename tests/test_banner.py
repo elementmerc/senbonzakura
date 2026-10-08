@@ -126,14 +126,15 @@ def test_designs_are_never_removed_only_added():
 # `private/plans/render-v05-candidates.py`, which has the segment structure rather than the string.
 
 
-def test_the_current_set_is_the_ten_the_operator_picked():
+def test_the_current_set_is_the_eleven_the_operator_picked():
     """A tripwire, not a constraint. Adding a design is a deliberate act and the operator picks
     them, so a change here should be a change somebody made on purpose rather than a set that
-    drifted. v0.4 shipped five; v0.5 added five more, chosen on 2026-10-08.
+    drifted. v0.4 shipped five; v0.5 added five more, chosen on 2026-10-08, plus the ASCII-only
+    one added under Q-110 because none of those five renders without a Unicode font.
     """
     assert set(banner.DESIGNS) == {
         "block", "scatter", "gokei", "camellia", "senkaimon",
-        "zanryu", "nagashi", "kuchiki", "kurohitsugi", "hollow"}
+        "zanryu", "nagashi", "kuchiki", "kurohitsugi", "hollow", "plain"}
     assert {since for _b, since in banner.DESIGNS.values()} == {"0.4", "0.5"}
 
 
@@ -176,6 +177,29 @@ def test_unknown_design_raises():
 
 
 # ── width ───────────────────────────────────────────────────────────────────────────────
+
+def test_at_least_one_design_renders_without_a_unicode_font():
+    """The picking notes require an ASCII-only design, for a terminal with no font for box
+    drawing or CJK. None of v0.5's five picks satisfied it, which is why Q-110 added a sixth.
+
+    Asserted as AT LEAST one rather than exactly one: adding a second would be fine, and losing
+    the last one is the failure. A banner that renders as replacement glyphs reads as a broken
+    tool rather than as decoration.
+    """
+    ascii_only = [name for name in banner.DESIGNS
+                  if banner.render(name, "9.9.9", colour=False).isascii()]
+    assert ascii_only, (
+        "every design needs a Unicode font to render. On a terminal without one they all come "
+        "out as replacement glyphs, which looks like the tool is broken")
+
+
+def test_the_ascii_design_carries_the_version_and_no_escape_codes():
+    out = banner.render("plain", "9.9.9", colour=False)
+    assert out.isascii()
+    assert "9.9.9" in out
+    assert "\x1b" not in out
+
+
 def test_display_width_counts_cjk_as_two_columns():
     assert banner.display_width("散り千本桜") == 10
     assert banner.display_width("abc") == 3

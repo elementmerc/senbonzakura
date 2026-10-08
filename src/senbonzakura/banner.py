@@ -207,6 +207,20 @@ def _hollow(version):
     ]
 
 
+def _plain(version):
+    """One line, pure ASCII, no art. Draft design 39, picked under Q-110.
+
+    THE ONLY DESIGN THAT RENDERS WITH NO UNICODE FONT, which the picking notes require and which
+    none of the other ten satisfies: every one of them is box drawing, half blocks or CJK. On a
+    live USB with no font for those, the others come out as tofu, which reads as a broken tool.
+
+    It is also the one to fall back to where a banner is noise rather than decoration, so it is
+    deliberately the shape of nmap's opening line rather than a picture.
+    """
+    return [[("text", f"Starting senbonzakura {version} "),
+             ("dim", "( https://github.com/elementmerc/senbonzakura )")]]
+
+
 #: Standing rule: every release adds at least this many NEW designs, and removes none.
 #: The set is meant to keep growing so an old favourite still turns up years later, and a
 #: rule kept only in a checklist is a rule that gets skipped on a busy release day.
@@ -228,6 +242,9 @@ DESIGNS = {
     "kuchiki": (_kuchiki, "0.5"),
     "kurohitsugi": (_kurohitsugi, "0.5"),
     "hollow": (_hollow, "0.5"),
+    # Q-110: the ASCII-only one, because none of the other ten renders without a
+    # Unicode font and the picking notes require one that does.
+    "plain": (_plain, "0.5"),
 }
 
 

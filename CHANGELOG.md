@@ -110,6 +110,20 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - `--pair` checks that it was given two files before reading any of them
 
 ### Command line
+- `capability --task tool-call --tool-schema <file>` offers the model a set of tool declarations in
+  the prompt and then checks every reply against them by code: did it emit a call, name a tool that
+  exists, pass the required arguments, and get the declared types right. Each rate is reported over
+  its own denominator, because they are not over the same replies, and every one of them says in
+  the output that it's mechanical: a model calling the wrong tool cleanly every time scores
+  perfectly on all of them
+- The tools are written into the prompt rather than used only for grading, because "passed an
+  argument the tool does not declare" is only a failure if the model was told what the tool
+  declares
+- Offering a different set of tools changes the exam fingerprint, so a later `--compare-to` refuses
+  to pair two runs that were asked the same questions with different tools available
+- Two defects in the tool-call reader, both of which scored a correct call as wrong: a brace
+  anywhere earlier in the reply swallowed the call, and a call nesting its name under `function`
+  had all its arguments dropped. No published figure came through that reader, so nothing moves
 - `python -m senbonzakura.capability` failed on its default evaluation set with
   `NameError: name 'load_probe' is not defined`, and `python -m senbonzakura.cli` failed before
   reading an argument. Both modules ran their script entry point above code that the entry point

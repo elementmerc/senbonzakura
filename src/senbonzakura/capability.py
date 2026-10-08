@@ -605,6 +605,134 @@ def tool_call_validity_block(replies, schema, truncated=None):
     return out
 
 
+# ── offering the tools to the model, which is what makes the block above mean anything ───
+#
+# THE MEASURES ABOVE WERE UNREACHABLE and that is the defect this section closes. `tool_call_
+# validity_block` was written, tested and called by nothing, which is this project's most
+# frequently repeated failure: a measure that exists, looks finished, and has never once run. It
+# has caught us on `--capability-eval` reading a flag that did not exist, on an in-search
+# capability gate that had never executed, and on a compass print whose deletion broke no test.
+#
+# Wiring it needs one thing the command did not have: a schema. And a schema the model never saw
+# cannot be graded against, because "passed an argument the tool does not declare" is only a
+# failure if the model was told what the tool declares. Grading an unprompted reply against a
+# hidden schema would score the model on a guess and report it as malformed tool use, in the
+# flattering direction for an edited model, which is the direction this module exists to distrust.
+#
+# So the schema goes into the prompt and into the grading from one source, and the exam fingerprint
+# covers it, because two runs offered DIFFERENT tools are not the same exam and pairing them would
+# compare item i against a different item i.
+
+
+def load_tool_schema(path):
+    """The tool declarations to offer and to grade against, from a JSON file.
+
+    One schema object or a list of them. Refused loudly rather than half-read: a schema that names
+    no function would make every item ungradeable, and a run that produced nothing but
+    indeterminates because of a typo in a path is a wasted generation pass over hundreds of prompts.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except OSError as e:
+        raise SystemExit(f"--tool-schema {path}: cannot be read ({e}).") from e
+    except ValueError as e:
+        raise SystemExit(f"--tool-schema {path}: is not valid JSON ({e}).") from e
+    if isinstance(doc, dict) and isinstance(doc.get("tools"), list):
+        # The shape a provider request body uses, accepted because that is the file somebody
+        # already has rather than one they have to write out again by hand.
+        doc = doc["tools"]
+    items = doc if isinstance(doc, list) else [doc]
+    box = _toolbox(items)
+    if not box:
+        raise SystemExit(
+            f"--tool-schema {path}: holds no usable tool declaration. Each one needs a function "
+            f"name, either at the top level or under a 'function' key. A tool that declares no "
+            f"parameters is fine; a tool with no name is not, because every grade below depends "
+            f"on whether the model named a tool that was offered.")
+    return items, box
+
+
+def offered_tools(box):
+    """The tool declarations as the model is shown them, or "" when none were offered.
+
+    DETERMINISTIC, sorted by name and by parameter name, because this text goes into the prompt and
+    therefore into the exam fingerprint. A dictionary's iteration order leaking in here would make
+    two identical runs look like two different exams and refuse to pair them.
+
+    Written out in prose rather than as pasted JSON on purpose. A JSON block invites a small model
+    to continue the block instead of answering, and the thing being measured is whether it emits a
+    call, so a prompt that makes a transcription failure look like a tool-use failure is measuring
+    the prompt.
+    """
+    if not box:
+        return ""
+    lines = ["You have these tools:"]
+    for name in sorted(box):
+        _, declared, required = box[name]
+        if not declared:
+            lines.append(f"- {name}: takes no arguments.")
+            continue
+        parts = []
+        for key in sorted(declared):
+            kind = declared[key]
+            if isinstance(kind, list):
+                kind = " or ".join(str(k) for k in kind)
+            shown = f"{key} ({kind})" if kind else key
+            parts.append(f"{shown} required" if key in required else f"{shown} optional")
+        lines.append(f"- {name}: " + ", ".join(parts) + ".")
+    return "\n".join(lines)
+
+
+def tool_validity_report(block):
+    """The validity measures as lines, or the reason there are none.
+
+    A WITHHELD RATE IS PRINTED AS WITHHELD, never as zero. `reportable_rate` returns None for a
+    rate whose denominator is below the floor, and a renderer that formats that as 0.0% would tell
+    a reader the model never once passed an undeclared argument when what happened is that too few
+    replies could be checked to say.
+    """
+    if block is None:
+        return ["  tool calls: nothing to grade, so no validity figures were taken."]
+    out = [f"  tool calls, MECHANICAL ONLY: {block['measures']}."]
+
+    def pct(key, label):
+        # The denominator comes out of the measure rather than being worked out again here. Each
+        # of these rates is over a different set and recomputing the sets at the rendering layer
+        # is how a figure ends up printed over the wrong n.
+        row = block[key]
+        if row["rate"] is None:
+            out.append(f"    {label}: {row['count']} of {row['n']}, and no rate, because "
+                       f"{row['why_not']}")
+        else:
+            lo, hi = row["ci"]
+            out.append(f"    {label}: {row['rate'] * 100:.1f}% ({row['count']}/{row['n']}, "
+                       f"95% CI {lo * 100:.1f} to {hi * 100:.1f}%)")
+
+    pct("emitted_call", "emitted a call at all")
+    pct("valid", "mechanically valid")
+    pct("invented_function", "named a tool that was not offered")
+    for key, label in (("missing_required", "missing a required argument"),
+                       ("wrong_typed", "argument of the wrong declared type"),
+                       ("undeclared", "passed an argument the tool does not declare"),
+                       ("arguments_malformed", "arguments could not be read")):
+        pct(key, label)
+    reasons = {k: v for k, v in block["no_call_because"].items() if v}
+    if reasons:
+        out.append("    no call because: "
+                   + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items())))
+    if block["indeterminate"]:
+        out.append(f"    {block['indeterminate']} of {block['n']} replies could not be graded "
+                   f"because they ran out of token budget.")
+    if block["budget_suspect"]:
+        out.append(f"    TOOL_CALL_BUDGET_SUSPECT: more than "
+                   f"{block['budget_threshold'] * 100:.0f}% of replies were cut off, so the rates "
+                   f"above describe --max-new rather than the model. Raise it and re-run.")
+    out.append("    None of these says the model chose the right tool or filled it sensibly. A "
+               "model that calls the wrong tool every time, cleanly, scores perfectly here.")
+    return out
+
+
 #: The constraint checks a format instruction can be graded by. Deliberately small: every one is a
 #: rule a reader could apply by hand and get the same answer, which is what keeps this out of
 #: judge territory.
@@ -1037,7 +1165,7 @@ def load_reference(path):
     return doc.get("verdicts"), doc.get("summary"), doc.get("items_digest")
 
 
-def items_digest(questions):
+def items_digest(questions, offered=""):
     """A fingerprint of the exam, so a paired comparison can check WHICH items it paired.
 
     WHY A COUNT IS NOT ENOUGH, and this is the defect it closes.
@@ -1061,6 +1189,13 @@ def items_digest(questions):
 
     Sixteen hex characters, matching the width of the other digests this project's artefacts
     carry, so a reader meets one kind of thing rather than three.
+
+    `offered` is the tool declarations the model was shown, which are part of the exam and not part
+    of the question. The same hundred questions asked with a different toolbox are a different
+    paper, and without this a run offered one tool would pair item by item against a run offered
+    five and report the difference as a change in capability. An empty `offered`, which is every
+    run of every other task, hashes exactly as it did before this argument existed, so artefacts
+    already on disk still pair.
     """
     h = hashlib.sha256()
     for q in questions:
@@ -1068,6 +1203,11 @@ def items_digest(questions):
         # hashing alike would put the check back where it started.
         raw = str(q).encode("utf-8")
         h.update(str(len(raw)).encode("ascii") + b"\0" + raw)
+    if offered:
+        # Under its own separator so a toolbox can never be mistaken for one more question, which
+        # is the collision that would make the length prefixing above pointless.
+        raw = str(offered).encode("utf-8")
+        h.update(b"tools\0" + str(len(raw)).encode("ascii") + b"\0" + raw)
     return h.hexdigest()[:16]
 
 
@@ -1412,6 +1552,13 @@ def build_parser():
                          "articles; 'tool-call' compares a JSON tool name and its arguments; "
                          "'constraints' checks a format instruction was followed. All grade by "
                          "code against a reference answer, so no judge model is involved.")
+    ap.add_argument("--tool-schema", dest="tool_schema", default="",
+                    help="a JSON file of tool declarations, for --task tool-call. The tools are "
+                         "OFFERED to the model in the prompt and the replies are then graded "
+                         "against them mechanically: did it emit a call, name a tool that exists, "
+                         "pass the required arguments, and get the declared types right. Those "
+                         "are separate from the graded accuracy and say nothing about whether the "
+                         "call was the right one to make")
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--question-column", dest="question_column", default=None,
@@ -1476,6 +1623,24 @@ def main(argv=None):
     if a.out is None:
         a.out = refuse_to_overwrite(DEFAULT_OUT, what="capability result")
 
+    # THE TOOLBOX, resolved before ANYTHING ELSE happens, because a bad path here is a typo and a
+    # typo should cost a second rather than a dataset download, a model load and a generation
+    # pass over hundreds of prompts. The same argument as every other pre-flight in this file.
+    tool_items, tool_box, offered = None, None, ""
+    if a.tool_schema:
+        if a.task != "tool-call":
+            # Refused rather than ignored. A flag that is silently dead on the task somebody
+            # passed it with is how a run gets reported as having measured tool validity when
+            # nothing measured anything, and this command has shipped that defect before.
+            raise SystemExit(
+                f"--tool-schema is for --task tool-call and this run is --task {a.task}. The "
+                f"validity measures grade a reply against the tools it was offered, which only "
+                f"means something when the task is to call one.")
+        tool_items, tool_box = load_tool_schema(a.tool_schema)
+        offered = offered_tools(tool_box)
+        print(f"offering {len(tool_box)} tool(s) from {a.tool_schema}: "
+              f"{', '.join(sorted(tool_box))}")
+
     from . import dataset
     from .cli import load_model_and_tokenizer
     if a.n is not None and a.n < 1:
@@ -1533,7 +1698,7 @@ def main(argv=None):
     # while verifying only the first word of it. Two runs of the same size over different items
     # pair item i against a different item i, and nothing downstream can tell: the verdicts are
     # valid, McNemar's counts compute, an interval comes back.
-    mine = items_digest(questions)
+    mine = items_digest(questions, offered)
     if reference is not None and reference_digest and reference_digest != mine:
         raise SystemExit(
             f"--compare-to {a.compare_to} was measured on a DIFFERENT set of {len(reference)} "
@@ -1565,6 +1730,11 @@ def main(argv=None):
 
     task = get_task(a.task)
     prompts = [task.prompt.format(q) for q in questions]
+    if offered:
+        # Before the question, because the model should know what it has to work with before it
+        # reads what it is being asked to do, and after nothing, because a preamble buried under a
+        # long question is a preamble a small model has forgotten by the time it answers.
+        prompts = [f"{offered}\n\n{p}" for p in prompts]
     gens, truncated = generate_with_truncation(
         model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new, log=print)
     verdicts = grade(gens, answers, truncated, task=a.task)
@@ -1597,6 +1767,16 @@ def main(argv=None):
     for line in report(summary, change):
         print(line)
 
+    # THE MECHANICAL BLOCK, beside the graded accuracy and not instead of it. They answer
+    # different questions and a reader who takes one for the other has the wrong number: accuracy
+    # says whether the call matched the reference, validity says whether it could have been
+    # executed at all. A model can score 0% accuracy with 100% validity by calling a real tool
+    # correctly and wrongly every time.
+    tool_calls = tool_call_validity_block(gens, tool_items, truncated) if tool_items else None
+    if tool_items:
+        for line in tool_validity_report(tool_calls):
+            print(line)
+
     from .crashsafe import atomic_write, provenance
 
     result = {"label": a.label, "model": a.model, "eval": a.eval, "task": a.task,
@@ -1605,7 +1785,14 @@ def main(argv=None):
               # checks this before it pairs anything: a count is not an identity, and two runs
               # of equal size over different exams pair item i against a different item i and
               # report the difference as a change in capability.
-              "items_digest": items_digest(questions),
+              "items_digest": mine,
+              # WHICH tools were offered, by name and by the exact text the model was shown.
+              # The digest above already covers it, but a digest says two runs differ without
+              # saying how, and the text is what somebody needs to reproduce the exam.
+              "tool_schema": a.tool_schema or None,
+              "tools_offered": sorted(tool_box) if tool_box else None,
+              "tools_offered_text": offered or None,
+              "tool_calls": tool_calls,
               "max_new": a.max_new, "seed": a.seed, "summary": summary,
               "verdicts": verdicts, "compare_to": a.compare_to or None, "change": change,
               # Which build produced this. Every other artefact in this project carries it and

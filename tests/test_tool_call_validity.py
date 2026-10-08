@@ -25,6 +25,8 @@ budget looks exactly like malformed JSON in the text, so if truncation counted a
 `--max-new` too low would read as a tool-use regression, in the same direction as the claim the
 measure exists to test.
 """
+import json
+
 import pytest
 
 from senbonzakura import capability as cap
@@ -514,3 +516,303 @@ def test_the_reference_graded_extractor_is_unchanged(reply, want):
     owed. `docs/comparison.md` is exact about that distinction.
     """
     assert cap.tool_call(reply) == want
+
+
+# ── offering the tools, which is what made the measures above reachable ───────────────
+#
+# ADDED 2026-10-08. `tool_call_validity_block` was written, tested, and CALLED BY NOTHING. These
+# cover the wiring that fixed that: the loader, the prompt preamble, the renderer and the exam
+# fingerprint. The defect class is this project's most repeated one, so the tests here are about
+# the join between the pieces rather than about any one of them.
+
+TWO_TOOLS = [
+    {"type": "function", "function": {"name": "get_weather", "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}, "days": {"type": "integer"}},
+        "required": ["city"]}}},
+    {"name": "send_email", "parameters": {"type": "object", "properties": {}}},
+]
+
+
+def _schema_file(tmp_path, payload):
+    p = tmp_path / "tools.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    return str(p)
+
+
+def test_a_provider_request_body_is_accepted_as_it_is_found(tmp_path):
+    """The shape somebody already has, rather than one they have to retype."""
+    items, box = cap.load_tool_schema(_schema_file(tmp_path, {"tools": TWO_TOOLS}))
+    assert sorted(box) == ["get_weather", "send_email"]
+    assert items == TWO_TOOLS
+
+
+def test_a_bare_list_and_a_single_object_both_load(tmp_path):
+    _, box = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    assert sorted(box) == ["get_weather", "send_email"]
+    _, one = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS[0]))
+    assert sorted(one) == ["get_weather"]
+
+
+@pytest.mark.parametrize(("payload", "fragment"), [
+    ({"tools": []}, "no usable tool declaration"),
+    ([{"parameters": {"type": "object"}}], "no usable tool declaration"),
+    ({"name": ""}, "no usable tool declaration"),
+])
+def test_an_unusable_schema_is_refused_before_a_model_loads(tmp_path, payload, fragment):
+    """REFUSED, NOT RUN. Every item would be ungradeable against a schema that names no function,
+    and a generation pass over hundreds of prompts spent to discover a typo in a path is the cost
+    this refusal exists to avoid.
+    """
+    with pytest.raises(SystemExit) as e:
+        cap.load_tool_schema(_schema_file(tmp_path, payload))
+    assert fragment in str(e.value)
+
+
+def test_unreadable_and_unparseable_files_name_which_one_it_was(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        cap.load_tool_schema(str(bad))
+    assert "not valid JSON" in str(e.value)
+
+    with pytest.raises(SystemExit) as e:
+        cap.load_tool_schema(str(tmp_path / "absent.json"))
+    assert "cannot be read" in str(e.value)
+
+
+def test_the_offer_names_every_tool_and_marks_what_is_required(tmp_path):
+    _, box = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    offered = cap.offered_tools(box)
+    assert "get_weather: city (string) required, days (integer) optional." in offered
+    assert "send_email: takes no arguments." in offered
+
+
+def test_the_offer_is_deterministic_whatever_order_the_tools_arrive_in(tmp_path):
+    """IT GOES INTO THE EXAM FINGERPRINT. A dictionary's iteration order leaking in here would
+    make two identical runs look like two different exams and refuse to pair them.
+    """
+    forward = cap.offered_tools(cap.load_tool_schema(
+        _schema_file(tmp_path, TWO_TOOLS))[1])
+    backward = cap.offered_tools(cap.load_tool_schema(
+        _schema_file(tmp_path, list(reversed(TWO_TOOLS))))[1])
+    assert forward == backward
+
+
+def test_no_tools_offers_nothing_rather_than_an_empty_heading():
+    assert cap.offered_tools({}) == ""
+
+
+def test_a_union_type_is_shown_as_a_union(tmp_path):
+    schema = {"name": "f", "parameters": {"type": "object", "properties": {
+        "x": {"type": ["string", "integer"]}}, "required": ["x"]}}
+    _, box = cap.load_tool_schema(_schema_file(tmp_path, schema))
+    assert "x (string or integer) required" in cap.offered_tools(box)
+
+
+def test_a_parameter_with_no_declared_type_is_named_without_inventing_one(tmp_path):
+    schema = {"name": "f", "parameters": {"type": "object", "properties": {"x": {}}}}
+    _, box = cap.load_tool_schema(_schema_file(tmp_path, schema))
+    assert "- f: x optional." in cap.offered_tools(box)
+
+
+def test_the_fingerprint_is_unchanged_when_no_tools_were_offered():
+    """Every artefact already on disk was written without this argument, so the no-tool digest has
+    to be byte-identical or every existing paired comparison refuses itself.
+    """
+    questions = ["one", "two"]
+    assert cap.items_digest(questions) == cap.items_digest(questions, "")
+
+
+def test_two_runs_offered_different_tools_are_different_exams(tmp_path):
+    """WITHOUT THIS they pair item by item and report the difference as a change in capability."""
+    questions = ["one", "two"]
+    _, both = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    _, one = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS[:1]))
+    assert (cap.items_digest(questions, cap.offered_tools(both))
+            != cap.items_digest(questions, cap.offered_tools(one)))
+    assert cap.items_digest(questions, cap.offered_tools(both)) != cap.items_digest(questions)
+
+
+def test_the_toolbox_cannot_collide_with_one_more_question():
+    """The separator earns its place: without it an exam of three questions and an exam of two
+    plus a toolbox spelled the same way would hash alike.
+    """
+    assert cap.items_digest(["a", "b"], "c") != cap.items_digest(["a", "b", "c"])
+
+
+def test_the_report_prints_a_withheld_rate_as_withheld(tmp_path):
+    """NEVER AS ZERO. `reportable_rate` returns None under the floor and a renderer that formats
+    that as 0.0% tells a reader the model never once passed an undeclared argument, when what
+    happened is that too few replies could be checked to say.
+    """
+    items, _ = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    block = cap.tool_call_validity_block(
+        ['{"name": "get_weather", "arguments": {"city": "Leeds"}}'] * 3, items)
+    out = "\n".join(cap.tool_validity_report(block))
+    assert "0.0%" not in out
+    assert "below the floor" in out
+    assert "and no rate" in out
+
+
+def test_the_report_gives_a_rate_with_its_counts_and_interval_once_there_are_enough(tmp_path):
+    items, _ = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    replies = (['{"name": "get_weather", "arguments": {"city": "Leeds"}}'] * 30
+               + ["no call here at all"] * 10)
+    out = "\n".join(cap.tool_validity_report(cap.tool_call_validity_block(replies, items)))
+    assert "emitted a call at all: 75.0% (30/40" in out
+    assert "95% CI" in out
+    assert "no call because: no_json 10" in out
+
+
+def test_the_report_says_the_measures_are_mechanical_in_its_own_output(tmp_path):
+    """The caveat travels with the figures. A reader meeting 100% valid has to meet, in the same
+    block, the fact that a model calling the wrong tool cleanly every time scores exactly that.
+    """
+    items, _ = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    out = "\n".join(cap.tool_validity_report(cap.tool_call_validity_block(
+        ['{"name": "get_weather", "arguments": {"city": "Leeds"}}'], items)))
+    assert "MECHANICAL ONLY" in out
+    assert "chose the right tool" in out
+
+
+def test_the_report_warns_when_the_budget_ate_the_sample(tmp_path):
+    items, _ = cap.load_tool_schema(_schema_file(tmp_path, TWO_TOOLS))
+    replies = ['{"name": "get_weather", "arguments": {"city": "Leeds"}}'] * 10
+    block = cap.tool_call_validity_block(replies, items, [True] * 9 + [False])
+    out = "\n".join(cap.tool_validity_report(block))
+    assert "TOOL_CALL_BUDGET_SUSPECT" in out
+    assert "9 of 10 replies could not be graded" in out
+
+
+def test_nothing_to_grade_says_so_rather_than_printing_a_block_of_zeros():
+    assert "nothing to grade" in cap.tool_validity_report(None)[0]
+
+
+# ── and through main(), because the artefact is what gets quoted ──────────────────────
+
+def _jsonl_eval(tmp_path, rows):
+    p = tmp_path / "eval.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_a_tool_schema_on_the_wrong_task_is_refused_before_anything_loads(tmp_path):
+    """REFUSED, NOT IGNORED. A flag silently dead on the task it was passed with is how a run gets
+    described as having measured tool validity when nothing measured anything, and this command has
+    shipped exactly that defect before: `--chat-template` was dead on the abliterate path and
+    `--capability-eval` read a flag that did not exist.
+
+    Before the dataset, before the model, because a flag-combination mistake should cost a second.
+    """
+    schema = _schema_file(tmp_path, TWO_TOOLS)
+    with pytest.raises(SystemExit) as e:
+        cap.main(["--model", "m", "--task", "numeric", "--tool-schema", schema,
+                  "--eval", _jsonl_eval(tmp_path, [{"question": "q", "answer": "1"}]),
+                  "--out", str(tmp_path / "c.json")])
+    assert "--task tool-call" in str(e.value)
+    assert not (tmp_path / "c.json").exists(), "it refused after writing something"
+
+
+def test_the_offered_tools_and_their_measures_reach_the_artefact(tmp_path, monkeypatch,
+                                                                 tiny_model, tiny_tok):
+    """THE WIRING ITSELF. `tool_call_validity_block` existed, passed its own tests, and was called
+    by nothing for the whole of the day it was written. This is the test that would have noticed.
+    """
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(_cli, "render_chat", lambda _tok, p: p)
+    monkeypatch.setattr(
+        cap, "generate_with_truncation",
+        lambda *a, **k: (['{"name": "get_weather", "arguments": {"city": "Leeds"}}'] * 2,
+                         [False] * 2))
+    schema = _schema_file(tmp_path, TWO_TOOLS)
+    out = tmp_path / "c.json"
+    rows = [{"question": "weather in Leeds?",
+             "answer": '{"name": "get_weather", "arguments": {"city": "Leeds"}}'}] * 2
+    cap.main(["--model", "m", "--device", "cpu", "--eval", _jsonl_eval(tmp_path, rows),
+              "--n", "2", "--max-new", "8", "--task", "tool-call",
+              "--tool-schema", schema, "--out", str(out)])
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["tools_offered"] == ["get_weather", "send_email"]
+    assert "get_weather: city (string) required" in doc["tools_offered_text"]
+    assert doc["tool_schema"] == schema
+    assert doc["tool_calls"]["valid"]["count"] == 2
+    assert len(doc["tool_calls"]["reports"]) == 2
+
+
+def test_the_model_is_actually_shown_the_tools(tmp_path, monkeypatch, tiny_model, tiny_tok):
+    """AND THIS IS THE ONE THAT MATTERS MOST. Grading a reply against a schema the model never saw
+    scores it on a guess: "passed an argument the tool does not declare" is only a failure if the
+    model was told what the tool declares. A hidden schema would report the harness's own silence
+    as malformed tool use, and malformed tool use is the direction an edited model is expected to
+    move in, so the error would have flattered exactly the claim this module exists to distrust.
+    """
+    import senbonzakura.cli as _cli
+
+    seen = {}
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(_cli, "render_chat", lambda _tok, p: p)
+
+    def _capture(model, tok, prompts, device, **k):
+        seen["prompts"] = list(prompts)
+        return ["no call"] * len(prompts), [False] * len(prompts)
+
+    monkeypatch.setattr(cap, "generate_with_truncation", _capture)
+    rows = [{"question": "weather in Leeds?", "answer": "{}"}] * 2
+    cap.main(["--model", "m", "--device", "cpu", "--eval", _jsonl_eval(tmp_path, rows),
+              "--n", "2", "--max-new", "8", "--task", "tool-call",
+              "--tool-schema", _schema_file(tmp_path, TWO_TOOLS),
+              "--out", str(tmp_path / "c.json")])
+    for prompt in seen["prompts"]:
+        assert prompt.startswith("You have these tools:")
+        assert "get_weather: city (string) required, days (integer) optional." in prompt
+        assert "weather in Leeds?" in prompt
+
+
+def test_a_run_without_a_schema_writes_the_absence_rather_than_an_empty_block(
+        tmp_path, monkeypatch, tiny_model, tiny_tok):
+    """None, not {}. An empty block would read as "measured, and found nothing wrong"."""
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(_cli, "render_chat", lambda _tok, p: p)
+    monkeypatch.setattr(cap, "generate_with_truncation",
+                        lambda *a, **k: (["no call"] * 2, [False] * 2))
+    out = tmp_path / "c.json"
+    rows = [{"question": "q", "answer": "{}"}] * 2
+    cap.main(["--model", "m", "--device", "cpu", "--eval", _jsonl_eval(tmp_path, rows),
+              "--n", "2", "--max-new", "8", "--task", "tool-call", "--out", str(out)])
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["tool_calls"] is None
+    assert doc["tools_offered"] is None
+    assert doc["tool_schema"] is None
+
+
+def test_the_fingerprint_in_the_artefact_covers_the_toolbox(tmp_path, monkeypatch, tiny_model,
+                                                            tiny_tok):
+    """So the two runs cannot be paired against each other by a later `--compare-to`."""
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(_cli, "render_chat", lambda _tok, p: p)
+    monkeypatch.setattr(cap, "generate_with_truncation",
+                        lambda *a, **k: (["no call"] * 2, [False] * 2))
+    rows = [{"question": "q", "answer": "{}"}] * 2
+    bench = _jsonl_eval(tmp_path, rows)
+
+    digests = []
+    for i, tools in enumerate((TWO_TOOLS, TWO_TOOLS[:1])):
+        out = tmp_path / f"c{i}.json"
+        # A directory each, because `_schema_file` writes one fixed filename and the second run
+        # would otherwise be measured against the first run's toolbox.
+        holder = tmp_path / f"s{i}"
+        holder.mkdir()
+        cap.main(["--model", "m", "--device", "cpu", "--eval", bench, "--n", "2",
+                  "--max-new", "8", "--task", "tool-call", "--out", str(out),
+                  "--tool-schema", _schema_file(holder, tools)])
+        digests.append(json.loads(out.read_text(encoding="utf-8"))["items_digest"])
+    assert digests[0] != digests[1], (
+        "the same questions with a different toolbox are a different exam, and without this a "
+        "later --compare-to pairs them and reports the difference as a change in capability")

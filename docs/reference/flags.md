@@ -117,6 +117,48 @@ for a multiple-choice set or a free-text one. Pointing `--capability-eval` at yo
 without changing this is the easy mistake: the model answers correctly, the grader cannot find a
 number, and every item comes back ungradeable.
 
+### Grading a tool call against the tools you offered
+
+`senbonzakura capability --task tool-call` compares the model's call against a reference call: did
+it name the tool the answer key names, with the same arguments? That is one question. There's a
+second one it can't answer, which is whether the call could have been run at all.
+
+`--tool-schema FILE` adds it. The file is JSON, either a list of tool declarations or a provider
+request body with a `tools` key, so in most cases it's a file you already have. Two things happen
+with it:
+
+1. The tools are written into the prompt, so the model is told what it may call and what each one
+   takes. Without that step the next part would be unfair, because "passed an argument the tool
+   does not declare" is only a failure if the model was ever told what the tool declares.
+2. Every reply is then checked against those declarations by code.
+
+What comes back, each over its own denominator because they aren't over the same set of replies:
+
+| Measure | Over | Reads as |
+|---|---|---|
+| emitted a call at all | the replies that could be graded | the model produced something call shaped rather than prose |
+| mechanically valid | the replies that could be graded | the call could have been executed |
+| named a tool that was not offered | the replies that emitted a call | the model invented a tool |
+| missing a required argument | the calls naming a real tool | a declared requirement was left out |
+| argument of the wrong declared type | the calls naming a real tool | a string where a number was declared, and so on |
+| passed an argument the tool does not declare | the calls naming a real tool | the model made up a parameter |
+
+**None of these says the model chose the right tool.** A model that reaches for the wrong tool
+every single time, with clean arguments of the right types, scores 100% on every row above. That
+is why the measures sit beside the graded accuracy and not instead of it: accuracy says whether
+the call matched the answer key, validity says whether it was well formed. A model can score 0% on
+the first and 100% on the second, and the two together say something neither says alone.
+
+A rate over too few replies is withheld rather than printed, and the counts are given in its
+place. Replies cut off by the token budget are counted as ungradeable, never as failures, for the
+same reason the accuracy does it: the answers that run out of budget are the long ones, so they
+aren't missing at random.
+
+The flag is refused on any other task, because grading a reply against tools when the task was
+arithmetic measures nothing. Offering a different set of tools also changes the exam fingerprint,
+so a later `--compare-to` refuses to pair two runs that were offered different toolboxes instead
+of reporting the difference as a change in capability.
+
 **`--capability-max-new`** interacts with the ungradeable rule above. Lowering it to save time
 makes answers get cut off before the model reaches its conclusion, and those count as
 ungradeable rather than wrong. So a budget set too low does not give you a faster measurement, it

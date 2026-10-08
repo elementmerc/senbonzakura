@@ -144,6 +144,12 @@ BLOCK_TYPE_PATTERN_KEY = "hybrid_override_pattern"
 #: about any other block, so the complement is the family's other mechanism.
 BLOCK_TYPE_INDEX_KEY = "attn_layer_indices"
 
+#: Cross-layer attention: how many blocks share one attention residual. Kimi K3's spelling, and
+#: the only one met so far. Taken from this repository's vendored converter, which reads it under
+#: the heading "cross-layer attention residuals" and pairs `<x>_res_norm` with `<x>_res_proj`
+#: tensors per group.
+ATTENTION_RESIDUAL_GROUP_KEY = "attn_res_block_size"
+
 #: Kimi Linear's spelling: inverted like Bamba's, NESTED one level down, and ONE-BASED.
 #:
 #: The one-based part is the whole reason this is a separate constant rather than another entry
@@ -464,6 +470,15 @@ class ModelMap:
     prediction_head: PredictionHead | None = None
     #: Why the residual stream's actual path is not in this record. Always populated.
     residual_path_why: str = ""
+    #: How many blocks share one attention residual, where a config declares cross-layer sharing.
+    #: Unknown for every model that does not, which is nearly all of them.
+    #:
+    #: THIS FIELD EXISTS BECAUSE ITS ABSENCE WAS THE ONE GAP THAT WOULD HAVE BEEN CONFIDENTLY
+    #: WRONG. Every other unmet architecture here is a string this marks unknown. Cross-layer
+    #: attention is a shape: a block whose attention residual is shared with its neighbours' is
+    #: not describable as a per-block kind, so a record built from per-block fields alone would
+    #: answer every question about it and be wrong about the ones that matter.
+    attention_residual_group: Resolved = None
     #: Places the config and the modules do not agree. Each entry is a finding, not an error.
     disagreements: tuple = ()
 
@@ -513,6 +528,22 @@ class ModelMap:
                 + (f"; separate widths are declared under {sorted(self.heads.split_widths)}"
                    if self.heads.split_widths else ""))
         out["where does the residual stream run"] = self.residual_path_why
+        group = self.attention_residual_group
+        if group is not None and group.known:
+            # NOT a per-block fact, which is the entire point. This tool's edit is an orthogonal
+            # projection applied to one block's output projection at a time, and the arithmetic
+            # behind "one layer, one edit" assumes that block's residual write reaches the stream
+            # on its own. Where a group of blocks shares an attention residual it does not, so an
+            # edit aimed at block i lands on the group, and a per-layer strength is a group
+            # strength wearing the wrong name. This project has already published a figure that
+            # was wrong for the neighbouring reason, a Gemma edit attenuated by a norm gain it did
+            # not know about, so the refusal here is deliberate rather than cautious.
+            out["is an edit to one block's attention independent of the others"] = (
+                f"no: {self.attention_residual_group.source} declares that attention residuals "
+                f"are shared across groups of {group.value} blocks, so a projection applied to "
+                f"one block's output reaches every block in its group. A per-block edit strength "
+                f"is not a per-block quantity on this architecture, and nothing in this record "
+                f"says which blocks fall in which group. Settling it needs a forward pass.")
         return out
 
 
@@ -584,6 +615,24 @@ def block_count(cfg):
         extra=extra_res,
         total=Resolved(value=declared + int(extra or 0),
                        source=key if not extra else f"{key} + {extra_key}"))
+
+
+def attention_residual_group(cfg):
+    """How many blocks share one attention residual, or unknown with the reason why.
+
+    Unknown is the answer for nearly every model, and that is not a shortcoming: cross-layer
+    attention is rare. What matters is that the unknown is a statement rather than a zero, because
+    the question it blocks is whether this tool's per-block edit is per-block at all.
+    """
+    scope, _ = decoder_scope(cfg)
+    size = scope.get(ATTENTION_RESIDUAL_GROUP_KEY)
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        return Resolved(
+            why=f"this config does not declare {ATTENTION_RESIDUAL_GROUP_KEY}, so no cross-layer "
+                f"attention residual sharing is known about. That is the usual case and it is not "
+                f"evidence of absence: a family sharing residuals under a spelling this tool has "
+                f"not met would look identical here.")
+    return Resolved(value=int(size), source=ATTENTION_RESIDUAL_GROUP_KEY)
 
 
 def mechanisms(cfg):
@@ -1396,6 +1445,7 @@ def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
         module_kinds=module_kinds,
         prediction_head=head,
         residual_path_why=RESIDUAL_PATH_WHY,
+        attention_residual_group=attention_residual_group(config),
         disagreements=tuple(disagreements))
 
 

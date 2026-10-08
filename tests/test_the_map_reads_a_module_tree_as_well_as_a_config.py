@@ -963,3 +963,60 @@ def test_the_unresolved_reason_names_all_five_spellings_it_looked_for():
     for spelling in ("layer_types", "layers_block_type", "hybrid_override_pattern",
                      "attn_layer_indices", "linear_attn_config.full_attn_layers"):
         assert spelling in why, f"{spelling} is searched for and not named in the reason"
+
+
+# ── cross-layer attention, the one gap that would have answered confidently ──────────
+
+def test_a_shared_attention_residual_is_read_and_its_group_size_recorded():
+    """The gap this closes was ranked the most dangerous in the map's own survey, and the reason is
+    that it is a SHAPE rather than a string. Every other unmet architecture is a value the map marks
+    unknown. A block whose attention residual is shared with its neighbours' is not describable as a
+    per-block kind at all, so a record built only from per-block fields answers every question about
+    it and is wrong about the one that matters.
+    """
+    mapping = mm.describe(config={"num_hidden_layers": 8, "attn_res_block_size": 4})
+    assert mapping.attention_residual_group.value == 4
+    assert mapping.attention_residual_group.source == "attn_res_block_size"
+
+
+def test_it_refuses_the_question_this_tool_actually_asks_of_a_block():
+    """What sharing breaks is not a description, it is this tool's arithmetic. The edit is an
+    orthogonal projection applied to one block's output projection, and "one layer, one edit"
+    assumes that block's residual write reaches the stream by itself. Shared, it does not.
+    """
+    blocked = mm.describe(
+        config={"num_hidden_layers": 8, "attn_res_block_size": 4}).unanswerable()
+    question = "is an edit to one block's attention independent of the others"
+    assert question in blocked
+    why = blocked[question]
+    assert why.startswith("no:"), "an answerable question answered 'no' is not the same as a gap"
+    assert "groups of 4 blocks" in why
+    assert "forward pass" in why, "the reader is not told what would settle it"
+
+
+def test_an_ordinary_model_is_not_given_the_warning():
+    """A caveat that fires on every model is one nobody reads. Cross-layer sharing is rare and the
+    record says so only where a config declares it.
+    """
+    mapping = mm.describe(config={"num_hidden_layers": 8})
+    assert "is an edit to one block's attention independent of the others" \
+        not in mapping.unanswerable()
+
+
+def test_an_ordinary_model_says_absence_rather_than_zero():
+    """Unknown here is a statement, and the reason has to refuse the universal negative: a family
+    sharing residuals under a spelling this tool has not met looks identical to one that does not.
+    """
+    why = mm.describe(config={"num_hidden_layers": 8}).attention_residual_group.why
+    assert "attn_res_block_size" in why
+    assert "not evidence of absence" in why
+
+
+@pytest.mark.parametrize("value", [0, -1, True, False, "4", 4.0, None, [], {}])
+def test_a_group_size_that_is_not_a_block_count_is_not_read(value):
+    """`True` is the one that matters: it is an `int` in Python, and a config carrying a boolean
+    here would otherwise be read as a group of one, which is the shape of "no sharing at all" and
+    the exact opposite of what a flag set true would mean.
+    """
+    mapping = mm.describe(config={"num_hidden_layers": 4, "attn_res_block_size": value})
+    assert mapping.attention_residual_group.value is None

@@ -89,10 +89,13 @@ NEEDS_LEAK_FIELD = (
     "nothing else: `leak` extracts its own direction",
 )
 NEEDS_NORM_GAIN = (
-    "gemma-2-2b-it and a Qwen of similar size",
-    "a refusal-free task to read the off-target effect on",
-    ("the strength sweep that matches the two arms on MEASURED leak rather than nominal"
-     " weight, which is the part that does not exist yet"),
+    ("the matching search EXISTS now: tools/research/matched_leak_strength.py bisects strength"
+     " on the measured leak so two models are compared on the edit that landed"),
+    "gemma-2-2b-it and a Qwen of similar size, both of which are on the ROG already",
+    ("a card that holds gemma-2-2b: 7.0 GB with headroom against the ROG's 6 GB, so this is a"
+     " rental and my earlier claim that it ran there was wrong"),
+    ("a refusal-free task to read the off-target effect on. arXiv 2607.17427 used 21,600 stock"
+     " decisions; any task with no refusals in it will do, and the capability probe is one"),
 )
 NEEDS_PREDICTION_HEAD = (
     ("the flag EXISTS now: `stream-bake --prediction-head {skip,edit}`, and the edit side needs"
@@ -144,7 +147,8 @@ ARMS = (
         params_b=2.6,
         hours=3.0,
         needs=NEEDS_NORM_GAIN,
-        built=False,
+        built=True,
+        command=("python", "tools/research/matched_leak_strength.py"),
     ),
     Arm(
         key="prediction-head",

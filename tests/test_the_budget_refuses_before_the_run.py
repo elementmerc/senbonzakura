@@ -616,10 +616,45 @@ def test_own_footprint_says_unmeasured_rather_than_zero_without_proc(monkeypatch
     assert resources.own_footprint() is None
 
 
-def test_free_disk_walks_up_to_a_directory_that_exists(tmp_path):
-    """The output directory of a run that has not started does not exist yet."""
+def test_free_disk_walks_up_to_a_directory_that_exists(tmp_path, monkeypatch):
+    """The output directory of a run that has not started does not exist yet.
+
+    THE ASSERTION IS THE PATH IT LANDED ON, not two readings of the free space. Comparing
+    `free_disk(deep)` against `free_disk(tmp_path)` was the first version and it is flaky by
+    construction: free space is a quantity other processes change, so under `pytest -n 4` three
+    sibling workers writing fixtures to the same filesystem can move it between the two calls.
+    It passed serially and failed about one run in ten in parallel, which is the worst shape for
+    a test to have, and §7 says find the race rather than retry it.
+
+    What the function promises is that it walks up to an existing ancestor. That is what this
+    checks, by recording which directory `disk_usage` was finally asked about.
+    """
+    import shutil
+
+    asked = []
+    real = shutil.disk_usage
+
+    def record(path):
+        asked.append(pathlib.Path(path))
+        return real(path)
+
+    monkeypatch.setattr(shutil, "disk_usage", record)
     deep = tmp_path / "not" / "created" / "yet"
-    assert resources.free_disk(deep) == resources.free_disk(tmp_path)
+    assert resources.free_disk(deep) is not None
+    assert asked == [tmp_path.resolve()], (
+        f"it asked about {asked}, and the nearest existing ancestor of {deep} is {tmp_path}")
+
+
+def test_free_disk_asks_about_the_path_itself_when_it_exists(tmp_path, monkeypatch):
+    """The other half: walking up must not happen when there is nothing to walk up from."""
+    import shutil
+
+    asked = []
+    real = shutil.disk_usage
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda p: (asked.append(pathlib.Path(p)), real(p))[1])
+    assert resources.free_disk(tmp_path) is not None
+    assert asked == [tmp_path.resolve()]
 
 
 def test_free_disk_returns_none_rather_than_raising_on_nonsense():

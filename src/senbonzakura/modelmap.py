@@ -54,6 +54,7 @@ list, because an empty list reads like "this model has no blocks".
 from __future__ import annotations
 
 import enum
+import itertools
 from dataclasses import dataclass, field
 
 from .writers import ATTN_BLOCKS, MIXER_BLOCKS, MLP_BLOCKS
@@ -68,8 +69,52 @@ from .writers import ATTN_BLOCKS, MIXER_BLOCKS, MLP_BLOCKS
 #: Every spelling of "how many decoder blocks". Measured: `num_hidden_layers` on 17 of 21 local
 #: checkpoints, `n_layer` on the 3 GPT-2 family members, and ABSENT on NemotronH-300M, whose only
 #: statement of depth is the length of its block list.
+#:
+#: `num_blocks` was added 2026-10-08 on the evidence of the 149-model architecture corpus, where it
+#: occurs exactly once: `NX-AI/xLSTM-7b` declares `num_blocks: 32`, no `num_hidden_layers` at all,
+#: and its tensor names carry a 32-entry stack. It is the corpus's only instance of the catalogue's
+#: `Recurrent` decoder type, so without this key the one family whose mixer is not attention at all
+#: has no readable depth.
 LAYER_COUNT_KEYS = ("num_hidden_layers", "n_layer", "n_layers", "num_layers",
-                    "num_decoder_layers", "n_block")
+                    "num_decoder_layers", "n_block", "num_blocks")
+
+#: `depth` IS NOT A LAYER-COUNT KEY AND MUST NOT BECOME ONE. It reads like the most natural
+#: spelling in the world, which is exactly why this is written down rather than left to the
+#: omission.
+#:
+#: It occurs 18 times in the 149-model corpus and every single one is an encoder's own depth: 16
+#: inside `vision_config`, one inside `visual_config.vq_config`, and one at the top level of
+#: `Motif-Technologies/Motif-Vision-Encoder`, which is a `MotifVisionModel` and not a causal
+#: language model at all.
+#:
+#: THE DECISIVE CASE. Qwen3.6-35B-A3B carries `config.vision_config.depth = 27` while its real
+#: decoder depth is `config.text_config.num_hidden_layers = 40`. Adopting `depth` would make this
+#: map report 27 blocks for a 40-block model, and it would do it confidently, on a model we have
+#: locally. That is the same trap the corpus tool already fell into and fixed when alphabetical key
+#: order read Gemma 4's audio tower as its language model.
+#:
+#: Pinned by `test_depth_is_not_a_layer_count_key_and_the_reason_is_qwen3_6`.
+NOT_LAYER_COUNT_KEYS = ("depth",)
+
+#: Module names that appear INSIDE a decoder block only when that block is a multi-token
+#: prediction head, rather than an ordinary block. An MTP head fuses the previous token's
+#: embedding with the hidden state, so it carries its own two input norms and a fusion projection,
+#: and an ordinary block never does.
+#:
+#: VERIFIED ON THE 149-MODEL CORPUS, not reasoned about. All three of these appear together on
+#: every one of the 15 models that store the head inside the decoder's own stack, which is 15 out
+#: of 15: DeepSeek V3, V3.2 and R1, GLM 4.5, 4.5-Air, 4.7, 5, 5.1, 5.2 and 5.3-Flash, Ling 2.6-1T
+#: and 3.0-flash, Step 3.5-Flash and Step-5-Preview, and Hy3-preview.
+PREDICTION_HEAD_MARKERS = ("eh_proj", "enorm", "hnorm")
+
+#: Corroborating but NOT reliable on their own, which is why they are a separate list: on the same
+#: 15 models `shared_head` appears on 12 and `embed_tokens` on only 6. An `embed_tokens` inside a
+#: block is a strong hint and its absence means nothing, so it never decides the question alone.
+PREDICTION_HEAD_WEAK_MARKERS = ("shared_head", "embed_tokens")
+
+#: Where a prediction head lives when it is NOT inside the decoder's stack: its own stack, under
+#: this prefix. 18 of the corpus's models do this, every Qwen3-Next and Qwen3.5 upward among them.
+PREDICTION_HEAD_OWN_STACK = "mtp"
 
 #: Blocks stored in the checkpoint PAST the declared stack. A multi-token-prediction head is
 #: written as `model.layers.N` for N at or beyond the declared count, so a reader trusting the
@@ -122,10 +167,60 @@ SHARED_EXPERT_WIDTH_KEYS = ("shared_expert_intermediate_size", "moe_shared_exper
 DENSE_PREFIX_KEY = "num_dense_layers"
 DENSE_INDEX_KEY = "mlp_only_layers"
 
-#: Where the decoder stack hangs, as a dotted attribute path. Was `cli._decoder_layers`' private
-#: tuple. Two of these four are exercised by no checkpoint in the local cache, which is recorded
-#: in the conformance suite as untested rather than left to look like coverage.
-DECODER_STACK_PATHS = ("model.layers", "transformer.h", "gpt_neox.layers", "model.decoder.layers")
+#: Where the decoder stack hangs, as a dotted attribute path, MOST SPECIFIC FIRST AND BARE LAST.
+#:
+#: THE ORDER IS LOAD-BEARING AND IT IS THE WHOLE SAFETY STORY OF THIS LIST. Get it wrong on a
+#: multimodal checkpoint and the editor resolves to a vision tower and edits a camera, silently.
+#: Two rules keep that from happening:
+#:
+#:   * `model.layers` is first, always. It is correct for 151 of the 289 causal language models in
+#:     the architecture corpus, more than every other prefix combined.
+#:   * the bare prefixes `layers`, `h` and `blocks` are LAST, because they are the shortest
+#:     possible match and would shadow a longer correct one. `h` resolves on bloom and on gpt2-xl;
+#:     it must never be reached on a model whose decoder is `model.language_model.layers`.
+#:
+#: Order alone is not enough, which is why `decoder_stack` also CHECKS what it found. plamo-2 is
+#: the proof: its decoder is `model.layers.layers`, so the path `model.layers` resolves to a
+#: wrapper module rather than to the stack, and a resolver that accepted the first non-None answer
+#: would hand back an object with no blocks in it. See `_is_stack` and the `expect` argument.
+#:
+#: Counts below are from the 356-record architecture corpus, over the 289 records whose
+#: architecture indicates a generative language model, with each record's decoder stack identified
+#: by matching a stack's own length against the depth its decoder config declares. That rule is
+#: what keeps vision and audio towers out of this list: `visual.blocks` and
+#: `vision_tower.encoder.blocks` are deeper than the decoder on the checkpoints that carry them,
+#: so a names-only reading picks them and a depth-matched reading does not.
+DECODER_STACK_PATHS = (
+    # The ordinary case, and the overwhelming majority.
+    "model.layers",                      # 151 records
+    # Multimodal wrappers. Both spellings occur and neither is derivable from the other.
+    "model.language_model.layers",       # 28: every Gemma 4, Qwen3-VL, Qwen3.5 and 3.6 up, GLM-5.3
+    "language_model.model.layers",       # 13: every Kimi K2.5 to K3, MiniMax M3, Mistral-Small-4
+    "model.llm.layers",                  # 1: Inkling
+    "llm.model.layers",                  # 3: MiniCPM-o, sarashina2.2-ocr
+    # Older and vendor-specific decoder trees.
+    "transformer.h",                     # 4
+    "gpt_neox.layers",                   # 6
+    "model.decoder.layers",              # 0 in the corpus; kept because it was already shipped
+    # State-space and recurrent families, whose stack is a "backbone" rather than a "model".
+    "backbone.layers",                   # 11: every Nemotron 3, Mamba and Mamba-2
+    "language_model.backbone.layers",    # 1: Nemotron Nano VL
+    "hyena.backbone.layers",             # 1
+    "backbone.blocks",                   # 3: xLSTM, the only family with no attention anywhere
+    "rwkv7.blocks",                      # 1
+    # Doubly-nested, which is why a candidate is checked rather than trusted.
+    "model.layers.layers",               # 1: plamo-2
+    "layers.layers",                     # plamo-embedding
+    # Block-named trees.
+    "model.transformer.blocks",          # 2: OLMo-1B, LLaDA
+    "transformer.blocks",                # 2: dbrx
+    "transformer.layers",                # 1: OpenELM, stablelm
+    # BARE PREFIXES, LAST. The shortest possible match, so they only ever answer when nothing
+    # longer did.
+    "layers",                            # 5: DeepSeek V4 family, Mistral-Small-3.1
+    "h",                                 # 7: bloom, bloomz, gpt2-xl, openai-gpt
+    "blocks",                            # 2
+)
 
 #: The module the stack and the final norm are both children of. Was `residualleak.BASE_MODEL_PATHS`.
 #:
@@ -343,6 +438,9 @@ class ModelMap:
     #: Per-block kinds read from the live modules rather than from the config. The two can
     #: disagree and `disagreements` says so.
     module_kinds: Resolved
+    #: Where a multi-token prediction head sits, when tensor names were supplied. Unknown with a
+    #: reason otherwise, because the config's count says whether one exists and never where.
+    prediction_head: PredictionHead | None = None
     #: Why the residual stream's actual path is not in this record. Always populated.
     residual_path_why: str = ""
     #: Places the config and the modules do not agree. Each entry is a finding, not an error.
@@ -615,6 +713,23 @@ def heads(cfg):
 # ----------------------------------------------------------------------------------------------
 
 
+def block_of(name, prefix):
+    """The block index a tensor name belongs to, or None when it sits outside the stack.
+
+    THE FIRST INTEGER AFTER THE PREFIX AND NO OTHER. An expert index and a block index look
+    identical in a name, so `model.layers.7.mlp.experts.63.up_proj.weight` is block 7, and taking
+    the second integer would read a 48-block mixture of experts as a 128-block model.
+    """
+    if not prefix:
+        return None
+    head = prefix + "."
+    if not name.startswith(head):
+        return None
+    rest = name[len(head):]
+    digits = rest.split(".", 1)[0]
+    return int(digits) if digits.isdigit() else None
+
+
 def _walk(obj, path):
     """Follow a dotted attribute path, or None at the first missing step."""
     for attr in path.split("."):
@@ -624,7 +739,28 @@ def _walk(obj, path):
     return obj
 
 
-def decoder_stack(model, *, paths=None):
+def _is_stack(obj):
+    """Whether this object is a sequence of blocks rather than something merely in the way.
+
+    A path can resolve to a module that is not the stack. plamo-2 puts its decoder at
+    `model.layers.layers`, so walking `model.layers` lands on a wrapper, and a resolver that
+    accepted any non-None answer would return it and then iterate nothing. `nn.ModuleList`,
+    `nn.Sequential` and a plain list all satisfy this; a bare `nn.Module` does not, because
+    `nn.Module` defines no `__len__`.
+
+    BEING SIZED IS THE WHOLE TEST, AND AN EMPTY STACK PASSES IT. The first version required at
+    least one block and that broke a real caller: `measure_leak` builds a model with a deliberately
+    empty stack and has its own, better message for it ("no residual-stream positions"), which a
+    resolution failure here would replace with a worse one. An empty stack is still the stack.
+    """
+    try:
+        len(obj)
+    except TypeError:
+        return False
+    return True
+
+
+def decoder_stack(model, *, paths=None, expect=None):
     """The decoder blocks and the path they were found under.
 
     Returns `(stack_or_None, Resolved)`. Callers that cannot continue without a stack raise on
@@ -640,25 +776,46 @@ def decoder_stack(model, *, paths=None):
     The phrase "decoder layer stack" is the one `cli._decoder_layers` has always raised and it is
     user-facing, so it is preserved verbatim even though this module otherwise says "block".
     """
-    for path in (paths if paths is not None else DECODER_STACK_PATHS):
-        found = _walk(model, path)
-        if found is not None:
-            return found, Resolved(value=path, source=path)
     tried = paths if paths is not None else DECODER_STACK_PATHS
+    first = None
+    for path in tried:
+        found = _walk(model, path)
+        if found is None or not _is_stack(found):
+            continue
+        if expect is None:
+            return found, Resolved(value=path, source=path)
+        # THE DEPTH THE CONFIG DECLARES IS THE DISCRIMINATOR, and it is the only one that
+        # separates a decoder from a vision tower without guessing from names. A tower is a
+        # different depth from the decoder on every multimodal checkpoint in the corpus, so a
+        # stack whose length is the declared depth is the decoder. `expect + 1` is accepted
+        # because a multi-token prediction head stored inside the stack makes it one longer, which
+        # `prediction_head` confirms separately from the tensor names.
+        if len(found) in (expect, expect + 1):
+            return found, Resolved(value=path, source=path)
+        first = first or (found, path, len(found))
+    if first is not None:
+        # Nothing matched the declared depth, so the best available answer is returned WITH the
+        # disagreement attached rather than silently, because a stack that is not the declared
+        # depth is either a tower or a config that does not describe this checkpoint.
+        found, path, length = first
+        return found, Resolved(
+            value=path, source=f"{path}, whose length is {length} against a declared depth of "
+                               f"{expect}; no path matched the declared depth, so this may be an "
+                               f"encoder rather than the decoder")
     return None, Resolved(
         why=f"could not find the decoder layer stack on {type(model).__name__}; looked for "
             f"{', '.join(tried)}. Either this architecture arranges its modules some other way, "
             f"or the object passed in is not a causal language model.")
 
 
-def stack_or_raise(model, *, paths=None):
+def stack_or_raise(model, *, paths=None, expect=None):
     """The decoder stack, or a ValueError carrying the reason. The old `cli._decoder_layers`.
 
     Kept as its own function because the editor genuinely cannot proceed without the stack, so for
     that caller the degradation is a loud failure at load rather than a reason to carry. Everything
     that CAN carry on calls `decoder_stack` and reads the reason.
     """
-    stack, resolved = decoder_stack(model, paths=paths)
+    stack, resolved = decoder_stack(model, paths=paths, expect=expect)
     if stack is None:
         raise ValueError(resolved.why)
     return stack
@@ -711,6 +868,209 @@ def final_norm(model, *, names=None, paths=None):
             f"looked for were {', '.join(looked)}. Either this architecture normalises somewhere "
             f"else or it names it something new, and either way the output basis cannot be "
             f"worked out.")
+
+
+def stack_prefix_from_names(names):
+    """The decoder stack's dotted prefix, inferred from tensor names rather than from a path list.
+
+    WHY INFER WHEN THIS MODULE OWNS A PATH LIST. Because the two answer different questions.
+    `DECODER_STACK_PATHS` resolves a live module tree, where the attribute names are what the
+    library built. This resolves a checkpoint on disk, where all anybody has is strings, and the
+    corpus shows at least six legitimate decoder prefixes outside that list, including the
+    `language_model.model.layers` every Kimi uses and the bare `layers` DeepSeek V4 uses. Inferring
+    reads those without the list having to grow first.
+
+    The rule is structural: the stack is the dotted prefix followed by the longest run of
+    consecutive integers. Returns `(prefix, Resolved)` so a failure carries its reason.
+
+    TWO MEASURED LIMITATIONS, both from the 149-model corpus, where this agrees with an
+    independently computed answer on 125 of the 128 records that carry tensor names.
+
+    First, a tie is real and this function breaks it. `mistralai/Mistral-7B-Instruct-v0.3` ships
+    BOTH conventions in one repository, a `layers.*` tree of 288 tensors and a `model.layers.*`
+    tree of 290, each 32 deep. A prefix that `DECODER_STACK_PATHS` already knows therefore wins a
+    tie, because that is the one a loader will actually build.
+
+    Second, and it cannot be fixed here: **this cannot tell a decoder from a vision tower.** On a
+    vision-language checkpoint the deepest stack is sometimes the tower, and names alone carry no
+    signal for which is which. On `allenai/olmOCR-2` the corpus's own deepest stack is
+    `visual.blocks`; on `moonshotai/Kimi-VL-A3B-Instruct` it is `vision_tower.encoder.blocks`
+    while the decoder is `language_model.model.layers`. So a caller holding a multi-tower
+    checkpoint must not treat this as the decoder without checking, and
+    `test_a_vision_tower_can_win_the_inference_and_that_is_a_known_limitation` pins the behaviour
+    so nobody discovers it by surprise.
+    """
+    groups = {}
+    for name in names:
+        parts = name.split(".")
+        for position, part in enumerate(parts):
+            if part.isdigit() and position:
+                groups.setdefault(".".join(parts[:position]), set()).add(int(part))
+                break
+    if not groups:
+        return None, Resolved(
+            why="no tensor name holds an integer path component, so these names describe no "
+                "indexed stack. A checkpoint with no indexed stack is not a decoder.")
+    # THE TIE-BREAK USES THE PATH LIST'S ORDER, because that order already encodes which prefix a
+    # loader would build. Preferring merely "a prefix the list knows" stopped working the moment
+    # the list learned both `model.layers` and a bare `layers`, since Mistral v0.3 ships both and
+    # the shorter one would then win on length. `_path_rank` is the position in the list, so
+    # earlier beats later and anything unknown comes last.
+    best = max(groups.items(), key=lambda kv: (_longest_run(kv[1]), len(kv[1]),
+                                               -_path_rank(kv[0]), -len(kv[0])))
+    contested = sorted(p for p in groups
+                       if p != best[0] and _longest_run(groups[p]) == _longest_run(best[1]))
+    source = "tensor names"
+    if contested:
+        source += f"; {len(contested)} other prefix(es) tied on depth: {contested[:3]}"
+    return best[0], Resolved(value=best[0], source=source)
+
+
+def _path_rank(prefix):
+    """Where `prefix` sits in `DECODER_STACK_PATHS`, or past the end when the list does not know it.
+
+    The list is ordered by which prefix a loader would actually build, so a smaller rank is a
+    better answer and an unknown prefix is worse than every known one.
+    """
+    try:
+        return DECODER_STACK_PATHS.index(prefix)
+    except ValueError:
+        return len(DECODER_STACK_PATHS)
+
+
+def _longest_run(indices):
+    """The length of the longest run of consecutive integers in a set. Always at least 1."""
+    ordered = sorted(indices)
+    best = run = 1
+    for previous, current in itertools.pairwise(ordered):
+        run = run + 1 if current == previous + 1 else 1
+        best = max(best, run)
+    return best
+
+
+@dataclass(frozen=True)
+class PredictionHead:
+    """Where a multi-token prediction head is, read from TENSOR NAMES rather than from a count.
+
+    WHY THE COUNT IS NOT ENOUGH, AND THIS IS THE WHOLE REASON THIS TYPE EXISTS. `EXTRA_BLOCK_KEYS`
+    tells you a checkpoint HAS a prediction head. It cannot tell you WHERE, and the corpus shows
+    the two conventions are not split by vendor, by size or by era: DeepSeek V3, V3.2 and R1 keep
+    the head inside `model.layers`, and DeepSeek V4-Flash, V4-Pro and V4.1-Flash keep it in its own
+    stack, with the SAME `num_nextn_predict_layers` key in the config. The same vendor changed
+    convention between versions.
+
+    And the key is not even necessary. Eight corpus models carry a separate `mtp` stack with NO
+    config key at all: Qwen3-Next-80B, four MiMo V2 variants, LongCat-Flash-Lite and Inkling. A
+    reader that only consults the config misses every one of them.
+
+    So the count answers "how many", the names answer "where", and only the second one tells an
+    editor whether the last entry of the stack it is about to walk is a decoder block.
+    """
+
+    #: Block indices inside the decoder's own stack that are prediction heads.
+    in_stack: Resolved
+    #: The prefix of a separate prediction-head stack, when there is one.
+    own_stack: Resolved
+    #: Which markers were actually seen, sorted. Evidence for the verdict.
+    markers: tuple = ()
+
+    @property
+    def anywhere(self):
+        """Whether a prediction head was found at all, by either convention."""
+        return bool(self.in_stack.unwrap([])) or self.own_stack.known
+
+
+def prediction_head(names, *, stack_prefix=None):
+    """Where the prediction head is, from an iterable of tensor names.
+
+    `names` is any iterable of full tensor names, which is what a safetensors index or a shard
+    header gives you, so this answers the question without loading a model or reading a weight.
+    `stack_prefix` is the decoder stack's dotted prefix; when it is None only the separate-stack
+    convention can be detected, and the in-stack answer says so rather than reporting none.
+    """
+    names = list(names)
+    if not names:
+        why = ("no tensor names were given, so where a prediction head sits cannot be read. The "
+               "config's own count says whether one EXISTS and never where it is stored.")
+        return PredictionHead(in_stack=Resolved(why=why), own_stack=Resolved(why=why))
+
+    seen, blocks = set(), set()
+    head = (stack_prefix + ".") if stack_prefix else None
+    own = _own_stack_prefix(names)
+    for name in names:
+        if head is None or not name.startswith(head):
+            continue
+        index = block_of(name, stack_prefix)
+        if index is None:
+            continue
+        for marker in PREDICTION_HEAD_MARKERS + PREDICTION_HEAD_WEAK_MARKERS:
+            if f".{marker}." in name or name.endswith("." + marker):
+                seen.add(marker)
+                # ONLY THE STRONG MARKERS DECIDE. A `shared_head` or an `embed_tokens` is recorded
+                # as evidence and does not on its own make a block a prediction head, because
+                # neither is present on all fifteen corpus models that have one.
+                if marker in PREDICTION_HEAD_MARKERS:
+                    blocks.add(index)
+
+    in_stack = (Resolved(value=sorted(blocks), source="tensor names") if blocks else
+                Resolved(value=[], source="tensor names") if head is not None else
+                Resolved(why="no decoder stack prefix was given, so the in-stack convention "
+                             "could not be checked"))
+    return PredictionHead(
+        in_stack=in_stack,
+        own_stack=(Resolved(value=own, source="tensor names") if own else
+                   Resolved(why=f"no tensor name sits under a {PREDICTION_HEAD_OWN_STACK!r} "
+                                f"stack, so this checkpoint does not use that convention")),
+        markers=tuple(sorted(seen)))
+
+
+def _own_stack_prefix(names):
+    """The walkable prefix of a separate prediction-head stack, or None.
+
+    TWO SUB-CONVENTIONS, BOTH IN THE CORPUS, and the first version of this function got the second
+    one wrong. Qwen3-Next and Qwen3.5 upward write `mtp.layers.{i}.input_layernorm.weight`, so the
+    prefix is `mtp.layers`; DeepSeek V4 writes `mtp.{i}.attn.wkv.weight`, so the blocks hang
+    directly off `mtp` and the prefix is `mtp`. Returning the bare marker for both would hand a
+    caller a prefix it cannot walk on the Qwen family.
+
+    Qwen also writes `mtp.fc.weight`, a fusion projection that sits OUTSIDE the indexed blocks.
+    Taking the first matching name returned `mtp` because `fc` sorts before `layers`, which is the
+    bug. So the prefix is decided by where an INDEX actually appears, not by the first name seen.
+    """
+    marker = PREDICTION_HEAD_OWN_STACK
+    for name in names:
+        parts = name.split(".")
+        if marker not in parts:
+            continue
+        at = parts.index(marker)
+        if at + 1 < len(parts) and parts[at + 1].isdigit():
+            return ".".join(parts[: at + 1])
+        if at + 2 < len(parts) and parts[at + 2].isdigit():
+            return ".".join(parts[: at + 2])
+    return None
+
+
+def trailing_block_is_prediction_head(names, *, stack_prefix, total=None):
+    """Is the LAST entry of the decoder stack a prediction head rather than a decoder block?
+
+    The question an editor actually has: it is about to walk `total` blocks and needs to know
+    whether the last one is a decoder block. Returns a `Resolved` bool so "nobody can tell"
+    survives as its own answer rather than collapsing into False.
+    """
+    found = prediction_head(names, stack_prefix=stack_prefix)
+    if not found.in_stack.known:
+        return Resolved(why=found.in_stack.why)
+    heads = found.in_stack.value
+    if total is None:
+        indices = [block_of(n, stack_prefix) for n in names if stack_prefix]
+        indices = [i for i in indices if i is not None]
+        if not indices:
+            return Resolved(why="no tensor name sits under the decoder stack prefix, so there is "
+                                "no trailing block to describe")
+        total = max(indices) + 1
+    return Resolved(value=(total - 1) in heads, source="tensor names",
+                    why=None) if heads else Resolved(
+        value=False, source="tensor names")
 
 
 def block_outproj_param(block):
@@ -885,7 +1245,7 @@ def _config_dict(cfg):
     return {}
 
 
-def describe(model=None, config=None, *, count_mixers=True):
+def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
     """One `ModelMap` from a config, a live model, or both.
 
     Giving both is the useful case and the reason `disagreements` exists: the config's claim and
@@ -915,7 +1275,7 @@ def describe(model=None, config=None, *, count_mixers=True):
     disagreements = []
 
     if model is not None:
-        stack, stack_path = decoder_stack(model)
+        stack, stack_path = decoder_stack(model, expect=counts.declared.unwrap())
         if stack is None:
             stack_len = Resolved(why=stack_path.why)
             module_kinds = Resolved(why=stack_path.why)
@@ -949,6 +1309,27 @@ def describe(model=None, config=None, *, count_mixers=True):
             f"for: {list(mech.unmapped)}. Those blocks are recorded as unknown rather than "
             f"guessed, and adding them to MECHANISM_BY_VALUE is how a new family is supported.")
 
+    # THE TENSOR NAMES ANSWER A QUESTION NEITHER OTHER SOURCE CAN. The config says whether a
+    # prediction head exists; the module tree shows a stack whose last entry looks like any other
+    # block. Only the names say whether that last entry is a decoder block at all.
+    # The prefix comes from the module tree when there is one and from the names otherwise, so a
+    # record built from a safetensors index alone can still answer the question. The first version
+    # only used the module tree, which meant the index-only case, the one a probe actually has,
+    # silently reported "no stack prefix was given".
+    names_prefix = stack_path.value if stack_path.known else None
+    if names_prefix is None and tensor_names:
+        names_prefix, _ = stack_prefix_from_names(tensor_names)
+    head = prediction_head(tensor_names or [], stack_prefix=names_prefix)
+    if tensor_names and head.in_stack.known and head.in_stack.value:
+        disagreements.append(
+            f"blocks {head.in_stack.value} carry a multi-token prediction head's own markers "
+            f"({list(head.markers)}), so they are not decoder blocks. Anything walking this "
+            f"stack to edit it should stop before them.")
+    if tensor_names and head.own_stack.known:
+        disagreements.append(
+            f"a prediction head is stored in its own stack under {head.own_stack.value!r}, so "
+            f"the decoder stack's own blocks are all decoder blocks")
+
     archs = config.get("architectures")
     return ModelMap(
         evidence=("config+modules" if model is not None and config else
@@ -970,6 +1351,7 @@ def describe(model=None, config=None, *, count_mixers=True):
         base_module_path=base_path,
         final_norm_name=norm_name,
         module_kinds=module_kinds,
+        prediction_head=head,
         residual_path_why=RESIDUAL_PATH_WHY,
         disagreements=tuple(disagreements))
 

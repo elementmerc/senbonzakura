@@ -638,3 +638,226 @@ def test_a_partly_read_mechanism_list_blocks_the_attention_count_through_the_sec
     mapping = mm.describe(config={"num_hidden_layers": 6, "attn_layer_indices": [0, 3]})
     assert mapping.mechanisms.without_attention() is None
     assert "how many blocks have no attention" in mapping.unanswerable()
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE DECODER PATH LIST, 2026-10-08. One case per family opened up, because a path added without
+# a test is the editor attempting something nobody has checked.
+#
+# Measured against the 356-record architecture corpus, over the 223 records whose architecture
+# indicates a generative language model AND whose tensor stems give a stack matching the depth
+# their decoder config declares: the four paths this tool shipped for years opened 149 of them,
+# and the list below opens 220. The 3 it still refuses are a deliberate exclusion, pinned by
+# `test_an_encoder_decoder_and_a_chatglm_style_encoder_name_are_deliberately_refused`.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def tree_at(prefix, blocks=4, width=8):
+    """A model whose decoder stack sits at `prefix`, built as real modules."""
+    root = nn.Module()
+    parts = prefix.split(".")
+    node = root
+    for part in parts[:-1]:
+        child = nn.Module()
+        setattr(node, part, child)
+        node = child
+    setattr(node, parts[-1], nn.ModuleList([block("attention", width) for _ in range(blocks)]))
+    return root
+
+
+#: Every prefix the list carries, with who uses it. The counts are corpus frequencies among
+#: in-scope causal language models, and the comment is the family a reader will recognise.
+FAMILY_PATHS = (
+    ("model.layers", "the ordinary case: Llama, Qwen, Mistral, Phi"),
+    ("model.language_model.layers", "Gemma 4, Qwen3-VL, Qwen3.5 and up, GLM-5.3-Flash"),
+    ("language_model.model.layers", "every Kimi K2.5 to K3, MiniMax M3, Mistral-Small-4"),
+    ("model.llm.layers", "Inkling"),
+    ("llm.model.layers", "MiniCPM-o, sarashina2.2-ocr"),
+    ("transformer.h", "GPT-2 family"),
+    ("gpt_neox.layers", "GPT-NeoX family"),
+    ("model.decoder.layers", "already shipped; no corpus record exercises it"),
+    ("backbone.layers", "every Nemotron 3, Mamba and Mamba-2"),
+    ("language_model.backbone.layers", "Nemotron Nano VL"),
+    ("hyena.backbone.layers", "Hyena"),
+    ("backbone.blocks", "xLSTM, the only family with no attention anywhere"),
+    ("rwkv7.blocks", "RWKV7"),
+    ("model.layers.layers", "plamo-2, which nests the same word twice"),
+    ("layers.layers", "plamo-embedding"),
+    ("model.transformer.blocks", "OLMo-1B, LLaDA"),
+    ("transformer.blocks", "dbrx"),
+    ("transformer.layers", "OpenELM, stablelm"),
+    ("layers", "DeepSeek V4 family, Mistral-Small-3.1"),
+    ("h", "bloom, bloomz, gpt2-xl, openai-gpt"),
+    ("blocks", "bare block stacks"),
+)
+
+
+@pytest.mark.parametrize(("prefix", "who"), FAMILY_PATHS, ids=[p for p, _ in FAMILY_PATHS])
+def test_every_family_in_the_path_list_resolves_to_its_stack(prefix, who):
+    model = tree_at(prefix, blocks=5)
+    stack, where = mm.decoder_stack(model)
+    assert stack is not None, f"{prefix} ({who}) does not resolve"
+    assert where.value == prefix
+    assert len(stack) == 5
+
+
+@pytest.mark.parametrize(("prefix", "who"), FAMILY_PATHS, ids=[p for p, _ in FAMILY_PATHS])
+def test_every_family_resolves_through_the_editors_own_entry_point(prefix, who):
+    """`cli._decoder_layers` is what the abliterator actually calls, so each family is driven
+    through it rather than only through the map.
+    """
+    from senbonzakura import cli
+    model = tree_at(prefix, blocks=3)
+    model.config = _Cfg(num_hidden_layers=3)
+    assert len(cli._decoder_layers(model)) == 3
+
+
+@pytest.mark.parametrize(("prefix", "who"), FAMILY_PATHS, ids=[p for p, _ in FAMILY_PATHS])
+def test_every_family_passes_the_editors_writer_guard(prefix, who):
+    """GUARDRAIL 3: no family is opened up without `refuse_unrecognised_writers` exercised on it.
+
+    Resolving a stack is not the same as being able to edit it. A path added without this check
+    means the editor finds blocks it cannot safely write to and discovers that later, mid-run.
+    """
+    from senbonzakura import cli
+    model = tree_at(prefix, blocks=3)
+    layers = mm.stack_or_raise(model)
+    cli.refuse_unrecognised_writers(layers, 8, log=lambda _m: None)
+
+
+class _Cfg:
+    """A config object shaped the way `modelmap._config_dict` reads one."""
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_model_layers_is_first_so_a_vision_tower_can_never_shadow_it():
+    """GUARDRAIL 1. The worst outcome available here is resolving to a tower and editing a camera,
+    silently, so the ordering is asserted rather than trusted to survive an alphabetical tidy-up.
+    """
+    assert mm.DECODER_STACK_PATHS[0] == "model.layers"
+
+
+def test_the_bare_prefixes_come_last_so_they_cannot_shadow_a_longer_correct_one():
+    """A bare `layers` or `h` is the shortest possible match. On a Kimi, whose decoder is
+    `language_model.model.layers`, a bare `layers` reached first would resolve to nothing useful
+    or to the wrong tree.
+    """
+    paths = list(mm.DECODER_STACK_PATHS)
+    bare = [p for p in paths if "." not in p]
+    assert bare == ["layers", "h", "blocks"], "the bare prefixes are these three and no others"
+    # Every one of them sits in the trailing block of the list, so no dotted path follows a bare
+    # one. Within that block the order between them does not matter, because no model carries two.
+    assert paths[-len(bare):] == bare
+    for dotted in paths[: -len(bare)]:
+        assert "." in dotted, f"{dotted} is bare and sits before the trailing group"
+
+
+def test_a_bare_prefix_does_not_win_when_a_longer_one_is_present():
+    """The real shape of `mistralai/Mistral-7B-Instruct-v0.3`, which ships BOTH trees."""
+    model = nn.Module()
+    model.layers = nn.ModuleList([block("attention") for _ in range(32)])
+    inner = nn.Module()
+    inner.layers = nn.ModuleList([block("attention") for _ in range(32)])
+    model.model = inner
+    _stack, where = mm.decoder_stack(model)
+    assert where.value == "model.layers"
+
+
+def test_a_wrapper_that_is_not_a_stack_is_walked_past():
+    """plamo-2's decoder is `model.layers.layers`, so `model.layers` resolves to a module that
+    holds the stack rather than to the stack. Accepting the first non-None answer would hand back
+    a wrapper and then iterate nothing.
+    """
+    model = tree_at("model.layers.layers", blocks=6)
+    stack, where = mm.decoder_stack(model)
+    assert where.value == "model.layers.layers"
+    assert len(stack) == 6
+
+
+def test_an_empty_stack_still_resolves_because_it_is_still_the_stack():
+    """`measure_leak` builds exactly this and has its own better message for it, so a resolution
+    failure here would replace a good sentence with a worse one.
+    """
+    model = nn.Module()
+    model.model = nn.Module()
+    model.model.layers = nn.ModuleList([])
+    stack, where = mm.decoder_stack(model)
+    assert stack is not None and len(stack) == 0
+    assert where.value == "model.layers"
+
+
+def test_the_declared_depth_picks_the_decoder_over_a_deeper_vision_tower():
+    """GUARDRAIL 2, and the mechanism that answers it. Names alone cannot tell a decoder from a
+    tower; the depth the decoder's own config declares can, because on every multimodal record in
+    the corpus the tower is a different depth.
+    """
+    model = nn.Module()
+    model.model = nn.Module()
+    model.model.layers = nn.ModuleList([block("attention") for _ in range(32)])   # the tower
+    lm = nn.Module()
+    lm.layers = nn.ModuleList([block("attention") for _ in range(12)])            # the decoder
+    model.model.language_model = lm
+    _stack, where = mm.decoder_stack(model, expect=12)
+    assert where.value == "model.language_model.layers", (
+        "with a declared depth of 12 the 12-block stack is the decoder, even though a 32-block "
+        "stack sits at an earlier path")
+
+
+def test_without_a_declared_depth_the_earlier_path_wins_and_that_is_the_documented_risk():
+    model = nn.Module()
+    model.model = nn.Module()
+    model.model.layers = nn.ModuleList([block("attention") for _ in range(32)])
+    lm = nn.Module()
+    lm.layers = nn.ModuleList([block("attention") for _ in range(12)])
+    model.model.language_model = lm
+    _stack, where = mm.decoder_stack(model)
+    assert where.value == "model.layers"
+
+
+def test_a_stack_that_matches_no_declared_depth_is_returned_with_the_disagreement_attached():
+    """Returned rather than refused, because the best available answer beats nothing, and WITH
+    the disagreement because a stack that is not the declared depth may be an encoder.
+    """
+    model = tree_at("model.layers", blocks=7)
+    stack, where = mm.decoder_stack(model, expect=40)
+    assert stack is not None
+    assert "against a declared depth of 40" in where.source
+    assert "may be an encoder" in where.source
+
+
+def test_a_prediction_head_inside_the_stack_still_matches_the_declared_depth():
+    """DeepSeek V3 declares 61 and its stack is 62, because the head is stored in it."""
+    model = tree_at("model.layers", blocks=62)
+    _stack, where = mm.decoder_stack(model, expect=61)
+    assert where.value == "model.layers"
+    assert "disagree" not in (where.source or "")
+
+
+def test_an_encoder_decoder_and_a_chatglm_style_encoder_name_are_deliberately_refused():
+    """THE EXCLUSION IS A DECISION, SO IT IS PINNED WITH ITS COST.
+
+    Three corpus records resolve to none of these paths: two T5-family models at `decoder.block`
+    and `decoder.layers`, and `thu-coai/ShieldLM-6B-chatglm3`, whose decoder really does live at
+    `transformer.encoder.layers`.
+
+    They are left out because the name cannot tell ChatGLM3's decoder from a genuine encoder, and
+    on an encoder-decoder whose two halves are the same depth the declared-depth check cannot
+    either. Adding the path would let the editor resolve an ENCODER on a T5 and edit it with
+    complete confidence. The cost is that ChatGLM3 stays unopenable, which is one record, and the
+    alternative risks silently editing the wrong half of a model.
+    """
+    for excluded in ("decoder.block", "decoder.layers", "transformer.encoder.layers"):
+        assert excluded not in mm.DECODER_STACK_PATHS
+    model = tree_at("transformer.encoder.layers", blocks=28)
+    stack, where = mm.decoder_stack(model)
+    assert stack is None
+    assert "could not find the decoder layer stack" in where.why
+
+
+def test_the_path_list_has_no_duplicates_and_every_entry_is_a_dotted_attribute_path():
+    paths = mm.DECODER_STACK_PATHS
+    assert len(set(paths)) == len(paths)
+    for path in paths:
+        assert path and not path.startswith(".") and not path.endswith(".")
+        assert all(part.isidentifier() for part in path.split(".")), path

@@ -119,6 +119,8 @@ from dataclasses import dataclass, field
 
 import torch
 
+from . import modelmap
+
 #: Below this many probe prompts the mean is not worth reporting. The metric has no run-to-run
 #: variance worth speaking of, so this is a floor against a caller handing over one prompt and
 #: quoting the result as a property of the model, not a power calculation.
@@ -159,27 +161,23 @@ NORM_DIAGONAL_TOL = 1e-4
 #: is alive rather than looking hung.
 HEARTBEAT_SECONDS = 30.0
 
-#: Attribute names that hold the final norm on the architectures this project has met. A name this
-#: list does not know is a WARNING and not an error: the per-position profile does not need the
-#: norm at all, so the instrument degrades to its primary output rather than failing.
-FINAL_NORM_NAMES = ("norm", "final_layernorm", "final_layer_norm", "ln_f", "final_norm")
-
-#: Where the decoder stack hangs, in the same order `cli._decoder_layers` tries. The final norm is
-#: a sibling of the stack rather than of the stack's entries, so one walk finds both.
+#: Attribute names that hold the final norm, and where the decoder stack hangs. BOTH ARE NOW
+#: RE-EXPORTS FROM `modelmap` RATHER THAN SECOND COPIES, which is what this consolidation bought.
 #:
-#: THIS IS A SECOND LIST OF ARCHITECTURE PATHS AND THAT IS A DELIBERATE CHOICE, because this
-#: project has paid for an undeclared second copy before. `cli._decoder_layers` answers "where are
-#: the blocks" and names paths ending in the stack's own attribute; this answers "which module are
-#: they a child of", which is a different question and the reason the strings differ rather than
-#: being derivable from each other. The stack itself is still resolved by importing that one
-#: function, so there is exactly one answer to the question it owns.
+#: The comment that used to sit here argued the duplication was deliberate, on the grounds that
+#: "where are the blocks" and "which module are they a child of" are different questions whose
+#: strings are not derivable from each other. That part was correct and it survives: `modelmap`
+#: carries both lists, separately, and says the same thing about why. What has changed is that
+#: there is now one place holding them, so the bounded cost the old comment described, a visible
+#: degradation on a model nobody has measured yet, is no longer a cost anybody has to accept.
 #:
-#: What the duplication can cost is bounded on purpose. If `cli` learns an architecture this list
-#: does not know, `final_norm` returns a reason, `measure_leak` logs it and records it in
-#: `warnings`, and the per-position profile comes out unaffected because it never touches the
-#: norm. The failure mode is a visible degradation on a model nobody has measured yet, never a
-#: wrong number on one somebody has.
-BASE_MODEL_PATHS = ("model", "transformer", "gpt_neox", "model.decoder")
+#: They stay as module-level names here for two reasons. A test patches `FINAL_NORM_NAMES` on this
+#: module to prove the degradation path, and `final_norm` passes whatever it finds here through to
+#: the map, so that patch still steers the resolution instead of silently testing nothing. And
+#: `residualleak` is on a live code path through `abliterate --leak-report`, so a name another
+#: module may already import does not get deleted as part of a tidy-up.
+FINAL_NORM_NAMES = modelmap.FINAL_NORM_NAMES
+BASE_MODEL_PATHS = modelmap.BASE_MODEL_PATHS
 
 
 def leak_fraction(residual, direction):
@@ -471,31 +469,32 @@ def leak_block(report=None, *, refused_because=None, prompts=None, requested=Tru
     }
 
 
-def _decoder_layers(model):
-    """The decoder stack, resolved by the one function that already resolves it.
+#: The sentence that makes a degradation here readable. It belongs to THIS module and not to the
+#: map, because it is a claim about what the leak measurement still produces: the per-position
+#: profile never touches the final norm, so losing the norm costs the output figure and nothing
+#: else. A general-purpose resolver has no business asserting that.
+STILL_MEASURED = " The per-position figures are unaffected."
 
-    Imported inside the call rather than at module scope on purpose. `cli.py` pulls in torch,
-    optuna and transformers, and this module is meant to cost nothing to import; by the time
-    anybody calls this they are holding a live model, so the cost is already paid. Re-listing the
-    architecture paths here would be a second copy of a list this project has already drifted
-    once, which is the defect `writers.py` exists to keep closed.
+
+def _decoder_layers(model):
+    """The decoder stack, resolved by the one module that owns every architecture path.
+
+    Was a call into `cli._decoder_layers`, whose own comment said re-listing the paths here would
+    be a second copy of a list this project had already drifted once. `modelmap` is where that
+    list now lives, and it imports nothing heavier than the standard library, so this no longer
+    has to defer the import to call time to keep this module cheap.
     """
-    from .cli import _decoder_layers as resolve
-    return resolve(model)
+    return modelmap.stack_or_raise(model)
 
 
 def _base_model(model):
-    """The module the decoder stack and the final norm both hang off, or None."""
-    for path in BASE_MODEL_PATHS:
-        obj = model
-        for attr in path.split("."):
-            obj = getattr(obj, attr, None)
-            if obj is None:
-                break
-        else:
-            if getattr(obj, "layers", None) is not None or getattr(obj, "h", None) is not None:
-                return obj
-    return None
+    """The module the decoder stack and the final norm both hang off, or None.
+
+    `BASE_MODEL_PATHS` is passed through rather than left to the map's default so that a test
+    patching THIS module's copy still steers the resolution. One implementation, one list, and the
+    patch keeps working.
+    """
+    return modelmap.base_module(model, paths=BASE_MODEL_PATHS)[0]
 
 
 def final_norm(model):
@@ -504,22 +503,17 @@ def final_norm(model):
     A name this project does not recognise is a degradation and not a failure, because the
     per-position profile never touches the norm. The reason comes back phrased for a person so
     the caller can put it in front of one rather than inventing a sentence.
+
+    The resolution is `modelmap.final_norm`'s and the SHAPE is this module's: callers here read a
+    two-tuple whose second element is the attribute name on success and the reason on failure, and
+    that contract is on a live path (`abliterate --leak-report`) so it is preserved exactly rather
+    than modernised. The map's own form returns a `Resolved`, which is the better shape for new
+    callers and the wrong one to impose on this one.
     """
-    base = _base_model(model)
-    if base is None:
-        return None, (f"the model tree on {type(model).__name__} does not expose a base module "
-                      f"this tool recognises, so its final norm could not be found. The "
-                      f"per-position figures are unaffected.")
-    for name in FINAL_NORM_NAMES:
-        mod = getattr(base, name, None)
-        if mod is not None and getattr(mod, "weight", None) is not None:
-            return mod, name
-    named = ", ".join(FINAL_NORM_NAMES)
-    return None, (f"no final norm with a learned weight was found on "
-                  f"{type(base).__name__}; the names looked for were {named}. Either this "
-                  f"architecture normalises somewhere else or it names it something new, and "
-                  f"either way the output basis cannot be worked out. The per-position figures "
-                  f"are unaffected.")
+    mod, where = modelmap.final_norm(model, names=FINAL_NORM_NAMES, paths=BASE_MODEL_PATHS)
+    if mod is not None:
+        return mod, where.value
+    return None, where.why + STILL_MEASURED
 
 
 def diagonal_candidates(weight):

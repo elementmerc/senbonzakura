@@ -893,3 +893,73 @@ def test_the_same_config_as_a_keyword_reads_normally():
     mapping = mm.describe(config={"num_hidden_layers": 27, "n_routed_experts": 64})
     assert mapping.blocks.total.value == 27
     assert mapping.experts.routed.value == 64
+
+
+# ── a fifth spelling of the mechanism list, nested and one-based ─────────────────────
+
+def test_the_nested_inverted_spelling_is_read_one_based():
+    """THE OFF-BY-ONE IS THE WHOLE POINT, and it is the reason this is a separate path.
+
+    Kimi Linear inverts its mechanism list like Bamba does, nests it a level down under
+    `linear_attn_config`, and numbers it from ONE. Read with the zero-based rule the other inverted
+    spelling uses, every block comes out shifted by one: the blocks reported as full attention are
+    their neighbours, the column is wrong from end to end, and nothing in the record looks wrong.
+
+    The convention is not inferred. This repository's own vendored converter carries the comment
+    "the layer lists are 1-indexed, as KimiLinearConfig.is_kda_layer uses (layer_idx + 1)" and uses
+    `(il + 1) in full_attn_layers` in two unrelated places.
+    """
+    mapping = mm.describe(config={
+        "num_hidden_layers": 8,
+        "linear_attn_config": {"full_attn_layers": [4, 8], "short_conv_kernel_size": 4}})
+    attention = [i for i, k in enumerate(mapping.mechanisms.kinds.value)
+                 if k is mm.BlockKind.ATTENTION]
+    assert attention == [3, 7], (
+        "a one-based 4 and 8 are block indices 3 and 7. Reading them as 4 and 7 is the off-by-one "
+        "this path exists to prevent")
+
+
+def test_the_nested_spelling_names_itself_as_the_source():
+    """A record whose source says `attn_layer_indices` for a key that is not there sends the next
+    reader to the wrong line of the config file.
+    """
+    mapping = mm.describe(config={
+        "num_hidden_layers": 4, "linear_attn_config": {"full_attn_layers": [2]}})
+    assert mapping.mechanisms.kinds.source == "linear_attn_config.full_attn_layers"
+
+
+def test_the_unlisted_blocks_are_unknown_rather_than_guessed_as_the_other_mechanism():
+    """Same discipline as Bamba's. The complement is this family's other mixer and the config does
+    not say what it is, so naming it would be filling in the checkpoint we happen to expect.
+    """
+    mapping = mm.describe(config={
+        "num_hidden_layers": 4, "linear_attn_config": {"full_attn_layers": [4]}})
+    kinds = [k.name for k in mapping.mechanisms.kinds.value]
+    assert kinds == ["UNKNOWN", "UNKNOWN", "UNKNOWN", "ATTENTION"]
+
+
+def test_the_flat_spelling_still_wins_when_both_are_present():
+    """Order matters: the flat key is the one whose sense this module has measured against a real
+    checkpoint, so a config carrying both is read by the better-evidenced path.
+    """
+    mapping = mm.describe(config={
+        "num_hidden_layers": 4, "attn_layer_indices": [0],
+        "linear_attn_config": {"full_attn_layers": [4]}})
+    assert mapping.mechanisms.kinds.source == "attn_layer_indices"
+    assert mapping.mechanisms.kinds.value[0] is mm.BlockKind.ATTENTION
+
+
+def test_a_nested_block_that_is_not_a_list_does_not_become_a_mechanism_column():
+    """`linear_attn_config` exists on configs that do not carry the layer list at all."""
+    mapping = mm.describe(config={
+        "num_hidden_layers": 4, "linear_attn_config": {"short_conv_kernel_size": 4}})
+    assert mapping.mechanisms.kinds.value is None
+    assert "linear_attn_config.full_attn_layers" in mapping.mechanisms.kinds.why
+
+
+def test_the_unresolved_reason_names_all_five_spellings_it_looked_for():
+    """The reason is what a reader uses to decide whether their config is spelled a sixth way."""
+    why = mm.describe(config={"num_hidden_layers": 4}).mechanisms.kinds.why
+    for spelling in ("layer_types", "layers_block_type", "hybrid_override_pattern",
+                     "attn_layer_indices", "linear_attn_config.full_attn_layers"):
+        assert spelling in why, f"{spelling} is searched for and not named in the reason"

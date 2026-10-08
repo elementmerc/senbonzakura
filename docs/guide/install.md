@@ -235,6 +235,31 @@ active. Size the card for the total, 30B, not the 3B it advertises.
 tensor cannot be rewritten in place, which is the same reason a GGUF cannot be uncensored. It is
 accepted on the measuring commands, where nothing is being rewritten.
 
+### Models trained at very low precision cannot be edited at all, by us or by anybody
+
+That refusal is narrower than the real limit, so here is the real one.
+
+A growing number of models are **trained** at very low precision rather than squeezed down
+afterwards: around 1.6 bits per weight, where an ordinary model uses 16. The training knows about
+the squeezing and compensates for it, which is why the result stays good. The usual name for this
+is quantisation-aware training.
+
+Our edit cannot touch those models, and the reason is arithmetic rather than effort. Think of each
+weight as a dial that can only point at three positions. The edit works by rotating a whole sheet
+of those dials slightly, and the rotated positions fall between the three. To store the result you
+have to snap every dial back to its nearest allowed position, and that snapping is what the
+original training spent its whole run compensating for. Do it afterwards, in one pass, with none
+of that compensation, and you get a model that is worse in ways nobody can predict. So the edit
+destroys the thing it is editing.
+
+This is not a gap we expect to close soon, and we would rather say so than imply otherwise.
+
+**What does still work is the measuring.** Reading a model is just running it, and running a
+low-precision model is exactly what it was built for. So if somebody else has uncensored one of
+these, by whatever method, every instrument here can measure what their edit did to it: the
+refusal rate, the harm recognition, the fluency, the capability cost. You cannot use this tool to
+edit a 1.6-bit model and you can use it to check one.
+
 **What happens if you try it anyway on too small a card:** `accelerate` will place what fits and
 push the rest to host RAM or to disk. Host RAM is slow and works. Disk **does not work**, and the
 tool refuses rather than pretending: a disk-offloaded tensor hands back a fresh copy on every read,

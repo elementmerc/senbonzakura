@@ -57,7 +57,6 @@ thing to watch is the offload directory's growth against the pre-flight's estima
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 #: Written into the directions file so a reader can tell an unsearched set from a searched one.
@@ -150,23 +149,82 @@ def check_offload_dir(offload_dir, model_dir, *, need_bytes=None, log=print):
             f"it and may evict a file while the pass is still reading it. Pick an ordinary "
             f"directory.")
 
-    offload.mkdir(parents=True, exist_ok=True)
-    if need_bytes is None:
+    # THE SPACE CHECK COMES BEFORE THE DIRECTORY EXISTS, which is the order a pre-flight wants:
+    # creating it first meant a refusal left behind a directory it had just decided not to use.
+    # `resources.free_disk` walks up to an existing ancestor, which answers the same question,
+    # and is already the way every other pre-flight in this project asks it.
+    if need_bytes is not None:
+        from . import resources
+
+        need = int(need_bytes * OFFLOAD_HEADROOM)
+        free = resources.free_disk(offload)
+        if free is None:
+            log(f"  offload space: COULD NOT BE READ at {offload}. The directory's filesystem "
+                f"did not answer, so this is not a statement that there is room.")
+        elif free < need:
+            raise StreamExtractError(
+                f"the offload directory {offload} has {free / 1e9:.1f} GB free and the worst "
+                f"case needs {need / 1e9:.1f} GB, the size of the checkpoint itself. In the "
+                f"worst case every shard spills to disk, and that is the case this command is "
+                f"for. Point --offload-dir at a larger volume, or free "
+                f"{(need - free) / 1e9:.1f} GB.")
+        else:
+            log(f"  offload space: {free / 1e9:.1f} GB free at {offload}, worst case "
+                f"{need / 1e9:.1f} GB. OK.")
+    else:
         log("  offload space: NOT CHECKED. The model is a Hub id, so its size is not known "
             "before the download; the free-space check needs a local checkpoint.")
-        return offload
 
-    need = int(need_bytes * OFFLOAD_HEADROOM)
-    free = shutil.disk_usage(offload).free
-    if free < need:
-        raise StreamExtractError(
-            f"the offload directory {offload} has {free / 1e9:.1f} GB free and the worst case "
-            f"needs {need / 1e9:.1f} GB, the size of the checkpoint itself. In the worst case "
-            f"every shard spills to disk, and that is the case this command is for. Point "
-            f"--offload-dir at a larger volume, or free {(need - free) / 1e9:.1f} GB.")
-    log(f"  offload space: {free / 1e9:.1f} GB free at {offload}, worst case "
-        f"{need / 1e9:.1f} GB. OK.")
+    offload.mkdir(parents=True, exist_ok=True)
     return offload
+
+
+def _file_size(path):
+    """`path`'s size if it is a file right now, else None. Separate so the tolerance is not a
+    `try` inside a loop, which is both slower and harder to read than a named question.
+    """
+    try:
+        return path.stat().st_size if path.is_file() else None
+    except OSError:
+        return None
+
+
+def tidy_offload(offload, *, created, log=print):
+    """Say what the offload directory is holding, and remove it only if it is ours and empty.
+
+    DELIBERATELY NOT A WIPE. The directory is a path somebody typed, and this command has no way
+    to know it holds nothing else: `--offload-dir /mnt/scratch` is a reasonable thing to type and
+    deleting its contents would be a different command from the one they ran. So the rule is the
+    narrow one that cannot be wrong: a directory this run created, which is still empty, is
+    removed; anything else is reported with its size and left alone.
+
+    It is reported rather than silently kept because accelerate's spill files are large and have
+    no reason to survive the run, and a scratch directory nobody mentions is a disk that fills up
+    a month later for no visible reason.
+    """
+    offload = Path(offload)
+    if not offload.exists():
+        return 0
+    total = 0
+    count = 0
+    for item in offload.rglob("*"):
+        # Tolerant per file, because a spill file can go away while this walks: accelerate is
+        # free to clean up as the model is released, and a vanished file is not a reason to fail
+        # a tidy-up that runs after the work is already done.
+        size = _file_size(item)
+        if size is not None:
+            total += size
+            count += 1
+    if count == 0:
+        if created:
+            try:
+                offload.rmdir()
+            except OSError:
+                pass
+        return 0
+    log(f"  the offload directory {offload} holds {count} file(s), {total / 1e9:.1f} GB. "
+        f"Nothing here needs them again, so they can be deleted.")
+    return total
 
 
 def report_placement(model, *, chunks, log=print):
@@ -295,7 +353,9 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
 
     size = checkpoint_bytes(model_id)
     offload = None
+    offload_is_ours = False
     if offload_dir:
+        offload_is_ours = not Path(offload_dir).expanduser().exists()
         offload = check_offload_dir(offload_dir, model_id, need_bytes=size, log=log)
     else:
         log("  no --offload-dir, so accelerate may use the card and host RAM but cannot spill to "
@@ -318,16 +378,23 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
 
     chunks = expected_chunks(dir_prompts=dir_prompts, capture_batch=cli.CAPTURE_BATCH)
     log(f"loading {model_id} on {device}, forward pass only")
-    loaded, tok = cli.load_model_and_tokenizer(
-        model_id, device=device, trust_remote_code=trust_remote_code,
-        attn_impl=attn_impl, log=log, chat_template=chat_template or None,
-        offload_dir=str(offload) if offload else None)
-    placement = report_placement(loaded, chunks=chunks, log=log)
+    # THE TIDY RUNS WHETHER OR NOT THE EXTRACTION SUCCEEDS, because the spill files are large and
+    # a run killed halfway is exactly when nobody is looking at the disk. It only ever removes a
+    # directory this run created and left empty; see `tidy_offload`.
+    try:
+        loaded, tok = cli.load_model_and_tokenizer(
+            model_id, device=device, trust_remote_code=trust_remote_code,
+            attn_impl=attn_impl, log=log, chat_template=chat_template or None,
+            offload_dir=str(offload) if offload else None)
+        placement = report_placement(loaded, chunks=chunks, log=log)
 
-    abl = cli.Abliterator(args, log, model=loaded, tok=tok)
-    track_dir = args.track
-    good = good_ds or f"{track_dir}/good_ds"
-    abl.extract_directions(f"{track_dir}/bad_ds", good, hedge_ds, clean_ds or good)
+        abl = cli.Abliterator(args, log, model=loaded, tok=tok, forward_only=True)
+        track_dir = args.track
+        good = good_ds or f"{track_dir}/good_ds"
+        abl.extract_directions(f"{track_dir}/bad_ds", good, hedge_ds, clean_ds or good)
+    finally:
+        if offload is not None:
+            tidy_offload(offload, created=offload_is_ours, log=log)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     streambake.save_directions(
@@ -390,17 +457,24 @@ what this does not do:
                    help="let accelerate spill blocks that fit in neither VRAM nor host RAM to "
                         "this directory. Without it, a model larger than card plus RAM cannot "
                         "load at all. Needs room for the whole checkpoint in the worst case")
-    p.add_argument("--dir-prompts", dest="dir_prompts", type=int, default=256, metavar="N",
+    p.add_argument("--dir-prompts", dest="dir_prompts",
+                   type=argresolve.whole_number("--dir-prompts", minimum=1),
+                   default=256, metavar="N",
                    help="prompts per side of the contrast set (default: 256). Fewer is faster "
                         "and a weaker estimate of the direction")
-    p.add_argument("--max-directions", dest="max_directions", type=int, default=3, metavar="K",
+    p.add_argument("--max-directions", dest="max_directions",
+                   type=argresolve.whole_number("--max-directions", minimum=1),
+                   default=3, metavar="K",
                    help="the cap on directions per position (default: 3)")
-    p.add_argument("--min-directions", dest="min_directions", type=int, default=1, metavar="K",
+    p.add_argument("--min-directions", dest="min_directions",
+                   type=argresolve.whole_number("--min-directions", minimum=1),
+                   default=1, metavar="K",
                    help="the floor on directions per position (default: 1)")
     p.add_argument("--mode", choices=("per_layer", "single"), default="per_layer",
                    help="recorded in the file as the bake's default. NOT a searched result: "
                         "nothing here searches (default: per_layer)")
-    p.add_argument("--seed", type=int, default=42, help="(default: 42)")
+    p.add_argument("--seed", type=argresolve.whole_number("--seed", minimum=0), default=42,
+                   help="(default: 42)")
     p.add_argument("--device", default="cuda",
                    help="cuda, cuda:N or cpu (default: cuda). accelerate places the weights")
     p.add_argument("--track", default=TRACK_AUTO,
@@ -430,8 +504,17 @@ def main(argv=None):
     from . import argresolve
 
     a = build_parser().parse_args(argv)
+    # THE INVERTED PAIR, refused here for the reason `_preflight_values` gives on the abliterate
+    # path: a range no trial can satisfy is checked before the model is touched, so finding out
+    # costs nothing. Bounding each flag on its own does not catch it, because 3 and 1 are both
+    # perfectly good whole numbers and only their order is wrong.
+    if a.min_directions > a.max_directions:
+        raise SystemExit(
+            f"senbonzakura stream-extract: --min-directions is {a.min_directions} and "
+            f"--max-directions is {a.max_directions}, so no position can satisfy both. Set them "
+            f"to the same number to pin the budget, or raise --max-directions.")
     model_id = argresolve.pick_model(a.model_positional, a.model,
-                                 command="senbonzakura stream-extract")
+                                     command="senbonzakura stream-extract")
     try:
         extract(model_id, a.out, dir_prompts=a.dir_prompts, k_max=a.max_directions,
                 k_min=a.min_directions, mode=a.mode, seed=a.seed, device=a.device,
@@ -443,3 +526,12 @@ def main(argv=None):
     except StreamExtractError as e:
         raise SystemExit(f"stream-extract: {e}") from e
     return 0
+
+
+# AT THE END OF THE FILE, for the reason recorded at the bottom of `capability.py`: running a
+# module as a script executes this before anything defined below it, so a block placed higher up
+# makes `python -m senbonzakura.streamextract` fail on names that do not exist yet while the
+# console script works. `tests/test_main_block_is_last.py` holds the shape.
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

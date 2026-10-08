@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 
 from . import argresolve
@@ -171,6 +172,62 @@ def compare(directions_a, directions_b, tolerance=SAME_SUBSPACE_TOL):
     )
 
 
+def compare_sets(sets_a, sets_b, tolerance=SAME_SUBSPACE_TOL):
+    """Position by position, do two SAVED direction sets span the same subspaces?
+
+    `compare` answers the question for one span. A direction set is one span per residual-stream
+    position, and the question somebody actually has is about the pair of files: did
+    `stream-extract` find what `abliterate --save-directions` finds, did two machines agree, did a
+    dtype change the answer. Asking that one position at a time and reading the output by eye is
+    how a disagreement at position 19 gets missed.
+
+    Returns `(same, per_position)`, where `per_position` carries every position's `Comparison` so a
+    failure names WHICH position. A parity check that says no without saying where sends somebody
+    back to bisect by hand, which is most of the cost of having asked.
+    """
+    a = torch.as_tensor(np.asarray(sets_a), dtype=torch.float64)
+    b = torch.as_tensor(np.asarray(sets_b), dtype=torch.float64)
+    if a.ndim != 3 or b.ndim != 3:
+        raise ValueError(
+            f"a saved direction set is [positions, K, hidden]; got {tuple(a.shape)} and "
+            f"{tuple(b.shape)}.")
+    if a.shape[0] != b.shape[0]:
+        raise ValueError(
+            f"the two sets cover {a.shape[0]} and {b.shape[0]} residual-stream positions, so they "
+            f"are not two measurements of the same stack.")
+    if a.shape[2] != b.shape[2]:
+        raise ValueError(
+            f"the two sets are {a.shape[2]} and {b.shape[2]} wide, so they are not two "
+            f"measurements of the same model.")
+    per_position = [compare(a[i], b[i], tolerance=tolerance) for i in range(a.shape[0])]
+    return all(c.same for c in per_position), per_position
+
+
+def describe_sets(same, per_position, *, log=print):
+    """The verdict for a pair of saved sets, naming every position that disagrees."""
+    if not per_position:
+        log("no positions to compare, so nothing was checked. That is not agreement.")
+        return same
+    log(f"subspace parity over {len(per_position)} residual-stream position(s), tolerance "
+        f"{per_position[0].tolerance:.0e}")
+    worst = max(per_position, key=lambda c: c.distance)
+    log(f"  worst: distance {worst.distance:.3e}, differing by {worst.disagreeing:.3e} of a "
+        f"direction, worst angle {worst.max_angle_degrees:.4f} degrees")
+    if same:
+        log("  SAME SUBSPACE at every position.")
+        # THE CAVEAT THAT STOPS THIS BEING QUOTED AS A PARITY RESULT FOR THE EDIT. Two identical
+        # subspaces applied at different strengths give different models, so this is a statement
+        # about the space and not about behaviour.
+        log("  That is a statement about the space, not about behaviour: the same subspace "
+            "applied at a different strength is a different edit.")
+        return same
+    bad = [(i, c) for i, c in enumerate(per_position) if not c.same]
+    log(f"  DIFFERENT at {len(bad)} of {len(per_position)} position(s):")
+    for i, c in bad:
+        log(f"    position {i}: {c.describe()}")
+    return same
+
+
 # ── the self-check, and the control that makes it fail ───────────────────────────────
 def _reference_pair(control, seed=0):
     """Two direction sets that should agree, unless `control` names a way to break one.
@@ -202,6 +259,11 @@ def main(argv=None):
         allow_abbrev=False,
         prog="python -m senbonzakura.subspace",
         description="Check the subspace-comparison instrument on cases whose answer is known.")
+    p.add_argument("--compare", nargs=2, metavar=("FIRST", "SECOND"), default=None,
+                   help="two directions files to compare position by position, instead of the "
+                        "self-check. This is the question `stream-extract` against `abliterate "
+                        "--save-directions` asks: did the two halves find the same subspaces. "
+                        "Exits non-zero on a disagreement")
     p.add_argument("--control", choices=["replace", "drop", "noise"], default=None,
                    help="break one side on purpose. The instrument must report a difference and "
                         "this command must exit non-zero. An instrument that cannot be made to "
@@ -211,6 +273,27 @@ def main(argv=None):
                         f"(default: {SAME_SUBSPACE_TOL:g}). Raising it makes the check easier to "
                         f"pass, which is worth doing only with a reason written down")
     a = p.parse_args(argv)
+
+    if a.compare:
+        if a.control:
+            raise SystemExit(
+                "senbonzakura.subspace: --compare reads two real files and --control breaks a "
+                "synthetic pair on purpose, so asking for both means asking two different "
+                "questions in one command. Run them separately.")
+        from . import streambake
+
+        try:
+            first, meta_a = streambake.load_directions(a.compare[0])
+            second, meta_b = streambake.load_directions(a.compare[1])
+            same, per_position = compare_sets(first, second, tolerance=a.tolerance)
+        except Exception as e:
+            raise SystemExit(f"subspace parity: {type(e).__name__}: {e}") from e
+        if meta_a.get("model") != meta_b.get("model"):
+            print(f"NOTE: the two files name different models ({meta_a.get('model')!r} and "
+                  f"{meta_b.get('model')!r}), so a disagreement may be the models rather than "
+                  f"the implementations.")
+        describe_sets(same, per_position)
+        return 0 if same else 1
 
     left, right = _reference_pair(a.control)
     result = compare(left, right, tolerance=a.tolerance)

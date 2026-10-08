@@ -2240,7 +2240,7 @@ class Abliterator:
     may be injected (skipping the load) so the class can be exercised against a tiny model in tests.
     """
 
-    def __init__(self, args, log, model=None, tok=None):
+    def __init__(self, args, log, model=None, tok=None, *, forward_only=False):
         self.args = args
         self.log = log
         self.dev = args.device
@@ -2348,7 +2348,16 @@ class Abliterator:
         # is the same defect as the capability notice and as the `doctor` CPU advisory before it.
         on_disk = sum(1 for v in dmap.values()
                       if not isinstance(v, int) and str(v).lower().split(":")[0] == "disk")
-        if on_disk:
+        # WHICH OF THE TWO THINGS DISK OFFLOAD MEANS DEPENDS ON WHAT THE CALLER IS ABOUT TO DO,
+        # and until `forward_only` existed this said the edit would be refused whatever the caller
+        # was for. `stream-extract` makes no edit, so on that path the old message described a
+        # refusal that cannot happen: the same defect class as a capability notice promising a
+        # probe the run could not reach. Only the caller knows, so only the caller can say.
+        if on_disk and forward_only:
+            log(f"  low-VRAM mode: {on_disk}/{len(dmap)} module groups are on DISK, and will be "
+                "read back from it on every pass. That is slow and it is correct: a forward pass "
+                "only reads weights. Nothing here writes one.")
+        elif on_disk:
             log(f"  low-VRAM mode: {on_disk}/{len(dmap)} module groups are on DISK. The edit is "
                 "refused when it reaches one of them: a disk-offloaded weight reads back as a "
                 "fresh copy, so the bake cannot write to it. Free the card, add host RAM, or use "

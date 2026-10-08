@@ -224,8 +224,8 @@ def test_an_offload_dir_inside_a_cache_is_refused(tmp_path):
 def test_an_offload_dir_without_room_for_the_checkpoint_is_refused(tmp_path, monkeypatch):
     model = tmp_path / "model"
     model.mkdir()
-    monkeypatch.setattr(streamextract.shutil, "disk_usage",
-                        lambda p: _Usage(free=5 * 10**9))
+    from senbonzakura import resources
+    monkeypatch.setattr(resources, "free_disk", lambda p: 5 * 10**9)
     with pytest.raises(streamextract.StreamExtractError) as e:
         streamextract.check_offload_dir(tmp_path / "off", model, need_bytes=40 * 10**9,
                                         log=lambda m: None)
@@ -234,21 +234,126 @@ def test_an_offload_dir_without_room_for_the_checkpoint_is_refused(tmp_path, mon
     assert "35.0 GB" in msg, "the refusal must say how much to free, not only that it is short"
 
 
-class _Usage:
-    def __init__(self, free):
-        self.free = free
-        self.total = free
-        self.used = 0
+def test_a_refused_offload_dir_is_not_created(tmp_path, monkeypatch):
+    """The pre-flight answers the space question without making anything, because a refusal that
+    leaves behind the directory it just declined to use is litter the next run has to interpret.
+    """
+    model = tmp_path / "model"
+    model.mkdir()
+    from senbonzakura import resources
+    monkeypatch.setattr(resources, "free_disk", lambda p: 1)
+    off = tmp_path / "off"
+    with pytest.raises(streamextract.StreamExtractError):
+        streamextract.check_offload_dir(off, model, need_bytes=40 * 10**9, log=lambda m: None)
+    assert not off.exists(), "the refusal created the directory it had just refused to use"
+
+
+def test_a_filesystem_that_will_not_answer_is_not_reported_as_room(tmp_path, monkeypatch):
+    """`free_disk` returns None when it cannot read the filesystem, and None is not "fits"."""
+    model = tmp_path / "model"
+    model.mkdir()
+    from senbonzakura import resources
+    monkeypatch.setattr(resources, "free_disk", lambda p: None)
+    msgs, log = _log_sink()
+    streamextract.check_offload_dir(tmp_path / "off", model, need_bytes=40 * 10**9, log=log)
+    text = "\n".join(msgs)
+    assert "COULD NOT BE READ" in text
+    assert "not a statement that there is room" in text
 
 
 def test_an_offload_dir_with_room_is_accepted_and_reports_the_numbers(tmp_path, monkeypatch):
     model = tmp_path / "model"
     model.mkdir()
-    monkeypatch.setattr(streamextract.shutil, "disk_usage", lambda p: _Usage(free=100 * 10**9))
+    from senbonzakura import resources
+    monkeypatch.setattr(resources, "free_disk", lambda p: 100 * 10**9)
     msgs, log = _log_sink()
     got = streamextract.check_offload_dir(tmp_path / "off", model, need_bytes=40 * 10**9, log=log)
     assert got.is_dir()
     assert "100.0 GB free" in "\n".join(msgs)
+
+
+# ── the offload directory afterwards ──────────────────────────────────────────────────
+
+def test_an_empty_offload_dir_this_run_created_is_removed(tmp_path):
+    off = tmp_path / "off"
+    off.mkdir()
+    assert streamextract.tidy_offload(off, created=True, log=lambda m: None) == 0
+    assert not off.exists()
+
+
+def test_an_empty_offload_dir_that_was_already_there_is_left_alone(tmp_path):
+    """It is a path somebody typed. Removing a directory this run did not create is a different
+    command from the one they ran.
+    """
+    off = tmp_path / "off"
+    off.mkdir()
+    streamextract.tidy_offload(off, created=False, log=lambda m: None)
+    assert off.is_dir()
+
+
+def test_an_offload_dir_with_spill_files_is_reported_and_never_wiped(tmp_path):
+    """The narrow rule that cannot be wrong: report the size, leave the files. `--offload-dir
+    /mnt/scratch` is reasonable to type and this command cannot know what else is in there.
+    """
+    off = tmp_path / "off"
+    (off / "nested").mkdir(parents=True)
+    (off / "a.dat").write_bytes(b"x" * 1000)
+    (off / "nested" / "b.dat").write_bytes(b"x" * 2000)
+    msgs, log = _log_sink()
+    total = streamextract.tidy_offload(off, created=True, log=log)
+    assert total == 3000
+    assert off.is_dir() and (off / "a.dat").exists()
+    text = "\n".join(msgs)
+    assert "2 file(s)" in text
+    assert "can be deleted" in text
+
+
+def test_tidying_a_directory_that_is_gone_is_not_an_error(tmp_path):
+    assert streamextract.tidy_offload(tmp_path / "never", created=True, log=lambda m: None) == 0
+
+
+def test_the_offload_dir_is_tidied_even_when_the_extraction_fails(tmp_path, monkeypatch,
+                                                                  base_args, track):
+    """A run killed halfway is exactly when nobody is looking at the disk."""
+    off = tmp_path / "off"
+
+    def boom(*a, **k):
+        raise RuntimeError("the card went away")
+
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", boom)
+    msgs, log = _log_sink()
+    with pytest.raises(RuntimeError):
+        streamextract.extract("tiny", tmp_path / "d.safetensors", log=log,
+                              **_extract_args(base_args, track, tmp_path,
+                                              offload_dir=str(off), device="cuda"))
+    assert not off.exists(), "the empty offload directory survived a failed run"
+
+
+# ── the message that must not promise an edit ─────────────────────────────────────────
+
+def test_a_forward_only_run_is_not_told_the_edit_will_be_refused(base_args, tiny_model, tiny_tok):
+    """`stream-extract` makes no edit, so "the edit is refused when it reaches one of them" is a
+    statement about a path the run never takes. The same defect class as a capability notice
+    promising a probe the run could not reach.
+    """
+    tiny_model.hf_device_map = {"model.layers.0": "disk", "model.layers.1": 0}
+    msgs, log = _log_sink()
+    cli.Abliterator(base_args, log, model=tiny_model, tok=tiny_tok, forward_only=True)
+    text = "\n".join(msgs)
+    assert "on DISK" in text
+    assert "Nothing here writes one" in text
+    assert "The edit is refused" not in text, (
+        "a forward-only run was told its edit would be refused, and it has no edit")
+
+
+def test_an_editing_run_is_still_told_the_edit_will_be_refused(base_args, tiny_model, tiny_tok):
+    """The other half of the pair, so the fix above cannot have removed the warning that matters:
+    an abliterate run on a disk-offloaded model really will fail at the first writer.
+    """
+    tiny_model.hf_device_map = {"model.layers.0": "disk", "model.layers.1": 0}
+    msgs, log = _log_sink()
+    cli.Abliterator(base_args, log, model=tiny_model, tok=tiny_tok)
+    assert "The edit is refused" in "\n".join(msgs)
 
 
 def test_an_unknown_checkpoint_size_is_reported_as_unchecked_rather_than_passing(tmp_path):

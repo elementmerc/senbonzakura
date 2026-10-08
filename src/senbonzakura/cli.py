@@ -5986,9 +5986,6 @@ def run_parsed(args, bankai, argv):
     return abl.run()
 
 
-if __name__ == "__main__":
-    main()
-
 # ── the short form ───────────────────────────────────────────────────────────────────────
 #
 # THESE LIVE HERE RATHER THAN IN `parser.py` because they READ parsed arguments, and that
@@ -6099,3 +6096,11 @@ def resolve_track(args, *, log=print):
     # second thing wrong with their command line instead of the first.
     args.track = None
     return None
+
+
+# AT THE END OF THE FILE, for the reason recorded at the bottom of `capability.py`. `main` reaches
+# `resolve_model`, `resolve_track` and `refuse_without_a_track`, all three defined in the section
+# above this one, so with this block where it used to be `python -m senbonzakura.cli` died on
+# `NameError: name 'resolve_model' is not defined` before it had read a single argument.
+if __name__ == "__main__":   # pragma: no cover
+    main()

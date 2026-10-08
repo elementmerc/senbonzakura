@@ -110,6 +110,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - `--pair` checks that it was given two files before reading any of them
 
 ### Command line
+- `python -m senbonzakura.capability` failed on its default evaluation set with
+  `NameError: name 'load_probe' is not defined`, and `python -m senbonzakura.cli` failed before
+  reading an argument. Both modules ran their script entry point above code that the entry point
+  needs, so the console scripts worked and the module paths did not
 - `quantise --like <reference.gguf>` copies the per-tensor precision schedule out of a finished
   GGUF and applies it to the model being quantised, which makes the layer-by-layer half of an
   Unsloth Dynamic (`UD-`) build reproducible: a GGUF records a type for every tensor in its own

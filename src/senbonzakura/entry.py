@@ -65,6 +65,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # running it, so a quantisation-aware checkpoint is measurable here and uneditable upstream.
     "leak": ("leak", "main"),
     "stream-bake": ("streambake", "main"),
+    "stream-extract": ("streamextract", "main"),
     "coherence": ("coherence", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),

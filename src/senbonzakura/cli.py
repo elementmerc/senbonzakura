@@ -2089,7 +2089,8 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
 
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
-                             chat_template=None, needs_chat_template=True):
+                             chat_template=None, needs_chat_template=True,
+                             offload_dir=None):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
     # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
     # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
@@ -2126,6 +2127,28 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # kept verbatim rather than reworded; what is dropped is the twenty frames of our internals
     # and theirs wrapped around it. Found by typing a model name with a character missing, which
     # is the most likely user error there is.
+    # DISK OFFLOAD IS OPT-IN, AND ONLY FOR A FORWARD PASS. Without `offload_folder`, a
+    # `device_map="auto"` fills the card and then host RAM and then fails; with it, accelerate
+    # spills the rest to disk and reads each group back as the pass reaches it. That makes a model
+    # larger than card plus RAM loadable for READING, which is all extraction needs.
+    #
+    # It is not offered to the bake and must not be. A disk-offloaded weight reads back as a fresh
+    # copy on every access, so an in-place write lands on a temporary and is discarded; see
+    # `_real_tensor`, which raises rather than pretending, and `capability.disk_offloaded_entries`,
+    # which is the check that first found this distinction mattered. The caller decides, because
+    # only the caller knows whether it is about to write.
+    if offload_dir:
+        if "device_map" not in kw:
+            raise ValueError(
+                f"offload_dir={offload_dir!r} was passed with device={device!r}, which places the "
+                f"model with a plain `.to()` and never consults accelerate. Disk offload needs a "
+                f"device_map, so this combination would create the directory and silently not use "
+                f"it.")
+        kw["offload_folder"] = str(offload_dir)
+        # The state dict goes to disk as it is read rather than being held whole in host RAM,
+        # which is the other half of the problem: a 200 GB checkpoint cannot be staged in RAM on
+        # the way to being placed, even when the placement itself would have fitted.
+        kw["offload_state_dict"] = True
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     except OSError as e:

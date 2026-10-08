@@ -465,6 +465,18 @@ def leak_block(report=None, *, refused_because=None, prompts=None, requested=Tru
         "output_along_post_norm_direction": (
             None if out is None else out.along_post_norm_direction),
         "output_basis_refused": None if out is None else out.refused_because,
+        # WHAT THE NUMBER MEANS, IN THE RECORD RATHER THAN ONLY IN THE TERMINAL. The standalone
+        # command prints this as a caveat, but `abliterate --leak-report` writes this block into
+        # `abliteration.json` and prints no caveat of its own, so without this field the one figure
+        # that can be read backwards travels with nothing saying so. A decoy defence (arXiv
+        # 2609.16204, and AMRA by another route) makes a LOW figure here the signature of an edit
+        # that landed on a feature orthogonal to refusal, and the only way to tell is to read this
+        # beside a refusal rate. On the abliterate path both figures are in this same record.
+        "means": (
+            "whether the direction this run applied has left the residual stream, which is the "
+            "same thing as refusal leaving the model only if that direction carried refusal. A low "
+            "figure beside an unchanged refusal rate is the signature of an edit that landed on a "
+            "decoy, so read the two together."),
         "warnings": list(report.warnings),
     }
 

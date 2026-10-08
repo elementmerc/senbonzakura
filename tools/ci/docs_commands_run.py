@@ -159,6 +159,11 @@ RULES: list[tuple[str, str, str]] = [
     # is the one command here whose documented example this runner can carry out verbatim, and
     # the example is a worked one precisely so that it can be.
     (r"^senbonzakura baseline (before|after)\.json\b", RUN, ""),
+    # The `measure` two-step, added with the summary-kind change. `_write_gating_fixtures` writes
+    # `out/score.json` so this runs verbatim too: the page's whole claim is that pointing
+    # `baseline` at a per-instrument file WORKS where pointing it at the summary does not, and a
+    # claim like that is worth nothing unless the command on the page is the one that was run.
+    (r"^senbonzakura baseline out/score\.json\b", RUN, ""),
     (r"^senbonzakura(-check)? (--help|--version|-h)\b", RUN, ""),
     (r"^senbonzakura(-check)? [a-z-]+ (--help|-h)\b", RUN, ""),
     (r"^senbonzakura doctor\b", RUN, ""),
@@ -243,6 +248,21 @@ def _write_gating_fixtures(scratch: pathlib.Path) -> None:
     (scratch / "after.json").write_text(json.dumps({
         "label": "after", "model": "Qwen/Qwen3-1.7B",
         "metrics": {"coherence": {**_STAMPED, "value": 3.44, "interval": [3.38, 3.50]}},
+    }, indent=2), encoding="utf-8")
+
+    # `out/score.json`, for the section telling a `measure` user to point `baseline` at one of the
+    # per-instrument files rather than at the summary. A refusal rate rather than coherence,
+    # because that is what `score` writes and the page names that file by name.
+    out = scratch / "out"
+    out.mkdir(exist_ok=True)
+    refusal = {**_STAMPED, "metric": "refusal",
+               "measures": "how often the model declined a harmful request",
+               "estimator": "semantic", "estimator_description": "a judge model's verdict",
+               "units": "share-of-prompts", "higher_is_better": False, "n": 64,
+               "partition": "measure", "prompt_format": "chat"}
+    (out / "score.json").write_text(json.dumps({
+        "label": "score", "model": "Qwen/Qwen3-1.7B",
+        "metrics": {"refusal": {**refusal, "value": 0.047, "interval": [0.01, 0.12]}},
     }, indent=2), encoding="utf-8")
 
 

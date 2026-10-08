@@ -4570,6 +4570,31 @@ class Abliterator:
             leak=leak)
         with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump(record, f, indent=2)
+        # THE SEAM BETWEEN THE TWO HALVES OF A LARGE RUN, and it is written after the record so a
+        # failure here cannot cost the run its provenance. Extraction needs a machine that can
+        # hold the model and the edit needs only disk, so a few megabytes of directions let an
+        # hour of rented card produce something a laptop then applies offline, repeatedly, at
+        # whatever strength, with no further compute. `stream-bake` is the other end.
+        if getattr(args, "save_directions", None):
+            from . import streambake
+            try:
+                streambake.save_directions(
+                    args.save_directions, self.dirs_multi.cpu().numpy(),
+                    model=args.model, mode=b_mode,
+                    provenance={"num_directions": b_K, "seed": args.seed,
+                                "tool_version": __version__,
+                                "ablate_conv": self.ablate_conv})
+            # Broad on purpose, and for the same reason the leak block is: by here the weights and
+            # the record are both on disk, so a convenience file failing to write must not end a
+            # finished run with a traceback.
+            except Exception as e:
+                log(f"  WARNING: the directions were not saved: {type(e).__name__}: {e}. The run "
+                    f"itself is complete and the model in {args.out} is unaffected.")
+            else:
+                log(f"  directions saved to {args.save_directions} "
+                    f"({self.dirs_multi.shape[0]} positions, {self.dirs_multi.shape[1]} per "
+                    f"position); `senbonzakura stream-bake` applies them to a checkpoint too "
+                    f"large to load")
         self._write_model_card(args, log)
         self.events.emit("done", out=str(args.out))
         self.events.close()

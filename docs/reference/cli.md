@@ -32,6 +32,8 @@ exactly the same arguments.
 | `validate` | Compare direction budgets at matched refusal removal, which is the comparison this project exists to make. |
 | `report` | Assemble a run's artefacts into the model card that should travel beside the weights. |
 
+| `stream-bake` | Apply a saved direction set to a checkpoint that is too large to load. It reads one tensor at a time and rewrites one shard at a time, so peak memory is a single weight matrix and the limit becomes free disk rather than RAM. The model directory is never written to: the edit runs on a copy, which is hard-linked where the filesystem allows it and so usually costs no disk and no time. A run interrupted at any point resumes from the shard it reached, and re-running a finished bake does nothing rather than projecting the weights a second time. It does not extract directions, because that is a forward pass; `abliterate --save-directions` writes the file this reads, which means the extraction can run on a machine that holds the model and the edit can run anywhere. |
+
 ## Checking somebody else's result
 
 | Command | What it does |

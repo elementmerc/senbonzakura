@@ -61,10 +61,27 @@ NEEDS_A_CONTROL = {
 #: for it. Being on this list is a claim somebody made, not an absence of one.
 NO_AGREEMENT_TO_BREAK = {
     "audit_flags.py": "enumerates declared flags; its output is a list, not a verdict",
+    "audit_unreached.py": "enumerates public names with no caller; its output is a list for a "
+                          "person to rule on, and it says so in its own output. It cannot tell a "
+                          "dead knob from a piece built ahead of its caller, which is why it "
+                          "prints rather than passing or failing, so there is no verdict to "
+                          "break. Its own validation is a known-present case, run against the "
+                          "commit before a wiring landed and again after",
     "audit_token_positions.py": "reports which positions a tokeniser produces; descriptive",
     "axis_probe.py": "reports a score per axis; nothing in its output is an agreement",
     "direction_validation.py": "reports properties of one basis, not a comparison of two",
     "expert_layout.py": "prints the expert layout of a checkpoint; descriptive",
+    "fetch_architecture_corpus.py": "collects and normalises published configs and tensor "
+                                    "inventories; its output is a corpus and a vocabulary, not "
+                                    "a verdict. The one thing it could get silently wrong is "
+                                    "reporting a model as reached when it was partly fetched, "
+                                    "which it records as partial with the reason rather than "
+                                    "deciding",
+    "gpu_lock.py": "an interlock, not an instrument. Its output is whether one job may use the "
+                   "card, and it has no comparison to break. The agreement it DOES depend on, "
+                   "that a lock file and the compute-app list are two independent facts, is "
+                   "covered by a test that gives it a free lock over a busy card and requires a "
+                   "refusal",
     "layer_read_spike.py": "a timing spike; its output is a duration",
     "leak_sweep.py": "reports a distribution of row lengths; its synthetic sweep is an input "
                      "rather than a control over a verdict",

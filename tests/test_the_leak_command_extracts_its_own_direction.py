@@ -280,3 +280,136 @@ def test_every_run_says_a_low_figure_can_mean_the_edit_landed_on_a_decoy(monkeyp
     assert "refusal rate" in joined, "the reader is not told which other figure to read beside it"
     assert "validate" in joined, (
         "the command that answers 'does this direction carry refusal' is not named")
+
+
+# ── --direction-from, the comparison that can actually show a removal ────────────────
+
+def test_the_default_extracts_from_the_model_under_test():
+    """Which is the behaviour the flag below exists to work around, so it is pinned here."""
+    assert leak.build_parser().parse_args(["m"]).direction_from is None
+
+
+def test_the_flag_is_declared_and_says_why_the_default_cannot_answer():
+    """MEASURED ON 2026-10-08 AND THE REASON THE FLAG EXISTS. Extracting from the model under test
+    fits whatever contrast is left and then finds it present, so that figure cannot fall by
+    editing. Four of this project's own edits, across two base models and all four verified to
+    have removed most of the refusal, left 88% to 132% of the base's direction in place.
+    """
+    action = next(a for a in leak.build_parser()._actions if a.dest == "direction_from")
+    assert "cannot fall by editing" in action.help
+    assert "base here" in action.help
+
+
+def test_the_reference_model_is_loaded_and_released_before_the_target(tmp_path, monkeypatch):
+    """Never both at once. The pair is a base and its edit, so they are the same size, and this
+    runs on exactly the machine where holding two is the difference between working and not.
+    """
+    import senbonzakura.cli as _cli
+
+    live, order = [], []
+
+    class _M:
+        def __init__(self, name):
+            self.name = name
+            live.append(name)
+
+    def _load(path, **_k):
+        order.append(("load", path))
+        return _M(path), object()
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", _load)
+    monkeypatch.setattr(leak, "_free_accelerator", lambda: order.append(("free", None)))
+    monkeypatch.setattr(residualleak, "contrast_direction",
+                        lambda *a, **k: ("dir", 3, {"raw": [1.0], "relative": [0.5]}, ()))
+
+    class _Report:
+        positions, probe_prompts = 2, 4
+        leak_per_position = (1e-8, 2e-8)
+        pinned: ClassVar[dict] = {}
+        output = None
+        warnings = ()
+        basis = "the pre-norm residual stream"
+        mean = 1.5e-8
+
+    monkeypatch.setattr(residualleak, "measure_leak", lambda *a, **k: _Report())
+    monkeypatch.setattr(residualleak, "stamp_report", lambda doc, _r: doc)
+    from senbonzakura import corpora
+    monkeypatch.setattr(corpora, "load", lambda key, **k: [f"{key} {i}" for i in range(8)])
+
+    out = tmp_path / "leak.json"
+    assert leak.main(["--model", "edited", "--direction-from", "base", "--device", "cpu",
+                      "--n", "4", "--probe-n", "2", "--out", str(out)]) == 0
+    assert order == [("load", "base"), ("free", None), ("load", "edited")], order
+
+
+def test_the_record_says_where_the_direction_came_from_and_its_strength_there(
+        tmp_path, monkeypatch):
+    """Without the reference figure the result is an absolute with nothing to be a share of, and
+    the whole point is the ratio.
+    """
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (object(), object()))
+    monkeypatch.setattr(leak, "_free_accelerator", lambda: None)
+    monkeypatch.setattr(residualleak, "contrast_direction",
+                        lambda *a, **k: ("dir", 5, {"raw": [1.0], "relative": [0.5]}, ()))
+
+    class _Report:
+        positions, probe_prompts = 2, 4
+        leak_per_position = (1e-8, 2e-8)
+        pinned: ClassVar[dict] = {}
+        output = None
+        warnings = ()
+        basis = "b"
+        mean = 4.2e-2
+
+    monkeypatch.setattr(residualleak, "measure_leak", lambda *a, **k: _Report())
+    monkeypatch.setattr(residualleak, "stamp_report", lambda doc, _r: doc)
+    from senbonzakura import corpora
+    monkeypatch.setattr(corpora, "load", lambda key, **k: [f"{key} {i}" for i in range(8)])
+
+    out = tmp_path / "leak.json"
+    leak.main(["--model", "edited", "--direction-from", "base", "--device", "cpu",
+               "--n", "4", "--probe-n", "2", "--out", str(out)])
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["direction_from"] == "base"
+    assert doc["reference"]["model"] == "base"
+    assert doc["reference"]["mean"] == 4.2e-2
+    assert doc["reference"]["position"] == 5
+
+
+def test_without_the_flag_the_record_carries_no_reference(tmp_path, monkeypatch):
+    """A `reference` of None is the honest shape: there is nothing the figure is a share of."""
+    import senbonzakura.cli as _cli
+
+    monkeypatch.setattr(_cli, "load_model_and_tokenizer", lambda *a, **k: (object(), object()))
+    monkeypatch.setattr(residualleak, "contrast_direction",
+                        lambda *a, **k: ("dir", 1, {"raw": [1.0], "relative": [0.5]}, ()))
+
+    class _Report:
+        positions, probe_prompts = 2, 4
+        leak_per_position = (1e-8,)
+        pinned: ClassVar[dict] = {}
+        output = None
+        warnings = ()
+        basis = "b"
+        mean = 1.0e-2
+
+    monkeypatch.setattr(residualleak, "measure_leak", lambda *a, **k: _Report())
+    monkeypatch.setattr(residualleak, "stamp_report", lambda doc, _r: doc)
+    from senbonzakura import corpora
+    monkeypatch.setattr(corpora, "load", lambda key, **k: [f"{key} {i}" for i in range(8)])
+
+    out = tmp_path / "leak.json"
+    leak.main(["--model", "m", "--device", "cpu", "--n", "4", "--probe-n", "2",
+               "--out", str(out)])
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["direction_from"] is None
+    assert doc["reference"] is None
+
+
+def test_freeing_the_accelerator_never_raises_on_a_machine_without_one():
+    """It runs between two loads on a machine chosen because it can just about hold one. An
+    exception here would end a run that had done everything right so far.
+    """
+    assert leak._free_accelerator() is None

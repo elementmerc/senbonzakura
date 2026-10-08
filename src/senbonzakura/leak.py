@@ -82,6 +82,21 @@ def contrast_warning(harmful, harmless):
     return None
 
 
+def _free_accelerator():
+    """Release the reference model's memory before the target is loaded.
+
+    A no-op on CPU and it must stay one: this runs between two loads on a machine chosen because
+    it can just about hold one of them, and an exception here would end a run that had done
+    everything right so far.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
 def build_parser():
     from .parser import loader_parser
 
@@ -117,6 +132,12 @@ def build_parser():
     ap.add_argument("--out", default=None,
                     help=f"where the profile is written (default: ./{DEFAULT_OUT}). A default "
                          f"that already exists is refused rather than replaced")
+    ap.add_argument("--direction-from", dest="direction_from", default=None, metavar="MODEL",
+                    help="take the direction from THIS model, then look for it in --model. This "
+                         "is the comparison that can show an edit removed something: the default "
+                         "extracts from the model under test, which fits whatever contrast is "
+                         "left and then finds it present, so that figure cannot fall by editing. "
+                         "Pass the base here and the edited checkpoint as --model")
     ap.add_argument("--label", default="", help="a name for this arm, recorded in the output")
     return ap
 
@@ -156,13 +177,42 @@ def main(argv=None):
 
     from . import residualleak
     from .cli import load_model_and_tokenizer
+
+    print(f"leak: {a.label or a.model}")
+    reference = None
+    if a.direction_from:
+        # THE DIRECTION COMES FROM ANOTHER CHECKPOINT, which is the only way this command can ask
+        # whether an edit removed anything. Measured on 2026-10-08: extracting from the model under
+        # test and measuring that same direction gives a figure that cannot fall by editing, because
+        # a difference of means always returns the top REMAINING contrast and then finds it present.
+        # Two of this project's own edits read HIGHER than the base they were made from under the
+        # default, while their refusal rate fell from 0.578 to 0.047.
+        #
+        # Loaded and released BEFORE the target, never beside it: the pair is a base and its edit,
+        # so they are the same size, and holding both is twice the memory on exactly the machine
+        # where this comparison is worth doing.
+        print(f"  taking the direction from {a.direction_from}")
+        ref_model, ref_tok = load_model_and_tokenizer(
+            a.direction_from, device=a.device, load_in_4bit=a.load_in_4bit,
+            trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+        direction, position, norms, caveats = residualleak.contrast_direction(
+            ref_model, ref_tok, harmful, harmless, at=a.at, log=print)
+        in_reference = residualleak.measure_leak(
+            ref_model, ref_tok, harmful[:a.probe_n], direction, log=lambda _m: None)
+        reference = {"model": a.direction_from, "mean": in_reference.mean,
+                     "position": position}
+        print(f"  that direction in {a.direction_from}: {in_reference.mean:.3e}, which is what "
+              f"the figure below is a share of")
+        del ref_model, ref_tok
+        _free_accelerator()
+
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
 
-    print(f"leak: {a.label or a.model}")
-    direction, position, norms, caveats = residualleak.contrast_direction(
-        model, tok, harmful, harmless, at=a.at, log=print)
+    if reference is None:
+        direction, position, norms, caveats = residualleak.contrast_direction(
+            model, tok, harmful, harmless, at=a.at, log=print)
 
     probe = harmful[:a.probe_n]
     try:
@@ -192,6 +242,10 @@ def main(argv=None):
         "model": a.model,
         "harmful": a.harmful,
         "harmless": a.harmless,
+        "direction_from": a.direction_from,
+        # Present only with --direction-from. It is what makes the figure a share rather than an
+        # absolute: the same direction's strength in the model it was taken from.
+        "reference": reference,
         "contrast_matched": warning is None,
         "contrast_warning": warning,
         "direction_position": position,

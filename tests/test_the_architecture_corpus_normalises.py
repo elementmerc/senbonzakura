@@ -935,3 +935,78 @@ def test_a_cooldown_is_bounded_so_a_hostile_header_cannot_stall_the_run():
     )
     fetcher._hold_everyone(10**9, "a header that says come back next year")
     assert fetcher._cooldown_until <= time.monotonic() + fac.MAX_COOLDOWN_S + 1
+
+
+# ── which indices a folded pattern covers ────────────────────────────────────────────
+#
+# ADDED 2026-10-08, after the omission it closes cost four wrong answers to one question.
+#
+# Folding 62 layer names into `model.layers.{i}.eh_proj.weight` is right, and recording only HOW
+# MANY folded in threw away the thing that tells a decoder layer from a trailing prediction head.
+# Both look like `model.layers.{i}.something`. The head is the one covering a single index above
+# the declared depth, and nothing in the record said so.
+#
+# Three readers then produced 2, 25, 15 and 4 for the same question. Two wrote patterns against the
+# folded text and measured the storage format. One expanded the templates across every index, so a
+# head at block 61 appeared on all 62, and validated a detector against ground truth computed the
+# same wrong way: two instruments agreed because they shared an assumption nothing had written
+# down. This field makes the question a lookup.
+
+def test_a_decoder_stack_reads_as_a_contiguous_run_from_zero():
+    got = fac.summarise_indices(set(range(61)))
+    assert got == {"count": 61, "min": 0, "max": 60, "contiguous": True}
+
+
+def test_a_prediction_head_reads_as_one_index_above_the_stack():
+    """THE CASE THE FIELD EXISTS FOR, in DeepSeek V3's real shape."""
+    got = fac.summarise_indices({61})
+    assert got == {"count": 1, "min": 61, "max": 61, "contiguous": False}
+
+
+def test_three_prediction_layers_read_as_three_indices_above_the_stack():
+    """Step 5 and Step 3.5 carry three, so one is not the only shape to handle."""
+    got = fac.summarise_indices({92, 93, 94})
+    assert got["count"] == 3
+    assert (got["min"], got["max"]) == (92, 94)
+    assert got["contiguous"] is False, "a run that does not start at zero is not a stack"
+
+
+def test_a_gap_inside_a_run_is_not_contiguous():
+    """A pattern present on some blocks and absent on others is a real shape: Nemotron-H carries
+    attention on 4 of 52. It must not read as a stack.
+    """
+    assert fac.summarise_indices({0, 1, 5, 6})["contiguous"] is False
+
+
+def test_no_indices_at_all_is_recorded_rather_than_guessed():
+    got = fac.summarise_indices(set())
+    assert got["count"] == 0
+    assert got["min"] is None and got["max"] is None
+    assert got["contiguous"] is False
+
+
+def test_the_inventory_separates_a_head_from_the_stack_it_sits_in():
+    """End to end on the shape that caused the confusion: one pattern covering 0 to 60 and two
+    covering 61 alone, all three spelled `model.layers.{i}.*`.
+    """
+    names = {f"model.layers.{i}.self_attn.q_proj.weight": {"dtype": "BF16", "shape": [8, 8]}
+             for i in range(61)}
+    names["model.layers.61.eh_proj.weight"] = {"dtype": "BF16", "shape": [8, 8]}
+    names["model.layers.61.enorm.weight"] = {"dtype": "BF16", "shape": [8]}
+    idx = fac.tensor_inventory(names)["pattern_layer_indices"]
+
+    stack = idx["model.layers.{i}.self_attn.q_proj.weight"]
+    assert stack["contiguous"] is True and stack["max"] == 60
+    for head in ("model.layers.{i}.eh_proj.weight", "model.layers.{i}.enorm.weight"):
+        assert idx[head] == {"count": 1, "min": 61, "max": 61, "contiguous": False}
+
+
+def test_an_expert_index_is_not_mistaken_for_a_layer_index():
+    """The first version of the depth reader took a max over every numeric component, so expert
+    127 of a 48 layer model read as 128 deep. Attribution matters here for the same reason.
+    """
+    names = {f"model.layers.{i}.mlp.experts.{e}.down_proj.weight": {"dtype": "BF16", "shape": [4, 4]}
+             for i in range(3) for e in range(8)}
+    idx = fac.tensor_inventory(names)["pattern_layer_indices"]
+    folded = "model.layers.{i}.mlp.experts.{e}.down_proj.weight"
+    assert idx[folded] == {"count": 3, "min": 0, "max": 2, "contiguous": True}

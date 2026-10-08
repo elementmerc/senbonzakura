@@ -561,15 +561,58 @@ def index_counts_by_stem(name: str) -> tuple[dict[str, int], dict[str, int]]:
     return layers, experts
 
 
+def summarise_indices(values: set[int]) -> dict[str, Any]:
+    """Which layer indices a folded pattern covers, compactly.
+
+    WHY THIS FIELD EXISTS, AND IT IS THE MOST EXPENSIVE OMISSION IN THIS FILE SO FAR.
+
+    Folding `model.layers.0.eh_proj` through `model.layers.61.eh_proj` into one pattern is right:
+    the pattern set is the fact and storing 30,000 names is storing six facts a thousand times.
+    But the first version recorded only HOW MANY names folded in, and that threw away the one
+    thing a reader needs to tell a decoder layer from a trailing prediction head. Both look like
+    `model.layers.{i}.something`; the head is the one covering a single index above the declared
+    depth.
+
+    The cost was not theoretical. Four separate attempts were made to count models whose
+    prediction head sits inside the decoder's own stack, by three different readers, and they
+    returned 2, 25, 15 and 4. Two of those wrote patterns against the folded text and measured the
+    STORAGE FORMAT. One expanded the templates across every index, so a head at block 61 appeared
+    on all 62 blocks, and then validated a detector against ground truth computed the same wrong
+    way: two instruments agreed because they shared an assumption this file had never written
+    down. A schema that records the indices makes all four of those readings unnecessary and the
+    question a lookup.
+
+    `contiguous` is the discriminator worth having precomputed: a decoder stack's pattern covers
+    0 to n-1 with no gaps, and anything else wants a human looking at it.
+    """
+    if not values:
+        return {"count": 0, "min": None, "max": None, "contiguous": False}
+    lo, hi = min(values), max(values)
+    return {
+        "count": len(values),
+        "min": lo,
+        "max": hi,
+        # True only for a gapless run starting at zero, which is what an ordinary stack looks like.
+        "contiguous": len(values) == (hi - lo + 1) and lo == 0,
+    }
+
+
 def tensor_inventory(names_to_spec: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Summarise a tensor inventory: folded patterns, dtypes, prefixes and per-stack depths."""
     patterns: dict[str, int] = {}
+    #: pattern -> the set of layer indices whose names folded into it. See `summarise_indices`.
+    pattern_indices: dict[str, set[int]] = {}
     dtypes: dict[str, int] = {}
     prefixes: dict[str, int] = {}
     layer_counts: dict[str, int] = {}
     expert_counts: dict[str, int] = {}
     for name, spec in names_to_spec.items():
-        patterns[fold_tensor_name(name)] = patterns.get(fold_tensor_name(name), 0) + 1
+        folded = fold_tensor_name(name)
+        patterns[folded] = patterns.get(folded, 0) + 1
+        # The indices this name contributes, attributed to the pattern rather than to a stem, so a
+        # reader can ask "which blocks does this pattern cover" without re-deriving it.
+        for match in _LAYER_INDEX.finditer(_EXPERT_INDEX.sub("{e}", name)):
+            pattern_indices.setdefault(folded, set()).add(int(match.group(0)))
         dtype = (spec or {}).get("dtype")
         if dtype:
             dtypes[str(dtype)] = dtypes.get(str(dtype), 0) + 1
@@ -584,6 +627,10 @@ def tensor_inventory(names_to_spec: dict[str, dict[str, Any]]) -> dict[str, Any]
         "tensor_count": len(names_to_spec),
         "pattern_count": len(patterns),
         "patterns": dict(sorted(patterns.items())),
+        # WHICH indices each pattern covers, not only how many names folded in. The field that
+        # makes "is this trailing block a prediction head" a lookup rather than a fourth guess.
+        "pattern_layer_indices": {
+            k: summarise_indices(v) for k, v in sorted(pattern_indices.items())},
         "dtypes": dict(sorted(dtypes.items())),
         "prefixes": dict(sorted(prefixes.items())),
         "layer_counts_by_stem": dict(sorted(layer_counts.items())),

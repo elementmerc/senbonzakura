@@ -91,9 +91,9 @@ NEEDS_LEAK_FIELD = (
 NEEDS_NORM_GAIN = (
     ("the matching search EXISTS now: tools/research/matched_leak_strength.py bisects strength"
      " on the measured leak so two models are compared on the edit that landed"),
-    "gemma-2-2b-it and a Qwen of similar size, both of which are on the ROG already",
-    ("a card that holds gemma-2-2b: 7.0 GB with headroom against the ROG's 6 GB, so this is a"
-     " rental and my earlier claim that it ran there was wrong"),
+    "gemma-2-2b-it and a Qwen of similar size, both already cached locally",
+    ("a card that holds gemma-2-2b: 7.0 GB with headroom, which a 6 GB laptop card does not"
+     " have, so this is a rental and an earlier claim that it ran locally was wrong"),
     ("a refusal-free task to read the off-target effect on. arXiv 2607.17427 used 21,600 stock"
      " decisions; any task with no refusals in it will do, and the capability probe is one"),
 )

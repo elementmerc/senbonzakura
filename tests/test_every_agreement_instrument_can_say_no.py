@@ -55,12 +55,33 @@ NEEDS_A_CONTROL = {
          "all. Without the control, the real run's in-sample 0.9920 reads as a result when the "
          "floor for pure noise is 0.59"),
         "--control shuffled"),
+    "matched_leak_strength.py": (
+        ("its whole output is whether two models were edited to the same place, which is an "
+         "agreement by construction. The expensive way to be wrong is a table of two matched "
+         "strengths where one arm never reached the target, with the difference between them then "
+         "attributed to the models rather than to the arm that did not converge"),
+        "caveat_if_unconverged"),
+    "decoy_injection.py": (
+        ("its whole output is whether `validate` agrees with a ground truth we planted, so it is "
+         "an agreement against a known answer. The control is the arm that says nothing: an alpha "
+         "too small leaves the estimator on refusal and the arm is an undefended model, an alpha "
+         "too large breaks the model and a broken model defeats the estimator too. Without that, "
+         "a sweep where no injection worked reads as a clean bill of health for the detector, "
+         "which is the one conclusion the data cannot support"),
+        "uninformative"),
 }
 
 #: Everything else under `tools/research/`, each with why a breaking control would mean nothing
 #: for it. Being on this list is a claim somebody made, not an absence of one.
 NO_AGREEMENT_TO_BREAK = {
     "audit_flags.py": "enumerates declared flags; its output is a list, not a verdict",
+    "experiments.py": "registers the open experiments and derives, per arm, whether this machine "
+                      "can run it. Its output is a table and a generated batch script, and the "
+                      "one claim it makes about the world is arithmetic over a declared model "
+                      "size against a card size read from the machine. Nothing in it compares two "
+                      "measurements, so there is no agreement a control could break. Its own "
+                      "guard is that no verdict is storable: a test moves every arm between "
+                      "verdicts by changing only the card size",
     "audit_unreached.py": "enumerates public names with no caller; its output is a list for a "
                           "person to rule on, and it says so in its own output. It cannot tell a "
                           "dead knob from a piece built ahead of its caller, which is why it "

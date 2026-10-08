@@ -269,6 +269,10 @@ FLAG_GROUPS = {
         "min_directions", "direction_clusters", "separation_statistic", "matched_scoring",
         "harmless_matched", "hedge_ds", "clean_ds", "no_good_orth", "no_norm_restore",
         "skip_conv_ablation", "per_component", "mlp_off", "sparsity", "ablation_rounds",
+        # Filed with the directions rather than with the output, because what a reader is looking
+        # for when they find it is the direction set, not a file format. The file is the seam
+        # `stream-bake` reads from.
+        "save_directions",
     ),
     "the prompts and the scoring": (
         "dir_prompts", "good_ds", "text_column", "eval_refusal", "eval_kl", "gen_tokens",

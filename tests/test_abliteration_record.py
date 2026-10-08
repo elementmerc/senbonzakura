@@ -247,6 +247,7 @@ EXPECTED_KEYS = {
     # Added 2026-09-21 when `separation` was finally stamped. Present only when a separation
     # figure was actually measured, which is why the guard below tolerates it being absent.
     "metrics",
+    "residual_leak",
 }
 
 

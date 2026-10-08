@@ -339,13 +339,20 @@ class LayerIndex:
     not part of any layer: embeddings, the final norm, the language-model head.
     """
 
-    __slots__ = ("count", "layers", "root", "shared")
+    __slots__ = ("count", "head", "head_indices", "layers", "root", "shared")
 
-    def __init__(self, root, count, layers, shared):
+    def __init__(self, root, count, layers, shared, head=None, head_indices=()):
         self.root = pathlib.Path(root)
         self.count = count
         self.layers = layers
         self.shared = shared
+        #: A multi-token prediction head stored INSIDE the decoder stack, kept apart from both the
+        #: layers and `shared`. Apart from the layers because the declared count is right to
+        #: exclude it and a caller walking `count` blocks must not meet it; apart from `shared`
+        #: because whether to edit it is a live question with two defensible answers, and a thing
+        #: filed under "everything else" cannot be the subject of a flag.
+        self.head = head or {}
+        self.head_indices = tuple(head_indices)
 
     def nbytes(self, i):
         """On-disk bytes of layer `i`. What one layer costs to read, and the preflight's unit."""
@@ -382,11 +389,17 @@ class LayerIndex:
         """Every shard the checkpoint spans, in a stable order."""
         seen = {shard for layer in self.layers for shard, _t in layer.values()}
         seen |= {shard for shard, _t in self.shared.values()}
+        # AND THE HEAD'S. A prediction head can be the only thing in its shard, and a bake that
+        # walked this list would then never open that file: with the head set to be edited it
+        # would be left untouched and the run would report success.
+        seen |= {shard for shard, _t in self.head.values()}
         return sorted(seen)
 
     def __repr__(self):
+        head = (f", a prediction head at block(s) {list(self.head_indices)}"
+                if self.head_indices else "")
         return (f"LayerIndex({self.count} layers, {len(self.shards())} shard(s), "
-                f"{len(self.shared)} shared tensor(s))")
+                f"{len(self.shared)} shared tensor(s){head})")
 
 
 def _layer_scope(model_dir):
@@ -465,6 +478,45 @@ def _layer_axis(names, count):
     return None
 
 
+def _layer_axis_with_head(names, count):
+    """`(position, head_indices)` for a stack that holds a prediction head, or `(None, ())`.
+
+    THE CASE THIS EXISTS FOR, and it is not rare. `_layer_axis` demands indices of exactly
+    `0..count-1`, and a multi-token prediction head stored inside the decoder's own stack puts one
+    more there than the config declares: DeepSeek V3 carries 0 to 61 against a declared 61. So the
+    strict search finds nothing and the refusal blames a naming layout, which is wrong twice over,
+    because the layout is ordinary and the checkpoint is editable. Fifteen models in the
+    architecture corpus sit in exactly this position.
+
+    The extra indices are accepted ONLY when every one of them is confirmed to be a prediction
+    head by its own tensors, and only when they are the TRAILING indices. Neither condition is
+    decoration. Accepting any superset would make the search agree with a checkpoint whose config
+    simply disagrees with its weights, which is the one thing this module refuses hardest, and a
+    head wedged into the middle of a stack is not a layout anybody ships; meeting one should be a
+    refusal rather than an off-by-one applied to every block after it.
+    """
+    from . import modelmap
+
+    seen = collections.defaultdict(set)
+    for name in names:
+        for position, match in enumerate(_INDEXED.finditer(name)):
+            seen[position].add(int(match.group(1)))
+    wanted = set(range(count))
+    for position in sorted(seen):
+        extra = seen[position] - wanted
+        if not extra or seen[position] & wanted != wanted:
+            continue
+        if extra != set(range(count, count + len(extra))):
+            continue
+        prefix, _ = modelmap.stack_prefix_from_names(names)
+        if prefix is None:
+            continue
+        confirmed = set(modelmap.prediction_head(names, stack_prefix=prefix).in_stack.unwrap([]))
+        if confirmed and extra <= confirmed:
+            return position, tuple(sorted(extra))
+    return None, ()
+
+
 def _prediction_head_hint(names, count):
     """The real reason the axis search failed, when a prediction head is what did it.
 
@@ -533,6 +585,12 @@ def index_layers(model_dir):
         raise ShardError(f"{model_dir}: no safetensors shards, so there is nothing to index")
 
     axis = _layer_axis(located, count)
+    head_indices = ()
+    if axis is None:
+        # The stack may hold a prediction head, which puts one more index at the layer position
+        # than the config declares. That is a checkpoint this reader can walk, not a layout it
+        # does not know, and `_prediction_head_hint` has been saying so in a refusal for a week.
+        axis, head_indices = _layer_axis_with_head(located, count)
     if axis is None:
         raise ShardError(
             f"{model_dir}: the config declares {count} layers and no position in the tensor "
@@ -542,13 +600,15 @@ def index_layers(model_dir):
             + _prediction_head_hint(located, count))
 
     layers = [{} for _ in range(count)]
-    shared = {}
+    shared, head = {}, {}
     for name, entry in located.items():
         i = _nth_index(name, axis)
         if i is None:
             shared[name] = entry
         elif 0 <= i < count:
             layers[i][name] = entry
+        elif i in head_indices:
+            head[name] = entry
         else:
             # An index at the layer position outside the declared range. Refused rather than
             # filed under `shared`, because the two readings ("the config is wrong" and "this
@@ -564,7 +624,7 @@ def index_layers(model_dir):
         raise ShardError(
             f"{model_dir}: the config declares {count} layers and layer(s) {empty} hold no "
             f"tensors. A streaming run would walk straight past them and report success")
-    return LayerIndex(model_dir, count, layers, shared)
+    return LayerIndex(model_dir, count, layers, shared, head=head, head_indices=head_indices)
 
 
 # ── loading one layer ────────────────────────────────────────────────────────────────────────

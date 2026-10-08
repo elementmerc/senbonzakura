@@ -559,3 +559,167 @@ def test_an_unreadable_directions_file_exits_rather_than_tracebacks(tmp_path, mo
     with pytest.raises(SystemExit, match="stream-bake:"):
         streambake.main(["--model", str(model), "--directions", str(bad),
                          "--out", str(tmp_path / "out")])
+
+
+# ── a prediction head inside the stack, which the reader used to refuse outright ─────
+
+def _checkpoint_with_head(root, *, layers=LAYERS, hidden=HIDDEN):
+    """A DeepSeek V3 shaped stack: `layers` decoder blocks plus one prediction-head block.
+
+    The head is marked the way real ones are, by `eh_proj` beside `enorm` and `hnorm`, which is
+    what `modelmap.prediction_head` reads. It also carries an `o_proj` and a `down_proj`, because
+    a head that held no residual writer would make the `edit` policy untestable.
+    """
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(3)
+    (root / "config.json").write_text(json.dumps({
+        "model_type": "deepseek_v3", "architectures": ["DeepseekV3ForCausalLM"],
+        "num_hidden_layers": layers, "hidden_size": hidden,
+        "num_nextn_predict_layers": 1}), encoding="utf-8")
+
+    arrays, index = {}, {}
+    for i in range(layers):
+        for suffix in ("self_attn.o_proj.weight", "mlp.down_proj.weight"):
+            name = f"model.layers.{i}.{suffix}"
+            arrays[name] = rng.standard_normal((hidden, hidden))
+    # The head, at the index one past the declared count.
+    for suffix in ("eh_proj.weight", "enorm.weight", "hnorm.weight",
+                   "self_attn.o_proj.weight", "mlp.down_proj.weight"):
+        name = f"model.layers.{layers}.{suffix}"
+        arrays[name] = rng.standard_normal(
+            (hidden, hidden) if "proj" in suffix else (hidden,))
+    arrays["model.norm.weight"] = rng.standard_normal((hidden,))
+    for name in arrays:
+        index[name] = "model-0.safetensors"
+    _write_shard(root / "model-0.safetensors", arrays)
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {}, "weight_map": index}), encoding="utf-8")
+    return root
+
+
+@pytest.fixture
+def model_with_head(tmp_path):
+    return _checkpoint_with_head(tmp_path / "source-head")
+
+
+def test_a_stack_holding_a_prediction_head_is_indexed_rather_than_refused(model_with_head):
+    """WHAT THIS REPLACES. The strict axis search wants indices of exactly 0..count-1 and a head
+    puts one more there, so the reader refused and blamed "a naming layout this reader does not
+    know". The layout is ordinary, the checkpoint is editable, and fifteen models in the
+    architecture corpus are in this position.
+    """
+    index = streaming.index_layers(model_with_head)
+    assert index.count == LAYERS
+    assert index.head_indices == (LAYERS,)
+    assert index.head, "the head's tensors were not kept"
+
+
+def test_the_head_is_kept_apart_from_the_layers_and_from_shared(model_with_head):
+    """Apart from the layers because the declared count is right to exclude it; apart from shared
+    because whether to edit it is a flag, and a thing filed under "everything else" cannot be one.
+    """
+    index = streaming.index_layers(model_with_head)
+    assert len(index.layers) == LAYERS
+    for layer in index.layers:
+        assert not any(f".{LAYERS}." in n for n in layer)
+    assert not any(f".{LAYERS}." in n for n in index.shared)
+    assert all(f".{LAYERS}." in n for n in index.head)
+
+
+def test_the_repr_says_a_head_is_there(model_with_head):
+    assert "prediction head" in repr(streaming.index_layers(model_with_head))
+
+
+def test_skipping_the_head_is_the_default_and_leaves_its_weights_alone(
+        model_with_head, tmp_path):
+    """The recorded position: the config's declared layer count excludes the head, so excluding it
+    from the edit is what that declaration means.
+    """
+    out = streambake.prepare_output(model_with_head, tmp_path / "out", log=lambda _m: None)
+    streambake.bake(out, _directions(), log=lambda _m: None)
+    for suffix in ("self_attn.o_proj.weight", "mlp.down_proj.weight"):
+        name = f"model.layers.{LAYERS}.{suffix}"
+        assert torch.equal(_read(model_with_head / "model-0.safetensors", name),
+                           _read(out / "model-0.safetensors", name)), name
+
+
+def test_editing_the_head_reaches_its_residual_writers(model_with_head, tmp_path):
+    out = streambake.prepare_output(model_with_head, tmp_path / "out", log=lambda _m: None)
+    streambake.bake(out, _directions(), prediction_head="edit", log=lambda _m: None)
+    for suffix in ("self_attn.o_proj.weight", "mlp.down_proj.weight"):
+        name = f"model.layers.{LAYERS}.{suffix}"
+        assert not torch.equal(_read(model_with_head / "model-0.safetensors", name),
+                               _read(out / "model-0.safetensors", name)), name
+
+
+def test_editing_the_head_does_not_touch_its_norms_or_its_projection_marker(
+        model_with_head, tmp_path):
+    """`eh_proj`, `enorm` and `hnorm` are what mark the block as a head. None of them is a
+    residual writer, and an edit that reached them would be a different intervention.
+    """
+    out = streambake.prepare_output(model_with_head, tmp_path / "out", log=lambda _m: None)
+    streambake.bake(out, _directions(), prediction_head="edit", log=lambda _m: None)
+    for suffix in ("enorm.weight", "hnorm.weight"):
+        name = f"model.layers.{LAYERS}.{suffix}"
+        assert torch.equal(_read(model_with_head / "model-0.safetensors", name),
+                           _read(out / "model-0.safetensors", name)), name
+
+
+def test_the_two_policies_are_different_edits_and_cannot_resume_each_other(
+        model_with_head, tmp_path):
+    """One checkpoint holding both answers to the question the flag exists to ask."""
+    out = streambake.prepare_output(model_with_head, tmp_path / "out", log=lambda _m: None)
+    streambake.bake(out, _directions(), prediction_head="skip", log=lambda _m: None)
+    with pytest.raises(streambake.StreamBakeError, match="part-finished"):
+        streambake.bake(out, _directions(), prediction_head="edit", log=lambda _m: None)
+
+
+def test_an_unknown_policy_is_refused_by_name(model_with_head):
+    index = streaming.index_layers(model_with_head)
+    with pytest.raises(streambake.StreamBakeError, match="must be one of"):
+        streambake.plan_edits(index, prediction_head="maybe")
+
+
+def test_the_bake_says_a_head_is_present_and_which_policy_it_used(model_with_head, tmp_path):
+    said = []
+    out = streambake.prepare_output(model_with_head, tmp_path / "out", log=lambda _m: None)
+    streambake.bake(out, _directions(), prediction_head="edit", log=said.append)
+    joined = " ".join(said)
+    assert "prediction head" in joined
+    assert "'edit'" in joined
+
+
+def test_the_command_exposes_both_policies():
+    dests = {a.dest: a for a in streambake.build_parser()._actions}
+    assert set(dests["prediction_head"].choices) == set(streambake.PREDICTION_HEAD_POLICIES)
+    assert dests["prediction_head"].default == "skip"
+
+
+def test_an_extra_index_that_is_not_a_head_is_still_refused(tmp_path):
+    """THE STRICTNESS THAT HAD TO SURVIVE. An extra index with no head markers means the config
+    disagrees with the weights, which has a different fix from a prediction head, and accepting
+    any superset would turn that into an off-by-one applied to every block.
+    """
+    root = tmp_path / "mismatch"
+    root.mkdir()
+    (root / "config.json").write_text(json.dumps({
+        "model_type": "llama", "architectures": ["LlamaForCausalLM"],
+        "num_hidden_layers": 2, "hidden_size": HIDDEN}), encoding="utf-8")
+    arrays = {f"model.layers.{i}.self_attn.o_proj.weight": np.zeros((HIDDEN, HIDDEN))
+              for i in range(3)}
+    _write_shard(root / "model-0.safetensors", arrays)
+    (root / "model.safetensors.index.json").write_text(json.dumps(
+        {"metadata": {}, "weight_map": dict.fromkeys(arrays, "model-0.safetensors")}),
+        encoding="utf-8")
+    with pytest.raises(streaming.ShardError):
+        streaming.index_layers(root)
+
+
+def test_a_shard_holding_only_the_head_is_still_walked(tmp_path):
+    """A head can be the only thing in its shard. A bake that walked the layer-derived shard list
+    would never open that file, leave the head untouched under `edit`, and report success.
+    """
+    root = _checkpoint_with_head(tmp_path / "split")
+    index = streaming.index_layers(root)
+    assert set(index.shards()) >= {shard for shard, _t in index.head.values()}

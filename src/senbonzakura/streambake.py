@@ -161,7 +161,26 @@ def prepare_output(source, out, *, log=print):
 
 # ── what gets edited, and with which direction ───────────────────────────────────────
 
-def plan_edits(index, *, ablate_conv=True):
+#: WHICH HEADS THIS REACHES, because it is not all of them. A prediction head is stored one of two
+#: ways and only one of them is covered here. Thirteen models in the architecture corpus put the
+#: head INSIDE the decoder stack, as one more index than the config declares: DeepSeek V3, V3.2 and
+#: R1, GLM 4.5 through 5.2, Ling 2.6 and 3.0, Step 3.5 and Hy3. Those are the ones `index.head`
+#: holds and the ones this policy decides about. Eleven more give the head its OWN stack, under
+#: `model.mtp_layers` or a sibling stem, and those tensors land in `shared`: they are not edited
+#: under either policy, and `edit` does not reach them. Extending to the own-stack convention is
+#: real work and is recorded rather than half-done, because a flag that silently covered one
+#: convention and not the other would make the two arms of the experiment incomparable across
+#: models without anything saying so.
+#:
+#: What to do with a multi-token prediction head found inside the decoder stack. `skip` is the
+#: default and it is the recorded position: the config's declared layer count excludes the head, so
+#: excluding it from the edit is what the declaration means. `edit` exists because the head writes
+#: to the residual stream like any other block and whether skipping it helps or hurts has never
+#: been measured; the two are the arms of that experiment.
+PREDICTION_HEAD_POLICIES = ("skip", "edit")
+
+
+def plan_edits(index, *, ablate_conv=True, prediction_head="skip"):
     """`{tensor name: layer index}` for every residual writer in the checkpoint.
 
     Built from `LayerIndex.writers`, which reads `writers.is_writer_tensor`, which is the same
@@ -169,10 +188,25 @@ def plan_edits(index, *, ablate_conv=True):
     to the residual stream would be a third hand-kept copy of that list, and the second one had
     already drifted far enough to refuse models the editor handled perfectly well.
     """
+    if prediction_head not in PREDICTION_HEAD_POLICIES:
+        raise StreamBakeError(
+            f"prediction_head is {prediction_head!r} and must be one of "
+            f"{list(PREDICTION_HEAD_POLICIES)}.")
     plan = {}
     for i in range(index.count):
         for name in index.writers(i, ablate_conv):
             plan[name] = i
+    if prediction_head == "edit" and index.head:
+        from .writers import is_writer_tensor
+        # THE DEEPEST POSITION, and the choice is worth stating because there is no obviously
+        # right answer. A prediction head reads the residual stream after the last decoder block,
+        # so the position whose directions describe what it sees is the last one; the direction
+        # set carries no entry of its own for a block the config does not count. Using the deepest
+        # available set is the closest honest approximation and the arm that measures whether
+        # editing the head helps at all is the same arm that would make a better choice possible.
+        for name in index.head:
+            if is_writer_tensor(name, ablate_conv):
+                plan[name] = index.count - 1
     return plan
 
 
@@ -229,7 +263,8 @@ def apply_direction(raw, tensor, directions, *, strength, sparsity, rounds, rest
 
 # ── resumability, keyed so a different edit cannot resume somebody else's ────────────
 
-def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, ablate_conv):
+def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, ablate_conv,
+                      prediction_head="skip"):
     """A digest of the whole edit, not just the directions.
 
     THE KEY INCLUDES THE PARAMETERS ON PURPOSE. The failure this prevents is the quiet one:
@@ -247,7 +282,8 @@ def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, 
     h.update(repr(arr.shape).encode())
     h.update(arr.tobytes())
     for name, value in (("strength", strength), ("sparsity", sparsity), ("rounds", rounds),
-                        ("restore_norms", restore_norms), ("ablate_conv", ablate_conv)):
+                        ("restore_norms", restore_norms), ("ablate_conv", ablate_conv),
+                        ("prediction_head", prediction_head)):
         h.update(f"\0{name}={value!r}".encode())
     return h.hexdigest()[:32]
 
@@ -376,7 +412,7 @@ def preflight(index, directions, *, out, plan, log=print):
 # ── the bake ─────────────────────────────────────────────────────────────────────────
 
 def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, restore_norms=True,
-         ablate_conv=True, mode="per_layer", log=print):
+         ablate_conv=True, mode="per_layer", prediction_head="skip", log=print):
     """Edit every residual writer in the checkpoint at `out`, shard by shard, resumably.
 
     `out` is a WORKING COPY. This never takes a source path, so there is no argument order in
@@ -386,12 +422,19 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
 
     arr = np.asarray(directions, dtype=np.float32)
     index = streaming.index_layers(out)
-    plan = plan_edits(index, ablate_conv=ablate_conv)
+    plan = plan_edits(index, ablate_conv=ablate_conv, prediction_head=prediction_head)
+    if index.head_indices:
+        log(f"  this stack holds a prediction head at block(s) {list(index.head_indices)}, which the"
+            f" config's layer count excludes; policy is {prediction_head!r}")
     stats = preflight(index, arr, out=out, plan=plan, log=log)
     K = stats["K"] if K is None else min(int(K), stats["K"])
 
+    # The policy is part of the key, like every other edit parameter: resuming a skip-the-head
+    # bake with edit-the-head would leave one checkpoint holding both answers to the question the
+    # flag exists to ask.
     digest = directions_digest(arr[:, :K, :], strength=strength, sparsity=sparsity, rounds=rounds,
-                               restore_norms=restore_norms, ablate_conv=ablate_conv)
+                               restore_norms=restore_norms, ablate_conv=ablate_conv,
+                               prediction_head=prediction_head)
     progress = read_progress(out)
     # COMPARED BEFORE IT IS OVERWRITTEN. The first version set `progress["digest"]` here and then
     # handed the same dict to `shards_to_do`, which compares the recorded digest against this
@@ -567,6 +610,12 @@ bake does nothing rather than projecting the weights a second time.
     p.add_argument("--no-restore-norms", dest="restore_norms", action="store_false",
                    help="the naive formulation: remove the direction and let row lengths fall "
                         "where they may. This is the control, not the recommended path")
+    p.add_argument("--prediction-head", dest="prediction_head", default="skip",
+                   choices=PREDICTION_HEAD_POLICIES,
+                   help="what to do with a multi-token prediction head stored inside the decoder "
+                        "stack (default: skip). The config's declared layer count excludes it, so "
+                        "skipping is what that declaration means; `edit` is the other arm of a "
+                        "question nobody has measured")
     p.add_argument("--no-ablate-conv", dest="ablate_conv", action="store_false",
                    help="leave convolutional residual writers alone")
     return p
@@ -587,7 +636,8 @@ def main(argv=None):
                   f"and the pre-flight still checks the geometry.")
         out = prepare_output(a.model, a.out)
         stats = bake(out, arr, K=a.K, strength=a.strength, sparsity=a.sparsity, rounds=a.rounds,
-                     restore_norms=a.restore_norms, ablate_conv=a.ablate_conv, mode=mode)
+                     restore_norms=a.restore_norms, ablate_conv=a.ablate_conv, mode=mode,
+                     prediction_head=a.prediction_head)
     except StreamBakeError as e:
         raise SystemExit(f"stream-bake: {e}") from e
     except streaming.ShardError as e:

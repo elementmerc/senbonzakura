@@ -40,6 +40,25 @@ class _Tty(io.StringIO):
 
 
 # ── the wordmark cannot drift ───────────────────────────────────────────────────────────
+
+def _plain_line(segments):
+    return "".join(text for _colour, text in segments)
+
+
+def _text_column(line):
+    """The display column where a right-hand text column starts, or None when there is not one.
+
+    A gap of two or more spaces followed by something, measured in display columns so a CJK
+    tagline counts double. Returns None for a row that is art alone, which is normal: several
+    designs leave their first and last rows empty on the right.
+    """
+    import re
+
+    match = re.search(r"\S {2,}(?=\S)", line)
+    if match is None:
+        return None
+    return banner.display_width(line[:match.end()])
+
 def test_the_wordmark_round_trips_to_the_project_name():
     """The check that would have caught SAKURA."""
     assert banner.spells() == banner.WORD == "senbonzakura"
@@ -95,10 +114,27 @@ def test_designs_are_never_removed_only_added():
 
 
 # ── rendering ───────────────────────────────────────────────────────────────────────────
-def test_the_current_set_is_the_five_the_operator_picked():
-    """A1, B4, B8, B9, B12 from the round-three draft."""
-    assert set(banner.DESIGNS) == {"block", "scatter", "gokei", "camellia", "senkaimon"}
-    assert all(since == "0.4" for _, since in banner.DESIGNS.values())
+# NO AUTOMATED ALIGNMENT CHECK HERE, and the reason is worth keeping so nobody rebuilds the one
+# that did not work. A right-hand text column that steps by a space or two between rows is a real
+# defect: it is invisible while writing a design and obvious on a terminal, and four of v0.5's
+# drafts had one. A check for it was written and deleted the same hour, because detecting the
+# boundary between art and text from the rendered string cannot be done reliably. The obvious
+# rule, "a run of two or more spaces followed by something", matches the gaps INSIDE the art of
+# `scatter`, `senkaimon`, `nagashi` and `hollow`, so it failed four designs that are correctly
+# aligned and shipped. An instrument that reports on something other than what it claims is worse
+# than none, and the alignment is instead measured once while a design is drafted, by
+# `private/plans/render-v05-candidates.py`, which has the segment structure rather than the string.
+
+
+def test_the_current_set_is_the_ten_the_operator_picked():
+    """A tripwire, not a constraint. Adding a design is a deliberate act and the operator picks
+    them, so a change here should be a change somebody made on purpose rather than a set that
+    drifted. v0.4 shipped five; v0.5 added five more, chosen on 2026-10-08.
+    """
+    assert set(banner.DESIGNS) == {
+        "block", "scatter", "gokei", "camellia", "senkaimon",
+        "zanryu", "nagashi", "kuchiki", "kurohitsugi", "hollow"}
+    assert {since for _b, since in banner.DESIGNS.values()} == {"0.4", "0.5"}
 
 
 @pytest.mark.parametrize("name", sorted(banner.DESIGNS))

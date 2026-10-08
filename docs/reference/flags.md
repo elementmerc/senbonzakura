@@ -188,19 +188,44 @@ Note that the worked command there says `--n` and `--max-new`, not `--capability
 can be run on its own against a model you already have, and which spells the same two settings
 without the prefix. Inside an `abliterate` run, use the prefixed names.
 
-## Did the direction actually leave? `--leak-report`
+## How much of the direction is still there? `--leak-report`
 
 Every other number here is about behaviour. The refusal rate, the harm recognition score, the KL,
-the capability probe: all of them watch what the model does and answer "did it change". There is
-an earlier question underneath that one, which is whether the thing you aimed at actually left the
-model, and nothing in a behavioural figure can see it. A model can stop refusing because the
-direction is gone, or because the edit damaged it into incoherence, and a refusal rate reads the
-same either way.
+the capability probe: all of them watch what the model does and answer "did it change". This one
+looks inside instead, at the weights rather than at the output.
 
-`--leak-report` answers the earlier question. Picture the model's internal state at each layer as
-an arrow in a very high dimensional space, and the refusal direction as one particular axis in
-that space. The measurement is the length of the arrow's shadow on that axis, divided by the
-length of the arrow. If the direction has really gone, the shadow is almost nothing.
+Picture the model's internal state at each layer as an arrow in a very high dimensional space, and
+the refusal direction as one particular axis in that space. The measurement is the length of the
+arrow's shadow on that axis, divided by the length of the arrow. A smaller shadow means less of
+that direction is present.
+
+### Read it beside the refusal rate, never on its own
+
+**It is not a verdict on whether the edit worked**, and this section used to say it was. On
+`Qwen2.5-0.5B-Instruct` we removed refusal behaviour completely, to a rate of zero, and 88 to 96
+per cent of the base model's refusal direction was still sitting in the residual stream
+afterwards. Two independently produced checkpoints, measured two ways. A high figure beside a
+collapsed refusal rate is a real thing that happens, so "the shadow is still there" does not mean
+"the edit failed".
+
+The opposite corner happens too, and for a different reason: a model can be built so that the
+direction a contrast set finds is a decoy, in which case the shadow goes away and the refusal
+stays. Published work describes exactly that defence.
+
+So the figure and the behaviour are two measurements, and neither answers the other's question:
+
+| | refusal collapsed | refusal unchanged |
+|---|---|---|
+| **shadow small** | the straightforward case | the edit landed on something that was not doing the work, a decoy among them |
+| **shadow large** | measured, and real: refusal gone with the direction still present | the edit did not reach the model |
+
+What the measurement is good for is the pair. On its own it tells you about magnitude, which is
+worth knowing and is not a result. Why refusal can go while the magnitude stays is an open
+question with three live candidates (the norm restore putting length back, the stream carrying the
+component by untouched routes, and the extracted direction not being the one that causes refusal);
+`private/research/leak-field-2026-10-08/` has the run and the arithmetic.
+
+### What it does not need
 
 It needs no judge, no sampling and not a single generated token, so there is nothing to validate a
 grader against and no run-to-run variance worth speaking of. One forward pass per probe prompt,
@@ -208,7 +233,7 @@ which is seconds. `--leak-prompts` sets how many prompts it averages over, defau
 
 The figure comes out once per residual-stream position: position 0 is what the embedding produced,
 and position `i + 1` is what decoder layer `i` wrote. The run also prints a mean across those
-positions, which is the single number the published form of the claim is about.
+positions.
 
 ### Two things it says that look like bad news and are not
 

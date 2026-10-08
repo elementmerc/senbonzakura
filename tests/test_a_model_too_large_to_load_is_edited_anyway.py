@@ -723,3 +723,211 @@ def test_a_shard_holding_only_the_head_is_still_walked(tmp_path):
     root = _checkpoint_with_head(tmp_path / "split")
     index = streaming.index_layers(root)
     assert set(index.shards()) >= {shard for shard, _t in index.head.values()}
+
+
+# ── parity across the dtypes a real checkpoint actually stores ───────────────────────
+
+TORCH_DTYPE = {"F32": torch.float32, "F16": torch.float16, "BF16": torch.bfloat16}
+
+
+def _write_typed_shard(path, arrays, dtype_name):
+    """A safetensors file in a named dtype, written through torch so BF16 is reachable.
+
+    numpy has no bfloat16, and bf16 is what most published checkpoints are stored in, so a parity
+    test that only covered float32 would be testing the one dtype the field does not use.
+    """
+    header, offset, blobs = {}, 0, []
+    for name, arr in arrays.items():
+        t = torch.as_tensor(arr, dtype=torch.float32).to(TORCH_DTYPE[dtype_name]).contiguous()
+        raw = t.view(torch.uint8).reshape(-1).numpy().tobytes()
+        header[name] = {"dtype": dtype_name, "shape": list(t.shape),
+                        "data_offsets": [offset, offset + len(raw)]}
+        offset += len(raw)
+        blobs.append(raw)
+    blob = json.dumps(header).encode("utf-8")
+    blob += b" " * ((-len(blob)) % 8)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<Q", len(blob)))
+        f.write(blob)
+        for raw in blobs:
+            f.write(raw)
+
+
+def _typed_checkpoint(root, dtype_name, *, layers=2, hidden=HIDDEN):
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(11)
+    (root / "config.json").write_text(json.dumps({
+        "model_type": "llama", "architectures": ["LlamaForCausalLM"],
+        "num_hidden_layers": layers, "hidden_size": hidden}), encoding="utf-8")
+    arrays, index = {}, {}
+    for i in range(layers):
+        name = f"model.layers.{i}.self_attn.o_proj.weight"
+        arrays[name] = rng.standard_normal((hidden, hidden))
+        index[name] = "model-0.safetensors"
+    _write_typed_shard(root / "model-0.safetensors", arrays, dtype_name)
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {}, "weight_map": index}), encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("dtype_name", ["F32", "F16", "BF16"])
+def test_the_streamed_edit_matches_the_resident_one_in_every_stored_dtype(
+        dtype_name, tmp_path):
+    """BF16 is the one that matters: it is what most published checkpoints store, and a parity
+    claim demonstrated only in float32 would be about the one dtype the field does not use.
+
+    The projection upcasts to float32 and casts back, on both paths, so the result should be
+    identical rather than merely close. Asserted as identical.
+    """
+    from senbonzakura.cli import orthogonalize_np_
+
+    model = _typed_checkpoint(tmp_path / f"src-{dtype_name}", dtype_name, layers=2)
+    dirs = _directions(layers=2)
+    name = "model.layers.1.self_attn.o_proj.weight"
+
+    expected = _read(model / "model-0.safetensors", name)
+    assert expected.dtype == TORCH_DTYPE[dtype_name]
+    orthogonalize_np_(expected, torch.from_numpy(dirs[2]), 1.0, 0.0, 0)
+
+    out = streambake.prepare_output(model, tmp_path / f"out-{dtype_name}",
+                                   log=lambda _m: None)
+    streambake.bake(out, dirs, log=lambda _m: None)
+    got = _read(out / "model-0.safetensors", name)
+    assert got.dtype == TORCH_DTYPE[dtype_name], "the edit changed the stored dtype"
+    assert torch.equal(got, expected), (
+        f"{dtype_name}: the streamed edit and the resident one disagree, so the parity claim "
+        f"holds in float32 only")
+
+
+@pytest.mark.parametrize("dtype_name", ["F16", "BF16"])
+def test_the_parity_check_can_be_made_to_fail(dtype_name, tmp_path):
+    """THE FORCED-FAIL CONTROL the rung's exit gate asks every parity instrument to carry.
+
+    An equality assertion that has only ever been seen passing has not been shown to detect
+    anything. This perturbs one path by a single direction's worth of strength and confirms the
+    comparison notices, which is what makes the passing case above evidence rather than decoration.
+    """
+    from senbonzakura.cli import orthogonalize_np_
+
+    model = _typed_checkpoint(tmp_path / f"src-{dtype_name}", dtype_name, layers=2)
+    dirs = _directions(layers=2)
+    name = "model.layers.1.self_attn.o_proj.weight"
+
+    expected = _read(model / "model-0.safetensors", name)
+    orthogonalize_np_(expected, torch.from_numpy(dirs[2]), 1.0, 0.0, 0)
+
+    out = streambake.prepare_output(model, tmp_path / f"out-{dtype_name}", log=lambda _m: None)
+    # The SAME bake at a different strength. Nothing else changes.
+    streambake.bake(out, dirs, strength=0.95, log=lambda _m: None)
+    got = _read(out / "model-0.safetensors", name)
+    assert not torch.equal(got, expected), (
+        "a 5% strength difference went undetected, so this comparison would pass a streamed path "
+        "that applied the wrong edit")
+
+
+def test_an_unsupported_dtype_is_refused_rather_than_reinterpreted(tmp_path):
+    """A dtype the projection has no meaning for. Reinterpreting the bytes as something it can
+    multiply would produce a checkpoint that loads and is noise.
+    """
+    model = _typed_checkpoint(tmp_path / "src", "F32", layers=2)
+    # An integer tensor in a residual-writer position, which no real checkpoint has and which is
+    # the cheapest way to reach the refusal.
+    tensors = list(streaming.tensors(str(model / "model-0.safetensors")))
+    assert tensors, "the fixture produced no tensors"
+    # 16 elements of F32 is 64 bytes, so the reshape succeeds and the REFUSAL is what is reached.
+    # The first version passed 8 bytes, which failed on the reshape instead and tested nothing.
+    with pytest.raises(streambake.StreamBakeError, match="neither a 2-D residual writer"):
+        streambake.apply_direction(
+            b"\0" * 64, streaming.Tensor("x", "F32", (2, 2, 2, 2), 0, 64),
+            torch.from_numpy(_directions()[1]), strength=1.0, sparsity=0.0, rounds=0,
+            restore_norms=True)
+
+
+# ── peak memory, asserted rather than observed once ─────────────────────────────────
+
+def _wide_checkpoint(root, *, layers, hidden):
+    """A checkpoint whose shard grows with `layers` while each tensor stays the same size."""
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(5)
+    (root / "config.json").write_text(json.dumps({
+        "model_type": "llama", "architectures": ["LlamaForCausalLM"],
+        "num_hidden_layers": layers, "hidden_size": hidden}), encoding="utf-8")
+    arrays, index = {}, {}
+    for i in range(layers):
+        name = f"model.layers.{i}.self_attn.o_proj.weight"
+        arrays[name] = rng.standard_normal((hidden, hidden))
+        index[name] = "model-0.safetensors"
+    _write_shard(root / "model-0.safetensors", arrays)
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {}, "weight_map": index}), encoding="utf-8")
+    return root
+
+
+def _peak_bytes_of_a_bake(model, out, dirs):
+    import tracemalloc
+
+    prepared = streambake.prepare_output(model, out, log=lambda _m: None)
+    tracemalloc.start()
+    try:
+        streambake.bake(prepared, dirs, log=lambda _m: None)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak
+
+
+def test_peak_memory_does_not_grow_when_the_shard_does(tmp_path):
+    """THE CLAIM THE WHOLE MODULE IS FOR, asserted rather than observed once.
+
+    Stated as a comparison rather than an absolute, deliberately. An absolute bound would have to
+    account for `streaming.CHUNK`, the 4 MB buffer the pass-through copy uses, which is a fixed
+    cost and not part of the claim. What the claim actually says is that cost scales with the
+    largest TENSOR and not with the shard, so the test quadruples the shard while holding the
+    tensor size fixed and asserts the peak barely moves.
+
+    If the bake ever starts holding a layer, or a shard, or the model, this is what notices.
+    """
+    hidden = 256                      # 256 x 256 float32 is 256 KB per tensor
+    small = _wide_checkpoint(tmp_path / "small", layers=4, hidden=hidden)
+    large = _wide_checkpoint(tmp_path / "large", layers=16, hidden=hidden)
+    dirs_small, dirs_large = _directions(layers=4, hidden=hidden), _directions(
+        layers=16, hidden=hidden)
+
+    small_shard = (small / "model-0.safetensors").stat().st_size
+    large_shard = (large / "model-0.safetensors").stat().st_size
+    assert large_shard > small_shard * 3.5, "the fixture did not actually grow the shard"
+
+    peak_small = _peak_bytes_of_a_bake(small, tmp_path / "out-small", dirs_small)
+    peak_large = _peak_bytes_of_a_bake(large, tmp_path / "out-large", dirs_large)
+
+    assert peak_large < peak_small * 2, (
+        f"peak went from {peak_small / 1e6:.2f} MB to {peak_large / 1e6:.2f} MB when the shard "
+        f"went from {small_shard / 1e6:.2f} MB to {large_shard / 1e6:.2f} MB, so it is tracking "
+        f"the shard rather than one tensor")
+
+
+def test_peak_memory_is_a_small_multiple_of_one_tensor(tmp_path):
+    """And the absolute form, with the copy buffer accounted for rather than ignored.
+
+    A tensor's bytes are held three times at the peak by design: the raw read, the torch view the
+    projection writes into, and the bytes handed back to the writer. Plus `streaming.CHUNK` for
+    the pass-through copy. The bound is that sum with headroom, and it is asserted so that a
+    fourth copy appearing is a failure rather than a slow drift.
+    """
+    hidden = 512                      # 512 x 512 float32 is 1 MB per tensor
+    model = _wide_checkpoint(tmp_path / "wide", layers=12, hidden=hidden)
+    one_tensor = hidden * hidden * 4
+    shard = (model / "model-0.safetensors").stat().st_size
+
+    peak = _peak_bytes_of_a_bake(model, tmp_path / "out",
+                                 _directions(layers=12, hidden=hidden))
+    budget = one_tensor * 4 + streaming.CHUNK
+    assert peak < budget, (
+        f"peak {peak / 1e6:.2f} MB is over the {budget / 1e6:.2f} MB budget: three copies of a "
+        f"{one_tensor / 1e6:.2f} MB tensor plus the {streaming.CHUNK / 1e6:.2f} MB copy buffer, "
+        f"with one copy of headroom")
+    assert peak < shard / 2, (
+        f"peak {peak / 1e6:.2f} MB is more than half the {shard / 1e6:.2f} MB shard, which is the "
+        f"shape of a reader that is holding the whole file")

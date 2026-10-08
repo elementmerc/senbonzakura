@@ -252,7 +252,13 @@ def apply_direction(raw, tensor, directions, *, strength, sparsity, rounds, rest
             f"a 3-D stacked-expert one. The editor knows how to project those two and this is "
             f"refused rather than reshaped into something that would project cleanly and mean "
             f"nothing.")
-    out = W.reshape(-1).contiguous().numpy().tobytes()
+    # THROUGH `view(torch.uint8)` AND NOT `.numpy()`. numpy has no bfloat16, so `.numpy()` raises
+    # `Got unsupported ScalarType BFloat16` on the dtype most published checkpoints are stored in:
+    # the bake worked on float32 and float16 and could not write a bf16 shard at all. Found by a
+    # parity test that covered the three dtypes a real checkpoint uses rather than the one the
+    # fixture happened to be written in. Reinterpreting the bytes needs no dtype support, so this
+    # path is also the one that keeps working when a checkpoint arrives in an 8-bit float.
+    out = W.reshape(-1).contiguous().view(torch.uint8).numpy().tobytes()
     if len(out) != len(raw):
         raise StreamBakeError(
             f"{tensor.name!r} came back as {len(out)} bytes from {len(raw)}, so the edit changed "

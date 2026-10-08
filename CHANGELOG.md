@@ -110,6 +110,14 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - `--pair` checks that it was given two files before reading any of them
 
 ### Command line
+- `senbonzakura stream-extract` pulls refusal directions out of a checkpoint too large to load,
+  and writes the file `stream-bake` applies. Extraction is a forward pass and a forward pass only
+  reads weights, so with `--offload-dir` the blocks that fit in neither the card nor host RAM can
+  sit on disk and be read back as the pass reaches them. Together the two commands do a whole run
+  on one machine, and the directions it finds are held identical to a full run's by test
+- `measure.json` now declares itself a summary, carries each instrument's own conditions verbatim,
+  and lists the conditions the instruments differ on. It never carried a figure of its own and now
+  says why, so `baseline` takes one of the per-instrument files beside it
 - `abliterate --leak-report` measures how much of the refusal direction is still present in the
   residual stream, on the weights that were saved. Every other figure in a run is behavioural and
   answers whether the model changed; this one looks at the weights, and it needs no judge, no

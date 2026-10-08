@@ -95,11 +95,16 @@ NEEDS_NORM_GAIN = (
      " weight, which is the part that does not exist yet"),
 )
 NEEDS_PREDICTION_HEAD = (
-    ("a model with a prediction head small enough to hold: Mapika/decider-2b is 24 layers"
-     " of 2048, Apache-2.0 and ungated"),
-    "a flag that includes or excludes the head, which does not exist yet",
-    ("NOTE: decider-2b declares linear attention, so it settles the behaviour and is not a"
-     " representative mainstream decoder; confirm on a larger one when renting"),
+    ("the flag EXISTS now: `stream-bake --prediction-head {skip,edit}`, and the edit side needs"
+     " no card because the bake streams"),
+    ("an IN-STACK head, which is what the flag reaches. Thirteen corpus models qualify and all"
+     " of them are large: GLM-4.5-Air at 46 layers is the smallest"),
+    ("extraction on a model that size, which is the rental. The edit is free; the directions"
+     " are not"),
+    ("OR own-stack head support, which would make small candidates usable. Mapika/decider-2b"
+     " was the cheap candidate and it stores its head in its own stack, so the flag does not"
+     " reach it: two wrong triages of this arm in a row, both from checking one thing and"
+     " reporting another"),
 )
 NEEDS_DECOY = (
     ("no DDO checkpoint is published, so the decoy has to be injected here from the paper's"
@@ -147,8 +152,8 @@ ARMS = (
         stake="An open design question with two defensible answers and no measurement. The head"
               " writes to the residual stream like any other block, so the editor currently"
               " treats it as one; whether that helps or hurts has never been read.",
-        params_b=2.0,
-        hours=2.0,
+        params_b=110.0,
+        hours=6.0,
         needs=NEEDS_PREDICTION_HEAD,
         built=False,
     ),

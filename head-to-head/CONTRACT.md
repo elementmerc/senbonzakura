@@ -195,6 +195,35 @@ plugin API. **If a future Heretic release makes the method selectable, this arm 
 in the `config.toml` it already writes rather than inherit a default**, because from that release
 onwards "Heretic at tag X" stops identifying what was run.
 
+**There is a published cross-tool study and it is larger than this one.** Young, *Comparative
+Analysis of LLM Abliteration Methods: A Cross-Architecture Evaluation* (arXiv 2512.13655),
+evaluates Heretic, DECCP, ErisForge and FailSpy across sixteen instruction-tuned models at 7B to
+14B. Sixteen models beats four and 14B beats 1.7B, and a reader deciding which write-up to trust
+on breadth should prefer theirs. We say so here rather than leaving it to be noticed.
+
+What this study does differently is narrower and worth stating plainly, as differences rather than
+faults. Their quantitative metrics are reported on "subsets dictated by tool support", and the
+headline capability figure averages three models; here every arm runs the full grid at five seeds.
+Their tools are each given their own prompt sets, which are the sets each tool ships; here the
+evaluation slices are staged once and both tools read the same files, because a tool's search is
+steered by whatever its scorers measure, so scoring two tools on different prompts is not giving
+them the same problem. And their study does not state a seed count, so the run-to-run spread behind
+a reported difference cannot be read off it.
+
+Where the two can be compared, they agree. Their KL divergence for Bayesian-optimised abliteration
+ranges from 0.043 to 1.646; a 200-trial run here on Qwen2.5-0.5B-Instruct reports 0.152, inside
+that range. Their headline finding is that mathematical reasoning is the most abliteration-
+sensitive capability they measured, from +1.51 to -18.81 percentage points on GSM8K depending on
+tool and architecture; the same run here moved GSM8K from 0.4974 to 0.4974, which is consistent
+with their claim being strongly model-dependent and with a 0.5B model being the wrong place to look
+for a reasoning collapse.
+
+**The honest reason this grid stops at 1.7B is the machine, not the design.** Every arm so far has
+run on a 6 GB laptop card. Editing a model larger than the card is what `stream-bake` is for and
+that landed in this release, so the constraint is now rented compute rather than architecture.
+Until a run at 7B or above exists here, their range is the better evidence about large models and
+this one is the better evidence about method.
+
 **Why the earlier commitment is withdrawn rather than quietly updated.** It was published here, so a
 reader who met it is owed the replacement in the same place. The reasoning behind it was not wrong:
 four tools measured carelessly is worse than two done properly, and that remains true. What changed

@@ -3380,7 +3380,12 @@ class Abliterator:
         Every other figure this run produces is behavioural and answers "did the model change".
         This answers the prior question, on the weights that were saved, and it needs no judge, no
         sampling and not one generated token, so it has nothing to validate a grader against and
-        no run-to-run variance worth speaking of.
+        no run-to-run variance worth speaking of. Which is a claim about grader error and variance
+        and NOT about whether the right direction was found: a published decoy defence (arXiv
+        2609.16204) offers a contrastive estimator a high-magnitude feature orthogonal to refusal,
+        so a bake that found the decoy ablates it, lands a low figure here, and leaves refusal
+        exactly where it was. The block's `means` field says so, and on this path the refusal
+        figures sit in the same record, which is the pairing that carries the information.
 
         THE DIRECTION COMES FROM `active_dirs`, WHICH IS THE FUNCTION THE BAKE USED. Not from a
         second resolution of the same parameters, because a second resolution is a second thing

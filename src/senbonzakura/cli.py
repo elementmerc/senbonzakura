@@ -59,6 +59,7 @@ from . import (
     dataset,  # every accepted way of saying "the prompts are here"
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
+    modelmap,  # the one description of every architecture: stack paths, base module, final norm
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     say,  # wrapping for every long message, leaving markers and pasteable commands alone
     separation,  # the candidate statistics for "does this axis carry refusal?" (Q-14)
@@ -1045,20 +1046,13 @@ def fold_norm_gain(R, g):
 
 
 def _decoder_layers(model):
-    # The list of decoder blocks, resolved across the common architecture trees rather than
-    # assuming `model.model.layers`. Raises loud if none matches, so an unsupported model fails
-    # at load with a clear message instead of an opaque AttributeError deep in the search.
-    for path in ("model.layers", "transformer.h", "gpt_neox.layers", "model.decoder.layers"):
-        obj = model
-        for attr in path.split("."):
-            obj = getattr(obj, attr, None)
-            if obj is None:
-                break
-        else:
-            return obj
-    raise ValueError(
-        f"could not find the decoder layer stack on {type(model).__name__}; looked for "
-        "model.layers, transformer.h, gpt_neox.layers, model.decoder.layers.")
+    # The list of decoder blocks. The paths used to be listed here and now live in `modelmap`,
+    # which is the one module that answers architecture-shape questions; `residualleak` used to
+    # import THIS function for the same reason and now reads the map directly. Still raises loud
+    # if nothing matches, because the editor cannot proceed without the stack, so an unsupported
+    # model fails at load with a clear message instead of an opaque AttributeError deep in the
+    # search. The message is unchanged.
+    return modelmap.stack_or_raise(model)
 
 
 def _real_tensor(owner, name):
@@ -1124,34 +1118,18 @@ from .writers import ATTN_BLOCKS  # noqa: E402
 
 
 def _attn_block(layer):
-    """The attention block on this layer, or None.
+    """The attention block on this layer and its output projection, or `(None, None)`.
 
-    Ordered, and `mixer` is deliberately last: an architecture carrying both a conventional
-    `self_attn` and something called `mixer` must resolve to the conventional one.
+    The predicate moved to `modelmap.attention_block`, which carries the ordering (a layer with
+    both a conventional `self_attn` and a `mixer` resolves to the conventional one), the rank
+    check read off the parameter without materialising it, and the rule that `out_proj` on a child
+    called `mixer` belongs to the mixer path. Those three were paid for here and the comments
+    explaining why moved with them.
+
+    It is a one-line call now because the map was written to reproduce this function exactly, and
+    was cross-checked against it on nine real module trees before either was touched.
     """
-    for name in ATTN_BLOCKS:
-        blk = getattr(layer, name, None)
-        if blk is None:
-            continue
-        # A block only counts as attention if it actually has an attention output projection.
-        # NemotronH's `mixer` is an MLP on some layers and a Mamba-2 mixer on others, and reading
-        # either as attention would edit the wrong matrix with complete confidence.
-        for pname in ("o_proj", "out_proj", "dense"):
-            p = getattr(blk, pname, None)
-            w = getattr(p, "weight", None) if p is not None else None
-            # Rank is read off the parameter DIRECTLY rather than through `_real_tensor`, because
-            # this answers a structural question. `_real_tensor` refuses a meta tensor, which is
-            # right when something is about to be edited and wrong here: the whole architecture
-            # probe builds models on the meta device precisely so it needs no weights, and making
-            # "does this layer attend" depend on resident storage broke it.
-            if w is None or getattr(w, "dim", None) is None or w.dim() != 2:
-                continue
-            # `out_proj` on a `mixer` is the Mamba-2 case, which belongs to the mixer path rather
-            # than here. NemotronH is the architecture where one child name means four things.
-            if name == "mixer" and pname != "o_proj":
-                continue
-            return blk, p
-    return None, None
+    return modelmap.attention_block(layer)
 
 
 def _attn_outproj(layer):
@@ -1210,17 +1188,12 @@ def _block_outproj(block):
 def _block_outproj_param(block):
     """The block's `out_proj` MODULE if it carries a 2-D weight, without materialising it.
 
-    The structural half of `_block_outproj`. Everything that asks what a layer is made of goes
-    through here, because the architecture probe builds models on the meta device on purpose and
-    a question about shape must not need storage to answer. Materialising belongs at the edit.
+    The structural half of `_block_outproj`, now `modelmap.block_outproj_param`. Everything that
+    asks what a layer is made of goes through there, because the architecture probe builds models
+    on the meta device on purpose and a question about shape must not need storage to answer.
+    Materialising belongs at the edit.
     """
-    if block is None:
-        return None
-    p = getattr(block, "out_proj", None)
-    w = getattr(p, "weight", None) if p is not None else None
-    if w is None or getattr(w, "dim", None) is None or w.dim() != 2:
-        return None
-    return p
+    return modelmap.block_outproj_param(block)
 
 
 def _has_attention(layer):

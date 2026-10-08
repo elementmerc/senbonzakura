@@ -49,6 +49,8 @@ import re
 import struct
 import sys
 
+from . import modelmap
+
 #: safetensors pads its header to this boundary. Writing a header that is not padded produces a
 #: file every reader still accepts, which is worse than one they reject: it diverges quietly.
 ALIGNMENT = 8
@@ -72,8 +74,23 @@ CHUNK = 1 << 22
 #: turns on: a checkpoint whose layers are named in some new way must be measured rather than
 #: silently skipped. Same list-from-the-config discipline as `tools/research/expert_layout.py`,
 #: which was rewritten after name matching reported a mixture-of-experts checkpoint as dense.
-LAYER_COUNT_KEYS = ("num_hidden_layers", "n_layer", "n_layers", "num_layers",
-                    "num_decoder_layers", "n_block")
+#:
+#: NOW A RE-EXPORT, so there is one list. `modelmap` owns it, along with every other spelling of
+#: every other architecture key.
+#:
+#: WHAT WAS DELIBERATELY *NOT* CHANGED HERE, because it is a product decision and not a defect to
+#: tidy away. `modelmap.block_count` also adds `num_nextn_predict_layers` and
+#: `mtp_num_hidden_layers`, the multi-token-prediction blocks that three measured checkpoints
+#: store past the declared stack: GLM-4.7-Flash is 47 plus 1, DeepSeek-V4-Flash 43 plus 1 and
+#: Qwen3.6-35B-A3B 40 plus 1. `layer_count` below still returns the DECLARED count, so a streaming
+#: run walks and edits the same layers it always has.
+#:
+#: Adopting the total here would make the editor edit one more block on those checkpoints, and
+#: whether an abliteration should reach a multi-token-prediction head is a question about what the
+#: edit is for, not a question about arithmetic. Nobody has measured what editing it does. So the
+#: map carries both numbers, this path keeps the one it was built on, and the choice is recorded
+#: in DEFERRED.md rather than made silently by a consolidation.
+LAYER_COUNT_KEYS = modelmap.LAYER_COUNT_KEYS
 
 #: An integer path component, which is how every architecture spells an index:
 #: `model.layers.3.mlp.experts.7.w2.weight` has two, and only the first of them is the layer.

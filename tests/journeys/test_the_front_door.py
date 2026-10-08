@@ -78,3 +78,42 @@ def test_asking_what_would_be_changed_changes_nothing(session):
     result.carried_no_traceback().fits_the_window()
     assert result.status in (0, 1, 3), f"setup exited {result.status}"
     result.never_says("Traceback")
+
+
+@pytest.mark.journey("command:stream-extract")
+def test_asking_what_the_streamed_extractor_is_says_both_halves(session):
+    """The two streaming commands only make sense as a pair, and somebody meeting one of them has
+    no way to know the other exists. Each one's help names the other, so reading either tells you
+    what the whole arrangement is for.
+    """
+    result = session("stream-extract", "--help")
+    result.exited(0).carried_no_traceback().says("usage: senbonzakura stream-extract")
+    result.says("stream-bake")
+    result.fits_the_window()
+
+
+@pytest.mark.journey("command:stream-extract", "state:missing-output")
+def test_the_streamed_extractor_without_an_output_path_says_which_flag(session):
+    """Its one required flag. Argparse's own message names it, which is what is wanted here: the
+    point of the journey is that the refusal is one line about the flag rather than a traceback.
+    """
+    result = session("stream-extract", "some/model")
+    result.carried_no_traceback()
+    assert result.status != 0
+    result.says("--out")
+
+
+@pytest.mark.journey("command:stream-extract", "state:offload-inside-the-model")
+def test_an_offload_directory_inside_the_checkpoint_is_refused_in_a_sentence(session, work):
+    """The mistake the flag invites: scratch space next to the weights, which is the one place it
+    must not go, because accelerate writes a file per offloaded weight and the checkpoint's index
+    then describes something that is no longer there.
+    """
+    model = work / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    result = session("stream-extract", str(model), "--out", str(work / "d.safetensors"),
+                     "--offload-dir", str(model / "scratch"))
+    result.carried_no_traceback()
+    assert result.status != 0
+    result.says("inside the model directory")

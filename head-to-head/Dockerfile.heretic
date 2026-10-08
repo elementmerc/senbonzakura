@@ -24,6 +24,17 @@ FROM senbon-bench:tool
 
 # Pinned by tag, and the tag's commit is recorded below. v1.4.0 is the current release as of
 # 2026-08-05. Never `master`: a benchmark whose subject moves between arms is not a benchmark.
+#
+# WHAT THIS TAG IS, AS A METHOD. v1.4.0 applies Magnitude-Preserving Orthogonal Ablation (MPOA),
+# merged as Heretic's pull request 52 and released in v1.2.0, and it offers no way to select a
+# different one. That is why the arm needs no method flag today.
+#
+# BEFORE BUMPING THIS, CHECK WHETHER THE METHOD BECAME SELECTABLE. Heretic merged a modifier plugin
+# API together with Arbitrary-Rank Ablation on 2026-10-01, after this tag. From the first release
+# carrying it, a tag no longer identifies a method, and an arm that inherits whatever the release
+# defaults to is an arm that cannot say what it ran. `run_heretic.py` writes the configuration it
+# gives Heretic and leaves it beside the result for exactly this case: name the method there.
+# head-to-head/CONTRACT.md carries the reader-facing version of this.
 ARG HERETIC_REF=v1.4.0
 
 USER root

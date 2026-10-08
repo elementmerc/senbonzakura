@@ -183,6 +183,18 @@ replaces it.** Four tools, four models:
 | Corpora | ours, abliterix |
 | Seeds | 5 per arm |
 
+**Which method each arm is, because a tag is not a method.** The Heretic arm is pinned at tag
+`v1.4.0`, and that release applies **Magnitude-Preserving Orthogonal Ablation (MPOA)**, contributed
+in Heretic's pull request 52 and released in v1.2.0. So a reader holding a published MPOA figure is
+reading the same method in our Heretic column, and that is worth stating because neither the tag nor
+the tool's name says it. Heretic at this tag offers no choice of method, so the arm cannot be
+anything else. Two other names circulate and neither is in a Heretic release a person could run:
+SOMA (Self-Organising Maps, multi-directional) was a proof of concept that closed unmerged, and
+Arbitrary-Rank Ablation (ARA) reached Heretic's main branch on 2026-10-01 alongside a modifier
+plugin API. **If a future Heretic release makes the method selectable, this arm must name its method
+in the `config.toml` it already writes rather than inherit a default**, because from that release
+onwards "Heretic at tag X" stops identifying what was run.
+
 **Why the earlier commitment is withdrawn rather than quietly updated.** It was published here, so a
 reader who met it is owed the replacement in the same place. The reasoning behind it was not wrong:
 four tools measured carelessly is worse than two done properly, and that remains true. What changed

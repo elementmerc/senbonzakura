@@ -1668,11 +1668,6 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":   # pragma: no cover
-    from .entry import module_entry
-    module_entry(main)
-
-
 # ── the probe that ships in the package ──────────────────────────────────────────────────────
 #
 # WHY THERE IS ONE AT ALL. Until 2026-09-22 `--capability-eval` defaulted to empty, so the gate
@@ -1762,3 +1757,17 @@ def load_probe(limit=None):
             row = json.loads(line)
             pairs.append((row[PROBE_QUESTION_KEY], row[PROBE_REFERENCE_KEY]))
     return pairs if limit is None else pairs[:limit]
+
+
+# AT THE END OF THE FILE, AND IT HAS TO BE. This block used to sit directly under `main`, with the
+# bundled probe's loader a hundred lines below it, and `python -m senbonzakura.capability` therefore
+# ran `main` before `load_probe` had been defined. Every invocation of the default `--eval bundled`
+# over that module path died with a bare `NameError: name 'load_probe' is not defined`, which names
+# neither the command nor the cause. The console script was fine, because importing a module runs
+# all of it before anything calls `main`, so the two documented ways to reach the same command did
+# not behave the same way.
+#
+# `tests/test_main_block_is_last.py` holds the shape so it cannot come back.
+if __name__ == "__main__":   # pragma: no cover
+    from .entry import module_entry
+    module_entry(main)

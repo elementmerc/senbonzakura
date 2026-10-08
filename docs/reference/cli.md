@@ -18,7 +18,7 @@ exactly the same arguments.
 
 | Command | What it does |
 |---|---|
-| `measure` | Every instrument against one model, into one directory, as one table: refusal, harm recognition, fluency and capability, plus the coherence cost when `--baseline` names the model it was edited from. It measures nothing itself; each row is the command below it, run with the arguments you would have typed. |
+| `measure` | Every instrument against one model, into one directory, as one table: refusal, harm recognition, fluency and capability, plus the coherence cost when `--baseline` names the model it was edited from. It measures nothing itself; each row is the command below it, run with the arguments you would have typed. Its `measure.json` says so: it declares itself a summary, carries no figure of its own, and holds each instrument's own conditions verbatim along with the list of conditions they differ on. So `baseline` takes one of the per-instrument files beside it, such as `score.json`, rather than the summary. One date on a report card would be wrong about every subject but one. |
 | `compass`<br>(or `harm-recognition`) | Harm recognition: does the edited model still know a harmful request when it sees one? Reports an AUC with a seeded bootstrap interval and its null controls. |
 | `score` | Refusal and compliance rates over an evaluation set. |
 | `tamper` | Whether the abliteration survives a safety-recovery finetune: refusal before, a brief finetune, refusal after, on prompts the finetune never saw. Runs the neutral-data control that says whether the effect is about safety at all, and the same recipe on the unedited model as a ceiling. |

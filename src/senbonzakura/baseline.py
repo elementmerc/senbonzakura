@@ -359,13 +359,36 @@ _PRE_METRICS_COMPASS_KEYS = ("auc", "controls", "n_harmful", "n_harmless")
 _MEASURE_STAGE_KEYS = ("stages", "measured", "table")
 
 
+#: What a `measure` summary declares itself to be. The literal, not an import of
+#: `measure.SUMMARY_KIND`: this module is on the path of every `baseline` invocation and `measure`
+#: pulls in the whole stage machinery, so importing it here to read one string would make reading
+#: a baseline pay for a command it is not running. The two are held together by a test instead.
+_SUMMARY_KIND = "summary"
+
+
 def _is_measure_summary(doc):
     """Whether this is a `measure` summary rather than a single measurement.
 
-    `measure` runs four instruments and writes one document describing all of them, plus a per-stage
-    artefact for each. It carries no `metrics` block, because it is not itself a measurement of
-    anything: it is an index of four.
+    `measure` runs several instruments and writes one document describing all of them, plus a
+    per-stage artefact for each. It carries no `metrics` block, because it is not itself a
+    measurement of anything: it is an index of several.
+
+    THE DECLARATION FIRST, THE SHAPE SECOND. Since Q-116 the document says `kind: summary`, and a
+    stated kind beats a guess read off a shape: "it has a stages dict and no metrics block" is an
+    inference about intent, and an artefact that happened to carry both would be misread with
+    nothing for a reader to check. The shape check is kept behind it, unchanged, because summaries
+    written before the declaration existed are still on people's disks and still deserve the
+    refusal that points at the per-stage files.
     """
+    if doc.get("kind") == _SUMMARY_KIND:
+        stages = doc.get("stages")
+        if isinstance(stages, dict) and stages:
+            files = sorted(v for v in stages.values() if isinstance(v, str) and v.endswith(".json"))
+            return "kind", files or sorted(f"{n}.json" for n in stages)
+        # DECLARED A SUMMARY AND LISTING NOTHING is still a summary, and still not a measurement.
+        # Falling through to the shape check here would report it as an old unstamped artefact,
+        # which is the false advice this whole branch exists to have stopped giving.
+        return "kind", []
     for key in _MEASURE_STAGE_KEYS:
         value = doc.get(key)
         if isinstance(value, dict) and value:

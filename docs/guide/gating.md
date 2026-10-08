@@ -26,6 +26,23 @@ The second `baseline` call is the step people skip. The gate compares two **reco
 measurements, never a recorded one against a raw result artefact, because a raw artefact does not
 say how many seeds the figure rests on and the gate will not guess.
 
+### If you ran `senbonzakura measure`, point `baseline` at one of the files beside the summary
+
+`measure` runs several instruments at once and writes `measure.json`, which is an index of them
+rather than a measurement. It has no single figure in it, so there is nothing for `baseline` to
+record, and it says as much if you try. Each instrument writes its own file in the same directory,
+and those do carry a figure and the conditions it was taken under:
+
+```
+senbonzakura baseline out/score.json --seeds 42,43,44,45,46 --out baselines/refusal.json
+```
+
+The reason it is not one step is worth a sentence, because it looks like a missing feature. Every
+recorded measurement states the conditions it was taken under, and these instruments genuinely
+differ on several of them: they measure different properties, on different inputs, over different
+rows. A summary carrying one value for each of those would be making a claim that is true of one
+instrument and false of the rest, which is exactly what the gate exists to catch somebody doing.
+
 ## A worked example you can run
 
 Everything below was run to produce the output shown. No model is involved; the inputs are result

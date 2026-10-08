@@ -144,6 +144,27 @@ BLOCK_TYPE_PATTERN_KEY = "hybrid_override_pattern"
 #: about any other block, so the complement is the family's other mechanism.
 BLOCK_TYPE_INDEX_KEY = "attn_layer_indices"
 
+#: Kimi Linear's spelling: inverted like Bamba's, NESTED one level down, and ONE-BASED.
+#:
+#: The one-based part is the whole reason this is a separate constant rather than another entry
+#: beside `attn_layer_indices`. Read with the zero-based rule the other inverted spelling uses,
+#: every block in the stack comes out shifted by one, so the blocks reported as full attention are
+#: its neighbours and nothing in the record looks wrong. An off-by-one across a whole mechanism
+#: column is worse than a refusal and indistinguishable from a correct reading without the config
+#: in hand.
+#:
+#: The evidence is this repository's own vendored converter rather than a guess:
+#: `vendor/src/conversion/kimi_k3.py` carries the comment "the layer lists are 1-indexed, as
+#: KimiLinearConfig.is_kda_layer uses (layer_idx + 1)", and uses `(il + 1) in full_attn_layers`
+#: twice, in two unrelated places. No checkpoint of this family has been read here, so the
+#: conformance suite still records it as untested; what is known is the SPELLING.
+BLOCK_TYPE_NESTED_INDEX_PATH = ("linear_attn_config", "full_attn_layers")
+
+#: Which block index the nested spelling's first block is. Named rather than written as a literal
+#: `1` at the use site, because a bare arithmetic offset is the kind of thing a later reader
+#: tidies away.
+NESTED_INDEX_BASE = 1
+
 #: Expert-count spellings. Three of them, and a fourth state: Gemma-4-31B carries `num_experts`
 #: with a NULL value beside `enable_moe_block: false`, so `"num_experts" in cfg` is true for a
 #: dense model and the key's presence proves nothing.
@@ -596,7 +617,13 @@ def mechanisms(cfg):
         decoded = _mechanisms_from_strings(
             tuple(PATTERN_LETTERS[ch] for ch in pattern), BLOCK_TYPE_PATTERN_KEY)
         return Mechanisms(kinds=decoded.kinds, raw=tuple(pattern), unmapped=decoded.unmapped)
-    marked = scope.get(BLOCK_TYPE_INDEX_KEY)
+    marked, base, source = scope.get(BLOCK_TYPE_INDEX_KEY), 0, BLOCK_TYPE_INDEX_KEY
+    if not isinstance(marked, list):
+        outer, inner = BLOCK_TYPE_NESTED_INDEX_PATH
+        nested = scope.get(outer)
+        if isinstance(nested, dict) and isinstance(nested.get(inner), list):
+            # Same inversion as Bamba's, one level down and one-based. See the constant.
+            marked, base, source = nested[inner], NESTED_INDEX_BASE, f"{outer}.{inner}"
     depth, _ = _first(scope, LAYER_COUNT_KEYS)
     if isinstance(marked, list) and depth is not None:
         # THE INVERTED SPELLING. The key names the attention blocks and says nothing about the
@@ -604,20 +631,24 @@ def mechanisms(cfg):
         # a 3-block model. Every unmarked index is the family's other mechanism, and this module
         # will not pretend to know which one it is: those blocks are UNKNOWN with a reason, not
         # silently labelled Mamba because Bamba happens to be the checkpoint in hand.
-        marked = {int(i) for i in marked}
+        # `base` makes the two inverted spellings comparable before anything is indexed, so the
+        # one-based list and the zero-based one meet the same code below rather than each carrying
+        # its own arithmetic to a place where the offset could be dropped.
+        marked = {int(i) - base for i in marked}
         kinds = [BlockKind.ATTENTION if i in marked else BlockKind.UNKNOWN
                  for i in range(int(depth))]
         return Mechanisms(
-            kinds=Resolved(value=kinds, source=BLOCK_TYPE_INDEX_KEY),
+            kinds=Resolved(value=kinds, source=source),
             raw=tuple("attention" if i in marked else UNNAMED_BY_INVERTED_KEY
                       for i in range(int(depth))),
             unmapped=(UNNAMED_BY_INVERTED_KEY,))
     return Mechanisms(
         kinds=Resolved(why=f"this config carries no per-block mechanism list: looked for "
-                           f"{list(BLOCK_TYPE_LIST_KEYS)}, {BLOCK_TYPE_PATTERN_KEY} and "
-                           f"{BLOCK_TYPE_INDEX_KEY}. The stack may be uniform, or it may be "
-                           f"hybrid under a spelling this tool has not met, and those two are "
-                           f"not distinguishable from the config alone."))
+                           f"{list(BLOCK_TYPE_LIST_KEYS)}, {BLOCK_TYPE_PATTERN_KEY}, "
+                           f"{BLOCK_TYPE_INDEX_KEY} and "
+                           f"{'.'.join(BLOCK_TYPE_NESTED_INDEX_PATH)}. The stack may be uniform, "
+                           f"or it may be hybrid under a spelling this tool has not met, and "
+                           f"those two are not distinguishable from the config alone."))
 
 
 def _mechanisms_from_strings(raw, key):

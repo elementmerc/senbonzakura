@@ -392,6 +392,23 @@ jobs:
         # every matrix row because it costs milliseconds.
         run: python tools/ci/check_prompt_artefacts.py .
 
+      - name: Public prose carries no writing tells
+        # THE WHOLE TREE, not only the lines a commit added. The pre-commit hook scans staged
+        # ADDITIONS to public docs, which is the right scope for a hook: it must not fail on text
+        # that was already there. This runs the same patterns over every public doc on every push,
+        # so a file nobody edited cannot drift and a pattern added to the list later is applied
+        # retroactively rather than only to the next change.
+        #
+        # It also reaches what the hook's glob cannot. A bash `case` pattern of `docs/*.md` does
+        # not match a slash, so `docs/guide/` and `docs/reference/` sit outside the hook's scope
+        # entirely, and `docs/reference/flags.md` alone gained about ninety lines of prose on
+        # 2026-10-08 that nothing scanned. Shell globbing here covers them without a second
+        # fleetwide change to a hook every project carries.
+        #
+        # Measured before it was wired: 32 public docs, zero findings, so this starts green rather
+        # than starting disabled. A gate that is red on a clean checkout gets commented out.
+        run: python tools/ci/check_prose_tells.py README.md ACCEPTABLE-USE.md docs/*.md docs/guide/*.md docs/reference/*.md
+
       - name: Contributed probes keep their shape
         # `probes/` holds probes other people wrote and this project distributes, so a malformed
         # one reaches everybody who installs. The gate is mechanical and checks shape only: it

@@ -163,7 +163,8 @@ ARMS = (
         params_b=110.0,
         hours=6.0,
         needs=NEEDS_PREDICTION_HEAD,
-        built=False,
+        built=True,
+        command=("senbonzakura", "stream-bake", "--prediction-head"),
     ),
     Arm(
         key="decoy-exposure",

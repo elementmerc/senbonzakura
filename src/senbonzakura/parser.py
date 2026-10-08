@@ -282,6 +282,12 @@ FLAG_GROUPS = {
         "gen_batch", "gpu_min_free_frac", "max_pause_s", "no_throttle", "background_mode",
         "external_pressure_mb", "attn_impl",
     ),
+    # Its own heading rather than filed under the capability probe, because they answer different
+    # questions: the probe asks what the edit cost, this asks whether the edit landed. Putting
+    # them together would invite a reader to take one for the other.
+    "the residual leak": (
+        "leak_report", "leak_prompts",
+    ),
     "the output": (
         "base_licence", "base_licence_link", "free_base_model", "json_events", "no_panel",
         "panel",
@@ -619,6 +625,20 @@ def build_parser(full=False):
                     help="token budget per probe answer (default: 512). A worked solution is long, "
                          "and a budget that cuts it off measures the budget rather than the model. "
                          "A truncated answer is counted as ungradeable, never as wrong.")
+    ap.add_argument("--leak-report", dest="leak_report", action="store_true",
+                    help="measure whether the direction actually left the residual stream, on the "
+                         "weights that were saved. Every other figure here is behavioural and "
+                         "answers 'did the model change'; this answers the prior question, and it "
+                         "needs no judge, no sampling and no generated tokens. It is reported per "
+                         "residual-stream position, in the space the residual writers write into, "
+                         "and it is only available when exactly one direction was applied: with "
+                         "more than one, or one per layer, there is no single direction for the "
+                         "figure to be about and the run says so instead of picking one.")
+    ap.add_argument("--leak-prompts", dest="leak_prompts",
+                    type=argresolve.whole_number("--leak-prompts", minimum=0), default=32,
+                    help="how many of the harmful evaluation prompts the leak report averages "
+                         "over (default: 32, 0 = all of them). One forward pass each, with no "
+                         "generation, so this is seconds rather than minutes.")
     ap.add_argument("--low-refusal-ok", dest="low_refusal_ok", action="store_true",
                     help="edit a model that hardly refuses anything to begin with. The run measures "
                          # `%%` because argparse runs this through percent formatting, and a bare
@@ -814,7 +834,7 @@ def build_parser(full=False):
             f"\n\nThis page shows the {core} flags a run needs, and the model it edits.\n"
             f"{hidden} more cover the search, the directions,\n"
             f"the prompts and the scoring, the capability probe,\n"
-            f"the machine and the output:\n"
+            f"the residual leak, the machine and the output:\n"
             f"  senbonzakura --help-all\n")
     return ap
 

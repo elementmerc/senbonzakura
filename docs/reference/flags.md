@@ -1,6 +1,6 @@
 # Flags worth knowing
 
-There are 74 flags, and `senbonzakura --help` shows the handful a run needs while
+There are 76 flags, and `senbonzakura --help` shows the handful a run needs while
 `senbonzakura --help-all` lists every one. This page said "forty-odd" until 2026-09-26, which was
 off by forty per cent. These are the seven that
 change what a run *means* rather than how it's spelled, so if you're going to read about any
@@ -187,6 +187,54 @@ Note that the worked command there says `--n` and `--max-new`, not `--capability
 `--capability-max-new`. That is because the message comes from `senbonzakura capability`, which
 can be run on its own against a model you already have, and which spells the same two settings
 without the prefix. Inside an `abliterate` run, use the prefixed names.
+
+## Did the direction actually leave? `--leak-report`
+
+Every other number here is about behaviour. The refusal rate, the harm recognition score, the KL,
+the capability probe: all of them watch what the model does and answer "did it change". There is
+an earlier question underneath that one, which is whether the thing you aimed at actually left the
+model, and nothing in a behavioural figure can see it. A model can stop refusing because the
+direction is gone, or because the edit damaged it into incoherence, and a refusal rate reads the
+same either way.
+
+`--leak-report` answers the earlier question. Picture the model's internal state at each layer as
+an arrow in a very high dimensional space, and the refusal direction as one particular axis in
+that space. The measurement is the length of the arrow's shadow on that axis, divided by the
+length of the arrow. If the direction has really gone, the shadow is almost nothing.
+
+It needs no judge, no sampling and not a single generated token, so there is nothing to validate a
+grader against and no run-to-run variance worth speaking of. One forward pass per probe prompt,
+which is seconds. `--leak-prompts` sets how many prompts it averages over, default 32.
+
+The figure comes out once per residual-stream position: position 0 is what the embedding produced,
+and position `i + 1` is what decoder layer `i` wrote. The run also prints a mean across those
+positions, which is the single number the published form of the claim is about.
+
+### Two things it says that look like bad news and are not
+
+**The figure at the output is bigger, and that is a ruler problem rather than a model problem.**
+There is a normalisation step at the very end of the model which multiplies each dimension by its
+own learned number. That is a bit like stretching a sheet of graph paper by a different amount
+along each axis: a right angle drawn on it no longer looks like a right angle, even though nothing
+on the sheet moved. So a direction that has genuinely gone still casts a visible shadow when
+measured against the original axis after that stretch. Measured against the axis the stretch maps
+it onto, it is gone again. The run reports the second one and names the basis beside it, and there
+is deliberately no way to ask it for the first one on its own.
+
+**Sometimes there is no figure at all, and the run says which recipe stopped it.** The measurement
+is defined against one direction. If the search settled on applying several directions per layer,
+or a different direction at each layer, then there is no single axis for the shadow to fall on, and
+the honest output is to say so. Picking one of them and reporting its shadow under the plain name
+would be a true number about a question nobody asked, printed next to a claim it does not support.
+
+The result lands in `abliteration.json` under `residual_leak`, always, in one of three states: you
+did not ask, you asked and there is no figure with the reason, or the figure with its basis.
+
+### Where the idea came from
+
+The metric is read from `orcabonsai-27B-uncensored`, which verifies its own runtime ablation this
+way. Their licence is Apache 2.0, so the arithmetic is ours to use with attribution, and
+`THIRD-PARTY-NOTICES.md` carries it.
 
 ## Where next
 

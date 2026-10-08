@@ -3386,6 +3386,62 @@ class Abliterator:
         self._weights_parked_on_host = False
         self.log(f"  save prep: put the weights back on {self.dev} for the measurements that follow")
 
+    @torch.no_grad()
+    def leak_report(self, b_K, b_mode):
+        """Did the direction actually leave the residual stream? The block for the record.
+
+        Every other figure this run produces is behavioural and answers "did the model change".
+        This answers the prior question, on the weights that were saved, and it needs no judge, no
+        sampling and not one generated token, so it has nothing to validate a grader against and
+        no run-to-run variance worth speaking of.
+
+        THE DIRECTION COMES FROM `active_dirs`, WHICH IS THE FUNCTION THE BAKE USED. Not from a
+        second resolution of the same parameters, because a second resolution is a second thing
+        that can drift, and this module has already paid for that once: `cli.py` and
+        `residualleak.py` both know how an architecture is shaped and the duplication is on the
+        roadmap to be consolidated. A leak figure measured against a direction the bake did not
+        apply would be a perfectly real number about nothing that happened.
+
+        In `single` mode `active_dirs` returns the same interpolated set at every layer index, so
+        index 0 is not an arbitrary choice: it is the one direction every layer got.
+
+        NOTHING HERE MAY COST THE RUN ITS RECORD. By the time this is called the weights are on
+        disk and `abliteration.json` is not yet written, so a measurement that raises would end a
+        finished run with a traceback and leave a checkpoint with no provenance. Every failure
+        becomes a reason in the block instead, and the reason is said out loud as well, because a
+        degradation that reaches only a field is invisible to somebody watching a terminal.
+        """
+        from . import residualleak
+
+        why = residualleak.unmeasurable_because(b_mode, b_K)
+        if why is not None:
+            self.log(f"  residual leak: not reported, because {why}")
+            return residualleak.leak_block(refused_because=why)
+
+        wanted = int(getattr(self.args, "leak_prompts", 0) or 0)
+        prompts = list(self.bad_eval) if wanted == 0 else list(self.bad_eval[:wanted])
+        try:
+            d = self.active_dirs(0, 1)[0]
+            report = residualleak.measure_leak(self.model, self.tok, prompts, d, log=self.log)
+        # Broad on purpose, and the docstring says why: by here the weights are on disk and
+        # the record is not, so a figure is worth less than the provenance of the thing it
+        # would have described.
+        except Exception as e:
+            why = (f"the measurement failed: {type(e).__name__}: {e}. The saved weights are "
+                   f"unaffected; this is a figure that was not taken, not a defect in the model.")
+            self.log(f"  residual leak: {why}")
+            return residualleak.leak_block(refused_because=why, prompts=len(prompts))
+
+        self.log(f"  residual leak over {report.probe_prompts} prompts, in "
+                 f"{report.basis}: mean {report.mean:.3e} across {report.positions} positions")
+        out = report.output
+        if out is not None and out.along_post_norm_direction is not None:
+            self.log(f"    at the output, in the basis the final norm maps into: "
+                     f"{out.along_post_norm_direction:.3e}")
+        elif out is not None:
+            self.log(f"    no output figure: {out.refused_because}")
+        return residualleak.leak_block(report)
+
     def eval_provenance(self):
         """Which rows the run's refusal figures came from, and what they may therefore be used for.
 
@@ -4487,6 +4543,18 @@ class Abliterator:
                 f" against a baseline of "
                 f"{'not gradeable' if cap_baseline is None else f'{cap_baseline:.3f}'}"
                 + ("" if drop is None else f", so the edit cost {drop:+.3f}"))
+        # THE LEAK REPORT GOES HERE, AFTER THE CAPABILITY PROBE, and the position is chosen for
+        # the two reasons the probe's own position was chosen for. It is after the save, so a
+        # failure cannot cost a baked model; and it is after `restore_device_after_save`, so when
+        # the probe put the weights back on the card this measurement gets them there too. One
+        # forward pass per prompt with no generation is cheap either way, but twenty times cheap
+        # is still worth having for free.
+        #
+        # A run that did not ask for it writes the not-requested state rather than nothing, so a
+        # reader can tell "nobody asked" from "asked and could not".
+        from . import residualleak
+        leak = (self.leak_report(b_K, b_mode) if getattr(args, "leak_report", False)
+                else residualleak.leak_block(requested=False))
         # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
         # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a
         # model that must never pass for the second, and the second losing a provenance line is
@@ -4506,7 +4574,8 @@ class Abliterator:
                   "capability_baseline": cap_baseline, "capability_after": post_cap,
                   "capability_items": len(cap_items),
                   "capability_baseline_summary": cap_baseline_summary,
-                  "capability_after_summary": cap_after_summary})
+                  "capability_after_summary": cap_after_summary},
+            leak=leak)
         with atomic_write(f"{args.out}/abliteration.json") as f:
             json.dump(record, f, indent=2)
         self._write_model_card(args, log)
@@ -4689,7 +4758,7 @@ def _capability_benchmark_name(args):
     return spec
 
 
-def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post):
+def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post, leak=None):
     """Everything `abliteration.json` claims about a run, as a value rather than a side effect.
 
     WHY THIS IS A FUNCTION AND NOT A `json.dump` CALL, which is what it was until 2026-09-21.
@@ -4713,6 +4782,8 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
     `capability_baseline`, `capability_after` and `capability_items`, which are optional only so
     that a caller written before 2026-09-22 still builds a record.
     """
+    from . import residualleak
+
     post_ref, post_heretic = post["refusals"], post["heretic"]
     post_brk, post_kl = post["broken"], post["kl"]
     record = {"per_component": args.per_component,
@@ -4738,6 +4809,16 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post)
             # figure in this record is a refusal ruler or a distributional proxy, and none of them
             # asks the model to reason.
             "capability": _capability_block(args, post),
+            # DID THE DIRECTION ACTUALLY LEAVE THE RESIDUAL STREAM. Every figure above it is
+            # behavioural and answers whether the model changed; this answers the prior question
+            # and is the one number here that needs no judge and no generated token. Always
+            # present, in one of three states, for the reason `_capability_block` gives at length:
+            # a key that is absent when nobody asked reads as an oversight rather than a fact.
+            #
+            # Defaulted rather than required so a caller written before this field existed still
+            # builds a record, which is the same courtesy the capability fields were given.
+            "residual_leak": (leak if leak is not None
+                              else residualleak.leak_block(requested=False)),
             # WHAT THOSE REFUSAL FIGURES ARE, which the artefact could not previously say.
             # They come from `bad_eval_ds`, whose head is the track's SELECTION partition:
             # the rows the search scored 200 trials against. That is the correct set to

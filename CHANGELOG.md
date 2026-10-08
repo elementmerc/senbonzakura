@@ -110,6 +110,18 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - `--pair` checks that it was given two files before reading any of them
 
 ### Command line
+- `abliterate --leak-report` measures whether the direction actually left the residual stream, on
+  the weights that were saved. Every other figure in a run is behavioural and answers whether the
+  model changed; this answers the earlier question, and it needs no judge, no sampling and not one
+  generated token. Reported once per residual-stream position with its basis named, and always
+  present in `abliteration.json` under `residual_leak`, in one of three states: not asked for,
+  asked for with the reason there is no figure, or measured
+- The measurement is defined against one direction, so a recipe that applied several per layer, or
+  a different one at each layer, gets the reason it has no such figure rather than one of those
+  directions reported under the plain name
+- The figure at the model's output is given in the basis the final normalisation maps the direction
+  into, and there is no way to ask for it against the original direction, because a direction that
+  has genuinely gone still reads as present when measured that way
 - `capability --task tool-call --tool-schema <file>` offers the model a set of tool declarations in
   the prompt and then checks every reply against them by code: did it emit a call, name a tool that
   exists, pass the required arguments, and get the declared types right. Each rate is reported over

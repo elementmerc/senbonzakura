@@ -207,6 +207,68 @@ committed to the repository while the prompt corpora are not. That distinction
 explains where the file lives; it says nothing about whether the licence applies,
 and MIT applies to 256 rows exactly as it applies to 1,319.
 
+## The residual leak metric
+
+**Something was taken and attributed only in a source comment**, which is not
+the same as attributed. Found on 2026-10-08, the day the metric gained its first
+caller: until then nothing in the tool could produce the figure, so the
+gap had never had a user to matter to. The moment `abliterate --leak-report`
+exists, the number reaches an artefact, a model card and whoever reads them, and
+the credit has to travel with it rather than sitting in a docstring that only a
+contributor opens.
+
+`src/senbonzakura/residualleak.py` computes, per residual-stream position, the
+mean over probe prompts of the component of the residual along the refusal
+direction divided by the residual norm, taken at the last token.
+
+| | |
+|---|---|
+| Source of the metric | `orcabonsai-27B-uncensored`, which verifies its own runtime ablation this way |
+| The published claim it is read from | that the residual component along the direction falls to about 1e-6 of the residual norm across depth |
+| Licence | **Apache License 2.0**, which permits the reuse and asks for this notice |
+| What was taken | the quantity and its arithmetic. No code, no weights, no data |
+| What is ours | the per-position reporting, the basis correction at the output, and the refusal to report a figure when more than one direction was applied |
+
+The basis correction is worth naming as a difference rather than a borrowing.
+A learned per-dimension weight in the final normalisation does not preserve
+orthogonality to a fixed vector, so a direction that has genuinely gone still
+reads as present when measured at the output against the original direction. The
+figure this tool reports there is taken in the basis the normalisation maps the
+direction into, and the naive reading is deliberately unreachable through the
+API.
+
+## The architecture gallery, as the seed list for the architecture corpus
+
+Recorded 2026-10-08, the day `tools/research/fetch_architecture_corpus.py` first ran.
+Nothing from this one ships in the wheel, and the entry exists anyway: the section
+below says a notice obligation attaches to what we *redistribute*, and a research
+input that shapes a published claim deserves credit on its own terms rather than on
+the terms of a licence test it was never going to trigger.
+
+The corpus answers a question the local model cache cannot: given about a hundred
+published architectures rather than the six that happen to be downloaded here, could
+one reader read all of them. The gallery is where the hundred came from.
+
+| | |
+|---|---|
+| Source | `rasbt/llm-architecture-gallery`, the `models.yml` seed list |
+| Pinned revision | `589d213a12188abc4b554a0c32ca735ceda75616` |
+| Licence | **Apache License 2.0**, read from the repository's own LICENSE file |
+| What was taken | the list of models and, per entry, the Hub repository, the licence, the date, the scale, the declared decoder type, attention description, layer mix and KV-cache figure |
+| What was not taken | the gallery author's summaries, highlights, images and benchmark scores. His prose is his |
+| What is ours | every fetched `config.json`, tensor inventory and prompt-format file, the normalisation into one shape, the observed-vocabulary counts and the failure map |
+| Where it lives | `private/research/architecture-corpus-2026-10-08/`, unshipped and unpublished |
+
+**The licence field was not the authority.** GitHub's reported licence for this
+project has been wrong before, so the LICENSE file was fetched and read: 11,357
+bytes of genuine Apache text, with the README stating nothing that contradicts it.
+
+**The model metadata underneath is a separate question and is handled separately.**
+Each record carries the licence the gallery states for that model, plus the licence
+its Hub model card declares, so no record can be reused without its terms arriving
+with it. The corpus holds public metadata for our own analysis; it republishes
+nobody's model card and no weights were fetched by any route.
+
 ## Licence reach, and why this file stops where it does
 
 Recorded 2026-09-22, because the v1.0 gate asks for it and because "these notices look complete"

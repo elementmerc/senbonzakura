@@ -379,6 +379,98 @@ def stamp_report(doc, report):
     return doc
 
 
+def unmeasurable_because(mode, k):
+    """Why this recipe has no single direction to report a leak for, or None when it has one.
+
+    THE METRIC TAKES ONE VECTOR, and that is not a limitation to be papered over. The quantity is
+    the component of the residual along *the* refusal direction, so it is defined against one
+    direction and nothing else. A recipe that applied two directions per layer has a two
+    dimensional subspace, and the leak out of a subspace is a different quantity with a different
+    derivation: the figure the published claim is stated in is the single-direction one.
+
+    So a run that cannot produce the figure says which recipe it used and why that recipe has no
+    such figure. The alternative is picking one of the K directions and reporting its leak under
+    the plain name, which would be a true number about something nobody asked about, published
+    beside a claim it does not support. That is the failure this project keeps finding in other
+    people's measurements and it is not going to ship one.
+
+    `mode` and `k` are the winning trial's `dir_mode` and `num_directions`, taken from the same
+    values the bake was given, so this cannot disagree with what was actually applied.
+    """
+    if int(k) != 1:
+        return (f"the recipe applied {int(k)} directions per layer, and the residual leak is "
+                f"defined against one. The leak out of a {int(k)} dimensional subspace is a "
+                f"different quantity, so no figure is reported rather than one of the "
+                f"{int(k)} being reported under the plain name.")
+    if mode != "single":
+        return (f"the recipe applied a different direction at every layer (dir_mode "
+                f"{mode!r}), so there is no one direction for a profile across positions to be "
+                f"about. A per-position figure against each position's own direction is a "
+                f"different measurement and is not this one.")
+    return None
+
+
+#: Nobody asked for a leak report. The honest default, and not a criticism of the run.
+LEAK_NOT_REQUESTED = "not_requested"
+#: A report WAS asked for and no figure came back, with the reason beside it.
+LEAK_REQUESTED_BUT_NOT_MEASURED = "requested_but_not_measured"
+#: A profile across positions, and the output figure where the final norm allowed one.
+LEAK_MEASURED = "measured"
+
+
+def leak_block(report=None, *, refused_because=None, prompts=None, requested=True):
+    """The leak result as a record block, ALWAYS present, whether or not it was measured.
+
+    THE THREE STATES ARE KEPT APART, exactly as `_capability_block` keeps its own three apart and
+    for the reason written there: a run nobody asked for a figure from and a run that was asked
+    and could not produce one are different facts, and an artefact that spells them the same way
+    hides the second one, which is the only one that needs reading.
+
+    An absent key would be worse than either, because it reads as whoever wrote the file
+    forgetting rather than as a statement.
+
+    THE COUNT IS `probe_prompts` AND NOT `prompts`, which is not a style choice.
+    `tools/ci/check_prompt_artefacts.py` refuses a committed artefact carrying a key named
+    `prompts` at any depth, because that is how a harmful prompt set reaches a public repository
+    wearing a measurement's name. It is the one control between such a set and a push and it is
+    never widened to accommodate a field; the field is renamed. Caught by that gate's own test
+    before this reached a commit, which is the gate working exactly as intended.
+
+    When `requested` is true, exactly one of `report` and `refused_because` is given. Both, or
+    neither, is a caller bug and raises here rather than writing a block that claims the figure
+    exists and does not.
+    """
+    if not requested:
+        return {"state": LEAK_NOT_REQUESTED, "measured": False, "why_not": None,
+                "probe_prompts": None}
+    if (report is None) == (refused_because is None):
+        raise ValueError(
+            "leak_block takes a report or a reason it has none, and exactly one of them: a block "
+            "carrying both would say the figure exists and does not.")
+    if report is None:
+        return {"state": LEAK_REQUESTED_BUT_NOT_MEASURED, "measured": False,
+                "why_not": refused_because,
+                "probe_prompts": None if prompts is None else int(prompts)}
+    out = report.output
+    return {
+        "state": LEAK_MEASURED,
+        "measured": True,
+        "basis": report.basis,
+        "positions": report.positions,
+        "probe_prompts": report.probe_prompts,
+        "mean": report.mean,
+        "per_position": list(report.leak_per_position),
+        # The post-norm figure in the basis the norm maps into, and NOT the pre-norm direction read
+        # at the output, which is the misreading this module's docstring exists to prevent. Absent
+        # with its reason rather than filled in, which is also what the checker's
+        # `a-removed-direction-with-no-basis-named` requires.
+        "output_along_post_norm_direction": (
+            None if out is None else out.along_post_norm_direction),
+        "output_basis_refused": None if out is None else out.refused_because,
+        "warnings": list(report.warnings),
+    }
+
+
 def _decoder_layers(model):
     """The decoder stack, resolved by the one function that already resolves it.
 

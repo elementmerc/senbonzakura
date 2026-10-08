@@ -110,10 +110,14 @@ NEEDS_PREDICTION_HEAD = (
      " reporting another"),
 )
 NEEDS_DECOY = (
-    ("no DDO checkpoint is published, so the decoy has to be injected here from the paper's"
-     " description. That is a build rather than a download, and it is why this arm is not"
-     " simply cheap"),
-    "a small model to inject into",
+    ("the injection arithmetic EXISTS now: tools/research/decoy_injection.py builds a decoy"
+     " orthogonal to the whole refusal span, the rank-one term that makes an estimator prefer"
+     " it, and the two checks that say whether an arm is informative at all"),
+    ("the driver that applies it to a checkpoint, re-extracts directions and calls `validate`."
+     " That needs a card and is the remaining piece"),
+    ("an alpha sweep, because both failure modes are at the ends: too small and the estimator"
+     " stays on refusal, too large and the model breaks, and a broken model defeats the"
+     " estimator too"),
 )
 NEEDS_GRID = (
     ("rented compute, and this is the one arm where that is the actual answer rather than a"

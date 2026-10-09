@@ -483,7 +483,8 @@ def extract(root, out_dir, limit, workers, shards):
     #
     # Many small shards fix it without mid-shard bookkeeping, which would have had to depend on
     # directory iteration order being stable across a reboot. At 256 shards each one is roughly
-    # 2,400 authors, about twenty seconds, so an interruption costs seconds rather than hours.
+    # 2,400 namespaces, measured at about five minutes on the corpus this was built for, so an
+    # interruption costs one shard per worker rather than the whole run.
     shards = max(shards, workers)
     if workers <= 1:
         results = [_shard(root, out_dir, i, shards, limit) for i in range(shards)]
@@ -549,7 +550,7 @@ def main(argv=None):
     e.add_argument("--shards", type=int, default=1,
                    help="how many slices to cut the corpus into, independent of --workers. A "
                         "shard is the resume unit, so many small ones means an interruption "
-                        "costs one shard rather than the run. 256 is about twenty seconds each "
+                        "costs one shard rather than the run. 256 is about five minutes each "
                         "on the corpus this was built for")
     e.add_argument("--workers", type=int, default=1,
                    help="how many shards run at once (default 1). The corpus this was built for "

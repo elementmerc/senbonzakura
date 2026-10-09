@@ -512,3 +512,6 @@ class RunPodProvider:
 
     def terminate(self, pod):
         self._call(f"/pods/{pod.id}", method="DELETE")
+
+# Declared user-facing in .baseline-hook-config, which is what keeps the orchestration gate
+# meaningful here rather than bypassed on every commit. See that file for the reasoning.

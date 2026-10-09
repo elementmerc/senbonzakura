@@ -334,7 +334,8 @@ def _args_for_extraction(overrides):
 
 def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
             offload_dir, track, good_ds, clean_ds, hedge_ds, skip_conv_ablation,
-            trust_remote_code, attn_impl, chat_template, force, log=print):
+            trust_remote_code, attn_impl, chat_template, force,
+            separation_statistic=None, log=print):
     """Load with offload, extract the directions, write them, stop. Returns the output path.
 
     The whole pipeline from here is `cli`'s: the contrast-set loading, the held-out split, the
@@ -345,6 +346,18 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
     """
     from . import cli, streambake
     from ._version import __version__
+
+    # BEFORE ANYTHING IS LOADED. A bad statistic name used to be caught by `separation`'s own
+    # lookup, which is a good message arriving after the weights are resident: on a large model
+    # that is minutes of waiting to be told about a typo. The parser's `choices` covers the command
+    # line; this covers a direct caller, and both now refuse in the same words.
+    if separation_statistic is not None:
+        from . import separation as _separation
+
+        if separation_statistic not in _separation.CHOICES:
+            raise StreamExtractError(
+                f"unknown separation statistic {separation_statistic!r}. This build knows: "
+                f"{', '.join(sorted(_separation.CHOICES))}.")
 
     out = Path(out)
     if not force and already_done(out, model=model_id, dir_prompts=dir_prompts,
@@ -369,6 +382,10 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
         "clean_ds": clean_ds, "hedge_ds": hedge_ds,
         "skip_conv_ablation": skip_conv_ablation, "trust_remote_code": trust_remote_code,
         "attn_impl": attn_impl, "chat_template": chat_template,
+        # OMITTED WHEN UNSET rather than passed as None, so the abliterate parser's own default
+        # stands. Writing None here would hand `extract_directions` a statistic name of None and
+        # the two defaults would then live in two places.
+        **({"separation_statistic": separation_statistic} if separation_statistic else {}),
         # ZEROED so the constructor's offload notice does not quote a search this command will
         # never run. It reports the cost of `trials` trials of generation, and there are none.
         "trials": 0, "gen_tokens": 0, "eval_refusal": 0,
@@ -404,6 +421,10 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
                     "dir_prompts": dir_prompts, "max_directions": k_max,
                     "min_directions": k_min, "seed": seed, "tool_version": __version__,
                     "ablate_conv": abl.ablate_conv,
+                    # THE STATISTIC IS PROVENANCE, not a knob. It decides which candidate axes
+                    # were kept, so two files extracted under different statistics are not two
+                    # measurements of the same thing and a reader has to be able to tell.
+                    "separation_statistic": getattr(args, "separation_statistic", None),
                     "offloaded_groups_on_disk": placement["disk"],
                     # THE FIELD THAT STOPS THIS FILE BEING READ AS A RESULT. `abliterate` records
                     # the mode its search chose; nothing here searched, so the mode is the bake's
@@ -485,6 +506,17 @@ what this does not do:
                    help="override the clean set used for the axis filter")
     p.add_argument("--hedge-ds", dest="hedge_ds", default=None,
                    help="an optional hedging set, subtracted so hedging is not read as refusal")
+    from . import separation as _separation
+
+    p.add_argument("--separation-statistic", dest="separation_statistic", default=None,
+                   choices=_separation.CHOICES, metavar="STATISTIC",
+                   help="which statistic decides whether a candidate axis carries refusal rather "
+                        "than topic. Same choices as `abliterate`, and the same default. Exposed "
+                        "here because this command is the cheap way to ask whether a model's "
+                        "direction COUNT is a property of the model or of the instrument: swap "
+                        "the statistic, extract again, compare the counts. A pre-declared "
+                        "statistic may be swapped; a threshold may NOT be moved after seeing a "
+                        "rejection rate, which is what `separation.Statistic` forbids")
     p.add_argument("--skip-conv-ablation", dest="skip_conv_ablation", action="store_true",
                    help="leave convolution blocks out of the residual-writer set")
     p.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
@@ -522,7 +554,8 @@ def main(argv=None):
                 clean_ds=a.clean_ds, hedge_ds=a.hedge_ds,
                 skip_conv_ablation=a.skip_conv_ablation,
                 trust_remote_code=a.trust_remote_code, attn_impl=a.attn_impl,
-                chat_template=a.chat_template, force=a.force)
+                chat_template=a.chat_template, force=a.force,
+                separation_statistic=a.separation_statistic)
     except StreamExtractError as e:
         raise SystemExit(f"stream-extract: {e}") from e
     return 0

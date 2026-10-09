@@ -1,7 +1,16 @@
 # Author:  Daniel Iwugo
 # Comment: Christ is King
 [build-system]
-requires = ["setuptools>=83.0.0", "wheel"]
+# `setuptools-rust` rather than maturin, and the reason is `setup.py`. That file is load-bearing
+# here: it stamps `_build.py` with the commit at build time, and it holds the platform-wheel
+# machinery with its stale-build trap. maturin takes over the build and all of that would have to
+# be rebuilt inside it. setuptools-rust adds a Rust extension to the build we already have.
+#
+# Pinned exactly, per baseline section 5: a build dependency runs on every build and every CI job,
+# and a lockfile does not cover `build-system.requires`. Both this and its one dependency,
+# `semantic_version`, were checked past the 7 day cooldown before adoption (released 2026-06-27
+# and 2022-05-26).
+requires = ["setuptools>=83.0.0", "wheel", "setuptools-rust==1.13.0"]
 build-backend = "setuptools.build_meta"
 
 [project]

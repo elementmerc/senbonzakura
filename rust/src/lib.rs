@@ -116,9 +116,13 @@ fn evaluate_timeline(
 }
 
 #[pymodule]
-fn senbonzakura_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__doc__", "The compiled half of senbonzakura. Not a public API: import \
-                      `senbonzakura.native` instead, which is where the refusals live.")?;
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Private by name and by statement. A Python-facing wrapper is where the refusals and the
+    // plain-language errors belong; until it exists this says so rather than naming a module that
+    // is not there, because a docstring pointing at nothing is worse than one pointing at itself.
+    m.add("__doc__", "The compiled half of senbonzakura. Private: the leading underscore is the \
+                      interface statement, and nothing outside the package should import it \
+                      directly.")?;
     m.add_function(wrap_pyfunction!(signatures, m)?)?;
     m.add_function(wrap_pyfunction!(parse_timestamp, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_timeline, m)?)?;

@@ -50,7 +50,17 @@ from pathlib import Path
 #: Row-length spreads to measure at. The bottom of the range is below 1.0 on purpose: a matrix
 #: whose rows are MORE even than average leaks least, and showing that the curve goes down as well
 #: as up is what makes it a measurement rather than an argument.
-SPREADS = (0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0)
+#:
+#: EXTENDED PAST 10x ON 2026-10-09, and the reason is a question the old range could not answer.
+#: The field test on 2026-10-08 found 88 to 96 per cent of a base model's refusal direction still
+#: present after an edit that removed 92 per cent of the refusal behaviour, and the norm restore
+#: was the leading candidate for where that came from. At 10x this curve reads about 41 per cent
+#: and is visibly saturating, so the honest answer needed the top of the curve rather than an
+#: extrapolation from its middle: either it climbs to 88 somewhere, and the restore is the whole
+#: story, or it does not, and something else is. Stopping at 10x would have left that settled by
+#: eye. 50x and 100x are far past anything a real checkpoint shows and are here as a CEILING, not
+#: as a plausible operating point.
+SPREADS = (0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 15.0, 25.0, 50.0, 100.0)
 
 #: Repeats per point. The spread between seeds is reported, not averaged away: a curve with no
 #: sense of its own noise cannot be argued with, which is a defect and not a feature.

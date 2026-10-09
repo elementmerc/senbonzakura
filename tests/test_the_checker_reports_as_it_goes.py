@@ -209,9 +209,68 @@ class TestTheOutputArrivesBeforeTheEnd:
 
         assert '"artefact"' in written, (
             "a killed sweep had reported nothing at all, which is the defect this streams to fix")
-        assert not written.rstrip().endswith("]"), (
-            f"the report was complete, so the whole sweep fitted inside the pipe buffer and this "
-            f"test measured nothing. Raise `artefacts` above {artefacts} until it cannot.")
+
+        # COMPLETENESS IS WHETHER IT PARSES, not whether it ends with a bracket.
+        #
+        # This was `not written.rstrip().endswith("]")` and it failed once in a full suite run on
+        # 2026-10-09, reporting that the whole sweep had fitted in the pipe buffer and advising
+        # that `artefacts` be raised above 400. Both halves of that were wrong. The report WAS
+        # truncated, to about 171 KB of 423 KB, and the kill had landed exactly where it was
+        # supposed to; the cut simply happened to fall just after a nested findings list, so the
+        # last character was a `]` indented two spaces rather than the top-level close.
+        #
+        # Measured rather than reasoned about: of 423 truncation points across a real 400-artefact
+        # report, exactly ONE ends with `]` after rstrip, and it is the one the failure landed on.
+        # A one-in-423 flake is why this passed three times alone and six times under load.
+        #
+        # `json.loads` has no such coincidence mode: a truncated array cannot parse, and a complete
+        # one always does. The guard now measures the property it names.
+        try:
+            json.loads(written)
+        except ValueError:
+            pass        # truncated, which is the point of the test
+        else:
+            raise AssertionError(
+                f"the report parsed as complete JSON, so the whole sweep fitted inside the pipe "
+                f"buffer and this test measured nothing. Raise `artefacts` above {artefacts} "
+                f"until it cannot. ({len(written)} bytes read.)")
+
+
+
+class TestTheCompletenessCheckItself:
+    """A guard on the guard above, because the guard above was wrong for a month.
+
+    The test that proves a killed sweep leaves a PARTIAL report has to be able to tell partial
+    from complete. It used `endswith("]")`, which a truncated report can satisfy by landing just
+    after a nested list, and on 2026-10-09 one did. These two tests pin the distinction without
+    spawning anything, so a future rewrite cannot quietly reintroduce the coincidence.
+    """
+
+    def _report(self, tmp_path, n=40):
+        for i in range(n):
+            (tmp_path / f"run-{i:03d}.json").write_text(json.dumps(GOOD), encoding="utf-8")
+        _status, written = _run(tmp_path, "--json")
+        return written
+
+    def test_a_truncation_that_ends_in_a_nested_bracket_is_not_complete(self, tmp_path):
+        """The exact shape that misfired: cut the report just after a nested findings list, so the
+        last character is a `]`, and assert the check still calls it truncated.
+        """
+        full = self._report(tmp_path)
+        cuts = [i for i in range(len(full) - 1, 0, -1) if full[:i].rstrip().endswith("]")]
+        coincidences = [c for c in cuts if c < len(full.rstrip())]
+        assert coincidences, (
+            "no truncation point in this report ends with a bracket, so the coincidence this "
+            "guards against cannot occur here and the test is measuring nothing. The report's "
+            "shape has changed; find the new coincidence or delete this test with a reason.")
+        cut = full[:coincidences[0]]
+        assert cut.rstrip().endswith("]"), "the premise: the old check would have passed this"
+        with pytest.raises(ValueError):
+            json.loads(cut)
+
+    def test_a_complete_report_parses(self, tmp_path):
+        """The other side, so the check cannot pass everything by refusing everything."""
+        json.loads(self._report(tmp_path))
 
 
 class TestTheStatusIsStillDecidedAtTheEnd:

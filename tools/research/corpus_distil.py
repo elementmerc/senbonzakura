@@ -406,7 +406,7 @@ def _author_row(author, model_dir, problems):
     }
 
 
-def _shard(root, out_dir, index, of, limit, queue=None):
+def _shard(root, out_dir, index, of, limit):
     """One worker's slice: every author whose position modulo `of` is `index`.
 
     PARTITION, DISTRIBUTE, MERGE, which §12 asks for and which this needs rather than wants.
@@ -450,15 +450,21 @@ def _shard(root, out_dir, index, of, limit, queue=None):
                 if row:
                     mfh.write(json.dumps(row, sort_keys=True) + "\n")
                     n_models += 1
-            if queue is not None and n_dirs % HEARTBEAT_EVERY == 0:
-                queue.put((index, n_dirs, n_models))
+            if n_dirs % HEARTBEAT_EVERY == 0:
+                # FLUSHED, because the reboot that killed the first run took every heartbeat and
+                # the whole summary with it: Python buffers stderr when it is redirected to a
+                # file, and nothing is written until the buffer fills or the process exits
+                # cleanly. Both logs were empty afterwards, so the run left no account of itself
+                # at all and the cause had to be found from the machine's uptime.
+                print(f"  shard {index}: {n_dirs} authors, {n_models} models",
+                      file=sys.stderr, flush=True)
     done.write_text(f"{n_dirs} authors, {n_models} models, {n_authors} namespaces\n")
     return {"shard": index, "authors": n_dirs, "models": n_models,
             "namespaces": n_authors, "seconds": round(time.monotonic() - started, 1),
             "problems": dict(problems)}
 
 
-def extract(root, out_dir, limit, workers):
+def extract(root, out_dir, limit, workers, shards):
     """Walk the corpus and write a gzipped distillate per shard."""
     root = Path(root)
     if not root.is_dir():
@@ -467,13 +473,25 @@ def extract(root, out_dir, limit, workers):
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
 
+    # SHARDS ARE DECOUPLED FROM WORKERS, and that is a fix rather than a flourish.
+    #
+    # The first version used one shard per worker, so four shards for 611,154 authors. The resume
+    # markers were real and useless: the box was resized and rebooted 12 minutes into the run, and
+    # because a marker is only written when a shard COMPLETES, ninety minutes of walking and 41 MB
+    # of output resumed from nothing. A unit of work that only checkpoints at the end has no
+    # checkpoint.
+    #
+    # Many small shards fix it without mid-shard bookkeeping, which would have had to depend on
+    # directory iteration order being stable across a reboot. At 256 shards each one is roughly
+    # 2,400 authors, about twenty seconds, so an interruption costs seconds rather than hours.
+    shards = max(shards, workers)
     if workers <= 1:
-        results = [_shard(root, out_dir, 0, 1, limit)]
+        results = [_shard(root, out_dir, i, shards, limit) for i in range(shards)]
     else:
         import multiprocessing as mp
         with mp.Pool(workers) as pool:
             results = pool.starmap(
-                _shard, [(root, out_dir, i, workers, limit) for i in range(workers)])
+                _shard, [(root, out_dir, i, shards, limit) for i in range(shards)])
 
     models = sum(r.get("models", 0) for r in results)
     authors = sum(r.get("authors", 0) for r in results)
@@ -484,7 +502,7 @@ def extract(root, out_dir, limit, workers):
     size = sum(f.stat().st_size for f in out_dir.glob("*.jsonl.gz"))
     summary = {
         "authors": authors, "models": models, "namespaces": namespaces,
-        "workers": workers,
+        "workers": workers, "shards_total": shards,
         "seconds": round(time.monotonic() - started, 1),
         "compressed_bytes": size,
         "out_dir": str(out_dir),
@@ -528,16 +546,23 @@ def main(argv=None):
                         "shard, plus a done-marker each so a re-run resumes")
     e.add_argument("--limit", type=int, default=0,
                    help="stop after this many authors PER SHARD, for a rehearsal on real data")
+    e.add_argument("--shards", type=int, default=1,
+                   help="how many slices to cut the corpus into, independent of --workers. A "
+                        "shard is the resume unit, so many small ones means an interruption "
+                        "costs one shard rather than the run. 256 is about twenty seconds each "
+                        "on the corpus this was built for")
     e.add_argument("--workers", type=int, default=1,
-                   help="parallel shards (default 1). The corpus this was built for needs about "
-                        "ten hours in one process and an hour across four")
+                   help="how many shards run at once (default 1). The corpus this was built for "
+                        "needs about ten hours in one process; set this to the core count")
 
     a = ap.parse_args(argv)
     if a.mode == "discover":
         return discover(a.root, a.sample)
     if a.workers < 1:
         ap.error("--workers must be at least 1")
-    return extract(a.root, a.out, a.limit, a.workers)
+    if a.shards < 1:
+        ap.error("--shards must be at least 1")
+    return extract(a.root, a.out, a.limit, a.workers, a.shards)
 
 
 if __name__ == "__main__":

@@ -407,7 +407,16 @@ jobs:
         #
         # Measured before it was wired: 32 public docs, zero findings, so this starts green rather
         # than starting disabled. A gate that is red on a clean checkout gets commented out.
-        run: python tools/ci/check_prose_tells.py README.md ACCEPTABLE-USE.md docs/*.md docs/guide/*.md docs/reference/*.md
+        #
+        # THE PATTERN SOURCE IS NAMED HERE, and it has to be. The checker's default is the
+        # pre-commit hook, which it parses rather than copying so the two cannot drift. That is
+        # right on a developer's machine and impossible here: the hooks are kept out of this
+        # repository on purpose, so a public checkout has no hook to read and the checker
+        # correctly refused, which is what turned every test job red from 2026-10-09. The
+        # generated export below is the copy, a test fails when it drifts from the hook, and
+        # naming it in the command keeps CI from quietly reading a different list than it looks
+        # like it reads.
+        run: python tools/ci/check_prose_tells.py --hook tools/ci/prose-tells.sh README.md ACCEPTABLE-USE.md docs/*.md docs/guide/*.md docs/reference/*.md
 
       - name: Contributed probes keep their shape
         # `probes/` holds probes other people wrote and this project distributes, so a malformed

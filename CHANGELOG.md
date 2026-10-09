@@ -9,6 +9,28 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 - A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.
 
+### New command: `diff`
+- Compares a checkpoint against the base it claims to come from, tensor by tensor: which ones
+  differ, where in the stack, and by how much, with residual-writing projections counted apart
+  from everything else. A model card saying "abliterated from X" is checked today by reading the
+  sentence; this checks the files
+- **It is not a safety verdict and not a backdoor check.** A poisoned checkpoint behaves normally
+  until its trigger appears, the trigger is drawn from an unbounded space, and no tool recovers
+  it: a published demonstration scored full marks on ordinary accuracy while firing every time. A
+  comparison showing no change means the weights match the base and nothing more, and the command
+  says so in its own output rather than only in the documentation
+- Loads no model, generates no token and needs no card or network, so it runs on a machine with no
+  GPU at all. It streams, and peak memory is one tensor from each side, so a pair of checkpoints
+  larger than memory is fine
+- Refuses a quantised candidate against a full-precision base rather than reporting it as changed
+  everywhere, which would be true and useless. The refusal reads the headers only, so it happens
+  before any tensor data is read
+- Refuses a Hub model that is not already in your cache rather than downloading it, because a
+  comparison that quietly fetched the checkpoint would cost the bandwidth it was meant to save
+- Reports a tensor missing from either side as absent rather than as changed, and names the reason
+  a change could not be sized when the dtype is one it does not decode, because an unmeasured
+  magnitude and a magnitude of zero are different facts
+
 ### New command: `jailbreak`
 - Reports single-turn jailbreak success on one of the bundled attack sets, with a Wilson interval
   and the raw counts on every figure, including the one printed to the terminal

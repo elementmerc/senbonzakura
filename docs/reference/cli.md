@@ -40,12 +40,17 @@ exactly the same arguments.
 | Command | What it does |
 |---|---|
 | `check` | Read an evaluation result file, from this tool or from another one, and report how the number could be wrong. Each finding names the incident behind it, what to do about it, and what would make the finding itself wrong. |
+| `diff` | Compare a checkpoint against the base it claims to come from, tensor by tensor: which ones differ, where in the stack, and by how much, with residual-writing projections counted apart from everything else. It streams, so a pair larger than memory is fine. **It is not a safety verdict and not a backdoor check.** A poisoned checkpoint behaves normally until its trigger appears, the trigger is drawn from an unbounded space, and no tool recovers it; a published demonstration scored full marks on ordinary accuracy while firing every time. A comparison showing no change means the weights match the base and nothing more. A quantised candidate against a full-precision base is refused rather than reported as changed everywhere, and a Hub model that is not already in your cache is refused rather than downloaded. |
 | `baseline` | Turn one measurement into the baseline file `gate` compares against. It carries the conditions the number was measured under, the interval, the sample size, the seeds, the estimator and the precision, and it refuses rather than guessing when any of those is missing, naming all of them at once so you fix them in one pass. |
 | `prereg` | Check a pre-registration: read the one fenced `prereg` block out of its Markdown and report what is missing or will not do what it is for. With `--run`, also check whether the run that claims to satisfy it actually did what it promised. Exits 0 when clean, 1 when the document is flawed, and 2 when it is not a pre-registration at all, because those are three different answers. |
 | `gate` | Compare a measurement against a recorded baseline and fail the build when a property moved outside its interval. It refuses, rather than comparing, when the two were measured under different conditions: a green tick on two numbers that never matched is worse than no gate at all. Exits 0 when steady, 1 on a regression, and 2 when it refused, because a refusal says nothing about the model. |
 
-`check` is the one command that needs nothing: no model, no corpus, no card, no network. It
-reads files and does arithmetic. It understands
+`check` and `diff` are the two commands that load no model: no card, no corpus, no network, and
+not one generated token. `check` needs only a result file; `diff` needs the two checkpoints on
+disk and reads them a tensor at a time. Both do arithmetic over files, which is why they are the
+cheapest things here to run and the only ones that work on a machine with no GPU at all.
+
+`check` reads files and does arithmetic. It understands
 [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) result files,
 [Inspect](https://inspect.aisi.org.uk) eval logs, and this project's own artefacts.
 

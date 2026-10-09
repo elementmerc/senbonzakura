@@ -118,6 +118,17 @@ from .track import (  # the recorded partition boundaries, and the flags that wo
 MIN_AXIS_SEPARATION = 0.5
 
 
+def _sep_choices():
+    """The separation statistics this build knows, for a message that names them.
+
+    Imported here rather than at module scope for the reason every heavy import in this file is:
+    `--help` paying for a module it does not need is a regression this project has fixed once.
+    """
+    from . import separation
+
+    return separation.CHOICES
+
+
 def refuse_resume_across_builds(study, here, *, resume):
     """Refuse to continue a search whose earlier trials were scored by a different build.
 
@@ -2976,9 +2987,24 @@ class Abliterator:
             log(f"  rejected-axis separations: {len(rejected)} axis/axes measured below the "
                 f"threshold, best {self.best_rejected_separation:.4f} against "
                 f"{sep_stat.threshold}"
+                # THE ADVICE USED TO BE "until it is varied", MEANING THE THRESHOLD, and that is
+                # the one thing `separation.Statistic` forbids: its null and margin are declared in
+                # advance and "neither may be moved in the light of a rejection rate", because a
+                # threshold chosen after seeing the rates is named in the pre-registration as
+                # something that would make the measurement worthless. So the line told a reader
+                # to do the thing the design rules out, and it was followed on 2026-10-09 before
+                # the docstring was read. The legitimate move is to swap the whole statistic,
+                # which is pre-declared too, and `stream-extract --separation-statistic` is the
+                # cheap way to do it because it extracts and stops.
                 + (". That is close enough to the threshold that the cut-off, not the model, "
-                   "decided the direction count; treat the single-direction reading as a "
-                   "property of the threshold until it is varied." if near else
+                   "decided the direction count. Do NOT lower the threshold to see: it is "
+                   "declared in advance and moving it after seeing a rejection rate is what the "
+                   "pre-registration rules out. Ask the question with a different pre-declared "
+                   "statistic instead, which is what `senbonzakura stream-extract --model "
+                   f"<model> --separation-statistic <one of {', '.join(sorted(_sep_choices()))}>` "
+                   "is for: if the count agrees across statistics it is the model's, and if it "
+                   "does not then the count is instrument-dependent and that is the finding."
+                   if near else
                    ". Well clear of the threshold, so lowering it would not add a direction."))
 
         window = self.dirs_per_layer[self.lo:self.hi + 1] or self.dirs_per_layer

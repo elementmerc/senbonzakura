@@ -558,3 +558,70 @@ def test_the_two_halves_meet_a_bake_accepts_what_the_extractor_wrote(base_args, 
     assert arr.ndim == 3
     assert meta["model"] == "tiny"
     assert meta["mode"] in ("per_layer", "single")
+
+# ── the separation statistic, which is provenance rather than a knob ──────────────────
+
+def test_the_separation_statistic_reaches_the_extractor(base_args, track, tmp_path, loader):
+    """The flag exists so the direction COUNT can be asked of two instruments rather than one.
+    It has to arrive at `extract_directions`, which reads it off the namespace.
+    """
+    out = tmp_path / "d.safetensors"
+    streamextract.extract("tiny", out, log=lambda m: None,
+                          **_extract_args(base_args, track, tmp_path,
+                                          separation_statistic="auc"))
+    _arr, meta = streambake.load_directions(out)
+    assert meta["separation_statistic"] == "auc"
+
+
+def test_an_unset_statistic_leaves_the_abliterate_default_alone(base_args, track, tmp_path,
+                                                                loader):
+    """Passed as None it must be OMITTED from the namespace, not written as None: writing it
+    would hand the extractor a statistic named None and put the default in two places.
+    """
+    ns = streamextract._args_for_extraction({"dir_prompts": 8})
+    default = ns.separation_statistic
+    assert default, "the abliterate parser should carry a default statistic"
+    out = tmp_path / "d.safetensors"
+    streamextract.extract("tiny", out, log=lambda m: None,
+                          **_extract_args(base_args, track, tmp_path))
+    _arr, meta = streambake.load_directions(out)
+    assert meta["separation_statistic"] == default
+
+
+def test_the_statistic_is_recorded_so_two_files_can_be_told_apart(base_args, track, tmp_path,
+                                                                  loader):
+    """Two extractions under different statistics are not two measurements of one thing. A reader
+    comparing direction counts has to be able to see which instrument produced which.
+    """
+    first = tmp_path / "a.safetensors"
+    second = tmp_path / "b.safetensors"
+    streamextract.extract("tiny", first, log=lambda m: None,
+                          **_extract_args(base_args, track, tmp_path,
+                                          separation_statistic="cohens-d"))
+    streamextract.extract("tiny", second, log=lambda m: None,
+                          **_extract_args(base_args, track, tmp_path,
+                                          separation_statistic="auc"))
+    assert streambake.load_directions(first)[1]["separation_statistic"] == "cohens-d"
+    assert streambake.load_directions(second)[1]["separation_statistic"] == "auc"
+
+
+def test_an_unknown_statistic_is_refused_before_the_model_loads(base_args, track, tmp_path,
+                                                                loader):
+    """`separation`'s own lookup already refused a bad name, but only after the weights were
+    resident, which on a large model is minutes of waiting to be told about a typo.
+    """
+    with pytest.raises(streamextract.StreamExtractError) as e:
+        streamextract.extract("tiny", tmp_path / "d.safetensors", log=lambda m: None,
+                              **_extract_args(base_args, track, tmp_path,
+                                              separation_statistic="not-a-statistic"))
+    msg = str(e.value)
+    assert "unknown separation statistic" in msg
+    assert "auc" in msg, "the refusal has to name what this build does know"
+    assert not loader, "the model was loaded before the statistic was checked"
+
+
+def test_the_command_line_refuses_an_unknown_statistic_at_parse_time(capsys):
+    with pytest.raises(SystemExit):
+        streamextract.build_parser().parse_args(
+            ["M", "--out", "d.st", "--separation-statistic", "nope"])
+    assert "invalid choice" in capsys.readouterr().err

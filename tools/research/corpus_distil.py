@@ -47,6 +47,7 @@ output can be reasoned about without re-reading 507 GB.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import sys
@@ -138,6 +139,10 @@ def _authors(root):
 #: Lines read from a `.jsonl` document when describing its shape. One line would miss a field that
 #: only later records carry; all of them would read a 12-million-file corpus to learn a shape.
 JSONL_SAMPLE_LINES = 20
+
+#: Commit records read per model. Measured: the sample averaged 2.75 commits per model, so this
+#: is far above the common case and exists to stop one pathological history dominating a shard.
+MAX_COMMITS = 500
 
 #: Documents whose value is their prose rather than their fields. Never read, never described, and
 #: never extracted: a distillate with somebody's readme in it is a different artefact with
@@ -253,95 +258,253 @@ def discover(root, sample):
     return 0
 
 
-def _pick(doc, names):
-    """The first of `names` present anywhere in the document, searched breadth first."""
-    queue = [doc]
-    seen = 0
-    while queue and seen < 5_000:          # bounded: a document cannot make this loop forever
-        node = queue.pop(0)
-        seen += 1
-        if isinstance(node, dict):
-            for n in names:
-                if n in node and node[n] is not None:
-                    return node[n]
-            queue.extend(node.values())
-        elif isinstance(node, list):
-            queue.extend(node[:50])
-    return None
+#: The documents worth reading, measured rather than guessed: `discover` over 200 authors of the
+#: real corpus found eight per model directory and these are the six that carry fields. The others
+#: are `config.json` and `tokenizer_config.json` (model architecture, not provenance),
+#: `discussions.json` (conversation bodies), `readme-main.md` (prose) and `gguf-metadata.bin`
+#: (binary). Reading only these halves the file count, which on twelve million files is hours.
+READ_FILES = ("meta.json", "commits-main.jsonl", "paths-info.json", "_deleted.json",
+              "base-model.json", "ns-overview.json")
 
 
-def _extensions(doc):
-    """Every file extension the document says the repo holds, lowercase, without the dot."""
-    sibs = _pick(doc, ("siblings", "files"))
+def _extensions_from(names):
+    """Lowercase extensions, without the dot, from a list of filenames."""
     out = set()
-    if isinstance(sibs, list):
-        for s in sibs[:5_000]:
-            name = s.get("rfilename") or s.get("filename") or s.get("path") if isinstance(s, dict) \
-                else (s if isinstance(s, str) else None)
-            if isinstance(name, str) and "." in name:
-                out.add(name.rsplit(".", 1)[1].lower()[:16])
+    for n in names:
+        if isinstance(n, str) and "." in n:
+            out.add(n.rsplit(".", 1)[1].lower()[:16])
     return sorted(out)
 
 
-def extract(root, out_path, limit):
-    """Walk every author and write one JSONL row per model document found."""
+def _model_row(author, model_dir, problems):
+    """One model's distillate, or None when the directory carries nothing worth keeping.
+
+    THE FIELD NAMES HERE ARE MEASURED, which is the whole reason `discover` exists. The first
+    version of this file guessed `securityFileStatus` for the host's file verdict; the corpus
+    spells it `status` inside `paths-info.json`, and a run against the guess would have written
+    three million rows with that field empty and nothing saying why.
+    """
+    files = {p.name: p for p in model_dir.iterdir() if p.is_file() and p.name in READ_FILES}
+    if not files:
+        return None
+
+    meta = _read_json(files["meta.json"], problems) if "meta.json" in files else None
+    if not isinstance(meta, dict) or not meta.get("id"):
+        # No identity means nothing downstream can refer to it. Counted so the total is honest.
+        problems["model directory with no usable meta.json"] += 1
+        return None
+
+    siblings = meta.get("siblings")
+    names = [s.get("rfilename") for s in siblings] if isinstance(siblings, list) else []
+    row = {
+        "author": author,
+        "model": meta.get("id"),
+        "created_at": meta.get("createdAt"),
+        "last_modified": meta.get("lastModified"),
+        "downloads": meta.get("downloads"),
+        "likes": meta.get("likes"),
+        "private": meta.get("private"),
+        "gated": meta.get("gated"),
+        "disabled": meta.get("disabled"),
+        "pipeline_tag": meta.get("pipeline_tag"),
+        "tags": meta.get("tags") if isinstance(meta.get("tags"), list) else [],
+        "sha": meta.get("sha"),
+        "extensions": _extensions_from(names),
+        "file_count": len(names),
+    }
+
+    # THE TIMELINE, and the limitation is recorded in the row rather than left to a reader.
+    # These records carry a date, a title, a message and the commit authors. They do NOT carry
+    # the files each commit touched, so the four "first ever <format>" signatures cannot be
+    # computed from this corpus at all, while dormancy, author change and burst can. A row that
+    # did not say so would invite somebody to compute the other four and get a confident wrong
+    # answer from a field that was never there.
+    if "commits-main.jsonl" in files:
+        commits = []
+        for rec in _read_jsonl(files["commits-main.jsonl"], problems, limit=MAX_COMMITS):
+            if not isinstance(rec, dict):
+                continue
+            who = rec.get("authors")
+            user = None
+            if isinstance(who, list) and who and isinstance(who[0], dict):
+                user = who[0].get("user")
+            commits.append([rec.get("date"), user])
+        # SORTED OLDEST FIRST, AND THIS IS A FIX RATHER THAN A TIDY-UP. Measured on 4,776 real
+        # rows: 3,362 arrive newest-first, 3 oldest-first and 4 in neither order. The ported
+        # hijacking signatures take the LAST commit as the newest, so fed in corpus order every
+        # one of them would have computed backwards: a three-year dormancy would have read as a
+        # three-year-old burst, and the author change would have compared the wrong pair. Nothing
+        # would have failed; the answers would just have been wrong.
+        #
+        # Sorting rather than reversing, because those 4 mixed rows mean the order is not a
+        # property this corpus guarantees. A record with no date cannot be placed, so it goes last
+        # and is counted instead of being given a position it did not earn.
+        undated = sum(1 for c in commits if not c[0])
+        commits.sort(key=lambda c: (c[0] is None, c[0] or ""))
+        row["commits"] = commits
+        row["commit_count"] = len(commits)
+        # Stated rather than implied, for the same reason as the file-lists flag below: a
+        # consumer that has to guess the order will guess wrong on 4 rows in 4,776.
+        row["commits_oldest_first"] = True
+        if undated:
+            row["commits_without_a_date"] = undated
+        row["commits_carry_file_lists"] = False
+    else:
+        row["commits"] = None
+        row["commit_unavailable_because"] = "this model directory holds no commits-main.jsonl"
+
+    # The host's own per-file verdict, carried as found and never as our own reading.
+    if "paths-info.json" in files:
+        pi = _read_json(files["paths-info.json"], problems)
+        if isinstance(pi, list):
+            statuses = sorted({e.get("status") for e in pi
+                               if isinstance(e, dict) and e.get("status")})
+            row["host_file_statuses"] = [s for s in statuses if s]
+
+    # The claimed base. This is the provenance claim `senbonzakura diff` exists to check, so the
+    # id is what matters; the rest of that document is a copy of the base's own metadata.
+    if "base-model.json" in files:
+        base = _read_json(files["base-model.json"], problems)
+        if isinstance(base, dict):
+            row["claimed_base"] = base.get("id")
+
+    # Gone, and why. The field this corpus has that no live API answer does.
+    if "_deleted.json" in files:
+        dele = _read_json(files["_deleted.json"], problems)
+        if isinstance(dele, dict):
+            row["deleted_at"] = dele.get("deleted_at")
+            row["deleted_reason"] = dele.get("reason")
+    return row
+
+
+def _author_row(author, model_dir, problems):
+    """The namespace's own record, from any one of its models. None when absent.
+
+    `ns-overview.json` describes the AUTHOR and is duplicated into each model directory, so it is
+    read once per author rather than three million times. Account age and follower count are the
+    signals here, and they are per-namespace by nature.
+    """
+    path = model_dir / "ns-overview.json"
+    if not path.is_file():
+        return None
+    ns = _read_json(path, problems)
+    if not isinstance(ns, dict):
+        return None
+    return {
+        "author": author,
+        "kind": ns.get("kind"),
+        "fullname": ns.get("fullname"),
+        "created_at": ns.get("created_at") or ns.get("created_at_decoded_from_id"),
+        "num_models": ns.get("num_models"),
+        "num_datasets": ns.get("num_datasets"),
+        "num_followers": ns.get("num_followers"),
+        "num_discussions": ns.get("num_discussions"),
+        "is_pro": ns.get("is_pro"),
+        "type_field": ns.get("type_field"),
+        "orgs": [o.get("name") for o in ns.get("orgs") or []
+                 if isinstance(o, dict) and o.get("name")],
+    }
+
+
+def _shard(root, out_dir, index, of, limit, queue=None):
+    """One worker's slice: every author whose position modulo `of` is `index`.
+
+    PARTITION, DISTRIBUTE, MERGE, which §12 asks for and which this needs rather than wants.
+    Measured on the real corpus: `discover` read 200 authors in 12 seconds, and 611,154 authors at
+    that rate is about ten hours in one process. Each shard writes its OWN pair of files, so there
+    is no lock on a hot path and a crashed worker costs its slice rather than the run.
+
+    Each shard writes a done-marker, so a re-run skips what finished. The markers are what make
+    this safe to interrupt, which matters on a box somebody else is also using.
+    """
+    done = out_dir / f"shard-{index:03d}.done"
+    if done.exists():
+        return {"shard": index, "skipped": True}
+    models_path = out_dir / f"models-{index:03d}.jsonl.gz"
+    authors_path = out_dir / f"authors-{index:03d}.jsonl.gz"
+    problems, n_models, n_authors, n_dirs = Counter(), 0, 0, 0
+    started = time.monotonic()
+    with gzip.open(models_path, "wt", encoding="utf-8") as mfh, \
+            gzip.open(authors_path, "wt", encoding="utf-8") as afh:
+        for position, entry in enumerate(_authors(root)):
+            if position % of != index:
+                continue
+            n_dirs += 1
+            if limit and n_dirs > limit:
+                break
+            author = entry.name
+            seen_author = False
+            try:
+                subs = [d for d in Path(entry.path).iterdir() if d.is_dir()]
+            except OSError as e:
+                problems[f"author unreadable: {type(e).__name__}"] += 1
+                continue
+            for model_dir in subs:
+                if not seen_author:
+                    arow = _author_row(author, model_dir, problems)
+                    if arow:
+                        afh.write(json.dumps(arow, sort_keys=True) + "\n")
+                        n_authors += 1
+                        seen_author = True
+                row = _model_row(author, model_dir, problems)
+                if row:
+                    mfh.write(json.dumps(row, sort_keys=True) + "\n")
+                    n_models += 1
+            if queue is not None and n_dirs % HEARTBEAT_EVERY == 0:
+                queue.put((index, n_dirs, n_models))
+    done.write_text(f"{n_dirs} authors, {n_models} models, {n_authors} namespaces\n")
+    return {"shard": index, "authors": n_dirs, "models": n_models,
+            "namespaces": n_authors, "seconds": round(time.monotonic() - started, 1),
+            "problems": dict(problems)}
+
+
+def extract(root, out_dir, limit, workers):
+    """Walk the corpus and write a gzipped distillate per shard."""
     root = Path(root)
     if not root.is_dir():
         raise SystemExit(f"{root} is not a directory.")
-    out_path = Path(out_path)
-    tmp = out_path.with_suffix(out_path.suffix + ".part")
-    problems = Counter()
-    authors = rows = 0
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
 
-    with tmp.open("w", encoding="utf-8") as sink:
-        for entry in _authors(root):
-            authors += 1
-            if limit and authors > limit:
-                break
-            for path in Path(entry.path).rglob("*.json"):
-                doc = _read_json(path, problems)
-                if not isinstance(doc, dict):
-                    continue
-                model = _pick(doc, ("id", "modelId", "model_id"))
-                if not isinstance(model, str):
-                    continue
-                row = {
-                    "author": entry.name,
-                    "model": model,
-                    "created_at": _pick(doc, ("createdAt", "created_at")),
-                    "last_modified": _pick(doc, ("lastModified", "last_modified")),
-                    "downloads": _pick(doc, ("downloads",)),
-                    "likes": _pick(doc, ("likes",)),
-                    "disabled": _pick(doc, ("disabled",)),
-                    "gated": _pick(doc, ("gated",)),
-                    "extensions": _extensions(doc),
-                    # The host's own security answer where the corpus happens to hold one. Carried
-                    # as found and never as a verdict: it is somebody else's reading.
-                    "host_security": _pick(doc, ("securityFileStatus", "security_file_status",
-                                                 "security_repo_status")),
-                    "source_file": path.name,
-                }
-                sink.write(json.dumps(row, sort_keys=True) + "\n")
-                rows += 1
-            if authors % HEARTBEAT_EVERY == 0:
-                rate = authors / max(time.monotonic() - started, 1e-6)
-                print(f"  {authors} authors, {rows} rows, {rate:.0f} authors/s", file=sys.stderr)
+    if workers <= 1:
+        results = [_shard(root, out_dir, 0, 1, limit)]
+    else:
+        import multiprocessing as mp
+        with mp.Pool(workers) as pool:
+            results = pool.starmap(
+                _shard, [(root, out_dir, i, workers, limit) for i in range(workers)])
 
-    # Rename on close, so an interrupted run never leaves a file that looks finished.
-    tmp.replace(out_path)
+    models = sum(r.get("models", 0) for r in results)
+    authors = sum(r.get("authors", 0) for r in results)
+    namespaces = sum(r.get("namespaces", 0) for r in results)
+    problems = Counter()
+    for r in results:
+        problems.update(r.get("problems") or {})
+    size = sum(f.stat().st_size for f in out_dir.glob("*.jsonl.gz"))
     summary = {
-        "authors": authors, "rows": rows,
+        "authors": authors, "models": models, "namespaces": namespaces,
+        "workers": workers,
         "seconds": round(time.monotonic() - started, 1),
-        "out": str(out_path),
-        "bytes": out_path.stat().st_size,
+        "compressed_bytes": size,
+        "out_dir": str(out_dir),
         "problems": dict(problems),
+        "shards": results,
     }
     print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
-    if not rows:
-        print("\nZERO ROWS. The walk ran and matched nothing, which is a statement about the "
+    # A RE-RUN THAT SKIPPED EVERYTHING IS A SUCCESS, NOT AN EMPTY RESULT. Found by reading this
+    # function's own output rather than its exit code: a second run over a finished extraction has
+    # zero models because there was nothing left to do, and reporting that as the zero-result
+    # refusal tells somebody who re-ran out of caution that their distillate is broken.
+    if all(r.get("skipped") for r in results):
+        print("\nEvery shard was already complete, so nothing was walked. The distillate in "
+              f"{out_dir} is the earlier run's and is unchanged. Delete the .done markers to "
+              f"force a re-extraction.", file=sys.stderr)
+        return 0
+    if not models:
+        print("\nZERO MODELS. The walk ran and matched nothing, which is a statement about the "
               "field names this looked for rather than about the corpus. Run `discover` and "
-              "compare its key_paths against WANTED in this file.", file=sys.stderr)
+              "compare its keys_by_filename against the readers in `_model_row`.", file=sys.stderr)
         return 1
     return 0
 
@@ -358,16 +521,23 @@ def main(argv=None):
     d.add_argument("--sample", type=int, default=DISCOVER_SAMPLE,
                    help=f"author directories to read (default {DISCOVER_SAMPLE})")
 
-    e = sub.add_parser("extract", help="walk everything and write JSONL")
+    e = sub.add_parser("extract", help="walk everything and write a gzipped distillate")
     e.add_argument("root")
-    e.add_argument("--out", required=True, help="where to write the JSONL distillate")
+    e.add_argument("--out", required=True,
+                   help="a DIRECTORY for the distillate. One pair of gzipped JSONL files per "
+                        "shard, plus a done-marker each so a re-run resumes")
     e.add_argument("--limit", type=int, default=0,
-                   help="stop after this many authors, for a rehearsal on a real corpus")
+                   help="stop after this many authors PER SHARD, for a rehearsal on real data")
+    e.add_argument("--workers", type=int, default=1,
+                   help="parallel shards (default 1). The corpus this was built for needs about "
+                        "ten hours in one process and an hour across four")
 
     a = ap.parse_args(argv)
     if a.mode == "discover":
         return discover(a.root, a.sample)
-    return extract(a.root, a.out, a.limit)
+    if a.workers < 1:
+        ap.error("--workers must be at least 1")
+    return extract(a.root, a.out, a.limit, a.workers)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ from __future__ import annotations
 import glob
 import json
 import pathlib
+import sys
 
 import pytest
 
@@ -67,11 +68,14 @@ CORPUS = (pathlib.Path(__file__).resolve().parents[1]
           / "private" / "research" / "architecture-corpus-2026-10-08" / "models")
 
 
-def local_config(repo):
+def _measure_config(repo):
     """One repo's config from the local hub cache or the architecture corpus, or None.
 
     NEVER DOWNLOADS. A repo in neither place is a gap in the evidence and the caller records it as
     `UNTESTED`, which is what keeps an absence of evidence from reading as a pass.
+
+    CALL `local_config` INSTEAD. This is the measurement; that is the snapshot, and the difference
+    is a defect this file had. See `_SNAPSHOT`.
     """
     if repo is None:
         return None
@@ -235,6 +239,46 @@ def ids(rows):
     """Readable parametrise ids, so a failure names the family rather than an index."""
     return [r["family"] for r in rows]
 
+
+#: Every family's config, measured ONCE, at import.
+#:
+#: WHY A SNAPSHOT AND NOT A FUNCTION CALL. `_measure_config` reads two directories, and one of them
+#: GROWS WHILE THE SUITE RUNS: the hub cache gains a model the moment any other test downloads a
+#: tiny checkpoint. So a family that had no instance when `WITHOUT_INSTANCE` was built can have one
+#: by the time a test parametrised over it executes, and the test then contradicts its own
+#: parametrisation.
+#:
+#: Measured in CI on 2026-10-09, which is how this was found: three families failed
+#: `test_a_family_with_no_local_instance_is_recorded_as_untested` because `local_config` returned a
+#: config for exactly the three repos the suite's other tests pull (a tiny Llama, a tiny Qwen2 and
+#: gpt2). Locally the cache was already full, so import time and run time agreed and the suite was
+#: green. A test whose answer depends on what has run before it is not measuring the map.
+#:
+#: One reading, shared by every test here, so the whole file describes one state of the machine.
+_SNAPSHOT = {r["repo"]: _measure_config(r["repo"]) for r in FAMILIES}
+
+
+def local_config(repo):
+    """The config this suite measured for `repo` at import, or None.
+
+    Repos outside the family table are measured on the spot, because a test naming one directly is
+    asking about that repo and not about the table.
+    """
+    if repo in _SNAPSHOT:
+        return _SNAPSHOT[repo]
+    return _measure_config(repo)
+
+
+#: Whether the architecture corpus is on this machine at all.
+#:
+#: It lives under `private/`, which is excluded from git, so a fresh clone and every CI runner has
+#: neither it nor a populated hub cache. The file's own docstring says that is the right outcome
+#: and that every family then falls through to UNTESTED, and it is right. What it did NOT account
+#: for is that two tests below compare the measured set of gaps against a recorded list, and on a
+#: machine with no evidence base at all that comparison is not a weaker check, it is a different
+#: question with a guaranteed answer: every family is a gap. Those two are therefore skipped, out
+#: loud and by name, where there is no corpus to compare against.
+HAVE_CORPUS = CORPUS.is_dir()
 
 WITH_INSTANCE = tuple(r for r in FAMILIES if local_config(r["repo"]) is not None)
 WITHOUT_INSTANCE = tuple(r for r in FAMILIES if local_config(r["repo"]) is None)
@@ -645,6 +689,11 @@ def test_a_family_with_no_local_instance_is_recorded_as_untested(row):
                 f"evidence and not a defect in the map.")
 
 
+@pytest.mark.skipif(not HAVE_CORPUS, reason=(
+    "the architecture corpus is not on this machine, so EVERY family reads as a gap and comparing "
+    "the measured gaps against the recorded ones would be asking a question with a guaranteed "
+    "answer rather than running a weaker check. The corpus lives under private/, which a fresh "
+    "clone and every CI runner lack by design. This gate runs where the evidence base exists."))
 def test_the_suites_own_output_names_every_untested_family():
     """The gate on discipline 2. If a gap ever stops being named, this fails.
 
@@ -652,6 +701,13 @@ def test_the_suites_own_output_names_every_untested_family():
     same as silence. The assertion is that the set of families with no instance is exactly the
     set recorded as expected gaps, so acquiring a checkpoint for one of them, or losing one,
     forces a deliberate edit here.
+
+    ONLY WHERE THERE IS A CORPUS TO COMPARE AGAINST. `EXPECTED_GAPS` records which families this
+    project has no instance of ANYWHERE, which is a fact about the evidence base. On a machine
+    with no evidence base the measured set is every family, and asserting that against a
+    three-name list says nothing about the map and fails every time. This file's own docstring
+    already said a fresh clone sees every family as untested and called that the right outcome;
+    this test was the one place that contradicted it.
     """
     missing = tuple(sorted(r["family"] for r in WITHOUT_INSTANCE))
     assert missing == tuple(sorted(EXPECTED_GAPS)), (
@@ -723,6 +779,11 @@ def test_every_row_in_the_table_has_every_field():
         assert set(row) == required, f"{row.get('family')!r} has fields {sorted(set(row))}"
 
 
+@pytest.mark.skipif(not HAVE_CORPUS, reason=(
+    "without the architecture corpus every family reads as having no instance, including the ones "
+    "whose block counts WERE measured against a real config, so this would fail on rows that are "
+    "correct. The property it guards is about the table, and the table is only readable against "
+    "the evidence base."))
 def test_a_family_with_no_instance_never_claims_a_measured_expectation():
     """A row with no checkpoint must not carry an expected block count, because an expectation
     nobody can check is the thing that makes an untested row look tested.
@@ -1096,3 +1157,58 @@ def test_the_declared_depth_excludes_the_prediction_head_on_every_in_stack_famil
         assert declared == stack - heads, (
             "the declared depth excludes the prediction head, which is why the streaming path's "
             "count is right to be the declared one")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 9. THE GUARD ON THIS FILE'S OWN MEASUREMENT. Added after CI failed on it, 2026-10-09.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+def test_the_configs_are_read_once_and_not_again_while_the_suite_runs(tmp_path, monkeypatch):
+    """THE DEFECT THIS CLOSES, and it made five CI jobs red while the suite was green locally.
+
+    `_measure_config` reads the hub cache, and the hub cache GROWS WHILE THE SUITE RUNS: any other
+    test that pulls a tiny checkpoint adds to it. `WITHOUT_INSTANCE` is built at import, so a
+    family that had no instance then could have one by the time its test executed, and the test
+    then contradicted the parametrisation that selected it. In CI the three repos that appeared
+    were exactly the three the rest of the suite downloads. Locally the cache was already full, so
+    import time and run time agreed and nothing showed.
+
+    The fix is that every test reads one snapshot. This asserts the snapshot is actually consulted:
+    point the hub somewhere new, and a family in the table must still answer what it answered at
+    import, while a repo outside the table is still measured on the spot because a test naming one
+    directly is asking about that repo.
+    """
+    row = FAMILIES[0]
+    before = local_config(row["repo"])
+    monkeypatch.setattr(sys.modules[__name__], "HUB", tmp_path / "an-empty-hub")
+    monkeypatch.setattr(sys.modules[__name__], "CORPUS", tmp_path / "an-empty-corpus")
+    assert local_config(row["repo"]) is before, (
+        "a family in the table re-measured its config instead of reading the snapshot, so the "
+        "answer can change mid-run and a test can disagree with its own parametrisation")
+    assert _measure_config(row["repo"]) is None, (
+        "the underlying measurement should see the empty directories, or this test is not "
+        "demonstrating that the snapshot is what shielded the answer")
+
+
+def test_every_family_in_the_table_is_in_the_snapshot():
+    """A row added to the table without a snapshot entry would fall through to the live
+    measurement and reintroduce the drift for that row alone, which is the hardest version of
+    this defect to see.
+    """
+    assert {r["repo"] for r in FAMILIES} == set(_SNAPSHOT)
+
+
+def test_the_two_evidence_base_gates_are_skipped_rather_than_weakened():
+    """Both gates compare a measured set against a recorded one, which is only a real question
+    where there is an evidence base. They are skipped without a corpus and they must not have
+    been softened to pass instead: the assertion each makes is unchanged.
+    """
+    assert EXPECTED_GAPS, "the recorded gap list must not have been emptied to make a gate pass"
+    for name in ("test_the_suites_own_output_names_every_untested_family",
+                 "test_a_family_with_no_instance_never_claims_a_measured_expectation"):
+        fn = globals()[name]
+        marks = [m for m in getattr(fn, "pytestmark", []) if m.name == "skipif"]
+        assert marks, f"{name} lost its evidence-base guard"
+        assert "corpus" in marks[0].kwargs.get("reason", ""), (
+            f"{name} is skipped for a reason that does not name the corpus, so a reader cannot "
+            f"tell whether the gate ran")

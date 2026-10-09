@@ -24,7 +24,8 @@ from senbonzakura import baseline, measure
 
 def _stamped(slot, **pinned):
     """A stage artefact with one stamped metric. `slot` is the key, `pinned` the stamped fields,
-    so a test can give the slot and the `metric` identity different values on purpose."""
+    so a test can give the slot and the `metric` identity different values on purpose.
+    """
     return {"metrics": {slot: {"value": 1.0, **pinned}}}
 
 

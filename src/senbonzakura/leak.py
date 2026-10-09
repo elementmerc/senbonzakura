@@ -246,6 +246,12 @@ def main(argv=None):
     block = residualleak.leak_block(report)
     print(f"  profile over {report.positions} positions, mean {report.mean:.3e}, "
           f"in {report.basis}")
+    # D1, 2026-10-09: this command is pointed at a checkpoint it did not edit, so it cannot name
+    # the positions an edit reached and its mean is the whole-stack one. On a real taper that is
+    # mostly untouched positions, and the figure reads high for that reason alone. An
+    # `abliterate --leak-report` run knows its own profiles and prints both.
+    print("  that mean covers every position, including any the edit never reached, because this "
+          "command cannot know where an edit acted. Read the profile above for where it did.")
     out = report.output
     if out is not None and out.along_post_norm_direction is not None:
         print(f"  at the output, in the basis the final norm maps into: "

@@ -268,6 +268,37 @@ class LeakReport:
         """
         return sum(self.leak_per_position) / len(self.leak_per_position)
 
+    def mean_over(self, positions):
+        """The mean over the positions given, which is how the EDITED figure is taken.
+
+        WHY THE WHOLE-STACK MEAN IS NOT THE EDIT'S FIGURE. `mean` averages every position, and an
+        abliteration does not touch every position: the strength is a taper that peaks at one layer
+        and falls to zero at a distance, so the layers outside it keep the whole component and pull
+        the average up. Measured on 2026-10-09: an edit that had removed about two thirds of the
+        direction where it acted read 88 to 96 per cent whole-stack, because fourteen of twenty-five
+        positions had never been touched.
+
+        So this is not a presentation choice. The two numbers answer different questions, and only
+        the caller that made the edit knows which positions it reached, which is why this takes them
+        rather than deriving them.
+
+        Refuses an empty or out-of-range set rather than returning a number, because a mean over no
+        positions is not a small figure, it is no figure, and `sum([]) / 0` would be a
+        ZeroDivisionError several frames from the caller that passed the wrong thing.
+        """
+        chosen = sorted({int(i) for i in positions})
+        if not chosen:
+            raise ValueError(
+                "mean_over was given no positions. A mean over nothing is not a low figure, it is "
+                "no figure; if the edit reached no position, say so rather than averaging.")
+        out_of_range = [i for i in chosen if i < 0 or i >= len(self.leak_per_position)]
+        if out_of_range:
+            raise ValueError(
+                f"positions {out_of_range} are outside the {len(self.leak_per_position)} this "
+                f"profile covers, so the caller and the measurement disagree about the model's "
+                f"depth. That is a bug in whichever of them is wrong and not a figure to average.")
+        return sum(self.leak_per_position[i] for i in chosen) / len(chosen)
+
     def reading(self):
         """One paragraph, leading with the per-position figures and never with the output."""
         lo, hi = min(self.leak_per_position), max(self.leak_per_position)
@@ -416,7 +447,8 @@ LEAK_REQUESTED_BUT_NOT_MEASURED = "requested_but_not_measured"
 LEAK_MEASURED = "measured"
 
 
-def leak_block(report=None, *, refused_because=None, prompts=None, requested=True):
+def leak_block(report=None, *, refused_because=None, prompts=None, requested=True,
+               edited_positions=None, edited_unavailable_because=None):
     """The leak result as a record block, ALWAYS present, whether or not it was measured.
 
     THE THREE STATES ARE KEPT APART, exactly as `_capability_block` keeps its own three apart and
@@ -437,7 +469,28 @@ def leak_block(report=None, *, refused_because=None, prompts=None, requested=Tru
     When `requested` is true, exactly one of `report` and `refused_because` is given. Both, or
     neither, is a caller bug and raises here rather than writing a block that claims the figure
     exists and does not.
+
+    `edited_positions` IS THE CALLER'S KNOWLEDGE AND NOT A DERIVABLE FACT (D1, 2026-10-09). The
+    whole-stack mean is diluted by every position the edit never reached, so the figure a reader
+    wants is the mean over the positions it DID reach. Only the caller that performed the edit
+    knows which those were: on the `abliterate` path they are the union of the two strength tapers'
+    supports, recoverable from the recorded profiles, and the standalone `leak` command cannot know
+    them at all because it is pointed at a checkpoint it did not edit. Passed as None, the block
+    carries the whole-stack figure alone and says why there is no second one, which is honest for
+    the standalone case and would be a silent omission if it were left unexplained.
+
+    `edited_unavailable_because` is for the third case: a caller that DID perform the edit and
+    still could not take the figure, which on the `abliterate` path means the taper and the
+    measurement disagreed about the model's depth. That is a defect in one of them, and by the time
+    it can be noticed the weights are on disk and the provenance is not, so it degrades to a stated
+    reason here and a loud line in the terminal rather than ending a finished run with a
+    traceback. Giving both it and `edited_positions` is a caller bug and raises.
     """
+    if edited_positions is not None and edited_unavailable_because is not None:
+        raise ValueError(
+            "leak_block was given both the edited positions and a reason it has none. One of "
+            "those two is wrong and the block would carry the figure beside an excuse for its "
+            "absence.")
     if not requested:
         return {"state": LEAK_NOT_REQUESTED, "measured": False, "why_not": None,
                 "probe_prompts": None}
@@ -456,7 +509,14 @@ def leak_block(report=None, *, refused_because=None, prompts=None, requested=Tru
         "basis": report.basis,
         "positions": report.positions,
         "probe_prompts": report.probe_prompts,
+        # THE WHOLE-STACK MEAN KEEPS ITS NAME AND ITS MEANING, deliberately. It is read by
+        # `tools/research/matched_leak_strength.py`, it is stamped into published artefacts, and
+        # changing what `mean` means would restate every leak figure this project has published for
+        # a presentation improvement. The new figure arrives beside it instead.
         "mean": report.mean,
+        "mean_answers": (
+            "whether the component is still present ANYWHERE in the residual stream, averaged over "
+            "every position including the ones the edit never reached"),
         "per_position": list(report.leak_per_position),
         # The post-norm figure in the basis the norm maps into, and NOT the pre-norm direction read
         # at the output, which is the misreading this module's docstring exists to prevent. Absent
@@ -478,6 +538,37 @@ def leak_block(report=None, *, refused_because=None, prompts=None, requested=Tru
             "figure beside an unchanged refusal rate is the signature of an edit that landed on a "
             "decoy, so read the two together."),
         "warnings": list(report.warnings),
+        **_edited_fields(report, edited_positions, edited_unavailable_because),
+    }
+
+
+def _edited_fields(report, edited_positions, unavailable_because=None):
+    """The edited-window figure, or a stated reason there is none. Never a silent omission."""
+    if edited_positions is None:
+        return {
+            "mean_over_edited_positions": None,
+            "edited_positions": None,
+            "edited_positions_absent_because": unavailable_because or (
+                "the caller did not perform the edit, so it cannot say which positions the edit "
+                "reached. The standalone `leak` command is pointed at a checkpoint it did not "
+                "make; only an `abliterate` run knows its own strength taper. The whole-stack "
+                "figure above is the whole measurement here."),
+        }
+    chosen = sorted({int(i) for i in edited_positions})
+    return {
+        # NAMED FIRST IN THE PROSE AND SECOND IN THE DICT, because dict order is not emphasis and
+        # the prose is where a reader is told which to quote.
+        "mean_over_edited_positions": report.mean_over(chosen),
+        "edited_positions": chosen,
+        "edited_positions_absent_because": None,
+        "edited_positions_are": (
+            "the residual-stream positions this run's strength taper actually reached, as the "
+            "union of the two profiles' supports. Position 0 is the embedding and is never "
+            "edited; position i+1 is what decoder layer i writes into."),
+        "mean_over_edited_positions_answers": (
+            "whether the edit removed the direction WHERE IT ACTED, which is the question the "
+            "whole-stack mean cannot answer because it averages in every untouched position. "
+            "Quote this one about the edit, and the whole-stack mean about the stream."),
     }
 
 

@@ -661,6 +661,29 @@ def layer_weight(idx, P, wmax, wmin, D):
     return wmax + (dist / D) * (wmin - wmax)
 
 
+def edited_positions_from_taper(bpr, n_layers):
+    """The residual-stream positions a bake with these profiles actually reached (D1, 2026-10-09).
+
+    THE EDIT IS A TAPER AND NOT A WINDOW. `[lo, hi]` on the search space bounds where the PEAK may
+    sit; the strength itself runs out to distance D either side of the peak, so the edited set is
+    the union of the two profiles' supports and can extend outside the bounds in both directions.
+    Verified empirically on 2026-10-09: of six profiles reachable in the search space, four put
+    layer 0 in the edit with `lo = 1`.
+
+    THE CONDITION IS THE BAKE'S OWN. `bake_pc` skips a layer when both weights are exactly zero,
+    so that same test, against the same `layer_weight`, is what decides membership here. A second
+    formulation of "which layers got edited" would be a second thing that can drift from the one
+    that did the editing, and this module has paid for that shape of mistake before.
+
+    Layer `idx` writes into residual-stream position `idx + 1`; position 0 is the embedding output
+    and no bake touches it, so it is never in this set.
+    """
+    oP, owmax, owmin, oD, dP, dwmax, dwmin, dD = bpr
+    return [idx + 1 for idx in range(n_layers)
+            if layer_weight(idx, oP, owmax, owmin, oD) != 0.0
+            or layer_weight(idx, dP, dwmax, dwmin, dD) != 0.0]
+
+
 @torch.no_grad()
 def _row_mask(delta, sparsity):
     """The rows sparse surgery is allowed to touch, as a broadcastable boolean mask.
@@ -3432,7 +3455,7 @@ class Abliterator:
         self.log(f"  save prep: put the weights back on {self.dev} for the measurements that follow")
 
     @torch.no_grad()
-    def leak_report(self, b_K, b_mode):
+    def leak_report(self, b_K, b_mode, bpr=None):
         """Did the direction actually leave the residual stream? The block for the record.
 
         Every other figure this run produces is behavioural and answers "did the model change".
@@ -3454,6 +3477,13 @@ class Abliterator:
 
         In `single` mode `active_dirs` returns the same interpolated set at every layer index, so
         index 0 is not an arbitrary choice: it is the one direction every layer got.
+
+        `bpr` IS WHAT MAKES THE FIGURE ABOUT THE EDIT (D1, 2026-10-09). The whole-stack mean
+        averages in every position the taper never reached, and on a real profile that is more than
+        half of them, which is why an edit that had removed two thirds of the direction where it
+        acted still read 88 to 96 per cent. Given the profiles, the positions the bake actually
+        touched are recoverable and the honest figure goes in the record beside the other one.
+        Without them the block says so rather than omitting the field.
 
         NOTHING HERE MAY COST THE RUN ITS RECORD. By the time this is called the weights are on
         disk and `abliteration.json` is not yet written, so a measurement that raises would end a
@@ -3482,15 +3512,50 @@ class Abliterator:
             self.log(f"  residual leak: {why}")
             return residualleak.leak_block(refused_because=why, prompts=len(prompts))
 
-        self.log(f"  residual leak over {report.probe_prompts} prompts, in "
-                 f"{report.basis}: mean {report.mean:.3e} across {report.positions} positions")
+        # THE EDITED FIGURE IS NAMED FIRST, because it is the one a reader should quote about the
+        # edit and a terminal is read top down. A depth disagreement between the taper and the
+        # measurement degrades to a stated reason: by here the weights are on disk and
+        # `abliteration.json` is not, so a raise would cost a finished run its provenance.
+        edited, unavailable = None, None
+        if bpr is not None:
+            try:
+                edited = edited_positions_from_taper(bpr, len(self.layers))
+                # An all-zero pair of profiles is a legal config and edits nothing, so there is no
+                # edited window to average over. Saying that is not the same as the depth defect
+                # below and must not borrow its reason.
+                if not edited:
+                    unavailable = ("both strength profiles are zero at every layer, so this bake "
+                                   "edited no position at all. There is no edited window to take "
+                                   "a figure over, which is a statement about the config and not "
+                                   "a failed measurement.")
+                    self.log(f"  residual leak: {unavailable}")
+                    edited = None
+                else:
+                    report.mean_over(edited)    # the range check, before anything is printed
+            except (ValueError, TypeError) as e:
+                unavailable = (f"the strength taper and the leak profile disagree about the "
+                               f"model's depth, so the positions the edit reached could not be "
+                               f"named: {type(e).__name__}: {e}")
+                self.log(f"  residual leak: no edited-window figure, because {unavailable}")
+                edited = None
+        if edited:
+            self.log(f"  residual leak over {report.probe_prompts} prompts, in {report.basis}: "
+                     f"mean {report.mean_over(edited):.3e} across the {len(edited)} positions the "
+                     f"edit reached")
+            self.log(f"    across all {report.positions} positions, including the "
+                     f"{report.positions - len(edited)} the edit never reached: "
+                     f"{report.mean:.3e}")
+        else:
+            self.log(f"  residual leak over {report.probe_prompts} prompts, in "
+                     f"{report.basis}: mean {report.mean:.3e} across {report.positions} positions")
         out = report.output
         if out is not None and out.along_post_norm_direction is not None:
             self.log(f"    at the output, in the basis the final norm maps into: "
                      f"{out.along_post_norm_direction:.3e}")
         elif out is not None:
             self.log(f"    no output figure: {out.refused_because}")
-        return residualleak.leak_block(report)
+        return residualleak.leak_block(report, edited_positions=edited,
+                                       edited_unavailable_because=unavailable)
 
     def eval_provenance(self):
         """Which rows the run's refusal figures came from, and what they may therefore be used for.
@@ -4603,7 +4668,7 @@ class Abliterator:
         # A run that did not ask for it writes the not-requested state rather than nothing, so a
         # reader can tell "nobody asked" from "asked and could not".
         from . import residualleak
-        leak = (self.leak_report(b_K, b_mode) if getattr(args, "leak_report", False)
+        leak = (self.leak_report(b_K, b_mode, bpr) if getattr(args, "leak_report", False)
                 else residualleak.leak_block(requested=False))
         # WHAT THIS CHECKPOINT IS, written where copying one file out of the directory cannot
         # shed it. Strict for a partial ablation and best-effort for a whole one: the first is a

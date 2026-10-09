@@ -4,11 +4,31 @@
 # Comment: Christ is King  # noqa: ERA001
 """A wheel that carries a Linux executable must not claim to run anywhere.
 
-The metadata lives in `pyproject.toml`; this file exists for one reason, which `pyproject.toml`
-has no way to express: **a wheel is tagged for a platform if and only if it contains platform
-binaries.**
+The metadata lives in `pyproject.toml`; this file exists for two reasons `pyproject.toml` has no
+way to express. The second one arrived on 2026-10-09 and it inverts the first, so both are stated
+plainly rather than one being left to a reader to reconcile:
 
-WHY IT IS A PROPERTY OF THE TREE RATHER THAN A FLAG
+1. **Every wheel is now platform-specific**, because the package contains a compiled Rust
+   extension (`rust/`, installed as `senbonzakura._native`). There is no longer any such thing as
+   a universal senbonzakura wheel, and the `py3-none-any` case this file used to protect no longer
+   exists.
+2. **A wheel additionally carries the llama.cpp binaries if and only if they are vendored in the
+   tree**, which is the original rule and is unchanged. It decides what is INSIDE the wheel; it no
+   longer decides whether the wheel is platform-tagged, because answer 1 already settled that.
+
+WHAT THE CHANGE COSTS, recorded because it is a real loss and the decision was taken with it in
+view. Before, `pip install senbonzakura` on a platform we publish no wheel for still worked: it
+got the universal wheel and simply could not convert or quantise. Now that platform falls back to
+the source distribution, which needs a Rust toolchain, so the failure moves from a missing feature
+to a build error. The mitigation is wheel coverage rather than a fallback implementation: a Python
+twin of the compiled logic would be two copies of one thing, and three copies of prompt rendering
+once drifted far enough to put the compass's reading on the wrong token.
+
+`abi3-py310` is what keeps the cost flat. The extension builds against CPython's stable ABI, so
+one wheel per platform covers 3.10 and everything after, which is exactly the cardinality the
+vendored binaries already produced. Without it the matrix would be platform times Python version.
+
+WHY THE BINARY RULE IS A PROPERTY OF THE TREE RATHER THAN A FLAG
 
 `pip install senbonzakura` gives a `py3-none-any` wheel that cannot convert or quantise, because
 the llama.cpp binaries are not in it. The fix is per-platform wheels that carry them. The obvious
@@ -21,8 +41,8 @@ So the condition is the presence of the binaries themselves. Vendor them and the
 for this platform; do not, and it stays universal and honest about what it cannot do. Neither
 state needs anyone to remember anything, and the dangerous combination cannot be built.
 
-    python -m build                              # no binaries vendored -> py3-none-any
-    python tools/packaging/vendor_llama.py && python -m build   # -> linux_x86_64, with the binaries
+    python -m build                              # cp310-abi3-<platform>, no llama.cpp binaries
+    python tools/packaging/vendor_llama.py && python -m build   # the same, with the binaries
 """
 import datetime
 import os
@@ -32,6 +52,7 @@ import subprocess
 from setuptools import setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.dist import Distribution
+from setuptools_rust import Binding, RustExtension
 
 #: Where `tools/packaging/vendor_llama.py` places what it fetches.
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -153,16 +174,21 @@ class _PlatformAwareWheel(bdist_wheel):
         self.root_is_pure = False
 
     def get_tag(self):
-        """`py3-none-<platform>`, not `cp314-cp314-<platform>`.
+        """`cp310-abi3-<platform>`, which is what the stable ABI earns us.
 
-        `root_is_pure = False` alone produces an interpreter-specific tag, which would be a lie in
-        the other direction: there is no compiled extension here and nothing binds this wheel to
-        one CPython build. It carries executables that care about the OS and the CPU and not at
-        all about the interpreter, so the platform is pinned and the rest is left open. The
-        alternative would need a separate wheel per Python version per platform, for no reason.
+        THIS USED TO BE `py3-none-<platform>` AND THAT IS NOW WRONG. The old reasoning was sound
+        for its time: the wheel carried executables that care about the OS and the CPU and not at
+        all about the interpreter, so binding it to one CPython build would have been a lie in the
+        other direction. A compiled extension changes the fact rather than the reasoning.
+
+        `abi3` is why this is not `cp314-cp314-<platform>`. The extension is built against
+        CPython's stable ABI (`abi3-py310` in `rust/Cargo.toml`), so one wheel genuinely does load
+        on 3.10 and everything after it, and the tag says so. The minimum is spelled here because
+        it has to agree with that Cargo feature: a tag claiming 3.10 over an extension built for
+        3.12 installs and then fails at import, which is the worst available outcome.
         """
         _python, _abi, plat = super().get_tag()
-        return "py3", "none", plat
+        return "cp310", "abi3", plat
 
 
 class _BinaryDistribution(Distribution):
@@ -191,7 +217,38 @@ class _BinaryDistribution(Distribution):
     """
 
     def has_ext_modules(self):
-        return bool(vendored_platforms())
+        # ALWAYS, now. It was `bool(vendored_platforms())` so that a wheel with no binaries stayed
+        # genuinely pure; there is a compiled extension in every wheel since 2026-10-09, so pure
+        # is no longer a state this package has. Returning the old expression would route the
+        # extension into purelib on a build with no binaries vendored, which is the layout
+        # auditwheel refuses outright and which this class was written to stop.
+        return True
 
 
-setup(distclass=_BinaryDistribution, cmdclass={"bdist_wheel": _PlatformAwareWheel})
+#: The compiled half. `rust/Cargo.toml` is the crate; `senbonzakura._native` is where it installs.
+#:
+#: `py_limited_api=True` here and `abi3-py310` in the crate are ONE decision stated in two places,
+#: because neither tool can see the other's half. They have to agree: this flag is what makes
+#: setuptools-rust ask for the stable-ABI filename, and the Cargo feature is what makes the
+#: extension actually conform to it. A wheel tagged abi3 over an extension built without the
+#: feature installs on 3.13 and fails at import, so the agreement is load-bearing rather than
+#: tidy. `_PlatformAwareWheel.get_tag` is the third place, and its docstring says so.
+#:
+#: The leading underscore is the interface statement: nothing outside the package imports
+#: `senbonzakura._native` directly. The Python-facing surface wraps it, which is where the
+#: refusals and the plain-language errors live.
+RUST = [
+    RustExtension(
+        "senbonzakura._native",
+        path="rust/Cargo.toml",
+        binding=Binding.PyO3,
+        py_limited_api=True,
+        debug=False,
+    )
+]
+
+setup(
+    distclass=_BinaryDistribution,
+    cmdclass={"bdist_wheel": _PlatformAwareWheel},
+    rust_extensions=RUST,
+)

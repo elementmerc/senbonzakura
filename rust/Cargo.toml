@@ -9,7 +9,11 @@ description = "The compiled half of senbonzakura: parsers over hostile input, an
 publish = false
 
 [lib]
-name = "senbonzakura_native"
+name = "_native"
+# The lib name IS the module name, because PyO3 derives its init symbol from it:
+# `_native` produces `PyInit__native`, which is what CPython looks for when importing
+# `senbonzakura._native`. A mismatch builds cleanly and fails at import.
+#
 # `rlib` beside `cdylib` so `cargo test` can link the crate as a library. A cdylib-only crate has
 # no test harness to build against, and the Rust-side tests are where the arithmetic is proven;
 # the Python tests prove the binding.

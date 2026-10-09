@@ -52,7 +52,7 @@ from pathlib import Path
 import optuna
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from . import (
     checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
@@ -278,6 +278,26 @@ WORST_SCORE = float("inf")
 # value this path used as a fixed size before it was paced, so a healthy card behaves exactly as
 # it did before.
 CAPTURE_BATCH = 16
+
+#: The prompt length the activation headroom is budgeted for, in tokens. The corpora this tool
+#: ships are short (the longest bundled refusal prompt is well under 200 tokens), so this is
+#: generous rather than tight, and it is a documented assumption rather than a measurement because
+#: the headroom is a floor and overshooting it costs a little card space while undershooting it
+#: costs the run. A prompt longer than this does not fail: it makes the reserve smaller than the
+#: pass needs, and the capture governor then shrinks the chunk exactly as it does for any other
+#: shortfall.
+HEADROOM_SEQ_TOKENS = 512
+
+#: The floor under any computed headroom. CUDA's own context, cuBLAS and cuDNN workspaces and
+#: allocator fragmentation all live outside the arithmetic below and together run to hundreds of
+#: megabytes before a single activation exists.
+HEADROOM_FLOOR_BYTES = 1 << 30
+
+#: The most of any one device's budget the headroom may claim. Reserving most of a small card to
+#: guarantee a forward pass leaves too little for weights to be worth placing, and a loud failure
+#: at load beats a run that technically starts and then thrashes. Past this the reserve is capped
+#: and the cap is reported.
+HEADROOM_MAX_FRACTION = 0.25
 
 
 # ── weight math (pure) ───────────────────────────────────────────────────────────
@@ -661,8 +681,103 @@ def layer_weight(idx, P, wmax, wmin, D):
     return wmax + (dist / D) * (wmin - wmax)
 
 
-def _corrected_max_memory(log):
-    """The placement budget accelerate computed, host entry corrected, or None to leave it alone.
+def _inner_text_config(config):
+    """The sub-config that carries the decoder's shape, which on a multimodal config is nested."""
+    inner = getattr(config, "text_config", None)
+    return inner if inner is not None and hasattr(inner, "num_hidden_layers") else config
+
+
+def _activation_headroom_bytes(config, *, seq=HEADROOM_SEQ_TOKENS):
+    """VRAM one single-prompt forward pass needs beyond the weights, or None if unknowable.
+
+    THE DEFECT THIS EXISTS FOR, and it is the same one as `_corrected_max_memory` one device over.
+    accelerate's `get_max_memory` reports each card's FREE memory and `infer_auto_device_map` then
+    fills it with weights, because placement is the only question it is being asked. A forward pass
+    needs room on top of the weights, and `output_hidden_states=True` needs a lot of it: every
+    layer's activations for the whole batch exist at once. With the card packed to the last hundred
+    megabytes there is nowhere for them to go.
+
+    WHY A ONE-PROMPT BUDGET AND NOT THE WHOLE CHUNK. `collect_resid` runs behind a
+    `ResourceGovernor` that halves the chunk on out-of-memory and waits when the card is too full,
+    so a chunk that does not fit is already handled. What the governor CANNOT do is go below one
+    prompt, and that floor is what has to be guaranteed in advance. Budgeting the full
+    `CAPTURE_BATCH` instead would reserve about 108 GB on a 72B model, which is not a reserve, it
+    is a refusal to use the card.
+
+    Found on 2026-10-09 on a rented A40: the host budget correction worked, 44.19 GiB of weights
+    landed on a 44.42 GiB card, and the first capture died asking for 462 MiB with 227 MiB free.
+
+    THE ARITHMETIC, per prompt at `seq` tokens, every term named so a reader can check it:
+
+      hidden states   (L + 1) x seq x H x 2      every layer's output, kept, in bf16
+      logits          seq x V x 4                computed in float32 on most families
+      transients      seq x I x 2 x 3            MLP intermediates, a few live at once
+
+    Doubled, because fragmentation and the attention implementation's own scratch are real and are
+    not in the list above, and floored at `HEADROOM_FLOOR_BYTES`, because on a small model the
+    three terms together come to a couple of hundred megabytes while CUDA's context and the BLAS
+    workspaces, which are in none of them, do not shrink with the model. Returns None when the
+    config does not name the shape, which is a statement that the headroom is unmeasured rather
+    than a guess at it.
+    """
+    inner = _inner_text_config(config)
+    layers = getattr(inner, "num_hidden_layers", None)
+    hidden = getattr(inner, "hidden_size", None)
+    vocab = getattr(inner, "vocab_size", None)
+    if not isinstance(layers, int) or not isinstance(hidden, int) or not isinstance(vocab, int):
+        return None
+    # `intermediate_size` is absent on some hybrid and MoE configs. Four times the hidden size is
+    # the conventional ratio and is used only for a transient term, so a family that does not name
+    # it gets a reasonable figure rather than no reserve at all.
+    inter = getattr(inner, "intermediate_size", None)
+    if not isinstance(inter, int):
+        inter = 4 * hidden
+    states = (layers + 1) * seq * hidden * 2
+    logits = seq * vocab * 4
+    transients = seq * inter * 2 * 3
+    return max(2 * (states + logits + transients), HEADROOM_FLOOR_BYTES)
+
+
+def _reserve_activation_headroom(budgets, headroom, log):
+    """Subtract `headroom` from every compute device in `budgets`. Returns True if any changed.
+
+    Mutates `budgets`. Only the keys accelerate uses for real devices are touched: `"cpu"` has
+    already been corrected against the cgroup by the caller and `"disk"` is not a device a forward
+    pass allocates on. A non-integer budget (accelerate accepts `"10GiB"` strings) is left alone
+    and reported, because parsing a unit string to subtract from it would be guessing at a format
+    we do not own.
+    """
+    changed = False
+    for key, value in list(budgets.items()):
+        if key in ("cpu", "disk"):
+            continue
+        if not isinstance(value, int):
+            log(f"  device {key}: its placement budget is {value!r} rather than a byte count, so "
+                f"no activation headroom was reserved on it. A capture that runs out of room will "
+                f"be shrunk by the governor rather than refused here.")
+            continue
+        take = min(headroom, int(value * HEADROOM_MAX_FRACTION))
+        if take < headroom:
+            log(f"  device {key}: a forward pass wants {headroom / 1e9:.1f} GB of headroom but that "
+                f"is more than {HEADROOM_MAX_FRACTION:.0%} of its {value / 1e9:.1f} GB, so "
+                f"{take / 1e9:.1f} GB is reserved and the rest is left to the capture governor.")
+        if take <= 0:
+            continue
+        budgets[key] = value - take
+        changed = True
+        log(f"  device {key}: {take / 1e9:.1f} GB of its {value / 1e9:.1f} GB held back for "
+            f"activations, so weights are placed against {budgets[key] / 1e9:.1f} GB.")
+    return changed
+
+
+def _corrected_max_memory(log, config=None):
+    """The placement budget accelerate computed, corrected, or None to leave it alone.
+
+    Two corrections, both of the same shape: accelerate is answering "where do the weights go" and
+    neither the host's real limit nor the room a forward pass needs is part of that question. The
+    host entry is corrected against the cgroup, and each compute device keeps back enough for one
+    prompt's activations. `config` is the model's own config and may be omitted, in which case only
+    the host correction is made.
 
     THE DEFECT. accelerate decides how much of a model goes in host RAM from
     `psutil.virtual_memory().available`, which reads `/proc/meminfo`. Inside a container that is
@@ -689,32 +804,47 @@ def _corrected_max_memory(log):
     """
     from . import resources
     budget, source = resources.host_memory_budget()
-    if budget is None:
+    headroom = _activation_headroom_bytes(config) if config is not None else None
+    if budget is None and headroom is None:
         log("  host memory: unmeasured on this platform, so accelerate's own placement budget "
             "stands. A model that does not fit will fail at load rather than being refused here.")
         return None
-    if source != "cgroup":
-        return None                                     # nothing caps us; accelerate was right
+    if budget is None:
+        log("  host memory: unmeasured on this platform, so accelerate's own host budget stands.")
+    elif source != "cgroup":
+        budget = None                                   # nothing caps us; accelerate was right
+    if headroom is None and config is not None:
+        log("  activations: this config does not name the layer count, width and vocabulary "
+            "together, so the headroom a forward pass needs is unmeasured and none is reserved. "
+            "A capture that runs out of room is shrunk by the governor instead.")
+    if budget is None and headroom is None:
+        return None
     try:
         from accelerate.utils import get_max_memory
         budgets = dict(get_max_memory())
     except Exception as e:
         # Graceful degradation with a visible warning, per the robustness mandate: a placement we
         # could not correct is accelerate's default, which is what every previous run used.
-        log(f"  host memory: a cgroup caps this process, but accelerate's placement budget could "
-            f"not be read to correct it ({type(e).__name__}: {e}), so its default stands. A load "
-            f"that overshoots the cap will be OOM-killed rather than spilling to disk.")
+        log(f"  placement: accelerate's own budget could not be read to correct it "
+            f"({type(e).__name__}: {e}), so its default stands. A load that overshoots a cgroup cap "
+            f"will be OOM-killed rather than spilling to disk, and a packed card will run out of "
+            f"room on the first forward pass.")
         return None
-    theirs = budgets.get("cpu")
-    if isinstance(theirs, int) and theirs <= budget:
-        return None                                     # already tighter than the cap; leave it
-    limit, current = resources.cgroup_memory_limit(), resources.cgroup_memory_current()
-    log(f"  host memory: a cgroup limits this process to {limit / 1e9:.1f} GB with "
-        f"{(current or 0) / 1e9:.1f} GB already counted against it, so the placement budget is "
-        f"{budget / 1e9:.1f} GB and not the {('%.1f GB' % (theirs / 1e9)) if isinstance(theirs, int) else theirs} "
-        f"that /proc/meminfo reports. Inside a container that file describes the host.")
-    budgets["cpu"] = budget
-    return budgets
+    changed = False
+    if budget is not None:
+        theirs = budgets.get("cpu")
+        if not (isinstance(theirs, int) and theirs <= budget):
+            limit, current = resources.cgroup_memory_limit(), resources.cgroup_memory_current()
+            log(f"  host memory: a cgroup limits this process to {limit / 1e9:.1f} GB with "
+                f"{(current or 0) / 1e9:.1f} GB already counted against it, so the placement budget "
+                f"is {budget / 1e9:.1f} GB and not the "
+                f"{('%.1f GB' % (theirs / 1e9)) if isinstance(theirs, int) else theirs} that "
+                f"/proc/meminfo reports. Inside a container that file describes the host.")
+            budgets["cpu"] = budget
+            changed = True
+    if headroom is not None:
+        changed = _reserve_activation_headroom(budgets, headroom, log) or changed
+    return budgets if changed else None
 
 
 def edited_positions_from_taper(bpr, n_layers):
@@ -2270,7 +2400,18 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # overshoot is an OOM kill instead of a spill to disk, which is the same defect with a worse
     # ending. See `_corrected_max_memory` for why the figure accelerate computes can be wrong.
     if "device_map" in kw:
-        corrected = _corrected_max_memory(_log)
+        # The config is read separately and BEFORE the weights, because the headroom has to be
+        # subtracted from the budget the placement is computed against. Reading it is a metadata
+        # fetch against a cache transformers is about to consult anyway. A config that cannot be
+        # read is not fatal here: the load below will fail with a better message than anything
+        # this could say, so the correction degrades to the host-only one.
+        cfg = None
+        try:
+            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+        except Exception as e:
+            _log(f"  the model config could not be read before the weights "
+                 f"({type(e).__name__}: {e}), so no activation headroom is reserved.")
+        corrected = _corrected_max_memory(_log, cfg)
         if corrected is not None:
             kw["max_memory"] = corrected
     try:

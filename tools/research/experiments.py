@@ -125,6 +125,15 @@ NEEDS_GRID = (
     "`stream-bake`, for the models that will not fit even on a rented card",
 )
 
+NEEDS_K_POWER = (
+    ("more eval prompts than the laptop card can grind through in a sitting. The grid is 25 arms"
+     " and the question is a DIFFERENCE between arms, so the sample size is set by the interval on"
+     " that difference rather than by the model"),
+    ("nothing to build: `validate --experiment e4` already produces the matched-refusal table and"
+     " already refuses to rank when the arms are not separated. The refusal is the reason this arm"
+     " exists"),
+)
+
 ARMS = (
     Arm(
         key="leak-field",
@@ -192,6 +201,27 @@ ARMS = (
         needs=NEEDS_GRID,
         built=True,
         command=("senbonzakura", "head-to-head"),
+    ),
+    Arm(
+        key="k-at-power",
+        question="At matched refusal removal, does a second ablated direction buy anything on"
+                 " Qwen2.5-0.5B, or does it just cut harder?",
+        stake="This project's distinguishing claim is multi-direction ablation, and on 2026-10-09"
+              " three instruments agreed that the second direction on this model does not"
+              " generalise: it overfits its own clusters 5.2x, beats the best random draw in 2 of"
+              " 24 folds, and every separation statistic keeps it only marginally. What is missing"
+              " is the one comparison that would make it decisive, and `e4` REFUSED to give it at"
+              " 64 prompts: the arms span 0.0312 in refusal, which 64 prompts pin only to 0.1151."
+              " So the finding is three quarters established and cannot be acted on. Four"
+              " published figures rest on this model, and a default that spends KL for nothing is"
+              " worth knowing about either way.",
+        # The model is tiny; the cost is entirely the prompt count. 25 arms at 384 prompts against
+        # the 64 that took about fifty minutes on a 6 GB card, so six times the generation.
+        params_b=0.5,
+        hours=5.0,
+        needs=NEEDS_K_POWER,
+        built=True,
+        command=("senbonzakura", "validate", "--experiment", "e4", "--eval-refusal", "384"),
     ),
 )
 

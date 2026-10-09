@@ -129,6 +129,12 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - The measurement is defined against one direction, so a recipe that applied several per layer, or
   a different one at each layer, gets the reason it has no such figure rather than one of those
   directions reported under the plain name
+- `abliterate --leak-report` now reports the mean over the positions the edit actually reached, and
+  names it before the mean over all of them. An abliteration's strength peaks at one layer and
+  fades out a few layers either side, so most positions are never edited and keep the whole
+  direction; averaging them in raised the headline figure for a reason that had nothing to do with
+  the edit. The old mean keeps its name and its value, the positions are listed beside the new one,
+  and the standalone `leak` command says plainly that it has only the whole-stack figure
 - The figure at the model's output is given in the basis the final normalisation maps the direction
   into, and there is no way to ask for it against the original direction, because a direction that
   has genuinely gone still reads as present when measured that way

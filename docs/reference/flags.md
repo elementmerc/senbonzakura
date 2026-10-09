@@ -232,8 +232,29 @@ grader against and no run-to-run variance worth speaking of. One forward pass pe
 which is seconds. `--leak-prompts` sets how many prompts it averages over, default 32.
 
 The figure comes out once per residual-stream position: position 0 is what the embedding produced,
-and position `i + 1` is what decoder layer `i` wrote. The run also prints a mean across those
-positions.
+and position `i + 1` is what decoder layer `i` wrote.
+
+### Which of the two means to quote
+
+An abliteration does not touch every position. The strength peaks at one layer and fades to nothing
+a few layers out, so on a typical run more than half the positions are never edited at all, and
+they keep the whole refusal direction. Average them in and the number goes up for a reason that has
+nothing to do with how well the edit worked.
+
+So `abliterate --leak-report` prints two means, and names the useful one first:
+
+| The mean over | Answers | Quote it when |
+|---|---|---|
+| the positions the edit reached | Did the edit remove the direction where it acted? | You are talking about the edit |
+| every position | Is the direction still anywhere in the stream? | You are talking about the whole model |
+
+Both land in `abliteration.json`, as `mean_over_edited_positions` and `mean`, with the positions
+listed beside them. The standalone `leak` command prints only the second one and says so: it is
+pointed at a checkpoint it did not edit, so it has no way to know where an edit acted.
+
+Measured on one of our own runs: an edit that had removed about two thirds of the direction where it
+acted read 88 to 96 per cent across the whole stack, because fourteen of twenty-five positions were
+never edited.
 
 ### Two things it says that look like bad news and are not
 

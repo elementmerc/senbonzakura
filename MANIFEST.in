@@ -27,3 +27,19 @@ include README.md
 include CHANGELOG.md
 include constraints.txt
 recursive-include constraints *.txt
+
+# THE RUST CRATE, which the sdist could not build without and did not carry.
+#
+# `rust/` sits outside `src/`, so setuptools never picked it up, and the sdist went out without
+# the extension's source while `setup.py` declared a RustExtension pointing at it. Building a
+# wheel from that tarball failed with "can't find manifest for Rust extension
+# `senbonzakura._native` at path `rust/Cargo.toml`", which is every source install: a platform
+# with no published wheel, or anybody passing `--no-binary`. Found by CI on 2026-10-09, the first
+# time the fast-lane wheel job built from an sdist after the extension became required.
+#
+# Cargo.lock is included deliberately, not incidentally. Section 5 of the baseline commits
+# lockfiles for libraries as well as binaries, and a source build that resolves its own dependency
+# versions is a source build that does not reproduce.
+include rust/Cargo.toml
+include rust/Cargo.lock
+recursive-include rust/src *.rs

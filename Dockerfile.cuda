@@ -66,6 +66,11 @@ WORKDIR /build
 COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md \
      APACHE-2.0.txt ACCEPTABLE-USE.md ./
 COPY src/ ./src/
+# The crate the extension is built from. Without it this build fails with "can't find manifest
+# for Rust extension `senbonzakura._native` at path `rust/Cargo.toml`", which is what turned this
+# image's job red on 2026-10-09: the extension became required and three separate manifests, this
+# one, the sdist's and the test environment's, each had to be told.
+COPY rust/ ./rust/
 # The checker's own tree, because `senbonzakura` depends on `senbonzakura-check` and that name is
 # not on PyPI yet. Without this the pip line below fails to resolve the dependency from the index,
 # which is pip correctly reporting that nobody can install a name that has never been published.

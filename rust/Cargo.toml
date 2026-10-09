@@ -1,0 +1,41 @@
+[package]
+name = "senbonzakura-native"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.74"
+license = "AGPL-3.0-or-later"
+authors = ["Daniel Iwugo <ops@themalwarefiles.com>"]
+description = "The compiled half of senbonzakura: parsers over hostile input, and the hot walks."
+publish = false
+
+[lib]
+name = "senbonzakura_native"
+# `rlib` beside `cdylib` so `cargo test` can link the crate as a library. A cdylib-only crate has
+# no test harness to build against, and the Rust-side tests are where the arithmetic is proven;
+# the Python tests prove the binding.
+crate-type = ["cdylib", "rlib"]
+
+# ONE DEPENDENCY, AND IT IS THE BINDING ITSELF.
+#
+# Baseline section 5 says a new dependency is a decision reviewed like any other design choice,
+# and section 13 says a security dependency runs with your privileges. This crate exists partly so
+# the project does NOT depend on somebody else's scanner, so arriving with a pile of crates would
+# defeat the point it was added for.
+#
+# The one thing that was tempting is a date library, for the timeline heuristics below. It is not
+# here: the whole requirement is "how many days between two RFC 3339 timestamps", and the exact
+# civil-date arithmetic for that is about fifteen lines (`days_from_civil`), proven by test against
+# known dates. A calendar crate would be more code in the dependency graph than in this file.
+#
+# `abi3-py310` is the load-bearing feature. Without it a PyO3 extension binds to one CPython
+# build, and the wheel matrix becomes platform TIMES python version. With it one wheel per platform
+# covers 3.10 and everything after, which is the same cardinality the vendored binaries already
+# produce, so `setup.py`'s existing one-wheel-per-platform machinery keeps working unchanged.
+[dependencies]
+pyo3 = { version = "0.27.1", features = ["extension-module", "abi3-py310"] }
+
+[profile.release]
+# A parser over attacker-controlled bytes must not wrap on overflow in release when it would have
+# panicked in debug, because that difference is where a bounds check silently stops holding.
+overflow-checks = true
+panic = "unwind"

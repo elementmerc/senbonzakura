@@ -332,10 +332,17 @@ def notebook_findings(path: Path, raw: bytes) -> list[str]:
 #: `.safetensors`, `.gguf`, `.pt` and `.bin` are deliberately NOT here. They are model weights,
 #: `.gitignore` keeps them out for their own reasons, and if one ever reaches this dispatcher the
 #: right answer is a loud refusal rather than a shrug.
+#: `.rs` ADDED 2026-10-09, when Rust entered the project. It is the same judgement as `.py` and
+#: `.rb` above and for the same stated reason: it is a source format rather than a format anybody
+#: builds a corpus in, and a corpus pasted into a Rust string literal is covered by the human
+#: review in `probes/README.md` exactly as one pasted into a Python list is. Recorded here rather
+#: than worked around, because the refusal this clears is the gate's deny-first posture doing its
+#: job: the tree measured in 2026-09-25 had no Rust in it, so the dispatcher had never been shown
+#: this kind and correctly declined to guess.
 IGNORED_KINDS = frozenset({
     ".1", ".bib", ".cff", ".css", ".cuda", ".dockerignore", ".gif", ".gitignore", ".gitkeep",
     ".heretic", ".ico", ".in", ".jinja", ".js", ".lock", ".mjs", ".npmrc", ".png", ".py", ".rb",
-    ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".tool", ".toml",
+    ".rs", ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".tool", ".toml",
     ".webmanifest", ".yaml", ".yml",
     "Dockerfile", "LICENSE", "NOTICE",
 })

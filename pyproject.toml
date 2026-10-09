@@ -350,7 +350,14 @@ dev = ["senbonzakura[abliterate,hub,completion,finetune]", "pytest>=9.0.3", "pyt
        # that `pytest -n 4` is available to anyone working on this locally, and so CI is not the
        # only place the parallel path is ever exercised.
        "pytest-xdist>=3.2",
-       "build>=1.0", "ruff==0.16.0",
+       "build>=1.0",
+    # The tests read setup.py, which declares the Rust extension, so this is a TEST
+    # dependency as well as a build one. It was in [build-system] requires only, which
+    # exists during a build and not in the environment the suite runs in, so every test
+    # job failed on `No module named setuptools_rust` while passing locally on a machine
+    # that had it left over from building a wheel. Pinned to the same version the build
+    # requires, because the two are reading the same code.
+    "setuptools-rust==1.13.0", "ruff==0.16.0",
        # `tomllib` is stdlib from 3.11 and this project supports 3.10, where the suite could not
        # be collected at all. Test-only, and only on the versions that lack it, so nothing a user
        # installs grows because of it.

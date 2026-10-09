@@ -77,9 +77,17 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY pyproject.toml README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md \
+COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md \
      APACHE-2.0.txt ACCEPTABLE-USE.md ./
 COPY src/ ./src/
+# THE CRATE, and `setup.py` above, because without either of them this image builds and is wrong.
+#
+# `setup.py` is where the Rust extension is declared. Leave it out and setuptools builds the
+# package as pure Python, the build SUCCEEDS, and the image ships without `senbonzakura._native`,
+# so the failure moves from the build to the first user who runs a command that needs it. Leave
+# out `rust/` and the build fails loudly instead, with "can't find manifest for Rust extension".
+# The loud one is the better failure and neither is acceptable, so both are copied.
+COPY rust/ ./rust/
 # The checker's own tree, because `senbonzakura` depends on `senbonzakura-check` and that name is
 # not on PyPI yet. Without this the pip line below reports "Invalid requirement: './checker'",
 # which is pip saying the path does not exist rather than anything being wrong with the package.

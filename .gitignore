@@ -1,31 +1,204 @@
-# Minimal universal .gitignore shipped by claude-setup. Kept deliberately
-# generic: operator tooling and private state (CLAUDE.md, .githooks/, private/,
-# etc.) are ignored locally via .git/info/exclude instead, so this committed
-# file never names them. Add language-specific entries (Rust target/, Node
-# node_modules/, Python __pycache__/) when you know what the repo ships.
+# No loaded guns: never commit weights, models, or harmful/harmless prompt sets.
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+models/
+abliterated/
+out/
+checkpoints/
+results/
+plots/
 
-# Environment + secrets
+# THE ONE EXCEPTION TO `results/`, and it is deliberately narrow.
+#
+# `CONTRACT.md` section 4 requires a record of every head-to-head run, and for a month there was
+# none for the 2026-09-10 one: the figures on the public benchmark page existed on a single laptop
+# and nowhere a reader could reach. The review panel could not check them, and the first correction
+# to that page consequently carried two numbers taken from a synthetic fixture rather than from the
+# run. A published measurement whose artefacts are unreachable is a measurement nobody can dispute,
+# which is not a virtue.
+#
+# So aggregate JSON under `head-to-head/results/` is re-admitted, and NOTHING else is. The heading
+# above still governs: `*.safetensors`, `*.pt`, `*.pth`, `*.bin` and `*.gguf` are matched by their
+# own patterns and stay excluded wherever they sit, and `.jsonl` is deliberately NOT re-admitted
+# because that is the extension the per-prompt margin rows use, and those carry prompt text and the
+# replies to it. `tests/test_published_head_to_head.py` asserts both halves of that, so the
+# exception cannot quietly widen.
+!head-to-head/results/
+!head-to-head/results/*/
+!head-to-head/results/**/*.json
+!head-to-head/results/**/*.md
+# datasets (the harmful/harmless contrast + eval sets stay private)
+ds/
+*_ds/
+data/
+*.arrow
+# THE NAMES THE GUIDE ACTUALLY TEACHES. README.md tells you to run
+# `senbonzakura track --harmful harmful.txt --harmless harmless.txt`, and until 2026-09-25
+# `git check-ignore -v harmful.txt harmless.txt` matched nothing: a contributor who followed the
+# guide and ran `git add .` staged a plaintext harmful corpus, and the heading at the top of this
+# file claimed that could not happen. Found by the review panel.
+#
+# These patterns are the first line and are not the control. An ignore rule does nothing about
+# `git add -f`, and it cannot know what somebody called their own file. The control is
+# `tools/ci/check_prompt_artefacts.py`, which now refuses any .txt, .csv or .tsv it does not
+# already know by name, whatever it is called.
+harmful*.txt
+harmless*.txt
+harmful*.csv
+harmless*.csv
+harmful*.tsv
+harmless*.tsv
+harmful_behaviors.csv
+# THE PACKAGE'S OWN data directory was collateral damage from the line above. `data/` has no
+# leading slash, so git matches it at any depth, and `src/senbonzakura/data/` was therefore in
+# nobody's clone. That is not a tidiness problem: it made `--chat-template plain` fail on a
+# fresh clone naming a template the tool claims to ship, and it is why `doctor` reported
+# corpora "that have never existed" on a second machine. Found on 2026-09-08 by a peer running
+# a pinned clone; a tar of the working tree would never have shown it.
+#
+# The templates come back in. They are Jinja chat formats with no prompts in them. Git cannot
+# un-ignore a file inside an ignored DIRECTORY, so the parent has to be re-included first and
+# then narrowed again; that is why this is four lines rather than one negation.
+!src/senbonzakura/data/
+src/senbonzakura/data/*
+!src/senbonzakura/data/templates/
+!src/senbonzakura/data/templates/*.jinja
+# The capability probe is committed rather than generated, for the opposite reason to the blobs
+# below: it is 256 GSM8K arithmetic questions under MIT, with no prompts and nothing gated. The
+# blobs are generated precisely BECAUSE they are harmful, and applying that rule to harmless
+# content would leave a clone install unable to run the capability gate that is now on by default,
+# which is the 2026-09-22 `--track default` defect on the one gate whose absence is hardest to
+# notice. Its negation cannot live here, because `*.jsonl` further down would undo it; see there.
+# `corpora.bin` and `default-track.bin` DELIBERATELY STAY OUT, and the rule above keeps them
+# out. They hold 4,895 harmful prompts under a shipping key, and the project publishes that
+# corpus as a GATED dataset on purpose. The wheel carries them because building one is a
+# deliberate act that attaches the licence notice; a public git tree would hand them to a
+# crawler and remove the gate. A clone rebuilds them, and the tool says how when they are
+# absent rather than failing obscurely.
+# Retained generations and per-prompt margins. These hold harmful prompts and the
+# replies a model gave to them, so the default is out.
+*.jsonl
+# The capability probe is the other explicit exception, and it has to sit AFTER `*.jsonl` rather
+# than beside the other data/ negations: git applies the last matching rule, so a negation written
+# earlier is silently undone here. `git check-ignore -v` is the only way to know, and it caught
+# exactly that on 2026-09-22. The file holds 256 GSM8K arithmetic questions under MIT: no prompts,
+# no generations, nothing the rule above exists to keep out.
+!src/senbonzakura/data/capability-gsm8k.jsonl
+# Probe items, which are the whole point of the contribution format and have to be readable in the
+# tree for anyone to review one before it is merged. Same placement rule as the line above, and for
+# the same reason: written earlier, `*.jsonl` would silently undo it.
+#
+# THIS IS NOT A HOLE IN THE RULE ABOVE. `tools/ci/check_prompt_artefacts.py` reads every tracked
+# `.jsonl` in the repository, so anything landing here meets the leak gate exactly as it would
+# anywhere else, and `probe.PROMPT_SHAPED_KEYS` refuses an items file that spells its columns the
+# way a corpus does. What the gates check is SHAPE; a person still reads the contents, which is
+# what `probes/README.md` says to the contributor and to the user in the same words.
+#
+# It was written on 2026-09-23 because `examples/probes/arithmetic-demo/items.jsonl` was NOT
+# tracked: the example shipped as a manifest pointing at a file that existed on one machine, its
+# test passed there, and CI failed everywhere. Second time in two days that `*.jsonl` quietly ate
+# a file somebody had deliberately added.
+!probes/**/*.jsonl
+!examples/probes/**/*.jsonl
+# evidence/ is the one committed home, and it needs an explicit negation: the rule
+# above would otherwise force `git add -f`, which defeats the ignore it bypasses.
+# Files landing here must already have their prompt and generation fields stripped,
+# which tools/ci/check_prompt_artefacts.py enforces rather than trusts.
+!evidence/
+!evidence/**/*.jsonl
+# python
+__pycache__/
+*.pyc
+build/
+dist/
+# Every scratch build directory, not each one as it is invented. `dist-adv/` was not
+# listed and a 19 MB wheel reached a commit in a repository with a public remote.
+dist-*/
+# The clean room's last-resort work directory, used only when /tmp and /var/tmp are both too
+# small for a full install. It holds a multi-gigabyte venv, so it is ignored for the same
+# reason `dist-*/` is: a scratch directory inside a repository with a public remote.
+.cleanroom-work/
+.venv/
+venv/
+*.egg-info/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.optuna*/
+optuna*.db
+
+# The committed toy track. Every dataset rule above catches a save_to_disk layout, so
+# the one example a stranger can run has to re-include the DIRECTORY before its
+# contents: git does not descend into an excluded directory, so negating only the files
+# would do nothing. Its prompts are synthetic placeholders, never real harmful text.
+!examples/toy-track/
+!examples/toy-track/**/
+!examples/toy-track/**
+
+# Terminal captures used only to verify a recording caught what it claims.
+# Not published, and the banner it captures is randomised, so it is not a golden file.
+docs/tapes/captured/
+
+# Vendored third-party artefacts: FETCHED at build time, never committed.
+#
+# `src/senbonzakura/vendor/pins.json` IS committed and is the whole record: it names the upstream,
+# the tag, the publication date, the expected sizes and the sha256 of everything fetched. So what a
+# wheel contains is reviewable in a diff of that one file rather than by unzipping a wheel.
+#
+# What is deliberately NOT here:
+#   * bin/ holds llama-quantize and its shared libraries, 27 MB for one platform and roughly 80 MB
+#     for the six. Committing opaque blobs of that size to a public repository, per pin bump, buys
+#     nothing a hash does not already give.
+#   * src/ holds llama.cpp's conversion package: 158 modules, about 752 KB. It was going to be
+#     committed on the argument that source is reviewable in a diff, and that argument does not
+#     survive contact with the actual number. A 158-file diff on every pin bump is the appearance
+#     of reviewability rather than the fact of it.
+#
+# `python tools/packaging/vendor_llama.py --all` repopulates both, verifies every hash against pins.json,
+# and runs the binary to prove the extraction produced something that starts.
+src/senbonzakura/vendor/bin/
+src/senbonzakura/vendor/src/
+
+# Fetched corpus sources. `src/senbonzakura/vendor/corpora-pins.json` IS committed and records the
+# upstream, the pinned commit, the byte count and the sha256 of every file, so what the wheel
+# carries is reviewable in a diff of one small file. The CSVs themselves are other people's data
+# at a pinned commit; re-fetch with `python tools/packaging/build_corpora.py`.
+build/corpora/
+
+# Generated at build time by setup.py: the commit these artefacts came from.
+# See setup.py `_write_build_stamp`. Never committed; it is per build, not per tree.
+src/senbonzakura/_build.py
+
+# RESTORED 2026-10-09, and the restoration is the point of this section.
+#
+# A claude-setup template install replaced this entire file with a 31 line generic stub, taking
+# the weights patterns, the corpus patterns, `results/` and the narrow head-to-head exception with
+# it. The clobbered version was then committed here unnoticed, inside an unrelated commit. Nothing
+# had been pushed, so nothing was disclosed, and `test_leak_gate_deny_first.py` is what caught it:
+# it runs `git check-ignore` against the two corpus names the guide teaches, rather than trusting
+# that a line somebody wrote once is still in the file.
+#
+# The entries below are the ones that stub genuinely added and this file had never carried. They
+# are kept because they are right, not because the stub said so.
+
+# Environment and secrets
 .env
 .env.*
 *.pem
 *.key
 .credentials.json
 
-# Editor + OS leakage
+# Editor and OS leakage
 .DS_Store
 Thumbs.db
 *.swp
 *.swo
 .idea/
 .vscode/
-
-# Common build artefact directories — uncomment per project as needed
-# target/
-# node_modules/
-# dist/
-# build/
-# __pycache__/
-# *.pyc
 
 # The Rust crate builds here. Generated, large, and per-toolchain.
 rust/target/

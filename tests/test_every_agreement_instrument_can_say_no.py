@@ -90,6 +90,16 @@ NO_AGREEMENT_TO_BREAK = {
                           "commit before a wiring landed and again after",
     "audit_token_positions.py": "reports which positions a tokeniser produces; descriptive",
     "axis_probe.py": "reports a score per axis; nothing in its output is an agreement",
+    "corpus_distil.py": "walks a metadata corpus and writes what each record contains. Its output "
+                        "is a description of what is on disk, per model and per namespace, plus "
+                        "counts and a tally of what it could not read, so there is no comparison "
+                        "in it for a control to break. What it CAN get silently wrong is the "
+                        "shape it declares for downstream work: it stamps every row with "
+                        "`commits_oldest_first` and `commits_carry_file_lists`, and those are "
+                        "assertions a later analysis will trust without re-checking. The first "
+                        "was wrong once, because the source orders commits newest first and the "
+                        "sort read them backwards, which no count would have revealed. Those two "
+                        "fields are the thing to test, not an agreement",
     "direction_validation.py": "reports properties of one basis, not a comparison of two",
     "expert_layout.py": "prints the expert layout of a checkpoint; descriptive",
     "fetch_architecture_corpus.py": "collects and normalises published configs and tensor "

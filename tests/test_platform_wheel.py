@@ -484,7 +484,7 @@ def test_the_real_shipped_blob_carries_no_build_machine_path():
 
 # ── where the binaries INSTALL, not just what the tag says (decision Q-34) ───────────────────
 
-def test_the_distribution_is_impure_exactly_when_binaries_are_vendored(monkeypatch, tmp_path):
+def test_the_distribution_is_impure_whether_or_not_binaries_are_vendored(monkeypatch, tmp_path):
     """The defect auditwheel reported when it was first pointed at a real wheel.
 
     THE REFUSAL, verbatim:
@@ -498,10 +498,22 @@ def test_the_distribution_is_impure_exactly_when_binaries_are_vendored(monkeypat
     `senbonzakura-<v>.data/purelib/`, binaries and all, and no manylinux tool will process a
     shared library in purelib. Every tag check we had passed a wheel auditwheel refused to look
     at, because our checks asked about the tag and not the layout.
+
+    THIS TEST USED TO ASSERT "EXACTLY WHEN", and the condition is now gone rather than broken.
+    The Rust extension is part of the package, so every build has a compiled module in it and
+    the distribution is impure unconditionally. That makes the defect above structurally
+    impossible instead of conditionally avoided, which is the stronger position: there is no
+    longer a configuration in which a vendored binary could be routed into purelib, so there is
+    nothing left for a future change to get wrong. The second half of the check is kept because
+    it still has to hold, and a reader comparing this file against its history should see that
+    the assertion inverted on purpose.
     """
     mod = load_setup(monkeypatch, tmp_path)
     dist = mod._BinaryDistribution()
-    assert dist.has_ext_modules() is False, "a tree with no binaries must stay genuinely pure"
+    assert dist.has_ext_modules() is True, (
+        "the Rust extension ships in every build, so the distribution is impure with no vendored "
+        "binaries at all. A False here means the extension stopped being declared, and the wheel "
+        "would go out pure with a compiled module inside it")
 
     place(tmp_path, "src/senbonzakura/vendor/bin", "linux-x86_64")
     assert dist.has_ext_modules() is True, (
@@ -509,14 +521,25 @@ def test_the_distribution_is_impure_exactly_when_binaries_are_vendored(monkeypat
         "purelib and the wheel cannot be repaired to a manylinux tag")
 
 
-def test_the_universal_wheel_is_not_dragged_impure(monkeypatch, tmp_path):
-    """The other half, and the one with a user on the end of it. The universal wheel is what
-    PyPI serves to macOS and Windows; if it became platlib it would still install, and the
-    change would be invisible until something depended on where the files landed.
+def test_there_is_no_universal_wheel_to_drag_impure(monkeypatch, tmp_path):
+    """The other half, and it is now a statement that the thing it guarded no longer exists.
+
+    This used to protect the universal wheel: the one PyPI served to macOS and Windows, which
+    stayed pure because it carried no binaries. There isn't one any more. The extension is
+    required, so every wheel is platform-specific and a platform we publish no wheel for gets no
+    install at all rather than a reduced one.
+
+    The test is kept rather than deleted because the invariant it now records is the one most
+    likely to be quietly undone: somebody making the extension optional again would restore a
+    pure wheel, and a pure wheel that silently cannot convert or quantise is the shape this
+    project already shipped once.
     """
     mod = load_setup(monkeypatch, tmp_path)
-    assert mod._BinaryDistribution().has_ext_modules() is False
-    assert mod.vendored_platforms() == []
+    assert mod.vendored_platforms() == [], "the fixture tree has no vendored binaries"
+    assert mod._BinaryDistribution().has_ext_modules() is True, (
+        "a tree with no vendored binaries is still impure, because the compiled extension is not "
+        "optional. If this reverts to False there is a universal wheel again, and the platform "
+        "fallback it brings back is the one that installed a tool which could not convert")
 
 
 # ── The specifier that was loosened for a dev cut must not survive into a release ─────────

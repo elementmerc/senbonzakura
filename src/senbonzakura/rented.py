@@ -515,3 +515,6 @@ class RunPodProvider:
 
 # Declared user-facing in .baseline-hook-config, which is what keeps the orchestration gate
 # meaningful here rather than bypassed on every commit. See that file for the reasoning.
+
+# The knob above is registered in the fleet pre-commit and pre-push allowlists; an unregistered
+# one warns on every commit, which is the same slow erosion this whole change was about.

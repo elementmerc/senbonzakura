@@ -850,6 +850,151 @@ def own_footprint():
         return None
 
 
+#: Where the unified (cgroup v2) and legacy (v1) hierarchies are mounted on Linux.
+CGROUP_ROOT = "/sys/fs/cgroup"
+
+#: Which cgroups this process belongs to. A constant rather than a literal so a test can point the
+#: whole mechanism at a fake hierarchy; the parsing of this file is most of what can go wrong here,
+#: and a test that cannot reach it would be testing the easy half.
+PROC_SELF_CGROUP = "/proc/self/cgroup"
+
+#: cgroup v1 spells "no limit" as a page-aligned value just under INT64_MAX rather than as a word,
+#: so a naive read gets eight exabytes and calls it a constraint. Anything at or above this is the
+#: absence of a limit written as a number.
+CGROUP_V1_NO_LIMIT = 0x7FFFFFFFFFFFF000
+
+#: Held back from any placement budget we hand to accelerate.
+#:
+#: NOT A FUDGE FACTOR. Placing the weights is not the only thing the load does: the tokeniser, the
+#: config, this interpreter, and the activations of the first forward pass all allocate outside the
+#: parameter budget, and under a cgroup an overshoot is not a slow run but an OOM kill with no
+#: Python traceback at all. accelerate's own default leaves no margin because it is reading
+#: `available`, which already moves; a cgroup limit does not move, so the margin has to be explicit.
+#: One gibibyte is comfortably over a tokeniser and a config and comfortably under any limit worth
+#: setting.
+HOST_MEMORY_RESERVE = 1 << 30
+
+
+def _cgroup_paths():
+    """Every cgroup directory governing this process, leaf first, for the memory controller.
+
+    v2 ONLY HAS ONE LINE and it governs every controller: `0::/some/path`. v1 has one line per
+    controller and the memory one is what matters, which may be mounted under a different
+    subdirectory. Both are read rather than guessed, because a container usually sits in its own
+    cgroup NAMESPACE where the path reads as `/` while the real limit is still readable at the
+    mount point, and a hardcoded path would answer for the wrong cgroup on at least one of the two.
+
+    Returns a list of (directory, filename) pairs to try in order. Empty on a platform with no
+    cgroups at all, which includes macOS and Windows, and the caller treats that as no limit.
+    """
+    import os
+    out = []
+    try:
+        with open(PROC_SELF_CGROUP, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        _, controllers, path = parts
+        if controllers == "":                              # v2: one line, every controller
+            base, name = os.path.join(CGROUP_ROOT, path.lstrip("/")), "memory.max"
+        elif "memory" in controllers.split(","):           # v1: the memory controller's own line
+            base, name = os.path.join(CGROUP_ROOT, "memory", path.lstrip("/")), "memory.limit_in_bytes"
+        else:
+            continue
+        # LEAF FIRST AND THEN EVERY ANCESTOR UP TO THE MOUNT. A limit set on a parent slice binds
+        # a child that says `max`, so reading only the leaf reads the wrong number in exactly the
+        # arrangement a shared machine uses: per-user slices under a capped parent.
+        here = os.path.normpath(base)
+        root = os.path.normpath(os.path.join(CGROUP_ROOT, "memory") if name.endswith("in_bytes")
+                                else CGROUP_ROOT)
+        while True:
+            out.append((here, name))
+            if here == root or len(here) <= len(root):
+                break
+            here = os.path.dirname(here)
+    return out
+
+
+def _read_int(path):
+    """One integer out of a one-line sysfs file, or None when it is absent, unreadable or a word."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def cgroup_memory_limit():
+    """The tightest memory ceiling this process's cgroups impose, in bytes, or None for no limit.
+
+    WHY THIS EXISTS, AND IT IS THE DEFECT RATHER THAN A REFINEMENT. accelerate decides how much of
+    a model to place in host RAM from `psutil.virtual_memory().available`, which reads
+    `/proc/meminfo`. Inside a container `/proc/meminfo` is the HOST's memory and not the limit the
+    process is held to, so on any cgroup-capped box, which is every container, every shared
+    cluster and every Kubernetes pod, the placement believes in memory that is not there. The
+    result is not a slow run and not a clean refusal: it is an OOM kill partway through loading,
+    with no traceback, at the exact moment disk offload was supposed to be doing its job.
+
+    Measured on 2026-10-09, which is how this was found: a rented A40 box reported 540.6 GB of RAM
+    against a provider spec sheet saying 50 GB, so a 145 GB checkpoint read as something that fits
+    in memory and the disk path under test would never have executed.
+
+    None means NO LIMIT, which is the honest answer on a laptop and on an unconstrained host, and
+    it is deliberately not zero and not a guess. A caller that gets None should use
+    `host_ram_available` exactly as before, because with no cgroup in the way `/proc/meminfo` is
+    the right number again.
+    """
+    seen = []
+    for directory, name in _cgroup_paths():
+        raw = _read_int(f"{directory}/{name}")
+        if raw is None or raw <= 0 or raw >= CGROUP_V1_NO_LIMIT:
+            continue                                        # absent, or `max`, or v1's sentinel
+        seen.append(raw)
+    return min(seen) if seen else None
+
+
+def cgroup_memory_current():
+    """Bytes already counted against this process's cgroup limit, or None when unknown.
+
+    The limit is a TOTAL and not an allowance: whatever the cgroup is already holding, this
+    process's own resident pages included, is spent. Subtracting it is the difference between
+    "the box permits 8 GB" and "8 GB is still going".
+    """
+    for directory, name in _cgroup_paths():
+        got = _read_int(f"{directory}/{'memory.current' if name == 'memory.max' else 'memory.usage_in_bytes'}")
+        if got is not None and got >= 0:
+            return got
+    return None
+
+
+def host_memory_budget(*, reserve=HOST_MEMORY_RESERVE):
+    """How much host RAM a model placement may use, and where the figure came from.
+
+    Returns `(bytes_or_None, source)`. `source` is `"cgroup"` when a cgroup limit is what bounds
+    us, `"meminfo"` when nothing does and `/proc/meminfo` is therefore correct, and `"unmeasured"`
+    when the platform would not say, in which case the bytes are None and a caller must say out
+    loud that it skipped the check rather than treating it as plenty.
+
+    THE TWO ARE COMBINED BY TAKING THE SMALLER, because they bound different things and both are
+    real: the cgroup says what we are permitted, `MemAvailable` says what the kernel can actually
+    hand over right now. Being under a generous cgroup on a busy box is just as fatal as being
+    over a tight one on an idle box.
+    """
+    available = host_ram_available()
+    limit = cgroup_memory_limit()
+    if limit is None:
+        return (available, "meminfo" if available is not None else "unmeasured")
+    current = cgroup_memory_current() or 0
+    headroom = max(0, limit - current - reserve)
+    if available is None:
+        return (headroom, "cgroup")
+    return (headroom, "cgroup") if headroom < available else (available, "meminfo")
+
+
 def free_disk(path):
     """Free bytes on the filesystem that would hold `path`, or None.
 

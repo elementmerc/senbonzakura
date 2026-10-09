@@ -661,6 +661,62 @@ def layer_weight(idx, P, wmax, wmin, D):
     return wmax + (dist / D) * (wmin - wmax)
 
 
+def _corrected_max_memory(log):
+    """The placement budget accelerate computed, host entry corrected, or None to leave it alone.
+
+    THE DEFECT. accelerate decides how much of a model goes in host RAM from
+    `psutil.virtual_memory().available`, which reads `/proc/meminfo`. Inside a container that is
+    the HOST's memory and not the limit the process is held to, so on a cgroup-capped box the
+    placement believes in memory that is not there. Without an offload directory the ending is an
+    OOM kill partway through loading, with no Python traceback; with one, it is worse in a quieter
+    way, because the weights go to RAM that seems to exist and the disk path the run was relying on
+    never executes at all.
+
+    Found on 2026-10-09 by trying to demonstrate disk offload on rented hardware. The box reported
+    540.6 GB of RAM against a provider spec sheet saying 50 GB, so a 145 GB checkpoint read as
+    something that comfortably fits and nothing would have spilled.
+
+    WHY THIS STARTS FROM accelerate's OWN DICT rather than building one. `max_memory` is used
+    verbatim when it is given, so a dict naming only `cpu` would place the entire model on the host
+    and never touch the card. Taking `get_max_memory()` and overriding one key keeps every
+    per-device figure accelerate would have chosen, which is the part we have no business
+    second-guessing.
+
+    IT ONLY EVER CORRECTS DOWNWARD. When no cgroup caps us, `host_memory_budget` returns the same
+    `/proc/meminfo` reading accelerate started from, and this returns None so the call site passes
+    nothing at all. Raising a budget on the strength of our own arithmetic would turn a
+    conservative default into an OOM, so the one direction this moves is the safe one.
+    """
+    from . import resources
+    budget, source = resources.host_memory_budget()
+    if budget is None:
+        log("  host memory: unmeasured on this platform, so accelerate's own placement budget "
+            "stands. A model that does not fit will fail at load rather than being refused here.")
+        return None
+    if source != "cgroup":
+        return None                                     # nothing caps us; accelerate was right
+    try:
+        from accelerate.utils import get_max_memory
+        budgets = dict(get_max_memory())
+    except Exception as e:
+        # Graceful degradation with a visible warning, per the robustness mandate: a placement we
+        # could not correct is accelerate's default, which is what every previous run used.
+        log(f"  host memory: a cgroup caps this process, but accelerate's placement budget could "
+            f"not be read to correct it ({type(e).__name__}: {e}), so its default stands. A load "
+            f"that overshoots the cap will be OOM-killed rather than spilling to disk.")
+        return None
+    theirs = budgets.get("cpu")
+    if isinstance(theirs, int) and theirs <= budget:
+        return None                                     # already tighter than the cap; leave it
+    limit, current = resources.cgroup_memory_limit(), resources.cgroup_memory_current()
+    log(f"  host memory: a cgroup limits this process to {limit / 1e9:.1f} GB with "
+        f"{(current or 0) / 1e9:.1f} GB already counted against it, so the placement budget is "
+        f"{budget / 1e9:.1f} GB and not the {('%.1f GB' % (theirs / 1e9)) if isinstance(theirs, int) else theirs} "
+        f"that /proc/meminfo reports. Inside a container that file describes the host.")
+    budgets["cpu"] = budget
+    return budgets
+
+
 def edited_positions_from_taper(bpr, n_layers):
     """The residual-stream positions a bake with these profiles actually reached (D1, 2026-10-09).
 
@@ -2183,6 +2239,14 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         # which is the other half of the problem: a 200 GB checkpoint cannot be staged in RAM on
         # the way to being placed, even when the placement itself would have fitted.
         kw["offload_state_dict"] = True
+    # THE HOST BUDGET, CORRECTED WHEN A CGROUP CAPS US. Applies to every accelerate placement and
+    # not only to the offload path, because the wrong number is just as wrong without it: there the
+    # overshoot is an OOM kill instead of a spill to disk, which is the same defect with a worse
+    # ending. See `_corrected_max_memory` for why the figure accelerate computes can be wrong.
+    if "device_map" in kw:
+        corrected = _corrected_max_memory(_log)
+        if corrected is not None:
+            kw["max_memory"] = corrected
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     except OSError as e:

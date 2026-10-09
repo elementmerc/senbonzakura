@@ -64,6 +64,12 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # a model this tool did not edit and in some cases cannot edit: reading a model is just
     # running it, so a quantisation-aware checkpoint is measurable here and uneditable upstream.
     "leak": ("leak", "main"),
+    # What changed between a checkpoint and the base it claims to come from, tensor by tensor.
+    # Its own command and not a flag because the interesting case is two checkpoints neither of
+    # which this tool made, and because it is the only instrument here that needs no model loaded,
+    # no token generated and no card: it compares two files. That is also why it must never grow
+    # a safety verdict, which the module docstring argues at length.
+    "diff": ("modeldiff", "main"),
     "stream-bake": ("streambake", "main"),
     "stream-extract": ("streamextract", "main"),
     "coherence": ("coherence", "main"),

@@ -1159,7 +1159,27 @@ def _config_dict_of(model):
     return modelmap._config_dict(getattr(model, "config", None))  # noqa: SLF001
 
 
-def _real_tensor(owner, name):
+def _real_tensor(owner, name, *, for_writing=True):
+    """The weight tensor for owner.<name>, unwrapping accelerate offload.
+
+    `for_writing=False` MEANS "I AM ONLY GOING TO LOOK AT IT", and it exists because the refusal
+    below is about writes and was firing on a run that makes none.
+
+    THE DEFECT THIS PARAMETER CLOSES, found on rented hardware 2026-10-09. `stream-extract` is
+    forward-only by construction: a forward pass reads weights and never edits them, which is the
+    whole reason disk offload is available to it and not to the bake. But it reaches the model
+    through `Abliterator.__init__`, which walks every layer to label its residual writers, and that
+    walk resolved each weight through this function, which refuses a disk-backed tensor because an
+    in-place edit would be lost. So the one path built for checkpoints too large to hold could not
+    load a checkpoint too large to hold. Nothing local could catch it: the refusal needs a model
+    big enough to spill to disk, and no such model fits on a machine small enough to spill it.
+
+    What the forward-only callers actually need is STRUCTURE, not editable memory. The labelling
+    walk consumes its result as `"+".join(kind for kind, _ in ...)` and `_classify`, which read
+    `ndim` and `shape`; both are present on a meta tensor and on a freshly materialised one. So
+    with `for_writing=False` an unstable or meta tensor is returned rather than refused, and the
+    only thing given up is the ability to edit it, which the caller has declared it will not do.
+    """
     # The REAL, editable weight tensor for owner.<name>, transparently unwrapping accelerate offload.
     # When a model is larger than VRAM, accelerate dispatches some layers to CPU (or disk): their
     # parameter becomes a META tensor with no data, and the resident copy lives in that module's
@@ -1188,6 +1208,8 @@ def _real_tensor(owner, name):
         except (KeyError, TypeError):
             real = probe = None
         if real is not None and not getattr(real, "is_meta", False):
+            if real is not probe and not for_writing:
+                return real          # a fresh copy per read is fine for a caller that only reads
             if real is not probe:
                 raise ValueError(
                     f"weight {name!r} on {type(owner).__name__} is disk-offloaded: its offload map "
@@ -1197,20 +1219,24 @@ def _real_tensor(owner, name):
                     "or host-RAM headroom so the weights stay resident or CPU-offloaded, which "
                     "both support in-place editing.")
             return real
+    if not for_writing:
+        # A meta tensor still carries shape and dtype, which is all a structural walk reads. The
+        # alternative is refusing to describe a model we can perfectly well run a forward pass on.
+        return getattr(owner, name)
     raise ValueError(
         f"weight {name!r} on {type(owner).__name__} is on the meta device with no resident offload "
         "copy, so it cannot be abliterated. This usually means disk-offload without an in-memory "
         "cache; load with more VRAM or host-RAM headroom so the weights stay resident.")
 
 
-def _owned_weight(parent, name):
+def _owned_weight(parent, name, *, for_writing=True):
     # parent.<name> is either a submodule that owns a `.weight` (a Linear) or a raw parameter/tensor
     # held directly under `name`. Resolve to the real editable tensor in both cases, unwrapping
     # accelerate offload wherever the resident copy actually lives (on the submodule, or on parent).
     obj = getattr(parent, name)
     if hasattr(obj, "weight"):
-        return _real_tensor(obj, "weight")
-    return _real_tensor(parent, name)
+        return _real_tensor(obj, "weight", for_writing=for_writing)
+    return _real_tensor(parent, name, for_writing=for_writing)
 
 
 #: THE NAMES NOW LIVE IN `writers.py`, and are re-exported here so every reference in this file
@@ -1236,7 +1262,7 @@ def _attn_block(layer):
     return modelmap.attention_block(layer)
 
 
-def _attn_outproj(layer):
+def _attn_outproj(layer, *, for_writing=True):
     # The attention OUTPUT projection (the matrix that writes attention back into the residual
     # stream), across naming conventions. Linear-based only: GPT-2-style Conv1D out-projections
     # (transposed weight) are deliberately not returned, since the row-wise norm-preserving bake
@@ -1244,7 +1270,7 @@ def _attn_outproj(layer):
     _blk, p = _attn_block(layer)
     if p is not None:
         # Materialised HERE, at the point of editing, which is the only place it is needed.
-        return _real_tensor(p, "weight")
+        return _real_tensor(p, "weight", for_writing=for_writing)
     raise ValueError(
         f"could not locate a Linear attention output projection on this layer "
         f"(type {type(layer).__name__}); architecture not supported.")
@@ -1255,7 +1281,7 @@ def _attn_outproj(layer):
 from .writers import MIXER_BLOCKS, MLP_BLOCKS  # noqa: E402
 
 
-def _conv_outproj(layer):
+def _conv_outproj(layer, *, for_writing=True):
     """A non-attention sequence mixer's output projection, or None if this layer has none.
 
     Named for the first case that needed it and kept for the callers that use the name. Hybrids
@@ -1269,13 +1295,13 @@ def _conv_outproj(layer):
     loud refusal `refuse_unrecognised_writers` is there to give.
     """
     for name in MIXER_BLOCKS:
-        w = _block_outproj(getattr(layer, name, None))
+        w = _block_outproj(getattr(layer, name, None), for_writing=for_writing)
         if w is not None:
             return w
     return None
 
 
-def _block_outproj(block):
+def _block_outproj(block, *, for_writing=True):
     """The block's own `out_proj`, if it has a 2-D one, else None.
 
     Split out because `mixer` is POLYMORPHIC. NemotronH gives every layer one child called
@@ -1286,7 +1312,7 @@ def _block_outproj(block):
     if block is None:
         return None
     p = _block_outproj_param(block)
-    return None if p is None else _real_tensor(p, "weight")
+    return None if p is None else _real_tensor(p, "weight", for_writing=for_writing)
 
 
 def _block_outproj_param(block):
@@ -1309,7 +1335,7 @@ def _has_attention(layer):
     return _attn_block(layer)[1] is not None
 
 
-def layer_attn_writers(layer, ablate_conv=True):
+def layer_attn_writers(layer, ablate_conv=True, *, for_writing=True):
     """EVERY matrix in this layer that writes the residual stream from the attention position.
 
     On an ordinary architecture that is one tensor and this is `_attn_outproj` with a list around
@@ -1319,9 +1345,9 @@ def layer_attn_writers(layer, ablate_conv=True):
     """
     out = []
     if _has_attention(layer):
-        out.append(_attn_outproj(layer))
+        out.append(_attn_outproj(layer, for_writing=for_writing))
     if ablate_conv:
-        conv = _conv_outproj(layer)
+        conv = _conv_outproj(layer, for_writing=for_writing)
         if conv is not None:
             out.append(conv)
     if not out:
@@ -1346,7 +1372,7 @@ def _classify(w):
     return "fused3d" if w.dim() == 3 else "dense"
 
 
-def _mlp_downprojs(mlp):
+def _mlp_downprojs(mlp, *, for_writing=True):
     # Every residual-WRITING down-projection inside one MLP / MoE block, as (kind, obj) entries.
     # kind is "dense" (2D weight), "fused3d" (batched [E, out, in] expert weight) or "list" (a list
     # of 2D per-expert weights). Covers dense, fused MoE (Qwen3-MoE / Granite output_linear),
@@ -1356,33 +1382,33 @@ def _mlp_downprojs(mlp):
         return out
     ol = getattr(mlp, "output_linear", None)                     # Granite-MoE parallel experts
     if ol is not None:
-        w = _owned_weight(mlp, "output_linear")
+        w = _owned_weight(mlp, "output_linear", for_writing=for_writing)
         out.append((_classify(w), w))
     experts = getattr(mlp, "experts", None)
     if experts is not None:
         if hasattr(experts, "down_proj"):                        # Qwen3-MoE fused single tensor
-            w = _owned_weight(experts, "down_proj")
+            w = _owned_weight(experts, "down_proj", for_writing=for_writing)
             out.append((_classify(w), w))
         elif hasattr(experts, "w2"):                             # fused Mixtral-style single tensor
-            w = _owned_weight(experts, "w2")
+            w = _owned_weight(experts, "w2", for_writing=for_writing)
             out.append((_classify(w), w))
         else:                                                    # unfused per-expert Linear list
             ex = list(experts)
             if ex and hasattr(ex[0], "down_proj"):               # OLMoE
-                out.append(("list", [_owned_weight(e, "down_proj") for e in ex]))
+                out.append(("list", [_owned_weight(e, "down_proj", for_writing=for_writing) for e in ex]))
             elif ex and hasattr(ex[0], "w2"):                    # Mixtral unfused
-                out.append(("list", [_owned_weight(e, "w2") for e in ex]))
+                out.append(("list", [_owned_weight(e, "w2", for_writing=for_writing) for e in ex]))
     for attr in ("shared_expert", "shared_experts"):             # Qwen2-MoE / DeepSeek-MoE
         sh = getattr(mlp, attr, None)
         if sh is not None and hasattr(sh, "down_proj"):
-            out.append(("dense", _owned_weight(sh, "down_proj")))
+            out.append(("dense", _owned_weight(sh, "down_proj", for_writing=for_writing)))
     if not out and hasattr(mlp, "down_proj"):                    # plain dense MLP
-        out.append(("dense", _owned_weight(mlp, "down_proj")))
+        out.append(("dense", _owned_weight(mlp, "down_proj", for_writing=for_writing)))
     if not out and hasattr(mlp, "w2"):                           # LFM2 dense feed-forward
         # Mixtral's name in a dense position: `w2` is the down-projection, `w1`/`w3` the gate and
         # up. Reached only after the expert branches above have declined, so a fused `w2` expert
         # stack is still classified as one rather than being read as a dense matrix here.
-        out.append(("dense", _owned_weight(mlp, "w2")))
+        out.append(("dense", _owned_weight(mlp, "w2", for_writing=for_writing)))
     return out
 
 
@@ -1510,7 +1536,7 @@ def refuse_unrecognised_writers(layers, hidden_size, ablate_conv=True, accept_pa
         f"refusal behaviour was only partly removed.")
 
 
-def layer_downproj(layer):
+def layer_downproj(layer, *, for_writing=True):
     # ALL residual-writing down-projections in this decoder layer, as (kind, obj) entries. A layer
     # may have more than one (a routed expert stack PLUS an always-on shared expert), and every one
     # writes the residual, so every one must be ablated. Granite exposes its experts under
@@ -1523,7 +1549,7 @@ def layer_downproj(layer):
     # naming in a dense position); NemotronH calls every block `mixer`.
     entries = []
     for name in MLP_BLOCKS:
-        entries += _mlp_downprojs(getattr(layer, name, None))
+        entries += _mlp_downprojs(getattr(layer, name, None), for_writing=for_writing)
     if not entries:
         raise ValueError(
             f"could not locate a residual-writing down-projection on this decoder layer "
@@ -1594,7 +1620,7 @@ def describe_composition(counts):
     return line, warn
 
 
-def layer_writers(layer, ablate_conv=True):
+def layer_writers(layer, ablate_conv=True, *, for_writing=True):
     """Both positions of one decoder layer, tolerating a layer that only has one of them.
 
     Returns `(attn_writers, mlp_entries)`.
@@ -1619,12 +1645,12 @@ def layer_writers(layer, ablate_conv=True):
     """
     attn, attn_err = [], None
     try:
-        attn = layer_attn_writers(layer, ablate_conv=ablate_conv)
+        attn = layer_attn_writers(layer, ablate_conv=ablate_conv, for_writing=for_writing)
     except ValueError as e:
         attn_err = e
     mlp, mlp_err = [], None
     try:
-        mlp = layer_downproj(layer)
+        mlp = layer_downproj(layer, for_writing=for_writing)
     except ValueError as e:
         mlp_err = e
     if not attn and not mlp:
@@ -2403,7 +2429,13 @@ class Abliterator:
         # label on any model whose expert layers start further in.
         _dp = []
         for _layer in self.layers:
-            _dp += layer_writers(_layer, ablate_conv=not args.skip_conv_ablation)[1]
+            # `for_writing` is the whole of the forward-only fix. This walk only reads a KIND
+            # label off each writer, and on a disk-offloaded checkpoint the resolver refuses an
+            # unstable tensor because a BAKE would lose its edit. A forward pass makes no edit,
+            # so the refusal was guarding nothing here and blocked the one path built for
+            # checkpoints this large.
+            _dp += layer_writers(_layer, ablate_conv=not args.skip_conv_ablation,
+                                 for_writing=not forward_only)[1]
         # EVERY layer, not just the first. A hybrid architecture interleaves block types, so a
         # first layer that resolves cleanly says nothing about the twentieth: LFM2 puts its
         # convolution blocks first and its attention blocks after, and either order would have

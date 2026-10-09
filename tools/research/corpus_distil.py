@@ -135,46 +135,107 @@ def _authors(root):
                 continue
 
 
+#: Lines read from a `.jsonl` document when describing its shape. One line would miss a field that
+#: only later records carry; all of them would read a 12-million-file corpus to learn a shape.
+JSONL_SAMPLE_LINES = 20
+
+#: Documents whose value is their prose rather than their fields. Never read, never described, and
+#: never extracted: a distillate with somebody's readme in it is a different artefact with
+#: different obligations, and the fields we want are not in it.
+PROSE_FILES = (".md", ".txt", ".rst")
+
+
+def _read_jsonl(path, problems, limit=JSONL_SAMPLE_LINES):
+    """Up to `limit` records from a JSON-lines document. A bad line is counted, never fatal.
+
+    THIS EXISTS BECAUSE THE COMMIT TIMELINE IS A .jsonl AND THE FIRST VERSION SKIPPED IT. The
+    extractor matched `*.json`, so `commits-main.jsonl` — the dates, authors and file lists per
+    commit, which is the single richest thing in the corpus and the exact input the hijacking
+    signatures need — was invisible to it. Found by running `discover` against the real tree
+    rather than by reasoning about it.
+    """
+    out = []
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            problems[f"{path.name}: skipped, larger than {MAX_FILE_BYTES} bytes"] += 1
+            return out
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i >= limit:
+                    break
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    out.append(json.loads(text))
+                except ValueError:
+                    problems[f"{path.name}: a line was not JSON"] += 1
+    except OSError as e:
+        problems[f"{path.name}: unreadable, {type(e).__name__}"] += 1
+    return out
+
+
+def _describe(path, problems, per_file):
+    """Record the key paths in one document, bucketed under its filename.
+
+    BUCKETED BY FILENAME, which the first version did not do and which made its report nearly
+    useless on a real corpus. Eight documents per model directory were merged into one flat key
+    list, so it said the corpus contains a `downloads` field somewhere without saying that it
+    lives in `meta.json`. An extractor cannot be written from that.
+    """
+    if path.suffix in PROSE_FILES:
+        return
+    if path.suffix == ".jsonl":
+        for rec in _read_jsonl(path, problems):
+            _walk_keys(rec, per_file[path.name])
+    elif path.suffix == ".json":
+        doc = _read_json(path, problems)
+        if doc is not None:
+            _walk_keys(doc, per_file[path.name])
+
+
 def discover(root, sample):
     """Report the shapes actually present, and assert nothing."""
     root = Path(root)
     if not root.is_dir():
         raise SystemExit(f"{root} is not a directory. Point this at the corpus root, the one "
                          f"holding one directory per author.")
-    filenames, keys, problems = Counter(), Counter(), Counter()
-    seen_authors = depth_two = 0
+    filenames, problems = Counter(), Counter()
+    per_file: dict[str, Counter] = {}
+    seen_authors = models = 0
     for entry in _authors(root):
         seen_authors += 1
         if seen_authors > sample:
             break
         for sub in Path(entry.path).iterdir():
+            targets = []
             if sub.is_dir():
-                depth_two += 1
-                for f in sub.iterdir():
-                    if f.is_file():
-                        filenames[f.name] += 1
-                        if f.suffix == ".json":
-                            doc = _read_json(f, problems)
-                            if doc is not None:
-                                _walk_keys(doc, keys)
+                models += 1
+                targets = [f for f in sub.iterdir() if f.is_file()]
             elif sub.is_file():
-                filenames[sub.name] += 1
-                if sub.suffix == ".json":
-                    doc = _read_json(sub, problems)
-                    if doc is not None:
-                        _walk_keys(doc, keys)
+                targets = [sub]
+            for f in targets:
+                filenames[f.name] += 1
+                per_file.setdefault(f.name, Counter())
+                _describe(f, problems, per_file)
 
+    sampled = min(seen_authors, sample)
     report = {
-        "authors_sampled": min(seen_authors, sample),
-        "second_level_directories_seen": depth_two,
+        "authors_sampled": sampled,
+        "model_directories_seen": models,
+        "models_per_author": round(models / sampled, 2) if sampled else 0,
         "filenames": filenames.most_common(40),
-        "key_paths": keys.most_common(80),
+        # The useful half: which keys live in WHICH document. An extractor is written from this.
+        "keys_by_filename": {
+            name: counts.most_common(30) for name, counts in sorted(per_file.items()) if counts},
+        "documents_described_but_empty": sorted(n for n, c in per_file.items() if not c),
         "problems": dict(problems),
-        "wanted_keys_present": sorted(
-            w for w in WANTED if any(k == w or k.endswith(f".{w}") for k in keys)),
-        "wanted_keys_absent": sorted(
-            w for w in WANTED if not any(k == w or k.endswith(f".{w}") for k in keys)),
     }
+    all_keys = {k for counts in per_file.values() for k in counts}
+    report["wanted_keys_present"] = sorted(
+        w for w in WANTED if any(k == w or k.endswith(f".{w}") for k in all_keys))
+    report["wanted_keys_absent"] = sorted(
+        w for w in WANTED if not any(k == w or k.endswith(f".{w}") for k in all_keys))
     print(json.dumps(report, indent=2, sort_keys=True))
     if not filenames:
         # An empty report is a finding about this script, not about the corpus, and it must not
@@ -183,6 +244,11 @@ def discover(root, sample):
               "about the corpus. The layout assumed here is <root>/<author>/... Check the root, "
               "and if the real layout differs, that is what this mode exists to tell you.",
               file=sys.stderr)
+        return 1
+    if not any(per_file.values()):
+        print("\nFILES WERE FOUND AND NONE COULD BE DESCRIBED. Every document was prose, "
+              "unreadable, or of a kind this does not parse. Read `filenames` and `problems` "
+              "above: the layout is right and the readers are wrong.", file=sys.stderr)
         return 1
     return 0
 

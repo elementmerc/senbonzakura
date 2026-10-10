@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { growIn, reveal, typeLoop } from '@/lib/motion';
+import { growIn, reveal, typeTranscript } from '@/lib/motion';
 
 /**
  * One piece of art per section, in the space the left-aligned prose leaves.
@@ -188,7 +188,7 @@ export function DriftBars() {
   );
 }
 
-/** What a run writes out, as the five result files it leaves on disk. */
+/** What a run writes out, typed as a terminal transcript that loops. */
 export function RunOutput() {
   const root = useRef<HTMLDivElement>(null);
   const FILES = [
@@ -199,84 +199,52 @@ export function RunOutput() {
     ['drift.json', 'how far the first token moved'],
   ];
 
-  const prompt = useRef<HTMLSpanElement>(null);
-
   useEffect(() => {
-    // THE ROWS THIS PANEL RENDERED EMPTY. They carried an inline `opacity: 0` and waited for an
-    // animation written in v3 syntax that could never run, so the panel showed its border and
-    // its header and nothing else. The inline opacity is gone and anime sets the start value.
-    reveal('[data-row]');
-
-    // The panel showed what a run leaves behind and gave no sign that anything had run. A
-    // command line that types itself, holds, wipes and types the next one is the smallest thing
-    // that reads as a tool working rather than a screenshot of one. Every command here is real
-    // and takes flags the CLI accepts; a decorative prompt that invents a command teaches the
-    // reader something false.
-    const el = prompt.current;
+    const el = root.current;
     if (!el) return;
-    return typeLoop(el, [
-      'senbonzakura measure ./model',
-      'senbonzakura abliterate ./model --max-directions 2',
-      'senbonzakura compare ./before ./after',
-    ]);
+    // Every line in reading order: the command, the directory it wrote, then one line per file.
+    // The caret rides whichever line is being typed, which is the part that makes it read as a
+    // terminal rather than as text fading in.
+    const lines = Array.from(el.querySelectorAll<HTMLElement>('[data-line]'));
+    return typeTranscript(lines);
   }, []);
 
   return (
     <div
       ref={root}
       aria-hidden="true"
+      className="mono"
       style={{
         width: '100%',
         border: '1px solid var(--rule)',
         borderRadius: '12px',
         overflow: 'hidden',
         background: 'var(--bg-raised)',
+        padding: '1.1rem 1.2rem 1.4rem',
+        // A FIXED HEIGHT, because the panel empties itself every few seconds. Without one the
+        // whole section would collapse and spring back on every loop, shoving the paragraph
+        // beside it up and down the page, which is far worse than any animation is good.
+        minHeight: '16.5rem',
+        lineHeight: 1.9,
+        fontSize: '0.82rem',
       }}
     >
-      <div
-        className="mono"
-        style={{
-          padding: '0.7rem 1.1rem',
-          borderBottom: '1px solid var(--rule)',
-          fontSize: '0.76rem',
-          color: 'var(--ink-faint)',
-          display: 'flex',
-          gap: '0.5rem',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-        }}
-      >
-        <span style={{ color: 'var(--measured)' }}>$</span>
-        {/* The caret is a CSS pseudo-element on this span, so it sits flush against the last
-            typed character without a space and without a node the typing has to work around. */}
-        <span ref={prompt} className="caret" style={{ color: 'var(--ink-dim)' }} />
+      <div style={{ whiteSpace: 'pre', overflow: 'hidden' }}>
+        <span style={{ color: 'var(--measured)' }}>$ </span>
+        <span data-line style={{ color: 'var(--ink)' }}>
+          senbonzakura measure ./model
+        </span>
+        <span className="caret" />
       </div>
-      <div
-        className="mono"
-        style={{
-          padding: '0.7rem 1.1rem',
-          borderBottom: '1px solid var(--rule)',
-          fontSize: '0.76rem',
-          color: 'var(--ink-faint)',
-        }}
-      >
-        ./results/
+
+      <div data-line style={{ color: 'var(--ink-faint)', whiteSpace: 'pre', overflow: 'hidden' }}>
+        wrote ./results/
       </div>
+
       {FILES.map(([name, what]) => (
-        <div
-          key={name}
-          data-row
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: '0.9rem',
-            padding: '0.72rem 1.1rem',
-          }}
-        >
-          <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--measured)' }}>
-            {name}
-          </span>
-          <span style={{ fontSize: '0.78rem', color: 'var(--ink-faint)' }}>{what}</span>
+        <div key={name} style={{ whiteSpace: 'pre', overflow: 'hidden' }}>
+          <span data-line style={{ color: 'var(--measured)' }}>{name}</span>
+          <span data-line style={{ color: 'var(--ink-faint)' }}>{'   ' + what}</span>
         </div>
       ))}
     </div>

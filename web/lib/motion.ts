@@ -252,45 +252,59 @@ export function driftPetals(root: Element): () => void {
 }
 
 /**
- * Type a line out, hold it, wipe it, and move to the next. Loops.
+ * Type a whole block out, line after line, hold it, wipe it, and start again.
  *
- * The one looping animation on the page besides the petals, and it is here because a panel
- * showing what a run leaves on disk should look like something that ran. A caret that never
- * moves is a screenshot.
+ * NOT ONE LINE. The first version typed a single prompt and left the rest of the panel sitting
+ * there as static text, which is not what a terminal looks like when something is running: the
+ * command goes in, then the output arrives underneath it, line by line. A caret blinking above
+ * five lines that were always there is a blinking caret, not a terminal.
  *
- * STOPS ENTIRELY under reduced motion rather than running at zero duration, which is the
- * opposite of the rule everywhere else in this file and is correct for exactly the same reason.
- * The rule exists so an element is never stranded at its start value; a loop has no final state
- * to be stranded short of, and a thing that retypes itself forever is the clearest vestibular
- * trigger there is because the reader cannot wait it out. So the element gets the longest phrase,
- * complete and still, and nothing moves.
+ * Each line keeps its own element, so the filenames stay in the accent colour and the notes stay
+ * grey. Typing one flat string into a `<pre>` would be simpler and would throw the colour away,
+ * which is most of what makes the panel readable.
+ *
+ * The real text stays in the markup and this clears it on mount. A reader whose JavaScript never
+ * arrives sees the finished listing; only a reader who is definitely getting the animation ever
+ * sees it empty.
  *
  * Returns a stop function. A loop still running after its component has gone keeps the
  * compositor awake, which is somebody's battery.
  */
-export function typeLoop(
-  el: Element,
-  phrases: string[],
-  { typeMs = 700, holdMs = 1400 } = {},
+export function typeTranscript(
+  lines: Element[],
+  { perChar = 26, lineGap = 90, hold = 2200, wipe = 420 } = {},
 ): () => void {
-  if (phrases.length === 0) return () => {};
-  if (prefersReducedMotion()) {
-    el.textContent = phrases.reduce((a, b) => (b.length > a.length ? b : a));
-    return () => {};
-  }
+  // Paired up front, so indexing never has to be proved safe twice: a line and its text travel
+  // together and the tween closes over the pair rather than over an index into two arrays.
+  const rows = lines.map((el) => ({ el, text: el.textContent ?? '' }));
+  if (rows.length === 0) return () => {};
+
+  const paint = (row: { el: Element; text: string }, n: number) => {
+    row.el.textContent = row.text.slice(0, Math.max(0, Math.round(n)));
+  };
+  rows.forEach((row) => paint(row, 0));
 
   const tl = createTimeline({ loop: true });
-  for (const phrase of phrases) {
-    // One state object per phrase. Sharing one across the whole timeline makes each later tween
-    // start from wherever the previous one left the value, which reads as a stutter.
+  rows.forEach((row, i) => {
     const state = { n: 0 };
-    const paint = () => {
-      el.textContent = phrase.slice(0, Math.round(state.n));
-    };
-    tl.add(state, { n: { from: 0, to: phrase.length }, duration: typeMs, ease: 'linear', onUpdate: paint })
-      .add(state, { n: phrase.length, duration: holdMs, onUpdate: paint })
-      .add(state, { n: { from: phrase.length, to: 0 }, duration: typeMs * 0.55, ease: 'linear', onUpdate: paint });
-  }
+    tl.add(
+      state,
+      {
+        n: { from: 0, to: row.text.length },
+        duration: Math.max(140, row.text.length * perChar),
+        ease: 'linear',
+        onUpdate: () => paint(row, state.n),
+      },
+      i === 0 ? undefined : `+=${lineGap}`,
+    );
+  });
+
+  // Hold the finished block, then clear every line at once rather than un-typing each one.
+  // Backspacing five lines takes as long as typing them and the reader has already read it; a
+  // terminal being cleared is one action, not five.
+  const done = { n: 1 };
+  tl.add(done, { n: 0, duration: hold, onComplete: () => rows.forEach((row) => paint(row, 0)) })
+    .add(done, { n: 1, duration: wipe });
 
   return () => tl.pause();
 }

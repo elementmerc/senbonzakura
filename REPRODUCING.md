@@ -120,9 +120,25 @@ python -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
     --out base-qwen3-1.7b.json
 ```
 
-**Every one of those flags is load-bearing.** The skips are the boundaries recorded in the
-track's `track.json`, and a compass run given none of them falls back to the older defaults of
-128 and 320, warns that the number may include rows the search selected on, and still writes a
+**The `--harmless-matched` line cannot be followed as written.** Nothing in this repository builds
+a `good_matched_ds` directory. `senbonzakura track` does not write one (see
+[the track guide](docs/guide/the-track.md)), no other command does, and the set was retired as a
+track partition on 2026-10-01 (see the `good_matched_ds is not part of the track` item in
+[`DEFERRED.md`](DEFERRED.md)). The one copy that existed was a hand-built set of 280 rows at a path
+outside this repository, and it is not carried here. If you point the flag at a path that does not
+exist, the run stops with a message telling you to pass "a directory built by `senbonzakura track`",
+which that step does not produce.
+
+To re-take the AUC and the length-only control without the topic-matched control, delete the
+`--harmless-matched` line. The run then writes no `topic_matched` entry, so the construct-validity
+check described below is missing from that file. Making the check reproducible needs a builder step
+that writes a matched harmless set and records its digest in `track.json`. The ledger chose not to
+build one, on a measurement from 2026-09-02 (Qwen3-1.7B): the topic-match score read 0.722 for the
+old set against 0.718 for the general corpus, where a perfect match scores 0.299.
+
+**Every flag except `--harmless-matched` is load-bearing.** The skips are the boundaries recorded
+in the track's `track.json`, and a compass run given none of them falls back to the older defaults
+of 128 and 320, warns that the number may include rows the search selected on, and still writes a
 file that looks like the published one. `<track>` is what `senbonzakura track` wrote.
 
 **The second row is the one to look at**, and it is the reason this project believes what it says
@@ -205,6 +221,38 @@ supports rather than a number chosen to pass.
 Point it at somebody else's files too. It understands result files from
 [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) and
 [Inspect](https://inspect.aisi.org.uk).
+
+## What a result file says about how it was made
+
+A measuring command writes a `provenance` block into its result file. One function builds it,
+`provenance()` in `src/senbonzakura/crashsafe.py`, so every command that uses it records the same
+fields. The block is not complete, and a reader rerunning a number needs to know which parts are
+missing. Checked on 2026-10-10 against the files in `head-to-head/results/2026-09-10/`:
+
+| Field | `scored-senbon-seed42.json` | `drift-senbon-seed42.json` and `headtohead-summary.json` |
+|---|---|---|
+| Tool version, git commit, whether the tree was dirty | Recorded: `0.4.0.dev0`, commit `a75ffee`, not dirty | No provenance block |
+| Python version | Recorded as a version only: `3.12.3` | No provenance block |
+| Path of the Python interpreter that ran | **Not recorded** | No provenance block |
+| Platform string, GPU name, device | Recorded | No provenance block |
+| Package versions (torch, transformers and so on) | Recorded | No provenance block |
+| Corpus revision (the pinned dataset version) | **Not recorded** | No provenance block |
+| Model revision (the Hub commit actually served) | **Not recorded**: only the label `senbon-seed42` | No provenance block |
+
+Three things follow from that table.
+
+- **Python is recorded as a version, not a path.** The field comes from `platform.python_version()`,
+  which gives `3.12.3` for every interpreter at that version. A system Python and a virtual
+  environment built from it look identical in the file. Record `sys.executable` yourself when you
+  reproduce a run.
+- **The drift files and the summary carry no environment at all.** Nothing in them ties the drift
+  numbers to the interpreter, packages or commit recorded in the scored file beside them. The
+  files do not say the two came from the same environment, so do not assume it.
+- **Nothing says which checkpoint or dataset version a number came from.** The label
+  `senbon-seed42` is a name, not an identity. `src/senbonzakura/stamps.py` has a helper,
+  `model_identity`, that records the checkpoint's id and revision, but the 2026-09-10 scored file
+  does not carry its output. Whether later files do is a separate question this table does not
+  answer.
 
 ## What you cannot reproduce from this repository, and why
 

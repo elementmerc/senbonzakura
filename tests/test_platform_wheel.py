@@ -435,7 +435,7 @@ def test_a_wheel_with_no_metadata_tag_is_still_read_from_its_filename():
 # The 2026-09-10 panel unpacked `src/senbonzakura/data/default-track.bin` from the
 # published wheel and read this out of the track manifest inside it:
 #
-#     "labels":  "/home/heph-agent/track2-enriched-backup/contrast/axis-labels-both.tsv"
+#     "labels":  "/home/builduser/track2-enriched-backup/contrast/axis-labels-both.tsv"
 #     "harmful": "/tmp/senbon-rebuild/harmful.txt"
 #
 # That unpacks into every user's ~/.cache/senbonzakura/bundled-track/. Baseline 13
@@ -454,10 +454,10 @@ def _wheel_with(tmp_path, name, body):
 
 def test_a_build_machine_path_in_a_shipped_blob_is_refused(tmp_path):
     w = _wheel_with(tmp_path, "senbonzakura/data/track.json",
-                    '{"sources": {"harmful": "/home/heph-agent/rebuild/harmful.txt"}}')
+                    '{"sources": {"harmful": "/home/builduser/rebuild/harmful.txt"}}')
     problems = check_wheel.leaks_a_build_path(w)
     assert problems, "the exact string read out of the published wheel was not flagged"
-    assert "/home/heph-agent" in problems[0]
+    assert "/home/builduser" in problems[0]
     assert "pack_track" in problems[0], "the reader needs the remedy, not just the complaint"
 
 

@@ -120,7 +120,7 @@ def scrub_manifest(doc):
     `track.json` records where each corpus came from, which on the machine that built it is an
     absolute path. Packed as-is, that ships in every wheel and unpacks into every user's
     `~/.cache/senbonzakura/bundled-track/`: the 2026-09-10 panel read
-    `/home/heph-agent/track2-enriched-backup/contrast/axis-labels-both.tsv` out of the published
+    `/home/builduser/track2-enriched-backup/contrast/axis-labels-both.tsv` out of the published
     blob. Baseline 13 forbids private paths in shipped artefacts, and `74e571f` fixed the same
     class of defect one level up; this one survived because the blob predates it and was never
     repacked.

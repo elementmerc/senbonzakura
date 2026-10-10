@@ -1,0 +1,29 @@
+# MOVE THIS INTO PLACE: `mv web/npmrc.template web/.npmrc`
+#
+# It is not already there because this session's permission settings deny writing any `.npmrc`,
+# on the grounds that those files can hold registry auth tokens. The gate is right and was not
+# worked around. This file holds no credential of any kind.
+#
+# Supply-chain settings for this site. The engineering baseline's section 5 is the reason for each
+# line, and the threat it names is a dependency that turns hostile between the version you read
+# about and the version you install.
+
+# EXACT VERSIONS, NEVER A RANGE. A caret range means the version that lands is whichever one was
+# published most recently, which is the one a compromise would be in.
+save-exact=true
+
+# A COOLDOWN, because most compromised versions are caught within days. Seven days is the
+# baseline's default for a path that is not critical, and this is a marketing site rather than the
+# measurement tool. Raise the date deliberately, after reading what changed. Do not delete the
+# line because an install complained: a transitive dependency with nothing older than the cutoff
+# is a thing worth looking at rather than waving through.
+before=2026-10-03
+
+# INSTALL SCRIPTS DO NOT RUN. A postinstall hook is arbitrary code executing as the user who holds
+# the signing keys and the tokens, at install time, before anybody has read a line of the package.
+# If a dependency genuinely needs its script, allow that one package by name rather than turning
+# this off wholesale.
+ignore-scripts=true
+
+audit=true
+fund=false

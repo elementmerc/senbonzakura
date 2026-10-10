@@ -33,34 +33,42 @@ export default function Hero() {
   }, []);
 
   return (
-    <header ref={root} className="band" style={{ paddingTop: 'clamp(3rem, 11vh, 7rem)' }}>
-      {/* The lockup: mark beside wordmark. The kit ships this as an SVG, and it is set as live
-          text here instead so it inherits the page's own type and stays crisp at any size. The
-          kit's own rule for the wordmark is what is applied: uppercase, about 0.14em tracking. */}
-      <div
+    <header
+      ref={root}
+      className="band"
+      style={{
+        paddingTop: 'clamp(2.5rem, 9vh, 6rem)',
+        textAlign: 'center',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+      }}
+    >
+      {/* A pill above the headline, which is where the reference site puts the one claim it
+          most wants read. Ours is the promise a hosted competitor structurally cannot make. */}
+      <a
         data-enter="hero"
+        href="#install"
         style={{
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          gap: '0.7rem',
-          margin: '0 0 2.6rem',
+          gap: '0.6rem',
+          padding: '0.5rem 1rem 0.5rem 0.75rem',
+          marginBottom: '2.2rem',
+          border: '1px solid var(--rule)',
+          borderRadius: '999px',
+          background: 'var(--bg-raised)',
+          fontSize: '0.88rem',
+          textDecoration: 'none',
+          color: 'var(--ink-dim)',
         }}
       >
-        <Mark size={40} />
-        <span
-          className="wordmark"
-          style={{ fontSize: '1.02rem', color: 'var(--ink)' }}
-        >
-          Senbonzakura
+        <Mark size={18} />
+        <span>Runs on your machine. No network call you did not ask for.</span>
+        <span aria-hidden="true" style={{ color: 'var(--ink-faint)' }}>
+          &rarr;
         </span>
-        <span
-          className="jp"
-          aria-hidden="true"
-          style={{ color: 'var(--ink-faint)', fontSize: '1rem', marginLeft: '0.1rem' }}
-        >
-          千本桜
-        </span>
-      </div>
+      </a>
 
       <h1
         data-enter="hero"
@@ -70,7 +78,7 @@ export default function Hero() {
           letterSpacing: '-0.035em',
           fontWeight: 600,
           margin: '0 0 1.6rem',
-          maxWidth: '22ch',
+          maxWidth: '20ch',
         }}
       >
         The refusal fell.
@@ -83,7 +91,7 @@ export default function Hero() {
         style={{
           fontSize: 'clamp(1.05rem, 1.5vw, 1.3rem)',
           color: 'var(--ink-dim)',
-          maxWidth: 'var(--measure)',
+          maxWidth: '54ch',
           margin: '0 0 2.6rem',
         }}
       >
@@ -93,7 +101,7 @@ export default function Hero() {
 
       <div
         data-enter="hero"
-        style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem', alignItems: 'center' }}
+        style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem', alignItems: 'center', justifyContent: 'center' }}
       >
         <code
           style={{
@@ -144,6 +152,7 @@ export default function Hero() {
         aria-hidden="true"
         style={{
           marginTop: 'calc(var(--band) * 0.55)',
+          width: 'min(100%, 46rem)',
           height: '2px',
           background: 'linear-gradient(to right, #F98DB0 0%, #E06A9C 38%, #8B4791 66%, #141A42 100%)',
           borderRadius: '2px',

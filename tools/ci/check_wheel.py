@@ -269,7 +269,7 @@ def missing_release_data(wheel: Path) -> list[str]:
 
 #: A path that belongs to whoever built the wheel rather than to whoever installs it. Baseline 13:
 #: no private paths in shipped artefacts. Found in the published blob on 2026-09-10, where
-#: `track.json` carried `/home/heph-agent/track2-enriched-backup/...` and unpacked it into every
+#: `track.json` carried `/home/builduser/track2-enriched-backup/...` and unpacked it into every
 #: user's cache. `74e571f` fixed the same class one level up; the blob predated it and was never
 #: repacked, which is exactly why this is a gate and not a memory.
 _BUILD_MACHINE_PATH = re.compile(rb"""["'](/home/[^"']+|/Users/[^"']+|[A-Za-z]:\\Users\\[^"']+"""

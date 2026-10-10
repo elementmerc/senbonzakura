@@ -122,6 +122,19 @@ NO_AGREEMENT_TO_BREAK = {
     "rdo.py": "an optimiser; its output is a chosen configuration and a score, not an agreement",
     "report_bands.py": "formats bands for a report; it computes no verdict",
     "shard_spike.py": "a timing and memory spike; its output is a measurement",
+    "count_prediction_heads.py": "compares a record's DECLARED layer count against the stem "
+                                 "count in that same record, which is a self-consistency "
+                                 "property of one artefact rather than an agreement between two "
+                                 "measurements, the same shape as check_glm_lite_convert.py "
+                                 "below. The expensive way to be wrong here is not a comparison "
+                                 "that always passes but a record that cannot be read being "
+                                 "counted as a record that says no: that is how the published "
+                                 "figure was 13 for two days, because two multimodal configs "
+                                 "keep the count under `text_config` and reading the top level "
+                                 "returned None. So the fourth bucket IS the control, and it is "
+                                 "tested by fixtures carrying each shape that produced a wrong "
+                                 "number, in tests/test_a_prediction_head_is_classified_the_same"
+                                 "_way_twice.py",
     "check_glm_lite_convert.py": "asks whether ONE checkpoint converts to a GGUF that llama.cpp "
                                  "will load, and whether its declared block count matches the "
                                  "tensors it actually saved. Both are self-consistency properties "

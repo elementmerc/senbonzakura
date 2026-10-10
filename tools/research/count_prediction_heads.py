@@ -27,6 +27,14 @@ Two traps are handled here because both produced a published wrong number:
 
 And the stem compared against the declared count has to be the LANGUAGE stem, not the longest one:
 a vision tower of 47 blocks says nothing about a prediction head.
+
+WHY THIS IS NOT `modelmap.prediction_head`, which already exists and does the same job. That one
+takes tensor NAMES, read from a real checkpoint's header, and the corpus deliberately stores
+tensor PATTERNS instead: `model.layers.{i}.self_attn.o_proj.weight` is one entry covering every
+layer. So there are no names here to hand it, and the two readers cannot be merged without the
+corpus holding something it chose not to hold. They should nonetheless AGREE, and they do: the
+docstring of `streaming._prediction_head_hint` already said 15 before this file was written,
+which is independent corroboration of the figure the corpus reading guide had as 13.
 """
 from __future__ import annotations
 

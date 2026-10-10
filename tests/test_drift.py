@@ -261,6 +261,28 @@ def test_main_writes_the_result_with_what_produced_it(tmp_path, monkeypatch, pro
     assert "DRIFT_DONE arm-1" in capsys.readouterr().out
 
 
+def test_main_file_carries_the_provenance_block_the_sibling_commands_write(
+        tmp_path, monkeypatch, prompts_file):
+    """A drift file with no receipt reads as a measurement nobody can re-take. Checked on the
+    file the run wrote, not on the dict it returned, because the file is what gets quoted later.
+    """
+    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
+    monkeypatch.setattr(drift, "first_token_logprobs",
+                        lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
+    out = str(tmp_path / "drift.json")
+    drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
+                "--out", out, "--device", "cpu"])
+
+    with open(out, encoding="utf-8") as f:
+        written = json.load(f)
+    prov = written["provenance"]
+    assert {"senbonzakura", "python", "platform", "device", "accelerator", "packages"} <= set(prov)
+    assert prov["device"] == "cpu"
+    assert prov["accelerator"] is None, "no card on a cpu run, so no card name"
+    assert prov["senbonzakura"]["version"]
+
+
 def test_main_refuses_a_base_that_covers_a_different_number_of_prompts(tmp_path, monkeypatch,
                                                                       prompts_file):
     """A cache from a longer prompt file would otherwise be compared row by row against this

@@ -274,7 +274,6 @@ a:hover {
    part of this panel that would otherwise keep moving after the typing had been switched off. */
 .caret::after {
   content: '\2588';
-  margin-left: 0.1em;
   color: var(--measured);
   animation: caret-blink 1.05s steps(2, start) infinite;
 }

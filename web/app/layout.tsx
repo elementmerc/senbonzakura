@@ -14,8 +14,8 @@ import './globals.css';
  * next/font fetches these at BUILD time and emits them as files served from this origin. That is
  * the difference that matters here rather than the speed: a Google Fonts <link> makes every
  * visitor's browser call a third party on load, and this page tells a security-conscious reader
- * that the tool makes no network call they did not ask for. A page that quietly calls out while
- * saying so reads as the claim being decorative.
+ * that their weights never leave their machine. A page that quietly calls a third party while
+ * making a claim about where data goes reads as the claim being decorative.
  */
 const body = Hanken_Grotesk({
   subsets: ['latin'],
@@ -33,7 +33,7 @@ const mono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: 'Senbonzakura',
   description:
-    'Measure what a behaviour edit did to an open-weight model, and what it cost. Runs on your machine, makes no network call you did not ask for.',
+    'Measure what a behaviour edit did to an open-weight model, and what it cost. The measuring runs on your own hardware and your weights never leave it.',
   metadataBase: new URL('https://senbon.dev'),
   manifest: '/manifest.webmanifest',
   icons: {

@@ -123,21 +123,23 @@ a:hover {
     scroll-behavior: auto !important;
   }
 
-  /* Anything that loops or travels. Opacity transitions are deliberately not listed. */
-  [data-motion='travels'],
+  /* ONLY LOOPS STOP HERE. The earlier version also killed `travels`, which is what switched off
+     the navigation bar's own transition, so a reader with the setting on saw the bar snap between
+     its two states and reported, correctly, that nothing was animating.
+     A loop is the clearest vestibular trigger because it never ends and cannot be waited out.
+     A transition the reader caused, by scrolling or by hovering, is bounded and is not. */
   [data-motion='loops'] {
     animation: none !important;
-    transition: none !important;
-    transform: none !important;
   }
 }
 
-/* An element waiting for its entrance is invisible, so a reader with JavaScript off or broken
-   would get a blank page. `.js-ready` is set on <html> by the motion script, so the hidden state
-   only applies once something is there to reveal it. Fail visible, never blank. */
-html.js-ready [data-enter] {
-  opacity: 0;
-}
+/* NOTHING IS PRE-HIDDEN HERE ANY MORE, and that is deliberate.
+   The old rule set every `[data-enter]` to opacity 0 once a class appeared on <html>, so any
+   element whose reveal failed to run stayed invisible for good. That is exactly what happened:
+   the animations used a v3 idiom, never ran, and a whole panel rendered empty.
+   anime.js sets the start value itself from `{ from: 0 }` when it creates the animation, so the
+   hidden state now lasts only as long as an animation that definitely exists. A reader with no
+   JavaScript gets the finished page, because nothing ever hides it. */
 
 .band {
   padding: var(--band) var(--gutter);

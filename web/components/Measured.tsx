@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { DriftBars } from '@/components/SectionArt';
-import { countUp, onFirstView, reveal } from '@/lib/motion';
+import { countUp, reveal } from '@/lib/motion';
 
 /**
  * Our own figures, and the headline one is a result against our own flagship feature.
@@ -38,13 +38,11 @@ export default function Measured() {
   useEffect(() => {
     const el = section.current;
     if (!el) return;
-    return onFirstView(el, () => {
-      reveal('[data-enter="measured"]');
-      el.querySelectorAll<HTMLElement>('[data-count]').forEach((node, i) => {
-        const to = Number(node.dataset.count);
-        const decimals = Number(node.dataset.decimals ?? 0);
-        if (Number.isFinite(to)) countUp(node, to, { decimals, delay: 160 + i * 110 });
-      });
+    reveal('[data-enter="measured"]');
+    el.querySelectorAll<HTMLElement>('[data-count]').forEach((node) => {
+      const to = Number(node.dataset.count);
+      const decimals = Number(node.dataset.decimals ?? 0);
+      if (Number.isFinite(to)) countUp(node, to, { decimals });
     });
   }, []);
 

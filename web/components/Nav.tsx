@@ -112,13 +112,7 @@ export default function Nav() {
             <a href={`${DOCS}/guide/what-it-is`} style={{ textDecoration: 'none', color: 'var(--ink-dim)' }}>
               Docs
             </a>
-            <a href={`${DOCS}/guide/what-we-know`} style={{ textDecoration: 'none', color: 'var(--ink-dim)' }}>
-              Evidence
-            </a>
-            <a
-              href="#corrections"
-              style={{ textDecoration: 'none', color: 'var(--ink-dim)' }}
-            >
+            <a href="/corrections" style={{ textDecoration: 'none', color: 'var(--ink-dim)' }}>
               What we got wrong
             </a>
           </div>

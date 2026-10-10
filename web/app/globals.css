@@ -162,29 +162,19 @@ a:hover {
   text-decoration-color: var(--measured);
 }
 
-/* THE BLANKET RULE IS GONE, AND THAT IS THE FIX RATHER THAN A RELAXATION.
-   `animation-duration: 0.01ms !important` on `*` is the snippet everybody pastes, and it kills
-   every animation including the ones that move nothing. A reader with the setting on then gets a
-   page that looks like the JavaScript failed, which is not what they asked for: they asked not to
-   be made ill by movement.
-   So the rule is scoped to what actually moves. Opacity fades and numbers counting up in place
-   keep running for everybody, because neither travels across the screen. Anything that loops,
-   translates, scales or rotates stops. The JavaScript half of this lives in `lib/motion.ts` and
-   draws the same line, because an inline style from a script beats a stylesheet rule. */
+/* THE SYSTEM'S REDUCED-MOTION SETTING IS NOT HONOURED ON THIS PAGE. Operator decision,
+   2026-10-10. The reasoning, and what it trades away, is recorded once in
+   RESPECT_SYSTEM_MOTION_SETTING in `lib/motion.ts` rather than restated here.
+
+   What survives is the one rule that is not about movement at all: a reader who has asked for
+   less motion still gets instant jumps instead of smooth scrolling when they follow an anchor,
+   because a page that scrolls itself slowly is the one piece of this a reader cannot stop once
+   it starts. Everything else runs for everybody. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
-  }
-
-  /* ONLY LOOPS STOP HERE. The earlier version also killed `travels`, which is what switched off
-     the navigation bar's own transition, so a reader with the setting on saw the bar snap between
-     its two states and reported, correctly, that nothing was animating.
-     A loop is the clearest vestibular trigger because it never ends and cannot be waited out.
-     A transition the reader caused, by scrolling or by hovering, is bounded and is not. */
-  [data-motion='loops'] {
-    animation: none !important;
   }
 }
 
@@ -291,6 +281,6 @@ a:hover {
 @keyframes caret-blink {
   to { opacity: 0; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .caret::after { animation: none; }
-}
+/* The caret keeps blinking whatever the system asks for. See RESPECT_SYSTEM_MOTION_SETTING in
+   lib/motion.ts, which is where that decision is recorded; this rule would otherwise be the one
+   place the old behaviour survived, because it is pure CSS and no script reaches it. */

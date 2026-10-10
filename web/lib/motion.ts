@@ -60,8 +60,29 @@ function wave(count: number, { spread = 520, max = 70 } = {}): number {
   return Math.min(max, spread / (count - 1));
 }
 
-/** Whether this reader has asked their system for less movement. */
+/**
+ * WHETHER THE SYSTEM'S REDUCED-MOTION SETTING IS HONOURED. Operator decision, 2026-10-10: it is
+ * not, and this constant is the whole of that decision so it is one line to revert and a reviewer
+ * cannot mistake it for an oversight.
+ *
+ * The usual argument for honouring it is strong and is written down here rather than deleted,
+ * because it is the thing being traded away. The setting exists for readers who get motion
+ * sickness or vestibular symptoms from movement they did not ask for, and a looping animation is
+ * the worst case because it cannot be waited out. We now run everything regardless.
+ *
+ * What makes that defensible here rather than merely convenient: nothing on this page is a scroll
+ * hijack, every scroll-linked animation is driven by the reader's own scrolling and stops the
+ * moment they stop, and the two looping pieces (the mark's petals, the typing prompt) are small,
+ * slow and off to one side rather than behind the text. What it costs is real all the same, and
+ * the honest statement is that this page prioritises the demonstration over that setting.
+ *
+ * Flipping this back to true restores the previous behaviour everywhere at once.
+ */
+const RESPECT_SYSTEM_MOTION_SETTING = false;
+
+/** Whether this reader has asked their system for less movement, and we are listening. */
 export function prefersReducedMotion(): boolean {
+  if (!RESPECT_SYSTEM_MOTION_SETTING) return false;
   return (
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches

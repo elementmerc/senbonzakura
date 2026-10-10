@@ -472,7 +472,8 @@ def rank_corr(a, b):
     return round(float((ra * rb).sum()) / denominator, 4)
 
 
-def controls(harmful, harmless, harmful_prompts=None, harmless_prompts=None):
+def controls(harmful, harmless, harmful_prompts=None, harmless_prompts=None, *,
+             seed=0, resamples=2000):
     """Construct-validity controls: is the compass measuring harm, or something correlated?
 
     An AUC on its own cannot answer that. Three cheap checks that can, each computed from
@@ -497,6 +498,8 @@ def controls(harmful, harmless, harmful_prompts=None, harmless_prompts=None):
         happened to be thought of first. If a ruler reading nothing but how long the WORDS are,
         or how much punctuation there is, separates the two arms as well as the compass does,
         the compass is measuring register rather than harm.
+        Each ruler's AUC carries its interval beside it as `<name>_auc_ci`, from the same bootstrap as
+        the headline, so a null that sits inside the compass's own noise is visibly one.
 
         Every one of them is reported whatever it says, which is the point: a panel you can
         quietly drop a member from is a panel that only ever agrees with you.
@@ -525,7 +528,7 @@ def controls(harmful, harmless, harmful_prompts=None, harmless_prompts=None):
         out["canonical_auc"] = auc(canon_h, canon_l)
 
     if harmful_prompts is not None and harmless_prompts is not None:
-        out["nulls"] = null_panel(harmful_prompts, harmless_prompts)
+        out["nulls"] = null_panel(harmful_prompts, harmless_prompts, seed=seed, resamples=resamples)
     return out
 
 
@@ -564,7 +567,7 @@ def _null_strength(block):
     return lambda name: (abs(block[name] - 0.5), block[name])
 
 
-def null_panel(harmful_prompts, harmless_prompts):
+def null_panel(harmful_prompts, harmless_prompts, seed=0, resamples=2000):
     """What each null ruler scores on this pair of arms, all of them, whatever they say.
 
     AN AUC OF 0.0 IS THE STRONGEST RESULT A NULL CAN HAVE, not the weakest, and this used to score
@@ -584,21 +587,33 @@ def null_panel(harmful_prompts, harmless_prompts):
     looked safe. `auc` returns None when a side is empty, meaning the panel could not be run
     rather than that it found nothing, and folding the two together is the same conflation one
     layer down. An unmeasured ruler is excluded from the comparison and the absence is reported.
+
+    EVERY POINT HAS ITS INTERVAL, beside it as `<name>_auc_ci`, by the same prompt-level bootstrap
+    the headline AUC uses (`bootstrap_auc_ci`). A null at 0.56 from 200 prompts is not the same
+    evidence as one at 0.56 from 20, and a reader who sees only the point cannot tell a real chance
+    result from a noisy one. Resamples of 0 skip the intervals, as `--bootstrap 0` does for the
+    headline, and the keys are still present with None so the shape never changes.
     """
     out = {}
     for name, ruler in NULL_RULERS.items():
-        out[f"{name}_auc"] = auc([ruler(p) for p in harmful_prompts],
-                                 [ruler(p) for p in harmless_prompts])
-    measured = {k: v for k, v in out.items() if isinstance(v, (int, float))}
+        pos = [ruler(p) for p in harmful_prompts]
+        neg = [ruler(p) for p in harmless_prompts]
+        out[f"{name}_auc"] = auc(pos, neg)
+        out[f"{name}_auc_ci"] = (bootstrap_auc_ci(pos, neg, seed=seed, resamples=resamples)
+                                 if resamples else None)
+    measured = {k: v for k, v in out.items()
+                if k.endswith("_auc") and isinstance(v, (int, float))}
     if not measured:
         out["strongest"] = None
         out["strongest_auc"] = None
+        out["strongest_auc_ci"] = None
         out["strongest_note"] = ("no null ruler could be scored, because one of the two arms is "
                                  "empty. This is an unmeasured panel and not a clean one")
         return out
     strongest = max(measured, key=_null_strength(measured))
     out["strongest"] = strongest
     out["strongest_auc"] = measured[strongest]
+    out["strongest_auc_ci"] = out[f"{strongest}_ci"]
     if len(measured) < len(NULL_RULERS):
         out["strongest_note"] = (
             f"{len(NULL_RULERS) - len(measured)} of {len(NULL_RULERS)} null rulers could not be "
@@ -833,6 +848,11 @@ def paired_bootstrap_delta_ci(before, after, seed=0, resamples=2000, alpha=0.05)
 def _fmt(value):
     """A control that could not be computed prints as such rather than as a number."""
     return "n/a" if value is None else f"{value:.4f}"
+
+
+def _fmt_ci(ci):
+    """The bracketed interval beside a figure, or nothing when no interval was computed."""
+    return "" if ci is None else f" [{ci[0]:.4f}, {ci[1]:.4f}]"
 
 
 def load_prompts(path, what, *, text_column=None, token=None, missing_hint=None):
@@ -1228,7 +1248,8 @@ def main(argv=None):
         # An AUC alone cannot say whether it measures harm or something that travels with
         # it. These say what a ruler reading nothing but prompt length would score, and
         # whether the headline survives dropping the max-over-spellings choice.
-        "controls": controls(detail_h, detail_l, harmful, harmless),
+        "controls": controls(detail_h, detail_l, harmful, harmless,
+                             seed=a.seed, resamples=a.bootstrap),
         # Whether the position being read is the position the verdict lives at. See `readout`:
         # on a thinking model it is where the reasoning opener goes, and then the margin
         # compares two tokens the model was never going to emit.
@@ -1325,7 +1346,8 @@ def main(argv=None):
             "auc": round(auc(mh, mm), 4),
             "auc_ci": bootstrap_auc_ci(mh, mm, seed=a.seed, resamples=a.bootstrap) if a.bootstrap else None,
             "mean_margin": round(sum(mm) / len(mm), 4),
-            "controls": controls(detail_h, detail_m, harmful, matched),
+            "controls": controls(detail_h, detail_m, harmful, matched,
+                                 seed=a.seed, resamples=a.bootstrap),
         }
 
     if a.compare_to:
@@ -1404,7 +1426,7 @@ def main(argv=None):
     # reach of the compass means the compass may be reading the same surface property it does.
     if c.get("nulls"):
         n = c["nulls"]
-        each = " ".join(f"{k}={_fmt(v)}" for k, v in n.items()
+        each = " ".join(f"{k}={_fmt(v)}{_fmt_ci(n.get(f'{k}_ci'))}" for k, v in n.items()
                         if k.endswith("_auc") and k != "strongest_auc")
         if n.get("strongest") is None:
             # AN UNMEASURED PANEL IS NOT A CLEAN ONE. Printing `strongest=None=n/a` beside a

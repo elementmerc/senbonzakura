@@ -15,6 +15,7 @@ published AUC comes from.
 """
 import json
 import random
+import re
 from pathlib import Path
 
 import pytest
@@ -1431,3 +1432,73 @@ def test_the_compass_prints_its_reading_in_words_as_well_as_markers(loaded, tmp_
         "the command no longer prints the sentences, so the figure arrives as markers alone again")
     assert "0.5 is a coin toss" in said
     assert "MARGIN_DONE" in said, "the markers have to survive alongside the prose"
+
+
+# ── the null panel carries an interval for every point it reports ──────────────────────
+def _spread_arms():
+    """Two arms that differ in length, with enough prompts for an interval to mean something."""
+    harmful = [("please " * (i % 9 + 1)).strip() for i in range(60)]
+    harmless = [("hi " * (i % 4 + 1)).strip() for i in range(60)]
+    return harmful, harmless
+
+
+def test_every_null_ruler_reports_an_interval_beside_its_point():
+    from senbonzakura.margin import NULL_RULERS, null_panel
+    harmful, harmless = _spread_arms()
+    got = null_panel(harmful, harmless, seed=7, resamples=200)
+    for name in NULL_RULERS:
+        ci = got[f"{name}_auc_ci"]
+        assert isinstance(ci, tuple) and len(ci) == 2, (name, ci)
+        assert 0.0 <= ci[0] <= ci[1] <= 1.0, (name, ci)
+
+
+def test_a_null_interval_is_the_headline_bootstrap_not_a_second_implementation():
+    """The reuse is the requirement: one statistic, one bootstrap. Equal outputs prove it."""
+    from senbonzakura import margin
+    harmful, harmless = _spread_arms()
+    got = margin.null_panel(harmful, harmless, seed=7, resamples=200)
+    for name, ruler in margin.NULL_RULERS.items():
+        expected = margin.bootstrap_auc_ci([ruler(p) for p in harmful],
+                                           [ruler(p) for p in harmless], seed=7, resamples=200)
+        assert got[f"{name}_auc_ci"] == expected, name
+
+
+def test_null_intervals_are_reproducible_from_the_seed():
+    from senbonzakura import margin
+    harmful, harmless = _spread_arms()
+    first = margin.null_panel(harmful, harmless, seed=3, resamples=200)
+    again = margin.null_panel(harmful, harmless, seed=3, resamples=200)
+    assert first == again
+
+
+def test_zero_resamples_keeps_the_keys_and_drops_the_intervals():
+    """The shape never changes with --bootstrap 0; only the interval goes to None."""
+    from senbonzakura.margin import NULL_RULERS, null_panel
+    harmful, harmless = _spread_arms()
+    got = null_panel(harmful, harmless, resamples=0)
+    for name in NULL_RULERS:
+        assert f"{name}_auc_ci" in got and got[f"{name}_auc_ci"] is None, name
+    assert got["strongest_auc_ci"] is None
+
+
+def test_the_strongest_null_carries_its_own_interval():
+    from senbonzakura import margin
+    harmful, harmless = _spread_arms()
+    got = margin.null_panel(harmful, harmless, seed=7, resamples=200)
+    assert got["strongest_auc_ci"] == got[f"{got['strongest']}_ci"]
+
+
+def test_an_unmeasured_panel_has_no_interval_to_report():
+    from senbonzakura import margin
+    got = margin.null_panel([], ["a harmless prompt"], resamples=200)
+    assert got["strongest_auc_ci"] is None
+    assert all(got[f"{name}_auc_ci"] is None for name in margin.NULL_RULERS)
+
+
+def test_the_null_interval_reaches_the_printed_panel_line(loaded, tmp_path, capsys):
+    """Computed but not printed is the failure this exists to prevent."""
+    res = _run(loaded, tmp_path, "nulls-printed")
+    assert "characters_auc_ci" in res["controls"]["nulls"]
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("MARGIN_NULLS "))
+    assert "characters_auc=" in line
+    assert re.search(r"characters_auc=[\d.]+ \[[\d.]+, [\d.]+\]", line), line

@@ -32,7 +32,10 @@ def record(config, counts, patterns=()):
     return {"status": "complete",
             "config": config,
             "tensors": {"layer_counts_by_stem": counts,
-                        "pattern_layer_indices": dict.fromkeys(patterns, {})}}
+                        # A comprehension rather than `dict.fromkeys(patterns, {})`, which hands
+                        # every key the SAME dict: mutate one and they all change. Harmless while
+                        # these stay empty and a trap the moment a test fills one in.
+                        "pattern_layer_indices": {p: {} for p in patterns}}}
 
 
 def test_a_head_on_trailing_indices_is_in_stack():
@@ -50,7 +53,7 @@ def test_a_head_in_its_own_stack_is_not_in_stack():
 
 
 def test_the_declared_count_is_found_when_it_is_nested_under_text_config():
-    """THIS IS THE ONE THAT MADE THE ANSWER 13.
+    """THE CASE THAT MADE THE ANSWER 13.
 
     A multimodal checkpoint keeps the decoder's own layer count under `text_config`, so reading
     `config["num_hidden_layers"]` returns None. Two records fell out of the count that way and
@@ -82,7 +85,7 @@ def test_a_vision_tower_is_never_mistaken_for_the_decoder_stack():
 
 
 def test_a_head_with_no_config_key_is_still_found():
-    """THIS IS THE ONE THAT MADE THE OWN-STACK ANSWER 11.
+    """THE CASE THAT MADE THE OWN-STACK ANSWER 11.
 
     Nine records carry the head's own tensors while declaring neither count field, so asking the
     config alone whether a head exists reports every one of them as having none.

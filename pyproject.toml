@@ -328,7 +328,25 @@ completion = ["shtab>=1.6"]
 # release that does not call `pyarrow.PyExtensionType`, which pyarrow removed in 14. The old 2.0
 # floor resolved cleanly and then died at import, which is precisely what the dependency-floor
 # CI job exists to catch, and did, on its first ever run.
-hub = ["datasets>=5.0.1"]
+# multidict IS A SECURITY FLOOR ON A TRANSITIVE DEPENDENCY, added 2026-10-10. It arrives through
+# datasets -> aiohttp -> multidict, so nothing here named it and a free resolve picked a
+# vulnerable version. Checked against OSV directly rather than taken from the auditor's summary,
+# which is the standard the datasets floor above set:
+#
+#     GHSA-54p9-h82j-f925 / CVE-2026-104874, a reference leak in MultiDict and CIMultiDict
+#     items-view union and subtraction. Introduced 6.7.0, fixed 6.9.1, and OSV lists the
+#     affected set as exactly 6.7.0, 6.7.1, 6.8.0 and 6.9.0.
+#
+# The floor is 6.9.1 rather than a range excluding 6.7 to 6.9.0, because everything below 6.7.0
+# predates the leak and nothing current resolves there anyway. 6.9.1 was published 2026-09-21, so
+# it is well past the cooldown window section 5 asks for.
+#
+# This was invisible until 2026-10-10 for a reason worth keeping: the pre-push audit is part of
+# the invariant gate, that gate was reporting "all gates passed" while its own output said the
+# binary was missing and the leg had been skipped, and CI's audit step runs with
+# AUDIT_REQUIRED=false. Three layers and the finding reached nobody. Building the binary is what
+# surfaced it.
+hub = ["datasets>=5.0.1", "multidict>=6.9.1"]
 # The finetune arms of `senbonzakura tamper --method lora`, which trains an adapter beside the
 # frozen weights to measure whether a customer's adapter can route around an abliteration.
 #

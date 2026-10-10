@@ -260,10 +260,30 @@ def _run_tool(args, lock):
                           capture_output=True, text=True, timeout=120, check=False)
 
 
+# THE CHILD COMMANDS ARE THIS INTERPRETER, NOT /bin/true, and that is a fix.
+#
+# These tests used `/bin/true` and `/bin/false`, which do not exist on macOS: there `true` and
+# `false` live in /usr/bin, so the child never started and the tool returned 1 for a reason that
+# had nothing to do with what was being tested. The macOS job carried that single failure from
+# before 2026-10-09 and it went unlooked-at because a louder failure was being chased.
+#
+# `sys.executable` is the one command guaranteed to exist wherever the suite runs, and the exit
+# status it is asked for is explicit, which is what these tests are actually about.
+def _exits(code):
+    """A command that does nothing and exits with `code`, on any platform."""
+    return [sys.executable, "-c", f"raise SystemExit({code})"]
+
+
+def _prints(text):
+    """A command that prints `text`, on any platform."""
+    return [sys.executable, "-c", f"print({text!r})"]
+
+
 def test_the_commands_own_exit_status_is_passed_through(tmp_path):
     lock = tmp_path / "gpu.lock"
-    assert _run_tool(["run", "--share-ok", "--", "/bin/true"], lock).returncode == 0
-    assert _run_tool(["run", "--share-ok", "--", "/bin/false"], lock).returncode == 1
+    assert _run_tool(["run", "--share-ok", "--", *_exits(0)], lock).returncode == 0
+    assert _run_tool(["run", "--share-ok", "--", *_exits(1)], lock).returncode == 1
+    assert _run_tool(["run", "--share-ok", "--", *_exits(7)], lock).returncode == 7
 
 
 def test_a_busy_card_exits_four_so_a_shell_can_tell_it_apart(tmp_path):
@@ -291,7 +311,7 @@ def test_a_busy_card_exits_four_so_a_shell_can_tell_it_apart(tmp_path):
                 pytest.fail("the holder never took the lock, so the refusal was never tested")
             done = subprocess.run(
                 [sys.executable, str(TOOL), "run", "--lock", lock, "--share-ok", "--",
-                 "/bin/echo", "SHOULD NOT RUN"],
+                 *_prints("SHOULD NOT RUN")],
                 capture_output=True, text=True, timeout=60, check=False)
         finally:
             holder.kill()

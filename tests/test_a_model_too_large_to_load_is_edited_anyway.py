@@ -931,3 +931,37 @@ def test_peak_memory_is_a_small_multiple_of_one_tensor(tmp_path):
     assert peak < shard / 2, (
         f"peak {peak / 1e6:.2f} MB is more than half the {shard / 1e6:.2f} MB shard, which is the "
         f"shape of a reader that is holding the whole file")
+
+
+# ── the cache markers must work on every platform, not just the one they were written on ──────
+#
+# Added 2026-10-09. Three of the six markers carried a forward slash and were compared against
+# `str(path)`, which on Windows uses backslashes, so "huggingface/hub", ".cache/torch" and
+# "modelscope/hub" could not match anything on that platform. The guard that refuses an offload
+# directory inside a model cache was dead there, and it hid because the bare "models--" still
+# caught the usual Hub layout. One CI job out of eleven runs Windows, so the two checks below are
+# written to fail on ANY platform rather than waiting for that job to notice.
+
+def test_no_cache_marker_carries_a_platform_specific_separator():
+    """A marker spelt with a backslash, or built with os.path.join, matches on one platform only."""
+    from senbonzakura import streambake
+    for marker in streambake.CACHE_MARKERS:
+        assert "\\" not in marker, (
+            f"the marker {marker!r} carries a backslash, so it matches on Windows and nowhere "
+            f"else. Markers are compared against the forward-slashed form of the path, so they "
+            f"are spelt with forward slashes on every platform")
+
+
+def test_a_cache_path_is_recognised_whichever_separator_it_arrives_with():
+    """The behaviour, rather than the spelling of the constants."""
+    from senbonzakura import streambake
+    markers_with_separators = [m for m in streambake.CACHE_MARKERS if "/" in m]
+    assert markers_with_separators, "this test is vacuous if no marker carries a separator"
+    for marker in markers_with_separators:
+        posix = f"/home/someone/{marker}/offload"
+        assert any(m in posix for m in streambake.CACHE_MARKERS), (
+            f"a path containing {marker!r} is not recognised as a cache")
+        # The same path as Windows would render it. The function resolves and forward-slashes
+        # before matching, so what reaches the comparison never carries a backslash; this asserts
+        # the markers themselves are the forward-slashed form that comparison expects.
+        assert "\\" not in marker

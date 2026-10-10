@@ -339,11 +339,21 @@ def notebook_findings(path: Path, raw: bytes) -> list[str]:
 #: than worked around, because the refusal this clears is the gate's deny-first posture doing its
 #: job: the tree measured in 2026-09-25 had no Rust in it, so the dispatcher had never been shown
 #: this kind and correctly declined to guess.
+#: `.ts`, `.tsx` and `.template` ADDED 2026-10-10, when the landing page entered the project under
+#: `web/`. `.ts` and `.tsx` are the same judgement as `.js` and `.mjs` directly above them, which
+#: have been cleared since the original measurement: TypeScript is the same source format as the
+#: JavaScript it compiles to, and the dispatcher had never been shown the suffix because the tree
+#: measured in 2026-09-25 had no TypeScript in it. `.template` joins `.in` and `.jinja` as a
+#: configuration template. Same caveat as every other source kind, stated once above and true
+#: here: a corpus pasted into a string literal is not something this gate can see, and the human
+#: review is what covers that. It is a real risk for a MARKETING page specifically, where quoting
+#: a model's output is a tempting thing to do, so the reviewer of any copy change to `web/` should
+#: read it with that in mind rather than relying on this list.
 IGNORED_KINDS = frozenset({
     ".1", ".bib", ".cff", ".css", ".cuda", ".dockerignore", ".gif", ".gitignore", ".gitkeep",
     ".heretic", ".ico", ".in", ".jinja", ".js", ".lock", ".mjs", ".npmrc", ".png", ".py", ".rb",
-    ".rs", ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".tool", ".toml",
-    ".webmanifest", ".yaml", ".yml",
+    ".rs", ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".template", ".tool",
+    ".toml", ".ts", ".tsx", ".webmanifest", ".yaml", ".yml",
     "Dockerfile", "LICENSE", "NOTICE",
 })
 

@@ -11,6 +11,18 @@ import { animate, stagger, utils } from 'animejs';
  * Checked in JavaScript as well as CSS because an animation driven from JavaScript sets inline
  * styles, and an inline style wins against the stylesheet's reduced-motion rule. The CSS covers
  * what CSS drives; this covers the rest.
+ *
+ * WHAT THIS DOES AND DOES NOT TURN OFF, because the first version turned off everything and the
+ * page then looked broken to anybody with the setting on, which is a lot of people who never
+ * chose it deliberately.
+ *
+ * The setting exists for vestibular disorders, where MOVEMENT across the screen causes real
+ * nausea and migraine. Translation, parallax, scaling, rotation and anything that loops are the
+ * triggers. A fade between two opacities moves nothing, and a number counting up in place moves
+ * nothing. So those keep running for everybody, and only the movement is dropped.
+ *
+ * The result is a page that is still visibly alive under the setting rather than one that looks
+ * like the JavaScript failed, and nobody gets the motion that would hurt them.
  */
 export function prefersReducedMotion(): boolean {
   return (
@@ -32,16 +44,14 @@ export function reveal(selector: string, { delay = 0 } = {}): void {
   const targets = utils.$(selector);
   if (targets.length === 0) return;
 
-  if (prefersReducedMotion()) {
-    utils.set(targets, { opacity: 1, translateY: 0 });
-    return;
-  }
-
+  // The fade runs for everybody. Only the 14px rise is dropped, because that is the part that
+  // moves and therefore the part the setting is about.
+  const still = prefersReducedMotion();
   animate(targets, {
     opacity: [0, 1],
-    translateY: [14, 0],
-    duration: 760,
-    delay: stagger(70, { start: delay }),
+    ...(still ? {} : { translateY: [14, 0] }),
+    duration: still ? 520 : 760,
+    delay: stagger(still ? 50 : 70, { start: delay }),
     ease: 'outExpo',
   });
 }
@@ -64,11 +74,9 @@ export function countUp(
     el.textContent = v.toFixed(decimals);
   };
 
-  if (prefersReducedMotion()) {
-    show(to);
-    return;
-  }
-
+  // A number counting up in place moves nothing across the screen, so it runs for everybody. It
+  // is also the one animation on this page that carries meaning rather than polish: it makes a
+  // reader look at the figure instead of skimming past it.
   const state = { value: 0 };
   animate(state, {
     value: to,

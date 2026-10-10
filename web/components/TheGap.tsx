@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { RefusalGrid } from '@/components/SectionArt';
 import { countUp, onFirstView, reveal } from '@/lib/motion';
 
 /**
@@ -148,14 +149,10 @@ export default function TheGap() {
         </div>
 
         <div
-          data-enter="gap"
-          style={{
-            marginTop: '3.4rem',
-            paddingTop: '2rem',
-            borderTop: '1px solid var(--rule)',
-            maxWidth: 'var(--measure)',
-          }}
+          className="split"
+          style={{ marginTop: '3.4rem', paddingTop: '2rem', borderTop: '1px solid var(--rule)' }}
         >
+          <div data-enter="gap" style={{ maxWidth: 'var(--measure)' }}>
           <p style={{ margin: '0 0 1rem' }}>
             So people edit the refusal out. The second paper above found that doubles the usable
             patches, then closed by asking for evaluations that measure refusal, correctness and
@@ -187,6 +184,10 @@ export default function TheGap() {
             </a>
             , July 2026.
           </p>
+          </div>
+          <div data-enter="gap" className="split-art">
+            <RefusalGrid />
+          </div>
         </div>
     </section>
   );

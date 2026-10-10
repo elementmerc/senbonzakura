@@ -574,3 +574,42 @@ def test_a_redirected_run_log_does_not_promise_a_reason_it_cannot_hold(monkeypat
         "the premise of this test is wrong: the reason DID reach the log")
     assert "is in this run's log above" not in on_stdout
     assert "stderr" in str(e.value)
+
+
+# ── the closed set of instruments ───────────────────────────────────────────────
+
+#: Every instrument command this project has that produces a refusal, coherence, capability or
+#: safety figure. Closed on purpose: a new instrument has to be added here, and then it has to be
+#: either a stage or a named exclusion, so it cannot be left out of `measure` without anyone
+#: deciding that it should be.
+KNOWN_INSTRUMENTS = frozenset({
+    "score", "compass", "coherence", "capability", "drift",
+    "jailbreak", "multi-turn", "tamper",
+})
+
+
+def test_every_known_instrument_is_either_a_stage_or_a_named_exclusion():
+    covered = set(measure.STAGE_ORDER) | set(measure.NOT_IN_MEASURE)
+    assert covered == KNOWN_INSTRUMENTS, (
+        f"not placed in measure: {sorted(KNOWN_INSTRUMENTS - covered)}; "
+        f"placed but not known: {sorted(covered - KNOWN_INSTRUMENTS)}")
+
+
+def test_no_instrument_is_both_a_stage_and_an_exclusion():
+    overlap = set(measure.STAGE_ORDER) & set(measure.NOT_IN_MEASURE)
+    assert not overlap, f"{sorted(overlap)} is named as both a stage and an exclusion"
+
+
+def test_every_exclusion_says_why_and_names_a_real_command():
+    for name, reason in measure.NOT_IN_MEASURE.items():
+        assert name in DELEGATED, f"{name} is not a command, so the exclusion points nowhere"
+        assert len(reason.split()) >= 8, f"{name} is excluded without a reason a reader can use"
+
+
+def test_an_excluded_instrument_is_refused_by_only_rather_than_quietly_skipped():
+    """`--only` takes its choices from STAGE_ORDER, so asking for an excluded instrument fails at
+    the parser instead of running nothing and reporting success.
+    """
+    parser = measure.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["Qwen/Qwen3-1.7B", "--only", "tamper"])

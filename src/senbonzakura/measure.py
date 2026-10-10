@@ -57,6 +57,20 @@ STAGE_ORDER = ("score", "compass", "coherence", "capability", "drift")
 #: after the quantity, so somebody who wants to re-run one by hand can see which it was.
 OUTPUTS = {name: f"{name}.json" for name in STAGE_ORDER}
 
+#: Instrument commands that `measure` does not run, each with the reason. Named here rather than
+#: left out silently, so that an omission is a recorded decision and a new instrument cannot slip
+#: past the closed set in the tests. `tamper` is the expensive one: it fine-tunes the model twice,
+#: so it does not belong in a run that a person starts expecting one command's worth of time.
+NOT_IN_MEASURE = {
+    "jailbreak": "single-turn jailbreak resistance. Runnable on its own with `senbonzakura "
+                 "jailbreak`. Not yet folded in, because it needs its own attack set and "
+                 "generation budget chosen for this command",
+    "multi-turn": "multi-turn jailbreak resistance. Runnable on its own with `senbonzakura "
+                  "multi-turn`. Not yet folded in, for the same reason as jailbreak",
+    "tamper": "safety-recovery finetune. Trains the model twice, so it is a separate, deliberate "
+              "run with `senbonzakura tamper`, not a stage of a one-command check",
+}
+
 
 class StageError(Exception):
     """One instrument did not produce a number, with the reason phrased for a person."""

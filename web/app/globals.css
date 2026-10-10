@@ -246,9 +246,18 @@ a:hover {
   aspect-ratio: 1;
   border-radius: 2px;
 }
+/* THE RESTING OPACITY IS THE DESTINATION, which is why this is 0.9 and not 0.
+   It was 0, as a start state for the reveal to animate out of, and that is precisely backwards:
+   `opacity: { from: 0 }` animates from 0 to whatever the element CURRENTLY computes to, so a
+   stylesheet pinning it at 0 made the destination 0 too. The animation ran perfectly, from zero
+   to zero, and four hundred squares stayed dark. Measured in a browser, not inferred.
+
+   It is the same mistake as writing the v3 `[0, 1]` array, one layer down: the start value
+   belongs to the animation, the resting value belongs here. Keeping the real value here is also
+   what a reader with no JavaScript sees, which is the rule the whole file is held to. */
 .cell-refused {
   background: var(--measured);
-  opacity: 0;
+  opacity: 0.9;
 }
 .cell-answered {
   background: var(--rule);

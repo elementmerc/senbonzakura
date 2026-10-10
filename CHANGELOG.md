@@ -130,6 +130,7 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - A long sweep says where it has got to every thirty seconds, on standard error, so `--json` stays
   machine readable
 - `--pair` checks that it was given two files before reading any of them
+- `senbonzakura check --quiet` prints one line per finding and nothing else, so its output goes straight into a build log or a grep
 
 ### Command line
 - `senbonzakura stream-extract` pulls refusal directions out of a checkpoint too large to load,
@@ -256,6 +257,7 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   refusal, because the measured gap to float32 is under one percent at the figures published here
 - `measure` counts an instrument that disowned its own figure as one that produced no number, so
   the table, the failure list in `measure.json` and the exit status now agree about the same run
+- `head-to-head stage` writes a separate coherence slice, `bestofn_kl_prompts.txt`, for the best-of-N selection, so the six candidates are ranked on prompts neither tool tuned against. Before this, the selection could be scored on prompts Heretic's search had already tuned against, which could change which candidate won
 
 ### Documentation
 - A new guide page covers whether an edit holds up: what each of the three new commands measures,

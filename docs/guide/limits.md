@@ -170,6 +170,21 @@ Every cell of it was produced by the shipped tools
 `senbonzakura coherence --load-in-4bit` for perplexity), which is what makes it
 reproducible. It's comparability with today's code that it lacks, not reproducibility.
 
+## A fresh checkout fails `doctor` (measured 2026-10-10)
+
+`senbonzakura doctor` on a plain source checkout reports mostly failures, and that is expected.
+On 2026-10-10 we ran it on a clean export of the repository (`git archive HEAD`, no release build)
+and it printed `15 checks, 4 pass, 3 advisory, 8 failed`, exiting with status 2.
+
+The eight failures are the parts that are built at release time rather than stored in git: the
+vendored `converter`, the bundled evaluation track, and the six bundled prompt corpora. The three
+advisories are the missing CUDA device, the unmeasured pinned memory, and the absent
+`llama-quantize` binary. A released wheel or the container image carries the built parts, so an
+installed release should not show these failures.
+
+The gap is that `doctor` cannot yet tell "not built yet" from "broken". Until it can, a
+contributor running it on a checkout will see a red report that is correct but not informative.
+
 ## Where next
 
 - [What is and is not established](/guide/what-we-know) for the multi-direction claim

@@ -85,7 +85,9 @@ separates the two groups **by construction**, which is the exact opposite of the
 arrangement, where it was built unable to.
 
 On the same four probes it now finds and applies **up to eight directions per layer** where
-it previously found one.
+it previously found one. Eight is a ceiling the tool allows, not a count any run reached: this
+page doesn't record how many directions a run actually applied, and the threshold meant to vet
+them rejected nothing at all (see below).
 
 ## What hasn't
 
@@ -268,7 +270,8 @@ That's a less exciting sentence than the README of most tools in this space, and
 true one. The tool keeps the multi-direction capability because the question is genuinely open
 on architectures we can't yet reach, and because being able to *test* the idea is worth more
 than believing it. By default the search chooses its own budget between one and three
-directions, and left to itself on this model it picks one more often than not.
+directions. Left to itself on this model, the count varies from seed to seed: the 2026-09-10
+head-to-head recovered the count for three of its five arms, and they applied two, one and two.
 
 ## Where next
 

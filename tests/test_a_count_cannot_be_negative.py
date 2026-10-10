@@ -92,9 +92,14 @@ EXEMPT: dict[str, str] = {
 #: `track --fit -5 --search -3`, `head-to-head run --trials -3 --batch -1 --max-new -2
 #: --skip-harmful -5`, `imatrix --chunks -4`, `drift --batch -1`, `fetch --expect-size -1`,
 #: `capability --seed -1` and five count flags on `validate` were all accepted.
-NOT_YET_BOUNDED: dict[str, str] = {
-    "--min-applied": "check, where zero may be a legitimate absence of a floor",
-}
+#: EMPTY SINCE 2026-10-10, and the last name went the same way the other ten did: the per-flag
+#: decision got made rather than the floor being set by default. `--min-applied 0` is documented to
+#: mean "no floor" and `main` reads `args.min_applied and thin`, so zero switches the check off and
+#: is the default. A NEGATIVE does the same thing, because it is falsy too, and says nothing about
+#: having done it, which is the silent-off defect that put `--capability-n` on this list in the
+#: first place. So the floor is zero, and the converter is a copy inside the checker rather than an
+#: import, because that distribution installs without torch and may not reach this package.
+NOT_YET_BOUNDED: dict[str, str] = {}
 
 
 def _numeric_actions(ap):
@@ -159,7 +164,7 @@ def test_the_debt_list_only_shrinks():
     Lower it when a flag is bounded. Raising it means a new unbounded count was added, which is the
     thing the sweep exists to stop, and the fix is the bound rather than the number.
     """
-    assert len(NOT_YET_BOUNDED) <= 1, (
+    assert len(NOT_YET_BOUNDED) == 0, (
         f"NOT_YET_BOUNDED has grown to {len(NOT_YET_BOUNDED)}: a new numeric flag was added without "
         f"a floor. Use argresolve.whole_number rather than recording it here.")
 
@@ -253,6 +258,11 @@ SIBLING_REFUSED = [
     ("imatrix", ["m", "--corpus", "neutral", "--chunks", "0"], "--chunks"),
     ("imatrix", ["m", "--corpus", "neutral", "--gpu-layers", "-1"], "--gpu-layers"),
     ("capability", ["m", "--seed", "-1"], "--seed"),
+    # THE CHECKER, which is a separate distribution and therefore a separate copy of the
+    # converter. Its one numeric flag went unbounded longest because it is the one flag the main
+    # package's `argresolve` could not reach: nothing under `senbonzakura_check` may import
+    # `senbonzakura`, or torch comes back into the torch-free wheel.
+    ("check", ["a.json", "--min-applied", "-1"], "--min-applied"),
 ]
 
 #: The same, for the head-to-head family, which needs more required flags to reach its own.
@@ -270,6 +280,9 @@ SIBLING_ACCEPTED = [
     ("track", ["--harmful", "h", "--harmless", "g", "--out", "o", "--fit", "0", "--search", "0"]),
     ("imatrix", ["m", "--corpus", "neutral", "--gpu-layers", "0"]),
     ("capability", ["m", "--seed", "0"]),
+    # Zero is the DEFAULT here and is documented to mean no floor, so refusing it would refuse
+    # every invocation that does not set the flag.
+    ("check", ["a.json", "--min-applied", "0"]),
 ]
 
 
@@ -490,3 +503,73 @@ def test_no_backstop_exemption_names_a_flag_the_package_no_longer_declares():
         f"the next flag of that name, so either the flag came back under a different name or the "
         f"exemption should go. If one of these is vendored, add it to VENDOR_SOURCED_EXEMPTIONS "
         f"rather than widening this check")
+
+
+# ── the checker's copy of the converter ─────────────────────────────────────────────────────────
+#
+# `senbonzakura_check` installs without torch, which is the whole point of it being a second
+# distribution (Q-29), so it cannot import `senbonzakura.argresolve` and carries its own copy of
+# `whole_number`. A copy nothing compares is a copy that drifts, and the drift here would be
+# invisible: both refuse, with different sentences, and only a reader who met both would notice.
+
+
+def test_the_checkers_copy_of_the_converter_behaves_like_the_original():
+    from senbonzakura_check.cli import whole_number as theirs
+
+    mine = argresolve.whole_number("--flag", minimum=0)
+    copy = theirs("--flag", minimum=0)
+    for good in ("0", "1", "4096"):
+        assert mine(good) == copy(good)
+    for bad in ("-1", "-500", "not a number", ""):
+        with pytest.raises(argparse.ArgumentTypeError) as from_mine:
+            mine(bad)
+        with pytest.raises(argparse.ArgumentTypeError) as from_copy:
+            copy(bad)
+        assert "--flag" in str(from_mine.value)
+        assert "--flag" in str(from_copy.value), (
+            "the copy refused without naming the flag, which is the one property the original's "
+            "docstring says argparse's own message lacks")
+
+
+def test_nothing_in_the_checker_imports_the_big_package():
+    """The claim `check.py` makes about itself, which until today nothing checked.
+
+    `src/senbonzakura/check.py` says "Nothing under `senbonzakura_check` may import `senbonzakura`,
+    and a test walks its import graph to keep that true, because an upward import would silently
+    put torch back into the torch-free distribution". The test it names is
+    `test_check_registry.py::test_the_check_subpackage_imports_nothing_heavy`, which walks the
+    graph for torch, transformers, numpy and seven others, and NOT for `senbonzakura` itself. So
+    `from senbonzakura.argresolve import whole_number` would have passed every guard in the suite
+    while pulling the whole package, and the first person to find out would have been somebody who
+    installed the small wheel on its own.
+
+    Found while writing the copy of `whole_number` that this file exists to check: the obvious
+    implementation was the import, and the reason not to was a sentence with nothing behind it.
+
+    READ OFF THE AST, not off the text. The first version of this grepped the source, and failed on
+    its own docstring, which mentions the module it forbids. A comment naming a rule is not a
+    breach of it.
+    """
+    import ast
+    from pathlib import Path
+
+    import senbonzakura_check
+
+    pkg = Path(senbonzakura_check.__file__).resolve().parent
+    offenders = []
+    for py in sorted(pkg.rglob("*.py")):
+        for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                # `level` above zero is a relative import, which stays inside this package however
+                # the module is spelled, so it cannot reach upward and is not asked about.
+                names = [] if node.level else [node.module or ""]
+            else:
+                continue
+            offenders += [f"{py.name}:{node.lineno} imports {n}" for n in names
+                          if n == "senbonzakura" or n.startswith("senbonzakura.")]
+    assert not offenders, (
+        "the checker is a separate distribution that installs without torch, so an import of the "
+        "big package puts torch back into the torch-free wheel and nothing on a development "
+        "machine would show it:\n  " + "\n  ".join(offenders))

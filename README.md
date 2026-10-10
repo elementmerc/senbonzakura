@@ -53,7 +53,7 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 
 ## Try it without installing anything
 
-[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/dev/notebooks/senbonzakura_colab.ipynb).
+[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.4.1/notebooks/senbonzakura_colab.ipynb).
 Free GPU, nothing on your machine. It measures a model, edits it, then measures what that cost.
 Nobody has timed it on Colab's hardware, so it gives you no duration to hold us to.
 

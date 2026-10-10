@@ -126,3 +126,41 @@ def test_the_real_readme_only_links_to_pages_this_repository_holds():
         if not any(c.is_file() for c in candidates):
             missing.append(url)
     assert not missing, f"the README links to pages with no source: {missing}"
+
+
+def test_the_colab_link_names_a_tag_and_not_a_moving_branch():
+    """A NOTEBOOK IS A LINK SOMEBODY RUNS, not one they read.
+
+    The README pointed Colab at `blob/dev`, so the notebook a reader opened was whatever had last
+    landed on the branch rather than the one the release was tested against. A notebook can break
+    silently that way: it installs the published package and then drives it with cells written for
+    a later one.
+
+    Two claims, and neither of them skips. The ref is never a branch, which holds in any checkout.
+    It is also the newest tag, which is checked only where tags are present, because a shallow
+    clone has none; that half says so rather than passing quietly.
+    """
+    import re
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    refs = re.findall(r"colab\.research\.google\.com/github/[^/]+/[^/]+/blob/([^/]+)/", readme)
+    assert refs, "no Colab link found in the README, so this guard is measuring nothing"
+    for ref in refs:
+        assert ref not in ("dev", "main", "master"), (
+            f"the Colab link points at the branch `{ref}`, so a reader opens whatever last landed "
+            f"there instead of the notebook a release was tested against. Name a tag.")
+        assert re.fullmatch(r"v\d+\.\d+\.\d+", ref), (
+            f"the Colab link's ref `{ref}` is not a release tag of the form vX.Y.Z")
+
+    tags = subprocess.run(["git", "tag", "--list", "v*", "--sort=-v:refname"],
+                          cwd=root, capture_output=True, text=True, check=False)
+    present = [t for t in tags.stdout.split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+    if not present:
+        # Deliberately not a skip: a skip reads exactly like a pass in a tail of the output, and
+        # the claim above was still checked.
+        return
+    assert refs[0] == present[0], (
+        f"the Colab link names {refs[0]} but the newest release tag is {present[0]}. A release "
+        f"has to repin this link, and forgetting it is what this guard is for.")

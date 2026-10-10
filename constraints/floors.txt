@@ -108,6 +108,19 @@ nvidia-ml-py==12.535.108
 # is ever installed, so it is the only place the exposure was ever visible, and it is why the
 # pyarrow pin above had to move with it.
 datasets==5.0.1
+# A SECURITY FLOOR ON A TRANSITIVE DEPENDENCY, pinned 2026-10-10 the same day the floor was
+# declared in pyproject.toml, because a floor with no pin here is a floor no job ever installs.
+#
+# `multidict` arrives through datasets -> aiohttp -> multidict, so nothing named it and a free
+# resolve picked a vulnerable version: GHSA-54p9-h82j-f925 / CVE-2026-104874, a reference leak in
+# the MultiDict and CIMultiDict items-view union and subtraction, introduced in 6.7.0 and fixed in
+# 6.9.1. pyproject.toml carries the full reasoning for why the floor is 6.9.1 rather than a range.
+#
+# THE PIN AND THE FLOOR ARE ONE DECISION IN TWO FILES, which is what `test_declared_floors.py`
+# exists to keep true: without it, the dependency-floor job resolves `multidict` freely, installs
+# the newest release, and reports a pass for a version the floor does not describe. So the one job
+# that would have caught a bad floor would have been testing the ceiling under the floor's name.
+multidict==6.9.1
 # 9.0.3 since 2026-10-06, raised from 7.0.0 for PYSEC-2026-1845, which was live at 7.0.0. The two
 # pins below are deliberately NOT raised with it: neither carries an advisory, and both declare
 # bounds that 9.0.3 satisfies (pytest-cov wants pytest>=4.6, xdist wants >=6.2.0). Raising a floor

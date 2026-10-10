@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import Mark from '@/components/Mark';
-import { driftPetals, reveal } from '@/lib/motion';
+import { driftPetals, magnet, pointerWash, revealOnce, riseLines } from '@/lib/motion';
 
 /**
  * The headline is the project's own agreed sentence, shortened to fit a hero.
@@ -27,15 +27,34 @@ import { driftPetals, reveal } from '@/lib/motion';
  * definition. Q-94's own hard line is the same shape, an architecture fingerprint and never a
  * model name, because for a lab measuring an unreleased model the name is the leak.
  */
+/**
+ * THE ACT'S DEVICE IS KINETIC TYPE, and it is the only act on the page that uses it.
+ *
+ * The headline's two lines rise out from behind masks, once, on load, and then the hero holds
+ * still. It used to fade and rise like everything else on the page, which is the right fade and
+ * the wrong thing to do five times; and because that fade was tied to scroll it also meant the
+ * hero UN-REVEALED itself whenever somebody scrolled back to the top. Measured: every headline
+ * element at opacity 0 on returning to y=0.
+ *
+ * What the hero does after that is respond to the reader rather than perform at them. A wash of
+ * the accent follows the pointer behind the type, and the pill leans toward it. Both are gated to
+ * a real pointer, so a phone gets a hero that is simply still, which is the correct hero for a
+ * page whose first claim is about restraint.
+ */
 export default function Hero() {
   const root = useRef<HTMLElement>(null);
+  const pill = useRef<HTMLAnchorElement>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('js-ready');
-    reveal('[data-enter="hero"]');
+    riseLines('.kline > span');
+    revealOnce('[data-enter="hero"]');
+
     const el = root.current;
     if (!el) return;
-    return driftPetals(el);
+    const stop = [driftPetals(el), pointerWash(el)];
+    if (pill.current) stop.push(magnet(pill.current));
+    return () => stop.forEach((fn) => fn());
   }, []);
 
   return (
@@ -48,12 +67,23 @@ export default function Hero() {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        // The wash is a child at a negative z-index, so the header has to be the thing it is
+        // behind. `isolation` keeps it inside this stacking context rather than letting it slide
+        // under the page's own ground, where it would be invisible.
+        position: 'relative',
+        isolation: 'isolate',
       }}
     >
+      <div className="hero-wash" aria-hidden="true" />
+
       {/* A pill above the headline, which is where the reference site puts the one claim it
-          most wants read. Ours is the promise a hosted competitor structurally cannot make. */}
+          most wants read. Ours is the promise a hosted competitor structurally cannot make.
+
+          NO `data-enter` HERE, deliberately. The magnet writes `transform` every frame in its own
+          loop, so a reveal on the same element loses its rise to a race and the reader sees
+          nothing. One continuous transform per element. */}
       <a
-        data-enter="hero"
+        ref={pill}
         href="#install"
         style={{
           display: 'inline-flex',
@@ -76,8 +106,14 @@ export default function Hero() {
         </span>
       </a>
 
+      {/* TWO MASKS, WRITTEN OUT RATHER THAN MEASURED. The usual implementation wraps every word in
+          a span, reads the real line boxes and re-runs after the webfont lands. On a headline that
+          carries a hard break and a coloured second half that rebuild has to reconstruct the
+          colour, and a measurement taken before the font arrives groups the words wrongly. This
+          headline has exactly two lines by authorial decision, so there is nothing to measure and
+          no font-loading order to get right. The `<br/>` is gone because each line is its own
+          block now; the words are unchanged. */}
       <h1
-        data-enter="hero"
         style={{
           fontSize: 'var(--t-hero)',
           lineHeight: 1.02,
@@ -87,9 +123,12 @@ export default function Hero() {
           maxWidth: '20ch',
         }}
       >
-        The refusal fell.
-        <br />
-        <span style={{ color: 'var(--ink-dim)' }}>What else moved?</span>
+        <span className="kline">
+          <span>The refusal fell.</span>
+        </span>
+        <span className="kline">
+          <span style={{ color: 'var(--ink-dim)' }}>What else moved?</span>
+        </span>
       </h1>
 
       <p

@@ -53,8 +53,8 @@ import torch
 from senbonzakura_check import measurement
 
 from . import argresolve, stamps
-from .cli import load_model_and_tokenizer, load_tokenizer, loader_parser
-from .crashsafe import atomic_write
+from .cli import accelerator_name, load_model_and_tokenizer, load_tokenizer, loader_parser
+from .crashsafe import atomic_write, provenance
 
 # The measurement itself, from the torch-only module the sealed best-of-N pass also uses, so the
 # published drift figure and the figure that selects an arm cannot drift apart.
@@ -368,6 +368,10 @@ def main(argv=None):
         # observation is a decoration.
         "kl_ci": None if kl_lo is None else [kl_lo, kl_hi],
         "kl_ci_method": f"seeded percentile bootstrap over prompts, {BOOTSTRAP_DRAWS} draws",
+        # Which code, machine and package versions produced this figure, so a re-run can be
+        # told apart from the run it is compared with. Without it a drift file reads as a
+        # measurement with no receipt, unlike every sibling that writes a result file.
+        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device)),
     }
     # Set only when it fires, which is the shape `margin` established and the shape every consumer
     # was written against: absent means this run makes no claim that its own figure is invalid.

@@ -3,7 +3,7 @@
 // Author:  Daniel Iwugo
 // Comment: Christ is King
 
-import { animate, onScroll, stagger, utils } from 'animejs';
+import { animate, createTimeline, onScroll, stagger, utils } from 'animejs';
 
 /**
  * WHY THIS FILE WAS REWRITTEN, because the first version animated nothing at all.
@@ -141,10 +141,27 @@ export function countUp(
       el.textContent = to.toFixed(decimals);
     },
     autoplay: onScroll({
+      // `target` IS NOT OPTIONAL HERE, and leaving it out is why the numbers never counted.
+      //
+      // A ScrollObserver with no target asks the animation it is linked to for a DOM element to
+      // watch. This animation's target is a plain object, deliberately, so the formatting stays
+      // ours and 43.8 does not get rounded to 44 inside a tween. There is no element to find, so
+      // the library falls back to `document.body`, whose box is the whole page: the counter was
+      // being driven by total page scroll rather than by arriving on screen, so it inched up over
+      // seven thousand pixels and was never seen to move.
+      target: el as HTMLElement,
       enter: ENTER,
       leave: LEAVE,
       sync: prefersReducedMotion() ? false : 3,
       repeat: true,
+      // RESET EXPLICITLY WHEN THE RANGE IS LEFT GOING BACKWARDS. Measured: scrolling down and
+      // back up left every counter showing its final figure. An element animation does not have
+      // this problem, because the observer seeks the animation to zero and the browser repaints
+      // the style; here the number only exists because onUpdate wrote it, and once the range is
+      // behind you there are no more updates to write it back. So the boundary says so directly.
+      onLeaveBackward: () => {
+        el.textContent = (0).toFixed(decimals);
+      },
     }),
   });
 }
@@ -211,4 +228,48 @@ export function driftPetals(root: Element): () => void {
   });
 
   return () => running.forEach((a) => a.pause());
+}
+
+/**
+ * Type a line out, hold it, wipe it, and move to the next. Loops.
+ *
+ * The one looping animation on the page besides the petals, and it is here because a panel
+ * showing what a run leaves on disk should look like something that ran. A caret that never
+ * moves is a screenshot.
+ *
+ * STOPS ENTIRELY under reduced motion rather than running at zero duration, which is the
+ * opposite of the rule everywhere else in this file and is correct for exactly the same reason.
+ * The rule exists so an element is never stranded at its start value; a loop has no final state
+ * to be stranded short of, and a thing that retypes itself forever is the clearest vestibular
+ * trigger there is because the reader cannot wait it out. So the element gets the longest phrase,
+ * complete and still, and nothing moves.
+ *
+ * Returns a stop function. A loop still running after its component has gone keeps the
+ * compositor awake, which is somebody's battery.
+ */
+export function typeLoop(
+  el: Element,
+  phrases: string[],
+  { typeMs = 700, holdMs = 1400 } = {},
+): () => void {
+  if (phrases.length === 0) return () => {};
+  if (prefersReducedMotion()) {
+    el.textContent = phrases.reduce((a, b) => (b.length > a.length ? b : a));
+    return () => {};
+  }
+
+  const tl = createTimeline({ loop: true });
+  for (const phrase of phrases) {
+    // One state object per phrase. Sharing one across the whole timeline makes each later tween
+    // start from wherever the previous one left the value, which reads as a stutter.
+    const state = { n: 0 };
+    const paint = () => {
+      el.textContent = phrase.slice(0, Math.round(state.n));
+    };
+    tl.add(state, { n: { from: 0, to: phrase.length }, duration: typeMs, ease: 'linear', onUpdate: paint })
+      .add(state, { n: phrase.length, duration: holdMs, onUpdate: paint })
+      .add(state, { n: { from: phrase.length, to: 0 }, duration: typeMs * 0.55, ease: 'linear', onUpdate: paint });
+  }
+
+  return () => tl.pause();
 }

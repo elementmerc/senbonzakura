@@ -277,3 +277,20 @@ a:hover {
   :root[data-theme='dark'] .icon-moon { display: inline; }
   :root[data-theme='dark'] .icon-sun { display: none; }
 }
+
+/* THE TYPING CARET. A pseudo-element rather than a character in the animated text, so the
+   typing code only ever deals with the command itself and cannot leave a stray block behind
+   when a phrase wipes to nothing. The blink stops under reduced motion: the caret is the one
+   part of this panel that would otherwise keep moving after the typing had been switched off. */
+.caret::after {
+  content: '\2588';
+  margin-left: 0.1em;
+  color: var(--measured);
+  animation: caret-blink 1.05s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .caret::after { animation: none; }
+}

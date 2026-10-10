@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { DriftBars } from '@/components/SectionArt';
 import { countUp, onFirstView, reveal } from '@/lib/motion';
 
 /**
@@ -87,14 +88,10 @@ export default function Measured() {
         direction cost.
       </p>
 
+      <div className="split">
       <div
         data-enter="measured"
-        style={{
-          border: '1px solid var(--rule)',
-          borderRadius: '12px',
-          overflow: 'hidden',
-          maxWidth: '46rem',
-        }}
+        style={{ border: '1px solid var(--rule)', borderRadius: '12px', overflow: 'hidden' }}
       >
         <table className="mono" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
           <thead>
@@ -131,6 +128,11 @@ export default function Measured() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div data-enter="measured" className="split-art">
+        <DriftBars />
+      </div>
       </div>
 
       <div

@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { RunOutput } from '@/components/SectionArt';
 import { onFirstView, reveal } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
@@ -46,6 +47,8 @@ export default function Install() {
     <>
       <hr className="rule" />
       <section ref={section} className="band">
+        <div className="split">
+        <div>
         <h2
           data-enter="install"
           style={{
@@ -128,6 +131,11 @@ export default function Install() {
           and <code>senbonzakura -i</code> asks the questions for you if you would rather not read
           the flags.
         </p>
+        </div>
+        <div data-enter="install" className="split-art">
+          <RunOutput />
+        </div>
+        </div>
       </section>
     </>
   );

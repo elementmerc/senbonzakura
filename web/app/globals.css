@@ -107,18 +107,28 @@ a:hover {
   text-decoration-color: var(--sakura);
 }
 
-/* EVERY MOTION ON THIS PAGE IS OPTIONAL. Someone who has asked their system for less movement has
-   usually asked because movement makes them ill, so this is not a nicety. The entrance animations
-   check the same preference in JavaScript before they run; this rule covers what CSS drives, and
-   the two together are the whole contract. */
+/* THE BLANKET RULE IS GONE, AND THAT IS THE FIX RATHER THAN A RELAXATION.
+   `animation-duration: 0.01ms !important` on `*` is the snippet everybody pastes, and it kills
+   every animation including the ones that move nothing. A reader with the setting on then gets a
+   page that looks like the JavaScript failed, which is not what they asked for: they asked not to
+   be made ill by movement.
+   So the rule is scoped to what actually moves. Opacity fades and numbers counting up in place
+   keep running for everybody, because neither travels across the screen. Anything that loops,
+   translates, scales or rotates stops. The JavaScript half of this lives in `lib/motion.ts` and
+   draws the same line, because an inline style from a script beats a stylesheet rule. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Anything that loops or travels. Opacity transitions are deliberately not listed. */
+  [data-motion='travels'],
+  [data-motion='loops'] {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
   }
 }
 
@@ -146,4 +156,44 @@ html.js-ready [data-enter] {
 :focus-visible {
   outline: 2px solid var(--sakura);
   outline-offset: 3px;
+}
+
+/* THE TWO-COLUMN SPLIT, which is where the section art lives.
+   Each section's prose stays left and its own figure sits in the space that was empty. The art
+   is always drawn from that section's own numbers, never a stock illustration, because a chart
+   that illustrates a figure it did not come from is the thing this project exists to object to.
+   One column below 980px: the art is a second reading of the prose rather than new information,
+   so on a phone it goes under rather than squeezing both. */
+.split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3rem;
+  align-items: start;
+}
+
+.split-art {
+  min-width: 0;
+}
+
+@media (min-width: 980px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
+    gap: 4rem;
+  }
+}
+
+/* The refusal grid's cells. Four hundred nodes, so the declaration lives here once rather than
+   being inlined four hundred times; doing it the other way added 56KB to the page. */
+.cell-refused,
+.cell-answered {
+  aspect-ratio: 1;
+  border-radius: 2px;
+}
+.cell-refused {
+  background: var(--sakura);
+  opacity: 0;
+}
+.cell-answered {
+  background: var(--rule);
+  opacity: 0.55;
 }

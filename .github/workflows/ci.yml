@@ -426,6 +426,29 @@ jobs:
         # letting a green tick read as "somebody checked the contents".
         run: python tools/ci/check_probes.py
 
+
+  cla:
+    name: Every author of the pushed commits has agreed to the CLA
+    runs-on: ubuntu-latest
+    # ITS OWN JOB, AND fetch-depth: 0, for two reasons that arrived together.
+    #
+    # It was a step inside the `test` matrix, which ran it five times on five platforms to ask a
+    # question about git history that has no platform in it. Four of those runs were waste.
+    #
+    # And all five were WRONG. `actions/checkout` clones at depth 1, so `github.event.before` is
+    # not present, the fallback resolved the root commit to the only commit there is, and the
+    # range collapsed to HEAD..HEAD. The checker correctly refuses an empty range, because a range
+    # matching nothing and a range whose authors all agreed look identical in a log. So the gate
+    # failed on every push rather than on an unagreed author.
+    #
+    # A check about history needs the history. Asking for it once, in one job, costs one clone.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Every author of the pushed commits has agreed to the CLA
         # `CLA.md` clause 2 is the only thing that would ever allow this code to be offered under
         # terms other than the AGPL, and that permission can only come from whoever wrote each

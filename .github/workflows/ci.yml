@@ -426,6 +426,36 @@ jobs:
         # letting a green tick read as "somebody checked the contents".
         run: python tools/ci/check_probes.py
 
+      - name: Every author of the pushed commits has agreed to the CLA
+        # `CLA.md` clause 2 is the only thing that would ever allow this code to be offered under
+        # terms other than the AGPL, and that permission can only come from whoever wrote each
+        # contribution. Asking later is the part that fails: people change jobs and addresses, and
+        # a contributor who cannot be found cannot be asked, so one unagreed commit closes the
+        # option for the code it touched for good.
+        #
+        # `CONTRIBUTING.md` already asks for the line. This makes it a gate rather than an honour
+        # system, which is the difference between "we had a CLA" and a record somebody can audit.
+        # It proves a line exists in a file, which is evidence and not a signature; CLA.md says on
+        # its own first line that it has not been reviewed by a solicitor.
+        #
+        # The range is deliberately the push, not the history: a full-history check would fail
+        # forever on the first unagreed commit rather than stopping the next one.
+        # The two values come through `env` rather than `${{ }}` inside the script. Interpolating
+        # an expression into a run block makes whatever it holds into shell, and the habit is the
+        # defect rather than any one field: these two are commit ids, but the same line written
+        # next to a branch name or a PR title is a remote shell.
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ -n "$BEFORE_SHA" ] && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            RANGE="${BEFORE_SHA}..${HEAD_SHA}"
+          else
+            RANGE="$(git rev-list --max-parents=0 "$HEAD_SHA" | head -1)..${HEAD_SHA}"
+          fi
+          echo "checking $RANGE"
+          python tools/ci/check_cla_assent.py --range "$RANGE"
+
   tests-badge:
     # THE ONLY JOB IN THIS WORKFLOW THAT CAN WRITE TO THE REPOSITORY, and it is deliberately the
     # one that runs nothing. It installs no dependencies, executes no project code and no

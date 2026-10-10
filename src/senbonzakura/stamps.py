@@ -123,8 +123,27 @@ def prompt_format_of(tok) -> str:
     `raw` is a claim rather than an absence. A model scored on bare prompts and one scored through
     its instruction format refuse at different rates, and three copies of this renderer drifted
     once and a table was published across the gap. The field says which of the two happened.
+
+    THE DIGEST IS PART OF THE ANSWER, and leaving it out was the defect here. `ensure_chat_template`
+    returns a mapping, `{"source": ..., "sha256": ..., "audit": ...}`, and this used to hand the
+    whole mapping to `str()`. An artefact therefore recorded the literal text
+    `{'source': 'tokenizer', 'sha256': '872be49dbb638044'}` as its prompt format, which is not a
+    name, does not compare equal to anything a reader would write, and puts a Python repr in a
+    published field.
+
+    The source alone is not enough either, and that is why the digest is kept rather than dropped
+    for tidiness: two tokenizers both answer "tokenizer" while rendering different templates, which
+    is exactly the drift the paragraph above is about. `tokenizer:872be49dbb638044` distinguishes
+    them; `tokenizer` does not.
     """
-    return str(getattr(tok, "senbon_chat_template", None) or "raw")
+    raw = getattr(tok, "senbon_chat_template", None)
+    if not raw:
+        return "raw"
+    if isinstance(raw, dict):
+        source = raw.get("source") or "unknown"
+        digest = raw.get("sha256")
+        return f"{source}:{digest}" if digest else str(source)
+    return str(raw)
 
 
 def partition_of(skip, recorded_skip=None, *, verified=None) -> str:

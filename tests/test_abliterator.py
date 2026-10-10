@@ -377,10 +377,24 @@ def test_every_entry_point_renders_a_prompt_the_same_way(abl, tiny_tok):
     and the compass that produces the AUC both left it on. So a configuration was selected under
     one prompt format and reported under another. Same renderer now, and this asserts it rather
     than trusting that nobody copies it a fourth time.
+
+    ASSERTED OVER THE WHOLE PACKAGE RATHER THAN OVER TWO MODULE ATTRIBUTES. This used to read
+    `score.render_chat is cli.render_chat`, which only holds while `score` happens to import the
+    name at module scope. It imports it inside the two functions that call it now, so the old
+    form broke on an import move while the property it was protecting was untouched, and a test
+    that fails for a reason unrelated to its own claim is a test that gets edited to pass. One
+    definition in the package is the claim, and nothing can satisfy it by accident.
     """
-    from senbonzakura import margin, score
-    assert score.render_chat is cli.render_chat
-    assert margin.render_chat is cli.render_chat
+    import ast
+
+    defined = []
+    for path in sorted((Path(cli.__file__).parent).glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defined += [path.name for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == "render_chat"]
+    assert defined == ["firsttoken.py"], (
+        "`render_chat` is defined somewhere other than `firsttoken`, which is how the three "
+        f"copies drifted the first time: {defined}")
 
     abl.tok = tiny_tok
     assert abl.chat("a request") == cli.render_chat(tiny_tok, "a request")

@@ -173,7 +173,17 @@ def test_help_still_prints_without_the_stack(stripped):
     assert "senbonzakura" in proc.stdout.lower()
 
 
-@pytest.mark.parametrize("command", ["score", "drift", "validate"])
+#: The shortest invocation of each command that gets past argparse, read off each command's own
+#: "the following arguments are required" line. The paths need not exist: the stack is imported
+#: before anything is opened, which is the whole point of the assertion below.
+NEEDS_THE_STACK = {
+    "score": ("--model", "m", "--eval", "e", "--out", "o"),
+    "drift": ("--model", "m", "--base", "b", "--prompts", "p", "--out", "o"),
+    "validate": ("--model", "m", "--out", "o"),
+}
+
+
+@pytest.mark.parametrize("command", sorted(NEEDS_THE_STACK))
 def test_a_command_that_genuinely_needs_the_stack_says_so_rather_than_crashing(stripped, command):
     """The other half of the contract: the boundary has to be legible from the outside.
 
@@ -186,12 +196,32 @@ def test_a_command_that_genuinely_needs_the_stack_says_so_rather_than_crashing(s
     rather than through `.parser`, where it lives; the test asserted the failure and so
     protected it. Three commands are named here instead of one, because a property asserted
     on a single example is a property one refactor away from being untested.
+
+    AND IT USED TO ASK FOR `--help`, WHICH WAS THE SAME DEFECT A SECOND TIME. A help page that
+    needs the stack is a help page the person who is trying to find out what to install cannot
+    read, so `--help` failing was never the contract; it was the symptom the `capability` case
+    directly below already names as a defect. These three now answer `--help` in under a tenth
+    of a second with nothing installed, so the test asks for the work instead, which is where
+    the stack is genuinely needed and where the sentence genuinely has to appear.
     """
-    proc = _run(stripped, command, "--help")
-    assert proc.returncode != 0
+    proc = _run(stripped, command, *NEEDS_THE_STACK[command])
+    assert proc.returncode != 0, "running the measurement with no stack at all reported success"
     said = proc.stderr + proc.stdout
     assert "Traceback" not in proc.stderr, f"a missing dependency reached the user as a crash:\n{said}"
     assert "pip install" in said, "the message must name what to install"
+
+
+@pytest.mark.parametrize("command", sorted(NEEDS_THE_STACK))
+def test_the_help_for_those_same_commands_needs_nothing_installed(stripped, command):
+    """The other side of the pair above, and the reason it had to stop asserting the failure.
+
+    `--help` is what somebody types to find out what a command wants, including what to install,
+    so it is the one invocation that cannot require the thing it is about to recommend. Held for
+    all three rather than one, for the same reason the test above names three.
+    """
+    proc = _run(stripped, command, "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "--model" in proc.stdout, "the help page printed without naming the command's flags"
 
 
 def test_capability_can_print_its_help_with_nothing_installed(stripped):

@@ -1025,16 +1025,25 @@ def report(summary, change=None):
     # these three branches had run, so a run that graded nothing printed "accuracy: nothing could
     # be graded" and then told the reader that the accuracy above was not a statement about this
     # model. A caveat about a figure that is not there reads as a figure that is.
+    # THE CLAUSE IS CARRIED WHOLE, and that is the fix rather than a tidy-up. This used to
+    # interpolate a noun phrase into one shared sentence ending "... is not a statement about this
+    # model", and the two phrases do not take the same verb: "the accuracy above is" is right and
+    # "the counts above is" is not. A reader met the second whenever a rate was withheld, which is
+    # exactly the run where the wording has to be careful. Keeping the agreement inside each
+    # branch means a third branch cannot reintroduce it.
     figure_above = None
+    figure_clause = None
     if summary["accuracy"] is not None:
         lo, hi = summary["accuracy_ci"]
         lines.append(f"  accuracy {summary['correct']}/{summary['graded']} = "
                      f"{summary['accuracy']}  95% CI [{lo}, {hi}]")
         figure_above = "the accuracy above"
+        figure_clause = "the accuracy above is not a statement about this model"
     elif summary.get("accuracy_withheld_because"):
         lines.append(f"  accuracy: {summary['correct']}/{summary['graded']} and NOT REPORTED as a "
                      f"rate: {summary['accuracy_withheld_because']}")
         figure_above = "the counts above"
+        figure_clause = "the counts above are not a statement about this model"
     else:
         lines.append("  accuracy: nothing could be graded")
     ref_rate = (change or {}).get("reference_indeterminate_rate")
@@ -1047,9 +1056,8 @@ def report(summary, change=None):
             f"items. That understates the cost in the flattering direction. Re-run the reference "
             f"with a larger --max-new before reading the change.")
     if summary.get("budget_suspect"):
-        cost = (f"so what was graded is an easier exam than the one set and {figure_above} is not "
-                f"a statement about this model"
-                if figure_above else
+        cost = (f"so what was graded is an easier exam than the one set and {figure_clause}"
+                if figure_clause else
                 "and here nothing could be graded at all, so this run has produced no figure "
                 "about this model to read")
         lines.append(

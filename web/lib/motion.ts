@@ -23,6 +23,43 @@ import { animate, onScroll, stagger, utils } from 'animejs';
  * the single most common way animation breaks a page, and it is what happened here.
  */
 
+/**
+ * THE SCROLL RANGE, and the reason it is short.
+ *
+ * `sync` maps an animation's whole timeline onto the scroll distance between `enter` and `leave`,
+ * so those two thresholds are not a trigger, they are the DURATION. The first version used the
+ * defaults, which run from the element appearing at the bottom of the viewport to the element
+ * disappearing off the top: the full journey. An animation stretched over that is at about 10%
+ * progress when the element is comfortably readable, so a reader sees a half-arrived page and
+ * concludes nothing is animating. That is exactly what happened, and the refusal grid was the
+ * proof: four hundred squares still at their start opacity while sitting in the middle of the
+ * screen.
+ *
+ * So the range ends when the element's top reaches the middle of the viewport. The movement
+ * finishes as the element settles into reading position and reverses on the way back up, which
+ * is the behaviour on animejs.com.
+ *
+ * The grammar is '<container edge> <target edge>', container FIRST, which is the opposite way
+ * round from how it reads in English. Checked against the installed bundle rather than assumed:
+ * `top`/`start` resolve to 0, `bottom`/`end` to 100%, `center` to 50%.
+ */
+const ENTER = 'end-=40 start';
+const LEAVE = 'center start';
+
+/**
+ * A stagger step that keeps the WHOLE wave inside `spread`, however many elements there are.
+ *
+ * A fixed per-element delay is a trap at scale. `stagger(60)` across the refusal grid's 175 lit
+ * cells is a ten-second wave, and under `sync` that ten seconds is the entire scroll range, so
+ * the last cells arrive only once the grid is leaving the screen. The reader never sees the
+ * finished figure. Bounding the total means a list of six and a grid of four hundred both take
+ * about the same time, which is also what makes them feel like one page rather than two.
+ */
+function wave(count: number, { spread = 520, max = 70 } = {}): number {
+  if (count < 2) return 0;
+  return Math.min(max, spread / (count - 1));
+}
+
 /** Whether this reader has asked their system for less movement. */
 export function prefersReducedMotion(): boolean {
   return (
@@ -66,11 +103,11 @@ export function reveal(selector: string, { rise = 18 } = {}): void {
     // stays, because a fade moves nothing across the screen and is not what the setting is for.
     ...(still ? {} : { translateY: { from: rise } }),
     duration: ms(620),
-    delay: still ? 0 : stagger(60),
+    delay: still ? 0 : stagger(wave(targets.length)),
     ease: 'out(3)',
     autoplay: onScroll({
-      enter: 'bottom-=80 top',
-      leave: 'top bottom',
+      enter: ENTER,
+      leave: LEAVE,
       sync: still ? false : 2,
       repeat: true,
     }),
@@ -104,8 +141,8 @@ export function countUp(
       el.textContent = to.toFixed(decimals);
     },
     autoplay: onScroll({
-      enter: 'bottom-=60 top',
-      leave: 'top bottom',
+      enter: ENTER,
+      leave: LEAVE,
       sync: prefersReducedMotion() ? false : 3,
       repeat: true,
     }),
@@ -129,11 +166,11 @@ export function growIn(
   animate(list, {
     [axis]: { from: 0 },
     duration: ms(duration),
-    delay: still ? 0 : stagger(step),
+    delay: still ? 0 : stagger(Math.min(step, wave(list.length, { spread: 700, max: step }))),
     ease: 'out(3)',
     autoplay: onScroll({
-      enter: 'bottom-=60 top',
-      leave: 'top bottom',
+      enter: ENTER,
+      leave: LEAVE,
       sync: still ? false : 2,
       repeat: true,
     }),

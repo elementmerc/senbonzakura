@@ -206,9 +206,16 @@ def _public_docs():
         # the worktree sits on. Those copies failed this guard while the real surfaces passed,
         # which is the worst possible reading: a stale snapshot nobody can reach reported as a
         # published surface quoting an uncaveated figure. **A worktree copy is not a surface.**
+        #
+        # `scrollcraft/` ADDED 2026-10-10, and it is the same shape a fourth time. It is the
+        # scroll-craft skill's workspace: design briefs, feeling curves and a fingerprint
+        # registry, written while planning the site's motion. A brief quotes the figures it is
+        # planning a section around, which is exactly right in a working note and exactly wrong
+        # in a published surface, and the guard cannot tell the two apart by reading the text.
+        # It is a tool's scratch directory, not a page anybody can reach.
         if rel.startswith(("private/", "docs/.vitepress/", "node_modules/", ".venv/",
                            "dist/", "dist-", "build/", "htmlcov/", ".tox/", "site/",
-                           ".claude/")):
+                           ".claude/", "scrollcraft/")):
             continue
         # ANYTHING GIT IGNORES CANNOT REACH A READER, so scanning it can only produce failures
         # that depend on what happens to be lying around. On 2026-09-26 a staging directory

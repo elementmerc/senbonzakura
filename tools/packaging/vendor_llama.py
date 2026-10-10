@@ -490,10 +490,25 @@ def content_digest(root):
     Path and size go into the hash alongside the bytes, so a renamed or truncated file cannot be
     concealed by another one's contents. Sorted, so the walk order of the filesystem cannot change
     the answer between two machines.
+
+    BYTECODE IS SKIPPED, and the paragraph above is why. This used to walk everything under root,
+    and the vendored tree is Python source that this project imports, so the first import writes
+    `__pycache__/*.pyc` beside it and the digest moves. Reproduced 2026-10-10 on a two file tree:
+    one generated `.pyc` appearing took the digest from ffb58007 to b77fe524. Nothing had changed
+    about the package. The docstring above already names that failure ("a check that cries wolf is
+    a check people learn to override") and the implementation was doing it.
+
+    Skipping bytecode hides nothing, which is the test a skip has to pass. A `.pyc` is compiled
+    from the `.py` sitting beside it and that source IS hashed, so there is no edit a `.pyc` could
+    carry that the source does not already account for. An ORPHAN `.pyc` with no source would be
+    the exception, and it cannot execute: Python only loads one through the module whose source
+    names it.
     """
     h = hashlib.sha256()
     for p in sorted(Path(root).rglob("*")):
         if not p.is_file():
+            continue
+        if p.suffix in (".pyc", ".pyo") or "__pycache__" in p.parts:
             continue
         rel = p.relative_to(root).as_posix()
         data = p.read_bytes()

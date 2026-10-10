@@ -396,11 +396,14 @@ def _from_hub(body, split, spec, token, streaming, limit):
 
 # ── the entry point ──────────────────────────────────────────────────────────────
 def resolve(spec, *, text_column=None, token=None, streaming=False, limit=None,
-            strip=True, what="dataset"):
+            strip=True, what="dataset", missing_hint=None):
     """Every accepted way of saying "the prompts are here", as a list of strings.
 
     `limit` bounds how many rows are read where that is possible (streaming stops early); it is a
     read budget rather than a slice, and `[:N]` in the spec is the slice.
+
+    `missing_hint` is the closing advice when nothing exists at the spec. It defaults to the advice
+    that fits the track's own splits; a caller whose set the track does not build passes its own.
     """
     body, split, slice_expr = parse_spec(spec)
     token = token or os.environ.get("HF_TOKEN") or None
@@ -446,10 +449,11 @@ def resolve(spec, *, text_column=None, token=None, streaming=False, limit=None,
     elif looks_like_hub_id(body):
         rows, cols = _from_hub(body, split, spec, token, streaming, limit)
     else:
+        hint = missing_hint or ("Check the spelling, or pass a directory built by "
+                                "`senbonzakura track`.")
         raise DatasetError(
             f"could not load the {what} at {spec}: nothing exists at that path and it does not "
-            f"look like a Hub dataset id ('owner/name'). Check the spelling, or pass a directory "
-            f"built by `senbonzakura track`.")
+            f"look like a Hub dataset id ('owner/name'). {hint}")
 
     if not rows:
         raise DatasetError(f"the {what} at {spec} is empty, so there is nothing to measure.")

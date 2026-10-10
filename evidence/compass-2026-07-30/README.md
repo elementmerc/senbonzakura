@@ -137,6 +137,15 @@ python -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
     --out base-qwen3-1.7b.json
 ```
 
+**This recipe cannot be re-run as written today.** It is the command the 2026-07-30 run used on
+the card recorded above, and `<matched>` pointed at a topic-matched set that existed on that
+machine at the time. Nothing in this repository builds a `good_matched_ds` directory:
+`senbonzakura track` does not write one, no other command does, and the set was retired as a
+track partition on 2026-10-01 (see [REPRODUCING.md](../../REPRODUCING.md)). The one copy that
+existed was a hand-built set of 280 rows outside this repository, and it is not carried here. If
+you point `--harmless-matched` at a path that does not exist, the run stops with an error saying
+no command builds that set, so you must supply it yourself.
+
 The skips are not arithmetic conventions; they are the boundaries recorded in the track's
 `track.json`, and a run whose flags would cross them stops rather than measuring.
 

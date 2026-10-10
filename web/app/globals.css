@@ -52,6 +52,15 @@
   --nav-bg-lifted: rgba(26, 29, 36, 0.72);
   --nav-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 
+  /* THE EASING TOKEN THE NAVIGATION BAR HAS BEEN ASKING FOR SINCE IT WAS WRITTEN, and it was
+     never defined. `transition: padding 320ms var(--ease)` with no `--ease` is not a transition
+     with a default curve, it is an INVALID declaration: an unresolvable `var()` makes the whole
+     property compute to its initial value, which for `transition` is none. So the bar's island
+     shape, its blur, its shadow and its padding all snapped between the two states with no
+     animation at all, on a page whose complaint was that nothing moved. Measured in a browser.
+     The built-in CSS easings are too weak for anything this size; this is the curve the kit uses. */
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+
   --t-hero: clamp(2.6rem, 7vw, 5.4rem);
   --t-head: clamp(1.7rem, 3.6vw, 2.9rem);
   --t-body: clamp(1rem, 1.1vw, 1.1rem);
@@ -229,8 +238,17 @@ a:hover {
   }
 }
 
-/* The refusal grid's cells. Four hundred nodes, so the declaration lives here once rather than
-   being inlined four hundred times; doing it the other way added 56KB to the page. */
+/* THE REFUSAL GRID IS TWO GRIDS NOW, and the second one is what makes the squares COLOUR rather
+   than appear.
+   A single grid of pink cells fading up from nothing shows the page's own background through each
+   square on the way, so the figure reads as squares arriving out of the void. Four hundred grey
+   squares with the hundred and seventy-five pink ones laid exactly on top reads as those squares
+   turning pink, which is what a refusal rate looks like when you watch it happen. Only opacity
+   moves either way, so the compositor does all of it and never touches layout, and both colours
+   stay theme tokens so the sweep is right in both themes and survives the toggle.
+
+   The declarations live here once rather than being inlined on each of five hundred and
+   seventy-five nodes; doing it the other way added 56KB to a page that makes a point of its size. */
 .cell-refused,
 .cell-answered {
   aspect-ratio: 1;
@@ -252,6 +270,19 @@ a:hover {
 .cell-answered {
   background: var(--rule);
   opacity: 0.55;
+}
+
+.grid-stack {
+  position: relative;
+}
+/* The lit layer is laid on the grey one by sharing its geometry rather than by being told where to
+   sit: same columns, same gap, same square cells, same width. The lit cells are the first 175 in
+   reading order, which is why no spacers are needed, and why the overlay is seven rows tall
+   against the base's sixteen. */
+.grid-lit {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 /* THE THEME TOGGLE'S ICON IS CHOSEN BY CSS, NOT BY JAVASCRIPT.
@@ -283,3 +314,100 @@ a:hover {
 /* The caret keeps blinking whatever the system asks for. See RESPECT_SYSTEM_MOTION_SETTING in
    lib/motion.ts, which is where that decision is recorded; this rule would otherwise be the one
    place the old behaviour survived, because it is pure CSS and no script reaches it. */
+
+/* THE HERO'S TWO MASKED LINES. `overflow: hidden` on the mask and a line that starts one
+   line-height below it, so each half of the headline rises out from behind a clean edge rather
+   than fading in on the spot.
+
+   THE PADDING IS NOT SPACING, IT IS DESCENDER ROOM. A mask clipped to the line box shears the
+   tails off g, y, p and j, and that is the single most common way this effect looks broken. The
+   headline here happens to have no descenders, which is exactly why a later copy edit would break
+   it silently, so the room is reserved now and taken back out with a negative margin. */
+.kline {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.14em;
+  margin-bottom: -0.14em;
+}
+.kline > span {
+  display: block;
+}
+
+/* THE HERO'S POINTER WASH. The page's one piece of embodiment: the first screen responds to
+   somebody being there, which is what lets it hold still otherwise.
+
+   `--wash` is 0 until a pointer has actually moved, so this is a response rather than a decoration
+   that was always on. It never appears on a touch screen, because the script that publishes
+   `--mx` is gated to a real pointer and the variables stay unset, which `var()` falls back for. */
+.hero-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: var(--wash, 0);
+  transition: opacity 600ms ease;
+  background: radial-gradient(
+    38rem 26rem at var(--mx, 50%) var(--my, 40%),
+    var(--measured-soft),
+    transparent 70%
+  );
+}
+
+/* THE SEED TICKS, which are the signature move's evidence layer.
+   One hairline per real measured run, at its own height, drawn over the bar it is averaged into.
+   `transform-origin: left` because the tick grows out from the axis rather than from its middle,
+   and the whole thing is `aria-hidden` art: every number it draws is already in the table.
+
+   THE TICKS TAKE THE INK COLOUR, NOT THE BAR'S. They have to be legible against three different
+   grounds at once: the page behind the chart, the grey bar and the pink one. A tick drawn in the
+   faint ink vanished against the grey bar it was crossing, which hid four of the five runs in
+   that arm. Ink reads against all three in both themes. */
+.seed-tick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--ink);
+  opacity: 0.55;
+  transform-origin: left;
+}
+.seed-tick--hi {
+  opacity: 0.75;
+}
+
+/* THE DRAWN 95% INTERVAL under the 1.9 figure. The band is real geometry between 1.2 and 3.1 and
+   the marker walks to 1.9, so the interval is drawn rather than restated. */
+.interval {
+  position: relative;
+  height: 1px;
+  background: var(--rule);
+  margin: 0.2rem 0 0.9rem;
+  max-width: 13rem;
+}
+.interval-band {
+  position: absolute;
+  top: -3px;
+  height: 7px;
+  background: var(--measured-soft);
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+}
+.interval-dot {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--measured);
+}
+
+/* THE FOOTER'S GROUND, which is how the page resolves instead of trailing off.
+   A hard step to the deeper ground rather than an interpolation: this page is a document with
+   sections, not one continuous place, and a cut is not a crossfade. The reader arrives somewhere
+   a shade quieter and it holds, so the last thing they carry is an ending rather than a fade. */
+footer.band {
+  background: var(--bg-deep);
+  box-shadow: inset 0 1px 0 var(--rule);
+}

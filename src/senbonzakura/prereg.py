@@ -91,6 +91,10 @@ COMPARISON_FIELDS = {
     "name": "what this comparison is called, so a result can be matched back to it",
     "metric": "what is measured",
     "instrument": "what measures it. Two numbers from two instruments are not a comparison",
+    "estimator": "the procedure that turns the rows into the figure: the statistic, how ties are "
+                 "handled, and how the doubt around it is drawn. `instrument` names what measures; "
+                 "this names how the number is computed, because one metric name can cover two "
+                 "procedures that disagree",
     "partition": "which rows it is scored on. A rate with no partition is the 2026-08-16 defect",
     "decision_rule": "what counts as a pass, fixed now rather than after the number arrives",
 }

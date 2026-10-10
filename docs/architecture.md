@@ -132,6 +132,45 @@ point that still holds coherence and low drift.
 - **New metrics.** `score.py` and `metrics.py` are separable from the search; a new
   refusal ruler can be added without touching the pipeline.
 
+## The artefact contract
+
+A result file committed to this repository must not carry the prompts it was scored on or the
+text the model generated for them. The repository has a public remote, and the rows a run keeps
+are harmful prompts and the replies a model gave to them, so a committed result file would publish
+both. Keeping a run's output on your own disk is fine. Committing it is what the rule governs.
+
+The authority is `tools/ci/check_prompt_artefacts.py`. Its module docstring explains the reasoning,
+and its constant tables hold the exact lists of banned field names and recorded files. This section
+describes the shape of the rule and deliberately copies none of those lists, because a second copy
+would drift from the checker. If this page and the checker ever disagree, the checker is right and
+this page needs fixing.
+
+CI runs the checker over the whole tree as the hard gate. You can run it by hand over what you've
+staged with `--staged`, which is what a local pre-commit step does. Each finding is printed as a
+plain line naming the file and the reason.
+
+The checker decides by file kind, and a kind it has not been told about is refused rather than
+passed. The main cases:
+
+- **JSON and JSON Lines** are read by field name at any depth, up to a fixed nesting limit. A
+  document nested deeper than that limit is refused, because a check that cannot see inside a
+  file cannot clear it. A document with no object in it, such as a bare array of strings, is
+  refused for the same reason.
+- **Binary datasets** (Arrow, Parquet, Feather) are cleared only when their SHA-256 hash matches
+  a recorded value. A changed file has to be re-recorded on purpose.
+- **Plaintext corpora** (`.txt`, `.csv`, `.tsv`) are cleared only when they are a recorded path.
+- **Notebooks** are refused if any cell holds saved output.
+- **Markdown** under `head-to-head/results/` is read for pasted output, meaning fenced or quoted
+  blocks. Markdown in the recorded documentation directories is cleared without being read.
+  Markdown anywhere else is refused.
+- **Anything else** is refused unless its kind is recorded as ignored.
+
+The check reads field names, not what the values say. That is deliberate: a gate that judges
+content needs a list of what harmful prompts look like, and that list would itself be published
+by the gate. When a legitimate field collides with a banned name, the fix is to rename the field
+in the data and leave the checker alone. Teaching the checker to inspect values is the wrong
+direction.
+
 ## Licence note
 
 The keyword metric in `metrics.py` takes its marker list verbatim from Heretic

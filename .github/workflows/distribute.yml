@@ -170,7 +170,14 @@ jobs:
         # grepped for two lines that said nothing about the bundled data.
         run: |
           set -euo pipefail
-          docker run --rm senbonzakura:smoke doctor 2>&1 | tee doctor.txt || true
+          # `--advisories-ok` RATHER THAN `|| true`, and the difference is what reaches this
+          # script. doctor exits 1 on advisories alone, which under `set -e` would abort here for
+          # something that is not a fault, so the status had to be discarded. `|| true` discarded
+          # a real exit 2 along with it. The flag makes advisories exit 0 and leaves a genuine
+          # failure non-zero, so doctor's own verdict is back in play and the greps below are a
+          # second check rather than the only one. Measured 2026-10-10: `doctor` exits 1 and
+          # `doctor --advisories-ok` exits 0 on a tree reporting 2 advisories and 0 failures.
+          docker run --rm senbonzakura:smoke doctor --advisories-ok 2>&1 | tee doctor.txt
           grep -q "llama-quantize *vendored, runs" doctor.txt \
             || { echo "::error::the image ships a quantiser that does not run"; exit 1; }
           # The bundled track is the one named exception: it is packed from a held-out track that

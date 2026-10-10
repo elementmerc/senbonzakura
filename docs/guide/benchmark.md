@@ -127,10 +127,19 @@ got the selection pass.
   point and it is still the wrong direction to round in, and the test pinning this row asserted
   only that Heretic's side was zero, so it could not have caught it. That assertion now covers
   both arms.
-- **The drift figures in the table were measured on 64 prompts** where the other axes use 200,
-  and that slice is the one Heretic tunes against. The re-measurement on 200 held-out prompts has
-  since been done, and it is the superseding block at the top of this page: no detectable
-  difference.
+- **The drift figures carry two prompt counts, and only one of them is current.** The superseded
+  2026-08-12 row (struck through in the table) was measured on 64 prompts, where the other axes use
+  200, and that slice is the one Heretic tunes against. The 2026-09-10 figures in the superseding
+  block at the top of this page were measured on 200 held-out prompts, and `head-to-head` now
+  takes its drift slice at 200 (as of 2026-10-10). Cite the 200-prompt figures above, not the
+  64-prompt one.
+- **The Senbonzakura arms did not pin the direction budget, so the table mixes K.** Each arm's
+  search chose its own number of directions. Of the five arms, three recorded the count they
+  applied and it was two, one and two; the other two could not be recovered. A mixture like that
+  says nothing either way about whether more directions help, in either direction: it is not
+  evidence for the multi-direction idea and it is not evidence against it. The clean contrast is
+  the 2026-08-13 K comparison, which pinned the budget at both ends. Recorded in full at
+  `head-to-head/results/2026-09-10/README.md`.
 - **The equal-budget matching is not symmetric, and it should be.** Trials were matched UP to
   Heretic's 200, on the stated principle that starving the comparison would decide it for us.
   Direction-fitting prompts were matched DOWN to our 256, where Heretic's shipped default is 400

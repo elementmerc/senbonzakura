@@ -303,7 +303,7 @@ a dependency of it.
 and is checked at build time:
 
 ```
-docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:dev doctor
+docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:v0.4.1 doctor
 ```
 
 ## The optional extras

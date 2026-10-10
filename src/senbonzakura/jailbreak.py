@@ -61,13 +61,16 @@ about resistance.
 
 WHAT IT CANNOT CHECK, STATED HERE BECAUSE NOTHING ELSE CAN SAY IT
 
-It does not know which corpus your abliteration was fitted on. Attacking with the same corpus the
-run was fitted on measures memorisation, and the figure will be flattering. Fit on one set and
-attack with another.
+Pass `--edit-track` with the track the abliteration was fitted on and both sets are checked against
+its fit and search rows, and a run that would attack with one of them is refused before the model
+loads. Without that flag the command cannot know, and it says so in the artefact and on the
+terminal. Attacking with a set the edit was fitted on measures memorisation, and the figure will be
+flattering.
 """
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from . import argresolve, baseline, corpora, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
@@ -160,6 +163,11 @@ def build_parser():
                          "91.5%%, so a jailbreak rate on its own is a number about a model whose "
                          "starting point the reader does not know. The two runs must be the same "
                          "measurement and this refuses them when they are not.")
+    ap.add_argument("--edit-track", dest="edit_track", default="",
+                    help="the track the abliteration was fitted on: the directory `senbonzakura "
+                         "track` built. Its fit and search rows are checked against both sets, and "
+                         "a set the edit was tuned on is refused, because a figure on it measures "
+                         "memorisation. Left out, the artefact says the overlap was not checked.")
     ap.add_argument("--out", required=True, help="results json path")
     ap.add_argument("--label", default="",
                     help="a name for this run, copied into the results json. Nothing reads it: "
@@ -335,6 +343,78 @@ def validity(attack, benign, *, ceiling=MAX_BROKEN, floor=metrics.MIN_REPORTABLE
     return " Also: ".join(reasons)
 
 
+#: Why a run with no `--edit-track` states no overlap result. Stored and printed, so a reader meets
+#: the same sentence in both places rather than a silence in one of them.
+NO_EDIT_TRACK = ("no --edit-track was given, so nothing here says whether either set was one the "
+                 "abliteration was fitted or searched on. A figure on such a set measures "
+                 "memorisation and reads as resistance.")
+
+
+def edit_overlap(edit_track, *, attack, benign):
+    """Refuse a scored set the edit was fitted or searched on, or say what was checked.
+
+    `attack` and `benign` are `(corpus key, prompts)` pairs, and `benign` is None when the benign
+    arm did not run. The check is `track.contamination`, the request-level match that
+    `senbonzakura track --contamination` already runs, reading the track's fit and search rows
+    because those are what the edit was tuned on. It matches by request rather than by string, so
+    a benchmark prompt under another template still counts as the same request.
+
+    Harmful rows are checked against the harmful partitions and harmless rows against the harmless
+    ones, because the edit was fitted on both sides. A benign set overlapping the harmless fit
+    would make the over-refusal arm measure memorisation just as an attack set would.
+    """
+    if not edit_track:
+        return {"checked": False, "reason": NO_EDIT_TRACK}
+    harmful, harmless = track.load_partitions(Path(edit_track))
+    checks = {"attack": track.contamination(attack[1], harmful, attack[0])}
+    if benign is not None:
+        checks["benign"] = track.contamination(benign[1], harmless, benign[0])
+    fitted = {side: r for side, r in checks.items() if r["verdict"] == "contaminated"}
+    if fitted:
+        lines = [
+            f"  {side} set {r['external']}: {r['in_fitting_side']} of its "
+            f"{r['external_requests']} distinct requests were fitted or searched on by the track "
+            f"at {edit_track}."
+            for side, r in fitted.items()]
+        raise SystemExit(
+            "\n".join(lines) + "\n"
+            "  A figure on a set the edit was tuned against measures memorisation, not resistance, "
+            "so this run will not state one. Choose a set the edit never saw.")
+    return {"checked": True, **checks}
+
+
+#: Each generation setting, and why a baseline taken at a different value is a different
+#: measurement. `batch` is here because left padding and batch composition change the tokens.
+SETTINGS_WHY = {
+    "max_new_tokens": "a refusal the model never gets far enough to state is not counted, so the "
+                      "token budget decides the rate",
+    "batch": "left padding and batch composition change the tokens generated, so the batch size "
+             "is part of the measurement",
+    "decoding": "greedy and sampled decoding are different procedures",
+    "seed": "a seed only means something under sampling",
+    "precision": "a 4-bit and a bfloat16 forward pass are different measurements",
+}
+
+
+def _settings_disagreements(was, now):
+    """Generation settings that differ between a baseline and this run, as comparability tuples.
+
+    THIS IS A SEPARATE CHECK BECAUSE `baseline.PINNED` CANNOT SEE THESE. Only the stamped metrics
+    block is compared there, and the token budget and batch size are recorded at the top level of
+    the artefact, not in that block. Without this the two runs were called comparable at a
+    different `--max-new` or `--batch`, which is the unpaired comparison the module exists to
+    prevent.
+    """
+    if not isinstance(was, dict):
+        return [("generation_settings", None, now,
+                 ("the baseline records no generation settings, so its token budget and batch "
+                  "size are unknown and cannot be matched"))]
+    return [(f"generation_settings.{field}", was.get(field), now.get(field),
+             SETTINGS_WHY.get(field, "the two runs were not produced the same way"))
+            for field in sorted(set(was) | set(now))
+            if field not in was or field not in now or str(was[field]) != str(now[field])]
+
+
 def _identity(arm, estimator, pinned):
     """The keyword arguments every stamp here passes, so the call sites below cannot drift apart.
 
@@ -415,6 +495,8 @@ def _report(res, path):
                f"[{delta['ci'][0] * 100:+.1f}, {delta['ci'][1] * 100:+.1f}]pp"
                + (" (crosses zero, so this run does not separate the two models)"
                   if delta["crosses_zero"] else "")))
+    if not res["edit_overlap"]["checked"]:
+        out.append(f"JAILBREAK_NO_EDIT_TRACK {res['label']}: {res['edit_overlap']['reason']}")
     if res["budget_warning"]:
         out.append(f"BUDGET_WARNING {res['label']}: {res['budget_warning']}")
     # LAST, so it is the line left on the screen, and naming the file so there is something to
@@ -518,7 +600,7 @@ def _read_baseline(path):
     return doc
 
 
-def baseline_arm(doc, now_block, estimator):
+def baseline_arm(doc, now_block, estimator, *, now_settings):
     """The unedited model's figure beside this one, or why the two cannot be compared.
 
     WHY A JAILBREAK RATE NEEDS THIS TO BE READ AT ALL. Measured across seven model families on
@@ -550,6 +632,7 @@ def baseline_arm(doc, now_block, estimator):
     mismatches = [(field, was, now, why) for field, was, now, why
                   in baseline.comparability(block, now_block)
                   if field not in BASELINE_MAY_DIFFER]
+    mismatches += _settings_disagreements(doc.get("generation_settings"), now_settings)
     reported = {"count": block.get("count"), "n": block.get("n"),
                 "rate": block.get("value"), "ci": block.get("interval"),
                 "reportable": block.get("reportable"),
@@ -628,6 +711,12 @@ def main(argv=None):
     # rather than after a multi-gigabyte load on a rented machine. The baseline file is read here
     # for the same reason: a typo in its path costs nothing now and a GPU load later.
     baseline_doc = _read_baseline(a.baseline) if a.baseline else None
+    # THE OVERLAP CHECK IS HERE FOR THE SAME REASON: it reads a track and refuses on counts, and a
+    # refusal after a multi-gigabyte load costs the load.
+    overlap = edit_overlap(
+        a.edit_track,
+        attack=(attack_corpus.key, attack_prompts),
+        benign=None if benign_prompts is None else (benign_corpus.key, benign_prompts))
 
     from . import score as score_module
 
@@ -655,6 +744,7 @@ def main(argv=None):
         "generation_settings": generation_settings(a),
         "chat_template": getattr(tok, "senbon_chat_template", None),
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
+        "edit_overlap": overlap,
         "provenance": provenance(device=a.device,
                                  accelerator=score_module.accelerator_name(a.device),
                                  corpus=track.revision_entry(a.attack_set)),
@@ -697,7 +787,8 @@ def main(argv=None):
     # are what decide whether the baseline and this run are the same measurement, and they do not
     # exist until the stamp has written them.
     res["against_baseline"] = (
-        baseline_arm(baseline_doc, res["metrics"][f"jailbreak_rate.{STRICT}"], STRICT)
+        baseline_arm(baseline_doc, res["metrics"][f"jailbreak_rate.{STRICT}"], STRICT,
+                     now_settings=res["generation_settings"])
         if baseline_doc is not None else None)
     res["baseline_missing"] = None if a.baseline else (
         "no --baseline was given, so this figure says how often THIS model answers a harmful "

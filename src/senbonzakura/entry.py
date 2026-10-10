@@ -181,6 +181,13 @@ _INSTALL_HINT = {
     "pyarrow": "pip install --force-reinstall senbonzakura",
     # Only the Hub reader and a couple of local shapes need it; local tracks do not.
     "datasets": "pip install 'senbonzakura[hub]'",
+    # NOT A PACKAGE ANYBODY HERE IMPORTS. It reaches an install through datasets -> aiohttp ->
+    # multidict and is named in the `hub` extra only to hold a security floor on it (see
+    # pyproject.toml). The hint is the same as datasets' because the way to get a conforming
+    # multidict is to install the extra that declares the floor; `pip install multidict` would
+    # satisfy the import and leave the version unconstrained, which is the thing the floor exists
+    # to stop.
+    "multidict": "pip install 'senbonzakura[hub]'",
     "bitsandbytes": "pip install 'senbonzakura[quant]'",
     "shtab": "pip install 'senbonzakura[completion]'",
     # Only `tamper --method lora` needs it; `--method full` trains without it.

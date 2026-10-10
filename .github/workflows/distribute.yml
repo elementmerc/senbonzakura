@@ -177,7 +177,23 @@ jobs:
           # failure non-zero, so doctor's own verdict is back in play and the greps below are a
           # second check rather than the only one. Measured 2026-10-10: `doctor` exits 1 and
           # `doctor --advisories-ok` exits 0 on a tree reporting 2 advisories and 0 failures.
-          docker run --rm senbonzakura:smoke doctor --advisories-ok 2>&1 | tee doctor.txt
+          # THE STATUS IS CAPTURED, NOT OBEYED, and the difference is this job's whole history.
+          #
+          # The previous version ran doctor directly under `set -e`. That was measured on the
+          # SOURCE TREE, which reports 2 advisories and 0 failures, so `--advisories-ok` exits 0
+          # there and the greps below run. Inside the IMAGE there is one genuine failure, the
+          # bundled track, which no CI job can build because it is packed from a held-out track
+          # that lives outside this repository. So doctor exits 2, `set -e` aborts the step, and
+          # the grep written specifically to excuse the bundled track never runs. The gate failed
+          # on the one thing it documents as acceptable.
+          #
+          # Capturing the status keeps doctor's verdict in play rather than discarding it the way
+          # `|| true` did. A non-zero exit this script cannot ACCOUNT FOR is still a failure: the
+          # check below is that every reported fault is the named exception, and the status is
+          # read against that rather than instead of it.
+          status=0
+          docker run --rm senbonzakura:smoke doctor --advisories-ok > doctor.txt 2>&1 || status=$?
+          cat doctor.txt
           grep -q "llama-quantize *vendored, runs" doctor.txt \
             || { echo "::error::the image ships a quantiser that does not run"; exit 1; }
           # The bundled track is the one named exception: it is packed from a held-out track that
@@ -189,6 +205,16 @@ jobs:
           if grep -vE "bundled track" doctor.txt | grep -qE "^\s+✗"; then
             echo "::error::doctor reports failing checks inside the image, so it is not shippable"
             grep -E "^\s+✗" doctor.txt
+            exit 1
+          fi
+          # A NON-ZERO EXIT WITH NOTHING TO EXPLAIN IT IS STILL A FAILURE. Reaching here means
+          # the only fault doctor reported is the bundled track, so a non-zero status is
+          # accounted for. A non-zero status with no fault line at all is doctor failing for a
+          # reason this script cannot see, and silently passing that is how the gate became
+          # decoration the first time.
+          if [ "$status" -ne 0 ] && ! grep -qE "^\s+✗" doctor.txt; then
+            echo "::error::doctor exited ${status} and reported no failing check."
+            echo "::error::That is a fault this gate cannot account for, so the image is not shippable."
             exit 1
           fi
 

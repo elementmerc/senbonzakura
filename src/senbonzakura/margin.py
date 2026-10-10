@@ -835,7 +835,7 @@ def _fmt(value):
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def load_prompts(path, what, *, text_column=None, token=None):
+def load_prompts(path, what, *, text_column=None, token=None, missing_hint=None):
     """Read prompts from wherever they are, failing readably at the boundary.
 
     Routed through `dataset.resolve` since 2026-08-16 so a CSV, a Hub id or a DatasetDict works
@@ -845,7 +845,7 @@ def load_prompts(path, what, *, text_column=None, token=None):
     from . import dataset
     try:
         return dataset.resolve(path, text_column=text_column, token=token,
-                               what=f"{what} dataset")
+                               what=f"{what} dataset", missing_hint=missing_hint)
     except dataset.DatasetError as e:
         raise SystemExit(str(e)) from e
 
@@ -1305,7 +1305,10 @@ def main(argv=None):
     # prompts on the SAME subjects is the version of the question with topic held still, and
     # the gap between the two AUCs is how much of the headline was topic.
     if a.harmless_matched:
-        matched_all = load_prompts(a.harmless_matched, "topic-matched harmless")
+        matched_all = load_prompts(
+            a.harmless_matched, "topic-matched harmless",
+            missing_hint="Check the spelling. No command in this tool builds a topic-matched set, "
+                         "so point this at a directory, file or Hub id you made yourself.")
         matched = matched_all[a.skip_matched:a.skip_matched + a.n]
         if not matched:
             raise SystemExit(f"the topic-matched harmless set at {a.harmless_matched} has "

@@ -216,3 +216,105 @@ def test_broken_json_names_the_file(tmp_path):
     p.write_text("{not json", encoding="utf-8")
     with pytest.raises(VendorError, match="not valid JSON"):
         vendoring.load_manifest(p)
+
+
+# ── the content digest must not move when Python writes bytecode beside the source ─────
+#
+# Added 2026-10-10, and this was a LIVE false positive rather than a hypothetical one. The
+# vendored package is Python source that this project imports, so the first import writes
+# `__pycache__/*.pyc` beside it. `content_digest` walked everything under the root, so those
+# generated files entered the hash and the recorded pin stopped matching.
+#
+# Measured at the time of the fix: 102 bytecode files were present in
+# `src/senbonzakura/vendor/src`, the old walk hashed to d7cdac12... and the pin records
+# a97bbbb8..., so the check was raising "the FILES differ, not just the packaging ... nothing
+# downstream should use this package" about files Python had generated itself. The function's own
+# docstring already named that outcome: a check that cries wolf is a check people learn to
+# override.
+#
+# Skipping bytecode hides nothing, and these tests are what says so: the source beside it is still
+# hashed, so every edit a `.pyc` could carry is already accounted for.
+
+def _vendor_module():
+    """`tools/packaging/vendor_llama.py`, loaded by path.
+
+    It is a tool rather than part of the installed package, so there is no import for it. Loaded
+    fresh each call so one test cannot leave state for the next.
+    """
+    import importlib.util
+    import pathlib as _pl
+    here = _pl.Path(__file__).resolve().parents[1] / "tools" / "packaging" / "vendor_llama.py"
+    spec = importlib.util.spec_from_file_location("_vendor_llama_under_test", here)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _tiny_tree(root):
+    """Two source files and a package directory, the shape of the vendored tree."""
+    (root / "gguf").mkdir()
+    (root / "gguf" / "constants.py").write_text("GGUF_MAGIC = 0x46554747\n")
+    (root / "convert.py").write_text("print('hi')\n")
+
+
+def test_generated_bytecode_does_not_move_the_content_digest(tmp_path):
+    vl = _vendor_module()
+    _tiny_tree(tmp_path)
+    before = vl.content_digest(tmp_path)
+    cache = tmp_path / "gguf" / "__pycache__"
+    cache.mkdir()
+    (cache / "constants.cpython-314.pyc").write_bytes(b"\x00compiled\x00")
+    (cache / "constants.cpython-312.pyc").write_bytes(b"\x00other interpreter\x00")
+    assert vl.content_digest(tmp_path) == before, (
+        "a .pyc that Python generated changed the digest, so the pin fails on any machine that "
+        "has imported the vendored package")
+
+
+def test_a_source_change_still_moves_the_digest(tmp_path):
+    """The other half, and the reason the skip is safe rather than convenient."""
+    vl = _vendor_module()
+    _tiny_tree(tmp_path)
+    before = vl.content_digest(tmp_path)
+    (tmp_path / "gguf" / "constants.py").write_text("GGUF_MAGIC = 0xDEADBEEF\n")
+    assert vl.content_digest(tmp_path) != before, "an edited source file went undetected"
+
+
+def test_a_rename_and_a_truncation_still_move_the_digest(tmp_path):
+    """Path and length are in the hash, and the skip must not have cost that."""
+    vl = _vendor_module()
+    _tiny_tree(tmp_path)
+    before = vl.content_digest(tmp_path)
+    (tmp_path / "convert.py").rename(tmp_path / "convert_renamed.py")
+    assert vl.content_digest(tmp_path) != before, "a renamed file went undetected"
+    (tmp_path / "convert_renamed.py").rename(tmp_path / "convert.py")
+    assert vl.content_digest(tmp_path) == before, "the rename was not the only difference"
+    (tmp_path / "convert.py").write_text("print('hi')")      # one byte shorter
+    assert vl.content_digest(tmp_path) != before, "a truncated file went undetected"
+
+
+def test_the_vendored_tree_here_matches_its_recorded_pin():
+    """The regression itself, on the real tree, when one is present.
+
+    This is the assertion that would have caught it. On the machine where the fix was written the
+    tree carried 102 bytecode files, the old walk hashed to d7cdac12 and the pin records a97bbbb8.
+    """
+    import pathlib as _pl
+    root = _pl.Path(__file__).resolve().parents[1]
+    dest = root / "src" / "senbonzakura" / "vendor" / "src"
+    pins_path = root / "src" / "senbonzakura" / "vendor" / "pins.json"
+    if not dest.is_dir() or not pins_path.is_file():
+        pytest.skip("the vendored source is fetched at build time and is not in this checkout")
+    # The hashes live under a `pins` mapping, one entry per vendored package. Walking the top
+    # level found nothing and SKIPPED, which reads exactly like a pass in a tail of output; the
+    # assertion below exists because the skip was hiding the very regression it was written for.
+    pins = json.loads(pins_path.read_text()).get("pins") or {}
+    recorded = [m["sha256"]["content"]
+                for m in pins.values()
+                if isinstance(m, dict) and isinstance(m.get("sha256"), dict)
+                and m["sha256"].get("content")]
+    assert recorded, (
+        "pins.json records no content hash under any pin, so this test would silently pass. "
+        "If the schema moved, fix this reader rather than letting it skip")
+    assert _vendor_module().content_digest(dest) in recorded, (
+        "the vendored tree no longer hashes to any recorded pin. If the only difference is "
+        "generated bytecode, that is the defect this block of tests exists for")

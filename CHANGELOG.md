@@ -5,6 +5,11 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
+### Breaking
+
+- Every wheel is now platform-specific because the package ships a compiled Rust extension, so on a platform with no published wheel, pip builds from source and fails unless you have a Rust toolchain installed.
+- Installing or upgrading senbonzakura now needs huggingface_hub 1.5.0 or later (it was 0.34), transformers 5.10.1 or later (it was 4.56), and torch 2.7 or later (it was 2.5), so older copies of those in your environment get upgraded with it.
+
 ### Security
 
 - A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.

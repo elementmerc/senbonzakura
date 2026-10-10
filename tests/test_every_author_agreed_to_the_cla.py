@@ -35,26 +35,73 @@ _spec.loader.exec_module(cla)
 AGREED = "Someone Else <someone@example.com>  2026-10-10  I agree to the CLA in CLA.md.\n"
 
 
+@pytest.fixture
+def a_repo_with_one_commit(tmp_path, monkeypatch):
+    """A throwaway repository with a known author, so these tests do not read the real history.
+
+    THREE OF THESE TESTS USED `HEAD~1..HEAD` AGAINST THIS REPOSITORY AND WENT RED IN CI, which is
+    the whole reason this exists. `actions/checkout` clones at depth 1 unless a job asks for more,
+    so `HEAD~1` does not resolve, the checker correctly reports a range it cannot read, and the
+    tests asserted 1 against the 2 they got. The assertions were right and the fixture was the
+    ambient repository, which is a different depth on every machine that runs it.
+
+    A test about what the checker does with a range should supply the range. `cla.ROOT` is
+    monkeypatched rather than a `--repo` flag being added, because the tool's job is to examine
+    the repository it ships in and widening its surface to make a test hermetic is the wrong way
+    round.
+    """
+    def run(*argv):
+        subprocess.run(argv, cwd=tmp_path, check=True, capture_output=True)
+
+    run("git", "init", "-q", "-b", "main")
+    run("git", "config", "user.name", "Nobody Inparticular")
+    run("git", "config", "user.email", "nobody@example.invalid")
+    run("git", "config", "commit.gpgsign", "false")
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    run("git", "add", "a.txt")
+    run("git", "commit", "-q", "-m", "one")
+    (tmp_path / "a.txt").write_text("b\n", encoding="utf-8")
+    run("git", "commit", "-q", "-a", "-m", "two")
+    monkeypatch.setattr(cla, "ROOT", tmp_path)
+    return tmp_path
+
+
 def test_the_real_history_has_no_unagreed_author():
     """THE ONE THAT MATTERS. Every author of every commit in this repository is recorded.
 
     If this fails, somebody's contribution is in the tree without the permission that keeps
     relicensing possible, and the fix is a line in CONTRIBUTORS.md rather than a change here.
     """
+    # ASKED DIRECTLY, BECAUSE A SHALLOW CLONE LIES ABOUT HAVING A ROOT COMMIT.
+    #
+    # The first fix here tested `rev-list --max-parents=0 HEAD` for failure. In a depth-1 clone
+    # that command SUCCEEDS: the only commit present has no parents, so git reports it as a root.
+    # The range then resolved to `HEAD..HEAD`, the checker correctly refused an empty range, and
+    # the test failed in exactly the place the skip was meant to cover. Caught by cloning this
+    # repository at depth 1 and running the file against it, not by reading the code.
+    #
+    # `--is-shallow-repository` is the question actually being asked, and it answers `true` in a
+    # depth-1 clone and `false` here. Two CI jobs run without `fetch-depth: 0`.
+    shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                             cwd=ROOT, capture_output=True, text=True, check=False)
     root = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"],
-                          cwd=ROOT, capture_output=True, text=True, check=True)
+                          cwd=ROOT, capture_output=True, text=True, check=False)
+    if shallow.stdout.strip() == "true" or root.returncode != 0 or not root.stdout.split():
+        pytest.skip("this is a shallow clone or not a checkout, so the full history is not here. "
+                    "The real history was NOT checked by this run; the job that checks it needs "
+                    "fetch-depth: 0.")
     first = root.stdout.split()[0]
     assert cla.main([f"--range={first}..HEAD"]) == 0
 
 
-def test_an_author_who_never_agreed_is_named(tmp_path):
+def test_an_author_who_never_agreed_is_named(tmp_path, a_repo_with_one_commit):
     contributors = tmp_path / "CONTRIBUTORS.md"
     contributors.write_text(AGREED, encoding="utf-8")
     # The real history's authors are not in that file, so every one of them is missing.
     assert cla.main(["--range=HEAD~1..HEAD", f"--contributors={contributors}"]) == 1
 
 
-def test_an_empty_range_fails_rather_than_passing(tmp_path):
+def test_an_empty_range_fails_rather_than_passing(tmp_path, a_repo_with_one_commit):
     """A range matching no commits and a range whose authors all agreed look identical in a log.
 
     This project has twice reported a run that measured nothing as a clean one, so the only safe
@@ -65,12 +112,13 @@ def test_an_empty_range_fails_rather_than_passing(tmp_path):
     assert cla.main(["--range=HEAD..HEAD", f"--contributors={contributors}"]) == 2
 
 
-def test_a_missing_contributors_file_fails_rather_than_finding_nothing_to_check(tmp_path):
+def test_a_missing_contributors_file_fails_rather_than_finding_nothing_to_check(
+        tmp_path, a_repo_with_one_commit):
     assert cla.main(["--range=HEAD~1..HEAD",
                      f"--contributors={tmp_path / 'absent.md'}"]) == 2
 
 
-def test_a_contributors_file_with_no_agreement_in_it_fails(tmp_path):
+def test_a_contributors_file_with_no_agreement_in_it_fails(tmp_path, a_repo_with_one_commit):
     """Covers the clobber this project has already had, and a reworded assent sentence.
 
     Either the file lost its content or the matcher is reading for words that are no longer the

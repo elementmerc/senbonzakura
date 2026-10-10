@@ -380,7 +380,7 @@ def a_machine_with_nothing_on_it(monkeypatch, request):
 
     A test that is ABOUT one of these probes marks itself `reads_the_real_install` and gets that
     one back, because pinning it there would let the test pass by measuring the stand-in. The
-    marker names the probes to leave alone, and naming none leaves them all alone:
+    marker NAMES the probes to leave alone, and naming none is refused:
 
         @pytest.mark.reads_the_real_install("resumable_runs")
 
@@ -394,10 +394,23 @@ def a_machine_with_nothing_on_it(monkeypatch, request):
     marker = request.node.get_closest_marker("reads_the_real_install")
     if marker is None:
         real = set()
-    elif marker.args:
-        real = set(marker.args)
     else:
-        real = everything
+        # A BARE MARKER IS REFUSED, and it used to mean "unpin everything". The docstring above
+        # argued both ways in two paragraphs: that naming none leaves them all alone, and then
+        # that this is per probe and not all or nothing. The code took the first reading, so
+        # `@pytest.mark.reads_the_real_install` with no arguments handed back every probe at once,
+        # silently, and a test written that way would pass by reading the real machine for
+        # readings it never meant to ask about. Measured 2026-10-10: 27 uses across four files and
+        # every one names its probe, so refusing the bare form costs nothing and closes the hole.
+        #
+        # This mirrors the check below. An unknown name is refused because it reads as cover it
+        # does not give; naming nothing is the same mistake with nothing to misspell.
+        assert marker.args, (
+            "@pytest.mark.reads_the_real_install needs the probe it is about, as in "
+            '`@pytest.mark.reads_the_real_install("resumable_runs")`. A bare marker used to unpin '
+            "every probe at once, so a test could pass by reading the real machine for readings "
+            "it was not written about. Name the one you need; the rest stay pinned.")
+        real = set(marker.args)
 
     unknown = real - everything
     assert not unknown, (

@@ -45,7 +45,7 @@ from pathlib import Path
 import pytest
 
 from senbonzakura import interactive
-from tests.conftest import MACHINE_READS
+from tests.conftest import MACHINE_READS, a_machine_with_nothing_on_it
 
 SOURCE = Path(inspect.getsourcefile(interactive))
 TESTS = Path(__file__).parent
@@ -262,3 +262,48 @@ def test_nobody_hand_writes_a_pin_that_conftest_already_owns():
         "drift from it the way the last two copies did:\n  " + "\n  ".join(findings) +
         "\nUse the `a_machine_with_nothing_on_it` fixture, or `machine_pins()` where no fixture "
         "reaches, such as inside a subprocess probe.")
+
+
+def test_no_test_uses_the_marker_without_naming_a_probe():
+    """A BARE MARKER USED TO UNPIN EVERY PROBE AT ONCE, silently.
+
+    The fixture refuses one now, so a bare marker fails loudly where it is written. This is the
+    static half: it names every offender in one run rather than one per suite, because the bare
+    form is a thing somebody copies from a neighbour rather than invents once.
+    """
+    bare = re.compile(r"@pytest\.mark\.reads_the_real_install\s*(?:$|[^(\w])", re.MULTILINE)
+    findings = [f"{path.name}:{text.count(chr(10), 0, m.start()) + 1}"
+                for path in sorted(TESTS.glob("test_*.py"))
+                for text in [path.read_text(encoding="utf-8")]
+                for m in bare.finditer(text)]
+    assert not findings, (
+        "these use the marker without naming a probe, which asks for every machine reading back "
+        "rather than the one the test is about:\n  " + "\n  ".join(findings) +
+        '\nName it, as in `@pytest.mark.reads_the_real_install("resumable_runs")`.')
+
+
+def test_the_fixture_itself_refuses_a_bare_marker(monkeypatch):
+    """The static guard above only sees the spellings it knows; this one proves the refusal.
+
+    Driving the fixture's own function with a bare `Mark` is the whole mechanism: without it, the
+    guard above could pass while the fixture had quietly gone back to handing everything over.
+    """
+    fixture = a_machine_with_nothing_on_it.__wrapped__
+
+    class _Mark:
+        # Only `.args` is read, and `pytest.Mark` is private and warns when built by hand.
+        def __init__(self, *args):
+            self.args = args
+
+    class _Request:
+        def __init__(self, mark):
+            self._mark = mark
+            self.node = self
+
+        def get_closest_marker(self, name):
+            return self._mark if name == "reads_the_real_install" else None
+
+    with pytest.raises(AssertionError, match="needs the probe it is about"):
+        fixture(monkeypatch, _Request(_Mark()))
+
+    fixture(monkeypatch, _Request(_Mark("resumable_runs")))

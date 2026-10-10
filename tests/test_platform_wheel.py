@@ -42,7 +42,12 @@ def place(root, where, platform):
 
 
 # ── the tag follows the contents ─────────────────────────────────────────────────
-def test_nothing_vendored_means_a_universal_wheel(monkeypatch, tmp_path):
+def test_an_empty_tree_reports_no_vendored_platforms(monkeypatch, tmp_path):
+    """Renamed on 2026-10-09. It was `test_nothing_vendored_means_a_universal_wheel`, and the
+    assertion was always only about `vendored_platforms()`, which is still right. The NAME became
+    false when the Rust extension made every wheel platform-specific, and a test name that states
+    something untrue is read as a claim by whoever meets it next.
+    """
     mod = load_setup(monkeypatch, tmp_path)
     assert mod.vendored_platforms() == []
 
@@ -118,14 +123,28 @@ def test_the_shipped_wheel_never_disagrees_with_itself():
     # cause, which is the worst kind to diagnose.
     with zipfile.ZipFile(wheels[-1]) as zf:
         names = zf.namelist()
-    has_binary = any("llama-quantize" in n or "llama-imatrix" in n for n in names)
+    has_vendored = any("llama-quantize" in n or "llama-imatrix" in n for n in names)
+    # THE COMPILED EXTENSION IS A PLATFORM PAYLOAD TOO, and leaving it out of this definition is
+    # what turned four jobs red on 2026-10-09. The claim below did not change: a platform tag has
+    # to be earned by something in the archive that only runs on that platform. What changed is
+    # what can earn it. Before the Rust extension the only candidate was a vendored llama.cpp
+    # executable, so a wheel built with none was expected to be universal; now every build carries
+    # `senbonzakura/_native.abi3.so` and the tag is justified with no vendored binaries at all.
+    #
+    # The docstring above says the last two times this was reasoned about the reasoning was wrong.
+    # This is the third, and it is the same mistake in a new place: the test encoded the list of
+    # things that existed when it was written rather than the property it was checking.
+    has_extension = any(("_native" in n and (n.endswith(".so") or n.endswith(".pyd")))
+                        for n in names)
+    has_binary = has_vendored or has_extension
     universal = name.endswith("-py3-none-any.whl")
     assert not (universal and has_binary), (
         f"{name} says it runs anywhere and carries a platform executable")
     # And the other direction, which is a different claim: a platform tag with nothing in it to
     # justify one would refuse installation everywhere else for no reason at all.
     assert not (not universal and not has_binary), (
-        f"{name} is tagged for a platform and carries no platform payload")
+        f"{name} is tagged for a platform and carries no platform payload: no vendored "
+        f"executable and no compiled extension. Contents: {sorted(names)[:12]}")
     for w in wheels:
         pathlib.Path(w).unlink()
     out.rmdir()

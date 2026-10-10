@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { onFirstView, prefersReducedMotion, reveal } from '@/lib/motion';
+import { growIn, reveal } from '@/lib/motion';
 
 /**
  * Twelve corrections as a descending timeline, alternating either side of a spine.
@@ -94,29 +94,11 @@ export default function Corrections() {
   const section = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const el = section.current;
-    if (!el) return;
-    return onFirstView(
-      el,
-      () => {
-        reveal('[data-enter="corr"]');
-        // The spine draws itself downward, which is the one piece of motion here that carries
-        // the meaning of the graphic: a sequence, in order, going down. Skipped for a reader who
-        // asked for less movement, where the spine simply appears at full height.
-        const spine = el.querySelector<HTMLElement>('[data-spine]');
-        if (spine) {
-          if (prefersReducedMotion()) {
-            spine.style.transform = 'scaleY(1)';
-          } else {
-            spine.style.transition = 'transform 1400ms cubic-bezier(0.16, 1, 0.3, 1)';
-            requestAnimationFrame(() => {
-              spine.style.transform = 'scaleY(1)';
-            });
-          }
-        }
-      },
-      { margin: '0px 0px -20% 0px' },
-    );
+    reveal('[data-enter="corr"]');
+    // The spine draws downward, tied to scroll, so it retracts on the way back up. That is the
+    // one piece of motion here that carries the graphic's meaning: a sequence, in order, going
+    // down. `transformOrigin: top` is set in CSS, because growIn cannot know which end grows.
+    growIn('[data-spine]', { axis: 'scaleY', duration: 1200, step: 0 });
   }, []);
 
   return (
@@ -174,7 +156,6 @@ export default function Corrections() {
               marginLeft: '-1px',
               background:
                 'linear-gradient(to bottom, #F98DB0 0%, #E06A9C 38%, #8B4791 66%, #141A42 100%)',
-              transform: 'scaleY(0)',
               transformOrigin: 'top',
             }}
           />
@@ -236,8 +217,9 @@ export default function Corrections() {
           }}
         >
           Both dates are real and there are only two of them, because that is when the corrections
-          were published rather than when each mistake was made. The long form, with the original
-          wording and what was actually wrong in each case, is in{' '}
+          were published rather than when each mistake was made. Each one has its own{' '}
+          <a href="/corrections">page here</a>, and the long form with the original wording and
+          what was actually wrong is in{' '}
           <a href={`${DOCS}/guide/what-we-got-wrong`}>what we got wrong</a>.
         </p>
 

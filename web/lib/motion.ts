@@ -3,27 +3,27 @@
 // Author:  Daniel Iwugo
 // Comment: Christ is King
 
-import { animate, stagger, utils } from 'animejs';
+import { animate, onScroll, stagger, utils } from 'animejs';
 
 /**
- * Whether this reader has asked their system for less movement.
+ * WHY THIS FILE WAS REWRITTEN, because the first version animated nothing at all.
  *
- * Checked in JavaScript as well as CSS because an animation driven from JavaScript sets inline
- * styles, and an inline style wins against the stylesheet's reduced-motion rule. The CSS covers
- * what CSS drives; this covers the rest.
+ * It used `opacity: [0, 1]`, which is the anime.js v3 idiom. In v4 a bare value is the
+ * DESTINATION, not the journey, and the start value goes in a tween parameter object:
+ * `opacity: { from: 0 }`. The array form is what almost every example on the web uses and it is
+ * not honoured here, so every animation resolved to "move to where you already are" and did
+ * nothing. The `./results/` panel was the visible proof: its rows carried an inline `opacity: 0`
+ * waiting for an animation that could never arrive, so the panel rendered empty.
  *
- * WHAT THIS DOES AND DOES NOT TURN OFF, because the first version turned off everything and the
- * page then looked broken to anybody with the setting on, which is a lot of people who never
- * chose it deliberately.
+ * The easings were wrong in the same way. `ease: 'outExpo'` is a v3 name; v4 takes `'out(3)'` and
+ * friends, and an unrecognised easing fails SILENTLY as linear rather than erroring.
  *
- * The setting exists for vestibular disorders, where MOVEMENT across the screen causes real
- * nausea and migraine. Translation, parallax, scaling, rotation and anything that loops are the
- * triggers. A fade between two opacities moves nothing, and a number counting up in place moves
- * nothing. So those keep running for everybody, and only the movement is dropped.
- *
- * The result is a page that is still visibly alive under the setting rather than one that looks
- * like the JavaScript failed, and nobody gets the motion that would hurt them.
+ * THE RULE THAT PREVENTS THE WHOLE CLASS: never skip an animation, give it `duration: 0`. An
+ * element parked at its start value by an animation that never ran is invisible content, which is
+ * the single most common way animation breaks a page, and it is what happened here.
  */
+
+/** Whether this reader has asked their system for less movement. */
 export function prefersReducedMotion(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -32,109 +32,124 @@ export function prefersReducedMotion(): boolean {
 }
 
 /**
- * Reveal elements, or just show them if the reader would rather nothing moved.
+ * How long something should take, given the reader's preference.
  *
- * The hidden-then-revealed pattern has one failure that matters: if the reveal never runs, the
- * content is invisible rather than merely unanimated. So the hidden state is applied by a rule
- * that depends on a class this module sets, and `reveal` sets opacity directly when motion is
- * declined. A reader with JavaScript off sees the page; a reader with reduced motion sees the
- * page; nobody sees nothing.
+ * Zero rather than skipped, always. A reduced-motion reader gets the finished page instantly;
+ * they do not get a page stuck at the start of an animation nobody ran.
  */
-export function reveal(selector: string, { delay = 0 } = {}): void {
+function ms(normal: number): number {
+  return prefersReducedMotion() ? 0 : normal;
+}
+
+/**
+ * Reveal elements as they scroll in, and UNREVEAL them as they scroll back out.
+ *
+ * `sync` ties playback to scroll position rather than firing once, which is what makes the
+ * movement reversible: scroll down and it plays, scroll up and it runs backwards. The reader can
+ * still select the text and click the links while it does, because nothing here is a scroll
+ * hijack; the page scrolls normally and the animation reads the position.
+ *
+ * `sync` takes a NUMBER as well as a boolean, and the number is the smoothing: a little lag so
+ * the motion is not welded to the scrollbar, which is the difference between this feeling
+ * designed and feeling like a slider. There is no separate smoothing PARAMETER, whatever the
+ * ScrollObserver class exposes on itself; the accepted keys are in the installed type.
+ */
+export function reveal(selector: string, { rise = 18 } = {}): void {
   const targets = utils.$(selector);
   if (targets.length === 0) return;
 
-  // The fade runs for everybody. Only the 14px rise is dropped, because that is the part that
-  // moves and therefore the part the setting is about.
   const still = prefersReducedMotion();
+
   animate(targets, {
-    opacity: [0, 1],
-    ...(still ? {} : { translateY: [14, 0] }),
-    duration: still ? 520 : 760,
-    delay: stagger(still ? 50 : 70, { start: delay }),
-    ease: 'outExpo',
+    opacity: { from: 0 },
+    // The rise is the part that travels, so it is the part the preference removes. The fade
+    // stays, because a fade moves nothing across the screen and is not what the setting is for.
+    ...(still ? {} : { translateY: { from: rise } }),
+    duration: ms(620),
+    delay: still ? 0 : stagger(60),
+    ease: 'out(3)',
+    autoplay: onScroll({
+      enter: 'bottom-=80 top',
+      leave: 'top bottom',
+      sync: still ? false : 2,
+      repeat: true,
+    }),
   });
 }
 
 /**
- * Count a number up to its value, for a figure the page wants read rather than skimmed.
+ * Count a number up to its value, tied to scroll so it also counts back down.
  *
- * `decimals` exists because these are measurements and a measurement's precision is part of it:
- * 43.8 is a different claim from 44, and rounding it in an animation would misquote a cited
- * figure. The element's text is set to the final value immediately when motion is declined, and
- * the markup carries the final value as its own content so the pre-animation state is correct
- * too.
+ * The plain object is animated rather than the element, so the formatting stays ours and the
+ * precision survives: 43.8 is a different claim from 44, and rounding a cited figure inside an
+ * animation would misquote it.
+ *
+ * The element's text already holds the final value in the markup, so a reader with no JavaScript,
+ * or one whose scroll trigger never fires, sees the correct number rather than a zero.
  */
 export function countUp(
   el: Element,
   to: number,
-  { decimals = 0, duration = 1400, delay = 0 } = {},
+  { decimals = 0, duration = 1100 } = {},
 ): void {
-  const show = (v: number) => {
-    el.textContent = v.toFixed(decimals);
-  };
-
-  // A number counting up in place moves nothing across the screen, so it runs for everybody. It
-  // is also the one animation on this page that carries meaning rather than polish: it makes a
-  // reader look at the figure instead of skimming past it.
   const state = { value: 0 };
   animate(state, {
     value: to,
-    duration,
-    delay,
-    ease: 'outExpo',
-    onUpdate: () => show(state.value),
-    onComplete: () => show(to),
+    duration: ms(duration),
+    ease: 'out(3)',
+    onUpdate: () => {
+      el.textContent = state.value.toFixed(decimals);
+    },
+    onComplete: () => {
+      el.textContent = to.toFixed(decimals);
+    },
+    autoplay: onScroll({
+      enter: 'bottom-=60 top',
+      leave: 'top bottom',
+      sync: prefersReducedMotion() ? false : 3,
+      repeat: true,
+    }),
   });
 }
 
 /**
- * Run `fn` the first time an element is on screen, then stop watching it.
+ * Grow a set of elements from nothing, tied to scroll. Used by the bars and the timeline spine.
  *
- * Entrance animations that fire on page load are finished before a reader scrolls to them, so a
- * block halfway down the page would animate to nobody. Where IntersectionObserver is missing, the
- * callback runs straight away rather than never, on the same fail-visible principle as above.
+ * `transformOrigin` is the caller's job, in CSS, because a bar grows from its base and a spine
+ * grows from its top and this function cannot know which.
  */
-export function onFirstView(
-  el: Element,
-  fn: () => void,
-  { margin = '0px 0px -12% 0px' } = {},
-): () => void {
-  if (typeof IntersectionObserver === 'undefined') {
-    fn();
-    return () => {};
-  }
+export function growIn(
+  targets: Element[] | string,
+  { axis = 'scaleY', duration = 900, step = 110 }: { axis?: 'scaleX' | 'scaleY'; duration?: number; step?: number } = {},
+): void {
+  const list = typeof targets === 'string' ? utils.$(targets) : targets;
+  if (list.length === 0) return;
+  const still = prefersReducedMotion();
 
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          fn();
-          observer.disconnect();
-        }
-      }
-    },
-    { rootMargin: margin, threshold: 0.1 },
-  );
-
-  observer.observe(el);
-  return () => observer.disconnect();
+  animate(list, {
+    [axis]: { from: 0 },
+    duration: ms(duration),
+    delay: still ? 0 : stagger(step),
+    ease: 'out(3)',
+    autoplay: onScroll({
+      enter: 'bottom-=60 top',
+      leave: 'top bottom',
+      sync: still ? false : 2,
+      repeat: true,
+    }),
+  });
 }
 
 /**
  * The two floating petals drift, independently and slowly.
  *
- * The brand kit describes the mark as three large petals "with two independent smaller petals
- * floating in the gaps", so this animates what the mark already depicts rather than adding an
- * effect to it. The large petals and the mark's own silhouette, colour and proportions are left
- * alone, because the kit says not to rotate, stretch, recolour or add effects to the mark.
+ * THE ONE ANIMATION THAT STILL STOPS ENTIRELY under reduced motion, and the only one that loops.
+ * A loop is the clearest vestibular trigger there is: it never ends, so a reader cannot wait it
+ * out. Everything else on this page either fades, which travels nowhere, or is tied to a scroll
+ * the reader is driving themselves.
  *
- * Independently is the whole point: the two get different durations and a deliberate offset, so
- * they never beat together. Two petals moving in lockstep read as one mechanism, which is the
- * opposite of floating.
- *
- * Returns a stop function. A looping animation left running after its component is gone keeps the
- * compositor awake on a laptop, which is somebody's battery.
+ * Returns a stop function; a loop left running after its component is gone keeps the compositor
+ * awake, which is somebody's battery.
  */
 export function driftPetals(root: Element): () => void {
   if (prefersReducedMotion()) return () => {};
@@ -145,18 +160,16 @@ export function driftPetals(root: Element): () => void {
   const running = petals.map((petal, i) => {
     const sign = petal.dataset.petal?.startsWith('-') ? -1 : 1;
     return animate(petal, {
-      // TRANSLATION ONLY, DELIBERATELY. These groups sit inside a parent that carries the
-      // petal's `rotate(+/-25)` placement, so the movement happens in that rotated frame and
-      // translateY drifts the petal along its own axis, out from the flower and back. A rotate
-      // here would need a transform origin to be right and would be a rotation of part of the
-      // mark, which the kit's rules are about. A drift out and back is the thing the mark
-      // already depicts.
-      translateY: [0, -3.4, 0],
-      translateX: [0, sign * 1.2, 0],
-      duration: 7200 + i * 1900,
+      // Translation only, inside the parent that carries the petal's rotation, so the petal
+      // drifts out along its own axis and back. A rotation here would need a transform origin to
+      // be right and would be a rotation of part of the mark, which the brand rules are about.
+      translateY: { from: 0, to: -3.4 },
+      translateX: { from: 0, to: sign * 1.2 },
+      duration: 3600 + i * 950,
       delay: i * 850,
-      ease: 'inOutSine',
+      ease: 'inOut(2)',
       loop: true,
+      alternate: true,
     });
   });
 

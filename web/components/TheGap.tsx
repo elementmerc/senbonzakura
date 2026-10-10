@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { RefusalGrid } from '@/components/SectionArt';
-import { countUp, onFirstView, reveal } from '@/lib/motion';
+import { countUp, reveal } from '@/lib/motion';
 
 /**
  * NOT ONE OF THESE NUMBERS IS OURS, and that is the point of the block.
@@ -68,14 +68,13 @@ export default function TheGap() {
   useEffect(() => {
     const el = section.current;
     if (!el) return;
-
-    return onFirstView(el, () => {
-      reveal('[data-enter="gap"]');
-      el.querySelectorAll<HTMLElement>('[data-count]').forEach((node, i) => {
-        const to = Number(node.dataset.count);
-        const decimals = Number(node.dataset.decimals ?? 0);
-        if (Number.isFinite(to)) countUp(node, to, { decimals, delay: 140 + i * 90 });
-      });
+    // Created once, on mount. Each animation carries its own scroll observer, so there is no
+    // outer trigger to miss and nothing stays hidden if a threshold is never crossed.
+    reveal('[data-enter="gap"]');
+    el.querySelectorAll<HTMLElement>('[data-count]').forEach((node) => {
+      const to = Number(node.dataset.count);
+      const decimals = Number(node.dataset.decimals ?? 0);
+      if (Number.isFinite(to)) countUp(node, to, { decimals });
     });
   }, []);
 

@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { RunOutput } from '@/components/SectionArt';
-import { onFirstView, reveal } from '@/lib/motion';
+import { reveal } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 const NOTEBOOK =
@@ -27,9 +27,7 @@ export default function Install() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const el = section.current;
-    if (!el) return;
-    return onFirstView(el, () => reveal('[data-enter="install"]'));
+    reveal('[data-enter="install"]');
   }, []);
 
   async function copy() {

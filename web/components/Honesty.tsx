@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { onFirstView, reveal } from '@/lib/motion';
+import { reveal } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
@@ -26,9 +26,7 @@ export default function Honesty() {
   const section = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const el = section.current;
-    if (!el) return;
-    return onFirstView(el, () => reveal('[data-enter="honesty"]'));
+    reveal('[data-enter="honesty"]');
   }, []);
 
   return (

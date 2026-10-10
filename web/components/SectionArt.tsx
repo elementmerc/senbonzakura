@@ -5,9 +5,8 @@
 
 'use client';
 
-import { animate, stagger, utils } from 'animejs';
 import { useEffect, useRef } from 'react';
-import { onFirstView, prefersReducedMotion } from '@/lib/motion';
+import { growIn, reveal } from '@/lib/motion';
 
 /**
  * One piece of art per section, in the space the left-aligned prose leaves.
@@ -31,21 +30,9 @@ export function RefusalGrid() {
   const LIT = Math.round(TOTAL * 0.438);
 
   useEffect(() => {
-    const el = root.current;
-    if (!el) return;
-    return onFirstView(el, () => {
-      const cells = Array.from(el.querySelectorAll<HTMLElement>('.cell-refused'));
-      if (prefersReducedMotion()) {
-        utils.set(cells, { opacity: 1 });
-        return;
-      }
-      animate(cells, {
-        opacity: [0, 1],
-        duration: 420,
-        delay: stagger(4, { from: 'first' }),
-        ease: 'outQuad',
-      });
-    });
+    // The lit cells fade in as the section arrives and fade back out on the way up, so the
+    // figure reads as being counted rather than as a static picture.
+    reveal('.cell-refused', { rise: 0 });
   }, []);
 
   return (
@@ -98,21 +85,7 @@ export function DriftBars() {
   useEffect(() => {
     const el = root.current;
     if (!el) return;
-    return onFirstView(el, () => {
-      const bars = Array.from(el.querySelectorAll<HTMLElement>('[data-bar]'));
-      if (prefersReducedMotion()) {
-        bars.forEach((b) => {
-          (b as HTMLElement).style.transform = 'scaleY(1)';
-        });
-        return;
-      }
-      animate(bars, {
-        scaleY: [0, 1],
-        duration: 1100,
-        delay: stagger(140),
-        ease: 'outExpo',
-      });
-    });
+    growIn(Array.from(el.querySelectorAll('[data-bar]')), { axis: 'scaleY', duration: 950 });
   }, []);
 
   return (
@@ -142,7 +115,6 @@ export function DriftBars() {
                 height: `${(b.value / MAX) * 100}%`,
                 minHeight: '4px',
                 borderRadius: '5px 5px 0 0',
-                transform: 'scaleY(0)',
                 transformOrigin: 'bottom',
                 background: i
                   ? 'linear-gradient(to bottom, #F98DB0, #8B4791)'
@@ -197,19 +169,10 @@ export function RunOutput() {
   ];
 
   useEffect(() => {
-    const el = root.current;
-    if (!el) return;
-    return onFirstView(el, () => {
-      const rows = Array.from(el.querySelectorAll<HTMLElement>('[data-row]'));
-      const still = prefersReducedMotion();
-      animate(rows, {
-        opacity: [0, 1],
-        ...(still ? {} : { translateX: [-8, 0] }),
-        duration: 500,
-        delay: stagger(90),
-        ease: 'outExpo',
-      });
-    });
+    // THE ROWS THIS PANEL RENDERED EMPTY. They carried an inline `opacity: 0` and waited for an
+    // animation written in v3 syntax that could never run, so the panel showed its border and
+    // its header and nothing else. The inline opacity is gone and anime sets the start value.
+    reveal('[data-row]');
   }, []);
 
   return (
@@ -244,7 +207,6 @@ export function RunOutput() {
             alignItems: 'baseline',
             gap: '0.9rem',
             padding: '0.72rem 1.1rem',
-            opacity: 0,
           }}
         >
           <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--sakura)' }}>

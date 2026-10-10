@@ -18,15 +18,21 @@ import { driftPetals, reveal } from '@/lib/motion';
  * reader who arrives claiming-first then finds our own comparison page conceding two rows stops
  * believing the rest of it.
  *
- * The second line is the promise no hosted competitor can answer, and it is load-bearing with
- * this audience rather than a feature bullet.
+ * The second line used to read "no network call you did not ask for". WITHDRAWN 2026-10-10:
+ * decision Q-94 puts opt-out telemetry in the tool behind a first-run notice, and some features
+ * are online by design, so the old line claimed something the product does not keep.
+ *
+ * What replaces it is narrower, true, and still something a hosted service structurally cannot
+ * say: the weights stay put. A hosted competitor RUNS the model, so it holds your weights by
+ * definition. Q-94's own hard line is the same shape, an architecture fingerprint and never a
+ * model name, because for a lab measuring an unreleased model the name is the leak.
  */
 export default function Hero() {
   const root = useRef<HTMLElement>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('js-ready');
-    reveal('[data-enter="hero"]', { delay: 120 });
+    reveal('[data-enter="hero"]');
     const el = root.current;
     if (!el) return;
     return driftPetals(el);
@@ -64,7 +70,7 @@ export default function Hero() {
         }}
       >
         <Mark size={18} />
-        <span>Runs on your machine. No network call you did not ask for.</span>
+        <span>Your weights never leave your machine.</span>
         <span aria-hidden="true" style={{ color: 'var(--ink-faint)' }}>
           &rarr;
         </span>
@@ -96,7 +102,7 @@ export default function Hero() {
         }}
       >
         Senbonzakura measures what a behaviour edit did to an open-weight model, and what it cost.
-        It runs on your machine and makes no network call you did not ask for.
+        The measuring runs on your own hardware.
       </p>
 
       <div

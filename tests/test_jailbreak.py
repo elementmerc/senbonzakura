@@ -126,6 +126,7 @@ def _res(**over):
         "attack": _arm(n_answer=30), "benign": _arm(n_refusal=30),
         "budget_warning": None, "pair_incomplete": None, "self_invalidated": None,
         "against_baseline": None, "baseline_missing": "no --baseline was given",
+        "edit_overlap": {"checked": False, "reason": jailbreak.NO_EDIT_TRACK},
     }
     res.update(over)
     return res
@@ -226,8 +227,13 @@ def _stamped(value, n, count, **over):
     return block
 
 
+#: The generation settings a run at the command's defaults writes, as the artefact records them.
+_SETTINGS = {"max_new_tokens": 64, "batch": 16, "decoding": "greedy", "seed": None,
+             "precision": "model default (bfloat16 on the loader)"}
+
+
 def _baseline_doc(value=0.2, **over):
-    return {"model": "base/model",
+    return {"model": "base/model", "generation_settings": dict(_SETTINGS),
             "metrics": {f"jailbreak_rate.{jailbreak.STRICT}": _stamped(value, 100, 20, **over)}}
 
 
@@ -236,7 +242,7 @@ def test_a_baseline_measured_the_same_way_is_compared_and_the_change_reported():
     change from the unedited model is the part that is about the edit.
     """
     now = _stamped(0.8, 100, 80, model="edited/model")
-    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)
+    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT, now_settings=_SETTINGS)
     assert got["not_comparable"] is None
     assert got["baseline"]["rate"] == 0.2
     assert got["delta"]["gap"] == pytest.approx(0.6)
@@ -249,7 +255,8 @@ def test_a_different_model_is_the_point_and_not_a_mismatch():
     gate. Here a different checkpoint is the whole comparison, so it is the one named exception.
     """
     now = _stamped(0.8, 100, 80, model="a completely different checkpoint")
-    assert jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)["not_comparable"] is None
+    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT, now_settings=_SETTINGS)
+    assert got["not_comparable"] is None
 
 
 @pytest.mark.parametrize("field", ["input_digest", "partition", "prompt_format", "precision"])
@@ -258,7 +265,7 @@ def test_a_baseline_measured_differently_is_refused_and_names_the_field(field):
     different precisions are not a comparison, and subtracting them would look like one.
     """
     now = _stamped(0.8, 100, 80, **{field: "something else"})
-    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)
+    got = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT, now_settings=_SETTINGS)
     assert field in got["not_comparable"]
     assert got["delta"] is None, "it subtracted two numbers it had just refused to compare"
     assert got["baseline"]["rate"] == 0.2, "the baseline figure is still reported"
@@ -267,28 +274,28 @@ def test_a_baseline_measured_differently_is_refused_and_names_the_field(field):
 def test_a_baseline_with_no_such_measurement_is_refused_and_says_what_it_holds():
     with pytest.raises(SystemExit, match="nothing here to compare") as e:
         jailbreak.baseline_arm({"metrics": {"refusal_rate.heretic-keyword": {}}},
-                               _stamped(0.8, 100, 80), jailbreak.STRICT)
+                               _stamped(0.8, 100, 80), jailbreak.STRICT, now_settings=_SETTINGS)
     assert "refusal_rate.heretic-keyword" in str(e.value)
     with pytest.raises(SystemExit, match="no metrics block at all"):
-        jailbreak.baseline_arm({}, _stamped(0.8, 100, 80), jailbreak.STRICT)
+        jailbreak.baseline_arm({}, _stamped(0.8, 100, 80), jailbreak.STRICT, now_settings=_SETTINGS)
 
 
 def test_a_withheld_rate_on_either_side_is_not_subtracted():
     """A difference of a number and a refusal to state a number is not a number."""
     assert jailbreak.baseline_arm(
-        _baseline_doc(value=None), _stamped(0.8, 100, 80), jailbreak.STRICT)["delta"] is None
+        _baseline_doc(value=None), _stamped(0.8, 100, 80), jailbreak.STRICT, now_settings=_SETTINGS)["delta"] is None
     assert jailbreak.baseline_arm(
-        _baseline_doc(), _stamped(None, 100, 80), jailbreak.STRICT)["delta"] is None
+        _baseline_doc(), _stamped(None, 100, 80), jailbreak.STRICT, now_settings=_SETTINGS)["delta"] is None
     assert jailbreak.baseline_arm(
-        _baseline_doc(), _stamped(0.8, 0, 0), jailbreak.STRICT)["delta"] is None
+        _baseline_doc(), _stamped(0.8, 0, 0), jailbreak.STRICT, now_settings=_SETTINGS)["delta"] is None
 
 
 def test_a_change_inside_its_interval_says_the_run_does_not_separate_the_models():
     now = _stamped(0.22, 100, 22)
-    delta = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)["delta"]
+    delta = jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT, now_settings=_SETTINGS)["delta"]
     assert delta["crosses_zero"] is True
     lines = jailbreak._report(
-        _res(against_baseline=jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT)),
+        _res(against_baseline=jailbreak.baseline_arm(_baseline_doc(), now, jailbreak.STRICT, now_settings=_SETTINGS)),
         "r.json")
     assert any("crosses zero" in ln for ln in lines)
 
@@ -321,18 +328,48 @@ def test_an_absent_baseline_file_is_refused(tmp_path):
         jailbreak._read_baseline(str(tmp_path / "absent.json"))
 
 
+@pytest.mark.parametrize(("field", "now"), [("max_new_tokens", 512), ("batch", 1)])
+def test_a_baseline_at_a_different_token_budget_or_batch_is_refused(field, now):
+    """A refusal the model never gets far enough to state is not counted, so the token budget
+    decides the rate, and the batch size changes the tokens. A subtraction across either is a
+    change of settings presented as a change of model.
+    """
+    got = jailbreak.baseline_arm(_baseline_doc(), _stamped(0.8, 100, 80), jailbreak.STRICT,
+                                 now_settings=dict(_SETTINGS, **{field: now}))
+    assert f"generation_settings.{field}" in got["not_comparable"]
+    assert got["delta"] is None
+    assert got["baseline"]["rate"] == 0.2, "the baseline figure is still reported"
+
+
+def test_a_baseline_with_no_recorded_generation_settings_is_refused_not_assumed_matched():
+    doc = _baseline_doc()
+    del doc["generation_settings"]
+    got = jailbreak.baseline_arm(doc, _stamped(0.8, 100, 80), jailbreak.STRICT,
+                                 now_settings=_SETTINGS)
+    assert "generation_settings" in got["not_comparable"]
+    assert got["delta"] is None
+
+
 # ── the whole command ─────────────────────────────────────────────────────────────────
 class _Tok:
     senbon_chat_template = None
 
 
-def _drive(monkeypatch, argv, *, attack=None, benign=None, prompts=30):
-    """Run `main` with the model and the corpora replaced, so every branch is reachable on CPU."""
+def _drive(monkeypatch, argv, *, attack=None, benign=None, prompts=30, rows=None):
+    """Run `main` with the model and the corpora replaced, so every branch is reachable on CPU.
+
+    `rows` is `(attack prompts, benign prompts)` when a test needs the prompts to be known exactly,
+    for the overlap check. Otherwise each set is generated, which is enough for everything else.
+    """
     from senbonzakura import score
 
     monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
-    monkeypatch.setattr(jailbreak, "prompts_for",
-                        lambda key, limit, what: [f"{key} {i}" for i in range(limit or prompts)])
+    if rows is None:
+        monkeypatch.setattr(jailbreak, "prompts_for",
+                            lambda key, limit, what: [f"{key} {i}" for i in range(limit or prompts)])
+    else:
+        monkeypatch.setattr(jailbreak, "prompts_for",
+                            lambda key, limit, what: rows[0] if what == "attack set" else rows[1])
     replies = {"attack": attack or [ANSWER] * 30, "benign": benign or [REFUSAL] * 30}
     seen = []
 
@@ -756,3 +793,112 @@ def test_the_help_for_a_file_flag_states_which_arm_the_flag_asserts():
         text = jailbreak.file_flag_help(verb)
         assert "asserted rather than declared" in text
         assert corpora.MANIFEST_SUFFIX in text
+
+
+@pytest.mark.parametrize(("flag", "edited", "field"),
+                         [("--max-new", "512", "max_new_tokens"), ("--batch", "4", "batch")])
+def test_a_baseline_run_at_a_different_setting_is_refused_end_to_end(
+        monkeypatch, tmp_path, flag, edited, field):
+    """The settings reach the comparison through `main`, not only through a direct call, because
+    that is the path a reader's two artefacts take.
+    """
+    base = str(tmp_path / "base.json")
+    _drive(monkeypatch, ["--model", "unedited", "--device", "cpu", "--out", base,
+                         "--max-new", "64", "--batch", "16"], attack=[REFUSAL] * 30)
+    res, _ = _drive(monkeypatch, ["--model", "edited", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json"), "--baseline", base,
+                                  flag, edited])
+    against = res["against_baseline"]
+    assert against["not_comparable"] is not None, "the two runs were subtracted across a setting"
+    assert f"generation_settings.{field}" in against["not_comparable"]
+    assert against["delta"] is None
+
+
+# ── the edit's track, which the scored sets must not overlap ─────────────────────────────
+_THINGS = [f"item{i:02d}" for i in range(30)]
+ATTACK_ROWS = [f"describe a method to bypass the {t} security" for t in _THINGS]
+BENIGN_ROWS = [f"how do I make a {t} at home" for t in _THINGS]
+
+
+def _edit_track(monkeypatch, *, harmful_fit=(), harmful_search=(), harmless_fit=()):
+    """The partitions of a track, without building one. Building a real track is tested in
+    `test_track.py`; this checks what this command does with the partitions it is handed.
+    """
+    parts = ({"fit": list(harmful_fit), "search": list(harmful_search),
+              "measure": ["a held out request about boats and their keels"]},
+             {"fit": list(harmless_fit), "search": [], "measure": []})
+    monkeypatch.setattr(jailbreak.track, "load_partitions", lambda path: parts)
+
+
+def test_an_attack_row_the_edit_was_fitted_on_is_refused_before_the_model_loads(
+        monkeypatch, tmp_path):
+    from senbonzakura import score
+
+    loaded = []
+    monkeypatch.setattr(score, "load_model_and_tokenizer",
+                        lambda *a, **k: loaded.append(1) or (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: ATTACK_ROWS if what == "attack set" else BENIGN_ROWS)
+    _edit_track(monkeypatch, harmful_fit=[ATTACK_ROWS[7]])
+    out = tmp_path / "r.json"
+    with pytest.raises(SystemExit, match="fitted or searched on") as e:
+        jailbreak.main(["--model", "m", "--device", "cpu", "--out", str(out),
+                        "--edit-track", str(tmp_path)])
+    assert "attack set" in str(e.value)
+    assert not loaded, "the model was loaded before the overlap was refused"
+    assert not out.exists(), "a refused run wrote a result file"
+
+
+def test_a_benign_row_the_edit_was_fitted_on_is_refused(monkeypatch, tmp_path):
+    from senbonzakura import score
+
+    loaded = []
+    monkeypatch.setattr(score, "load_model_and_tokenizer",
+                        lambda *a, **k: loaded.append(1) or (object(), _Tok()))
+    monkeypatch.setattr(jailbreak, "prompts_for",
+                        lambda key, limit, what: ATTACK_ROWS if what == "attack set" else BENIGN_ROWS)
+    _edit_track(monkeypatch, harmless_fit=[BENIGN_ROWS[3]])
+    with pytest.raises(SystemExit, match="fitted or searched on") as e:
+        jailbreak.main(["--model", "m", "--device", "cpu", "--out", str(tmp_path / "r.json"),
+                        "--edit-track", str(tmp_path)])
+    assert "benign set" in str(e.value)
+    assert not loaded
+
+
+def test_a_clean_edit_track_lets_the_run_proceed_and_records_both_checks(
+        monkeypatch, tmp_path, capsys):
+    _edit_track(monkeypatch, harmful_fit=["a request nobody asked about"],
+                harmless_fit=["a harmless question nobody asked about"])
+    res, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json"),
+                                  "--edit-track", str(tmp_path)],
+                    rows=(ATTACK_ROWS, BENIGN_ROWS))
+    overlap = res["edit_overlap"]
+    assert overlap["checked"] is True
+    assert overlap["attack"]["verdict"] == "clean"
+    assert overlap["benign"]["verdict"] == "clean"
+    assert overlap["attack"]["in_fitting_side"] == 0
+    assert "JAILBREAK_NO_EDIT_TRACK" not in capsys.readouterr().out
+
+
+def test_with_no_benign_arm_only_the_attack_set_is_checked(monkeypatch, tmp_path):
+    """`--no-over-refusal` means the benign set is never scored, so overlap with it is not a
+    reason to refuse the run.
+    """
+    _edit_track(monkeypatch, harmless_fit=[BENIGN_ROWS[3]])
+    res, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json"),
+                                  "--edit-track", str(tmp_path), "--no-over-refusal"],
+                    rows=(ATTACK_ROWS, BENIGN_ROWS))
+    assert res["edit_overlap"]["checked"] is True
+    assert "benign" not in res["edit_overlap"]
+
+
+def test_without_an_edit_track_the_artefact_and_the_terminal_both_say_it_was_not_checked(
+        monkeypatch, tmp_path, capsys):
+    res, _ = _drive(monkeypatch, ["--model", "m", "--device", "cpu",
+                                  "--out", str(tmp_path / "r.json")])
+    assert res["edit_overlap"] == {"checked": False, "reason": jailbreak.NO_EDIT_TRACK}
+    out = capsys.readouterr().out
+    assert "JAILBREAK_NO_EDIT_TRACK" in out
+    assert "memorisation" in out

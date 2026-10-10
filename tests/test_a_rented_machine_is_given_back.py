@@ -373,11 +373,41 @@ def test_the_fake_and_the_real_provider_satisfy_the_same_interface():
         assert list(fake.parameters) == list(real.parameters), f"{name} differs"
 
 
-def test_time_moves_forward_in_the_fake_so_a_cost_is_real():
-    """Guards against a fake that bills nothing by freezing the clock, which would make the
-    ceiling tests vacuous.
+def test_the_cost_is_the_quoted_rate_over_the_elapsed_hours():
+    """The arithmetic, with the clock supplied rather than read.
+
+    This half used to be a 10 millisecond sleep followed by `cost_so_far() > 0`, which failed on
+    the Windows runner with `assert 0.0 > 0`. That reading was correct: `time.monotonic()` on
+    Windows advances in steps of about 15.6 milliseconds, so ten milliseconds of sleep can
+    genuinely elapse with the clock unmoved. Lengthening the sleep would have made the failure
+    rarer rather than absent, which section 7 calls a flaky test rather than a fixed one.
+
+    `cost_so_far` already accepts the time to measure against, so the arithmetic can be checked
+    exactly and the clock tested separately below.
     """
     p = rented.FakeProvider()
     pod = p.create(spec(), rented.GpuOffer("x", "X", 48, 3600.0))
-    time.sleep(0.01)
-    assert pod.cost_so_far() > 0
+    assert pod.cost_so_far(now=pod.started_at) == 0.0
+    assert pod.cost_so_far(now=pod.started_at + 3600) == pytest.approx(3600.0)
+    assert pod.cost_so_far(now=pod.started_at + 1800) == pytest.approx(1800.0)
+    # A clock that went backwards must not produce a credit.
+    assert pod.cost_so_far(now=pod.started_at - 60) == 0.0
+
+
+def test_the_fake_does_not_freeze_its_clock():
+    """The other half, and the thing the original test was actually guarding: a fake that bills
+    nothing because its clock never moves would make every ceiling test vacuous.
+
+    Waits for the platform clock to advance by one tick rather than assuming a sleep is enough,
+    with a deadline, because an unbounded wait on a frozen clock would hang the suite instead of
+    reporting it.
+    """
+    p = rented.FakeProvider()
+    pod = p.create(spec(), rented.GpuOffer("x", "X", 48, 3600.0))
+    opening = pod.cost_so_far()
+    deadline = time.monotonic() + 5.0
+    while pod.cost_so_far() <= opening and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pod.cost_so_far() > opening, (
+        "the cost did not move in five seconds, so the fake is billing against a stopped clock "
+        "and every ceiling and deadline test built on it proves nothing")

@@ -1052,6 +1052,27 @@ def test_the_budget_warning_does_not_invent_an_accuracy_that_was_never_printed()
     assert "do not quote any figure from this run" in text
 
 
+def test_the_budget_warning_agrees_with_whichever_figure_is_on_the_screen():
+    """Both branches of the caveat, because one of them was wrong for as long as it existed.
+
+    The warning used to build one sentence and slot a noun phrase into it, which cannot agree with
+    both subjects. Checking only the branch that happened to read correctly is what let the other
+    one ship, so this asserts the pair.
+    """
+    withheld = cap.summarise(_verdicts("c" + "i" * 9))
+    if withheld["accuracy"] is not None:
+        pytest.skip("this sample did not trip the withholding rule")
+    assert "the counts above are not a statement" in "\n".join(cap.report(withheld))
+
+    # A denominator large enough to report a rate, still over the budget threshold.
+    reported = cap.summarise(_verdicts("c" * 60 + "i" * 12))
+    assert reported["accuracy"] is not None, "this sample was meant to report a rate"
+    assert reported["budget_suspect"] is True, "this sample was meant to trip the budget warning"
+    text = "\n".join(cap.report(reported))
+    assert "the accuracy above is not a statement" in text
+    assert "the accuracy above are" not in text
+
+
 def test_the_budget_warning_names_the_counts_when_the_rate_was_withheld():
     """`reportable_rate` withholds a rate over too small a denominator, and the counts are what
     is on the screen instead. The caveat has to be about those.
@@ -1062,7 +1083,13 @@ def test_the_budget_warning_names_the_counts_when_the_rate_was_withheld():
     text = "\n".join(cap.report(s))
     assert s["budget_suspect"] is True
     assert "NOT REPORTED as a rate" in text
-    assert "the counts above is not a statement about this model" in text
+    # "are", not "is". This assertion used to require the ungrammatical form and so held the
+    # defect in place: the warning interpolated a noun phrase into one shared sentence, and "the
+    # counts above" does not take the verb that "the accuracy above" does. A reader met the broken
+    # version precisely when a rate had been withheld, which is the run where the wording matters
+    # most. Fixed 2026-10-10.
+    assert "the counts above are not a statement about this model" in text
+    assert "the counts above is" not in text, "the verb no longer agrees with its subject"
     assert "the accuracy above" not in text
 
 

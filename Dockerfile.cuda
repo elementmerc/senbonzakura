@@ -49,8 +49,29 @@ ENV DEBIAN_FRONTEND=noninteractive
 # which is the defect the CPU image found and the clean room now asserts against.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3.11 python3.11-venv python3-pip curl ca-certificates libgomp1 \
+      python3.11 python3.11-venv python3-pip curl ca-certificates libgomp1 gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# `gcc` and `libc6-dev` are both needed and the second is easy to miss: with
+# `--no-install-recommends`, gcc arrives without the C library development files, so
+# the compile succeeds and the LINK fails with "cannot open crti.o" and "unable to
+# find library -lc". Measured in a local build of this image on 2026-10-09, which is
+# why the list above is explicit rather than trusting what gcc pulls in.
+#
+# A RUST TOOLCHAIN, for the same reason as the CPU image: the package contains a compiled
+# extension and this stage builds it from source. Measured, so the choice is not guessed at: this
+# base offers rustc 1.75.0, which does clear the crate's declared 1.74 minimum, so apt would
+# build it. rustup with an exact pin is still the right answer, because an apt candidate moves
+# with the distribution's updates and because a toolchain that merely clears a declared floor is
+# not the one this project tests with. See the CPU image for the full argument. Builder stage
+# only; the runtime stage copies out the installed package and nothing of this.
+ENV RUSTUP_TOOLCHAIN=1.98.1 \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN" \
+ && cargo --version && rustc --version
 
 RUN python3.11 -m venv /opt/venv
 # A CUDA torch wheel is about two and a half gigabytes. pip's default 15-second socket timeout

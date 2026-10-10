@@ -73,8 +73,41 @@ FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa
 # tool's smoke check catches at build time rather than letting the image ship a binary that
 # cannot start.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 \
+ && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# `gcc` and `libc6-dev` are both needed and the second is easy to miss: with
+# `--no-install-recommends`, gcc arrives without the C library development files, so
+# the compile succeeds and the LINK fails with "cannot open crti.o" and "unable to
+# find library -lc". Measured in a local build of this image on 2026-10-09, which is
+# why the list above is explicit rather than trusting what gcc pulls in.
+#
+# A RUST TOOLCHAIN, because the package now contains a compiled extension and this image builds
+# it from source. Without this, pip reaches the extension and stops with "try installing a Rust
+# compiler from your system package manager", which is what turned both container jobs red on
+# 2026-10-09 after the crate itself was copied in.
+#
+# rustup rather than apt, and NOT for the reason first written here. The first version of this
+# comment said the packaged toolchain was too old to build the crate. That was measured and it is
+# false: this base is Debian trixie, which offers rustc 1.85.1, and the CUDA image's Ubuntu 22.04
+# offers 1.75.0, both above the crate's declared 1.74 minimum.
+#
+# The actual reasons are two. An apt candidate version moves with the distribution's own updates,
+# so the toolchain that compiles a shipped artefact would change without anybody choosing it, and
+# section 5 pins exactly what a lockfile does not manage. And the declared minimum is a floor
+# nobody re-measures against the dependency tree, so a toolchain that merely clears it is a guess;
+# 1.98.1 is the version this project actually builds and tests with, released 2026-09-01 and so
+# well past the cooldown window.
+#
+# It costs nothing in the shipped image: this is the builder stage, and the runtime stage below
+# copies only the installed package and the vendored binaries out of it.
+ENV RUSTUP_TOOLCHAIN=1.98.1 \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN" \
+ && cargo --version && rustc --version
 
 WORKDIR /build
 COPY pyproject.toml setup.py README.md LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-CORPORA.md \

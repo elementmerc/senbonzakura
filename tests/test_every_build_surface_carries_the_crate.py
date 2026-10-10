@@ -98,6 +98,14 @@ def test_every_container_copies_the_crate_and_the_setup_script():
         assert re.search(r"^COPY\s+rust/\s", text, re.MULTILINE), (
             f"{name} does not copy rust/, so the image build fails with \"can't find manifest "
             f'for Rust extension"')
+        assert "RUSTUP_TOOLCHAIN=" in text, (
+            f"{name} copies the crate but installs no Rust toolchain, so pip reaches the "
+            f'extension and stops with "try installing a Rust compiler". Both Debian bookworm '
+            f"and Ubuntu 22.04 package a rustc older than the crate's declared minimum, so the "
+            f"toolchain comes from rustup at an exact pin rather than from apt")
+        assert re.search(r"RUSTUP_TOOLCHAIN=\d+\.\d+\.\d+", text), (
+            f"{name} does not pin the Rust toolchain to an exact version. Section 5 pins anything "
+            f"a lockfile does not manage, and this one is fetched over the network at build time")
         assert re.search(r"^COPY\s[^\n]*\bsetup\.py\b", text, re.MULTILINE), (
             f"{name} does not copy setup.py, which is where the extension is declared. Without "
             f"it this image builds SUCCESSFULLY as pure Python and ships with no "

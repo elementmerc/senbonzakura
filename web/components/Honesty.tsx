@@ -59,7 +59,7 @@ export default function Honesty() {
           style={{
             margin: '0 0 2.8rem',
             padding: '1.4rem 1.6rem',
-            borderLeft: '2px solid var(--sakura)',
+            borderLeft: '2px solid var(--measured)',
             background: 'var(--bg-raised)',
             borderRadius: '0 10px 10px 0',
             maxWidth: '46rem',

@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import Mark from '@/components/Mark';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
@@ -71,10 +72,14 @@ export default function Nav() {
           border: '1px solid',
           borderColor: lifted ? 'var(--rule)' : 'transparent',
           borderBottomColor: 'var(--rule)',
-          // ALWAYS a background. This is the line the old version got wrong.
-          background: lifted ? 'rgba(20, 26, 66, 0.72)' : 'var(--navy-deep)',
+          // ALWAYS a background, and ALWAYS a theme token. Two separate defects on one line:
+          // the first version made the background conditional, so the bar vanished over moving
+          // content; the second gave it the brand navy, which is fixed by the kit and so sat
+          // unchanged on a page that had moved to a neutral ground. The bar is a surface of the
+          // page, not a piece of the mark.
+          background: lifted ? 'var(--nav-bg-lifted)' : 'var(--nav-bg)',
           backdropFilter: lifted ? 'blur(14px) saturate(140%)' : 'none',
-          boxShadow: lifted ? '0 10px 30px rgba(5, 8, 24, 0.45)' : 'none',
+          boxShadow: lifted ? 'var(--nav-shadow)' : 'none',
           transition:
             'max-width 320ms var(--ease), border-radius 320ms var(--ease), background 320ms ease, box-shadow 320ms ease, border-color 320ms ease',
         }}
@@ -116,6 +121,8 @@ export default function Nav() {
               What we got wrong
             </a>
           </div>
+
+          <ThemeToggle />
 
           <a
             href="https://github.com/elementmerc/senbonzakura"

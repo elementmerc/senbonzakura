@@ -92,7 +92,7 @@ export default function Install() {
             <span>pip install senbonzakura</span>
             <span
               aria-live="polite"
-              style={{ color: copied ? 'var(--sakura)' : 'var(--ink-faint)', fontSize: '0.8rem' }}
+              style={{ color: copied ? 'var(--measured)' : 'var(--ink-faint)', fontSize: '0.8rem' }}
             >
               {copied ? 'copied' : 'copy'}
             </span>

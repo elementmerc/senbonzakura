@@ -209,7 +209,7 @@ export function RunOutput() {
             padding: '0.72rem 1.1rem',
           }}
         >
-          <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--sakura)' }}>
+          <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--measured)' }}>
             {name}
           </span>
           <span style={{ fontSize: '0.78rem', color: 'var(--ink-faint)' }}>{what}</span>

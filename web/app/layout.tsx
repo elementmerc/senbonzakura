@@ -62,14 +62,45 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Deep navy, so the browser chrome and the page are one surface rather than a dark page in a
-  // light frame. It is the brand's own background colour.
-  themeColor: '#0E1330',
+  // The browser chrome and the page are one surface rather than a page in a frame of the wrong
+  // colour, and there are TWO entries because the chrome has to follow the theme as well. A
+  // single themeColor was the brand navy, which left a navy address bar above a neutral page,
+  // the same mistake the navigation bar was making.
+  //
+  // These track the system rather than a stored choice, which is all the media query can see. A
+  // reader who overrides the system on this site gets the right page and a chrome one shade out;
+  // there is no metadata form that can read localStorage, and the alternative is a chrome that is
+  // wrong for everybody who has not chosen.
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0E1014' },
+    { media: '(prefers-color-scheme: light)', color: '#F2F1EF' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en-GB" className={`${body.variable} ${mono.variable}`}>
+    <html lang="en-GB" className={`${body.variable} ${mono.variable}`} suppressHydrationWarning>
+      <head>
+        {/* THE THEME IS SET BEFORE THE FIRST PAINT, and it has to be done here rather than in a
+            component. React has not hydrated when the browser paints the first frame, so a theme
+            applied in an effect arrives after the reader has already seen the other one. That
+            flash is the single most noticeable defect a theme toggle has.
+
+            Only a stored CHOICE is applied. Absence means "follow the system", which the
+            stylesheet handles with a `prefers-color-scheme` query, so this script writes nothing
+            when nobody has chosen and the markup stays identical for every first-time visitor.
+
+            Wrapped in try/catch because `localStorage` throws rather than returning null in a
+            private window with site data blocked, and an exception here runs before anything is
+            on screen, which would leave the page blank. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('senbon-theme');" +
+              "if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

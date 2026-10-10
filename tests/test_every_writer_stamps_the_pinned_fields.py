@@ -137,3 +137,51 @@ def test_the_helpers_that_stamp_twice_pass_the_fields_through():
         assert block.get("interval"), (
             f"{key} carries no interval, so `baseline.from_artefact` will refuse it and the "
             f"headline metric stays ungateable")
+
+
+# ── the prompt format has to be a name, not a Python repr ──────────────────────────
+#
+# Added 2026-10-10. `ensure_chat_template` returns a mapping, and `prompt_format_of` used to hand
+# the whole mapping to `str()`, so a published artefact recorded
+# `{'source': 'tokenizer', 'sha256': '872be49dbb638044'}` as its prompt format. That is not a name,
+# it compares equal to nothing a reader would type, and it puts a repr into a field other people
+# are invited to check our numbers against.
+
+class _Tok:
+    def __init__(self, value):
+        self.senbon_chat_template = value
+
+
+def test_no_prompt_format_is_a_python_repr():
+    """The defect itself, stated as the thing that must never appear again."""
+    from senbonzakura import stamps
+    real_shape = {"source": "tokenizer", "sha256": "872be49dbb638044", "audit": {"ok": True}}
+    out = stamps.prompt_format_of(_Tok(real_shape))
+    assert "{" not in out and "'" not in out, f"a mapping reached the field as a repr: {out!r}"
+    assert out == "tokenizer:872be49dbb638044"
+
+
+def test_the_digest_is_kept_because_two_tokenizers_both_say_tokenizer():
+    """Why the source alone is not the answer.
+
+    Dropping the digest would be tidier and would re-open the drift this field exists to catch:
+    two models both report `tokenizer` while rendering different templates, which is how a table
+    was once published across a renderer gap.
+    """
+    from senbonzakura import stamps
+    a = stamps.prompt_format_of(_Tok({"source": "tokenizer", "sha256": "1111111111111111"}))
+    b = stamps.prompt_format_of(_Tok({"source": "tokenizer", "sha256": "2222222222222222"}))
+    assert a != b, "two different templates produced the same prompt_format"
+
+
+def test_no_template_is_raw_and_that_is_a_claim():
+    from senbonzakura import stamps
+    assert stamps.prompt_format_of(_Tok(None)) == "raw"
+
+
+def test_a_missing_digest_degrades_to_the_source_rather_than_to_none():
+    """`sha256` is None when the tokenizer's template is not a string. The source still identifies
+    more than nothing, so it is reported rather than discarded.
+    """
+    from senbonzakura import stamps
+    assert stamps.prompt_format_of(_Tok({"source": "tokenizer", "sha256": None})) == "tokenizer"

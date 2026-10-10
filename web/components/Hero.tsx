@@ -5,8 +5,9 @@
 
 'use client';
 
-import { useEffect } from 'react';
-import { reveal } from '@/lib/motion';
+import { useEffect, useRef } from 'react';
+import Mark from '@/components/Mark';
+import { driftPetals, reveal } from '@/lib/motion';
 
 /**
  * The headline is the project's own agreed sentence, shortened to fit a hero.
@@ -17,30 +18,49 @@ import { reveal } from '@/lib/motion';
  * reader who arrives claiming-first then finds our own comparison page conceding two rows stops
  * believing the rest of it.
  *
- * The second line is the promise that no hosted competitor can answer, and it is load-bearing with
+ * The second line is the promise no hosted competitor can answer, and it is load-bearing with
  * this audience rather than a feature bullet.
  */
 export default function Hero() {
+  const root = useRef<HTMLElement>(null);
+
   useEffect(() => {
     document.documentElement.classList.add('js-ready');
     reveal('[data-enter="hero"]', { delay: 120 });
+    const el = root.current;
+    if (!el) return;
+    return driftPetals(el);
   }, []);
 
   return (
-    <header className="band" style={{ paddingTop: 'clamp(4rem, 14vh, 9rem)' }}>
-      <p
+    <header ref={root} className="band" style={{ paddingTop: 'clamp(3rem, 11vh, 7rem)' }}>
+      {/* The lockup: mark beside wordmark. The kit ships this as an SVG, and it is set as live
+          text here instead so it inherits the page's own type and stays crisp at any size. The
+          kit's own rule for the wordmark is what is applied: uppercase, about 0.14em tracking. */}
+      <div
         data-enter="hero"
-        className="mono"
         style={{
-          color: 'var(--ink-faint)',
-          fontSize: 'var(--t-small)',
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          margin: '0 0 2.2rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.7rem',
+          margin: '0 0 2.6rem',
         }}
       >
-        Senbonzakura
-      </p>
+        <Mark size={40} />
+        <span
+          className="wordmark"
+          style={{ fontSize: '1.02rem', color: 'var(--ink)' }}
+        >
+          Senbonzakura
+        </span>
+        <span
+          className="jp"
+          aria-hidden="true"
+          style={{ color: 'var(--ink-faint)', fontSize: '1rem', marginLeft: '0.1rem' }}
+        >
+          千本桜
+        </span>
+      </div>
 
       <h1
         data-enter="hero"
@@ -48,7 +68,7 @@ export default function Hero() {
           fontSize: 'var(--t-hero)',
           lineHeight: 1.02,
           letterSpacing: '-0.035em',
-          fontWeight: 560,
+          fontWeight: 600,
           margin: '0 0 1.6rem',
           maxWidth: '22ch',
         }}
@@ -115,6 +135,20 @@ export default function Hero() {
         0.4.1 on PyPI &nbsp;·&nbsp; AGPL-3.0-or-later &nbsp;·&nbsp; runs on CPU &nbsp;·&nbsp; free
         GPU notebook
       </p>
+
+      {/* THE ONE PLACE THE GRADIENT APPEARS AS A GRADIENT, as a hairline closing the hero. The
+          kit insists it runs pink to violet to navy and that the violet midpoint is load-bearing,
+          so it is rotated to a horizontal sweep rather than recoloured or reordered. */}
+      <div
+        data-enter="hero"
+        aria-hidden="true"
+        style={{
+          marginTop: 'calc(var(--band) * 0.55)',
+          height: '2px',
+          background: 'linear-gradient(to right, #F98DB0 0%, #E06A9C 38%, #8B4791 66%, #141A42 100%)',
+          borderRadius: '2px',
+        }}
+      />
     </header>
   );
 }

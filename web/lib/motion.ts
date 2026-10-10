@@ -112,3 +112,45 @@ export function onFirstView(
   observer.observe(el);
   return () => observer.disconnect();
 }
+
+/**
+ * The two floating petals drift, independently and slowly.
+ *
+ * The brand kit describes the mark as three large petals "with two independent smaller petals
+ * floating in the gaps", so this animates what the mark already depicts rather than adding an
+ * effect to it. The large petals and the mark's own silhouette, colour and proportions are left
+ * alone, because the kit says not to rotate, stretch, recolour or add effects to the mark.
+ *
+ * Independently is the whole point: the two get different durations and a deliberate offset, so
+ * they never beat together. Two petals moving in lockstep read as one mechanism, which is the
+ * opposite of floating.
+ *
+ * Returns a stop function. A looping animation left running after its component is gone keeps the
+ * compositor awake on a laptop, which is somebody's battery.
+ */
+export function driftPetals(root: Element): () => void {
+  if (prefersReducedMotion()) return () => {};
+
+  const petals = Array.from(root.querySelectorAll<SVGElement>('[data-petal]'));
+  if (petals.length === 0) return () => {};
+
+  const running = petals.map((petal, i) => {
+    const sign = petal.dataset.petal?.startsWith('-') ? -1 : 1;
+    return animate(petal, {
+      // TRANSLATION ONLY, DELIBERATELY. These groups sit inside a parent that carries the
+      // petal's `rotate(+/-25)` placement, so the movement happens in that rotated frame and
+      // translateY drifts the petal along its own axis, out from the flower and back. A rotate
+      // here would need a transform origin to be right and would be a rotation of part of the
+      // mark, which the kit's rules are about. A drift out and back is the thing the mark
+      // already depicts.
+      translateY: [0, -3.4, 0],
+      translateX: [0, sign * 1.2, 0],
+      duration: 7200 + i * 1900,
+      delay: i * 850,
+      ease: 'inOutSine',
+      loop: true,
+    });
+  });
+
+  return () => running.forEach((a) => a.pause());
+}

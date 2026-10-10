@@ -134,8 +134,7 @@ def test_the_shipped_wheel_never_disagrees_with_itself():
     # The docstring above says the last two times this was reasoned about the reasoning was wrong.
     # This is the third, and it is the same mistake in a new place: the test encoded the list of
     # things that existed when it was written rather than the property it was checking.
-    has_extension = any(("_native" in n and (n.endswith(".so") or n.endswith(".pyd")))
-                        for n in names)
+    has_extension = any(("_native" in n and n.endswith((".so", ".pyd"))) for n in names)
     has_binary = has_vendored or has_extension
     universal = name.endswith("-py3-none-any.whl")
     assert not (universal and has_binary), (

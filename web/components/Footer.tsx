@@ -9,21 +9,19 @@ const REPO = 'https://github.com/elementmerc/senbonzakura';
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
 /**
- * ALL THREE LICENCE ROWS, in the footer, because one of them surprises people.
+ * Links, a copyright line, and nothing else.
  *
- * Two readers with no knowledge of this project went looking for the licensing position in
- * September 2026 and found it stated nowhere but the licence file itself, which is the wrong
- * place for the one fact a commercial reader most needs. Three separate things are licensed
- * differently and a reader who assumes one answer covers all three gets it wrong:
+ * THE LICENCE TABLE THAT WAS HERE IS GONE, by the operator's decision of 2026-10-10. It set out
+ * all three licences, because three separate things are licensed differently and a reader who
+ * assumes one answer covers all three gets it wrong. That remains true, so the Project column
+ * now carries a licence link rather than losing the question entirely: the detail belongs in the
+ * repository, where it is authoritative, instead of being restated in a footer where it can
+ * drift out of agreement with the files it describes.
  *
- *   the code         AGPL-3.0-or-later
- *   the bundled evaluation track    CC BY-NC 4.0, so non-commercial
- *   a model you edit                whatever the base model says
- *
- * The middle one is the trap. A firm can use this tool commercially without trouble, because the
- * network clause only bites somebody reselling it as a service, but `--track default` is
- * non-commercial and they have to bring their own corpus. Neither competitor states anything
- * comparable, and one of them has no legal links at all.
+ * The no-tracking sentence is gone too, and for a better reason than brevity. It was accurate on
+ * the day it was written and the project has since decided to collect telemetry, so it was a
+ * claim with an expiry date sitting in the one place nobody re-reads. A promise about data
+ * handling belongs in a privacy policy that is versioned and dated, not in a footer.
  */
 export default function Footer() {
   return (
@@ -97,6 +95,7 @@ export default function Footer() {
             </p>
             {[
               [REPO, 'Repository'],
+              [`${REPO}/blob/v0.4.1/LICENSE`, 'Licence'],
               [`${REPO}/blob/v0.4.1/ACCEPTABLE-USE.md`, 'Acceptable use'],
               [`${REPO}/blob/v0.4.1/CONTRIBUTING.md`, 'Contributing'],
               [`${REPO}/blob/v0.4.1/CHANGELOG.md`, 'Changelog'],
@@ -110,67 +109,8 @@ export default function Footer() {
           </div>
         </div>
 
-        {/* The three licences, as a table rather than a sentence, because they genuinely differ
-            and a reader skimming one line takes the first answer for all three. */}
-        <div
-          style={{
-            border: '1px solid var(--rule)',
-            borderRadius: '10px',
-            overflow: 'hidden',
-            maxWidth: '46rem',
-            marginBottom: '2.4rem',
-          }}
-        >
-          {[
-            ['The code', 'AGPL-3.0-or-later', 'Using it inside your company triggers nothing. Reselling it as a service does.'],
-            [
-              'The bundled evaluation track',
-              'CC BY-NC 4.0',
-              'Non-commercial. For commercial work, point --track at a corpus of your own.',
-            ],
-            [
-              'A model you edit',
-              "the base model's licence",
-              'Redistributing an edited checkpoint is governed by Qwen, Llama, Gemma and so on, never by us.',
-            ],
-          ].map(([what, licence, note], i) => (
-            <div
-              key={what}
-              style={{
-                padding: '0.95rem 1.2rem',
-                borderTop: i ? '1px solid var(--rule)' : undefined,
-                display: 'grid',
-                gridTemplateColumns: 'minmax(11rem, 14rem) 1fr',
-                gap: '0.4rem 1.2rem',
-                alignItems: 'baseline',
-              }}
-            >
-              <span style={{ fontSize: '0.9rem' }}>{what}</span>
-              <span>
-                <span className="mono" style={{ fontSize: '0.86rem', color: 'var(--measured)' }}>
-                  {licence}
-                </span>
-                <span
-                  style={{
-                    display: 'block',
-                    fontSize: 'var(--t-small)',
-                    color: 'var(--ink-faint)',
-                    marginTop: '0.25rem',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {note}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-
         <p style={{ margin: 0, fontSize: 'var(--t-small)', color: 'var(--ink-faint)', lineHeight: 1.8 }}>
-          Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand blades.
-          <br />
-          &copy; 2026 Daniel Iwugo. This site sets no cookies, runs no analytics and loads nothing
-          from anybody else.
+          &copy; 2026 Daniel Iwugo
         </p>
       </footer>
     </>

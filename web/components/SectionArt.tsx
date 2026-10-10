@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { growIn, reveal } from '@/lib/motion';
+import { growIn, reveal, typeLoop } from '@/lib/motion';
 
 /**
  * One piece of art per section, in the space the left-aligned prose leaves.
@@ -73,6 +73,13 @@ export function RefusalGrid() {
  * The bars are in the true ratio rather than a flattering one: 0.0932 against 0.0497 is 1.88, and
  * the taller bar is 1.88 times the shorter. Scaling the axis to make the gap look bigger is the
  * oldest chart lie there is.
+ *
+ * WHAT THE CHART WAS MISSING was not decoration, it was the caption a stranger needs to read it.
+ * Two bars and four numbers, with the labels in the faintest ink on the page, left the reader to
+ * work out what was being compared, which way was good, and which bar was which. So the chart now
+ * says what it measures and which direction is better before the bars appear, the labels sit in
+ * ordinary ink at a readable size, and the quieter bar is a visible grey rather than the hairline
+ * rule colour, which at 15rem tall had almost disappeared.
  */
 export function DriftBars() {
   const root = useRef<HTMLDivElement>(null);
@@ -86,10 +93,30 @@ export function DriftBars() {
     const el = root.current;
     if (!el) return;
     growIn(Array.from(el.querySelectorAll('[data-bar]')), { axis: 'scaleY', duration: 950 });
+    // The counters here are NOT registered by this component, deliberately. This chart renders
+    // inside Measured's section, whose own effect already walks [data-count] across its whole
+    // subtree, so registering them here put two competing animations on one node and the second
+    // one read no data-decimals and formatted 0.0497 with zero decimal places. The figures
+    // turned into "0". One owner per counter, and the owner is the section.
   }, []);
 
   return (
     <div ref={root} aria-hidden="true" style={{ width: '100%' }}>
+      <p
+        className="mono"
+        style={{
+          margin: '0 0 0.3rem',
+          fontSize: '0.74rem',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-faint)',
+        }}
+      >
+        Coherence drift
+      </p>
+      <p style={{ margin: '0 0 1.6rem', fontSize: '0.82rem', color: 'var(--ink-dim)' }}>
+        How far the edit moved the model's ordinary writing. Lower is better.
+      </p>
       <div
         style={{
           display: 'flex',
@@ -104,7 +131,9 @@ export function DriftBars() {
           <div key={b.label} style={{ flex: 1, textAlign: 'center' }}>
             <p
               className="mono"
-              style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: 'var(--ink)' }}
+              data-count={b.value}
+              data-decimals="4"
+              style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: 'var(--ink)' }}
             >
               {b.value.toFixed(4)}
             </p>
@@ -118,7 +147,7 @@ export function DriftBars() {
                 transformOrigin: 'bottom',
                 background: i
                   ? 'linear-gradient(to bottom, #F98DB0, #8B4791)'
-                  : 'var(--rule)',
+                  : 'var(--ink-faint)',
               }}
             />
           </div>
@@ -132,14 +161,16 @@ export function DriftBars() {
               flex: 1,
               textAlign: 'center',
               margin: 0,
-              fontSize: '0.78rem',
-              color: 'var(--ink-faint)',
-              lineHeight: 1.5,
+              fontSize: '0.92rem',
+              color: 'var(--ink)',
+              lineHeight: 1.6,
             }}
           >
-            {b.label}
+            {b.label} removed
             <br />
-            <span className="mono">spread {b.spread.toFixed(4)}</span>
+            <span className="mono" style={{ fontSize: '0.76rem', color: 'var(--ink-faint)' }}>
+              spread {b.spread.toFixed(4)} across 5 seeds
+            </span>
           </p>
         ))}
       </div>
@@ -168,11 +199,26 @@ export function RunOutput() {
     ['drift.json', 'how far the first token moved'],
   ];
 
+  const prompt = useRef<HTMLSpanElement>(null);
+
   useEffect(() => {
     // THE ROWS THIS PANEL RENDERED EMPTY. They carried an inline `opacity: 0` and waited for an
     // animation written in v3 syntax that could never run, so the panel showed its border and
     // its header and nothing else. The inline opacity is gone and anime sets the start value.
     reveal('[data-row]');
+
+    // The panel showed what a run leaves behind and gave no sign that anything had run. A
+    // command line that types itself, holds, wipes and types the next one is the smallest thing
+    // that reads as a tool working rather than a screenshot of one. Every command here is real
+    // and takes flags the CLI accepts; a decorative prompt that invents a command teaches the
+    // reader something false.
+    const el = prompt.current;
+    if (!el) return;
+    return typeLoop(el, [
+      'senbonzakura measure ./model',
+      'senbonzakura abliterate ./model --max-directions 2',
+      'senbonzakura compare ./before ./after',
+    ]);
   }, []);
 
   return (
@@ -187,6 +233,24 @@ export function RunOutput() {
         background: 'var(--bg-raised)',
       }}
     >
+      <div
+        className="mono"
+        style={{
+          padding: '0.7rem 1.1rem',
+          borderBottom: '1px solid var(--rule)',
+          fontSize: '0.76rem',
+          color: 'var(--ink-faint)',
+          display: 'flex',
+          gap: '0.5rem',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+        }}
+      >
+        <span style={{ color: 'var(--measured)' }}>$</span>
+        {/* The caret is a CSS pseudo-element on this span, so it sits flush against the last
+            typed character without a space and without a node the typing has to work around. */}
+        <span ref={prompt} className="caret" style={{ color: 'var(--ink-dim)' }} />
+      </div>
       <div
         className="mono"
         style={{

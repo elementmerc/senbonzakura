@@ -72,3 +72,61 @@ def test_nothing_shown_exceeds_the_budget_it_was_given():
         if ln.startswith(("  PRE :", "  POST:")):
             # eval() of a repr is not run here; the quoted length is what is compared.
             assert len(ln) <= len("  POST: ") + cli.INSPECT_TEXT_CHARS + 2
+
+
+# ── the caution that has to survive the next pass over this output ─────────────────
+#
+# Added 2026-10-10. `--inspect` is the one surface that puts a model's answers to harmful prompts
+# on a screen. The acceptable-use policy says no completions are distributed with this tool, which
+# is true of what ships and not of what this command makes, and until now nothing said so at the
+# point the text appeared. A policy file the reader of this output may never have opened is not a
+# disclosure to that reader.
+#
+# This is a test rather than a comment because the failure mode is specific and has happened twice
+# in this project: somebody shortens a block of output for readability and takes a line of
+# obligation out with the padding. The assertions below are about what the caution has to SAY, not
+# how it is worded, so it can be rewritten without tripping them.
+
+def test_the_inspect_caution_says_what_is_about_to_appear():
+    from senbonzakura import cli
+    text = cli.INSPECT_CAUTION.lower()
+    assert "harmful" in text, "the caution has to name what the prompts are"
+    assert "answers" in text or "completions" in text, (
+        "the caution has to say these are the MODEL'S OUTPUT, not the prompt set. The prompts "
+        "ship with the tool and the answers do not, which is the whole reason this needs saying")
+
+
+def test_the_inspect_caution_says_the_text_is_not_saved_but_is_in_the_scrollback():
+    from senbonzakura import cli
+    text = cli.INSPECT_CAUTION.lower()
+    assert "not saved" in text or "nothing here is saved" in text
+    assert "scrollback" in text or "screen" in text, (
+        "'nothing is saved' alone reads as reassurance. The point is that it is still on the "
+        "screen and in the terminal's history, which is where somebody else may read it")
+
+
+def test_the_inspect_caution_raises_the_shared_machine_question():
+    from senbonzakura import cli
+    text = cli.INSPECT_CAUTION.lower()
+    assert "shared" in text or "institutional" in text, (
+        "the acceptable-use policy asks this question about the corpus landing on a shared "
+        "machine; the generations are the stronger case and the caution has to ask it too")
+
+
+def test_the_caution_is_printed_before_the_first_harmful_block():
+    """Order matters: a caution after the text is a caption, not a warning.
+
+    Asserted on the source rather than by running the command, because reaching that code path
+    needs a model on a card. A source-order check cannot prove the runtime order in general, and
+    here the two statements sit in one straight-line function with nothing between them, so it
+    does.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "src" / "senbonzakura" / "cli.py").read_text()
+    caution_at = src.find("print(INSPECT_CAUTION)")
+    harmful_at = src.find('show("HARMFUL"')
+    assert caution_at != -1, "the caution is no longer printed anywhere"
+    assert harmful_at != -1, "the harmful block is no longer shown, so this test needs rewriting"
+    assert caution_at < harmful_at, (
+        "the caution is printed AFTER the harmful generations, so the reader meets the text "
+        "first and the warning second")

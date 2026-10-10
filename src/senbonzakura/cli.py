@@ -2454,6 +2454,25 @@ def _weights_live_on(model):
 INSPECT_PROMPT_CHARS = 110
 INSPECT_TEXT_CHARS = 220
 
+#: Printed once, immediately before `--inspect`'s first block of generations.
+#:
+#: The acceptable-use policy says no completions are distributed with this tool, and that is true
+#: of what ships. `--inspect` MAKES them: it is the one surface that puts a model's answers to
+#: harmful prompts on a screen, because a KL number cannot tell "wrecked" from "a few benign first
+#: tokens flipped" and somebody has to read the text. That is a legitimate reason and it does not
+#: remove the obligation to say what is about to appear, at the point it appears, rather than only
+#: in a policy file the reader of this output may never have opened.
+#:
+#: Deliberately short. A caution long enough to scroll is a caution people learn to scroll past,
+#: and the last line is the one that asks something of the reader, so it goes last.
+INSPECT_CAUTION = (
+    "  What follows is this model's own answers to harmful prompts, before and after the "
+    "edit.\n"
+    "  Nothing here is saved: it is on your screen and in your terminal's scrollback.\n"
+    "  If this machine is shared or institutional, consider whether whoever administers it "
+    "would expect that text to be on it."
+)
+
 
 def inspect_lines(tag, prompts, pre, post):
     """`--inspect`'s before-and-after block, as lines, with every cut value marked as cut.
@@ -4185,6 +4204,7 @@ class Abliterator:
         def show(tag, prompts, pre, post):
             for line in inspect_lines(tag, prompts, pre, post):
                 print(line)
+        print(INSPECT_CAUTION)
         show("HARMFUL", hprompts, pre_h, post_h)
         show("HARMLESS", gprompts, pre_g, post_g)
         def pct(xs, f):

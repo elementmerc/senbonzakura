@@ -38,6 +38,7 @@ def _clean(**over):
             "name": "projected against raw",
             "metric": "refusal_rate",
             "instrument": "senbonzakura score, keyword ruler",
+            "estimator": "difference of seed means, with a percentile bootstrap over prompts",
             "partition": "measurement",
             "decision_rule": "a gap larger than the seed spread, on five seeds",
         },
@@ -135,7 +136,7 @@ def test_a_date_that_is_not_a_date_is_reported():
 def test_secondaries_are_allowed_and_are_not_treated_as_claims():
     """A secondary with no decision rule is fine: it is already declared as not the claim."""
     sec = {"name": "coherence", "metric": "nll", "instrument": "senbonzakura coherence",
-           "partition": "fixed-passage"}
+           "estimator": "mean per-token nll", "partition": "fixed-passage"}
     assert prereg.validate(_clean(secondaries=[sec])) == []
 
 
@@ -226,6 +227,13 @@ def test_a_pre_registration_with_no_usable_primary_cannot_hold_a_run_to_anything
 
 
 # ── the rung's own acceptance test ───────────────────────────────────────────────
+def test_an_estimator_left_blank_is_reported_as_blank_not_as_named():
+    primary = _clean()["primary"]
+    primary["estimator"] = "   "
+    findings = prereg.validate(_clean(primary=primary))
+    assert any(s == prereg.FINDING and "`estimator`" in m for s, m in findings), findings
+
+
 def _written_by_hand():
     return sorted(PREREG_DIR.glob("pre-registration-*.md"))
 

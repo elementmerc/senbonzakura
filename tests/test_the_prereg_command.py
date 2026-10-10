@@ -50,6 +50,7 @@ COMPLETE = {
         "name": "K=1 against K=2 at matched refusal",
         "metric": "post_bake_kl",
         "instrument": "senbonzakura drift",
+        "estimator": "mean post-bake KL over held-out rows, per seed, compared across seeds",
         "partition": "held-out evaluation rows, never used for fitting or selection",
         "decision_rule": "K=2 wins only if its mean KL is lower over five seeds a side",
     },

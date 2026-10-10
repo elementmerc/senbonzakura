@@ -37,6 +37,22 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "research"))
+
+# SKIPPED WHERE `fcntl` DOES NOT EXIST, which is Windows, and this guard is a fix.
+#
+# `gpu_lock` is built on POSIX advisory locking and imports `fcntl` at module scope, so importing
+# it on Windows raised ModuleNotFoundError during COLLECTION. That is an error rather than a
+# failure, and pytest reports it in a separate block from the failure list, so for as long as
+# this job had failing tests the error sat underneath them unread. Fixing the three failures on
+# 2026-10-10 left it as the only thing keeping the Windows job red.
+#
+# Keyed on the missing module rather than on `sys.platform`, because the dependency is fcntl and
+# naming the platform would be a guess about which platforms lack it.
+pytest.importorskip(
+    "fcntl",
+    reason="gpu_lock is built on POSIX advisory locking, which this platform has no fcntl for. "
+           "The interlock it provides is meaningless without one, so there is nothing here to "
+           "test rather than something untested.")
 import gpu_lock
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "research" / "gpu_lock.py"

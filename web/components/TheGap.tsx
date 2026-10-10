@@ -79,9 +79,7 @@ export default function TheGap() {
   }, []);
 
   return (
-    <>
-      <hr className="rule" />
-      <section ref={section} className="band">
+    <section ref={section} className="band">
         <h2
           data-enter="gap"
           style={{
@@ -190,7 +188,6 @@ export default function TheGap() {
             , July 2026.
           </p>
         </div>
-      </section>
-    </>
+    </section>
   );
 }

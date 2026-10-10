@@ -45,25 +45,36 @@ import math
 import os
 import shutil
 
-import torch
-
 # THE METRIC VOCABULARY LIVES IN THE TORCH-FREE DISTRIBUTION (decision Q-29), because both sides
 # need it and only one of them has torch. The dependency runs big-to-small, which is the only
 # direction allowed: `senbonzakura_check` may never import `senbonzakura`.
 from senbonzakura_check import measurement
 
 from . import argresolve, stamps
-from .cli import accelerator_name, load_model_and_tokenizer, load_tokenizer, loader_parser
 from .crashsafe import atomic_write, provenance
 
-# The measurement itself, from the torch-only module the sealed best-of-N pass also uses, so the
-# published drift figure and the figure that selects an arm cannot drift apart.
-from .firsttoken import first_token_logprobs, kl, kl_per_prompt
+# NOTHING HEAVY AT MODULE SCOPE, AND IT IS MEASURED RATHER THAN HOPED. Three imports cost this
+# command its help page: `torch` at 1.17s, `.cli` pulling transformers (0.79s) and optuna (0.19s),
+# and `.firsttoken`, which is torch-only by design. `senbonzakura drift --help` took 3.57 seconds
+# to print a page of text, the slowest of the twenty-five commands. `capability.py` and
+# `jailbreak.py` already reach `loader_parser` through `.parser` for exactly this reason, with the
+# reasoning written out at `capability.build_parser`; this is the same fix applied to the four
+# commands that were left behind. Measured after: 0.06s.
+#
+# The MEASUREMENT still comes from `.firsttoken` and from nowhere else, which is what keeps the
+# published drift figure and the figure that selects an arm from drifting apart. It is imported in
+# the two functions that compute, rather than at the top of a file whose help page needs neither.
+#
+# `tests/test_a_help_page_costs_nothing.py` asserts the cost rather than trusting this comment,
+# because a future edit that adds `import torch` here restores the defect silently.
 
 CACHE_SCHEMA = "senbonzakura-drift-base/1"
 
 
 def build_parser():
+    # FROM `.parser`, NOT FROM `.cli`, which re-exports it. See the note at the top of this file.
+    from .parser import loader_parser
+
     ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura drift",
@@ -234,6 +245,10 @@ def kl_interval(base_lp, cand_lp, *, seed=0, draws=BOOTSTRAP_DRAWS):
     the same machine would measure floating-point reduction order, which is a reassuring number
     about the wrong thing.
     """
+    import torch  # local: this module is import-light, see the note at the top
+
+    from .firsttoken import kl_per_prompt
+
     per = kl_per_prompt(base_lp, cand_lp)
     n = per.shape[0]
     if n < 2:
@@ -247,6 +262,11 @@ def kl_interval(base_lp, cand_lp, *, seed=0, draws=BOOTSTRAP_DRAWS):
 
 def load_base_logprobs(a, prompts, fp, log=print):
     """The base model's distributions, from cache when the cache is genuinely for this question."""
+    import torch  # local: this module is import-light, see the note at the top
+
+    from .cli import load_model_and_tokenizer
+    from .firsttoken import first_token_logprobs
+
     cache = a.base_cache
     if cache and os.path.isfile(cache):
         # weights_only=True: the payload is {str: str|int|Tensor}, which it handles, and the
@@ -263,9 +283,19 @@ def load_base_logprobs(a, prompts, fp, log=print):
         log(f"drift: the cache at {cache} was built for a different base, prompt set, chat "
             f"template or batch size. Recomputing.")
 
+    # `--chat-template` IS FORWARDED, and until 2026-10-10 it was not. `loader_parser()` declares
+    # the flag, this command accepted it, and both loads here dropped it, so a model that ships no
+    # template fell back to whatever the loader decides and a user who passed one had it silently
+    # ignored. On a command whose whole figure is a comparison held at a fixed prompt format,
+    # against a base loaded the same way, that is the documented incident class rather than a
+    # nicety: `first_token_logprobs` renders through the chat template, so the flag decides what
+    # the model was shown.
+    #
+    # BOTH SIDES GET THE SAME ONE. A template applied to the candidate and not to the base would
+    # make the divergence a measure of the rendering rather than of the edit.
     base_model, base_tok = load_model_and_tokenizer(
         a.base, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code)
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
     lp = first_token_logprobs(base_model, base_tok, prompts, batch=a.batch)
     del base_model
     if torch.cuda.is_available():       # pragma: no cover - depends on the machine
@@ -297,6 +327,15 @@ def load_base_logprobs(a, prompts, fp, log=print):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+
+    # BELOW THE PARSE, NOT ABOVE IT, and that line is the whole of why this works.
+    # `--help` and every argument error exit from inside `parse_args`, so an import above it
+    # is paid by the help page and the deferral buys nothing. Measured: with this import one
+    # line higher, `--help` still cost the full 3.2 seconds and the only way to tell was to
+    # ask which modules were loaded when it exited.
+    from .cli import accelerator_name, load_model_and_tokenizer, load_tokenizer
+    from .firsttoken import first_token_logprobs, kl
+
     prompts = read_prompts(a.prompts)
 
     # ORDER IS LOAD-BEARING, and it used to be the other way round. The candidate was loaded
@@ -308,7 +347,8 @@ def main(argv=None):
     #
     # Only the tokenizer is needed to fingerprint the question, so the base is measured and freed
     # before the candidate arrives, and the peak is one model.
-    tok = load_tokenizer(a.model, trust_remote_code=a.trust_remote_code)
+    tok = load_tokenizer(a.model, trust_remote_code=a.trust_remote_code,
+                         chat_template=a.chat_template)
     template = getattr(tok, "chat_template", None) or ""
     fp = fingerprint(a.base, prompts, template)
 
@@ -320,7 +360,7 @@ def main(argv=None):
 
     cand, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code)
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)
     value = kl(base_lp, cand_lp)
     kl_lo, kl_hi = kl_interval(base_lp, cand_lp, seed=int(getattr(a, "seed", 0) or 0))

@@ -1009,10 +1009,16 @@ def main(argv=None):
             "happened.")
     require_lora_backend(a.method)
 
+    # `cli` FOR THE LOADER AND THE ACCELERATOR NAME, `score` FOR THE SCORING. Both used to come
+    # through `score`, which imported them from `.cli` at module scope and re-exported them by
+    # accident of the import. That import moved into the functions that need it so that
+    # `score --help` does not pay for torch, and a borrowed re-export is not an interface: a call
+    # through `score` also read as though the scorer owned the loader, which it never did.
+    from . import cli as _cli_mod
     from . import score as score_module
 
     def load(checkpoint):
-        return score_module.load_model_and_tokenizer(
+        return _cli_mod.load_model_and_tokenizer(
             checkpoint, device=a.device, load_in_4bit=a.load_in_4bit,
             trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
 
@@ -1112,7 +1118,7 @@ def main(argv=None):
         "chat_template": edited["chat_template"],
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "provenance": provenance(device=a.device,
-                                 accelerator=score_module.accelerator_name(a.device),
+                                 accelerator=_cli_mod.accelerator_name(a.device),
                                  corpus=track.revision_entry(a.corpus)),
     }
     # THE ONLY CLAIM THIS COMMAND MAKES, and it is a difference rather than a level. Without the

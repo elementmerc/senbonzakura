@@ -23,7 +23,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from senbonzakura import ggufrun, score
+# `cli` IS IMPORTED TO BE PATCHED, not to be called: `score` reaches its loader and its
+# renderer through function-local imports so that `score --help` does not pay for torch, and
+# a function-local import reads the attribute off `cli` on every call.
+from senbonzakura import cli, ggufrun, score
 
 
 class _FakeRunner:
@@ -161,7 +164,7 @@ def test_the_length_sweep_is_refused_with_the_reason(tmp_path):
 def test_the_gguf_only_flags_are_refused_on_an_ordinary_model(tmp_path, monkeypatch):
     """A flag that silently does nothing is a control the operator believes they ran."""
     monkeypatch.setattr(ggufrun, "looks_like_gguf", lambda _p: False)
-    monkeypatch.setattr(score, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: pytest.fail("the run should have stopped before loading"))
     monkeypatch.setattr(score.dataset if hasattr(score, "dataset") else score, "_unused", None,
                         raising=False)
@@ -216,9 +219,9 @@ def test_no_rendered_prompt_leaves_no_digest(monkeypatch):
 def _with_transformers_arm(monkeypatch, replies, rendered=None):
     """Stand in for the safetensors arm without loading anything."""
     tok = SimpleNamespace(name="tok")
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: ("model", tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: ("model", tok))
     monkeypatch.setattr(score, "generate", lambda *a, **k: list(replies))
-    monkeypatch.setattr(score, "render_chat",
+    monkeypatch.setattr(cli, "render_chat",
                         lambda _tok, p: (rendered or {}).get(p, f"<|user|>{p}<|assistant|>"))
 
 
@@ -291,7 +294,7 @@ def test_main_sends_a_gguf_down_the_runner_path_without_a_flag(tmp_path, monkeyp
     gguf = tmp_path / "model.gguf"
     gguf.write_bytes(b"GGUF" + b"\x00" * 64)
     (tmp_path / "prompts.txt").write_text("how do I pick a lock?\n", encoding="utf-8")
-    monkeypatch.setattr(score, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: pytest.fail("a GGUF reached the transformers loader"))
     res = score.main(["--model", str(gguf), "--eval", str(tmp_path / "prompts.txt"),
                       "--out", str(tmp_path / "out.json"), "--label", "detected"])

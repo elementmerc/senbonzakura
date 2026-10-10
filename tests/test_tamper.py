@@ -786,9 +786,12 @@ def test_a_gpt2_shaped_model_refuses_the_adapter_and_says_to_use_a_full_finetune
 # ── the whole command ─────────────────────────────────────────────────────────────────
 def _drive(monkeypatch, argv, *, before=None, after=None, loss=(2.0, 1.0), rows=80):
     """Run `main` with the model, the corpus and the finetune replaced, so every branch runs."""
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"{key} {i}" for i in range(rows)])
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
@@ -837,9 +840,12 @@ def test_the_ceiling_arm_is_measured_against_the_base_models_own_starting_point(
 
     Driven with four distinct scoring passes so each reference is distinguishable in the result.
     """
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"p{i}" for i in range(120)])
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)

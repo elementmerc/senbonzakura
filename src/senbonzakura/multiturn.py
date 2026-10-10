@@ -533,9 +533,14 @@ def main(argv=None):
         a.attack_set, a.attack_set_file, arm="harmful", name_flag="--attack-set",
         file_flag="--attack-set-file", what="attack set", limit=a.n)
 
-    from . import score as score_module
+    # `cli` OWNS THE LOADER AND THE ACCELERATOR NAME. Both used to be reached through `score`,
+    # which imported them from `.cli` at module scope and so re-exported them by accident of the
+    # import. That import moved into the functions that need it, so that `score --help` does not
+    # pay for torch, and a borrowed re-export is not an interface: the call also read as though
+    # the scorer owned the loader, which it never did.
+    from . import cli as _cli_mod
 
-    model, tok = score_module.load_model_and_tokenizer(
+    model, tok = _cli_mod.load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
 
@@ -583,7 +588,7 @@ def main(argv=None):
         "chat_template": getattr(tok, "senbon_chat_template", None),
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "provenance": provenance(device=a.device,
-                                 accelerator=score_module.accelerator_name(a.device),
+                                 accelerator=_cli_mod.accelerator_name(a.device),
                                  corpus=track.revision_entry(a.attack_set)),
     }
     res["advantage"] = advantage(arm_blocks["arm"], arm_blocks["control"])

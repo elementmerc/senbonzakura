@@ -22,11 +22,18 @@ import hashlib
 import json
 import math
 
-import torch
-
 from . import argresolve, stamps
-from .cli import load_model_and_tokenizer, loader_parser
 from .crashsafe import atomic_write
+
+# NOTHING HEAVY AT MODULE SCOPE, AND THAT IS MEASURED RATHER THAN HOPED. `torch` costs 1.17s to
+# import on the development box and `.cli` pulls transformers and optuna on top of it, so
+# `senbonzakura coherence --help` took 3.21 seconds to print a page of text. `capability.py` and
+# `jailbreak.py` already reach `loader_parser` through `.parser` for exactly this reason, with the
+# reasoning written at `capability.build_parser`; this module is the same fix applied to the four
+# commands that were left behind. Measured after: 0.06s.
+#
+# `tests/test_a_help_page_costs_nothing.py` asserts the cost rather than trusting this comment,
+# because a future edit that adds `import torch` here restores the defect silently.
 
 # A fixed, deliberately unremarkable passage. It touches no refusal-adjacent topic,
 # so a rising perplexity here is coherence damage, not the model balking at content.
@@ -146,6 +153,9 @@ def _stamp_coherence(res, precision="unknown"):
 
 
 def build_parser():
+    # FROM `.parser`, NOT FROM `.cli`, which re-exports it. See the note at the top of this file.
+    from .parser import loader_parser
+
     # No --chat-template, deliberately: this measures the perplexity of a fixed passage and
     # never renders a chat prompt, so there is no prompt format for one to specify.
     ap = argresolve.ParserThatNamesUnknownFlags(
@@ -162,6 +172,8 @@ def build_parser():
 
 
 def coherence(model, tok, text=NEUTRAL):
+    import torch  # local: this module is import-light, see the note at the top
+
     ids = tok(text, return_tensors="pt").input_ids.to(model.device)
     with torch.no_grad():
         nll = model(ids, labels=ids).loss.item()
@@ -177,6 +189,14 @@ def coherence(model, tok, text=NEUTRAL):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+
+    # BELOW THE PARSE, NOT ABOVE IT, and that line is the whole of why this works.
+    # `--help` and every argument error exit from inside `parse_args`, so an import above it
+    # is paid by the help page and the deferral buys nothing. Measured: with this import one
+    # line higher, `--help` still cost the full 3.2 seconds and the only way to tell was to
+    # ask which modules were loaded when it exited.
+    from .cli import load_model_and_tokenizer
+
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, needs_chat_template=False)

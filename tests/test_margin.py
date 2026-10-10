@@ -21,7 +21,13 @@ from pathlib import Path
 import pytest
 import torch
 
-from senbonzakura import firsttoken, margin
+# `cli` IS IMPORTED HERE TO BE PATCHED, not to be called. The command module below reads
+# its loader through a function-local `from .cli import ...`, so that its `--help` does not
+# pay for torch, transformers and optuna; a function-local import reads the attribute off
+# `cli` on every call, which is where the fake has to go. Patching the command module sets
+# an attribute nothing looks at, and the test then tries to load a real model, which is how
+# each of these was found.
+from senbonzakura import cli, firsttoken, margin
 
 
 @pytest.fixture
@@ -536,7 +542,7 @@ def _track(tmp_path, n_harmful=4, n_harmless=6):
 @pytest.fixture
 def loaded(monkeypatch, margin_kit):
     model, tok = margin_kit
-    monkeypatch.setattr(margin, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
     return model, tok
 
 

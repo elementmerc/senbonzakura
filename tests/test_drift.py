@@ -19,7 +19,13 @@ import json
 import pytest
 import torch
 
-from senbonzakura import drift, firsttoken
+# `cli` IS IMPORTED HERE TO BE PATCHED, not to be called. The command module below reads
+# its loader through a function-local `from .cli import ...`, so that its `--help` does not
+# pay for torch, transformers and optuna; a function-local import reads the attribute off
+# `cli` on every call, which is where the fake has to go. Patching the command module sets
+# an attribute nothing looks at, and the test then tries to load a real model, which is how
+# each of these was found.
+from senbonzakura import cli, drift, firsttoken
 
 
 # ── the prompt file ───────────────────────────────────────────────────────────────────
@@ -65,7 +71,7 @@ def _lp(rows):
 
 def test_identical_distributions_have_zero_divergence():
     lp = _lp([[0.5, 0.5], [0.25, 0.75]])
-    assert drift.kl(lp, lp) == pytest.approx(0.0, abs=1e-6)
+    assert firsttoken.kl(lp, lp) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_the_divergence_matches_the_arithmetic_by_hand():
@@ -73,15 +79,15 @@ def test_the_divergence_matches_the_arithmetic_by_hand():
     cand = _lp([[0.25, 0.75]])
     expected = (0.5 * torch.log(torch.tensor(0.5 / 0.25))
                 + 0.5 * torch.log(torch.tensor(0.5 / 0.75)))
-    assert drift.kl(base, cand) == pytest.approx(float(expected), abs=1e-6)
+    assert firsttoken.kl(base, cand) == pytest.approx(float(expected), abs=1e-6)
 
 
 def test_the_divergence_is_averaged_over_prompts_not_summed():
     """Otherwise the figure would depend on how many prompts were scored."""
     base = _lp([[0.5, 0.5], [0.5, 0.5]])
     cand = _lp([[0.25, 0.75], [0.25, 0.75]])
-    one = drift.kl(base[:1], cand[:1])
-    assert drift.kl(base, cand) == pytest.approx(one, abs=1e-6)
+    one = firsttoken.kl(base[:1], cand[:1])
+    assert firsttoken.kl(base, cand) == pytest.approx(one, abs=1e-6)
 
 
 def test_the_direction_is_base_against_candidate():
@@ -90,7 +96,7 @@ def test_the_direction_is_base_against_candidate():
     """
     base = _lp([[0.9, 0.1]])
     cand = _lp([[0.5, 0.5]])
-    assert drift.kl(base, cand) != pytest.approx(drift.kl(cand, base), abs=1e-3)
+    assert firsttoken.kl(base, cand) != pytest.approx(firsttoken.kl(cand, base), abs=1e-3)
 
 
 # ── the forward pass ──────────────────────────────────────────────────────────────────
@@ -139,7 +145,7 @@ def stub_forward(monkeypatch):
 
 def test_the_forward_pass_returns_one_row_per_prompt(stub_forward):
     (model, tok), _ = stub_forward
-    out = drift.first_token_logprobs(model, tok, ["a", "b", "c"], batch=2)
+    out = firsttoken.first_token_logprobs(model, tok, ["a", "b", "c"], batch=2)
     assert out.shape == (3, model.vocab)
     # Uniform logits mean a uniform distribution: log(1/3) in every column.
     assert float(out[0][0]) == pytest.approx(torch.log(torch.tensor(1 / 3)), abs=1e-6)
@@ -147,7 +153,7 @@ def test_the_forward_pass_returns_one_row_per_prompt(stub_forward):
 
 def test_the_prompts_go_through_the_chat_template(stub_forward):
     (model, tok), _ = stub_forward
-    drift.first_token_logprobs(model, tok, ["a", "b"], batch=8)
+    firsttoken.first_token_logprobs(model, tok, ["a", "b"], batch=8)
     assert tok.last_chunk == ["<a>", "<b>"]
 
 
@@ -156,7 +162,7 @@ def test_the_batch_size_is_honoured(stub_forward):
     comparison that changed it between models would not be one.
     """
     (model, tok), seen = stub_forward
-    drift.first_token_logprobs(model, tok, ["a", "b", "c", "d", "e"], batch=2)
+    firsttoken.first_token_logprobs(model, tok, ["a", "b", "c", "d", "e"], batch=2)
     assert seen["batches"] == [2, 2, 1]
 
 
@@ -178,7 +184,7 @@ def _write_cache(path, fingerprint, batch, rows):
 def test_a_matching_cache_is_reused_without_loading_the_base(tmp_path, monkeypatch):
     cache = str(tmp_path / "base.pt")
     _write_cache(cache, "fp-1", 16, 4)
-    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: pytest.fail("the base was loaded despite a valid cache"))
     said = []
     out = drift.load_base_logprobs(_args(tmp_path, base_cache=cache, batch=16),
@@ -199,8 +205,8 @@ def test_a_cache_built_for_a_different_question_is_rebuilt_loudly(
     (model, tok), _ = stub_forward
     cache = str(tmp_path / "base.pt")
     _write_cache(cache, cached_fp, cached_batch, 4)
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: tok)
     said = []
     out = drift.load_base_logprobs(_args(tmp_path, base_cache=cache, batch=16),
                                    ["a", "b"], "fp-1", log=said.append)
@@ -212,8 +218,8 @@ def test_the_recomputed_base_is_written_back_for_the_next_model(tmp_path, monkey
                                                                stub_forward):
     (model, tok), _ = stub_forward
     cache = str(tmp_path / "base.pt")
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: tok)
     drift.load_base_logprobs(_args(tmp_path, base_cache=cache, batch=4), ["a"], "fp-1",
                              log=lambda _s: None)
     doc = torch.load(cache, map_location="cpu", weights_only=False)
@@ -223,8 +229,8 @@ def test_the_recomputed_base_is_written_back_for_the_next_model(tmp_path, monkey
 
 def test_no_cache_path_means_no_cache_file(tmp_path, monkeypatch, stub_forward):
     (model, tok), _ = stub_forward
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: tok)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: tok)
     drift.load_base_logprobs(_args(tmp_path, base_cache=None, batch=4), ["a"], "fp-1",
                              log=lambda _s: None)
     assert list(tmp_path.glob("*.pt")) == []
@@ -243,9 +249,9 @@ def test_main_writes_the_result_with_what_produced_it(tmp_path, monkeypatch, pro
     """The provenance fields are the point: the whole reason this module exists is that two KL
     figures measured on different slices were put in one column.
     """
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: _FakeTok())
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     out = str(tmp_path / "drift.json")
     res = drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
@@ -266,9 +272,9 @@ def test_main_file_carries_the_provenance_block_the_sibling_commands_write(
     """A drift file with no receipt reads as a measurement nobody can re-take. Checked on the
     file the run wrote, not on the dict it returned, because the file is what gets quoted later.
     """
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: _FakeTok())
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     out = str(tmp_path / "drift.json")
     drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
@@ -288,8 +294,8 @@ def test_main_refuses_a_base_that_covers_a_different_number_of_prompts(tmp_path,
     """A cache from a longer prompt file would otherwise be compared row by row against this
     one, which silently pairs each model with somebody else's question.
     """
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (_FakeModel(), _FakeTok()))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: _FakeTok())
     monkeypatch.setattr(drift, "load_base_logprobs",
                         lambda *a, **k: _lp([[0.5, 0.5]] * 5))
     with pytest.raises(SystemExit) as e:
@@ -305,10 +311,10 @@ def test_a_model_with_no_chat_template_still_fingerprints(tmp_path, monkeypatch,
     class _NoTemplate(_FakeTok):
         chat_template = None
 
-    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeModel(), _NoTemplate()))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _NoTemplate())
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: _NoTemplate())
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     res = drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
                       "--out", str(tmp_path / "d.json")])
@@ -336,7 +342,7 @@ def test_drift_now_carries_an_interval_over_prompt_sampling():
     base = torch.log_softmax(torch.randn(n, vocab), dim=-1)
     cand = torch.log_softmax(base + 0.3 * torch.randn(n, vocab), dim=-1)
 
-    value = drift.kl(base, cand)
+    value = firsttoken.kl(base, cand)
     lo, hi = drift.kl_interval(base, cand, seed=7)
     assert lo < value < hi, f"the point estimate {value} is outside its own interval"
     assert hi - lo > 0, "a zero-width interval on 64 varied prompts is not a measurement"
@@ -372,12 +378,11 @@ def test_the_per_prompt_values_average_to_the_reported_figure():
     """The interval is only about the same quantity if it is built from the same numbers."""
     import torch
 
-    from senbonzakura import drift
 
     torch.manual_seed(5)
     base = torch.log_softmax(torch.randn(24, 12), dim=-1)
     cand = torch.log_softmax(base + 0.1 * torch.randn(24, 12), dim=-1)
-    assert abs(float(drift.kl_per_prompt(base, cand).mean()) - drift.kl(base, cand)) < 1e-9
+    assert abs(float(firsttoken.kl_per_prompt(base, cand).mean()) - firsttoken.kl(base, cand)) < 1e-9
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────
@@ -399,10 +404,10 @@ def test_the_base_is_measured_and_freed_before_the_candidate_is_loaded(
         order.append(f"model:{model_id}")
         return _FakeModel(), _FakeTok()
 
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", _model)
-    monkeypatch.setattr(drift, "load_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", _model)
+    monkeypatch.setattr(cli, "load_tokenizer",
                         lambda *a, **k: order.append("tokenizer") or _FakeTok())
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts_file),
                 "--out", str(tmp_path / "d.json")])
@@ -435,9 +440,9 @@ def test_the_base_cache_is_not_written_when_it_would_fill_the_volume(tmp_path, m
         free = 4
 
     monkeypatch.setattr(drift.shutil, "disk_usage", lambda _p: _Usage())
-    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     out = drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
                                    ["a", "b"], "fp-1", log=said.append)
@@ -455,9 +460,9 @@ def test_the_base_cache_is_written_when_there_is_room(tmp_path, monkeypatch):
         free = 50 * 1024 ** 3
 
     monkeypatch.setattr(drift.shutil, "disk_usage", lambda _p: _Usage())
-    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
                              ["a", "b"], "fp-1", log=said.append)
@@ -473,9 +478,9 @@ def test_an_unreadable_volume_does_not_stop_the_cache_being_written(tmp_path, mo
         raise OSError("cannot stat")
 
     monkeypatch.setattr(drift.shutil, "disk_usage", _boom)
-    monkeypatch.setattr(drift, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeModel(), _FakeTok()))
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, prompts, batch=16, log=None: _lp([[0.5, 0.5]] * len(prompts)))
     drift.load_base_logprobs(_args(tmp_path, base_cache=str(cache), batch=16),
                              ["a", "b"], "fp-1", log=lambda _m: None)

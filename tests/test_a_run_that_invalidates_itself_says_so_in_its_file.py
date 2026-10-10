@@ -29,7 +29,12 @@ import json
 
 import pytest
 
-from senbonzakura import capability, drift, score
+# `cli` AND `firsttoken` ARE IMPORTED HERE TO BE PATCHED, not to be called. `drift` and `score`
+# read their loader and their estimator through function-local imports, so that their `--help` does
+# not pay for torch, transformers and optuna. A function-local import reads the attribute off the
+# defining module on every call, which is where the fake has to go; patching the command module
+# sets an attribute nothing looks at, and the test then tries to load a real model.
+from senbonzakura import capability, cli, drift, firsttoken, score
 from senbonzakura.entry import exit_status
 from senbonzakura.metrics import MIN_REPORTABLE_N
 
@@ -243,12 +248,12 @@ def _drift_main(tmp_path, monkeypatch, kl_value, n_prompts=4):
     prompts = tmp_path / "p.txt"
     prompts.write_text("\n".join(f"prompt {i}" for i in range(n_prompts)) + "\n",
                        encoding="utf-8")
-    monkeypatch.setattr(drift, "load_model_and_tokenizer", lambda *a, **k: (object(), _FakeTok()))
-    monkeypatch.setattr(drift, "load_tokenizer", lambda *a, **k: _FakeTok())
-    monkeypatch.setattr(drift, "first_token_logprobs",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _FakeTok()))
+    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: _FakeTok())
+    monkeypatch.setattr(firsttoken, "first_token_logprobs",
                         lambda m, t, ps, batch=16, log=None:
                         torch.log(torch.full((len(ps), 2), 0.5)))
-    monkeypatch.setattr(drift, "kl", lambda *a: kl_value)
+    monkeypatch.setattr(firsttoken, "kl", lambda *a: kl_value)
     out = tmp_path / "drift.json"
     res = drift.main(["--model", "cand", "--base", "base", "--prompts", str(prompts),
                       "--out", str(out), "--label", "planted"])
@@ -278,7 +283,7 @@ def test_a_compass_pass_of_unreadable_replies_records_it(monkeypatch, tiny_model
 
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": [f"bad thing {i}" for i in range(4)]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     tiny_tok._decode_text = "let me think about this at length and never reach a conclusion"
     out = tmp_path / "r.json"
     res = score.main(["--model", "x", "--eval", ev, "--out", str(out), "--harm-recognition",
@@ -296,7 +301,7 @@ def test_a_compass_pass_over_enough_readable_replies_records_nothing(monkeypatch
 
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": [f"bad thing {i}" for i in range(MIN_REPORTABLE_N)]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     tiny_tok._decode_text = "HARMFUL"
     out = tmp_path / "r.json"
     res = score.main(["--model", "x", "--eval", ev, "--out", str(out), "--harm-recognition",

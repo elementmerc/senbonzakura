@@ -59,7 +59,16 @@ PROGRESS_VERSION = 1
 #: Path fragments that mean "this is a library's model cache, not your working copy". Writing into
 #: one is the mistake this module most has to avoid, and the names are the ones that actually
 #: appear: `huggingface_hub` builds `<cache>/models--org--name/snapshots/<rev>/`.
-CACHE_MARKERS = ("huggingface/hub", "huggingface_hub", os.path.join("models--", ""), "models--",
+#: SPELT WITH FORWARD SLASHES AND MATCHED AGAINST A FORWARD-SLASHED PATH, which is a fix rather
+#: than a style choice. These were compared against `str(path)`, and on Windows that is
+#: `C:\...\huggingface\hub\offload`, so "huggingface/hub", ".cache/torch" and "modelscope/hub"
+#: could not match anything on that platform. Three of the six guards were dead on Windows, and
+#: it hid because the bare "models--" still caught the usual Hub layout. CI found it on
+#: 2026-10-09: the test asserting a cache is refused did not raise there.
+#:
+#: `os.path.join("models--", "")` used to be here, which is the one marker somebody had made
+#: separator-aware, and it is now spelt the same way as the rest.
+CACHE_MARKERS = ("huggingface/hub", "huggingface_hub", "models--/", "models--",
                  ".cache/torch", "modelscope/hub")
 
 
@@ -79,8 +88,12 @@ def looks_like_a_cache(path):
     A string match, deliberately, and it is checked against the RESOLVED path so a symlink into a
     cache is caught too. It cannot be exhaustive, which is why it is one of four guards rather
     than the only one.
+
+    The comparison is on the forward-slashed form of the path, because the markers carry
+    separators and `str()` on Windows does not use the ones they are written with. See
+    CACHE_MARKERS for what that cost.
     """
-    text = str(_resolve(path))
+    text = _resolve(path).as_posix()
     return any(marker in text for marker in CACHE_MARKERS if marker)
 
 

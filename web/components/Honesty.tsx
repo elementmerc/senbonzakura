@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { reveal } from '@/lib/motion';
+import { revealOnce } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
@@ -26,7 +26,11 @@ export default function Honesty() {
   const section = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    reveal('[data-enter="honesty"]');
+    // NOTHING ELSE HAPPENS IN THIS SECTION, and the stillness is authored rather than left over.
+    // It sits immediately after the page's peak, which is the loudest thing on it, and relief only
+    // reads as relief when it follows something. An act with its own device here would be the
+    // third impressive thing in a row, and a page with three peaks has none.
+    revealOnce('[data-enter="honesty"]');
   }, []);
 
   return (

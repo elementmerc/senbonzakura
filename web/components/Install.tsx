@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { RunOutput } from '@/components/SectionArt';
-import { reveal } from '@/lib/motion';
+import { revealOnce } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 const NOTEBOOK =
@@ -27,7 +27,10 @@ export default function Install() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    reveal('[data-enter="install"]');
+    // The act's device is the terminal beside this prose, which types its own transcript and
+    // loops. It is the only looping thing on the page apart from the mark's petals, and it earns
+    // the loop because it is showing a command running rather than decorating a heading.
+    revealOnce('[data-enter="install"]');
   }, []);
 
   async function copy() {

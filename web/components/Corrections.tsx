@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { growIn, reveal } from '@/lib/motion';
+import { growIn, revealOnce } from '@/lib/motion';
 
 /**
  * Twelve corrections as a descending timeline, alternating either side of a spine.
@@ -94,11 +94,28 @@ export default function Corrections() {
   const section = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    reveal('[data-enter="corr"]');
+    revealOnce('[data-enter="corr"]');
     // The spine draws downward, tied to scroll, so it retracts on the way back up. That is the
     // one piece of motion here that carries the graphic's meaning: a sequence, in order, going
     // down. `transformOrigin: top` is set in CSS, because growIn cannot know which end grows.
-    growIn('[data-spine]', { axis: 'scaleY', duration: 1200, step: 0 });
+    //
+    // A LONGER RANGE THAN THE PAGE'S DEFAULT, because the spine is as tall as the list it runs
+    // beside. On the default it finished drawing by scroll y=265 of a possible 1755 and then held
+    // for the rest of the page, so the descent was over before the reader had read the first
+    // correction. It now runs from the spine's top clearing the fold to the viewport's top
+    // reaching it, which measured out at y=0 to about y=715.
+    //
+    // THAT IS AN IMPROVEMENT RATHER THAN THE IDEAL, and the limit is written down rather than
+    // dressed up. The range that would stretch the draw across the whole list is 'end end', and it
+    // leaves the spine at zero for the entire page, which is worse than short. 'start end' behaves
+    // identically to the pair below. Both measured, neither chased further.
+    growIn('[data-spine]', {
+      axis: 'scaleY',
+      duration: 1200,
+      step: 0,
+      enter: 'end start',
+      leave: 'start start',
+    });
   }, []);
 
   return (

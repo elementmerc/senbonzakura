@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { RefusalGrid } from '@/components/SectionArt';
-import { countUp, reveal } from '@/lib/motion';
+import { countUp, revealOnce } from '@/lib/motion';
 
 /**
  * NOT ONE OF THESE NUMBERS IS OURS, and that is the point of the block.
@@ -68,9 +68,15 @@ export default function TheGap() {
   useEffect(() => {
     const el = section.current;
     if (!el) return;
-    // Created once, on mount. Each animation carries its own scroll observer, so there is no
-    // outer trigger to miss and nothing stays hidden if a threshold is never crossed.
-    reveal('[data-enter="gap"]');
+    // Created once, on mount. Each animation carries its own observer, so there is no outer
+    // trigger to miss and nothing stays hidden if a threshold is never crossed.
+    //
+    // THE ACT'S OWN DEVICE IS NOT THIS. The prose here arrives once and stays, which is the
+    // plainest thing in the kit and correct for text. What carries the section is the grid
+    // colouring up beside it and the four figures counting, both of which run backwards when the
+    // reader leaves. The quiet half is the point: a figure that re-derives itself next to prose
+    // that simply sits there is the contrast the whole page is built on.
+    revealOnce('[data-enter="gap"]');
     el.querySelectorAll<HTMLElement>('[data-count]').forEach((node) => {
       const to = Number(node.dataset.count);
       const decimals = Number(node.dataset.decimals ?? 0);

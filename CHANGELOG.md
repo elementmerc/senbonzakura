@@ -103,6 +103,9 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   the line above it
 - Writes the whole budget as JSON with `--out`, through a temporary file and a rename, so a
   truncated file can never read as a complete one
+- Says what else would fit, not only whether this run does: for each resource it names the largest
+  single thing you could still add and how many times this run's own figure that is, so a machine
+  with room to spare tells you how much room rather than just "yes"
 
 ### GitHub Action
 - Give the step a baseline and a measurement and it also runs the regression gate, so a property
@@ -136,6 +139,8 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   machine readable
 - `--pair` checks that it was given two files before reading any of them
 - `senbonzakura check --quiet` prints one line per finding and nothing else, so its output goes straight into a build log or a grep
+- `--min-applied` refuses a negative count at the flag, like every other count on both commands,
+  rather than accepting one and comparing against it
 
 ### Command line
 - `senbonzakura stream-extract` pulls refusal directions out of a checkpoint too large to load,
@@ -205,6 +210,17 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   instead of adding the refusal direction back
 - The governor's free memory fraction, the pause ceiling and the divergence ceiling are checked
   before a run starts, because each of them moves a bar rather than crashing
+- `--help` on `drift`, `score`, `coherence`, `validate` and `stream-extract` answers in about a
+  sixteenth of a second instead of over three, because reading a help page no longer loads the
+  machine-learning libraries the command would only need once it had work to do
+- When a command is missing a required argument it now prints the shortest command line it will
+  accept, indented so you can copy it straight back out, on every subcommand rather than on the
+  few that had the example written by hand
+- A plugin can add a measurement. The contract is one documented protocol with two transports, in
+  the same process for something installed beside us and in a subprocess for anything else, with a
+  deadline on every call, a cap on the reply and the plugin's own standard error quoted back when
+  it fails. Our own instruments are served across it too, so the first thing the contract is held
+  to is us
 
 ### Report
 - `senbonzakura report` takes `--multiturn`, a `senbonzakura multi-turn` artefact, and reports
@@ -235,6 +251,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   card always dropped
 - An interval explanation and a note on why the rows matter are written for a reader who is not a
   statistician
+- `senbonzakura head-to-head report` takes `--out` and writes the comparison as a machine readable
+  summary. It declares itself a summary, stamps no figure of its own, carries each arm's own
+  recorded conditions word for word, and lists the conditions the arms differ on, so a reader can
+  see what a comparison between them is and isn't entitled to say
 
 ### Measurement
 - Graded prose measures beside `is_broken`, over the whole reply rather than its first 240
@@ -285,6 +305,8 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   claim the evidence supports
 - The comparison page says which tools it read, which it didn't, and on what date
 - A fourth tool and a third idea, the conditional edit, are named in the prior-art page
+- A new reference page documents the plugin protocol: the manifest a plugin returns, the request
+  and reply shapes, the limits on each, and how to install one so the tool finds it
 
 ### Other
 - Bug fixes and improvements.

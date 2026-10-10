@@ -52,7 +52,7 @@ export default function Measured() {
         data-enter="measured"
         className="mono"
         style={{
-          color: 'var(--sakura)',
+          color: 'var(--measured)',
           fontSize: 'var(--t-small)',
           letterSpacing: '0.08em',
           textTransform: 'uppercase',
@@ -149,7 +149,7 @@ export default function Measured() {
               fontSize: 'clamp(2.2rem, 4vw, 3rem)',
               lineHeight: 1,
               letterSpacing: '-0.04em',
-              color: 'var(--sakura)',
+              color: 'var(--measured)',
               margin: '0 0 0.6rem',
             }}
           >

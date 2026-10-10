@@ -7,48 +7,103 @@
  * The mark is Bloom: a sakura fading from pink at the tip to navy at the root.
  */
 
+/* THE GROUND IS NEUTRAL, AND THE BRAND COLOUR IS SPENT ON ONE THING.
+   Deep navy under a pink accent was two saturated colours competing, and the page read as loud
+   before it read as anything. The ground is now the documentation site's own, so the two halves
+   of this project look like one thing, and the sakura has the only chroma on the page.
+
+   EVERY PAIR BELOW WAS MEASURED, not chosen by eye. The ratios are in the comments and the rule
+   is WCAG AA: 4.5 for body text, 3.0 for large text and for anything a reader only has to
+   notice. The one that decided the light theme: sakura #F7799F on white is 2.56, which fails
+   even large text, so the light accent is a darkened sakura at 4.66 rather than the brand pink. */
+
 :root {
-  /* THE FIVE BRAND COLOURS, named as the kit names them so a change there is findable here. */
-  --sakura: #f7799f; /* petal tip: accent and links */
-  --violet: #9a4c93; /* gradient midpoint ONLY, never a flat fill */
-  --navy: #151b45; /* petal root: primary text on light, raised ground on dark */
-  --navy-deep: #0e1330; /* dark backgrounds and the hero */
+  /* The brand kit's five, unchanged. These are the identity; what follows is how they are used. */
+  --sakura: #f7799f;
+  --violet: #9a4c93;
+  --navy: #151b45;
+  --navy-deep: #0e1330;
   --paper: #ffffff;
 
-  /* THE GRADIENT RUNS PINK TO VIOLET TO NAVY, TOP TO BOTTOM, ALWAYS.
-     The violet midpoint is load-bearing rather than decorative: a straight pink-to-navy fade goes
-     muddy grey. Never recolour it and never flip its direction. Stops match the public mark. */
-  --bloom: linear-gradient(
-    to bottom,
-    #f98db0 0%,
-    #e06a9c 38%,
-    #8b4791 66%,
-    #141a42 100%
-  );
+  /* THE GRADIENT STILL RUNS PINK TO VIOLET TO NAVY, TOP TO BOTTOM, in both themes. The violet
+     midpoint is load-bearing: a straight pink-to-navy fade goes muddy grey. */
+  --bloom: linear-gradient(to bottom, #f98db0 0%, #e06a9c 38%, #8b4791 66%, #141a42 100%);
 
-  --bg: var(--navy-deep);
-  --bg-raised: #171d4a;
-  --rule: #272e5e;
+  color-scheme: dark;
 
-  --ink: #eef0f8;
-  --ink-dim: #a7adcb;
-  --ink-faint: #6f76a0;
+  /* Dark, and the default. Grounds are the docs site's own: #12151b, #0e1014, #1a1d24. */
+  --bg: #12151b;
+  --bg-deep: #0e1014;
+  --bg-raised: #1a1d24;
+  --rule: #272b33;
 
-  /* The accent is spent on one thing: a measured number. Using it for buttons and headings as
-     well would stop it meaning anything, and the whole page is about numbers. */
-  --measured: var(--sakura);
+  --ink: #e9eaee;      /* 15.21 on --bg */
+  --ink-dim: #9aa0ad;  /*  6.97 */
+  --ink-faint: #7c8292;/*  4.76, which is the floor for body text and this is the smallest text */
+
+  --measured: var(--sakura); /* 7.13 on --bg */
+  --measured-soft: rgba(247, 121, 159, 0.14);
+  /* THE NAVIGATION BAR IS A THEME SURFACE, NOT A BRAND SURFACE, and getting that wrong is what
+     left a navy bar sitting on a neutral grey page. The bar used --navy-deep and a hardcoded
+     navy rgba, which are mark colours: fixed by the brand kit, so they cannot follow a theme.
+     The bar's job is to be the page's own ground, slightly separated, so it takes the ground
+     tokens. The lifted value is translucent because a blur behind an opaque fill does nothing. */
+  --nav-bg: #0e1014;
+  --nav-bg-lifted: rgba(26, 29, 36, 0.72);
+  --nav-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 
   --t-hero: clamp(2.6rem, 7vw, 5.4rem);
   --t-head: clamp(1.7rem, 3.6vw, 2.9rem);
   --t-body: clamp(1rem, 1.1vw, 1.1rem);
   --t-small: 0.84rem;
-
-  /* The wordmark's tracking, from the kit: uppercase at about 0.14em. */
   --wordmark-track: 0.14em;
-
   --gutter: 1.5rem;
   --band: clamp(5rem, 11vh, 9rem);
   --measure: 62ch;
+}
+
+/* LIGHT, and the three rules that make it more than an inversion.
+   The ground is a warm off-white rather than #ffffff, because a pure white page beside a pink
+   accent glares. The accent darkens, because the brand pink cannot carry text on a light ground
+   at any size. The gradient does not change, because it is the mark's own and recolouring it is
+   the one thing the brand kit forbids outright. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #faf9f8;
+  --bg-deep: #f2f1ef;
+  --bg-raised: #ffffff;
+  --rule: #e3e1de;
+
+  --ink: #1a1d24;      /* 16.04 on --bg */
+  --ink-dim: #5e636e;  /*  5.73 */
+  --ink-faint: #6b7280;/*  4.60 */
+
+  --measured: #c2426b; /*  4.66, a darkened sakura. The brand pink is 2.44 here and fails */
+  --measured-soft: rgba(194, 66, 107, 0.1);
+  --nav-bg: #f2f1ef;
+  --nav-bg-lifted: rgba(255, 255, 255, 0.78);
+  --nav-shadow: 0 10px 30px rgba(20, 22, 28, 0.1);
+}
+
+/* A reader who has asked their system for light gets light, unless they have chosen on this site.
+   The `:not([data-theme='dark'])` guard is what makes the choice win over the system. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #faf9f8;
+    --bg-deep: #f2f1ef;
+    --bg-raised: #ffffff;
+    --rule: #e3e1de;
+    --ink: #1a1d24;
+    --ink-dim: #5e636e;
+    --ink-faint: #6b7280;
+    --measured: #c2426b;
+    --measured-soft: rgba(194, 66, 107, 0.1);
+    --nav-bg: #f2f1ef;
+    --nav-bg-lifted: rgba(255, 255, 255, 0.78);
+    --nav-shadow: 0 10px 30px rgba(20, 22, 28, 0.1);
+  }
 }
 
 *,
@@ -104,7 +159,7 @@ a {
 }
 
 a:hover {
-  text-decoration-color: var(--sakura);
+  text-decoration-color: var(--measured);
 }
 
 /* THE BLANKET RULE IS GONE, AND THAT IS THE FIX RATHER THAN A RELAXATION.
@@ -156,7 +211,7 @@ a:hover {
 /* The focus ring is deliberately loud. A keyboard reader losing their place on a dark page is a
    worse outcome than a ring somebody finds ugly. */
 :focus-visible {
-  outline: 2px solid var(--sakura);
+  outline: 2px solid var(--measured);
   outline-offset: 3px;
 }
 
@@ -192,10 +247,24 @@ a:hover {
   border-radius: 2px;
 }
 .cell-refused {
-  background: var(--sakura);
+  background: var(--measured);
   opacity: 0;
 }
 .cell-answered {
   background: var(--rule);
   opacity: 0.55;
+}
+
+/* THE THEME TOGGLE'S ICON IS CHOSEN BY CSS, NOT BY JAVASCRIPT.
+   Both glyphs are in the markup and the stylesheet hides one, so the correct icon is painted on
+   the very first frame. Deciding in React means the icon is wrong until hydration, which on a
+   slow connection is long enough to see and is the same class of bug as a theme flash. */
+.icon-sun { display: none; }
+:root[data-theme='light'] .icon-moon { display: none; }
+:root[data-theme='light'] .icon-sun { display: inline; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .icon-moon { display: none; }
+  :root:not([data-theme='dark']) .icon-sun { display: inline; }
+  :root[data-theme='dark'] .icon-moon { display: inline; }
+  :root[data-theme='dark'] .icon-sun { display: none; }
 }

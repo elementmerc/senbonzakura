@@ -147,7 +147,7 @@ export default function Footer() {
             >
               <span style={{ fontSize: '0.9rem' }}>{what}</span>
               <span>
-                <span className="mono" style={{ fontSize: '0.86rem', color: 'var(--sakura)' }}>
+                <span className="mono" style={{ fontSize: '0.86rem', color: 'var(--measured)' }}>
                   {licence}
                 </span>
                 <span

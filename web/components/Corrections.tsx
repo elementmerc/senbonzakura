@@ -109,7 +109,7 @@ export default function Corrections() {
           data-enter="corr"
           className="mono"
           style={{
-            color: 'var(--sakura)',
+            color: 'var(--measured)',
             fontSize: 'var(--t-small)',
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
@@ -179,7 +179,7 @@ export default function Corrections() {
                     background: 'var(--bg-raised)',
                     border: '1px solid var(--rule)',
                     fontSize: '0.78rem',
-                    color: 'var(--sakura)',
+                    color: 'var(--measured)',
                   }}
                 >
                   {cluster.date}
@@ -237,7 +237,7 @@ export default function Corrections() {
             height: 9px;
             margin-left: -4.5px;
             border-radius: 50%;
-            background: var(--sakura);
+            background: var(--measured);
             box-shadow: 0 0 0 4px var(--bg);
           }
           .corr-was {

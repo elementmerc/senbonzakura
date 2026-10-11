@@ -251,7 +251,18 @@ def test_both_corrections_land_in_one_dict(monkeypatch):
 # ── the loader has to actually hand the config over ───────────────────────────────────
 
 def _patched_loader(monkeypatch, cfg, tiny_model, tiny_tok):
-    """Patch the three transformers entry points and return the kwargs the model load receives."""
+    """Patch the three transformers entry points and return the kwargs the model load receives.
+
+    THE CARD IS DECLARED HERE, because the loader refuses an unusable device from 2026-10-11 and
+    every caller of this helper drives the cuda placement path deliberately. Declaring it in the
+    helper rather than in each test keeps the two in step; the `--device cpu` callers are
+    unaffected, because the refusal returns early for a processor.
+
+    Without this the tests pass on a machine with a card and fail on CI, which is exactly the
+    hardware dependence that refusal was moved into the loader to avoid. See
+    tests/test_a_device_this_machine_cannot_use_is_refused_before_the_download.py.
+    """
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
     seen = {}
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))

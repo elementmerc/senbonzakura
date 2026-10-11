@@ -191,6 +191,13 @@ jobs:
           # `|| true` did. A non-zero exit this script cannot ACCOUNT FOR is still a failure: the
           # check below is that every reported fault is the named exception, and the status is
           # read against that rather than instead of it.
+          #
+          # SINCE 2026-10-11 the absent track is an ADVISORY in doctor itself, because a user
+          # pasting the README's first command met "This install cannot do what it claims" over
+          # an artefact the project deliberately holds back. So this step no longer has a failure
+          # to excuse. Everything below is kept exactly as it is: it asserts the row still EXISTS
+          # and that nothing else fails, which is the part that was ever doing work, and it holds
+          # whichever weight doctor gives that row.
           status=0
           docker run --rm senbonzakura:smoke doctor --advisories-ok > doctor.txt 2>&1 || status=$?
           cat doctor.txt

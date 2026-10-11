@@ -262,10 +262,20 @@ def test_an_unrecognised_platform_is_an_advisory(monkeypatch):
     assert doctor.check_platform().status == "warn"
 
 
-def test_a_missing_bundled_track_is_a_failure(monkeypatch, tmp_path):
+def test_a_missing_bundled_track_is_an_advisory_and_not_a_failure(monkeypatch, tmp_path):
+    """It was a failure until 2026-10-11, and that made the README's first command self-condemning.
+
+    A journey persona pasted `docker run ... doctor` out of the README and got exit 2 with "This
+    install cannot do what it claims". The published image ships without the packed track on
+    purpose: it is packed from a held-out corpus no CI job can build. So the one absence the
+    project documents as acceptable was the one that made the tool declare itself broken on first
+    contact. An advisory is the honest weight, because `--track default` is the only thing closed.
+    """
     from senbonzakura import bundled
     monkeypatch.setattr(bundled, "data_path", lambda: tmp_path / "nope.bin")
-    assert doctor.check_track().status == "fail"
+    row = doctor.check_track()
+    assert row.status == "warn", "a held-out artefact's absence must not read as a broken install"
+    assert "--track" in row.fix, "the advisory has to say what still works and how"
 
 
 def test_torch_without_cuda_is_an_advisory_and_names_the_version():

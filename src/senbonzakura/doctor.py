@@ -313,19 +313,43 @@ def check_corpora():
             out.append(_fail(f"corpus {key}", str(e).split(".")[0], _corpus_fix()))
             continue
         expected = CORPORA[key].rows
-        out.append(_pass(f"corpus {key}", f"{len(rows)} prompts")
+        # THE LICENCE ON THE ROW, not only in the citation block above the report. `README.md`
+        # sends a reader here with "lists every bundled corpus it can decode, with its licence",
+        # so the licence per corpus is a promise this report makes and the row was answering only
+        # half of it.
+        licence = CORPORA[key].licence
+        out.append(_pass(f"corpus {key}", f"{len(rows)} prompts, {licence}")
                    if len(rows) == expected else
-                   _fail(f"corpus {key}", f"{len(rows)} prompts, expected {expected}",
+                   _fail(f"corpus {key}", f"{len(rows)} prompts, expected {expected} ({licence})",
                          "the pack and the code disagree; rebuild it"))
     return out
 
 
 def check_track():
+    """Is the packed evaluation track in this install?
+
+    AN ADVISORY, NOT A FAILURE, and the distinction is the whole of the first impression.
+
+    The track is packed from a held-out corpus that lives outside this repository, so no CI job
+    can build one and the published container image genuinely ships without it. That made the
+    README's own first command, `docker run ... doctor`, exit 2 and print "This install cannot do
+    what it claims" at somebody thirty seconds into meeting the tool. The image was right about
+    the fact and wrong about the weight: an install with no packed track cannot run `--track
+    default` and can do everything else, which is the definition of an advisory here.
+
+    The distribute gate had already reached the same conclusion from the other side, on
+    2026-10-10 in `0e95d5f`: it captures doctor's status rather than obeying it, specifically so
+    this one absence cannot abort the step. Two places deciding the same thing is one too many,
+    and this is the place that a user reads.
+    """
     try:
         from . import bundled
         p = Path(bundled.data_path())
         if not p.is_file():
-            return _fail("bundled track", "not installed", "reinstall, or rebuild it")
+            return _warn("bundled track", "not installed, so `--track default` is closed",
+                         "every other command works. Point `--track` at a track you built, or "
+                         "pack one with tools/packaging/pack_track.py. Published builds ship "
+                         "without it because the corpus it is packed from is held out")
         # THE PATH, not just the size. Auditing the bundled track is a real task and it is the
         # one that decides a rented-card booking, and the only way to find where it unpacks to
         # was to import `senbonzakura.bundled` and call `ensure()` in a REPL. Reading the source
@@ -599,7 +623,25 @@ def _in_group(checks, name):
     return checks
 
 
+#: The line that goes above everything, including the licence attribution the checks trigger.
+#:
+#: WHY IT IS BACK, AND IT IS NOT THE TITLE THAT WAS REMOVED. A title used to print inside `main`
+#: and was dropped on the reasoning that the banner the entry point draws already names the tool.
+#: That reasoning holds on a terminal and nowhere else: the banner is drawn only for a terminal, so
+#: a piped run and `docker run` with no tty open on thirty-one lines of third-party citations with
+#: nothing above them saying what command is running. The README's first command is
+#: `docker run ... doctor`, so that cold open is the first thing this project shows anybody.
+#:
+#: It is a sentence rather than a title because it has a job a title does not: it tells the reader
+#: that the prose about to appear is not the answer they asked for, which is the complaint a
+#: journey persona actually made. `Installed:` already marks where that prose ends; this marks
+#: where it begins.
+OPENING = "senbonzakura doctor: checking what this install can do."
+
+
 def run_checks(*, deep=False, log=print):
+    log(OPENING)
+    log("")
     # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
     # where finding the real ceiling means climbing to it.
     checks = _in_group([check_platform(), check_torch(),

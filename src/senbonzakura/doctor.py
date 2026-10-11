@@ -304,19 +304,35 @@ def _corpus_fix():
 
 
 def check_corpora():
+    """Does each packed corpus hold the rows the registry says it does?
+
+    A COUNT, NOT A USE, and `attribute=False` is what says so.
+
+    Operator ruling, 2026-10-11. This loop reads all six packs to assert six row counts. It
+    publishes no figure, derives nothing and keeps no rows, and for that it was printing six full
+    citations: twenty-nine lines of attribution above the report, on the very command the README
+    tells a stranger to run first. The answer the reader came for started on line 33 of 68.
+
+    The obligation stays where it was. `pointer()` still prints, so the file holding every
+    citation is still named in the output; every corpus's licence is on its own row below, which
+    is what `README.md` promises this report does; and a run that uses the prompts for a
+    measurement prints the full citation unchanged. See `corpora.load`'s docstring for the whole
+    reasoning, which lives there because that is where the decision is enforced.
+    """
     from .corpora import CORPORA, CorpusError, load
     out = []
     for key in sorted(CORPORA):
         try:
-            rows = load(key)
+            rows = load(key, attribute=False)
         except CorpusError as e:
             out.append(_fail(f"corpus {key}", str(e).split(".")[0], _corpus_fix()))
             continue
         expected = CORPORA[key].rows
-        # THE LICENCE ON THE ROW, not only in the citation block above the report. `README.md`
-        # sends a reader here with "lists every bundled corpus it can decode, with its licence",
-        # so the licence per corpus is a promise this report makes and the row was answering only
-        # half of it.
+        # THE LICENCE ON THE ROW, not only in the citation block that used to sit above the
+        # report. `README.md` sends a reader here with "lists every bundled corpus it can decode,
+        # with its licence", so the licence per corpus is a promise this report makes and the row
+        # was answering only half of it. With the citations gone from this surface it is now the
+        # only thing keeping that sentence true, which is why it landed before they moved.
         licence = CORPORA[key].licence
         out.append(_pass(f"corpus {key}", f"{len(rows)} prompts, {licence}")
                    if len(rows) == expected else
@@ -642,6 +658,16 @@ OPENING = "senbonzakura doctor: checking what this install can do."
 def run_checks(*, deep=False, log=print):
     log(OPENING)
     log("")
+    # THE POINTER WITHOUT THE CITATIONS, which is this report's half of the 2026-10-11 ruling.
+    # `check_corpora` reads the packs with `attribute=False` because a row count is not a use, so
+    # nothing down there prints the sentence naming the file that holds every citation. It is
+    # printed here instead rather than dropped: the licences ask for the notice to travel with the
+    # work, and naming `THIRD-PARTY-CORPORA.md` on a surface that lists the corpora is the part of
+    # that which was never in question.
+    # No blank line after it: `report` opens with one of its own, and two reads as a gap where
+    # something was removed.
+    from . import corpora
+    corpora.pointer(log=log)
     # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
     # where finding the real ceiling means climbing to it.
     checks = _in_group([check_platform(), check_torch(),

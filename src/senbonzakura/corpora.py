@@ -291,6 +291,25 @@ def check_count(corpus, prompts):
 _notified = set()
 
 
+def pointer(log=print, columns=None):
+    """The one sentence that covers all six corpora: where the citations are, and what they ask.
+
+    Lifted out of `notice` so a surface that LISTS the corpora without using them can print it on
+    its own. `doctor` is that surface and the only one: it loads all six to assert their row
+    counts, publishes no figure and adapts nothing, so under the operator's ruling of 2026-10-11
+    it prints this and the per-corpus licence on its own check rows, and the full citations stay
+    with the run that actually uses the prompts.
+
+    The phrase "Citations and terms:" is load-bearing and stays word for word: it is what
+    `test_the_shared_sentence_appears_once_however_many_corpora_load` counts, and the point of
+    counting it is that this sentence is printed once rather than once per corpus.
+    """
+    for line in say.lines("Bundled corpora. Citations and terms: THIRD-PARTY-CORPORA.md, "
+                          "beside this install. Attribution travels with any figure you "
+                          "publish.", columns=columns):
+        log(line)
+
+
 def notice(key, log=print, columns=None):
     """Print the attribution for a bundled corpus, once per process.
 
@@ -329,13 +348,7 @@ def notice(key, log=print, columns=None):
     # note when it covers all six. A sentence about every entry cannot sit inside one of them.
     if not _tail_shown:
         _tail_shown.append(True)
-        # The phrase "Citations and terms:" is load-bearing and stays word for word: it is what
-        # `test_the_shared_sentence_appears_once_however_many_corpora_load` counts, and the point of
-        # counting it is that this sentence is printed once rather than once per corpus.
-        for line in say.lines("Bundled corpora. Citations and terms: THIRD-PARTY-CORPORA.md, "
-                              "beside this install. Attribution travels with any figure you "
-                              "publish.", columns=columns):
-            log(line)
+        pointer(log=log, columns=columns)
     # ONE BLOCK PER CORPUS, SEPARATED BY A BLANK LINE. Operator direction,
     # 2026-09-28, against a real `doctor` screen where six corpora filled twenty-odd lines of
     # unbroken prose before the first check appeared, and the reader had to parse sentences to
@@ -427,7 +440,7 @@ def notices():
 CORPORA_BLOB = "corpora.bin"
 
 
-def load(key, *, root=None, log=print):
+def load(key, *, root=None, log=print, attribute=True):
     """The prompts of one bundled corpus, from the pack that ships in the wheel.
 
     Packed through the same encrypted container as the evaluation track, for the same stated
@@ -438,6 +451,24 @@ def load(key, *, root=None, log=print):
     A source checkout has no pack until the build tool has run, and the failure says that rather
     than reporting the corpus as empty. Those are different problems and only one of them is the
     user's fault.
+
+    `attribute=False` READS THE ROWS WITHOUT PRINTING THE CITATION, and there is exactly one
+    caller entitled to it.
+
+    Operator ruling, 2026-10-11, after a journey persona met thirty-one lines of third-party
+    citations above the report of the README's very first command. `doctor` loads all six corpora
+    to assert that each pack's row count matches the registry. It publishes no figure, derives
+    nothing and keeps no rows: the citation it printed was attribution for a use that was not
+    happening, six times over, and it pushed the answer the reader came for to line 33 of 68.
+
+    Nothing about the obligation moves. The licences ask for the notice to travel with the work,
+    and it does: `THIRD-PARTY-CORPORA.md` ships beside the package and is named in the pointer
+    `doctor` still prints, every corpus's licence is on its own check row there, and any run that
+    uses the prompts for a measurement prints the full citation exactly as before. What changed is
+    that a row count is no longer treated as a use.
+
+    It is a keyword with a default of True so the honest behaviour is what a new caller gets
+    without thinking about it, and skipping the citation has to be asked for in writing.
     """
     import json as _json
 
@@ -469,5 +500,6 @@ def load(key, *, root=None, log=print):
         raise CorpusError(
             f"{key}: the pack holds {len(prompts)} prompts and this build expects {expected}. The "
             f"pack and the code disagree about what this corpus is, so neither can be trusted.")
-    notice(key, log=log)
+    if attribute:
+        notice(key, log=log)
     return list(prompts)

@@ -33,6 +33,7 @@ Torch-free and import-light on purpose: the gate runs on whatever hardware a CI 
 """
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -200,6 +201,9 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
                 "fortnight. Record the interval the measurement reports, or declare the metric "
                 "deterministic if it genuinely does not vary between runs.")
         lo, hi = interval
+        # BEFORE THE INTERVAL TEST, so a NaN is named as a NaN. Without this the comparison below
+        # is False for one and the writer reported it as a point outside its own interval.
+        point = numeric_point(point, side="this baseline")
         if lo > hi:
             raise BaselineError(
                 f"interval {interval} is inverted: its low bound exceeds its high one.")
@@ -533,6 +537,42 @@ def comparability(baseline, now):
 #: on ordinary seed-to-seed variation and be switched off, which is the failure this whole module
 #: is shaped around.
 MAX_WIDTH_RATIO = 2.0
+
+
+def numeric_point(point, *, side="this measurement"):
+    """The point estimate as a float, or a refusal saying why it is not one.
+
+    WHY BOTH SIDES NEED THIS, 2026-10-11. `record` refused a NaN point only by accident: the
+    interval test `lo <= point <= hi` is False for NaN, so the writer raised "point estimate nan
+    lies outside its own interval", which is a true sentence about the wrong problem. **The reader
+    had no check at all.** So a measurement whose point estimate was NaN, infinity, or the string
+    `"0.9"` reached `verdict`, compared cleanly against the baseline's interval, and the gate
+    printed `gate OK: auc: within interval ... Moved +nan on the point estimate, which on its own
+    is not a finding` and exited 0.
+
+    Exit 0 is this command's promise that the property did not move. A NaN point estimate means the
+    measurement did not produce a number, which is the one thing a gate must never read as
+    agreement. Found by the integrator journey of 2026-10-11, which built the file by hand and
+    re-addressed it, because the content address is self-computed and so detects an accidental edit
+    rather than a deliberate one.
+
+    A string is refused rather than coerced. `0.9` and `"0.9"` compare identically today, so
+    nothing is gained by accepting it, and a producer that emits a string for a number has a fault
+    this gate is better off naming than papering over.
+    """
+    if isinstance(point, bool) or not isinstance(point, (int, float)):
+        raise BaselineError(
+            f"{side} records a point estimate of {point!r}, which is {type(point).__name__} and "
+            f"not a number. A gate cannot compare it to an interval, and coercing it would hide "
+            f"whatever produced it.")
+    if not math.isfinite(point):
+        raise BaselineError(
+            f"{side} records a point estimate of {point}, which is not a finite number. That "
+            f"means the measurement did not produce one, so there is nothing to compare: a gate "
+            f"reporting 'within interval' here would be promising that a property did not move "
+            f"on the strength of a number that does not exist. Re-run the measurement, and read "
+            f"its own output for why it came out this way.")
+    return float(point)
 
 
 def interval_of(doc):

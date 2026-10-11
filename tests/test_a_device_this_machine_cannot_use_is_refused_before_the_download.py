@@ -59,23 +59,37 @@ def test_the_loader_refuses_before_it_reaches_transformers():
     assert "--device cpu" in str(e.value), "the refusal has to say what to pass instead"
 
 
-def test_the_check_sits_beside_the_other_loader_refusal():
+def test_the_check_sits_after_the_security_check_and_before_the_weights():
     """Read off the source, because the POSITION is the design decision this file records.
 
-    If somebody moves it to the command surfaces again, the eighteen hardware-dependent failures
-    come back, and they come back on CI rather than here.
+    Two orderings were wrong before this one, and the test encodes both lessons.
+
+    It must not be at the command surfaces: that preempts every refusal a command does for itself,
+    and only on a machine with no card, so the suite's behaviour follows the test host's hardware.
+
+    And it must not precede the checkpoint-index check. Put first in the loader, it stood in front
+    of the PYSEC-2026-3804 refusal, so a hostile checkpoint went unexamined whenever the device
+    string happened to be wrong too. **A convenience check must never be able to preempt a security
+    one.** The weights are downstream either way, so nothing is lost by going second.
     """
     from senbonzakura import cli
     src = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
     # The whole remainder, not a fixed window: this function carries several hundred lines of
     # comment and a 3000-character window fell short of its own `from_pretrained`.
     head = src.split("def load_model_and_tokenizer", 1)[1]
-    assert "_refuse_without_the_checker()" in head
     assert "argresolve.refuse_unusable_device(device)" in head, (
         "the loader no longer refuses an unusable device, so every command that loads a model will "
         "pay for the download before finding out")
-    assert head.index("_refuse_without_the_checker()") < head.index("from_pretrained"), (
-        "the refusals must precede the fetch")
+
+    device_at = head.index("argresolve.refuse_unusable_device(device)")
+    index_at = head.index("refuse_unsafe_hub_index")
+    fetch_at = head.index("from_pretrained")
+
+    assert index_at < device_at, (
+        "the device check now precedes the checkpoint-index check, so a hostile checkpoint goes "
+        "unexamined when the device string is also wrong. Security first")
+    assert device_at < fetch_at, (
+        "the device check now follows the model fetch, which is the download it exists to save")
 
 
 def test_a_command_surface_does_not_preempt_its_own_preflights():

@@ -206,8 +206,13 @@ def run(argv=None, log=print):
     # difference. The comment was written about `KeyError` and the fix stopped at the exception
     # families that existed that day.
     try:
+        # `numeric_point` INSIDE THIS TRY, so a point estimate that is not a finite number lands on
+        # the REFUSED handler below rather than being compared. It raises `BaselineError`, which the
+        # next clause already treats as a refusal: a malformed measurement is not a regression, and
+        # a NaN is the most malformed a measurement gets.
         ok, headline, detail = baseline.verdict(
-            recorded, current["point"], baseline.interval_of(current))
+            recorded, baseline.numeric_point(current["point"], side="this run"),
+            baseline.interval_of(current))
     except baseline.BaselineError as e:
         log(f"gate REFUSED: {e}")
         record_run(REFUSED, "refused", str(e))

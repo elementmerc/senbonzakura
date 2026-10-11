@@ -2397,19 +2397,6 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # the weight bake rewrites tensors in place and needs full precision.
     _log = log or (lambda m: None)
     _refuse_without_the_checker()
-    # AND THE DEVICE, BESIDE THE CHECKER, FOR THE SAME REASON. `--device` defaults to `cuda`, and
-    # `_preflight_device` refused an unusable one on the abliterate path and the guided mode only.
-    # Every other command reached `.to(device)` with the weights already fetched and loaded, and
-    # died there under fourteen frames of torch. On a metered connection that download is the whole
-    # cost of finding out. Found by the constrained-user journey, 2026-10-11.
-    #
-    # HERE RATHER THAN AT EACH `main`, which is where it went first and was wrong. A surface check
-    # preempts every refusal the command does for itself, so eighteen tests that assert a specific
-    # early refusal got this one instead. Worse, they only got it on a machine with no card, which
-    # is CI: the suite's behaviour would have depended on the test host's hardware. A test that
-    # asserts a refusal BEFORE the model loads never reaches this line, so ordering is preserved
-    # and the download is still never paid for.
-    argresolve.refuse_unusable_device(device)
     # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
     # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
     # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
@@ -2419,6 +2406,23 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         checkpoint.refuse_unsafe_index(model_id)
     else:
         checkpoint.refuse_unsafe_hub_index(model_id)
+    # AND THE DEVICE, AFTER THE INDEX CHECK AND BEFORE ANY WEIGHTS. `--device` defaults to `cuda`,
+    # and `_preflight_device` refused an unusable one on the abliterate path and the guided mode
+    # only. Every other command reached `.to(device)` with the weights already fetched and loaded,
+    # and died there under fourteen frames of torch. On a metered connection that download is the
+    # whole cost of finding out. Found by the constrained-user journey, 2026-10-11.
+    #
+    # HERE RATHER THAN AT EACH `main`, which is where it went first and was wrong. A surface check
+    # preempts every refusal the command does for itself, so eighteen tests that assert a specific
+    # early refusal got this one instead. Worse, they only got it on a machine with no card, which
+    # is CI: the suite's behaviour would have depended on the test host's hardware.
+    #
+    # AND AFTER THE INDEX CHECK RATHER THAN BEFORE IT, which is the second ordering mistake in the
+    # same fix. Put first, it preempted the PYSEC-2026-3804 refusal above, so a hostile checkpoint
+    # went unexamined whenever the device string was also wrong. A convenience check must not be
+    # able to stand in front of a security one. The weights are still downstream of this line, so
+    # the cost it exists to save is still saved.
+    argresolve.refuse_unusable_device(device)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)

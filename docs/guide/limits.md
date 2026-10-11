@@ -11,7 +11,8 @@ before quoting us, read this one.
 ::: warning The one-line version
 Everything measured before 2026-07-30 was measured with a broken ruler, every Gemma number
 is withdrawn, no measurement above 3B parameters still stands, and the headline multi-direction
-claim was tested and [it lost](/guide/what-we-know).
+claim [lost the one test we could run properly](/guide/what-we-know) without that settling the
+claim either way.
 :::
 
 ## The measurements taken with a broken ruler

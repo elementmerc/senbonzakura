@@ -3102,13 +3102,27 @@ class Abliterator:
                 if floors_by_size:
                     layer_null_floors[li] = round(max(floors_by_size.values()), 4)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
-                    floor_lo, floor_hi = min(floors_by_size.values()), max(floors_by_size.values())
-                    log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
-                        f"refusal-separation threshold ({sep_stat.name}, the larger of the fixed "
-                        f"{sep_stat.threshold} and a null floor measured at each candidate's own "
-                        f"row count, which ranged {floor_lo:.4f} to {floor_hi:.4f} across "
-                        f"{len(floors_by_size)} distinct cluster size(s)); {dropped_by_null} of "
-                        f"them cleared the constant and lost to a direction carrying nothing")
+                    # PLAIN LANGUAGE, AND THE NUMBERS STAY IN THE ARTEFACT. This line used to run
+                    # to five wrapped lines beginning "below the refusal-separation threshold
+                    # (cohens-d, the larger of the fixed 0.5 and a null floor measured at each
+                    # candidate's own row count, which ranged ...)". A journey persona quoted it
+                    # back as the clearest example of this tool explaining its internals at a
+                    # reader instead of telling them what happened, and Section 20 agrees: CLI
+                    # output is public documentation and is written for somebody with no prior
+                    # context.
+                    #
+                    # Nothing is dropped, only moved. Every floor is already recorded per layer as
+                    # `null_separation_floor_per_layer` in abliteration.json, which is the right
+                    # home for a number somebody wants to audit, and the line names it so the
+                    # reader can get there. The counts stay in the log because they are what a
+                    # person watching the run needs: how many went, and how many went on the
+                    # noise check rather than the fixed bar.
+                    log(f"  layer {li}: dropped {dropped} of the candidate directions. Each one "
+                        f"has to separate harmful prompts from harmless ones better than a "
+                        f"direction carrying nothing does, and these did not.")
+                    log(f"    {dropped_by_null} of them cleared the fixed bar and lost to that "
+                        f"noise check. The bars are in abliteration.json, as "
+                        f"null_separation_floor_per_layer.")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         # FLOAT32, NOT BFLOAT16, and the cast was costing orthogonality for nothing.

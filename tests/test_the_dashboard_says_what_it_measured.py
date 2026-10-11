@@ -310,9 +310,14 @@ class TestAttachRefusesRatherThanGuessing:
         panel = livedisplay.attach(events.EventLog(None), _args(), log=said.append,
                                    stream=io.StringIO())
         assert not panel.active
-        assert any("no live panel" in s for s in said), (
+        assert any("plain log" in s for s in said), (
             "the panel was skipped and the reason was computed and discarded, which is the defect "
-            "that had somebody asking out loud why it never appeared")
+            f"that had somebody asking out loud why it never appeared: {said}")
+        # It leads with what the reader GETS. The line used to open "no live panel: output is not
+        # an interactive terminal", which a journey persona read as an implementation note that
+        # had escaped into the log, and they were right about why: the first thing it named was
+        # the machinery rather than the output they were about to read.
+        assert not any(s.strip().startswith("no live panel") for s in said), said
 
     def test_a_panel_that_cannot_be_built_is_not_a_failed_run(self, monkeypatch):
         said = []

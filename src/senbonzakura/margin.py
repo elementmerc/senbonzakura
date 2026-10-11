@@ -44,7 +44,7 @@ from .cli import (
 from .crashsafe import atomic_write, provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
-from .track import read_manifest
+from .track import read_manifest, revision_entry
 
 #: What to skip when there is no manifest to read the boundary out of. These are the values this
 #: command carried as hard defaults until 2026-08-17, kept only so an invocation with a bare pair
@@ -1237,7 +1237,22 @@ def main(argv=None):
             "HARMFUL": [{"id": i, "token_text": tok.decode([i])} for i in hid],
             "BENIGN": [{"id": i, "token_text": tok.decode([i])} for i in bid],
         },
-        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device)),
+        # THE TWO FIELDS `evidence/README.md` HAS REQUIRED SINCE 2026-09-25 AND NOTHING WROTE.
+        #
+        # An id and a corpus name are not identities: a Hub repository can be pushed to and a
+        # corpus can be rebuilt in place, so two artefacts can agree on both names and describe
+        # different measurements. The mechanism for the corpus half already existed, in
+        # `crashsafe.provenance(corpus=)` and `track.revision_entry`, with both docstrings arguing
+        # for exactly this; it simply was never passed from here. The model half had no mechanism
+        # at all until `stamps.model_revision_of`.
+        #
+        # Found 2026-10-11 when the provenance guard refused a fresh artefact. The two artefacts
+        # already in the tree are listed as exceptions for missing these, described as predating
+        # the rule, and they did predate it; the tool had not caught up, so every new artefact
+        # landed in the same hole and the exemption list was quietly absorbing a live gap.
+        "model_revision": stamps.model_revision_of(model),
+        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device),
+                                 corpus=revision_entry(a.harmful)),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
         # A model whose margin never crosses zero always says the same thing. That

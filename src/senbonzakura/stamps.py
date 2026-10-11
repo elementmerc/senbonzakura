@@ -45,6 +45,42 @@ UNVERIFIED_PREFIX = "rows-from-"
 MEASURE = "measure"
 
 
+def model_revision_of(model) -> str | None:
+    """Which revision of a Hub model produced a number, or None when there is no such thing.
+
+    WHY THIS WAS MISSING FOR THREE WEEKS. `evidence/README.md` has required "the model id and
+    revision" of every committed result since the 2026-09-25 panel. Nothing ever recorded the
+    revision, so the two artefacts in the tree were listed as exceptions in
+    `tests/test_evidence_carries_its_provenance.py`, described as predating the rule. They did,
+    and the tool had not caught up, so every NEW artefact landed in the same hole: the exemption
+    list was absorbing a live gap rather than a historical one. Found 2026-10-11 when the guard
+    refused a fresh artefact and the honest answer turned out not to be another exemption.
+
+    AN ID IS NOT AN IDENTITY. `Qwen/Qwen3-1.7B` is a name on a repository somebody else can push
+    to, so two runs a month apart can name the same model and have loaded different weights. This
+    is the same argument `input_digest_of` makes about prompt paths and `track.revision_entry`
+    makes about corpus names, and it has the same answer.
+
+    Read off the config transformers already resolved, which is free and works offline: the loader
+    sets `_commit_hash` from the cache when `HF_HUB_OFFLINE=1`, measured on the evidence run of
+    2026-10-11 where it matched the snapshot directory exactly.
+
+    NONE FOR A LOCAL DIRECTORY, deliberately, and the guard is then expected to refuse. A path on
+    disk has no upstream revision, and the honest pin for one is a digest of its weights, which
+    this project does not yet have and which is a design decision rather than a line of code: a
+    hash of the index file alone would satisfy a presence check while recording nothing a reader
+    could verify, which is exactly what `crashsafe.provenance` refuses to do for a corpus. So an
+    artefact from a local checkpoint stays unpinned and says so by failing, rather than carrying a
+    placeholder that reads as a receipt. `DEFERRED.md` carries the design question.
+    """
+    revision = getattr(getattr(model, "config", None), "_commit_hash", None)
+    # A local load leaves it unset or sets it to the path. Either way it is not a revision, and a
+    # 40-character hex string is what one looks like.
+    if not isinstance(revision, str) or len(revision) != 40:
+        return None
+    return revision if all(c in "0123456789abcdef" for c in revision.lower()) else None
+
+
 def input_digest_of(prompts) -> str:
     """A digest of the prompts a number was actually taken on, as sixteen hex characters.
 

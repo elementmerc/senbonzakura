@@ -84,10 +84,9 @@ arrive:**
 
 ```sh
 pip install --index-url https://download.pytorch.org/whl/cpu torch
-pip install senbonzakura
 ```
 
-pip then finds torch already satisfied and leaves it alone. This is the route the Docker image
+Then install the tool as above. pip finds torch already satisfied and leaves it alone. This is the route the Docker image
 takes, which is **2.11 GB rather than about 6 GB** (measured, and the only measured figure here:
 nobody has timed or sized the pip route separately). Everything that doesn't need a card still
 works, which is every instrument: `compass`, `drift`, `score`, `check`, `doctor`, `convert` and

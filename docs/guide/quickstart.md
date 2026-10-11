@@ -151,7 +151,7 @@ senbonzakura compass \
 
 **Measured: 3 minutes 44 seconds on sixteen cores**, with the compass at 0.9872 (95% interval
 0.9722 to 0.9972) against a length-only ruler's 0.6853. The artefact and the exact environment are
-in [evidence/compass-2026-10-11](https://github.com/elementmerc/senbonzakura/blob/main/evidence/compass-2026-10-11/README.md).
+in [evidence/compass-2026-10-11](https://github.com/elementmerc/senbonzakura/blob/dev/evidence/compass-2026-10-11/README.md).
 Fewer or slower cores take proportionally longer, and nobody has timed it on an older processor. The
 model is **about 3.8 GB** the first time, which is the real cost of this command.
 

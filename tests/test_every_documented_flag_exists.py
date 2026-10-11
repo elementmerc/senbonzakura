@@ -40,6 +40,7 @@ NOT_OURS = {
     "--flag",           # a placeholder in prose about flags in general
     "--help",           # argparse's own, present on every command
     "--version",        # likewise
+    "--gpus",           # docker's, in the README's note that a CPU image cannot use a card with it
 }
 
 #: Commands that carry sub-verbs, whose flags live on the sub-verb rather than on the command.

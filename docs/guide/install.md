@@ -121,10 +121,10 @@ packages never arrive:
 
 ```sh
 pip install --index-url https://download.pytorch.org/whl/cpu torch
-pip install senbonzakura
 ```
 
-pip then finds torch already satisfied and leaves it alone. This is exactly what the Docker image
+Then install the tool as the section above shows. pip finds torch already satisfied and leaves it
+alone. This is exactly what the Docker image
 does, and it is why that image is **2.11 GB rather than about 6 GB**. That figure is measured; the
 pip route's own total is not, so treat the saving as the same shape rather than the same number.
 

@@ -7,6 +7,8 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ### Breaking
 
+- A command given `--device cuda` on a machine with no usable card now refuses before the model is downloaded, instead of running. Some commands used to run anyway: the loader places the model with accelerate, which falls back to the processor, so the run was silently fifty times slower than the flag asked for. Others got as far as loading the weights and then failed inside torch. If a job of yours passes `--device cuda` on a machine without a card, it will now stop and tell you to pass `--device cpu`.
+- A measurement whose point estimate is not a finite number is now refused by `senbonzakura gate` (exit 2) instead of being compared. A NaN used to pass as "within interval" with exit 0, which told you a property had not moved on the strength of a number that does not exist.
 - Every wheel is now platform-specific because the package ships a compiled Rust extension, so on a platform with no published wheel, pip builds from source and fails unless you have a Rust toolchain installed.
 - Installing or upgrading senbonzakura now needs huggingface_hub 1.5.0 or later (it was 0.34), transformers 5.10.1 or later (it was 4.56), and torch 2.7 or later (it was 2.5), so older copies of those in your environment get upgraded with it.
 

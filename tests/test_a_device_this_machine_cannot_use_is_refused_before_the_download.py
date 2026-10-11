@@ -109,8 +109,19 @@ def test_a_command_surface_does_not_preempt_its_own_preflights():
 
 
 def test_compass_still_refuses_end_to_end():
-    """The user-visible behaviour, through the real entry point and the real parser."""
-    from senbonzakura import margin
+    """The user-visible behaviour, through the real entry point and the real parser.
+
+    SKIPPED WITHOUT THE PACKED TRACK, which is CI. `src/senbonzakura/data/*.bin` are built at
+    release time and deliberately not committed, because they hold harmful prompts, so
+    `--track default` refuses before the loader is reached and this test asserted the wrong
+    refusal. `bundled.is_available()` is the helper the rest of the suite settled on for exactly
+    this, and the first version of this file was written without it on the same day the lesson was
+    recorded elsewhere.
+    """
+    from senbonzakura import bundled, margin
+
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree; the loader is unreachable without one")
 
     def must_not_be_reached(*a, **k):
         raise AssertionError("compass reached the loader's model fetch")

@@ -410,8 +410,12 @@ def main(argv=None):
 
     level = worst(findings)
     counts = {s: sum(1 for x, _ in findings if x == s) for s in (REFUSED, FINDING, NOTE)}
-    print(f"\n{len(findings)} finding(s): "
-          + ", ".join(f"{n} {s}" for s, n in counts.items() if n))
+    # "5 finding(s): 5 finding", which is what this printed until 2026-10-11, reads as a bug in
+    # the sentence rather than a count. The head said `finding(s)` because it covers all three
+    # severities, and one of those severities is itself called `finding`, so the two collided
+    # whenever that was the only kind present.
+    total = f"{len(findings)} finding{'' if len(findings) == 1 else 's'}"
+    print(f"\n{total}: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n))
     # A NOTE alone exits 0, so a document with an amendment recorded honestly is not a build
     # failure. That is the point of having three levels rather than two.
     return _EXIT_FOR.get(level, OK)

@@ -129,10 +129,17 @@ sentence length is run over the same prompts, and if that separates them as well
 does, the run says so and refuses its own figure.
 
 **Measured: 3 minutes 44 seconds on 16 processor cores**, with the compass at 0.9872 (95% interval
-0.9722 to 0.9972) against the length ruler's 0.6853 and a clean verdict read-out on every prompt. The first run also spends
-longer than that fetching 3.8 GB of weights. The artefact, the exact command and the environment
-it was measured in are in
+0.9722 to 0.9972) against the length ruler's 0.6853 and a clean verdict read-out on every prompt.
+The first run also spends longer than that fetching 3.8 GB of weights. The artefact, the exact
+command and the environment it was measured in are in
 [evidence/compass-2026-10-11](evidence/compass-2026-10-11/README.md).
+
+**That is the no-graphics-card case, deliberately**, because it is the one worth promising: the
+command above ends in `--device cpu` and a run that needs no card is a run anyone can repeat. A
+card is faster and **we have published no measured figure for this command on one**, so there is
+nothing here to compare it against. Do not read it against the 108 minutes quoted for an
+abliteration run either. That figure is from a 6 GB card, it is a different command doing a much
+larger job, and the two numbers share neither the work nor the hardware.
 
 > **This example has now been wrong three times, and the third time is the instructive one.** It
 > used `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26: at 135M the model does not put a

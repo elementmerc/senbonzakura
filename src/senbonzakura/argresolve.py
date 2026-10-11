@@ -292,3 +292,89 @@ class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
     def _has_subcommands(self):
         return any(isinstance(a, argparse._SubParsersAction)  # noqa: SLF001
                    for a in self._actions)
+
+
+#: Device kinds this tool accepts. `cpu` and `cuda` are what the documentation offers; the rest are
+#: accelerators torch names, accepted because somebody with one should not be told their hardware is
+#: a typo. Anything else is a typo, and saying so before a download is the whole point.
+KNOWN_DEVICES = frozenset({"cpu", "cuda", "mps", "xpu", "hpu", "npu", "mtia", "meta"})
+
+
+def refuse_unusable_device(device):
+    """Refuse a device this machine cannot use, for any command, before anything is downloaded.
+
+    WHY THIS LIVES HERE RATHER THAN IN `cli`, 2026-10-11.
+
+    `cli._preflight_device` has done exactly this since 2026-09-16, and the comment it carries
+    says the lesson plainly: the failure it prevents is the one that "`entry.py` goes to some
+    trouble to prevent for a missing import, arriving through the one input nobody checked". It
+    was wired into the abliterate path and the guided mode, and into nothing else.
+
+    So `senbonzakura compass --device cuda` on a machine with no card still fetched the weights,
+    loaded them, began scoring, and died inside `margin.py` on `.to(device)` under fourteen frames
+    of torch. **The same defect, in the same shape, one command away from its own fix.** Found by
+    the constrained-user journey of 2026-10-11, whose whole point is that paying for a 3.8 GB
+    download and then being told the obvious is the difference between using this tool and not.
+
+    It is deliberately NOT inside the model loader, which is where the dependency pre-flight went.
+    That one belongs there because it cannot be predicted from the command line; this one is
+    decidable from a flag, dozens of tests drive the loader directly with a device string, and a
+    refusal there would be a refusal in the middle of somebody's unit test rather than at the
+    surface where a person typed the flag.
+
+    `torch` is imported inside the function on purpose: this module is on the `--help` path, which
+    is measured and must not pay for torch.
+    """
+    device = str(device or "").strip().lower()
+    if not device or device.startswith("cpu"):
+        return device
+
+    import torch
+
+    from . import say
+    kind = device.split(":", 1)[0]
+    if kind == "cuda" and not torch.cuda.is_available():
+        # THROUGH `say.refusal_text`, which wraps to the terminal, rather than hand wrapped.
+        # This was built with explicit newlines at about a hundred and twenty columns, so the
+        # reason line ran off the edge of any ordinary window, and it runs off it twice now that
+        # the guided mode quotes a failing check's refusal on its pre-flight board. Found by a
+        # journey driving the walk with `--device cuda` on a machine with no card.
+        #
+        # The two command lines keep their own indentation: `say` leaves an indented line alone
+        # deliberately, because an indented line is something somebody has to paste.
+        raise SystemExit(say.refusal_text(
+            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.",
+            "Checked before the model is downloaded, because finding out afterwards costs the "
+            "download and tells you the same thing.",
+            "What to do:\n"
+            "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
+            "    or fix the install:            senbonzakura setup --apply",
+            "`senbonzakura doctor` reports the same thing as an advisory and runs without a "
+            "card."))
+    if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",
+                                     lambda: False)():
+        raise SystemExit(
+            "senbonzakura: --device is 'mps' and this build of torch reports no MPS device.\n"
+            "  Use --device cpu, or install a torch built with MPS support.\n"
+            "  `senbonzakura doctor` reports what this install can and cannot do.")
+    # AND FINALLY, WHETHER IT IS A DEVICE AT ALL. Everything above asks whether a KNOWN device is
+    # usable; nothing asked whether the string names a device, so `--device banana` fell straight
+    # through to `model.to("banana")` and reached the user as fourteen frames of traceback out of
+    # torch, AFTER the model had downloaded and loaded. Found by a surface audit on 2026-09-27, and
+    # it is the one flag in this pre-flight block that was not checked here: `--track`, `--out`,
+    # `--trials`, the direction budget and CUDA availability all are.
+    #
+    # The accepted set is what `--help` documents, plus the accelerators torch names that somebody
+    # may legitimately have. An unknown one is refused with the list rather than passed on, because
+    # torch's own message is a comma-separated dump of twenty backend names with no advice in it.
+    if kind not in KNOWN_DEVICES:
+        raise SystemExit(say.refusal_text(
+            f"senbonzakura: --device {device!r} is not a device this tool knows.",
+            "Checked here rather than at load time, because torch raises on it only after the model "
+            "has been downloaded and placed, and then says so in twenty frames.",
+            "What to pass:\n"
+            "    --device cpu       every machine, correct and slow\n"
+            "    --device cuda      an NVIDIA card\n"
+            "    --device cuda:1    a specific card when there are several",
+            "`senbonzakura doctor` says what this machine actually has."))
+    return device

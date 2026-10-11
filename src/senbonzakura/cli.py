@@ -54,7 +54,10 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+# Torch-free on purpose: the measurement commands take the model as a positional too and must not
+# import THIS module in order to parse a command line.
 from . import (
+    argresolve,
     checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
@@ -69,9 +72,6 @@ from . import (
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
 # it without paying for torch. Re-exported here because everything already asks cli.
 from ._version import __version__
-
-# Torch-free on purpose: the measurement commands take the model as a positional too and must not
-# import THIS module in order to parse a command line.
 from .argresolve import pick_model
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
@@ -2397,6 +2397,19 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # the weight bake rewrites tensors in place and needs full precision.
     _log = log or (lambda m: None)
     _refuse_without_the_checker()
+    # AND THE DEVICE, BESIDE THE CHECKER, FOR THE SAME REASON. `--device` defaults to `cuda`, and
+    # `_preflight_device` refused an unusable one on the abliterate path and the guided mode only.
+    # Every other command reached `.to(device)` with the weights already fetched and loaded, and
+    # died there under fourteen frames of torch. On a metered connection that download is the whole
+    # cost of finding out. Found by the constrained-user journey, 2026-10-11.
+    #
+    # HERE RATHER THAN AT EACH `main`, which is where it went first and was wrong. A surface check
+    # preempts every refusal the command does for itself, so eighteen tests that assert a specific
+    # early refusal got this one instead. Worse, they only got it on a machine with no card, which
+    # is CI: the suite's behaviour would have depended on the test host's hardware. A test that
+    # asserts a refusal BEFORE the model loads never reaches this line, so ordering is preserved
+    # and the download is still never paid for.
+    argresolve.refuse_unusable_device(device)
     # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
     # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
     # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
@@ -6126,62 +6139,13 @@ def _preflight_device(args, log=print):
 
     Cheap, local, and decidable before the first byte is fetched, so it belongs beside the other
     command-line pre-flights rather than inside the model load.
+
+    THE CHECK ITSELF MOVED to `argresolve.refuse_unusable_device` on 2026-10-11, because it was
+    wired here and into the guided mode and nowhere else, so `compass` still died on `.to(device)`
+    after paying for the download. This stays as the name the abliterate path calls and that
+    several tests monkeypatch; the reasoning is on the shared function.
     """
-    device = str(getattr(args, "device", "") or "").strip().lower()
-    if not device or device.startswith("cpu"):
-        return device
-    kind = device.split(":", 1)[0]
-    if kind == "cuda" and not torch.cuda.is_available():
-        # THROUGH `say.refusal_text`, which wraps to the terminal, rather than hand wrapped.
-        # This was built with explicit newlines at about a hundred and twenty columns, so the
-        # reason line ran off the edge of any ordinary window, and it runs off it twice now that
-        # the guided mode quotes a failing check's refusal on its pre-flight board. Found by a
-        # journey driving the walk with `--device cuda` on a machine with no card.
-        #
-        # The two command lines keep their own indentation: `say` leaves an indented line alone
-        # deliberately, because an indented line is something somebody has to paste.
-        raise SystemExit(say.refusal_text(
-            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.",
-            "Checked before the model is downloaded, because finding out afterwards costs the "
-            "download and tells you the same thing.",
-            "What to do:\n"
-            "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
-            "    or fix the install:            senbonzakura setup --apply",
-            "`senbonzakura doctor` reports the same thing as an advisory and runs without a "
-            "card."))
-    if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",
-                                     lambda: False)():
-        raise SystemExit(
-            "senbonzakura: --device is 'mps' and this build of torch reports no MPS device.\n"
-            "  Use --device cpu, or install a torch built with MPS support.\n"
-            "  `senbonzakura doctor` reports what this install can and cannot do.")
-    # AND FINALLY, WHETHER IT IS A DEVICE AT ALL. Everything above asks whether a KNOWN device is
-    # usable; nothing asked whether the string names a device, so `--device banana` fell straight
-    # through to `model.to("banana")` and reached the user as fourteen frames of traceback out of
-    # torch, AFTER the model had downloaded and loaded. Found by a surface audit on 2026-09-27, and
-    # it is the one flag in this pre-flight block that was not checked here: `--track`, `--out`,
-    # `--trials`, the direction budget and CUDA availability all are.
-    #
-    # The accepted set is what `--help` documents, plus the accelerators torch names that somebody
-    # may legitimately have. An unknown one is refused with the list rather than passed on, because
-    # torch's own message is a comma-separated dump of twenty backend names with no advice in it.
-    if kind not in _KNOWN_DEVICES:
-        raise SystemExit(say.refusal_text(
-            f"senbonzakura: --device {device!r} is not a device this tool knows.",
-            "Checked here rather than at load time, because torch raises on it only after the model "
-            "has been downloaded and placed, and then says so in twenty frames.",
-            "What to pass:\n"
-            "    --device cpu       every machine, correct and slow\n"
-            "    --device cuda      an NVIDIA card\n"
-            "    --device cuda:1    a specific card when there are several",
-            "`senbonzakura doctor` says what this machine actually has."))
-    return device
-
-
-#: Device kinds this tool accepts. `cpu` and `cuda` are what the documentation offers; the rest are
-#: accelerators torch names, accepted because somebody with one should not be told their hardware is
-#: a typo. Anything else is a typo, and saying so before a download is the whole point.
-_KNOWN_DEVICES = frozenset({"cpu", "cuda", "mps", "xpu", "hpu", "npu", "mtia", "meta"})
+    return argresolve.refuse_unusable_device(getattr(args, "device", ""))
 
 
 def _budget_warning(budget):

@@ -2333,6 +2333,59 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     return tok
 
 
+#: The one declared dependency that is imported from inside a function rather than at module top.
+#:
+#: `senbonzakura_check` owns the measurement stamp, so every command that writes a figure reaches
+#: for it at the END of its run. The imports are deferred on purpose, to keep `--help` fast, and
+#: that is exactly why nothing caught its absence early: `entry.dispatch` only sees imports that
+#: happen while a module is LOADING, and the handler around the run catches the late failure and
+#: says the right thing far too late.
+CHECKER = "senbonzakura_check"
+
+
+def _refuse_without_the_checker():
+    """Refuse before the weights, if the package that will write the result is missing.
+
+    MEASURED 2026-10-11 on sixteen cores. `senbonzakura compass` spent 3 minutes 45 seconds and 28
+    CPU-minutes loading Qwen3-1.7B and scoring sixty prompts, then refused with "it needs
+    senbonzakura_check, which is not installed". True, actionable, and after all the work. Section
+    2.1 asks for dependency presence to be checked "before a long job starts, not halfway
+    through", and this project already does that for the CUDA device, the skip boundaries and the
+    capability-probe budget.
+
+    HERE, AND NOT IN A TABLE IN `entry`. The first attempt listed which commands defer the import
+    and pre-flighted them before dispatch. A test derived the same list from the source and showed
+    the hand-written one was wrong in both directions, then showed that neither a direct-import
+    walk nor a transitive one can produce the right answer: direct misses `leak`, which reaches
+    the checker through `residualleak`, and transitive reachability sweeps in `doctor`, which must
+    run with nothing installed. Predicting the set was the wrong idea.
+
+    The loader is the honest place. Everything expensive is downstream of it, every command that
+    writes a stamped figure passes through it, and the commands that never load a model, `doctor`
+    and `diff` and `track` among them, never reach it and keep working with the checker absent.
+    No table, nothing to drift, and the cost avoided is the whole load plus the scoring.
+
+    `find_spec` rather than an import, so this costs microseconds and executes nothing.
+    """
+    import importlib.util
+
+    try:
+        present = importlib.util.find_spec(CHECKER) is not None
+    except (ImportError, ValueError):
+        present = False
+    if present:
+        return
+    raise SystemExit(
+        f"senbonzakura: {CHECKER} is not installed, and every measurement this writes is stamped "
+        f"through it.\n"
+        f"  Refusing now rather than after the model loads: on a processor that wait is minutes, "
+        f"and the answer at the end of it would be this same sentence.\n"
+        f"  Install it with:\n"
+        f"    pip install senbonzakura\n"
+        f"  `senbonzakura doctor` lists everything this install is missing in one go, and it runs "
+        f"without any of it.")
+
+
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
                              chat_template=None, needs_chat_template=True,
@@ -2343,6 +2396,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
     # the weight bake rewrites tensors in place and needs full precision.
     _log = log or (lambda m: None)
+    _refuse_without_the_checker()
     # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
     # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
     # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the

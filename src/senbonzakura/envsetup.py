@@ -535,6 +535,22 @@ def main(argv=None):
     for line in textwrap.wrap(f"{verdict.upper()}: {reason}", width=say.width(),
                               initial_indent="  ", subsequent_indent="    "):
         print(line)
+    if verdict == "unknown":
+        # SAID OUT LOUD, because the exit status cannot say it and is not going to start.
+        #
+        # This command exits 0 on an UNKNOWN verdict, so a CI step reading the status sees green
+        # on a result that means "I could not tell". A journey persona raised that on 2026-10-11
+        # against `doctor`, which exits 1 on an advisory. The division is deliberate: `setup`
+        # advises and changes nothing without `--apply`, `doctor` is the command that gates. But
+        # a reader cannot infer a division from a zero, and anything scripted as
+        # `senbonzakura setup && ...` would break if the status changed, so the sentence is the
+        # fix rather than the code.
+        for line in textwrap.wrap(
+                "This exits 0 because nothing is wrong that it can see, not because the question "
+                "was answered. `senbonzakura doctor` is the one that gates: it exits 1 on an "
+                "advisory and 2 on a failure, so a CI step should read that one.",
+                width=say.width(), initial_indent="    ", subsequent_indent="    "):
+            print(line)
     if args is None:
         # "blocked" means there is a real problem here that this command cannot fix, which is not
         # the same answer as "nothing to do". Exiting 0 on both makes them indistinguishable to

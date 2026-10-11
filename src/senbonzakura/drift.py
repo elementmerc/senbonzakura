@@ -88,8 +88,44 @@ def build_parser():
 
 
 def read_prompts(path):
-    with open(path, encoding="utf-8") as f:
-        prompts = [ln.strip() for ln in f if ln.strip()]
+    """The prompts, from a plain file or from any dataset spec the rest of the tool accepts.
+
+    IT USED TO BE A BARE `open()`, AND THAT MADE `measure --only drift` IMPOSSIBLE.
+
+    `measure` hands every stage a dataset spec, and for this one it passes
+    `_track_spec(track, "good_ds")`, which is `default/good_ds` for the bundled track and
+    `<dir>/good_ds` for a built one. Both are directories, so `open()` raised
+    `FileNotFoundError` two seconds into the stage. Found by a journey persona on 2026-10-11, who
+    ran `measure --only drift` and got a traceback naming a path that looks like a typo and is
+    not: drift is the one stage of the five that could never run on a track.
+
+    `_track_spec`'s own docstring says "the bundled track needs no special case anywhere
+    downstream", and it was right about every stage but this one, because this one never went
+    through `dataset.resolve`. The claim was true of the spec and false of one reader of it, which
+    is why reading the docstring would not have found this and running the command did.
+
+    A plain file still works, and that is the documented form in `--prompts`' own help: `resolve`
+    accepts a path and reads one prompt per line, blank lines dropped, exactly as this did.
+
+    SystemExit rather than a traceback, which is what `margin.load_prompts` does through the same
+    call for the same reason: a prompt file that is not there is a sentence the reader can act on,
+    not twenty frames of our internals and theirs.
+    """
+    from . import dataset
+
+    try:
+        prompts = dataset.resolve(
+            path, what="drift prompts",
+            missing_hint="pass a text file with one harmless prompt per line, or a track split "
+                         "such as `default/good_ds`")
+    except dataset.DatasetError as e:
+        raise SystemExit(str(e)) from e
+    # BELT AND BRACES, and it no longer fires for a file. `resolve` refuses an empty source and an
+    # all-blank one itself, with a better message than this: it says how many rows it found and
+    # that every one was blank. Kept because `resolve` accepts spec forms this has not been shown
+    # to cover, a Hub id and a parquet among them, and a drift of nan reported as a result is the
+    # outcome it exists to prevent. Removing it on the strength of two measured cases would be
+    # stating a universal from a sample of two.
     if not prompts:
         raise SystemExit(f"drift: {path} holds no prompts, so there is nothing to measure on.")
     return prompts

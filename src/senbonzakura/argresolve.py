@@ -227,7 +227,67 @@ class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
                     f"Also, {named} {verb} this command has, so adding the missing one above would "
                     f"leave it silently ignored. Check the spelling against --help.",
                     indent="  ", first="  "))
-        super().error(message)
+        self._refuse(message)
+
+    def _refuse(self, message):
+        """Say what was wrong, first, and point at the help instead of reprinting it.
+
+        WHY THIS OVERRIDES ARGPARSE. `ArgumentParser.error` prints the usage block and then the
+        error. On this tool's main parser that is thirteen lines of bracketed flag soup above the
+        one line saying what the reader got wrong, and a journey persona reported exactly that:
+        they read the last line, which is the error, and had to scroll back up past the wall to be
+        sure nothing else was in it.
+
+        Printing the usage AFTER the error is worse, not better: a terminal scrolls, so the thing
+        a reader sees is the last thing written, and that would bury the error from the other
+        side. So the block goes and a pointer replaces it. Nothing is lost: `--help` prints the
+        usage, the flags and the command list, and this names it.
+
+        Exit 2 and stderr are unchanged, because a script reading either is reading a contract.
+
+        It also spells the refusal in British English and offers the nearest real flag. argparse
+        writes "unrecognized arguments", which is the one American spelling this tool emits in a
+        user-facing string, and "unrecognized arguments: --modle" is true and unhelpful next to
+        `--model` sitting one letter away. The subcommand path has suggested a near match since
+        `entry._not_a_command`; the flag path had not.
+        """
+        from . import say
+
+        message = message.replace("unrecognized", "unrecognised")
+        tail = [say.lines(f"`{self.prog} --help` lists what this command takes.",
+                          indent="  ", first="  ")]
+        near = self._nearest_flags(message)
+        if near:
+            tail.insert(0, say.lines(f"Did you mean {', '.join(near)}?",
+                                     indent="  ", first="  "))
+            tail.insert(1, [""])
+        out = [f"{self.prog}: error: {message}", ""]
+        for block in tail:
+            out += block
+        self.exit(2, "".join(f"{line}\n" for line in out))
+
+    def _nearest_flags(self, message):
+        """The declared flags closest to the unknown ones this refusal names, at most three.
+
+        Reads the flags back out of the message rather than out of `argv`, so it only ever
+        suggests a replacement for a token argparse itself has just rejected. A cutoff of 0.8 is
+        the same one `entry._not_a_command` uses, and it is deliberately tight: a wrong suggestion
+        costs more than no suggestion, because the reader will try it.
+        """
+        import difflib
+
+        typed = [tok.rstrip(",") for tok in message.split()
+                 if tok.startswith("--") and len(tok) > 2]
+        if not typed:
+            return []
+        known = sorted({opt for action in self._actions
+                        for opt in action.option_strings if opt.startswith("--")})
+        out = []
+        for tok in typed:
+            for hit in difflib.get_close_matches(tok.split("=", 1)[0], known, n=1, cutoff=0.8):
+                if hit not in out:
+                    out.append(hit)
+        return out[:3]
 
     def _has_subcommands(self):
         return any(isinstance(a, argparse._SubParsersAction)  # noqa: SLF001

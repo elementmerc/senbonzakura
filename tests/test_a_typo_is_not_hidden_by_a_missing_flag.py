@@ -94,12 +94,36 @@ class TestItNeverRejectsWhatUsedToParse:
         got = _parser().parse_args(["--seeds", "a=--b"])
         assert got.seeds == "a=--b"
 
+    def test_a_refusal_that_names_no_flag_suggests_nothing(self, capsys):
+        """The other half of the near-match search: it must not invent a suggestion.
+
+        A refusal about a positional, a bad choice or a missing value carries no `--flag` for the
+        search to work from, and a suggestion there would be the parser guessing at a word the
+        reader never typed. Covered deliberately rather than left to the overall figure, because
+        it is the branch where being confidently wrong costs the reader a command that fails
+        differently.
+        """
+        ap = argresolve.ParserThatNamesUnknownFlags(prog="t", allow_abbrev=False)
+        ap.add_argument("--seeds")
+        ap.add_argument("where", choices=["here", "there"])
+        said = _refused(ap, ["nowhere"], capsys)
+        assert "invalid choice" in said, said
+        assert "Did you mean" not in said, (
+            f"a suggestion was offered for a refusal that names no flag: {said}")
+        assert "t --help" in said, "the pointer at the help is missing"
+
     def test_an_unknown_flag_on_its_own_is_still_just_unrecognised(self, capsys):
-        """With nothing required missing, argparse's own message is already the right one."""
+        """With nothing required missing, argparse's own message is already the right one.
+
+        It is spelled the way the rest of this tool spells it. argparse writes "unrecognized",
+        which was the one American spelling reaching a user-facing string here, and `_refuse`
+        translates it on the way out.
+        """
         ap = argresolve.ParserThatNamesUnknownFlags(prog="t", allow_abbrev=False)
         ap.add_argument("--seeds")
         said = _refused(ap, ["--sedes", "1"], capsys)
-        assert "unrecognized arguments" in said
+        assert "unrecognised arguments" in said
+        assert "unrecognized" not in said, "argparse's American spelling reached the reader"
 
 
 class TestTheScanItself:

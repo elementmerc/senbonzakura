@@ -137,23 +137,46 @@ it did not.
 ## Without a graphics card {#without-a-graphics-card}
 
 You cannot edit a model on CPU in any useful time, but the instruments run fine. This scores a
-stock model on the track bundled in your install, in a couple of minutes:
+stock model on the track bundled in your install:
 
 ```sh
 senbonzakura compass \
-    --model Qwen/Qwen3-0.6B \
+    --model Qwen/Qwen3-1.7B \
+    --track default \
     --harmful default/bad_eval_ds \
     --harmless default/good_ds \
-    --skip-harmful 0 --skip-harmless 0 --n 12 \
+    --n 60 \
     --out compass-toy.json --device cpu
 ```
 
-::: tip Why this model and not a smaller one
-This said `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26. That downloads in seconds and
-then exits 1: at 135M the model puts no verdict token where the compass reads one, so the run
-prints `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement, and is right to. It is
-the tool being honest and a poor first command, because it reads as a broken install. Qwen3-0.6B
-answers with a verdict on 100% of prompts and exits 0.
+**Measured: 3 minutes 44 seconds on sixteen cores**, with the compass at 0.9872 (95% interval
+0.9722 to 0.9972) against a length-only ruler's 0.6853. The artefact and the exact environment are
+in [evidence/compass-2026-10-11](https://github.com/elementmerc/senbonzakura/blob/main/evidence/compass-2026-10-11/README.md).
+Fewer or slower cores take proportionally longer, and nobody has timed it on an older processor. The
+model is **about 3.8 GB** the first time, which is the real cost of this command.
+
+::: tip Why this model, and why not a cheaper one. Measured 2026-10-11.
+Two smaller models were tried here and both refuse to report a figure, for two different reasons.
+That is the tool working, and it makes them poor first commands, because a run that exits 1 reads
+as a broken install.
+
+`HuggingFaceTB/SmolLM2-135M-Instruct`, until 2026-09-26: at 135M the model puts no verdict token
+where the compass reads one, so the run prints `MARGIN_READOUT_SUSPECT` and declines to call its
+AUC a measurement.
+
+`Qwen/Qwen3-0.6B`, until 2026-10-11, and this page recommended it while claiming it "exits 0". It
+does not. It answers with a verdict on 100% of prompts, which is the part that was true, and then
+exits 1 with `MARGIN_NULLS_DOMINATE`, because a control that reads nothing but surface text
+separates the two sets as well as the model does. Both sample sizes were measured:
+
+| Rows | Compass AUC | The control that beat it | Wall clock |
+|---|---|---|---|
+| 12 | 0.7292, interval [0.5174, 0.9097] | characters, 1.0000 | 27s |
+| 60 | 0.7047, interval [0.6126, 0.7940] | punctuation density, 0.2590, which is informative in reverse and further from chance than the compass | 83s |
+
+So the fault was never only the flags this command used to carry. At 0.6B the signal is too weak on
+this track for any sample size worth running on a processor, and twelve rows could not have
+supported a claim regardless.
 :::
 
 `default/<partition>` means the evaluation track inside the install, so there is no corpus to
@@ -162,9 +185,11 @@ this one does need a network. It used to say `examples/toy-track/...`, which exi
 install, so the one recipe written for readers without a card was the one they could not run. If you
 did clone the repository, `examples/toy-track/` still works and is smaller.
 
-It asks whether the model still recognises a harmful request when it sees one. Twelve rows
-measures nothing, and the tool makes you pass those three flags rather than pretending otherwise.
-[The compass](/guide/compass) explains how to read it.
+It asks whether the model still recognises a harmful request when it sees one. `--track default`
+is what makes the answer mean anything: it reads the track's recorded boundary and scores rows 132
+and 385 onward, so the figure is taken on prompts nothing was fitted or selected on. Without it the
+run would score the opening rows of each file, which are the search and fit rows, and report a
+plausible number anyway. [The compass](/guide/compass) explains how to read the result.
 
 ## Where next
 

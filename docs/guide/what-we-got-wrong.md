@@ -86,7 +86,20 @@ decline.
 three minutes.
 
 **It says:** 857 seconds, so 14.3 minutes, on sixteen modern cores, at a budget cut to the bone.
-An older CPU is 45 to 90 minutes.
+An older CPU is likely several times that.
+
+::: warning Which of those two numbers was measured, corrected 2026-10-11
+The 857 seconds was timed, and that is all the repository can tell you. It appears here and in
+`tools/dev/colab_probe.py`, both saying "857 seconds on sixteen modern cores", and **neither names
+the model, the track or the flags**, so nobody can repeat it. It is also not in `evidence/`, which
+is where this project's own rule says a figure has to live before a page quotes it. Treat it as one
+machine's reading, once, of a run you cannot reconstruct.
+
+This line used to continue "an older CPU is 45 to 90 minutes", which had no measurement behind it
+at all. On a page about an extrapolation presented with the confidence of a measurement, that was
+the same mistake one paragraph down. It is now stated as the unquantified guess it always was, and
+committing a real CPU timing is on the ledger.
+:::
 
 **What was actually wrong:** the figure was an extrapolation from a GPU run presented with the
 confidence of a measurement. It is on this page even though it never shipped, because it was one

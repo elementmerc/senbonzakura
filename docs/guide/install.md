@@ -292,6 +292,18 @@ so the edit would be written into something discarded before the next forward pa
 would come out unedited, still refusing, with nothing reporting it. The refusal names the weight
 and tells you to load with more VRAM or more host-RAM headroom.
 
+**That limit is about writing, not reading, and the difference is the way out.** A forward pass only
+reads the weights, so disk offload is perfectly sound for anything that measures rather than edits.
+`senbonzakura stream-extract` takes the directions off a checkpoint larger than your card and your
+RAM put together, one group of layers at a time, and `senbonzakura stream-bake` applies them the
+same way. `senbonzakura budget --model <a local checkpoint>` prints what a given model will ask of
+the machine before you commit to a run, though it needs the checkpoint on disk already, so it
+answers "should I have done this" better than "should I".
+
+These are in [the command reference](/reference/cli) with their flags. They were missing from this
+page until 2026-10-11, which meant a reader whose machine was too small was told the tool could not
+help them, when the half they wanted worked.
+
 Worth knowing about *when* that refusal arrives: it fires as the first edit is applied, which is
 after the download and the load. On a large model that is a long wait before being told the card is
 too small, so do this arithmetic first.

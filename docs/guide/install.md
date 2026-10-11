@@ -91,6 +91,28 @@ you get depends on your operating system rather than on what is in the machine:
 | macOS on Apple silicon | a build that uses Metal. Correct |
 | Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
+### If your disk is tight, move the model cache
+
+Models go to Hugging Face's cache, not into this tool's directory, and they are the largest thing
+you will download: Qwen3-1.7B is about 3.8 GB and a bigger model is proportionally worse. The cache
+defaults to `~/.cache/huggingface`, so on a machine whose home partition is nearly full it fills
+the wrong disk and nothing here warned you.
+
+Point it somewhere with room:
+
+```sh
+export HF_HOME=/mnt/big-disk/huggingface
+```
+
+Set it before the first run, in your shell profile if you want it to stick. Nothing in this project
+needs the cache in any particular place.
+
+`senbonzakura doctor` does **not** currently report where the model cache is, or how much room is
+left on the disk holding it. It reports this tool's own track cache, which is small. So if you move
+`HF_HOME`, nothing here will confirm it took effect. `hf env` will: it prints `HF_HUB_CACHE`, which
+is the directory the weights actually land in. (Not `huggingface-cli env`, which is deprecated and
+no longer runs, and which this project already strips out of upstream advice for being stale.)
+
 ### If you have no graphics card, choose your torch first
 
 The table's second row is avoidable, and until 2026-10-11 this page described the problem without

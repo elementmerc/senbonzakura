@@ -63,6 +63,9 @@ Or, if you have Docker:
 docker run --rm ghcr.io/elementmerc/senbonzakura:v0.4.1 doctor
 ```
 
+That image is **2.11 GB** (measured), because its torch comes from the CPU index. It cannot use a
+graphics card even with `--gpus all`, and `doctor` says so rather than pretending.
+
 `doctor` reports what your install can and cannot do, which on a first run is more useful than it
 sounds.
 

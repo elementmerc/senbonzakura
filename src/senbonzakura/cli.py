@@ -2414,6 +2414,18 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         corrected = _corrected_max_memory(_log, cfg)
         if corrected is not None:
             kw["max_memory"] = corrected
+    # SAID BEFORE THE WAIT, NOT AFTER IT. Measured 2026-10-11 while reproducing a journey
+    # finding: `senbonzakura compass` on a processor sat for six minutes having printed exactly
+    # one line, and that line was huggingface's own rate-limit warning. Nothing of ours said a
+    # model was being fetched, so the only thing on screen was somebody else's prose and the run
+    # looked wedged. Section 2 asks for a heartbeat on every long wait; a fetch over a slow or
+    # throttled link is one of the longest this tool has, and it had no entry line at all.
+    #
+    # The download note is added only for a Hub id. A local directory loads at disk speed, so
+    # telling that reader about a download would be wrong about what they are waiting for, and
+    # being confidently wrong about the cause is the shape of message this project keeps removing.
+    _log(f"  loading {model_id} on {device}"
+         f"{'' if Path(model_id).is_dir() else ' (a first run downloads it, which is the slow part)'}")
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     except OSError as e:

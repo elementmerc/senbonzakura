@@ -1014,7 +1014,7 @@ def main(argv=None):
     def load(checkpoint):
         return score_module.load_model_and_tokenizer(
             checkpoint, device=a.device, load_in_4bit=a.load_in_4bit,
-            trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+            trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
 
     def measure(model, tok, which):
         gens = score_module.generate(model, tok, eval_prompts, a.device, batch=a.batch,

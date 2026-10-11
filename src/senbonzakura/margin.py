@@ -1137,7 +1137,7 @@ def main(argv=None):
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
                                           load_in_4bit=a.load_in_4bit,
                                           trust_remote_code=a.trust_remote_code,
-                                          chat_template=a.chat_template)
+                                          chat_template=a.chat_template, log=print)
     # Slice arithmetic makes a nonsense argument silently produce a plausible file rather
     # than an error: --n 0 scores nothing and then dies inside round(None), and a negative
     # skip reads the TAIL of the set, which is real data from the wrong partition.

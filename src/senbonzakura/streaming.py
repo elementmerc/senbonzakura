@@ -438,7 +438,23 @@ def layer_count(model_dir):
     this reader does not match would report one fewer layer and edit one fewer, and nothing
     anywhere would say so. The config is a second, independent account, which is the whole point
     of consulting it.
+
+    THE PATH IS CHECKED FIRST, because otherwise every wrong path gets the wrong diagnosis.
+    `_layer_scope` globs for `config.json` and a directory that does not exist yields nothing, so
+    `senbonzakura budget --model /nonexistent/dir` refused with a sentence about seven layer-count
+    keys and sent the reader looking at their checkpoint's config. A journey persona reported that
+    on 2026-10-11: the refusal was loud and correct about what it had looked for, and about the
+    wrong thing. It is checked here rather than in `budget` because the diagnosis is the same for
+    every caller, and `budget` was only the one that got asked.
     """
+    model_dir = pathlib.Path(model_dir)
+    if not model_dir.exists():
+        raise ShardError(f"{model_dir}: there is nothing at that path. Check the spelling, or "
+                         f"pass a Hub id to a command that downloads one; this one reads a "
+                         f"checkpoint already on disk.")
+    if not model_dir.is_dir():
+        raise ShardError(f"{model_dir}: that is a file, not a checkpoint directory. Pass the "
+                         f"directory holding config.json and the weight shards.")
     scope, key = _layer_scope(model_dir)
     if scope is not None:
         return scope[key], key

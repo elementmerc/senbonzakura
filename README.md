@@ -110,20 +110,30 @@ so it works straight after `pip install`:
 
 ```sh
 senbonzakura compass \
-    --model Qwen/Qwen3-0.6B \
+    --model Qwen/Qwen3-1.7B \
     --harmful default/bad_eval_ds \
     --harmless default/good_ds \
-    --skip-harmful 0 --skip-harmless 0 --n 12 \
+    --skip-harmful 0 --skip-harmless 0 --n 60 \
     --out compass-toy.json --device cpu
 ```
 
-> **Why this model and not a smaller one.** This example used
-> `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26, which downloads in seconds and then
-> exits 1: at 135M the model does not put a verdict token where the compass reads one, so the run
-> says `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement, and is right to. That
-> is the tool being honest, and it is a poor first command, because it looks like a broken
-> install. Qwen3-0.6B answers with a verdict on 100% of prompts and exits 0. It is a larger
-> download, and a first command that works is worth it.
+**It takes about four minutes on a processor, and the sixty rows are the reason.** The compass has
+to beat a control, not just score well: a ruler that reads nothing but sentence length is run over
+the same prompts, and if that separates them as well as the compass does, the run says so and
+refuses its own figure. On twelve rows the length ruler scores a perfect 1.0000, so nothing can
+clear it, and the command exits 1 however good the model is. Sixty rows is where the comparison
+becomes possible: the compass scores 0.9851 against the length ruler's 0.8339, and the run exits 0.
+
+> **Why this model and this many rows, measured rather than assumed.** This example has been wrong
+> twice, and both times because somebody changed it without running it. It used
+> `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26: at 135M the model does not put a verdict
+> token where the compass reads one, so the run said `MARGIN_READOUT_SUSPECT` and refused its own
+> AUC. It was changed to `Qwen3-0.6B --n 12` to fix that, which traded one refusal for another:
+> that configuration exits 1 with `MARGIN_NULLS_DOMINATE` at every sample size tried, 12, 40 and
+> 100. Qwen3-1.7B at twelve rows scores a **perfect 1.0000 and is still refused**, because the
+> length ruler also scores 1.0000. The slice is the problem, not the model. The configuration
+> above is the one that was run and seen to exit 0; it is a 3.8 GB download against 1.5 GB, and a
+> first command that has actually been run is worth it.
 
 This used to read `examples/toy-track/...`, which is in the repository and in **no install**, so the
 first command under a heading saying "on your own machine" could not be run by anyone who had

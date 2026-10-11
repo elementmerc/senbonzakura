@@ -1660,13 +1660,48 @@ def _no_terminal(reason, log):
     identical for both, since the way back in does not depend on how the refusal was reached.
     """
     log(f"senbonzakura: {reason}")
-    _say("A script wants the flags rather than the menu. `senbonzakura --help` lists them, "
-         "and `senbonzakura interactive` on a terminal prints the command for any run.",
+    _say(f"A script wants the flags rather than the menu. `senbonzakura --help` lists them, "
+         f"and `{NAME}` on a terminal prints the command for any run.",
          log=log, indent="  ")
     return 2
 
 
+#: How this command is named in its own messages, and it is the long form.
+#:
+#: IT HAD TWO NAMES AND SAID SO NOWHERE. The no-argument screen, the one page written for somebody
+#: meeting the tool, says "START HERE: senbonzakura -i". Every message this module printed said
+#: `senbonzakura interactive`. A journey persona met both inside one minute and asked which was
+#: the real one, which is the right question: nothing on either surface said they were the same
+#: command.
+#:
+#: TWO DRAFTS WERE WRONG BEFORE THIS ONE, and what they were wrong about is worth keeping.
+#:
+#: The first made `-i` the single name everywhere. The suite refused it, correctly:
+#: `test_the_usage_line_is_a_command_that_can_actually_be_run` exists because five commands once
+#: opened their help with a usage line nobody could paste, and showing `usage: senbonzakura -i` to
+#: somebody who typed `senbonzakura interactive --help` hands them that same defect. Picking one
+#: name cannot be right when there are genuinely two doors.
+#:
+#: The second had the page follow the door, which read well and cost too much: `entry.main` had to
+#: pass the typed spelling into `run`, making that call non-uniform, and two separate tests stub a
+#: dispatched entry point as a plain one-argument callable because that has always been the
+#: contract. Two independent objections to one special case is a design signal.
+#:
+#: So the fix is the cheap one that answers the actual question. The page names BOTH spellings,
+#: long form first because that is the canonical name in `DELEGATED`, with one sentence saying
+#: they are one command. A reader arriving by either door sees the equivalence immediately, and
+#: nothing outside this module changes.
+NAME = "senbonzakura interactive"
+
+#: Both spellings in one phrase, for a message that has to be true from either door.
+EITHER = "senbonzakura interactive --help` (or `-i --help`)"
+
+
 HELP = """usage: senbonzakura interactive [-h] [--no-interactive]
+       senbonzakura -i [-h] [--no-interactive]
+
+The two spellings are one command. `-i` is the short one and the one the
+no-argument screen points at.
 
 A guided walk through the few choices that decide whether a run means
 anything.
@@ -1692,9 +1727,17 @@ options:
                     person, and without this flag the menu waits forever for
                     an answer."""
 
-
+#: The page under the default spelling.
+#:
+#: Kept as a module attribute, and not only for the tests that read it: `HELP` has been the name
+#: of this page since before it took an argument, and a constant that quietly becomes a function
+#: is the kind of change that breaks a caller nobody remembered. `help_text` is the live form.
 def run(argv=None, *, ask_fn=input, log=print, stdin=None):
-    """Entry point for `senbonzakura interactive`."""
+    """Entry point for the guided walk, under either of its two spellings.
+
+    It takes argv alone, like every other delegated entry point, and that uniformity is load
+    bearing: see `NAME` for the draft that broke it and why that was the wrong trade.
+    """
     # Before the terminal check on purpose. Asking what a command does is the one question that
     # must be answerable without the conditions for running it, and a reader piping into `less`
     # has no terminal on stdin.
@@ -1704,10 +1747,12 @@ def run(argv=None, *, ask_fn=input, log=print, stdin=None):
     # Refused rather than ignored, and after `--help` so a reader can still ask what the flag is.
     unknown = [a for a in (argv or []) if a not in _FLAGS]
     if unknown:
-        log(f"senbonzakura interactive: unrecognised argument{'s' if len(unknown) > 1 else ''}: "
+        log(f"{NAME}: unrecognised argument{'s' if len(unknown) > 1 else ''}: "
             f"{', '.join(unknown)}.")
+        # BOTH SPELLINGS, because this message is reached from either door and naming one of them
+        # is how the reader ended up asking which was real.
         _say(f"This command takes only -h and {NO_INTERACTIVE}; it asks for everything else. "
-             f"`senbonzakura interactive --help` lists them, and `senbonzakura --help` lists the "
+             f"`{EITHER} lists them, and `senbonzakura --help` lists the "
              f"flags for a run you want to type yourself.", log=log, indent="  ")
         return 2
     # Before the terminal check, and the reason is smaller than it looks. A pseudo-terminal passes

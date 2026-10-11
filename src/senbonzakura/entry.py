@@ -564,6 +564,12 @@ def main(argv=None):
     # rather than added to ALIASES because everything in that table is a word: a flag spelling
     # living beside `harm-recognition` would reach `_not_a_command`, the near-miss search and the
     # documentation guards, none of which are written for flags.
+    # IT DOES NOT TELL `interactive` WHICH SPELLING WAS TYPED, and a draft that did was withdrawn
+    # on 2026-10-11. Passing it meant `run(argv[1:], invoked_as=...)`, which makes this call
+    # non-uniform: every other delegated command takes argv alone, and two separate tests stub a
+    # dispatched entry point as exactly that, correctly, because that has always been the
+    # contract. Breaking it to carry one word is a bad trade, and the help page names both
+    # spellings instead, which answers the same question without touching the boundary.
     if argv[0] == "-i":
         argv[0] = "interactive"
 

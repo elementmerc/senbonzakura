@@ -179,6 +179,58 @@ def test_help_wins_over_the_flag_when_both_are_given():
     assert "usage: senbonzakura interactive" in "\n".join(said)
 
 
+def test_the_page_names_both_spellings_and_says_they_are_one_command():
+    """Two doors into one command, and the page says so rather than picking a favourite.
+
+    THE FINDING. This command is reached as a word and as `-i`. The no-argument screen, the one
+    page written for somebody meeting the tool, advertises `-i`; every message here said
+    `interactive`. A journey persona met both inside a minute and asked which was real, and
+    nothing on either surface answered them.
+
+    TWO DRAFTS WERE WRONG BEFORE THIS ONE, and both are worth remembering because both looked
+    right while they were being written.
+
+    Making `-i` the single name was refused by
+    `test_the_usage_line_is_a_command_that_can_actually_be_run`, correctly: it exists because five
+    commands once opened their help with a usage line nobody could paste, and showing `usage:
+    senbonzakura -i` to somebody who typed `senbonzakura interactive --help` is that same defect.
+
+    Having the page follow the door read well and cost too much. It needed `entry.main` to pass
+    the typed spelling into `run`, which makes that call non-uniform, and two separate tests stub
+    a dispatched entry point as a one-argument callable because that is what the contract has
+    always been. Two independent objections to one special case is a design signal, not two
+    stubs to patch.
+
+    So the page names both, long form first because that is the canonical name in `DELEGATED`,
+    with a sentence saying they are one command. Both halves are asserted: the first line has to
+    be runnable, and the equivalence has to be stated, because either alone leaves the persona's
+    question unanswered.
+    """
+    first, *rest = it.HELP.splitlines()
+    assert first == "usage: senbonzakura interactive [-h] [--no-interactive]", (
+        f"the first line is not the canonical command, so it may not be pasteable:\n  {first}")
+    assert rest[0].strip().startswith("senbonzakura -i "), (
+        f"the short spelling is not offered beside it:\n  {rest[0]}")
+    assert "one command" in it.HELP, (
+        "the page lists two spellings without saying they are the same thing, which is the whole "
+        "of what the reader asked")
+
+
+def test_the_unknown_argument_message_is_true_from_either_door():
+    """A message reached by two spellings cannot name only one of them.
+
+    Naming one is how the reader came to ask which was real, so the refusal offers both.
+    """
+    said = []
+    assert it.run(["--no-interactve"], ask_fn=_must_not_ask, log=said.append,
+                  stdin=_LooksLikeATerminal()) == 2
+    joined = "\n".join(said)
+    assert "senbonzakura interactive --help" in joined, joined
+    assert "-i --help" in joined, (
+        f"the short spelling is not offered, so a reader who typed `-i` is sent elsewhere:\n"
+        f"{joined}")
+
+
 def test_a_near_miss_spelling_is_refused_rather_than_ignored():
     """The hang reached by typing the flag almost right.
 

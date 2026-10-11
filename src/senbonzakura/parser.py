@@ -416,6 +416,8 @@ def build_parser(full=False):
             "  harm-recognition alias for compass, for the same reason.\n"
             "  interactive      a guided walk through the choices that decide whether a run\n"
             "                   means anything. It prints each command before running it.\n"
+            "                   `senbonzakura -i` is the same command, and is the spelling\n"
+            "                   the no-argument screen points at.\n"
             "  validate         ask whether a direction set carries refusal or carries\n"
             "                   topic: leave-one-cluster-out generalisation, a random-\n"
             "                   direction floor, and a sweep of direction count compared at\n"

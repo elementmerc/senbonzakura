@@ -126,8 +126,13 @@ that looks fine and is marking its own homework.
 
 The compass also has to beat a control rather than just score well. A ruler that reads nothing but
 sentence length is run over the same prompts, and if that separates them as well as the compass
-does, the run says so and refuses its own figure. Expect it to take a few minutes on a processor,
-and expect the first run to spend longer than that fetching 3.8 GB of weights.
+does, the run says so and refuses its own figure.
+
+**Measured: 3 minutes 36 seconds on 16 processor cores**, with the compass at 0.9872 against the
+length ruler's 0.6853 and a clean verdict read-out on every prompt. The first run also spends
+longer than that fetching 3.8 GB of weights. The artefact, the exact command and the environment
+it was measured in are in
+[evidence/compass-2026-10-11](evidence/compass-2026-10-11/README.md).
 
 > **This example has now been wrong three times, and the third time is the instructive one.** It
 > used `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26: at 135M the model does not put a
@@ -143,9 +148,11 @@ and expect the first run to spend longer than that fetching 3.8 GB of weights.
 > least had the decency to refuse. A journey persona found it the same day by reading the skip
 > flags' own help text against the arithmetic of the track.
 >
-> No figure is quoted here now, and that is deliberate. The numbers that were here could not be
-> traced to anything committed, and `evidence/` is where a figure has to live before this file
-> repeats it. Run the command and read your own.
+> The figures that were here could not be traced to anything committed, and the weights they were
+> taken on were not on the machine afterwards, so nobody could reproduce or even locate them. The
+> ones above replace them and come from a committed artefact, run twice on the same configuration
+> for the same answer. `evidence/` is where a figure has to live before this file repeats it, and
+> a test now enforces that.
 
 This used to read `examples/toy-track/...`, which is in the repository and in **no install**, so the
 first command under a heading saying "on your own machine" could not be run by anyone who had

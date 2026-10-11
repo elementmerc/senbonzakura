@@ -15,9 +15,11 @@ from was scoring the wrong rows.
 | Harmless arm | rows 385 to 444 of `good_ds`, after the 257 fit rows and the 128 search rows |
 | Boundary source | `track`, read from the track's own manifest, not guessed |
 | Device | cpu, 16 cores |
-| Wall clock | 3 minutes 36 seconds |
+| Wall clock | 3 minutes 44 seconds |
 | Seed | 42 |
-| senbonzakura | `d7aac58` |
+| senbonzakura | `023869d` |
+| Model revision | `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` |
+| Corpus revision | `416bdf8ac34e85be3cb834d808f59ee5022fc929494bb86bb3b0d6a14657a602`, the packed track's `sha256_of_tar` |
 
 The exact command, which is the one in the README:
 
@@ -80,8 +82,10 @@ Run the command above. Two things decide whether you land on the same figures:
 - **The environment.** `provenance.packages` in the artefact pins torch, transformers, pyarrow and
   the rest. `torch==2.14.0+cu130` running on cpu is the measurement here.
 
-Two independent runs of this configuration on this machine, one before the commit and one after,
-both gave AUC 0.9872 and a length-only ruler of 0.6853.
+Three independent runs of this configuration on this machine, at three different commits of the
+tool, all gave AUC 0.9872 and a length-only ruler of 0.6853. None of the three intervening changes
+touched the scoring path, so that is a check on the harness rather than on the measurement; what it
+rules out is a figure that moves when nothing relevant moved.
 
 ## What is not here, and why
 
@@ -89,6 +93,12 @@ both gave AUC 0.9872 and a length-only ruler of 0.6853.
 not in this directory. Those rows hold the prompts, so they live in an ignored `results/` tree, as
 `evidence/README.md` sets out and as `tools/ci/check_prompt_artefacts.py` enforces. The pointer is
 kept because it says what the artefact was written beside.
+
+**A pin for a local checkpoint.** This artefact is of a Hub model, so `model_revision` is the
+resolved commit. A checkpoint on disk has no upstream revision, and the honest pin for one is a
+digest of its weights, which this project does not have yet. `stamps.model_revision_of` therefore
+records nothing for a local path rather than a placeholder, and the provenance guard is expected to
+refuse such an artefact until the digest exists. The design question is in `DEFERRED.md`.
 
 **A `dirty` flag that says `false`.** The stamp reads `"dirty": null`, meaning unknown, and a
 consumer is expected to treat unknown as dirty. The tree WAS clean at `d7aac58`: it was committed,

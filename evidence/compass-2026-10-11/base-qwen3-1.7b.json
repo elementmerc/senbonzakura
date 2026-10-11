@@ -75,11 +75,12 @@
       }
     ]
   },
+  "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
   "provenance": {
     "senbonzakura": {
       "version": "0.4.1",
       "git": {
-        "commit": "d7aac58",
+        "commit": "023869d",
         "dirty": null,
         "source": "build"
       }
@@ -101,6 +102,11 @@
       "bitsandbytes": null,
       "table_backend": "auto",
       "table_backend_pinned": false
+    },
+    "corpus": {
+      "id": "default/bad_eval_ds",
+      "kind": "bundled-track",
+      "revision": "416bdf8ac34e85be3cb834d808f59ee5022fc929494bb86bb3b0d6a14657a602"
     }
   },
   "mean_margin_harmful": 18.6917,

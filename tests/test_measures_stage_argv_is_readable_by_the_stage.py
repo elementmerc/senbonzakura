@@ -64,54 +64,82 @@ def _stage_argv(name, **kw):
     return measure.stage_argv(name, _Args(**kw), pathlib.Path("/tmp/journey2-measure"))
 
 
-def test_the_drift_stage_prompts_can_actually_be_read():
+@pytest.fixture
+def a_track_on_disk(tmp_path):
+    """A track directory with the three splits `measure` derives specs for.
+
+    THE VERSION THAT RUNS IN CI, and the reason it exists is the whole lesson of this file's second
+    draft. The first draft pointed every assertion at `default/...`, the bundled track. That track
+    is NOT in git: `tools/packaging/pack_track.py` builds it, because the blob holds harmful
+    prompts and is deliberately kept out. So the tests passed on a development machine and failed
+    on every CI platform at once, which `tests/test_doctor.py` had already written down as "this
+    project's oldest recurring shape: my machine has an artefact CI does not".
+
+    A synthetic track exercises the identical contract. `measure` builds `<track>/<split>` either
+    way, `dataset.resolve` reads a directory split the same way, and nothing about the defect this
+    file guards was specific to the bundled one. So the contract is tested everywhere and the
+    bundled track became the bonus case below rather than the premise.
+    """
+    for split, rows in (("good_ds", 140), ("bad_eval_ds", 140), ("bad_ds", 40)):
+        (tmp_path / split).write_text(
+            "".join(f"a prompt numbered {i} for the {split} split\n" for i in range(rows)),
+            encoding="utf-8")
+    return tmp_path
+
+
+def test_the_drift_stage_prompts_can_actually_be_read(a_track_on_disk):
     """The defect itself, driven end to end through the two real functions.
 
     This is the whole finding in four lines: whatever `measure` puts after `--prompts`, hand it to
-    the function that reads `--prompts`.
+    the function that reads `--prompts`. Before the fix this raised `FileNotFoundError`, because
+    `drift.read_prompts` was a bare `open()` and the spec names a directory split.
     """
     from senbonzakura import drift
 
-    spec = _value_after(_stage_argv("drift"), "--prompts")
+    spec = _value_after(_stage_argv("drift", track=str(a_track_on_disk)), "--prompts")
     assert spec is not None, "measure no longer passes --prompts to drift"
     prompts = drift.read_prompts(spec)
-    assert len(prompts) > 100, (
-        f"drift read {len(prompts)} prompts from the spec measure gave it ({spec!r}); the bundled "
-        f"harmless set has thousands, so this is not the set measure meant")
-    assert all(isinstance(p, str) and p.strip() for p in prompts[:50]), (
+    assert len(prompts) == 140, (
+        f"drift read {len(prompts)} prompts from the spec measure gave it ({spec!r}), not the 140 "
+        f"the split holds")
+    assert all(isinstance(p, str) and p.strip() for p in prompts), (
         "drift read rows that are not non-empty strings")
-
-
-def test_the_drift_stage_prompts_resolve_for_a_built_track_too():
-    """A directory track, not only the bundled one, because `_track_spec` serves both.
-
-    The bundled track resolves through a special case for the word `default`. A track on disk
-    takes the ordinary path, and that is the one a user who ran `senbonzakura track` has.
-    """
-    from senbonzakura import bundled, drift
-
-    unpacked = pathlib.Path(bundled.cache_dir())
-    if not (unpacked / "good_ds").exists():
-        pytest.skip("the bundled track is not unpacked here, so there is no directory form to use")
-    spec = _value_after(_stage_argv("drift", track=str(unpacked)), "--prompts")
-    assert len(drift.read_prompts(spec)) > 100, f"drift could not read the directory spec {spec!r}"
 
 
 @pytest.mark.parametrize(("stage", "flag"),
                          [("drift", "--prompts"), ("compass", "--harmful"),
                           ("compass", "--harmless"), ("score", "--eval")])
-def test_every_dataset_spec_measure_builds_resolves(stage, flag):
+def test_every_dataset_spec_measure_builds_resolves(stage, flag, a_track_on_disk):
     """The general form, so the next stage to grow a reader of its own is covered in advance.
 
     Each of these flags carries a dataset spec that `measure` derived from `--track`. Resolving
-    them all through `dataset.resolve` proves the specs themselves are sound; the per-stage tests
-    above prove the stage's own reader agrees, which is the half that was missing.
+    them all through `dataset.resolve` proves the specs themselves are sound; the per-stage test
+    above proves the stage's own reader agrees, which is the half that was missing.
     """
     from senbonzakura import dataset
 
-    argv = _stage_argv(stage)
+    argv = _stage_argv(stage, track=str(a_track_on_disk))
     spec = _value_after(argv, flag)
     if spec is None:
         pytest.skip(f"measure passes no {flag} to {stage}")
     rows = dataset.resolve(spec, what=f"{stage} {flag}")
     assert rows, f"{stage} {flag} resolved to no rows from {spec!r}"
+
+
+def test_the_bundled_track_resolves_the_same_way_where_one_is_installed():
+    """The bonus case: the `default` alias, which takes a different path through `dataset`.
+
+    Guarded rather than asserted, because a source checkout and a `git archive` tarball genuinely
+    carry no packed track and that is a supported state. Skipping is honest here for the reason
+    `test_the_corpus_is_pinned` gives about the same guard: "no track here" is not evidence either
+    way about whether a track that exists resolves, and the contract itself is covered above on a
+    track that always exists.
+    """
+    from senbonzakura import bundled, drift
+
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree; run tools/packaging/pack_track.py to make one")
+    spec = _value_after(_stage_argv("drift"), "--prompts")
+    assert spec == "default/good_ds", f"measure no longer derives the bundled spec: {spec!r}"
+    assert len(drift.read_prompts(spec)) > 100, (
+        "the bundled harmless split holds thousands of rows, so this is not the set measure meant")

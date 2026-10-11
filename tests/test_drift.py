@@ -61,16 +61,33 @@ def test_a_prompt_file_that_does_not_exist_is_a_sentence_not_a_traceback(tmp_pat
     assert "nope.txt" in str(e.value)
 
 
-def test_the_prompts_can_be_a_track_split_which_is_what_measure_passes():
+def test_the_prompts_can_be_a_track_split_which_is_what_measure_passes(tmp_path):
     """The journey-2 defect, at the unit level.
 
     `measure --only drift` passed `default/good_ds` and the bare `open()` raised
     `FileNotFoundError` on a path that looks like a typo and is not. Drift was the one instrument
     of the five that could never run on a track.
+
+    ON A TRACK BUILT HERE, not the bundled one. The first draft of this test read
+    `default/good_ds`, which passes on a development machine and fails on every CI platform: the
+    packed track is not in git, because the blob holds harmful prompts and is kept out on purpose.
+    A split in a directory reaches the same `dataset.resolve` path and nothing about the defect was
+    specific to the bundled alias.
     """
-    rows = drift.read_prompts("default/good_ds")
-    assert len(rows) > 100, f"a track split resolved to only {len(rows)} prompts"
-    assert all(isinstance(r, str) and r.strip() for r in rows[:20])
+    split = tmp_path / "good_ds"
+    split.write_text("".join(f"prompt {i}\n" for i in range(120)), encoding="utf-8")
+    rows = drift.read_prompts(str(split))
+    assert len(rows) == 120, f"a track split resolved to {len(rows)} prompts, not 120"
+    assert all(isinstance(r, str) and r.strip() for r in rows)
+
+
+def test_the_bundled_split_resolves_too_where_a_track_is_installed():
+    """The bundled alias, which takes its own path through `dataset`. Guarded, not asserted."""
+    from senbonzakura import bundled
+
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree; run tools/packaging/pack_track.py to make one")
+    assert len(drift.read_prompts("default/good_ds")) > 100
 
 
 # ── the fingerprint, which is what the cache is allowed to be reused for ──────────────

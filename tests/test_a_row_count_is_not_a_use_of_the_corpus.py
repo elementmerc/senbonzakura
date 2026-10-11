@@ -34,6 +34,18 @@ def _fresh_notices():
 
 
 def _pack_is_here():
+    """Both packs, because this file's assertions span both.
+
+    `check_corpora` reads the CORPORA pack and `check_track` reads the TRACK pack, and neither is
+    in git: both hold harmful prompts and are built rather than committed. A guard that checked
+    only one would skip in CI for the right reason by accident, or run and fail. Measured
+    2026-10-11 when three tests in this cluster asserted a packed track unconditionally and went
+    red on every CI platform at once.
+    """
+    from senbonzakura import bundled
+
+    if not bundled.is_available():
+        return False
     try:
         corpora.load(next(iter(sorted(corpora.CORPORA))), attribute=False, log=lambda _m: None)
     except corpora.CorpusError:

@@ -90,9 +90,15 @@ def test_the_bundled_track_pins_to_its_own_digest():
     The revision is the packed track's `sha256_of_tar`, so two runs naming `default/bad_eval_ds`
     can be told apart when the pack is rebuilt.
     """
+    from senbonzakura import bundled
+
+    # `bundled.is_available()` rather than testing the return for None, which is the helper
+    # `test_the_corpus_is_pinned` settled on for the same question. The packed track is not in git,
+    # so a source checkout and a `git archive` tarball both legitimately have none.
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree; run tools/packaging/pack_track.py to make one")
     entry = revision_entry("default/bad_eval_ds")
-    if entry is None:
-        pytest.skip("no bundled track in this checkout, so there is nothing to pin")
+    assert entry is not None, "a track is installed and revision_entry declined to pin it"
     assert entry["id"] == "default/bad_eval_ds"
     assert entry["kind"] == "bundled-track"
     assert len(entry["revision"]) == 64, f"not a sha256: {entry['revision']!r}"

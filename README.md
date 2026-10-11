@@ -74,7 +74,21 @@ senbonzakura setup
 ```
 
 That brings torch, transformers, accelerate and optuna with it: **70 packages, 5.9 GB**, fifteen
-of them CUDA wheels. There is nothing to choose.
+of them CUDA wheels.
+
+**If you have no graphics card, install torch from the CPU index first and those fifteen never
+arrive:**
+
+```sh
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install senbonzakura
+```
+
+pip then finds torch already satisfied and leaves it alone. This is the route the Docker image
+takes, which is **2.11 GB rather than about 6 GB** (measured, and the only measured figure here:
+nobody has timed or sized the pip route separately). Everything that doesn't need a card still
+works, which is every instrument: `compass`, `drift`, `score`, `check`, `doctor`, `convert` and
+`quantise`. Editing a model is the part that really wants a card.
 
 > This paragraph used to tell you *not* to run that command, and it was right to until 0.4.0 went
 > out. [What we got wrong](https://elementmerc.github.io/senbonzakura/guide/what-we-got-wrong) has

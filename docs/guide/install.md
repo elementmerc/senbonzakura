@@ -91,6 +91,31 @@ you get depends on your operating system rather than on what is in the machine:
 | macOS on Apple silicon | a build that uses Metal. Correct |
 | Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
+### If you have no graphics card, choose your torch first
+
+The table's second row is avoidable, and until 2026-10-11 this page described the problem without
+giving you the way round it. Install torch from the CPU index before the tool, and the fifteen CUDA
+packages never arrive:
+
+```sh
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install senbonzakura
+```
+
+pip then finds torch already satisfied and leaves it alone. This is exactly what the Docker image
+does, and it is why that image is **2.11 GB rather than about 6 GB**. That figure is measured; the
+pip route's own total is not, so treat the saving as the same shape rather than the same number.
+
+What you give up is the card you haven't got. Every instrument runs on a processor: `compass`,
+`drift`, `score`, `check`, `doctor`, `convert`, `quantise`. The abliteration itself runs too, and
+slowly enough that the no-card section of [the quickstart](/guide/quickstart#without-a-graphics-card)
+tells you not to plan on it.
+
+If you later get a card, `senbonzakura setup` notices that torch is a CPU build while a card is
+present. When it can read the CUDA version your driver supports, it prints the exact command to
+swap the build out. When it can't read it, it says so and names the channels to choose from rather
+than guessing one for you. `senbonzakura doctor` tells you which build you're on either way.
+
 ::: tip Why the Windows row is in bold
 PyPI's Windows torch is 124 MB and CPU-only; the CUDA build is not on PyPI at all. So a gaming
 laptop with a 3060 in it installs a torch that cannot see the card, and nothing warns you. The

@@ -263,13 +263,13 @@ dependencies = [
   # pre-releases resolves to whatever is newest for ever after, which is how a pinned-looking
   # build changes underneath a rented card.
   #
-  # `<0.5` because a floor alone would let a future major checker satisfy a 0.4 wheel, and the
+  # `<0.6` because a floor alone would let a future major checker satisfy a 0.5 wheel, and the
   # two distributions share a version line on purpose.
   #
   # `tools/ci/check_wheel.py` refuses a stable wheel carrying the loosened form, and it asks the
   # wheel's own version rather than trusting anyone to remember. The floor must therefore rise
   # with each release line; it is not a constant anyone may leave behind.
-  "senbonzakura-check>=0.4.0,<0.5",
+  "senbonzakura-check>=0.5.0,<0.6",
 ]
 
 [project.optional-dependencies]
@@ -765,6 +765,19 @@ accepted_advisories = [
 # What is still true, because an accepted gap described as a closed one is worse than no note:
 # torch is not advisory-scanned by this gate. The pin is exact, the index is declared, and the
 # supply-chain workflow checks the channel separately, but no advisory feed is consulted for it.
+# Our own two distributions are the other entry, and the reason is not a release-window excuse.
+# Every job installs them from the checkout, so what the advisory service is asked about is a
+# version string that exists only here. Until 0.5.0 this passed, and it passed BY COINCIDENCE: the
+# working tree carried 0.4.1, a number PyPI also carried, so the lookup matched our own published
+# release and said nothing whatever about the code in front of it. Bumping to 0.5.0 removed the
+# coincidence and the step failed, which is the gate reporting the truth it had been missing.
+#
+# THE COST, stated rather than glossed: if an advisory were ever filed against either
+# distribution, this declaration would keep the gate quiet about it. That is a real gap. It is
+# accepted because an external feed cannot describe an unpublished working tree at all, so the
+# alternative is not coverage, it is a lookup of a different artefact wearing the same number.
 unauditable_packages = [
   { package = "torch", reason = "installed from download.pytorch.org/whl/cpu, and a local version such as 2.13.0+cpu has no PyPI release for the advisory service to match", revisit = "if the CPU build is ever published to PyPI, or if the jobs stop installing from the PyTorch index" },
+  { package = "senbonzakura", reason = "installed from this checkout, so the version asked about exists only here and the advisory service has no release to match; a match before 0.5.0 was the working tree happening to share a number with a published release", revisit = "if an advisory is ever filed against this package, which has to be watched for by hand because this entry is what stops the gate saying it" },
+  { package = "senbonzakura-check", reason = "installed from ./checker in every job, for the same reason as the package above; it resolved from PyPI only while the main package's pin excluded the in-tree version, which was the defect fixed in 0.5.0", revisit = "if an advisory is ever filed against this package, or if a job stops installing it from the checkout" },
 ]

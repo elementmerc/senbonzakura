@@ -330,18 +330,24 @@ def _machine(monkeypatch, *, system, gpus, driver, torch_version, variant):
 
 
 def test_apply_runs_the_command_it_printed(capsys, monkeypatch):
-    ran = {}
+    # EVERY CALL, not the last one. From 2026-10-12 `--apply` makes a second subprocess call after
+    # pip, to check the torch it just installed can initialise CUDA, so a recorder that kept only
+    # the most recent argv saw the probe and reported that the install command was never run. The
+    # claim this test makes is about the pip call, which is still made.
+    calls = []
     _machine(monkeypatch, system="Windows", gpus=["GPU 0: RTX 3060"], driver=(13, 0),
              torch_version="2.14.0", variant=None)
+
     def record(argv, **k):
-        ran["argv"] = argv
+        calls.append(argv)
         return _Proc(returncode=0)
 
     monkeypatch.setattr(envsetup.subprocess, "run", record)
     assert envsetup.main(["--apply"]) == 0
-    assert "--index-url" in ran["argv"]
-    assert ran["argv"][-1] == "torch"
-    assert "cu130" in " ".join(ran["argv"])
+    pip = next((c for c in calls if "--index-url" in c), None)
+    assert pip is not None, f"no pip install was run; calls were {calls}"
+    assert pip[-1] == "torch"
+    assert "cu130" in " ".join(pip)
 
 
 def test_a_failing_pip_is_reported_rather_than_swallowed(capsys, monkeypatch):

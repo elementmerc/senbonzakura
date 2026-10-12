@@ -12,6 +12,10 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 - Every wheel is now platform-specific because the package ships a compiled Rust extension, so on a platform with no published wheel, pip builds from source and fails unless you have a Rust toolchain installed.
 - Installing or upgrading senbonzakura now needs huggingface_hub 1.5.0 or later (it was 0.34), transformers 5.10.1 or later (it was 4.56), and torch 2.7 or later (it was 2.5), so older copies of those in your environment get upgraded with it.
 
+### Install and setup
+
+- `senbonzakura setup --apply` now checks that the torch it installed can actually start, and says so loudly when it cannot. It picks a CUDA channel from the version your driver reports and the capability of your card, and on Windows with WSL there is a third limit neither of those describes: the usable CUDA version is capped by the library the Windows driver ships, which can be older than `nvidia-smi` says. On one laptop the recommended build installed cleanly and then crashed the moment anything touched the card, which left the machine with no working torch at all and a `doctor` report that looked like the original problem. The check runs the new torch in a separate process, because a crash of that kind takes the interpreter with it and cannot be caught from inside. When it crashes, the command names the channel, explains the cap, and gives you the command for the next channel down.
+
 ### Security
 
 - A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.

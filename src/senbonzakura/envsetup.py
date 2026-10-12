@@ -227,6 +227,80 @@ def card_is_too_old_for(channel, compute):
             f"channel is the fix; pass --cuda to choose one.")
 
 
+#: What the CUDA probe exits with when torch imports cleanly and reports no device. Distinct from
+#: 0, which means a card is usable, and from dying on a signal, which is the case the probe exists
+#: to catch.
+CUDA_PROBE_NO_DEVICE = 3
+
+#: The probe loads torch and initialises a CUDA context, which on a cold driver is not instant.
+CUDA_PROBE_TIMEOUT = 300
+
+
+def next_channel_below(tag):
+    """The next older published channel after `tag`, or None when there is none.
+
+    For the case where the newest channel the driver claims to support turns out not to work: the
+    honest next move is one step down, not a guess.
+    """
+    tags = [t for _, t in CUDA_CHANNELS]
+    if tag not in tags:
+        return None
+    i = tags.index(tag)
+    return tags[i + 1] if i + 1 < len(tags) else None
+
+
+def cuda_initialises(python=None, timeout=CUDA_PROBE_TIMEOUT):
+    """Whether `torch.cuda.is_available()` survives being called. In a process of its own.
+
+    Returns `(state, detail)`, where state is one of "ok", "no-device", "crashed", "timeout" or
+    "error".
+
+    **IN A SUBPROCESS, AND THAT IS THE WHOLE POINT.** Measured on the operator's own machine on
+    2026-10-12: a Windows laptop with an RTX 3060 and a WSL2 Ubuntu inside, driver reporting a CUDA
+    13.4 ceiling, card compute 8.6. `pick_cuda_channel` returns `cu132` for that pair, both of its
+    modelled constraints are satisfied, and `torch.cuda.is_available()` on the resulting
+    2.14.1+cu132 build **dies with SIGSEGV**. `cu128` on the same machine returns True and names
+    the card. A segfault takes the interpreter with it, so an in-process check cannot report it and
+    a `try/except` around the call never runs.
+
+    **THE THIRD CONSTRAINT.** `pick_cuda_channel`'s docstring says the driver ceiling is "necessary
+    and NOT sufficient" about the card's compute capability. On WSL there is one more bound nobody
+    modelled: the usable CUDA version is capped by the `libcuda` stub the Windows driver ships into
+    `/usr/lib/wsl/lib/`, and that can lag what `nvidia-smi` reports. Rather than sniff for WSL and
+    cap the channel, which is a guess about a moving target, this verifies the thing we actually
+    care about: that the build we just installed can initialise.
+
+    Why it matters more than an ordinary environment quirk: `setup` is the command this project
+    advertises as the remedy for a torch that cannot see the card, and the install guide puts the
+    Windows row in bold precisely because that platform gets a CPU build by default. Without this
+    check, following our advice there replaces a working CPU torch with one that crashes, and
+    `doctor` afterwards reports no CUDA device, which reads like the original problem rather than
+    like our fix.
+    """
+    exe = python or sys.executable
+    code = (f"import torch; raise SystemExit(0 if torch.cuda.is_available() "
+            f"else {CUDA_PROBE_NO_DEVICE})")
+    try:
+        out = subprocess.run([exe, "-c", code], capture_output=True, text=True,
+                             timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"the probe did not finish within {timeout}s"
+    except (OSError, subprocess.SubprocessError) as e:
+        return "error", f"{type(e).__name__}: {e}"
+    rc = out.returncode
+    if rc == 0:
+        return "ok", "a CUDA device is usable"
+    if rc == CUDA_PROBE_NO_DEVICE:
+        return "no-device", "torch loaded and reports no CUDA device"
+    # NEGATIVE ON POSIX, where `subprocess` reports a signal as its negation, and 139 when a shell
+    # sat in between and turned it into 128+11. Both spellings mean the interpreter was killed.
+    if rc < 0 or rc in (139, 134, 132):
+        sig = -rc if rc < 0 else rc - 128
+        return "crashed", f"the interpreter was killed by signal {sig} while initialising CUDA"
+    tail = (out.stderr or out.stdout or "").strip().splitlines()
+    return "error", (tail[-1][:200] if tail else f"the probe exited {rc} with no output")
+
+
 def pick_cuda_channel(driver, compute=None):
     """The newest channel this machine can actually run, or None when it can run none of them.
 
@@ -591,6 +665,48 @@ def main(argv=None):
         print(f"\n  pip exited {rc}. Nothing here can fix that; this is the command to debug:\n"
               f"    {printable}", file=sys.stderr)
         return rc
+    # AND NOW CHECK THAT WHAT WE JUST INSTALLED CAN ACTUALLY START, which until 2026-10-12 nothing
+    # did. See `cuda_initialises`: the channel this command recommends is chosen from the driver's
+    # CUDA ceiling and the card's compute capability, and on WSL a third bound applies that neither
+    # describes, so the newest channel the driver claims can segfault. Printing "done" over a torch
+    # that dies on first use is the worst outcome available here, because the next thing the reader
+    # runs is `doctor`, which then reports no CUDA device and looks like the problem they started
+    # with.
+    channel = next((args[i + 1].rsplit("/", 1)[-1] for i, v in enumerate(args)
+                    if v == "--index-url"), None)
+    if channel and channel.startswith("cu"):
+        print("\n  checking that the new torch can actually start...")
+        state, detail = cuda_initialises()
+        if state == "crashed":
+            nxt = next_channel_below(channel)
+            step_down = (f"\n  Try the next channel down:\n"
+                         f"    {sys.executable} -m pip install --upgrade --force-reinstall "
+                         f"--index-url {INDEX}/{nxt} torch" if nxt else
+                         "\n  There is no older channel to try, so this needs a driver update or a "
+                         "report.")
+            print(f"\n  THE INSTALL SUCCEEDED AND THE RESULT DOES NOT WORK.\n"
+                  f"  torch from the {channel} channel installed cleanly, and {detail}.\n"
+                  f"  So this machine cannot run that build, even though the driver reports a CUDA\n"
+                  f"  version high enough for it. On WSL the usable version is capped by the\n"
+                  f"  libcuda the Windows driver ships, which can be older than nvidia-smi says."
+                  f"{step_down}\n"
+                  f"  Your previous torch has been replaced, so until this is resolved this\n"
+                  f"  environment has no working torch at all. `senbonzakura doctor` will say so.",
+                  file=sys.stderr)
+            return 2
+        if state == "no-device":
+            print("\n  torch starts and still reports no CUDA device. That is not what this "
+                  "command set out to achieve, and `senbonzakura doctor` will say the same. The "
+                  "usual causes are a driver that needs a restart, or a card held by another "
+                  "operating system.", file=sys.stderr)
+            return 2
+        if state in ("timeout", "error"):
+            # NOT A FAILURE OF THE INSTALL. Reported as unverified rather than broken, because an
+            # unreadable probe is not evidence that the thing it probed is wrong.
+            print(f"\n  the new torch was installed and could NOT be verified: {detail}. "
+                  f"Run `senbonzakura doctor` before relying on it.", file=sys.stderr)
+            return 0
+        print(f"\n  verified: {detail}.")
     print("\n  done. `senbonzakura doctor` will confirm what this install can now do.")
     return 0
 

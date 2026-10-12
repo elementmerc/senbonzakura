@@ -35,6 +35,7 @@ the channel would be a guess about a moving target. Verifying that the build we 
 is the thing we actually care about and cannot be wrong about.
 """
 
+import os
 import subprocess
 import sys
 
@@ -81,12 +82,15 @@ def test_torch_reporting_no_device_is_not_a_crash(monkeypatch):
     assert state == "no-device"
 
 
-@pytest.mark.parametrize("rc", [-11, 139, -6, 134])
+@pytest.mark.parametrize("rc", [
+    -11, 139, -6, 134,                 # POSIX: negated signal, or 128+signal through a shell
+    0xC0000005, 0xC0000374, 0xC000001D, 0xC00000FD,   # Windows NTSTATUS: access violation, heap
+])                                                    # corruption, illegal instruction, overflow
 def test_a_probe_that_dies_on_a_signal_is_a_crash(monkeypatch, rc):
     """THE TEST THIS FILE EXISTS FOR.
 
     `subprocess` reports a signal death as the negated signal number; a shell in between turns it
-    into 128 plus the signal. Both spellings are the same event, and the one observed on the ROG
+    into 128 plus the signal. Both spellings are the same event, and the one observed on that
     was SIGSEGV, which is 11 and therefore -11 or 139.
     """
     def fake(cmd, **kw):
@@ -94,7 +98,10 @@ def test_a_probe_that_dies_on_a_signal_is_a_crash(monkeypatch, rc):
     monkeypatch.setattr(subprocess, "run", fake)
     state, detail = envsetup.cuda_initialises()
     assert state == "crashed", f"return code {rc} was not read as a crash"
-    assert "signal" in detail
+    # "killed" rather than "signal": the two platforms name the cause differently and the claim
+    # here is that the detail says the interpreter died, not that it uses POSIX vocabulary.
+    assert "killed" in detail
+    assert "initialising CUDA" in detail
 
 
 def test_a_probe_that_hangs_is_reported_as_unverified(monkeypatch):
@@ -152,13 +159,16 @@ def test_the_probe_distinguishes_no_device_by_a_code_of_its_own():
     assert envsetup.CUDA_PROBE_NO_DEVICE not in (0, 1, 2)
 
 
+@pytest.mark.skipif(os.name != "posix",
+                    reason="writes a #!/bin/sh script and relies on signal semantics, so it is "
+                           "POSIX only. The parametrised cases above cover the Windows spelling.")
 def test_a_real_signal_death_is_read_as_a_crash(tmp_path):
     """END TO END, against a process that genuinely dies on SIGSEGV rather than a mocked code.
 
     Every other crash test above hands the function a return code. This one makes a real process
     kill itself with the real signal, because the thing being verified is the reading of what the
     operating system reports, and that is exactly what a mocked `CompletedProcess` cannot check.
-    Verified on 2026-10-12 to report signal 11, which is what the ROG's cu132 torch did.
+    Verified on 2026-10-12 to report signal 11, which is what the cu132 torch did there.
     """
     fake = tmp_path / "fakepython"
     fake.write_text("#!/bin/sh\nkill -SEGV $$\n", encoding="utf-8")
@@ -168,6 +178,7 @@ def test_a_real_signal_death_is_read_as_a_crash(tmp_path):
     assert "signal 11" in detail
 
 
+@pytest.mark.skipif(os.name != "posix", reason="the control for the POSIX-only test above")
 def test_a_real_clean_exit_is_read_as_ok(tmp_path):
     """The control for the test above: the same mechanism, a process that exits 0."""
     fake = tmp_path / "okpython"

@@ -292,11 +292,21 @@ def cuda_initialises(python=None, timeout=CUDA_PROBE_TIMEOUT):
         return "ok", "a CUDA device is usable"
     if rc == CUDA_PROBE_NO_DEVICE:
         return "no-device", "torch loaded and reports no CUDA device"
-    # NEGATIVE ON POSIX, where `subprocess` reports a signal as its negation, and 139 when a shell
-    # sat in between and turned it into 128+11. Both spellings mean the interpreter was killed.
+    # NEGATIVE ON POSIX, where `subprocess` reports a signal as its negation, and 128+N when a
+    # shell sat in between. Both spellings mean the interpreter was killed.
     if rc < 0 or rc in (139, 134, 132):
         sig = -rc if rc < 0 else rc - 128
         return "crashed", f"the interpreter was killed by signal {sig} while initialising CUDA"
+    # AND WINDOWS SPELLS IT ENTIRELY DIFFERENTLY, which the first version of this function missed
+    # because it was written and measured on Linux. A process killed by an access violation there
+    # exits with an NTSTATUS failure code: 0xC0000005 for the access violation itself, and the
+    # 0xC000xxxx range for heap corruption, illegal instruction and stack overflow. Those are large
+    # positive integers, so the POSIX checks above read them as an ordinary non-zero exit and the
+    # reader got "the probe exited 3221225477" instead of "it crashed". Windows with a card is the
+    # platform `install.md` puts in bold, so it is the last place this should be vague.
+    if rc >= 0xC0000000:
+        return "crashed", (f"the interpreter was killed while initialising CUDA "
+                           f"(Windows status 0x{rc:08X})")
     tail = (out.stderr or out.stdout or "").strip().splitlines()
     return "error", (tail[-1][:200] if tail else f"the probe exited {rc} with no output")
 

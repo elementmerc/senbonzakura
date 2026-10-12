@@ -60,7 +60,7 @@ Nobody has timed it on Colab's hardware, so it gives you no duration to hold us 
 Or, if you have Docker:
 
 ```sh
-docker run --rm ghcr.io/elementmerc/senbonzakura:v0.4.1 doctor
+docker run --rm ghcr.io/elementmerc/senbonzakura:v0.5.0 doctor
 ```
 
 That image is **2.11 GB** (measured), because its torch comes from the CPU index. It cannot use a

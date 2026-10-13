@@ -27,7 +27,7 @@ class SenbonzakuraCheck < Formula
   # PLACEHOLDER-URL
   url "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.5.0.tar.gz"
   # PLACEHOLDER-SHA256
-  sha256 "f77902993ddf863c67b7ea4e32d5dcb937baa4b2b6d4e6fa6911ae5b34757f63"
+  sha256 "f81aead8f0dc3308edaf7d4c0bd9d8b005b23c786361b8db755fffcbd7fe58ab"
   license "AGPL-3.0-or-later"
 
   depends_on "python@3.12"

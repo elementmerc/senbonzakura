@@ -249,6 +249,52 @@ def next_channel_below(tag):
     return tags[i + 1] if i + 1 < len(tags) else None
 
 
+#: What a CUDA channel install actually costs, measured rather than estimated. Taken from the user
+#: journey of 2026-10-13 on a laptop with a home connection: `--apply` on this channel downloaded
+#: this much and took this long. Named as constants so the sentence that quotes them cannot drift
+#: from the record, and dated so a reader can judge how stale it is.
+CUDA_MEASURED_CHANNEL = "cu132"
+CUDA_MEASURED_SIZE = "about 5.3 GB"
+CUDA_MEASURED_MINUTES = 21
+CUDA_MEASURED_ON = "2026-10-13"
+
+
+def is_wsl():
+    """Whether this Linux is running inside Windows Subsystem for Linux.
+
+    Read from `/proc/version`, which carries the kernel's build string and says "microsoft" under
+    both WSL1 and WSL2. The `WSL_DISTRO_NAME` environment variable says the same thing and is not
+    used, because it is absent from a service, a cron job and anything started without the login
+    environment, and a caveat that disappears under systemd is worse than no caveat.
+    """
+    try:
+        with open("/proc/version", encoding="utf-8", errors="replace") as fh:
+            return "microsoft" in fh.read(4096).lower()
+    except OSError:
+        # No /proc at all, which is every non-Linux platform and a very unusual Linux. Not WSL as
+        # far as anything here can tell, and saying so is better than raising inside a diagnosis.
+        return False
+
+
+#: What a CUDA channel proposal has to say on WSL, where the driver's own answer is not the bound
+#: that matters. Written once because `plan` and the post-crash message both need it, and the two
+#: drifting apart is how a reader ends up with two different accounts of one problem.
+def _wsl_caveat(channel):
+    nxt = next_channel_below(channel)
+    # NOT "and that one works". The next channel down is the next thing to TRY, and on the one
+    # machine this was measured on the working channel was two steps down rather than one. Naming
+    # a channel as known-good when nothing measured it here is the kind of confident wrong answer
+    # this module keeps having to withdraw.
+    step = (f"If it segfaults, step down a channel at a time, starting with `--cuda {nxt}`."
+            if nxt else
+            "If it segfaults, there is no older channel to try and the driver needs updating.")
+    return (f" THIS IS WSL, where the usable CUDA version is capped by the libcuda the Windows "
+            f"driver ships, which can be older than nvidia-smi reports. So {channel} is the right "
+            f"answer to what the driver claims and may still not run here. {step} The install "
+            f"checks that the result starts before it reports success, so a bad channel costs the "
+            f"download rather than a silent failure later.")
+
+
 def cuda_initialises(python=None, timeout=CUDA_PROBE_TIMEOUT):
     """Whether `torch.cuda.is_available()` survives being called. In a process of its own.
 
@@ -387,13 +433,14 @@ def cuda_orphans(names=None):
 
 
 def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=None, variant=None,
-         compute=None):
+         compute=None, wsl=None):
     """What this machine should do, as (verdict, reason, pip arguments or None).
 
     Pure, and every input is injectable, so the table can be tested for machines nobody here owns.
     """
     system = system or platform.system()
     machine = machine or platform.machine()
+    wsl = is_wsl() if wsl is None else wsl
 
     has_gpu = bool(gpus)
     cannot_tell = gpus is None
@@ -504,6 +551,12 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
                     return ("blocked", reason, None)
                 reason = (f"an NVIDIA GPU is present and torch is {torch_version}, a CPU-only "
                           f"build, so the card is idle.")
+                # THE CAVEAT BEFORE THE DOWNLOAD, not after the crash. Journey 1, 2026-10-13: this
+                # exact proposal on this exact machine cost 21 minutes and 5.3 GB and ended in a
+                # SIGSEGV, and the WSL cap that explains it was named only in the failure message.
+                # A reader who is told first can pick the cheaper channel and skip the whole thing.
+                if wsl:
+                    reason += _wsl_caveat(channel)
                 return ("fix", reason, swap(channel))
             if compute is not None and compute < min(CHANNEL_ARCH_FLOOR.values()):
                 reason = (f"an NVIDIA GPU is present and torch is {torch_version}, but the card is "
@@ -616,6 +669,8 @@ def main(argv=None):
         if too_old:
             print(f"\n  WARNING: {too_old}")
         verdict, reason = "fix", f"--cuda {a.cuda} was given, so the driver's own answer is not used."
+        if a.cuda.startswith("cu") and is_wsl():
+            reason += _wsl_caveat(a.cuda)
         args = ["install", "--upgrade", "--force-reinstall",
                 "--index-url", f"{INDEX}/{a.cuda}", "torch"]
     else:
@@ -672,6 +727,21 @@ def main(argv=None):
         print(f"\n  and then, to actually free the space, because the line above replaces torch "
               f"and leaves these {len(orphans)} packages behind:\n")
         print("  " + " ".join([sys.executable, "-m", "pip", "uninstall", "-y", *orphans]))
+
+    # HOW BIG, BEFORE IT STARTS. Journey 1 ran this not knowing, and found out 21 minutes later.
+    # The figure is the one that journey measured rather than one read from the index: a pip
+    # dry-run against the PyTorch channel takes minutes of its own, which is a strange thing to
+    # spend before a download, and a resolver answer is not more honest than a stopwatch.
+    if any(v == "--index-url" and args[i + 1].rsplit("/", 1)[-1].startswith("cu")
+           for i, v in enumerate(args[:-1])):
+        for line in textwrap.wrap(
+                f"This is a large download. The {CUDA_MEASURED_CHANNEL} build measured "
+                f"{CUDA_MEASURED_SIZE} and took {CUDA_MEASURED_MINUTES} minutes on a home "
+                f"connection on {CUDA_MEASURED_ON}; other channels are the same order of size. It "
+                f"replaces the torch that is here now, and if the result turns out not to run on "
+                f"this machine the previous build is put back.",
+                width=say.width(), initial_indent="  ", subsequent_indent="  "):
+            print(line)
 
     if not a.apply:
         print("\n  Nothing was changed. Re-run with --apply to do it.")

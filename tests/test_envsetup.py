@@ -931,3 +931,92 @@ def test_no_rollback_is_attempted_when_there_was_no_torch_to_begin_with(capsys, 
     """`--cuda` needs torch present to reach this path, so the None case is driven directly."""
     assert envsetup.restore_args(None, None) is None
     assert envsetup.restore_args(None, "cu126") is None
+
+
+# ── the WSL cap is named BEFORE the download, not after the crash ────────────────────
+#
+# Journey 1, 2026-10-13: `setup` on a WSL2 Ubuntu with an RTX 3060 proposed cu132, the reader took
+# it, and 21 minutes and 5.3 GB later the result died with SIGSEGV. The cap that explains it was
+# named only in the failure message, by which time the money was spent.
+def _flat(text):
+    """The printed reason, with the wrapping taken out. `textwrap` breaks it at the terminal
+    width, so an assertion on a phrase is an assertion about where the line happened to end.
+    """
+    return " ".join(text.split())
+
+
+def _wsl_machine(monkeypatch, wsl):
+    monkeypatch.setattr(envsetup, "is_wsl", lambda: wsl)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cpu", "cpu"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: (13, 4))
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: (8, 6))
+
+
+def test_a_cuda_proposal_on_wsl_says_so_before_anything_is_downloaded(capsys, monkeypatch):
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main([]) == 0
+    out = _flat(capsys.readouterr().out)
+    assert "THIS IS WSL" in out
+    assert "capped by the libcuda" in out
+    assert "Nothing was changed" in out, "the caveat must appear in the proposal, not after it"
+
+
+def test_the_same_machine_outside_wsl_gains_no_caveat(capsys, monkeypatch):
+    """The cap is a WSL fact. Saying it on bare metal would be noise that teaches readers to skim."""
+    _wsl_machine(monkeypatch, wsl=False)
+    assert envsetup.main([]) == 0
+    assert "THIS IS WSL" not in _flat(capsys.readouterr().out)
+
+
+def test_an_explicit_cuda_flag_on_wsl_carries_the_same_caveat(capsys, monkeypatch):
+    """`--cuda` bypasses `plan`, and used to bypass this with it."""
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main(["--cuda", "cu130"]) == 0
+    assert "THIS IS WSL" in _flat(capsys.readouterr().out)
+
+
+def test_an_explicit_rocm_channel_gains_no_cuda_caveat(capsys, monkeypatch):
+    """A ROCm build has no libcuda to be capped by."""
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main(["--cuda", "rocm6.4"]) == 0
+    assert "THIS IS WSL" not in _flat(capsys.readouterr().out)
+
+
+def test_the_caveat_names_the_next_channel_to_try_without_claiming_it_works(monkeypatch):
+    """On the one machine this was measured on, the channel that worked was two steps down."""
+    text = envsetup._wsl_caveat("cu132")
+    assert "--cuda cu130" in text
+    assert "step down a channel at a time" in text
+    for claim in ("is the one that works", "and that one works", "known to work"):
+        assert claim not in text, f"the caveat asserts an unmeasured result: {claim!r}"
+
+
+def test_the_caveat_on_the_oldest_channel_says_there_is_nowhere_to_step(monkeypatch):
+    oldest = envsetup.CUDA_CHANNELS[-1][1]
+    assert envsetup.next_channel_below(oldest) is None
+    assert "no older channel" in envsetup._wsl_caveat(oldest)
+
+
+def test_wsl_is_read_from_proc_version_not_from_the_environment(tmp_path, monkeypatch):
+    """`WSL_DISTRO_NAME` is absent from a service or a cron job, so a caveat built on it vanishes."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.0.0-38-generic (buildd@lcy02) #39-Ubuntu SMP\n")
+    real_open = open
+    monkeypatch.setattr("builtins.open",
+                        lambda f, *a, **k: real_open(fake if f == "/proc/version" else f, *a, **k))
+    assert envsetup.is_wsl() is False
+    fake.write_text("Linux version 6.6.87.2-microsoft-standard-WSL2 (root@build) #1 SMP\n")
+    assert envsetup.is_wsl() is True
+
+
+def test_a_machine_with_no_proc_version_is_not_called_wsl(monkeypatch):
+    """No /proc is every non-Linux platform. Raising inside a diagnosis would be worse."""
+    def _no(f, *a, **k):
+        raise OSError("no such file")
+    monkeypatch.setattr("builtins.open", _no)
+    assert envsetup.is_wsl() is False

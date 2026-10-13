@@ -157,6 +157,93 @@ def check_platform():
     return _pass("platform", key)
 
 
+#: The distribution whose declared requirements `check_requirements` reads. Named once rather than
+#: spelled at each use, because a typo here would make the check pass by finding nothing.
+_DIST = "senbonzakura"
+
+
+def _declared_requirements():
+    """The base requirements of this install that apply to this interpreter.
+
+    Read from the INSTALLED distribution's metadata rather than from `pyproject.toml`: a wheel
+    carries no `pyproject.toml`, and the question this answers is what this install was built to
+    need, not what the checkout currently declares.
+
+    Extras are excluded on purpose. An extra is opt-in, so a missing `bitsandbytes` is not a
+    damaged install, and failing on one would teach the reader to ignore this check.
+
+    Returns `(requirements, complaint)`. A complaint means the list is not trustworthy and the
+    caller must say so rather than report all clear from a short list, which is the exact failure
+    shape this whole check exists to close.
+    """
+    from importlib.metadata import PackageNotFoundError, requires
+    try:
+        declared = requires(_DIST)
+    except PackageNotFoundError:
+        return [], (f"{_DIST} is not installed as a distribution, so its requirements cannot be "
+                    f"read. This is a checkout running from source without an install")
+    if not declared:
+        return [], f"{_DIST}'s metadata declares no requirements at all, which cannot be right"
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        return [], ("`packaging` is not importable, so requirement markers cannot be evaluated "
+                    "and this check cannot tell which requirements apply here")
+    out = []
+    for line in declared:
+        try:
+            req = Requirement(line)
+        except Exception as e:
+            return [], f"{_DIST} declares a requirement this check cannot parse ({line!r}: {e})"
+        # `evaluate()` with no `extra` in the environment is False for every `extra == "..."`
+        # marker, which is how the extras drop out without being named here.
+        if req.marker is not None and not req.marker.evaluate():
+            continue
+        out.append(req)
+    return out, ""
+
+
+def check_requirements():
+    """Every package this install declares it needs is installed, at a version it accepts.
+
+    WHY THIS EXISTS. Journey 1, 2026-10-13: `doctor` reported "19 checks, 19 pass, 0 failed" and
+    exited 0 on a `--no-deps` install, while `score` refused in the very next command on a missing
+    required package AND told the reader to run `doctor` to find it. Two surfaces contradicting
+    each other, with the one that was wrong being the one that exited 0. A doctor that cannot see a
+    missing required dependency is not doing the job its own error messages promise it does.
+
+    THIS ONE IS A PRESENCE CHECK, against this module's rule that every check proves work rather
+    than presence, and the exception is deliberate. Importing all fourteen would add the cost of
+    `transformers` and `optuna` to a command people run to answer a quick question, and the heavy
+    ones are already proved to WORK further down: `check_torch` imports torch and runs a tensor
+    through it, `check_quantize` and `check_converter` start the binaries, `check_corpora` decodes
+    the packs. What was missing was anybody asking whether the declared set is there at all.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    reqs, complaint = _declared_requirements()
+    if complaint:
+        # NOT A PASS AND NOT SILENCE. An unreadable declaration means this check has no opinion,
+        # and reporting the absence of an opinion as all clear is how the original defect read.
+        return [_warn("requirements", f"cannot be checked: {complaint}",
+                      "`pip install --force-reinstall senbonzakura` rebuilds the metadata")]
+    bad = []
+    for req in reqs:
+        try:
+            have = version(req.name)
+        except PackageNotFoundError:
+            bad.append(_fail(f"requirement {req.name}", "not installed",
+                             f"`pip install '{req}'`, or `pip install --force-reinstall "
+                             f"{_DIST}` to put the whole declared set back"))
+            continue
+        if req.specifier and not req.specifier.contains(have, prereleases=True):
+            bad.append(_fail(f"requirement {req.name}", f"{have} installed, {req.specifier} needed",
+                             f"`pip install -U '{req}'`"))
+    if bad:
+        return bad
+    return [_pass("requirements", f"{len(reqs)} of {len(reqs)} declared, all installed")]
+
+
 def check_pins():
     from .vendoring import load_manifest
     try:
@@ -670,8 +757,11 @@ def run_checks(*, deep=False, log=print):
     corpora.pointer(log=log)
     # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
     # where finding the real ceiling means climbing to it.
-    checks = _in_group([check_platform(), check_torch(),
-                        check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None)], "machine")
+    # FIRST, because every other check below assumes the declared set is present, and a reader
+    # looking at twelve failures wants to be told once that nothing was installed.
+    checks = _in_group(check_requirements(), "install")
+    checks += _in_group([check_platform(), check_torch(),
+                         check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None)], "machine")
     checks += _in_group([*check_pins(), check_quantize(), *check_converter()], "tools")
     checks += _in_group([check_track(), check_table_io(), *check_corpora()], "data")
     if deep:

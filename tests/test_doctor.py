@@ -794,7 +794,13 @@ def test_grouping_changes_no_check_and_drops_none():
     checks = doctor.run_checks(deep=False)
     names = [c.name for c in checks]
     assert names == sorted(set(names), key=names.index), "a check appears twice"
-    assert names[0] == "platform" and names[1] == "torch"
+    # AMENDED 2026-10-13. This read `names[0] == "platform"`, which was the right assertion when
+    # the grouping work it guards was the only thing that had touched the order. `requirements`
+    # now runs ahead of the machine group on purpose (journey 1, J1-2), so pinning index 0 would
+    # make this test refuse a deliberate addition rather than catch an accidental reshuffle. The
+    # property it was defending is that the machine group's own order is untouched, and that is
+    # what it asserts now.
+    assert names.index("torch") == names.index("platform") + 1
     assert "pinned memory" in names and "bundled track" in names
     assert all(c.group for c in checks), "a check reached the report ungrouped"
 
@@ -813,3 +819,136 @@ def test_the_ascii_pass_mark_is_not_a_machine_marker(monkeypatch):
     # Still aligned and still distinguishable, which is the whole reason the fallback exists.
     assert len({marks["pass"], marks["warn"], marks["fail"]}) == 3
     assert len({len(m) for m in marks.values()}) == 1
+
+
+# ── the declared requirement set is checked at all ───────────────────────────────────
+#
+# Journey 1, 2026-10-13: `doctor` said "19 checks, 19 pass, 0 failed" and exited 0 on a --no-deps
+# install, while `score` refused on a missing required package in the very next command and told
+# the reader to run `doctor` to find it. The surface that was wrong was the one that exited 0.
+def _requirement(line):
+    from packaging.requirements import Requirement
+    return Requirement(line)
+
+
+def test_a_missing_declared_requirement_fails_rather_than_passing(monkeypatch):
+    """The ledger's mutant: uninstall senbonzakura_check, and doctor must not report all clear."""
+    from importlib.metadata import PackageNotFoundError
+
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("senbonzakura-check>=0.5,<0.6"),
+                                  _requirement("pyarrow>=23.0.1")], ""))
+
+    def _version(name):
+        if name == "senbonzakura-check":
+            raise PackageNotFoundError(name)
+        return "23.0.1"
+
+    monkeypatch.setattr("importlib.metadata.version", _version)
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["fail"]
+    assert checks[0].name == "requirement senbonzakura-check"
+    assert checks[0].detail == "not installed"
+    assert "pip install" in checks[0].fix
+
+
+def test_a_requirement_installed_at_a_version_the_install_rejects_fails(monkeypatch):
+    """A wrong version breaks the same code a missing one does, so it is the same verdict."""
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("transformers>=5.10.1")], ""))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "4.56.0")
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["fail"]
+    assert "4.56.0 installed" in checks[0].detail
+    assert ">=5.10.1 needed" in checks[0].detail
+
+
+def test_every_missing_requirement_is_named_not_just_the_first(monkeypatch):
+    """A reader fixing a --no-deps install needs the list, not one name at a time."""
+    from importlib.metadata import PackageNotFoundError
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("rich>=13.0"), _requirement("optuna>=4.0"),
+                                  _requirement("gguf>=0.19")], ""))
+    monkeypatch.setattr("importlib.metadata.version",
+                        lambda name: (_ for _ in ()).throw(PackageNotFoundError(name)))
+    checks = doctor.check_requirements()
+    assert len(checks) == 3
+    assert {c.name for c in checks} == {"requirement rich", "requirement optuna",
+                                        "requirement gguf"}
+
+
+def test_a_satisfied_requirement_set_is_one_row_rather_than_fourteen(monkeypatch):
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("rich>=13.0"), _requirement("gguf>=0.19")], ""))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "99.0")
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["pass"]
+    assert checks[0].detail == "2 of 2 declared, all installed"
+
+
+def test_a_declaration_that_cannot_be_read_warns_rather_than_reporting_all_clear(monkeypatch):
+    """An unreadable declaration means no opinion, and no opinion is not a pass.
+
+    Reporting all clear from a list this check could not build is the original defect wearing a
+    different hat.
+    """
+    monkeypatch.setattr(doctor, "_declared_requirements", lambda: ([], "the metadata is missing"))
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["warn"]
+    assert "cannot be checked" in checks[0].detail
+    assert "the metadata is missing" in checks[0].detail
+
+
+def test_an_uninstalled_distribution_is_a_complaint_not_an_empty_pass(monkeypatch):
+    from importlib.metadata import PackageNotFoundError
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: (_ for _ in ()).throw(PackageNotFoundError(name)))
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "not installed as a distribution" in complaint
+
+
+def test_a_distribution_declaring_no_requirements_is_a_complaint(monkeypatch):
+    monkeypatch.setattr("importlib.metadata.requires", lambda name: None)
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "no requirements at all" in complaint
+
+
+def test_an_unparsable_requirement_line_is_a_complaint_not_a_skip(monkeypatch):
+    monkeypatch.setattr("importlib.metadata.requires", lambda name: ["=== not a requirement"])
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "cannot parse" in complaint
+
+
+def test_extras_are_excluded_so_an_opt_in_package_is_not_a_damaged_install(monkeypatch):
+    """`bitsandbytes` lives behind the `quant` extra. Its absence is a choice, not a fault."""
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: ["rich>=13.0", 'bitsandbytes>=0.43; extra == "quant"'])
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    assert [r.name for r in reqs] == ["rich"]
+
+
+def test_a_requirement_whose_marker_excludes_this_interpreter_is_not_demanded(monkeypatch):
+    """`tomli` is declared only below 3.11, and demanding it above would be a false failure."""
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: ["rich>=13.0", 'tomli>=2.0; python_version < "3.0"'])
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    assert [r.name for r in reqs] == ["rich"]
+
+
+def test_the_real_declaration_of_this_install_is_readable_and_satisfied():
+    """Against the actual installed metadata, not a fixture. A fixture cannot catch a rename."""
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == "", f"this install's own requirements cannot be read: {complaint}"
+    assert len(reqs) >= 8, f"too few requirements to be the real set: {[r.name for r in reqs]}"
+    assert [c.status for c in doctor.check_requirements()] == ["pass"]
+
+
+def test_the_requirement_check_runs_as_part_of_the_report():
+    checks = doctor.run_checks(log=lambda *a, **k: None)
+    assert any(c.group == "install" for c in checks)
+    assert checks[0].group == "install", "the requirement set is checked before anything else"

@@ -109,10 +109,32 @@ def test_a_hub_id_still_gets_the_token_advice():
     assert "That path exists" not in message
 
 
-def test_a_path_that_does_not_exist_is_treated_as_an_id(tmp_path):
-    """A mistyped path and a mistyped id are indistinguishable, so the Hub advice is still right."""
-    message = _could_not_load(str(tmp_path / "nothing-here"), OSError("no such thing"))
+def test_an_ambiguous_name_that_does_not_exist_is_treated_as_an_id():
+    """A mistyped path and a mistyped id are indistinguishable, so the Hub advice is still right.
+
+    THE PREMISE IS RIGHT AND THIS TEST'S EXAMPLE WAS NOT, corrected 2026-10-13. It asserted the
+    rule with an ABSOLUTE path out of `tmp_path`, and an absolute path is one of the few shapes a
+    hub id cannot take: an id is `org/model`, with one slash and no leading separator. So the
+    example was not an instance of the ambiguity the sentence describes, and the test was pinning
+    the Hub advice onto a case where it is simply wrong.
+
+    The journey that found it typed a directory that was not there and was told to go and
+    authenticate, which is the same wrong fix this file's other tests exist to prevent, arriving
+    through the one input nobody had questioned: the test's own example.
+
+    So the rule is kept and stated against a name that genuinely is ambiguous.
+    """
+    message = _could_not_load("meta-llma/Llama-3-8B", OSError("no such thing"))
     assert "--hf-token" in message
+
+
+def test_a_name_that_can_only_be_a_path_is_not_treated_as_an_id(tmp_path):
+    """And the unambiguous half of the same question, which is what the old example really was."""
+    message = _could_not_load(str(tmp_path / "nothing-here"), OSError("no such thing"))
+    assert "--hf-token" not in message, f"told to authenticate about a path: {message}"
+    assert "hf auth login" not in message
+    assert "Nothing exists at that path" in message
+    assert "no such thing" in message, "the useful half of the refusal is still there"
 
 
 def test_an_unusable_path_does_not_raise_from_inside_the_refusal():

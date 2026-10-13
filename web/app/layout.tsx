@@ -51,11 +51,22 @@ export const metadata: Metadata = {
     url: 'https://senbon.dev',
     siteName: 'Senbonzakura',
     type: 'website',
-    images: [{ url: '/social-card.png', width: 1280, height: 640 }],
+    // `og-card.png` rather than `social-card.png`, changed 2026-10-13. The old card showed the
+    // mark and the name and nothing else, so a reader scrolling past learned that the project
+    // exists and not what it is. This one carries the tagline, and it is not a new design: it is
+    // `assets/brand/social/facebook.png`, built by `tools/packaging/build_brand_assets.py` at the
+    // 1200x630 og spec from the same mark and the same wordmark. The card set existed and the
+    // site was simply pointing at the wrong file.
+    //
+    // `social-card.png` stays where it is on purpose. It is byte-identical to
+    // `docs/public/social-card.png`, which the generator LIFTS THE WORDMARK FROM rather than
+    // re-setting it in a font, so that one file is the single source of the lettering. Replacing
+    // it would change the wordmark everywhere downstream of the generator.
+    images: [{ url: '/og-card.png', width: 1200, height: 630 }],
   },
   twitter: {
     card: 'summary_large_image',
-    images: ['/social-card.png'],
+    images: ['/og-card.png'],
   },
   // No analytics, no verification tokens, no third-party script, for the reason given above.
   robots: { index: true, follow: true },

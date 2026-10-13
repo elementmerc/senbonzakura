@@ -128,6 +128,17 @@ def _element_count(shape):
     return n
 
 
+#: The largest header this will read, which is the safetensors format's own ceiling. Without it the
+#: only bound was the file's size, so a 145 GB checkpoint could declare a 145 GB header and this
+#: would try to hold all of it before anything looked at it.
+#:
+#: 100 MB rather than the checker's 64 MB because this is a different kind of document: a
+#: safetensors header on a very large sharded model carries an entry per tensor and legitimately
+#: runs to several megabytes, and the format itself draws the line at 100 MB. Borrowing a bound set
+#: for result artefacts would refuse files that are not hostile.
+MAX_HEADER_BYTES = 100 * 1024 * 1024
+
+
 def read_header(path):
     """The header of a safetensors shard, and the offset its tensor data starts at.
 
@@ -135,7 +146,25 @@ def read_header(path):
     announces itself; it is a header whose declared byte ranges disagree with the shapes beside
     them, because a rewrite driven by those ranges would then write a correct tensor into the wrong
     place and produce a checkpoint that loads.
+
+    AND IT IS A HOSTILE FILE, NOT ONLY A BROKEN ONE. `diff` and `budget` exist to inspect
+    checkpoints somebody else published, which is the definition of input you do not trust, and
+    until 2026-10-13 a crafted header could end either command with a stack overflow.
+
+    Two separate bounds, because neither covers the other and the obvious one is the weaker:
+
+      * a size cap, so a declared length cannot make this allocate a model's worth of RAM; and
+      * a depth catch, because the crash that was actually demonstrated came from a **200 KB**
+        file. `{"a": [[[[ ... ]]]]}` nests past the interpreter's recursion limit in a couple of
+        hundred kilobytes, so a size cap alone would have let it straight through.
+
+    `RecursionError` is neither a `ValueError` nor an `OSError`, which is exactly why it escaped
+    both arms below as a traceback. `probe.py` met this same class on 2026-09-25 reading manifests
+    a stranger wrote, and fixed it there; the guard covered one spelling of the defect and reported
+    clean on this one. The depth bound and its test are the checker's, imported rather than
+    restated, because two numbers in two places drift and this project has paid for that already.
     """
+    from senbonzakura_check.registry import MAX_ARTEFACT_DEPTH, too_deep
     # The read and the judgement are kept apart: only the read can raise OSError, and wrapping the
     # validation in the same try would turn a future bug in it into "cannot be read".
     try:
@@ -149,6 +178,15 @@ def read_header(path):
 
     if length is None:
         raise ShardError(f"{path}: too short to be a safetensors file")
+    # THE CAP IS JUDGED BEFORE THE FILE SIZE, deliberately. Both refuse the same crafted file on a
+    # small disk, and only this order refuses it on a large one: a 145 GB checkpoint can declare a
+    # 145 GB header without ever exceeding its own size, and the size check alone would wave it
+    # through to a read that tries to hold all of it.
+    if length > MAX_HEADER_BYTES:
+        raise ShardError(
+            f"{path}: header declares {length:,} bytes and this reads at most "
+            f"{MAX_HEADER_BYTES:,}, which is the safetensors format's own ceiling. A real header "
+            f"is a few megabytes at most, so this file is damaged or crafted.")
     if length <= 0 or 8 + length > size:
         raise ShardError(f"{path}: header says it is {length} bytes and the file is {size}")
     if len(blob) != length:
@@ -158,8 +196,20 @@ def read_header(path):
         header = json.loads(blob)
     except ValueError as exc:
         raise ShardError(f"{path}: header is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        raise ShardError(
+            f"{path}: header nests deeper than this reads. A safetensors header is a flat object "
+            f"of tensor entries, so nesting that reaches the interpreter's own limit is damage or "
+            f"a crafted file rather than an unusual checkpoint.") from exc
     if not isinstance(header, dict):
         raise ShardError(f"{path}: header is not a JSON object")
+    # AND THE CASE THAT PARSES. A document can nest far enough to be hostile while staying inside
+    # the recursion limit, and every consumer below walks it. Asked after the parse rather than
+    # before, because asking before would mean writing a second parser to look at the text.
+    if too_deep(header, MAX_ARTEFACT_DEPTH):
+        raise ShardError(
+            f"{path}: header nests past {MAX_ARTEFACT_DEPTH} levels. See the sentence above: this "
+            f"is damage or a crafted file rather than an unusual checkpoint.")
     return header, 8 + length
 
 

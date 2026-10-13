@@ -122,3 +122,15 @@ def test_a_checkpoint_with_no_writers_is_refused(tmp_path, monkeypatch, capsys):
 def test_a_non_positive_tensor_cap_is_refused(capsys):
     assert harness.main(["--max-tensors", "0"]) == 2
     assert "at least 1" in capsys.readouterr().err
+
+
+def test_making_the_batched_side_follow_the_other_order_silences_the_active_cells(monkeypatch):
+    """The control: if the divergence were a harness bug it would survive this."""
+    def per_direction(block, rows, strength, sparsity, rounds, *, restore_norms):
+        for e in range(block.shape[0]):
+            harness.cli.orthogonalize_np_(block[e], rows, strength, sparsity=sparsity,
+                                          rounds=rounds, restore_norms=restore_norms)
+
+    monkeypatch.setattr(harness.cli, "_orthogonalize_np_3d_block_", per_direction)
+    out = harness.divergence(stack(), harness.basis(64, 3, 0), sparsity=0.3, rounds=3)
+    assert out["relative_frobenius"] == 0.0

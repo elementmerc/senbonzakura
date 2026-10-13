@@ -69,6 +69,15 @@ NEEDS_A_CONTROL = {
          "a sweep where no injection worked reads as a clean bill of health for the detector, "
          "which is the one conclusion the data cannot support"),
         "uninformative"),
+    "deflation_order.py": (
+        ("its whole output is how far two deflation orders disagree on the same weights. The "
+         "control is built into every grid: the cells where the maths says the orders MUST agree "
+         "(one direction, no mask, no rounds) are reported separately as the worst case "
+         "everywhere else, and a harness whose quiet cells stopped reading as noise would be "
+         "measuring its own bug rather than a divergence. "
+         "tests/test_deflation_order_harness.py breaks the batched side on purpose and requires "
+         "the active cells to go quiet"),
+        "worst_everywhere_else"),
 }
 
 #: Everything else under `tools/research/`, each with why a breaking control would mean nothing

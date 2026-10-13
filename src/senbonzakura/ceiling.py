@@ -188,14 +188,18 @@ def build_parser():
     p.add_argument("--model", default=None,
                    help="a checkpoint directory whose proportions the ceiling is given in "
                         "(default: a synthetic Qwen3-30B-A3B shape)")
-    p.add_argument("--trials", type=argresolve.whole_number("--trials", minimum=1), default=64)
-    p.add_argument("--prompts", type=argresolve.whole_number("--prompts", minimum=1), default=48)
-    p.add_argument("--tokens", type=argresolve.whole_number("--tokens", minimum=1), default=48)
+    p.add_argument("--trials", type=argresolve.whole_number("--trials", minimum=1), default=64,
+                   help="search trials the run would take (default: 64)")
+    p.add_argument("--prompts", type=argresolve.whole_number("--prompts", minimum=1), default=48,
+                   help="prompts scored per trial (default: 48)")
+    p.add_argument("--tokens", type=argresolve.whole_number("--tokens", minimum=1), default=48,
+                   help="tokens generated per prompt (default: 48)")
     p.add_argument("--gen-batch", type=argresolve.whole_number("--gen-batch", minimum=1),
-                   default=16)
+                   default=16, help="prompts generated at once (default: 16)")
     p.add_argument("--expert-block", type=argresolve.whole_number("--expert-block", minimum=1),
-                   default=8)
-    p.add_argument("--sparsity", action="store_true")
+                   default=8, help="experts converted to float32 at once (default: 8)")
+    p.add_argument("--sparsity", action="store_true",
+                   help="budget for sparse surgery, which holds one more float32 tensor live")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
     return p
 

@@ -3,6 +3,53 @@
 All notable changes to Senbonzakura are recorded here, newest first, grouped by the part of the
 tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] "Kuchiki" — 2026-10-13
+
+A hotfix. No new features: security, and the defects that leave somebody worse off than before
+they ran the command.
+
+### Security
+- `diff` and `budget` could be ended by a crafted checkpoint header. A file of about 200 KB was
+  enough. Both now refuse it and say why
+- The wheel no longer carries a RunPod client that read an API key from your environment and could
+  be reached from no command
+
+### Fixed
+- `setup --apply` put back the torch it replaced when the new one will not start. It used to leave
+  the machine with no working torch at all, after a download of several gigabytes
+- `setup` says the download is large, and on WSL says the chosen CUDA build may not run there, both
+  before it starts rather than after it fails
+- `doctor` fails when a package the install declares is missing. It reported all clear while `score`
+  refused on the same missing package and told you to run `doctor` to find it
+- `doctor` names the graphics card it can see and why it is unused, instead of reporting only that
+  no card is in use
+- `tamper` refuses a finetune whose loss stopped being a number, rather than reporting it as
+  resistance to tampering. No figure from 0.5.0 is affected: the command shipped the same day
+- `diff` reports a tensor holding a NaN or an infinity as exactly that, and says which side it is
+  on, instead of claiming it cannot read the dtype
+- `diff` holds its memory flat whatever the tensor's size, which is what its own `--help` promised.
+  It is also about three times faster
+- `diff` warns before a comparison that will take a long time, and says something while it is
+  inside one large tensor
+- A model path that exists on your disk is no longer answered with advice about authenticating to
+  Hugging Face
+- `diff` and `budget` leave no `.part` file behind when writing `--out` fails
+
+### Breaking
+- `--inspect` refuses a negative layer index or a negative ablation strength. This landed in 0.5.0
+  and was not written down at the time
+
+### Docs
+- The README says what to do when pip refuses with "externally-managed-environment", which is the
+  default on Debian, Ubuntu and Fedora
+- A published AUC comparison in `evidence/compass-2026-10-11` is withdrawn. One row quoted two
+  figures that no committed artefact produces and that cannot be recomputed from the record beside
+  them. The removal is explained in place rather than made quietly
+- The website said 0.4.1 and linked that tag, two releases after it stopped being current
+
+### Other
+- Bug fixes and improvements.
+
 ## [0.5.0] "Kuchiki" — 2026-10-13
 
 The headline is streaming: a checkpoint too large to load can be measured and edited on one machine. Five new commands ask whether an edit holds up.

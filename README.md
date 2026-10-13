@@ -107,6 +107,26 @@ the thing to know before you install rather than after;
 work immediately. Everywhere else, and on older Linux, the universal wheel installs and works
 without them. `senbonzakura doctor` says which you got.
 
+**If pip refuses with "externally-managed-environment", make a virtual environment.** Debian,
+Ubuntu and Fedora mark the system Python as managed by the package manager, so `pip install` into
+it is blocked, and `--user` is blocked too. A stranger trying this on a fresh Ubuntu hit that and
+gave up, which is the only install note here written from somebody failing rather than from the
+documentation:
+
+```sh
+python3 -m venv ~/senbonzakura
+~/senbonzakura/bin/pip install senbonzakura
+~/senbonzakura/bin/senbonzakura doctor
+```
+
+Everything after that uses `~/senbonzakura/bin/senbonzakura`, or you activate it once with
+`source ~/senbonzakura/bin/activate` and type `senbonzakura`. Do not reach for
+`--break-system-packages`: it means what it says, and this package brings torch with it.
+
+**A stale copy on your PATH will shadow a new install.** If `senbonzakura --version` disagrees
+with what you just installed, an older one is earlier in the PATH; `which -a senbonzakura` lists
+every copy.
+
 `senbonzakura setup` exists because **pip picks by platform, not by hardware**. On Windows, PyPI's
 torch is CPU-only, so **a card there sits idle** and nothing warns you. It says what it found and
 prints the command that fixes it, changing nothing unless you add `--apply`.

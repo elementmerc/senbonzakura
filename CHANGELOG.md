@@ -25,6 +25,11 @@ they ran the command.
   no card is in use
 - `tamper` refuses a finetune whose loss stopped being a number, rather than reporting it as
   resistance to tampering. No figure from 0.5.0 is affected: the command shipped the same day
+- `tamper` also refuses a finetune whose loss blew up and came back, which it used to report as a
+  finetune that did nothing. Every value in such a run is a real number, so the check for a loss
+  that stopped being a number cannot see it
+- `tamper` describes a loss that rose as having risen. It used to call it a fall of a negative
+  amount, which says the opposite to anyone reading quickly
 - `diff` reports a tensor holding a NaN or an infinity as exactly that, and says which side it is
   on, instead of claiming it cannot read the dtype
 - `diff` holds its memory flat whatever the tensor's size, which is what its own `--help` promised.

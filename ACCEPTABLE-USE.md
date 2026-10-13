@@ -23,6 +23,16 @@ model or onto this project.
 
 **Do not use it against a model you are not permitted to modify.** See the licence section.
 
+## Who it is for
+
+Senbonzakura is for people aged 18 and over. The models it produces will talk about anything,
+including violence, self harm and sexual content, with no filter in the way. That isn't
+something children should be handed, and it isn't something you should hand them either.
+
+If you're under 18, please don't use it. If you're an adult sharing a model made with it, the
+rule above applies twice: say what it is, and keep it away from anyone who shouldn't be
+reading its answers.
+
 ## What it is for
 
 - Measuring how much capability an abliteration costs, which is the thing the field mostly does

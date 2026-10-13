@@ -61,16 +61,28 @@ So the harmful arm would score the rows the search selected its winning trial fr
 harmless arm would score the rows the abliteration directions were fitted on. The run exits 0 and
 reports a plausible number either way, which is what makes it worth writing down.
 
-Measured both ways on the same model and the same sample size:
+Measured from the recorded boundary, which is the run this directory holds:
 
 | | compass AUC | length-only ruler |
 |---|---|---|
-| Scoring from row 0 (fit and search rows) | 0.9851 | 0.8339 |
 | Scoring from the recorded boundary | **0.9872** | **0.6853** |
 
-The compass barely moves. The control moves a lot, from 0.8339 to 0.6853, because the opening rows
-of this track are separable by sentence length in a way the held-out rows are not. A reader who
-took the first row of that table would have a figure flattered by its partition and no way to tell.
+The length-only ruler is the control that matters here. It asks how well sentence length alone
+separates the two sets, and on the held-out rows it reaches 0.6853, far below the compass. That
+gap is the measurement: the compass is reading something length is not.
+
+**A second row was removed from this table on 2026-10-13, and the removal is the honest part.** It
+reported scoring from row 0, the rows the search selected its winning trial from and the rows the
+directions were fitted on, and it carried two figures. No artefact in this repository produces
+them. They cannot be recomputed from the file beside this README either, which records summary
+statistics rather than the per-item margins, and the `margins_path` it names is not committed.
+
+So the comparison those two figures supported is withdrawn rather than restated. The concern that
+prompted it stands and is the reason the command above names an explicit boundary: scoring a model
+on the rows its own directions were fitted on flatters the result, the run exits 0 either way, and
+nothing in the output says which partition you got. Re-measuring it needs a GPU and the model, and
+until somebody does, this directory says what it can show.
+
 Rebalancing the opening rows is `v0.9` row 9.11.
 
 ## Reproducing it

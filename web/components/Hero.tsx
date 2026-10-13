@@ -100,7 +100,7 @@ export default function Hero() {
         }}
       >
         <Mark size={18} />
-        <span>Your weights never leave your machine.</span>
+        <span>The world's top open-weight AI model workshop</span>
         <span aria-hidden="true" style={{ color: 'var(--ink-faint)' }}>
           &rarr;
         </span>

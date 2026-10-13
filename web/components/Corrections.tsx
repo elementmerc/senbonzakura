@@ -120,7 +120,6 @@ export default function Corrections() {
 
   return (
     <>
-      <hr className="rule" />
       <section ref={section} id="corrections" className="band">
         <p
           data-enter="corr"

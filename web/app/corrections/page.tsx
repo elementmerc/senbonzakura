@@ -31,27 +31,9 @@ export default function CorrectionsPage() {
     <>
       <Nav />
       <main>
-        <header className="band" style={{ paddingBottom: 0 }}>
-          <p
-            className="mono"
-            style={{
-              color: 'var(--ink-faint)',
-              fontSize: 'var(--t-small)',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              margin: '0 0 1rem',
-            }}
-          >
-            <a href="/" style={{ textDecoration: 'none' }}>
-              Senbonzakura
-            </a>{' '}
-            / corrections
-          </p>
-          <p style={{ color: 'var(--ink-dim)', maxWidth: 'var(--measure)', margin: 0 }}>
-            This page exists because a measurement tool that will not publish its own mistakes is
-            asking to be taken on trust, which is the thing it sells against.
-          </p>
-        </header>
+        {/* The breadcrumb and the standfirst that stood here were removed by the operator on
+            2026-10-13. The page now opens on its own heading, which says the same thing in fewer
+            words: "Twelve things we published that were not true." */}
         <Corrections />
       </main>
       <Footer />

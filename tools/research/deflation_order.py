@@ -46,7 +46,11 @@ DEFAULT_DIRECTIONS = (1, 2, 3, 4)
 DEFAULT_SPARSITIES = (0.0, 0.3, 0.6)
 DEFAULT_ROUNDS = (0, 2, 4)
 SYNTHETIC_SHAPE = (4, 64, 96)           # [experts, hidden, inner]
-SCHEMA = 1
+SCHEMA = 2
+BASES = ("random", "aligned")
+#: Relative Frobenius gap above which a cell the maths says MUST agree is reported as a harness
+#: fault. float32 noise sits near 1e-7 and accumulates over rounds, so this leaves a decade of room.
+CONTROL_TOLERANCE = 1e-6
 
 
 def basis(hidden, k, seed):
@@ -54,6 +58,20 @@ def basis(hidden, k, seed):
     gen = torch.Generator().manual_seed(seed)
     q, _ = torch.linalg.qr(torch.randn(hidden, k, generator=gen, dtype=torch.float32))
     return q.T.contiguous()
+
+
+def aligned_basis(weight, k):
+    """The top `k` left singular vectors of the writer, as an orthonormal `[k, hidden]` basis.
+
+    A random basis in a few thousand dimensions is nearly orthogonal to everything a writer does,
+    so the edit it makes is small and may understate the disagreement. The leading singular
+    directions are where the writer puts its mass, which is where a real refusal direction has to
+    live to matter, so this is the stress case. It is still not a measured refusal direction.
+    """
+    w = weight.detach().float()
+    flat = w if w.ndim == 2 else w.permute(1, 0, 2).reshape(w.shape[1], -1)
+    u, _s, _vh = torch.linalg.svd(flat, full_matrices=False)
+    return u[:, :k].T.contiguous()
 
 
 def divergence(weight, rows, *, sparsity, rounds, strength=1.0):
@@ -75,15 +93,23 @@ def divergence(weight, rows, *, sparsity, rounds, strength=1.0):
             "elements_differing": int((gap > 0).sum()), "elements": int(gap.numel())}
 
 
-def sweep(weights, *, directions, sparsities, rounds, seed):
-    """One row per (tensor, K, sparsity, rounds). Order of rows is the order of the inputs."""
+def sweep(weights, *, directions, sparsities, rounds, seed, seeds=1, bases=("random",)):
+    """One row per (tensor, basis, seed, K, sparsity, rounds), in input order.
+
+    An aligned basis is deterministic, so it is run once (seed null) rather than once per seed.
+    """
     rows = []
     for name, weight in weights:
         hidden = weight.shape[-2]
-        for k, sparsity, n in itertools.product(directions, sparsities, rounds):
-            result = divergence(weight, basis(hidden, k, seed), sparsity=sparsity, rounds=n)
-            rows.append({"tensor": name, "directions": k, "sparsity": sparsity, "rounds": n,
-                         **result})
+        for kind in bases:
+            for s in ([None] if kind == "aligned" else [seed + i for i in range(seeds)]):
+                for k in directions:
+                    rows_basis = (aligned_basis(weight, k) if kind == "aligned"
+                                  else basis(hidden, k, s))
+                    for sparsity, n in itertools.product(sparsities, rounds):
+                        result = divergence(weight, rows_basis, sparsity=sparsity, rounds=n)
+                        rows.append({"tensor": name, "basis": kind, "seed": s, "directions": k,
+                                     "sparsity": sparsity, "rounds": n, **result})
     return rows
 
 
@@ -93,35 +119,72 @@ def synthetic_weights(shape, seed):
 
 
 def checkpoint_weights(model_dir, max_tensors):
-    """The residual writers of a checkpoint, a tensor at a time, at most `max_tensors` of them."""
+    """Residual writers of a checkpoint, at most `max_tensors`, spread evenly across the depth.
+
+    The first N writers would all be the earliest layers, and early layers are not representative.
+    Names are listed first (headers only), then an evenly spaced subset is read a tensor at a time.
+    """
     from senbonzakura import streaming
     index = streaming.index_layers(model_dir)
-    found = []
+    named = []
     for layer in range(index.count):
         for name, spec in sorted(index.writers(layer).items()):
-            if len(found) >= max_tensors:
-                return found
-            found.append((name, streaming.load_tensor(*spec)))
-    return found
+            named.append((name, spec))
+    if len(named) > max_tensors:
+        last = len(named) - 1
+        picks = (sorted({round(i * last / (max_tensors - 1)) for i in range(max_tensors)})
+                 if max_tensors > 1 else [0])
+        named = [named[i] for i in picks]
+    return [(name, streaming.load_tensor(*spec)) for name, spec in named]
+
+
+def _spread(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = ordered[n // 2] if n % 2 else (ordered[n // 2 - 1] + ordered[n // 2]) / 2
+    return {"n": n, "min": ordered[0], "median": mid, "max": ordered[-1],
+            "mean": sum(ordered) / n}
+
+
+def expected_to_agree(row):
+    """True where the maths says the two orders are the same operation."""
+    return not (row["sparsity"] > 0 and row["rounds"] > 0 and row["directions"] > 1)
 
 
 def summarise(rows):
-    """What the grid shows, in the terms the question is asked in."""
-    active = [r for r in rows if r["sparsity"] > 0 and r["rounds"] > 0 and r["directions"] > 1]
-    quiet = [r for r in rows if r not in active]
+    """What the grid shows, in the terms the question is asked in.
+
+    `controls` is the cells that MUST agree. If any exceeds the tolerance the harness is at fault
+    and nothing else in the report should be believed. `by_cell` gives each grid cell's spread
+    across tensors and seeds, because one number with no spread is not a finding.
+    """
+    quiet = [r for r in rows if expected_to_agree(r)]
+    active = [r for r in rows if not expected_to_agree(r)]
+    cells = {}
+    for r in rows:
+        key = f"{r['basis']}|K={r['directions']}|sparsity={r['sparsity']}|rounds={r['rounds']}"
+        cells.setdefault(key, []).append(r["relative_frobenius"])
     return {
         "worst_when_both_flags_on": max((r["relative_frobenius"] for r in active), default=None),
         "worst_everywhere_else": max((r["relative_frobenius"] for r in quiet), default=None),
         "cells": len(rows),
+        "controls": {
+            "rows": len(quiet), "tolerance": CONTROL_TOLERANCE,
+            "violations": sum(1 for r in quiet if r["relative_frobenius"] > CONTROL_TOLERANCE),
+        },
+        "by_cell": {key: _spread(vals) for key, vals in sorted(cells.items())},
     }
 
 
 def provenance(args, weights):
-    return {"schema": SCHEMA, "seed": args.seed, "torch": torch.__version__,
+    return {"schema": SCHEMA, "seed": args.seed, "seeds": args.seeds, "bases": list(args.bases),
+            "torch": torch.__version__,
             "python": platform.python_version(),
             "source": args.model or {"synthetic_shape": list(args.shape)},
-            "tensors": [name for name, _ in weights],
-            "basis": "seeded random orthonormal; not a measured refusal direction",
+            "tensors": [{"name": name, "shape": list(w.shape), "dtype": str(w.dtype)}
+                        for name, w in weights],
+            "basis": ("random: seeded orthonormal. aligned: top singular vectors of the writer. "
+                      "Neither is a measured refusal direction"),
             "decides": "nothing; no order is named canonical by this report"}
 
 
@@ -134,15 +197,17 @@ def build_parser():
     p.add_argument("--directions", type=int, nargs="+", default=list(DEFAULT_DIRECTIONS))
     p.add_argument("--sparsities", type=float, nargs="+", default=list(DEFAULT_SPARSITIES))
     p.add_argument("--rounds", type=int, nargs="+", default=list(DEFAULT_ROUNDS))
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=0, help="first seed of the random basis")
+    p.add_argument("--seeds", type=int, default=1, help="how many consecutive seeds to run")
+    p.add_argument("--bases", nargs="+", choices=BASES, default=["random"])
     p.add_argument("--out", default=None)
     return p
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if args.max_tensors < 1:
-        print("--max-tensors must be at least 1", file=sys.stderr)
+    if args.max_tensors < 1 or args.seeds < 1:
+        print("--max-tensors and --seeds must each be at least 1", file=sys.stderr)
         return 2
     if args.model:
         from senbonzakura import streaming
@@ -157,7 +222,8 @@ def main(argv=None):
     else:
         weights = synthetic_weights(tuple(args.shape), args.seed)
     rows = sweep(weights, directions=args.directions, sparsities=args.sparsities,
-                 rounds=args.rounds, seed=args.seed)
+                 rounds=args.rounds, seed=args.seed, seeds=args.seeds,
+                 bases=tuple(args.bases))
     report = {"provenance": provenance(args, weights), "summary": summarise(rows), "rows": rows}
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.out:

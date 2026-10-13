@@ -89,7 +89,7 @@ def test_a_different_seed_changes_the_numbers_and_the_provenance(tmp_path):
 def test_the_report_states_that_it_decides_nothing_and_what_basis_it_used(tmp_path):
     prov = json.loads(run(tmp_path, "a.json"))["provenance"]
     assert "nothing" in prov["decides"]
-    assert "not a measured refusal direction" in prov["basis"]
+    assert "Neither is a measured refusal direction" in prov["basis"]
 
 
 def test_stdout_is_used_when_no_out_is_given(capsys):
@@ -117,6 +117,70 @@ def test_a_checkpoint_with_no_writers_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(harness, "checkpoint_weights", lambda *a: [])
     assert harness.main(["--model", str(tmp_path)]) == 2
     assert "no residual writers" in capsys.readouterr().err
+
+
+def test_an_aligned_basis_is_orthonormal_and_deterministic():
+    first = harness.aligned_basis(stack(), 3)
+    assert first.shape == (3, 64)
+    assert torch.allclose(first @ first.T, torch.eye(3), atol=1e-5)
+    assert torch.equal(first, harness.aligned_basis(stack(), 3))
+
+
+def test_an_aligned_basis_is_run_once_and_a_random_one_once_per_seed():
+    rows = harness.sweep(harness.synthetic_weights((2, 16, 24), 0), directions=(2,),
+                         sparsities=(0.3,), rounds=(2,), seed=5, seeds=3,
+                         bases=("random", "aligned"))
+    assert [r["seed"] for r in rows if r["basis"] == "random"] == [5, 6, 7]
+    assert [r["seed"] for r in rows if r["basis"] == "aligned"] == [None]
+
+
+def test_the_controls_are_the_cells_the_maths_says_must_agree():
+    rows = harness.sweep(harness.synthetic_weights((4, 64, 96), 0), directions=(1, 3),
+                         sparsities=(0.0, 0.3), rounds=(0, 3), seed=0, bases=("random", "aligned"))
+    summary = harness.summarise(rows)
+    assert summary["controls"]["violations"] == 0
+    assert summary["controls"]["rows"] == sum(harness.expected_to_agree(r) for r in rows)
+
+
+def test_a_control_cell_over_tolerance_is_counted_as_a_violation():
+    rows = [{"basis": "random", "directions": 1, "sparsity": 0.0, "rounds": 0,
+             "relative_frobenius": 0.5}]
+    assert harness.summarise(rows)["controls"]["violations"] == 1
+
+
+def test_each_cell_reports_its_n_and_spread():
+    rows = harness.sweep(harness.synthetic_weights((4, 64, 96), 0), directions=(3,),
+                         sparsities=(0.3,), rounds=(3,), seed=0, seeds=4)
+    cell = harness.summarise(rows)["by_cell"]["random|K=3|sparsity=0.3|rounds=3"]
+    assert cell["n"] == 4
+    assert cell["min"] <= cell["median"] <= cell["max"]
+
+
+def test_the_spread_of_an_even_count_takes_the_middle_pair():
+    assert harness._spread([1.0, 2.0, 3.0, 10.0])["median"] == 2.5
+
+
+def test_checkpoint_writers_are_spread_across_the_depth_not_taken_from_the_front(tmp_path):
+    root = build_checkpoint(tmp_path / "m", layers=8, hidden=32, inter=48)
+    names = [n for n, _ in harness.checkpoint_weights(root, 4)]
+    layers = sorted({int(n.split("layers.")[1].split(".")[0]) for n in names})
+    assert layers[0] == 0
+    assert layers[-1] == 7
+    assert len(set(names)) == len(names)
+
+
+def test_asking_for_more_tensors_than_exist_returns_them_all(tmp_path):
+    root = build_checkpoint(tmp_path / "m", layers=2, hidden=32, inter=48)
+    assert len(harness.checkpoint_weights(root, 99)) == len(harness.checkpoint_weights(root, 98))
+
+
+def test_a_single_tensor_request_takes_the_first_writer(tmp_path):
+    root = build_checkpoint(tmp_path / "m", layers=4, hidden=32, inter=48)
+    assert len(harness.checkpoint_weights(root, 1)) == 1
+
+
+def test_a_non_positive_seed_count_is_refused(capsys):
+    assert harness.main(["--seeds", "0"]) == 2
 
 
 def test_a_non_positive_tensor_cap_is_refused(capsys):

@@ -343,7 +343,26 @@ def main(argv=None):
             f"the base and the candidate are the same directory ({base}), so the comparison can "
             f"only report that a checkpoint matches itself. Name two checkpoints.")
     log(f"comparing {cand} against {base}")
-    report = compare(base, cand, log=log)
+    try:
+        report = compare(base, cand, log=log)
+    except streaming.ShardError as exc:
+        # A SENTENCE, NOT A TRACEBACK, which is the answer `budget` already gave to the same
+        # question through the same reader. One malformed checkpoint got a clean refusal from one
+        # command and a stack trace from the other, and the one that crashed is the one whose whole
+        # job is inspecting files you have reason to doubt.
+        say.say(f"diff refused: {exc}", indent="  ")
+        return DIFF_UNREADABLE
+    return _write(args, report, log)
+
+
+#: Exit codes, matching `budget`'s so a script can branch on them the same way. 0 the comparison
+#: ran, 2 a checkpoint could not be read at all. There is no 1 here: "they differ" is the ordinary
+#: result of this command rather than a failure, and a reader scripting against it wants the report.
+DIFF_OK, DIFF_UNREADABLE = 0, 2
+
+
+def _write(args, report, log):
+    """The reporting tail, split out so the refusal above returns without duplicating it."""
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         tmp = Path(f"{args.out}.part")
@@ -354,7 +373,7 @@ def main(argv=None):
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(render(report))
-    return 0
+    return DIFF_OK
 
 
 if __name__ == "__main__":

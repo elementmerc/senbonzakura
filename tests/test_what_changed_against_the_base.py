@@ -333,3 +333,49 @@ def test_the_command_does_not_import_torch(pair):
          "import sys; import senbonzakura.modeldiff; print('torch' in sys.modules)"],
         capture_output=True, text=True, check=True)
     assert r.stdout.strip() == "False", "modeldiff pulled in torch at import time"
+
+
+# ── a malformed checkpoint gets a sentence, as `budget` already gave it ──────────────
+#
+# `diff` and `budget` read checkpoints through the same `streaming.read_header`. `budget` caught
+# its `ShardError` and printed a reason; `diff` let it out as a traceback, so one malformed file
+# got a clean refusal from one command and a stack trace from the other. The one that crashed is
+# the one whose whole job is inspecting files you have reason to doubt.
+def _crafted(tmp_path, name, blob):
+    d = tmp_path / name
+    d.mkdir(exist_ok=True)
+    (d / "model.safetensors").write_bytes(struct.pack("<Q", len(blob)) + blob)
+    return d
+
+
+def test_a_malformed_base_is_refused_with_a_sentence_not_a_traceback(tmp_path, capsys):
+    base = _crafted(tmp_path, "base", b"not json at all")
+    cand = _crafted(tmp_path, "cand", b'{"__metadata__":{"format":"pt"}}')
+    assert modeldiff.main(["--base", str(base), "--candidate", str(cand)]) \
+        == modeldiff.DIFF_UNREADABLE
+    out = capsys.readouterr().out
+    assert "diff refused" in out
+    assert "not valid JSON" in out, f"the reason is not in the message: {out}"
+
+
+def test_a_crafted_header_ends_the_command_cleanly_rather_than_the_interpreter(tmp_path, capsys):
+    """The 200 KB file that used to raise an uncaught RecursionError through this command."""
+    depth = 100_001
+    base = _crafted(tmp_path, "base", b'{"a":' + b"[" * depth + b"]" * depth + b"}")
+    cand = _crafted(tmp_path, "cand", b'{"__metadata__":{"format":"pt"}}')
+    assert modeldiff.main(["--base", str(base), "--candidate", str(cand)]) \
+        == modeldiff.DIFF_UNREADABLE
+    assert "nests deeper" in capsys.readouterr().out
+
+
+def test_the_refusal_exit_code_matches_the_one_budget_uses(tmp_path):
+    """A script branching on the two commands should not need to learn two conventions."""
+    from senbonzakura import streaming
+    assert modeldiff.DIFF_UNREADABLE == streaming.BUDGET_UNREADABLE
+
+
+def test_an_ordinary_comparison_still_returns_the_success_code(pair, capsys):
+    b, c = pair({WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))},
+                {WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))})
+    assert modeldiff.main(["--base", str(b), "--candidate", str(c)]) == modeldiff.DIFF_OK
+    assert capsys.readouterr().out

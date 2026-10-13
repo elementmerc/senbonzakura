@@ -77,11 +77,16 @@ def test_the_check_sits_after_the_security_check_and_before_the_weights():
     # The whole remainder, not a fixed window: this function carries several hundred lines of
     # comment and a 3000-character window fell short of its own `from_pretrained`.
     head = src.split("def load_model_and_tokenizer", 1)[1]
-    assert "argresolve.refuse_unusable_device(device)" in head, (
+    # MATCHED WITHOUT THE CLOSING BRACKET, because the call takes `offload_dir` as well since
+    # 2026-10-13 and this guard is about WHERE the call is, not what it is passed. Pinning the
+    # exact argument list made a correct change to the signature look like the regression this
+    # test exists to catch.
+    CALL = "argresolve.refuse_unusable_device(device"
+    assert CALL in head, (
         "the loader no longer refuses an unusable device, so every command that loads a model will "
         "pay for the download before finding out")
 
-    device_at = head.index("argresolve.refuse_unusable_device(device)")
+    device_at = head.index(CALL)
     index_at = head.index("refuse_unsafe_hub_index")
     fetch_at = head.index("from_pretrained")
 

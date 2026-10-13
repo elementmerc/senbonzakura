@@ -33,6 +33,23 @@ they ran the command.
   inside one large tensor
 - A model path that exists on your disk is no longer answered with advice about authenticating to
   Hugging Face
+- A model path that does not exist is answered the same way. Typing a directory wrongly used to
+  send you off to check a token that was never involved
+- A checkpoint cloned without its large files is named as exactly that, with the files that are
+  still placeholders and the command that fetches them. It used to fail inside a JSON parser
+- `stream-extract` refuses `--offload-dir` together with `--device cpu` at the point you type them,
+  in one sentence saying which to drop. The two cannot work together, and on a machine with no
+  usable card the advice given for the missing card led straight into the pair
+- A direction set says how many directions it holds rather than how many it had room for. A run
+  that found one per position reported three, which is the size of the space they sit in
+- A direction file records the number found alongside the number allocated, so the file can be read
+  without guessing which one a figure refers to
+- A direction set is written whole or not at all, so a run stopped during the write cannot leave a
+  file that looks like a direction set and is not one
+- Ctrl+C says what happened in a sentence and exits 130. Every command except the guided search
+  used to answer it with a traceback through whatever it was doing at the time
+- `senbonzakura-check` says a file is not text rather than failing with a decoding error, which is
+  what happened when you pointed it at a model or a direction set
 - `diff` and `budget` leave no `.part` file behind when writing `--out` fails
 
 ### Breaking

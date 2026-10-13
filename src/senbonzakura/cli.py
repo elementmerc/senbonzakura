@@ -2283,6 +2283,60 @@ def _track_digests(track):
 _THEIR_ADVICE_IS_FOR_THE_PYTHON_API = hubmessage.ADVICE_FOR_THE_PYTHON_API
 
 
+#: How a git-lfs pointer file begins. The spec line is the first thing in the file and it is
+#: fixed text, so this is a reliable test rather than a guess.
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+#: The files worth examining for the pointer. Not a glob over the whole directory: a model
+#: directory can hold hundreds of shards, and the point is a cheap answer, not a complete audit.
+_LFS_SUSPECTS = ("config.json", "tokenizer.json", "tokenizer_config.json",
+                 "model.safetensors", "pytorch_model.bin", "model.safetensors.index.json")
+
+
+def _unfetched_lfs_files(model_dir):
+    """The files in a local model directory that are git-lfs pointers rather than their contents.
+
+    A `git clone` of a model repository without `git lfs pull`, or with lfs absent, leaves every
+    large file as a 130-byte text stub naming where the real one lives. The directory then looks
+    complete: the file names are right, `config.json` may even be real, and the failure arrives
+    from inside `transformers` as whatever that stub fails to parse as. The streaming journey of
+    2026-10-13 met it as `json.decoder.JSONDecodeError: Expecting value: line 1 column 1` out of
+    `tokenization_utils_base.py`, which is eleven frames describing our dependency's parser and
+    not one word about the actual problem.
+
+    Cheap on purpose: a bounded list of names, 64 bytes read from each.
+    """
+    found = []
+    for name in _LFS_SUSPECTS:
+        candidate = Path(model_dir) / name
+        try:
+            if not candidate.is_file():
+                continue
+            with open(candidate, "rb") as fh:
+                if fh.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
+                    found.append(name)
+        except OSError:
+            # This function runs while another failure is being explained. It must not be able to
+            # replace that explanation with one of its own.
+            continue
+    return found
+
+
+def _looks_like_a_local_path(model_id):
+    """Whether this string names the filesystem in a way a hub model id cannot.
+
+    A hub id is `org/model`: one slash, no leading dot or tilde, no trailing separator. So an
+    absolute path, an explicitly relative one, a `~` path, a trailing separator and three or more
+    segments are all shapes an id cannot take, and anything else is left ambiguous on purpose.
+    """
+    text = str(model_id or "").strip()
+    if not text:
+        return False
+    if text.startswith(("/", "./", "../", "~")) or text.endswith("/"):
+        return True
+    return text.count("/") >= 2
+
+
 def _could_not_load(model_id, error):
     """One refusal for a model that will not load, shared by both loaders.
 
@@ -2307,9 +2361,36 @@ def _could_not_load(model_id, error):
         # An over-long path or one with a null byte is not a thing on disk, and raising here would
         # replace a refusal the reader can act on with a traceback.
         local = False
-    advice = ("  That path exists, so this is about the files themselves rather than about "
-              "access.\n" if local else
-              "  If it is gated or private, pass --hf-token or log in with `hf auth login`.\n")
+    # AND THE THIRD CASE, WHICH THE PAIR ABOVE SENT TO THE WRONG FIX, 2026-10-13. A string that
+    # plainly names the filesystem and is not there got the hub's token advice, so a reader who
+    # mistyped a directory was told to go and authenticate. The two cases above were "it is on
+    # disk" and "everything else", and a mistyped path falls in the second.
+    #
+    # Deliberately conservative about what counts as plainly a path. A hub id carries exactly one
+    # slash, so `org/model` stays a hub id and only the shapes an id cannot have are claimed here.
+    # The ambiguous middle, a bare `name` or a single-slash `a/b` that is not on disk, keeps the
+    # hub advice, because that genuinely is the likelier reading of it.
+    if local:
+        # AND IF THE FILES ARE STUBS, SAY SO, because "about the files themselves" is true and
+        # unhelpful next to the one cause that accounts for most of it.
+        stubs = _unfetched_lfs_files(model_id) if Path(model_id).is_dir() else []
+        if stubs:
+            one = len(stubs) == 1
+            advice = (f"  {', '.join(stubs)} "
+                      f"{'is a git-lfs pointer' if one else 'are git-lfs pointers'} rather than "
+                      f"{'the real file' if one else 'the real files'}, so this checkpoint was "
+                      f"cloned without its large files. Fetch them with `git lfs pull` in that "
+                      f"directory, or download the model with `senbonzakura fetch` instead of "
+                      f"git.\n")
+        else:
+            advice = ("  That path exists, so this is about the files themselves rather than "
+                      "about access.\n")
+    elif _looks_like_a_local_path(model_id):
+        advice = ("  Nothing exists at that path, and it is a path rather than a model id, so "
+                  "the hub is not involved. Check the spelling, and that the directory holds a "
+                  "config.json beside its weights.\n")
+    else:
+        advice = "  If it is gated or private, pass --hf-token or log in with `hf auth login`.\n"
     return (f"senbonzakura: could not load the model '{model_id}'.\n"
             f"{detail}"
             f"{advice}".rstrip("\n"))
@@ -2334,7 +2415,13 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     # reason: transformers' sentence is good, the frames around it are not.
     try:
         tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-    except OSError as e:
+    # `ValueError` BESIDE `OSError`, 2026-10-13. A missing file raises `OSError` and that was the
+    # only shape handled; a file that is PRESENT and is not what it claims raises out of whatever
+    # parser `transformers` hands it to, and `json.JSONDecodeError` is a `ValueError`. So a
+    # checkpoint cloned without its large files reached the user as eleven frames ending inside
+    # `tokenization_utils_base.py`. Both are the same question to the reader, "this model will not
+    # load, why", and `_could_not_load` now answers the git-lfs case by name.
+    except (OSError, ValueError) as e:
         raise SystemExit(_could_not_load(model_id, e)) from e
     tok.padding_side = "left"
     if tok.pad_token is None:
@@ -2439,7 +2526,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # went unexamined whenever the device string was also wrong. A convenience check must not be
     # able to stand in front of a security one. The weights are still downstream of this line, so
     # the cost it exists to save is still saved.
-    argresolve.refuse_unusable_device(device)
+    argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
@@ -2516,7 +2603,9 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
          f"{'' if Path(model_id).is_dir() else ' (a first run downloads it, which is the slow part)'}")
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
-    except OSError as e:
+    # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
+    # present and malformed fails in a parser rather than in the filesystem.
+    except (OSError, ValueError) as e:
         raise SystemExit(_could_not_load(model_id, e)) from e
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
@@ -5086,9 +5175,8 @@ class Abliterator:
                     f"itself is complete and the model in {args.out} is unaffected.")
             else:
                 log(f"  directions saved to {args.save_directions} "
-                    f"({self.dirs_multi.shape[0]} positions, {self.dirs_multi.shape[1]} per "
-                    f"position); `senbonzakura stream-bake` applies them to a checkpoint too "
-                    f"large to load")
+                    f"({streambake.describe_directions(self.dirs_multi.cpu().numpy())}); "
+                    f"`senbonzakura stream-bake` applies them to a checkpoint too large to load")
         self._write_model_card(args, log)
         self.events.emit("done", out=str(args.out))
         self.events.close()

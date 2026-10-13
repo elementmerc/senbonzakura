@@ -300,8 +300,15 @@ class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
 KNOWN_DEVICES = frozenset({"cpu", "cuda", "mps", "xpu", "hpu", "npu", "mtia", "meta"})
 
 
-def refuse_unusable_device(device):
+def refuse_unusable_device(device, *, offload_dir=None):
     """Refuse a device this machine cannot use, for any command, before anything is downloaded.
+
+    `offload_dir` IS TAKEN ONLY TO GET THE ADVICE RIGHT, 2026-10-13. The CUDA refusal below told
+    every reader to "run on the processor instead: --device cpu", which is correct advice unless
+    they also passed `--offload-dir`: a CPU placement is a plain copy that accelerate never sees,
+    so it cannot spill, and the loader raises on the pair. A reader on a machine with no card who
+    wanted disk offload was therefore sent from a clear refusal into a traceback by this tool's own
+    suggestion. Found by the streaming journey on 2026-10-13, on a machine with no usable card.
 
     WHY THIS LIVES HERE RATHER THAN IN `cli`, 2026-10-11.
 
@@ -346,9 +353,18 @@ def refuse_unusable_device(device):
             "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.",
             "Checked before the model is downloaded, because finding out afterwards costs the "
             "download and tells you the same thing.",
-            "What to do:\n"
-            "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
-            "    or fix the install:            senbonzakura setup --apply",
+            ("What to do:\n"
+             "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
+             "    or fix the install:            senbonzakura setup --apply"
+             if not offload_dir else
+             "What to do:\n"
+             "    drop BOTH flags:               --device cpu, and no --offload-dir\n"
+             "    or fix the install:            senbonzakura setup --apply\n"
+             "  --offload-dir cannot be kept here. Spilling to disk is something accelerate does "
+             "while it places a model across a card, host memory and disk, and a processor run is "
+             "placed by a plain copy it never sees. So on the processor the whole checkpoint has "
+             "to fit in memory, and a model too large for that needs a card rather than a "
+             "different flag."),
             "`senbonzakura doctor` reports the same thing as an advisory and runs without a "
             "card."))
     if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",

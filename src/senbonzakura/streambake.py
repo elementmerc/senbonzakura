@@ -515,6 +515,56 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
 DIRECTIONS_KEY = "dirs_per_position"
 
 
+#: The norm below which a direction row is an unused slot rather than a direction. The same figure
+#: as `cli.Abliterator.dirs_per_position` uses, and deliberately the same: two thresholds would be
+#: two answers to "how many directions does this file hold".
+DIRECTION_EPSILON = 1e-6
+
+
+def real_counts(dirs_per_position):
+    """How many directions each position ACTUALLY holds, which is not K.
+
+    A direction set is allocated `[positions, K, hidden]` and zero-filled, and a position that
+    found fewer than K directions leaves the rest of its rows at zero, which ablate nothing. So
+    the array's second dimension is the cap that was asked for and not the number that was found,
+    and the two are different on most runs: the shape says 3 where the run found 1.
+
+    THIS EXISTS BECAUSE TWO LOG LINES READ THE SHAPE AND CALLED IT THE COUNT, 2026-10-13. Both
+    said "N positions, K per position" straight off `.shape`, so a run that had already printed
+    "no layer anywhere got more than one direction" closed by reporting three per position. A
+    reader who saw only the last line, which is the line written to be read, was told the file
+    held three times what it holds. Found by the streaming journey driving the released build.
+    """
+    import numpy as np
+
+    arr = np.asarray(dirs_per_position, dtype=np.float32)
+    if arr.ndim != 3:
+        raise StreamBakeError(
+            f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
+    norms = np.linalg.norm(arr, axis=-1)
+    return [int(n) for n in (norms > DIRECTION_EPSILON).sum(axis=-1)]
+
+
+def describe_directions(dirs_per_position):
+    """One sentence saying what a direction set holds, honest about the padding.
+
+    Used by every writer of a direction set so the sentence cannot drift between them.
+    """
+    import numpy as np
+
+    counts = real_counts(dirs_per_position)
+    if not counts:
+        return "0 positions"
+    cap = int(np.asarray(dirs_per_position).shape[1])
+    total = sum(counts)
+    lo, hi = min(counts), max(counts)
+    span = str(lo) if lo == hi else f"{lo} to {hi}"
+    if lo == cap:
+        return f"{len(counts)} positions, {cap} each, {total} in all"
+    return (f"{len(counts)} positions, {span} each, {total} in all; {cap} were allocated per "
+            f"position and the rows that went unfilled are zero, which ablate nothing")
+
+
 def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
     """Write a direction set, with enough provenance that a bake can refuse the wrong one.
 
@@ -530,22 +580,42 @@ def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
     """
     import numpy as np
     import torch
-    from safetensors.torch import save_file
+    from safetensors.torch import save
 
     arr = np.asarray(dirs_per_position, dtype=np.float32)
     if arr.ndim != 3:
         raise StreamBakeError(
             f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
+    # `K` IS THE CAP AND `directions_found` IS THE COUNT, and both are written because a reader of
+    # this file cannot otherwise tell them apart. `K` describes the array, so a bake can allocate
+    # against it; `directions_found` describes the run, and on most runs it is smaller. Written
+    # here rather than left to each caller's provenance dictionary, because a caller that forgets
+    # it leaves a file whose only answer to "how many directions is this" is the padded one.
+    counts = real_counts(arr)
     meta = {"model": str(model), "mode": str(mode),
             "positions": str(arr.shape[0]), "K": str(arr.shape[1]), "hidden": str(arr.shape[2]),
+            "directions_found": str(sum(counts)),
+            "directions_found_per_position": json.dumps(counts),
             "tool": "senbonzakura"}
     for key, value in (provenance or {}).items():
         # Every value stringified, because safetensors metadata is a map of string to string and
         # a non-string here fails at write time with a message about the format rather than the
         # field that caused it.
         meta[str(key)] = str(value)
-    save_file({DIRECTIONS_KEY: torch.from_numpy(np.ascontiguousarray(arr))}, str(path),
-              metadata=meta)
+    # THROUGH THE ATOMIC WRITER, like every other artefact this project writes. `save_file` wrote
+    # straight to the destination, so a run stopped during the write left a safetensors file that
+    # exists, is not empty and is not a direction set, and `stream-bake` would then be handed a
+    # truncated one. It is a small file and the window is short; the window is also the exact
+    # moment a person is most likely to press Ctrl+C, because it is the end of a long extraction.
+    #
+    # `save_file` takes a path rather than a handle, so the sibling `.part` is named through the
+    # same writer and replaced over the target by it. Found while writing the Ctrl+C message on
+    # 2026-10-13, which had claimed this was already true of every writer here.
+    from . import crashsafe
+
+    tensors = {DIRECTIONS_KEY: torch.from_numpy(np.ascontiguousarray(arr))}
+    with crashsafe.atomic_write(path, binary=True) as fh:
+        fh.write(save(tensors, metadata=meta))
     return path
 
 

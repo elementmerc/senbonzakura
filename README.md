@@ -133,9 +133,9 @@ torch is CPU-only, so **a card there sits idle** and nothing warns you. It says 
 prints the command that fixes it, changing nothing unless you add `--apply`.
 [Install](https://elementmerc.github.io/senbonzakura/guide/install) has the full table.
 
-Editing a model wants a CUDA card, and **how much of one scales with the model**: the weights have
-to be resident in full precision, because the uncensoring edit rewrites them in place. 6 GB is
-enough for the sizes this project has actually measured, all under 3B.
+Editing a model wants a CUDA card, and **how much of one scales with the model** when you load it
+whole. Streaming a checkpoint a layer at a time needs far less. 6 GB is enough for the sizes this
+project has actually measured, all under 3B.
 [What size card](https://elementmerc.github.io/senbonzakura/guide/install#what-size-card) does the
 arithmetic, including the trap that a mixture-of-experts model needs room for *all* its experts and
 not just the active ones. The measuring commands run on CPU.

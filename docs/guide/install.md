@@ -255,12 +255,13 @@ from. 1.7B is the only row anybody has run; everything above it is arithmetic.
 
 ## What size card {#what-size-card}
 
-Uncensoring rewrites real weight matrices in place, so **the weights have to be resident and in
-full precision**. That fixes the floor by arithmetic rather than by preference: 16-bit weights are
-two bytes per parameter, and you need headroom on top for activations and for the reference copy
-the divergence measurement compares against.
+Uncensoring rewrites real weight matrices, and there are two ways to run it. Loading the whole
+model sets the floor by arithmetic: 16-bit weights are two bytes per parameter, and you need
+headroom on top for activations and for the reference copy the divergence measurement compares
+against. The table below is that case. Streaming edits the checkpoint a layer at a time and needs
+far less (see [the way out](#the-way-out) below), at the price of being slower.
 
-| Model size | Weights at 16-bit | Card that will do it |
+| Model size | Weights at 16-bit | Card that will do it, loading the whole model |
 |---|---|---|
 | 1.7B | 3.4 GB | 6 GB. Measured |
 | 3B | 6 GB | 8 to 12 GB |
@@ -275,7 +276,7 @@ This is the one that catches people, because the headline number invites the opp
 model described as "30B total, 3B active" routes each token through a small fraction of itself, so
 it *runs* like a 3B model. Uncensoring is not inference: it edits the weights, and it has to edit
 **all** of them, because refusal does not politely confine itself to the experts that happen to be
-active. Size the card for the total, 30B, not the 3B it advertises.
+active. Size the card (or the disk, when streaming) for the total, 30B, not the 3B it advertises.
 :::
 
 **`--load-in-4bit` does not help here and the tool refuses it on the editing path.** A 4-bit
@@ -314,7 +315,7 @@ so the edit would be written into something discarded before the next forward pa
 would come out unedited, still refusing, with nothing reporting it. The refusal names the weight
 and tells you to load with more VRAM or more host-RAM headroom.
 
-**That limit is about writing, not reading, and the difference is the way out.** A forward pass only
+**That limit is about writing, not reading, and the difference is the way out.** {#the-way-out} A forward pass only
 reads the weights, so disk offload is perfectly sound for anything that measures rather than edits.
 `senbonzakura stream-extract` takes the directions off a checkpoint larger than your card and your
 RAM put together, one group of layers at a time, and `senbonzakura stream-bake` applies them the

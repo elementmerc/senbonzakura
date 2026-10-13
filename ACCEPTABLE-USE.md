@@ -26,7 +26,7 @@ model or onto this project.
 ## Who it is for
 
 Senbonzakura is for people aged 18 and over. The models it produces will talk about anything,
-including violence, self harm and sexual content, with no filter in the way. That isn't
+including violence, self-harm and sexual content, with no filter in the way. That isn't
 something children should be handed, and it isn't something you should hand them either.
 
 If you're under 18, please don't use it. If you're an adult sharing a model made with it, the

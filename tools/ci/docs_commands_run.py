@@ -62,6 +62,14 @@ RULES: list[tuple[str, str, str]] = [
     (r"^(\||│|└|├|─|\.\.\.|v$|d$|\"$)", SKIP, "diagram or continuation line, not a command"),
     (r"^\$ ?$", SKIP, "a bare prompt"),
 
+    # ── look at this, which is an instruction to a reader rather than a step ─────────
+    # `ls dist-checker/` in the release runbook tells whoever is cutting a release to check the
+    # directory for stale artefacts before attaching them, after a build that produced it. The
+    # harness has no such directory and running it would fail for a reason that says nothing about
+    # the documentation being right. Added 2026-10-13, when exactly that line turned the suite red.
+    (r"^ls( |$)", SKIP,
+     "an instruction to look at a directory, which only exists after a step the harness cannot run"),
+
     # ── environment setup, run by this harness itself rather than re-run per page ────
     (r"^pip install |^python -m pip install |^\.venv/bin/pip ", SKIP,
      ("the harness installs the package under test itself; re-running an install from a page "

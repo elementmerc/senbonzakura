@@ -269,6 +269,32 @@ its Hub model card declares, so no record can be reused without its terms arrivi
 with it. The corpus holds public metadata for our own analysis; it republishes
 nobody's model card and no weights were fetched by any route.
 
+## Hanken Grotesk, vendored for the brand cards
+
+**What it is and where it sits.** Two static cuts of Hanken Grotesk, at weights 500 and 700, in
+`assets/brand/fonts/`, with the licence beside them in `assets/brand/fonts/OFL.txt`.
+
+**Licence: SIL Open Font License 1.1.** The OFL permits redistribution provided the licence
+travels with the font, which is why the text sits in the same directory rather than being linked
+to. Copyright 2021 The Hanken Grotesk Project Authors.
+
+**Why it is vendored at all**, since this project vendors as little as it can. The brand cards are
+set in the face the website uses, so that a reader who clicks a link preview lands on a page that
+looks like the card. The website gets that face from Google Fonts at build time as `woff2`, which
+the card generator cannot read and which only exists after a web build has run. Vendoring two
+small files means a clean clone can regenerate the cards with no network and no dependency on the
+site having been built.
+
+**Instantiated, not synthesised.** The upstream font is variable, with a `wght` axis from 100 to
+900. The two cuts here were instantiated from that axis at 500 and 700 rather than produced by
+asking a renderer to embolden the regular, which smears outlines rather than selecting a drawn
+weight.
+
+**Not shipped in the wheel.** These files are build-time inputs for the brand assets. They are not
+packaged, not imported, and reach no user through PyPI, so they carry no notice obligation into
+the distributed artefact. The obligation they do carry, redistribution of the font within this
+repository, is met by `OFL.txt` sitting next to them.
+
 ## Licence reach, and why this file stops where it does
 
 Recorded 2026-09-22, because the v1.0 gate asks for it and because "these notices look complete"

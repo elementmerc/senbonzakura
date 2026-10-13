@@ -940,12 +940,48 @@ def test_a_requirement_whose_marker_excludes_this_interpreter_is_not_demanded(mo
     assert [r.name for r in reqs] == ["rich"]
 
 
-def test_the_real_declaration_of_this_install_is_readable_and_satisfied():
-    """Against the actual installed metadata, not a fixture. A fixture cannot catch a rename."""
+def test_the_real_declaration_of_this_install_is_readable():
+    """Against the actual metadata, not a fixture. A fixture cannot catch a rename."""
     reqs, complaint = doctor._declared_requirements()
     assert complaint == "", f"this install's own requirements cannot be read: {complaint}"
     assert len(reqs) >= 8, f"too few requirements to be the real set: {[r.name for r in reqs]}"
-    assert [c.status for c in doctor.check_requirements()] == ["pass"]
+    assert "torch" in {r.name for r in reqs}
+
+
+def test_the_real_verdict_agrees_with_what_the_metadata_actually_says():
+    """The check is right about this environment, whatever state this environment is in.
+
+    THIS USED TO ASSERT A CLEAN PASS, and that was the wrong assertion: it is a claim about the
+    developer's machine rather than about the code, and it failed for a reason that had nothing to
+    do with either.
+
+    What it failed on is worth writing down, because it will happen again. A `python -m build` in
+    the checkout leaves `src/senbonzakura.egg-info` behind, and most test files put `src/` on
+    `sys.path`, so `importlib.metadata` resolves the CHECKOUT's declaration ahead of the installed
+    distribution's. The egg-info said 0.5.0 and required `senbonzakura-check>=0.5.0`; the venv had
+    the checker at 0.4.1. The check reported that mismatch correctly, and only under `-n 4`, where
+    whichever worker had already imported a module that inserted `src/` saw a different answer
+    from the others. **A metadata reading is not a constant, so a test must assert the verdict is
+    CORRECT rather than that it is green.**
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    by_name = {r.name: r for r in reqs}
+    for check in doctor.check_requirements():
+        if check.status == "pass":
+            continue
+        name = check.name.removeprefix("requirement ")
+        req = by_name[name]
+        try:
+            have = version(name)
+        except PackageNotFoundError:
+            assert check.detail == "not installed"
+            continue
+        assert not req.specifier.contains(have, prereleases=True), \
+            f"{name} {have} satisfies {req.specifier} and the check called it a failure"
+        assert have in check.detail and str(req.specifier) in check.detail
 
 
 def test_the_requirement_check_runs_as_part_of_the_report():

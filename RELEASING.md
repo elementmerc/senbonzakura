@@ -49,17 +49,38 @@ source checkout; in a release it is a defect.
 
 ## Before the wheel leaves this machine
 
-**Two wheels are built, not one.** This is the step the runbook used to leave out, and following
-it literally landed the operator at the verify step with a public GitHub Release and one wheel PyPI
-will not take.
+**CORRECTED 2026-10-13, during the 0.5.0 release. There is no universal wheel any more, and this
+section said there was.** What follows the correction is what actually ships.
 
-The reason is that `setup.py` refuses to let a wheel carrying `vendor/bin/` claim `py3-none-any`,
-and correctly tags it `linux_x86_64` instead, which PyPI does not accept. So:
+The old text said two wheels are built and that the universal one (`py3-none-any`) goes to PyPI. It
+was true when it was written and stopped being true on **2026-10-09**, when the compiled Rust
+extension became unconditional. `setup.py`'s `has_ext_modules` now returns `True` always, and its
+comment says why in one line: *"pure is no longer a state this package has."* Moving `vendor/bin`
+aside no longer produces a pure wheel, it produces a smaller `linux_x86_64` one, which is the exact
+tag PyPI refuses.
 
-- the **universal** wheel (`py3-none-any`) goes to PyPI. It is built with the vendored binaries
-  moved aside, and `--track default` still resolves from it;
-- the **platform** wheel goes to PyPI too, AFTER being repaired to a manylinux tag (see below);
-- the **sdist** goes to both, and carries no binaries at all (`MANIFEST.in` prunes them).
+**Following this page literally on 0.5.0 produced that refused wheel.** It was caught by
+`check_wheel.py --release`, whose message is worth quoting because it names the cost: *"twine
+upload will refuse this wheel after the GitHub Release is already published and the version number
+is spent."* The gate held; the runbook did not.
+
+**What ships, per distribution:**
+
+- `senbonzakura`: the **platform** wheel, repaired to a manylinux tag (see below), and the
+  **sdist**. Two artefacts. Every wheel is platform-specific now, so a platform with no published
+  wheel builds from the sdist and needs a Rust toolchain, which the CHANGELOG states plainly.
+- `senbonzakura-check`: a genuine **`py3-none-any`** wheel and its **sdist**. It has no compiled
+  half and no dependencies at all, so it is the only pure artefact here.
+
+That is **four files on the Release**, and `publish.yml` refuses to proceed if either distribution's
+directory comes out empty, because an upload step pointed at an empty directory reports success
+having sent nothing.
+
+**Build the checker too.** The old order never mentioned it, and it is not optional: the main
+package depends on it, and the workflow uploads it first so the dependency exists before the thing
+that needs it. `python -m build --outdir dist-checker ./checker`. Check the output directory for
+stale artefacts before attaching; a `0.4.0.dev9` wheel from a previous build was sitting there on
+2026-10-13 and would have been offered to PyPI as a dev release.
 
 ### The platform wheel is repaired before it goes anywhere (decision Q-34)
 
@@ -121,16 +142,26 @@ for w in dist/*.whl; do python tools/ci/check_wheel.py "$w" --intermediate; done
 tools/packaging/repair_manylinux.sh dist/senbonzakura-*-py3-none-linux_x86_64.whl
 python tools/ci/check_wheel.py dist-manylinux/*.whl --release
 
-# 2. the UNIVERSAL wheel plus the sdist, for PyPI.
-#    `build/` must go too: a stale staging directory carries the binaries back in even after
-#    the source tree has none, which is the trap setup.py documents.
+# 2. the SDIST, for PyPI. The binaries move aside so they cannot reach it, and `build/` goes too:
+#    a stale staging directory carries them back in even after the source tree has none, which is
+#    the trap setup.py documents.
+#
+#    THIS STEP ALSO EMITS A WHEEL AND THAT WHEEL IS NOT PUBLISHED. It comes out tagged
+#    `linux_x86_64`, because the Rust extension is compiled whether or not the binaries are
+#    vendored, and PyPI refuses that tag. Do not attach it. The published wheel is the repaired
+#    manylinux one from step 1; this one is a by-product of building the sdist.
 mv src/senbonzakura/vendor/bin /tmp/senbon-vendor-bin
 rm -rf build
 python -m build --outdir dist-pypi
 mv /tmp/senbon-vendor-bin src/senbonzakura/vendor/bin
 
-python tools/ci/check_wheel.py dist-pypi/*.whl --release  # the artefact strangers get
 python tools/ci/check_wheel.py dist-pypi/*.tar.gz         # nothing platform-specific in the sdist
+
+# 3. the CHECKER, which the main package depends on and the upload sends first.
+python -m build --outdir dist-checker ./checker
+ls dist-checker/                           # LOOK: a stale dev wheel here would be offered to PyPI
+python tools/ci/check_wheel.py dist-checker/*.whl --release
+
 python tools/ci/check_cuda_channels.py     # the channels `senbonzakura setup` recommends still exist
 ```
 

@@ -439,7 +439,8 @@ def test_chunking_gives_the_same_answer_at_every_size_including_the_boundaries(d
     """Chunking must change the bound and not the answer, especially across a chunk edge."""
     xs = [1.0] * size
     ys = [1.5] * size
-    rel, peak = modeldiff._magnitude(pack(ys), pack(xs), dtype)
+    rel, peak, why_not = modeldiff._magnitude(pack(ys), pack(xs), dtype)
+    assert why_not is None
     assert rel == pytest.approx(0.5, rel=1e-3), f"{dtype} at n={size}"
     assert peak == pytest.approx(0.5, rel=1e-3)
 
@@ -449,7 +450,7 @@ def test_a_chunk_boundary_cannot_silently_drop_a_tail():
     n = modeldiff.CHUNK_ELEMENTS + 1
     xs = [0.0] * n
     ys = [0.0] * (n - 1) + [4.0]          # the only difference is in the final chunk
-    rel, peak = modeldiff._magnitude(bf16(ys), bf16(xs), "BF16")
+    rel, peak, _ = modeldiff._magnitude(bf16(ys), bf16(xs), "BF16")
     assert peak == pytest.approx(4.0), "the last element was not compared"
 
 
@@ -516,3 +517,85 @@ def test_a_progress_line_reads_sensibly_below_a_million(pair, monkeypatch):
     beats = [m for m in said if "still inside" in m]
     assert beats
     assert not any("0 of 0" in m for m in beats), beats
+
+
+# ── an unmeasurable magnitude says WHICH of the three reasons it was ─────────────────
+#
+# `_magnitude` returns nothing in three distinct cases and the row reported all three as "this
+# command does not decode {dtype}". That is false for two of them, and most wrong for the one a
+# reader most needs: a non-finite value in a candidate is exactly what a diff is for, and it was
+# explained with a sentence saying F32 is not decoded, when F32 is decoded.
+def _f32_with(values):
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+def test_a_nan_in_the_candidate_is_named_as_a_nan_not_as_an_unreadable_dtype(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, float("nan"), 3.0, 4.0]))})
+    row = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]
+    why = row["magnitude_unavailable_because"]
+    assert row["changed"] is True, "the identity verdict is a byte comparison and is still exact"
+    assert row["relative_change"] is None
+    assert "not a finite number" in why, why
+    assert "the candidate" in why, why
+    assert "does not decode F32" not in why, "the old false reason is back"
+
+
+def test_an_infinity_is_caught_by_the_same_arm(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, float("inf"), 3.0, 4.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "not a finite number" in why
+
+
+def test_a_nan_in_the_base_is_attributed_to_the_base(pair):
+    """A broken base and a broken edit are different findings, and only one is the edit's fault."""
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, float("nan"), 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "the base" in why, why
+
+
+def test_an_undecodable_dtype_still_gets_the_dtype_reason(pair):
+    """The reason that was always right must survive the split."""
+    b, c = pair({WRITER: ("I64", [2], struct.pack("<2q", 1, 2))},
+                {WRITER: ("I64", [2], struct.pack("<2q", 3, 4))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "does not decode I64" in why, why
+
+
+def test_a_measured_tensor_carries_no_reason_at_all(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([2.0, 4.0, 6.0, 8.0]))})
+    row = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]
+    assert row["magnitude_unavailable_because"] is None
+    assert row["relative_change"] is not None
+
+
+def test_the_three_reasons_are_distinguishable_from_each_other():
+    """Directly, because the whole point is that they stopped being the same sentence."""
+    nan = modeldiff._magnitude(_f32_with([float("nan")]), _f32_with([1.0]), "F32")[2]
+    dtype = modeldiff._magnitude(b"\x00" * 8, b"\x00" * 8, "I64")[2]
+    length = modeldiff._magnitude(_f32_with([1.0, 2.0]), _f32_with([1.0]), "F32")[2]
+    assert len({nan, dtype, length}) == 3
+    assert "disagrees with its own" in length, length
+
+
+def test_a_nan_on_both_sides_is_reported_as_both(pair):
+    b, c = pair({WRITER: ("F32", [2], _f32_with([float("nan"), 2.0]))},
+                {WRITER: ("F32", [2], _f32_with([float("nan"), 3.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "both sides" in why, why
+
+
+def test_the_side_is_read_from_the_data_rather_than_guessed_from_the_sums():
+    """A NaN in the base poisons both running sums, so the sums cannot tell the two apart.
+
+    This is the mistake the first version made, and it is the kind that looks right in review:
+    every difference taken against a NaN is a NaN, so a broken base reported as "both sides" was
+    arithmetically unsurprising and still wrong about the file.
+    """
+    nan, ok = _f32_with([float("nan")]), _f32_with([1.0])
+    assert modeldiff._which_side_is_not_finite(nan, ok, "F32") == "the candidate holds"
+    assert modeldiff._which_side_is_not_finite(ok, nan, "F32") == "the base holds"
+    assert modeldiff._which_side_is_not_finite(nan, nan, "F32") == "both sides hold"

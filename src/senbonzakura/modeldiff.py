@@ -171,6 +171,18 @@ def _decode_chunks(raw, dtype):
             yield struct.unpack(f"<{n}{DECODABLE[dtype][0][1]}", piece)
 
 
+def _which_side_is_not_finite(a, b, dtype):
+    """Which of the two tensors holds a non-finite value: "the candidate", "the base" or "both".
+
+    `a` is the candidate and `b` the base, matching the call in `compare`.
+    """
+    bad_a = any(not math.isfinite(v) for chunk in _decode_chunks(a, dtype) for v in chunk)
+    bad_b = any(not math.isfinite(v) for chunk in _decode_chunks(b, dtype) for v in chunk)
+    if bad_a and bad_b:
+        return "both sides hold"
+    return "the candidate holds" if bad_a else "the base holds"
+
+
 def _magnitude(a, b, dtype, on_progress=None):
     """How big the change is, as a pair: the relative Frobenius norm and the largest element move.
 
@@ -182,12 +194,22 @@ def _magnitude(a, b, dtype, on_progress=None):
     the edit. The denominator is the base's own norm, so 0.01 reads as "a one per cent change to
     this tensor" on every layer of every model and the figures are comparable down the stack.
 
-    Returns (None, None) for a dtype this cannot decode, which is reported as unavailable. The
-    identity verdict beside it is still exact, because that one is a byte comparison.
+    Returns `(relative, peak, why_not)`, where `why_not` is None on success and otherwise names
+    WHICH of the three unavailable cases this was. They used to be indistinguishable, and the row
+    reported all three as "this command does not decode {dtype}": false for two of them, and most
+    wrong for the one a reader most needs, because a non-finite value in a candidate is exactly
+    what a diff is for. The identity verdict beside it is still exact in every case, because that
+    one is a byte comparison.
     """
     width = _width(dtype)
-    if width is None or len(a) != len(b):
-        return None, None
+    if width is None:
+        return None, None, (f"this command does not decode {dtype}, so whether the tensor changed "
+                            f"is exact and how much it changed is unmeasured")
+    if len(a) != len(b):
+        return None, None, (f"the two tensors hold {len(a)} and {len(b)} bytes, so there is no "
+                            f"element-by-element comparison to make. They are both {dtype} of the "
+                            f"same declared shape, so one of the two files disagrees with its own "
+                            f"header")
     num = base = peak = 0.0
     done = 0
     # `strict=True` on both: the outer zip would otherwise stop at the shorter stream and the inner
@@ -204,8 +226,27 @@ def _magnitude(a, b, dtype, on_progress=None):
         if on_progress is not None:
             on_progress(done, total)
     if not math.isfinite(num) or not math.isfinite(base):
-        return None, None
-    return (math.sqrt(num) / math.sqrt(base) if base > 0 else None), peak
+        # WHICH SIDE, because they mean different things. A non-finite value in the CANDIDATE is a
+        # broken edit, which is the single most useful thing this command can tell anybody. One in
+        # the BASE means the checkpoint being compared against was already broken, and no edit made
+        # it so.
+        #
+        # ASKED OF THE DATA, NOT INFERRED FROM THE SUMS, because the sums cannot answer it: a NaN
+        # in the base poisons `base` AND `num`, since every difference against it is also a NaN,
+        # so "both are NaN" does not mean both sides hold one. The first version of this reported
+        # a broken base as "both sides" for exactly that reason.
+        #
+        # The extra pass is affordable because it runs only when a magnitude has already failed,
+        # which is the rare path. Testing finiteness per element in the loop above would cost a
+        # comparison on every element of every tensor to answer a question almost nobody asks.
+        where = _which_side_is_not_finite(a, b, dtype)
+        return None, None, (
+            f"{where} a value that is not a finite number (a NaN or an infinity), so a "
+            f"magnitude cannot be computed. This is not a dtype this command cannot read: "
+            f"{dtype} is decoded, and what came out of it is not arithmetic. A checkpoint with "
+            f"non-finite weights will not generate text, so this is worth looking at before "
+            f"anything else in this report")
+    return (math.sqrt(num) / math.sqrt(base) if base > 0 else None), peak, None
 
 
 def resolve_checkpoint(spec, *, what):
@@ -333,8 +374,8 @@ def compare(base_dir, cand_dir, *, log=None):
         craw = streaming.read_tensor(str(cshard), ct)
         read += len(braw)
         identical = braw == craw
-        rel, peak = ((None, None) if identical
-                     else _magnitude(craw, braw, bt.dtype, on_progress=beat))
+        rel, peak, why_not = ((None, None, None) if identical
+                              else _magnitude(craw, braw, bt.dtype, on_progress=beat))
         rows.append({
             "tensor": name, "layer": _layer_of(name), "dtype": bt.dtype,
             "shape": list(bt.shape), "changed": not identical,
@@ -342,10 +383,7 @@ def compare(base_dir, cand_dir, *, log=None):
             "largest_element_move": None if peak is None else float(peak),
             # Named rather than left to a reader comparing nulls: a magnitude we could not compute
             # and a magnitude of zero are different facts, and the second is a measurement.
-            "magnitude_unavailable_because": (
-                None if identical or rel is not None
-                else f"this command does not decode {bt.dtype}, so whether the tensor changed is "
-                     f"exact and how much it changed is unmeasured"),
+            "magnitude_unavailable_because": why_not,
             "is_residual_writer": any(h in name for h in WRITER_HINTS),
         })
         if n % 200 == 0:

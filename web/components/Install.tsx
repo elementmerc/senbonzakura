@@ -8,10 +8,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { RunOutput } from '@/components/SectionArt';
 import { revealOnce } from '@/lib/motion';
+import { TAG } from '@/lib/release';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 const NOTEBOOK =
-  'https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.4.1/notebooks/senbonzakura_colab.ipynb';
+  `https://colab.research.google.com/github/elementmerc/senbonzakura/blob/${TAG}/notebooks/senbonzakura_colab.ipynb`;
 
 /**
  * NO TIMING CLAIM APPEARS HERE, and its absence is deliberate rather than an omission.

@@ -2293,9 +2293,26 @@ def _could_not_load(model_id, error):
     # every line was advice, left a blank line where the detail should be, which reads as output
     # that got cut off.
     detail = "".join(f"  {ln}\n" for ln in hubmessage.useful_lines(error))
+    # THE TOKEN ADVICE IS FOR THE HUB, and it used to be printed for a local path too. A reader who
+    # passed a file that is already on their disk was told to authenticate to a service that is not
+    # involved, which sends them to fix something that is not broken. Found by a user journey on
+    # 2026-10-13, where the path given was a .jsonl.
+    #
+    # The test is "does this name something on disk", not "does it look like an id": an id with a
+    # slash and a path with a slash are the same shape, and a relative path that exists is the case
+    # this has to catch.
+    try:
+        local = Path(model_id).exists()
+    except (OSError, ValueError):
+        # An over-long path or one with a null byte is not a thing on disk, and raising here would
+        # replace a refusal the reader can act on with a traceback.
+        local = False
+    advice = ("  That path exists, so this is about the files themselves rather than about "
+              "access.\n" if local else
+              "  If it is gated or private, pass --hf-token or log in with `hf auth login`.\n")
     return (f"senbonzakura: could not load the model '{model_id}'.\n"
             f"{detail}"
-            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.")
+            f"{advice}".rstrip("\n"))
 
 
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,

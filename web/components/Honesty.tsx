@@ -7,6 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { revealOnce } from '@/lib/motion';
+import { atTag } from '@/lib/release';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
@@ -107,7 +108,7 @@ export default function Honesty() {
               body: 'What is still true and still broken, written down before you find it.',
             },
             {
-              href: 'https://github.com/elementmerc/senbonzakura/blob/v0.4.1/REPRODUCING.md',
+              href: atTag('REPRODUCING.md'),
               title: 'Reproducing it',
               body: 'Every published figure mapped to the file it came from and the command that makes it.',
             },

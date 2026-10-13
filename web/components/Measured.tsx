@@ -8,6 +8,7 @@
 import { useEffect, useRef } from 'react';
 import { DriftBars } from '@/components/SectionArt';
 import { countUp, intervalMarker, revealOnce, wipeInOnce } from '@/lib/motion';
+import { atTag } from '@/lib/release';
 
 /**
  * Our own figures, and the headline one is a result against our own flagship feature.
@@ -30,7 +31,7 @@ import { countUp, intervalMarker, revealOnce, wipeInOnce } from '@/lib/motion';
 
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 const EVIDENCE =
-  'https://github.com/elementmerc/senbonzakura/blob/v0.4.1/evidence/k-sweep-2026-08-13/drift-per-seed.json';
+  atTag('evidence/k-sweep-2026-08-13/drift-per-seed.json');
 
 /**
  * THIS IS THE PAGE'S PEAK, and the motion is budgeted accordingly.

@@ -8,6 +8,7 @@
 import { useEffect, useRef } from 'react';
 import Mark from '@/components/Mark';
 import { driftPetals, magnet, pointerWash, revealOnce, riseLines } from '@/lib/motion';
+import { RELEASE } from '@/lib/release';
 
 /**
  * The headline is the project's own agreed sentence, shortened to fit a hero.
@@ -185,7 +186,7 @@ export default function Hero() {
           marginTop: '1.6rem',
         }}
       >
-        0.4.1 on PyPI &nbsp;·&nbsp; AGPL-3.0-or-later &nbsp;·&nbsp; runs on CPU &nbsp;·&nbsp; free
+        {RELEASE} on PyPI &nbsp;·&nbsp; AGPL-3.0-or-later &nbsp;·&nbsp; runs on CPU &nbsp;·&nbsp; free
         GPU notebook
       </p>
 

@@ -4,8 +4,8 @@
 // Comment: Christ is King
 
 import Mark from '@/components/Mark';
+import { REPO, atTag } from '@/lib/release';
 
-const REPO = 'https://github.com/elementmerc/senbonzakura';
 const DOCS = 'https://elementmerc.github.io/senbonzakura';
 
 /**
@@ -95,10 +95,10 @@ export default function Footer() {
             </p>
             {[
               [REPO, 'Repository'],
-              [`${REPO}/blob/v0.4.1/LICENSE`, 'Licence'],
-              [`${REPO}/blob/v0.4.1/ACCEPTABLE-USE.md`, 'Acceptable use'],
-              [`${REPO}/blob/v0.4.1/CONTRIBUTING.md`, 'Contributing'],
-              [`${REPO}/blob/v0.4.1/CHANGELOG.md`, 'Changelog'],
+              [atTag('LICENSE'), 'Licence'],
+              [atTag('ACCEPTABLE-USE.md'), 'Acceptable use'],
+              [atTag('CONTRIBUTING.md'), 'Contributing'],
+              [atTag('CHANGELOG.md'), 'Changelog'],
             ].map(([href, label]) => (
               <p key={label} style={{ margin: '0 0 0.5rem', fontSize: '0.92rem' }}>
                 <a href={href} style={{ textDecoration: 'none', color: 'var(--ink-dim)' }}>

@@ -52,6 +52,22 @@ permissions:
 # happened here. If this block's last key is ever removed, remove the `env:` line with it.
 env:
   AUDIT_REQUIRED: 'false'
+  # ── CARGO'S NETWORK RETRY, raised from its default of 3, added 2026-10-13 ─────────────────────
+  #
+  # The macOS leg failed on `Could not resolve host: index.crates.io` while cargo fetched pyo3 for
+  # the native extension. Not a test failure and not our code: DNS on the runner, during the one
+  # step that reaches the network.
+  #
+  # It is worth a fix rather than a re-run because the leg has now failed four times in twelve
+  # runs, and a third of builds going red on infrastructure is how a suite stops being read. The
+  # earlier failures in that window had a different, since-fixed cause, so the DNS share is
+  # smaller than a third; it is still not once.
+  #
+  # Cargo classifies a name-resolution failure as spurious and retries it, so the cheapest real
+  # fix is to let it retry more than three times. This does NOT make the build independent of
+  # crates.io, which would need a vendored registry or a warm cache; it makes a single blip
+  # survivable, which is what actually happened here.
+  CARGO_NET_RETRY: '10'
 
 # THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
 # live here is gone, along with the `env:` block that held it. A workflow with an `env:` key and

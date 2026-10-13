@@ -51,6 +51,7 @@ import math
 import os
 import struct
 import sys
+import time
 from pathlib import Path
 
 from . import argresolve, checkpoint, say, streaming
@@ -83,27 +84,99 @@ PRINT_ROWS = 25
 DECODABLE = {"F64": ("<d", 8), "F32": ("<f", 4), "F16": ("<e", 2)}
 
 
-def _decode(raw, dtype):
-    """A list of floats from a tensor's raw bytes, or None when the dtype is not decodable.
+#: How many elements are decoded at a time. The bound that makes this command's own `--help` true.
+#:
+#: 4,096 BY MEASUREMENT, NOT BY TASTE, on 2026-10-13 over 4-million-element BF16 tensors:
+#:
+#:     chunk      peak      rate
+#:     4,096     0.94 MB    4.45 million elements/second
+#:     16,384    3.74 MB    4.10
+#:     65,536   14.98 MB    3.73
+#:     262,144  59.99 MB    3.53
+#:
+#: The expected trade is smaller chunks against more per-chunk overhead, and it does not appear:
+#: the smallest chunk is both the leanest and the fastest, which is what cache locality looks like
+#: when the working set stops fitting. So this is the cheap end of both axes rather than a
+#: compromise between them. Peak is flat in the tensor's size at every row, which is the property
+#: that matters; the figure is which constant it is flat at.
+CHUNK_ELEMENTS = 4_096
+
+#: Elements per second this decodes and compares, measured on 2026-10-13 on an eight-core laptop:
+#: 4.15 million. Rounded down to 4 million because the figure is only ever used to warn somebody
+#: that a run is long, and a warning that overstates the wait is the harmless direction.
+#:
+#: It is pure Python arithmetic on purpose. numpy would be an order of magnitude faster and is not
+#: a dependency of this package, and torch is, but pulling torch in here would put a multi-second
+#: import in front of a command whose promise is that it is cheap.
+ELEMENTS_PER_SECOND = 4_000_000
+
+#: Past this much work, say how long it might take. One billion elements is about four minutes,
+#: which is where a reader starts wondering whether the command has hung.
+SLOW_ELEMENTS = 1_000_000_000
+
+#: How often to say something from inside one tensor. The baseline asks for 30 to 60 seconds on
+#: any long-running loop, and this is the loop that can sit silent for minutes on one tensor.
+HEARTBEAT_SECONDS = 30
+
+
+def _count(n):
+    """A count a reader can take in at a glance, with units that suit its size.
+
+    The first version printed millions unconditionally, so a progress line about a tensor smaller
+    than a million elements read "0 of 0 million elements", which looks like a bug in the thing
+    reporting progress rather than progress.
+    """
+    if n >= 1_000_000_000:
+        return f"{n / 1e9:.1f} billion"
+    if n >= 1_000_000:
+        return f"{n / 1e6:.0f} million"
+    return f"{n:,}"
+
+
+def _width(dtype):
+    """Bytes per element, or None when this cannot decode the dtype at all."""
+    if dtype == "BF16":
+        return 2
+    return DECODABLE[dtype][1] if dtype in DECODABLE else None
+
+
+def _decode_chunks(raw, dtype):
+    """Floats from a tensor's raw bytes, a bounded chunk at a time.
+
+    **CHUNKED, AND THAT IS THE WHOLE POINT.** This returned one list holding the entire tensor,
+    and a Python float costs about 24 bytes against BF16's 2, so the list cost more than an order
+    of magnitude more than the data it came from. Measured 2026-10-13 on 8-million-element tensors:
+    **967 MB resident for 16 MB of raw data per side, 60 times.** This command's `--help` says peak
+    memory is one tensor from each side, and that sentence was false by that factor on every run.
+
+    The arithmetic in `_magnitude` is three running sums, all of which are associative, so chunking
+    changes the bound and not the answer.
 
     BF16 is handled by hand because it is not a struct format and not a numpy dtype: it is the top
     sixteen bits of an IEEE single, so shifting each pair left into a four-byte word and reading
     that as a float is exact rather than approximate. Doing it by hand also keeps this module free
     of a numeric dependency it would otherwise pull in for one conversion.
     """
-    if dtype == "BF16":
-        n = len(raw) // 2
-        words = struct.unpack(f"<{n}H", raw[:n * 2])
-        return list(struct.unpack(f"<{n}f", struct.pack(f"<{n}I", *(w << 16 for w in words))))
-    if dtype in DECODABLE:
-        fmt, width = DECODABLE[dtype]
-        n = len(raw) // width
-        return list(struct.unpack(f"<{n}{fmt[1]}", raw[:n * width]))
-    return None
+    width = _width(dtype)
+    if width is None:
+        return
+    total = len(raw) // width
+    for start in range(0, total, CHUNK_ELEMENTS):
+        n = min(CHUNK_ELEMENTS, total - start)
+        piece = raw[start * width:(start + n) * width]
+        if dtype == "BF16":
+            words = struct.unpack(f"<{n}H", piece)
+            yield struct.unpack(f"<{n}f", struct.pack(f"<{n}I", *(w << 16 for w in words)))
+        else:
+            yield struct.unpack(f"<{n}{DECODABLE[dtype][0][1]}", piece)
 
 
-def _magnitude(a, b, dtype):
+def _magnitude(a, b, dtype, on_progress=None):
     """How big the change is, as a pair: the relative Frobenius norm and the largest element move.
+
+    `on_progress(done, total)` is called as the chunks go by, so a caller can keep a long single
+    tensor from looking like a hang. One tensor of an 8B model runs to hundreds of millions of
+    elements, which is minutes of arithmetic with nothing printed.
 
     RELATIVE, because an absolute norm over a tensor says more about the tensor's size than about
     the edit. The denominator is the base's own norm, so 0.01 reads as "a one per cent change to
@@ -112,15 +185,24 @@ def _magnitude(a, b, dtype):
     Returns (None, None) for a dtype this cannot decode, which is reported as unavailable. The
     identity verdict beside it is still exact, because that one is a byte comparison.
     """
-    xs, ys = _decode(a, dtype), _decode(b, dtype)
-    if xs is None or ys is None or len(xs) != len(ys):
+    width = _width(dtype)
+    if width is None or len(a) != len(b):
         return None, None
     num = base = peak = 0.0
-    for x, y in zip(xs, ys, strict=True):
-        d = x - y
-        num += d * d
-        base += y * y
-        peak = max(peak, abs(d))
+    done = 0
+    # `strict=True` on both: the outer zip would otherwise stop at the shorter stream and the inner
+    # one at the shorter chunk, and a comparison that silently ignored a tail would report a
+    # smaller change than the real one, which is the direction that matters here.
+    total = len(a) // width
+    for xs, ys in zip(_decode_chunks(a, dtype), _decode_chunks(b, dtype), strict=True):
+        for x, y in zip(xs, ys, strict=True):
+            d = x - y
+            num += d * d
+            base += y * y
+            peak = max(peak, abs(d))
+        done += len(xs)
+        if on_progress is not None:
+            on_progress(done, total)
     if not math.isfinite(num) or not math.isfinite(base):
         return None, None
     return (math.sqrt(num) / math.sqrt(base) if base > 0 else None), peak
@@ -218,7 +300,32 @@ def compare(base_dir, cand_dir, *, log=None):
             f"'changed everywhere' would be true and useless, so this refuses. Compare like with "
             f"like, or dequantise first.")
 
+    # HOW LONG THIS MIGHT TAKE, SAID BEFORE IT STARTS. Only CHANGED tensors are decoded, so an
+    # abliteration that rewrote a handful of projections finishes in seconds while a full finetune
+    # decodes the whole model, and nothing said which of those the reader was about to sit through.
+    # The ceiling is the honest number to quote because this cannot know what changed until it has
+    # read it, and a reader who is warned about an hour and waits a minute is not harmed.
+    # From `nbytes` and the dtype's width rather than from the shape, so this uses the same two
+    # public facts the decode itself uses and cannot disagree with it about how big a tensor is.
+    decodable = sum(base[name][1].nbytes // _width(base[name][1].dtype) for name in shared
+                    if _width(base[name][1].dtype) is not None)
+    if decodable > SLOW_ELEMENTS:
+        say_(f"  up to {_count(decodable)} elements to compare, which is roughly "
+             f"{max(1, round(decodable / ELEMENTS_PER_SECOND / 60))} minutes at the rate this was "
+             f"measured at "
+             f"if every tensor changed. Only changed tensors are decoded, so an edit that touched "
+             f"a few projections will finish far sooner than that.")
+
     rows, read = [], 0
+    last_beat = time.monotonic()
+
+    def beat(done, total):
+        nonlocal last_beat
+        now = time.monotonic()
+        if now - last_beat >= HEARTBEAT_SECONDS:
+            last_beat = now
+            say_(f"    still inside {name}: {_count(done)} of {_count(total)} elements")
+
     for n, name in enumerate(shared, 1):
         bshard, bt = base[name]
         cshard, ct = cand[name]
@@ -226,7 +333,8 @@ def compare(base_dir, cand_dir, *, log=None):
         craw = streaming.read_tensor(str(cshard), ct)
         read += len(braw)
         identical = braw == craw
-        rel, peak = (None, None) if identical else _magnitude(craw, braw, bt.dtype)
+        rel, peak = ((None, None) if identical
+                     else _magnitude(craw, braw, bt.dtype, on_progress=beat))
         rows.append({
             "tensor": name, "layer": _layer_of(name), "dtype": bt.dtype,
             "shape": list(bt.shape), "changed": not identical,

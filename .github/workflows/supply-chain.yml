@@ -38,6 +38,22 @@ on:
 permissions:
   contents: read
 
+# ── ONE RUN PER REF, added 2026-10-13 ──────────────────────────────────────────────────────────
+#
+# This workflow had no concurrency block while `ci.yml`, `distribute.yml` and `docs.yml` all did,
+# which meant the Monday schedule and a push could run the same analysis over the same tree at the
+# same time, for no benefit.
+#
+# `cancel-in-progress` is safe HERE and would not be everywhere: this workflow declares
+# `contents: read` and writes nothing, so a cancelled run leaves no half-finished state behind.
+# That is the test to apply before copying this block somewhere else, and `publish.yml` is the
+# case where the answer comes out the other way.
+#
+# Keyed on the ref, like the others, so a push to `dev` cannot cancel the analysis of `main`.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # ── Q-71, AND THE FLIP IS THE ONE LINE BELOW ───────────────────────────────────────────────────
 #
 # A check has three outcomes and GitHub's conclusions only express two, so DID NOT RUN has to

@@ -153,8 +153,7 @@ export default function Corrections() {
           data-enter="corr"
           style={{ color: 'var(--ink-dim)', maxWidth: 'var(--measure)', margin: '0 0 4rem' }}
         >
-          They are still on the site, with the original wording beside the correction. Neither
-          competitor publishes a page like this.
+          They are still on the site, with the original wording beside the correction.
         </p>
 
         <div style={{ position: 'relative', maxWidth: '62rem', margin: '0 auto' }}>

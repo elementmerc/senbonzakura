@@ -13,7 +13,7 @@
         "Python": "python"
     },
     "url": "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.5.0.zip",
-    "hash": "6b2e92608be252ce0db2da35716ece0e68a853fb42606d9fbe1a474a0d9d20e6",
+    "hash": "a0dd282755a678f2e7203617e38b097e717988594ab6b7bd21693128d6cada55",
     "extract_dir": "senbonzakura-0.5.0\\checker",
     "installer": {
         "script": [

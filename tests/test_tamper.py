@@ -1108,10 +1108,16 @@ def test_a_missing_lora_backend_is_refused_before_any_model_loads(monkeypatch, t
     # on a 392-row evaluation that is twenty-six minutes of a user's time spent to be told a
     # dependency is missing. A model loading at all is the failure this asserts against, so the
     # stand-in raises rather than returning something usable.
-    from senbonzakura import score as score_module
+    #
+    # THE STAND-IN GOES ON `cli`, which owns the loader, and it used to go on `score`. `score` only
+    # ever re-exported it by accident of its own module-scope import, and when that import became
+    # function-local the name stopped existing there, so this patch raised AttributeError instead of
+    # biting. Its two siblings above were moved at the same time and this one was not, because
+    # `needs_corpora` skips it unless the corpora are on the disk and a skip reads like a pass.
+    from senbonzakura import cli
 
     monkeypatch.setitem(sys.modules, "peft", None)
-    monkeypatch.setattr(score_module, "load_model_and_tokenizer", _never_loads)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", _never_loads)
     with pytest.raises(SystemExit, match=r"senbonzakura\[finetune\]"):
         tamper.main(["--model", "unused-because-nothing-should-load", "--corpus", "advbench",
                      "--train-n", "8", "--method", "lora",

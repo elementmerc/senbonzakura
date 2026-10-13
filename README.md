@@ -11,7 +11,7 @@
 Measure, uncensor and audit.
 
 <p>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the default branch" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=main&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the released branch" /></a>
   <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3776AB?logo=python&amp;logoColor=white&amp;labelColor=24292f" alt="Python 3.10 to 3.14" /></a>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-4C566A?labelColor=24292f" alt="Platform: Linux, macOS and Windows" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-A42E2B?logo=gnu&amp;logoColor=white&amp;labelColor=24292f" alt="Licence: AGPL-3.0-or-later" /></a>
@@ -53,7 +53,7 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 
 ## Try it without installing anything
 
-[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.4.1/notebooks/senbonzakura_colab.ipynb).
+[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.5.0/notebooks/senbonzakura_colab.ipynb).
 Free GPU, nothing on your machine. It measures a model, edits it, then measures what that cost.
 Nobody has timed it on Colab's hardware, so it gives you no duration to hold us to.
 

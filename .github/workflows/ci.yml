@@ -11,6 +11,22 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # ── WHY `main` IS ALSO RUN ON A TIMER, added 2026-10-13 ───────────────────────────────────────
+  #
+  # `main` moves only at a release (baseline §8), so between releases it is the one branch nothing
+  # re-runs. That is not a theoretical gap: `main` sat at 9ffe308 from 2026-10-05 to 2026-10-13
+  # with nine failing jobs, and the README's CI badge tracks the default branch, so the project's
+  # front page said "CI failing" to every visitor for eight days.
+  #
+  # IT WAS NOT BROKEN BY BAD CODE. It failed on `torch: Dependency not found on PyPI and could not
+  # be audited`, a defect `dev` had ALREADY FIXED at the time. `main` was broken by being stale,
+  # which is the failure mode a release branch has and a development branch does not: the world
+  # moves (an index, an advisory feed, a runner image) under a commit nobody is re-testing.
+  #
+  # A push trigger cannot catch that, because the cause is not a push. Only a clock can. Daily
+  # rather than weekly because the badge is public and the cost is zero on a public repository.
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read

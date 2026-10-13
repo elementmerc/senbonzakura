@@ -326,8 +326,6 @@ def compose(width, height):
 
 def _compose_wide(card, draw, width, height):
     """Mark left, name and tagline right. The arrangement for every link-preview size."""
-    Image = __import__("PIL.Image", fromlist=["Image"])
-
     pad = round(width * 0.06)
     mark_h = round(height * 0.30)
     mark = render_mark(mark_h)
@@ -353,7 +351,7 @@ def _compose_wide(card, draw, width, height):
 
     s_px = round(height * 0.055)
     f_sub = brand_face(500, s_px)
-    while max(draw.textlength(l, font=f_sub) for l in TAGLINE_LINES) > avail and s_px > 12:
+    while max(draw.textlength(ln, font=f_sub) for ln in TAGLINE_LINES) > avail and s_px > 12:
         s_px -= 1
         f_sub = brand_face(500, s_px)
 
@@ -399,7 +397,7 @@ def _compose_square(card, draw, width, height):
 
     s_px = round(height * 0.042)
     f_sub = brand_face(500, s_px)
-    while max(draw.textlength(l, font=f_sub) for l in TAGLINE_LINES) > avail and s_px > 12:
+    while max(draw.textlength(ln, font=f_sub) for ln in TAGLINE_LINES) > avail and s_px > 12:
         s_px -= 1
         f_sub = brand_face(500, s_px)
 

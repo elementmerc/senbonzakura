@@ -84,3 +84,46 @@ def test_an_empty_upstream_message_still_gives_a_usable_refusal():
     assert "could not load the model 'some/model'" in bare
     assert "--hf-token" in bare
     assert "\n\n" not in bare, "an empty upstream message must not leave a hole in the output"
+
+
+# ── the token advice is for the Hub, not for a file already on disk ──────────────────
+#
+# Journey 1, 2026-10-13: a reader passed a local .jsonl as --model, it would not load, and the
+# refusal told them to authenticate to a service that was not involved. Advice for a problem the
+# reader does not have sends them to fix something that is not broken, which is expensive in
+# exactly the moment they are already stuck.
+def test_a_path_that_exists_is_not_told_to_authenticate(tmp_path):
+    local = tmp_path / "prompts.jsonl"
+    local.write_text('{"prompt": "hello"}\n')
+    message = _could_not_load(str(local), OSError("not a model directory"))
+    assert "--hf-token" not in message, f"told to authenticate about a local file: {message}"
+    assert "hf auth login" not in message
+    assert "That path exists" in message
+    assert "not a model directory" in message, "the useful half of the refusal is still there"
+
+
+def test_a_hub_id_still_gets_the_token_advice():
+    """The common case is unchanged, and the shape of an id and of a path is the same."""
+    message = _could_not_load("meta-llama/Llama-3-8B", OSError("gated repo"))
+    assert "--hf-token" in message
+    assert "That path exists" not in message
+
+
+def test_a_path_that_does_not_exist_is_treated_as_an_id(tmp_path):
+    """A mistyped path and a mistyped id are indistinguishable, so the Hub advice is still right."""
+    message = _could_not_load(str(tmp_path / "nothing-here"), OSError("no such thing"))
+    assert "--hf-token" in message
+
+
+def test_an_unusable_path_does_not_raise_from_inside_the_refusal():
+    """A null byte makes `Path.exists` raise, and a traceback here replaces a usable refusal."""
+    message = _could_not_load("some/model\x00name", OSError("boom"))
+    assert "could not load the model" in message
+    assert "--hf-token" in message
+
+
+def test_the_local_refusal_has_no_trailing_blank_line(tmp_path):
+    """Same property the empty-upstream case asserts: no hole in the output."""
+    local = tmp_path / "weights"
+    local.mkdir()
+    assert not _could_not_load(str(local), OSError("")).endswith("\n")

@@ -952,3 +952,80 @@ def test_the_requirement_check_runs_as_part_of_the_report():
     checks = doctor.run_checks(log=lambda *a, **k: None)
     assert any(c.group == "install" for c in checks)
     assert checks[0].group == "install", "the requirement set is checked before anything else"
+
+
+# ── a CPU torch beside an idle card says which card and why ──────────────────────────
+#
+# Journey 1, 2026-10-13: on a laptop with an idle RTX 3060 and a CPU-only torch, `doctor` said
+# "no cuda device" and talked about a four-hour probe, while `setup` in the very next command
+# named the card, named the CPU-only build and gave the line that fixes it. The tool knew.
+class _FakeTorch:
+    __version__ = "2.14.1+cpu"
+
+    class cuda:      # noqa: N801 - the name torch gives it, and the code under test reads it
+        @staticmethod
+        def is_available():
+            return False
+
+
+def _cpu_torch_beside_a_card(monkeypatch, driver=(13, 0), compute=(8, 6)):
+    from senbonzakura import envsetup
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cpu", "cpu"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: driver)
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: compute)
+
+
+def test_an_idle_card_is_diagnosed_rather_than_merely_reported_absent(monkeypatch):
+    _cpu_torch_beside_a_card(monkeypatch)
+    c = doctor.check_torch()
+    assert c.status == "warn"
+    assert "CPU-only build" in c.detail, f"the cause is not named: {c.detail}"
+    assert "idle" in c.detail
+    assert "-m pip install" in c.fix, f"the fix is not a command: {c.fix}"
+    assert "senbonzakura setup --apply" in c.fix
+
+
+def test_the_cpu_advisory_survives_the_diagnosis(monkeypatch):
+    """The four-hour probe refusal is still true and is still what the reader hits next."""
+    _cpu_torch_beside_a_card(monkeypatch)
+    assert "--slow-probe-ok" in doctor.check_torch().fix
+
+
+def test_a_fault_pip_cannot_fix_still_carries_its_reason(monkeypatch):
+    """A card below every channel's floor has no install command, and the reason is the point."""
+    _cpu_torch_beside_a_card(monkeypatch, compute=(3, 0))
+    c = doctor.check_torch()
+    assert "compute capability 3.0" in c.detail
+    assert "-m pip install" not in c.fix
+    assert "senbonzakura setup" in c.fix
+
+
+def test_a_machine_with_no_card_gains_no_invented_diagnosis(monkeypatch):
+    """`plan` answers "ok" here, and inventing a fault would be worse than saying nothing."""
+    from senbonzakura import envsetup
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: None)
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: None)
+    assert doctor._no_cuda_diagnosis() == ("", "")
+    c = doctor.check_torch()
+    assert c.detail == "2.14.1+cpu, no cuda device"
+    assert c.fix.startswith("scoring is fine on CPU")
+
+
+def test_a_card_present_with_a_cuda_torch_is_not_this_branch(monkeypatch):
+    """Sanity: the diagnosis is only reached when there is genuinely no CUDA device."""
+    from senbonzakura import envsetup
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cu130", "cu130"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: (13, 0))
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: (8, 6))
+    assert doctor._no_cuda_diagnosis() == ("", "")

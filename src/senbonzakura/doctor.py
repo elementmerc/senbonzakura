@@ -544,12 +544,55 @@ def check_torch():
     # default 200-item, 512-token probe at roughly four hours of host generation and exits rather
     # than spending it. An advisory that promises a slow success where the tool delivers a refusal
     # sends the reader looking for a fault in their install.
-    return _warn("torch", f"{torch.__version__}, no cuda device",
-                 "scoring is fine on CPU. An edit is not, on the default flags: the capability "
-                 "probe costs about four hours at host speed, so the run refuses rather than "
-                 "starting, and names the ways past it. They are --capability-n 0 for no "
-                 "capability number, or --slow-probe-ok to spend the hours. The edit itself "
-                 "works on CPU, slowly.")
+    cpu_only = ("scoring is fine on CPU. An edit is not, on the default flags: the capability "
+                "probe costs about four hours at host speed, so the run refuses rather than "
+                "starting, and names the ways past it. They are --capability-n 0 for no "
+                "capability number, or --slow-probe-ok to spend the hours. The edit itself "
+                "works on CPU, slowly.")
+    why, fix = _no_cuda_diagnosis()
+    if why:
+        return _warn("torch", f"{torch.__version__}, no cuda device: {why}",
+                     f"{fix}\n\nUntil then, {cpu_only[0].lower()}{cpu_only[1:]}")
+    return _warn("torch", f"{torch.__version__}, no cuda device", cpu_only)
+
+
+def _no_cuda_diagnosis():
+    """Why there is no CUDA device here, as `(what is wrong, what to do)`, or `("", "")`.
+
+    WHY THIS IS BORROWED RATHER THAN WRITTEN. Journey 1, 2026-10-13, on a laptop with an idle
+    RTX 3060 and a CPU-only torch: `doctor` said "no cuda device" and offered advice about a
+    four-hour probe, and `setup` in the very next command named the card, named the CPU-only
+    build, and gave the exact line to fix it. **The tool knew. `doctor` just did not say it**, and
+    the reader had to run a second command to find out that the hardware they had bought was
+    sitting idle.
+
+    So this asks `envsetup` the question it already answers, rather than growing a second copy of
+    a hardware table that would drift from the first. Every fact-gatherer it calls returns a
+    "could not tell" value of its own rather than raising, and `plan` is pure, so there is nothing
+    here to catch.
+
+    Returns empty strings when there is nothing useful to add, which is the common and correct
+    case: a machine with no NVIDIA card at all has no diagnosis to give beyond the absence, and
+    `plan`'s own answer there is "ok", meaning nothing is wrong that it can see.
+    """
+    from . import envsetup
+
+    torch_version, variant = envsetup.installed_torch()
+    verdict, reason, args = envsetup.plan(
+        gpus=envsetup.nvidia_gpus(), driver=envsetup.driver_cuda_version(),
+        torch_version=torch_version, variant=variant, compute=envsetup.compute_capability())
+    if verdict == "ok":
+        return "", ""
+    if args:
+        import sys as _sys
+        fix = (f"{' '.join([_sys.executable, '-m', 'pip', *args])}\n\n"
+               f"`senbonzakura setup --apply` runs that for you and checks the result starts.")
+    else:
+        # NO COMMAND IS NOT NO ANSWER. `plan` returns a reason without arguments whenever the fault
+        # is one pip cannot fix (a driver too old, a card below every channel's floor), and that
+        # reason is the whole value of asking.
+        fix = "`senbonzakura setup` says the same thing at more length."
+    return reason, fix
 
 
 #: Steps for the page-locked probe. Big enough that the per-allocation overhead does not dominate,

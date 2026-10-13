@@ -62,7 +62,7 @@ classifiers = [
   # Declared because CI runs on all three, not because the code looks portable.
   # Before 2026-07-30 there were no OS classifiers at all, which PyPI presents as
   # OS-independent: a claim nothing had ever tested. macOS means arm64; the CPU
-  # index's newest x86_64 torch is 2.2.2, below this project's 2.5 floor.
+  # index's newest x86_64 torch is 2.2.2, below this project's floor.
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS :: MacOS X",
   "Operating System :: Microsoft :: Windows",
@@ -70,11 +70,12 @@ classifiers = [
 # ── THE PINNING POLICY, decided 2026-09-21 ──────────────────────────────────────────
 #
 # NO SPECULATIVE CEILINGS. Nothing here is capped because a future release MIGHT break
-# it. The evidence is against that reflex: this project declares a floor of
-# `transformers>=4.56` and CI currently resolves 5.14.1, `datasets` 5.0.1 and torch
-# 2.13.0, green, two major boundaries above the floor. A cap written a year ago on
-# suspicion would have blocked exactly that, and would have needed a release of its own
-# to lift.
+# it. The evidence is against that reflex: when this was written the declared floor was
+# `transformers>=4.56` and CI resolved 5.14.1, `datasets` 5.0.1 and torch 2.13.0, green,
+# two major boundaries above the floor. A cap written a year ago on suspicion would have
+# blocked exactly that, and would have needed a release of its own to lift. The floor has
+# since been raised to 5.10.1 for a reason recorded below; the argument is unchanged and
+# the figures are kept as the dated evidence for it rather than updated to today's.
 #
 # AN EXCLUSION IS A MEMORY, NOT A GUESS. A `!=` goes in when a version has been MEASURED
 # broken here, and it carries the symptom in a comment beside it so the next reader can
@@ -140,9 +141,12 @@ dependencies = [
   # code at install time, and PyPI forbids depending on PyTorch's own index. So the default is the
   # platform's wheel, which is CUDA on Linux and CPU-ONLY on Windows, and `senbonzakura setup`
   # corrects it on the machine it is run on.
-  # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE
-  # path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
-  # succeed into an environment the tool then rejects.
+  # The code refuses to start below `crashsafe.MIN_TORCH`, which is 2.7: transformers'
+  # MoE path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
+  # succeed into an environment the tool then rejects. The constant is named rather than
+  # its value restated, because the two said different things from 2026-10-07 until this
+  # was corrected on 2026-10-13: the floor moved to 2.7 and the sentence beside it went on
+  # saying 2.5, in the file whose job is declaring floors.
   #
   # The floors above 3.12 are wheel availability, not a code requirement: 2.5 has
   # no cp313 wheels and the first build with cp314 is 2.9 (checked against PyPI,

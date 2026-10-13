@@ -18,11 +18,18 @@ credentials handed to a box that did not need them.
 The test that matters most on this page is `test_the_pod_goes_back_even_when_the_work_raises`.
 Everything else is arithmetic; that one is the bill.
 """
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
-from senbonzakura import rented
+# NOT `from senbonzakura import rented`. This module lives outside the package on purpose: it
+# reads an API key and makes HTTPS calls, nothing reaches it, and it used to ship in every wheel
+# anyway. See `unshipped/README.md`. The test follows it rather than the module staying put.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unshipped"))
+
+import rented
 
 
 def spec(**kw):

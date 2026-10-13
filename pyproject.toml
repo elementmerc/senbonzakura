@@ -549,6 +549,12 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # run, and a broken line there is worse than a broken line in the source, because the reader
 # cannot tell whether they did something wrong.
 "notebooks/*.ipynb" = ["CPY001"]
+
+# `unshipped/` holds single modules kept deliberately out of the wheel, so they are deliberately
+# NOT a package: being a package under `src/` is precisely how a module gets discovered and
+# shipped, which is the thing that went wrong. INP001 asks for the `__init__.py` that would undo
+# that. See `unshipped/README.md`.
+"unshipped/*.py" = ["INP001"]
 # Only rules that are NOT in the global `ignore` above belong here. A per-file
 # entry duplicating a global one is dead config that reads as a decision, and
 # the wrong lesson gets drawn from it when the global entry is later lifted.

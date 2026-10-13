@@ -429,7 +429,15 @@ DOCUMENTATION_DIRS = (
     "head-to-head/",    # the results notes are handled above; the rest are READMEs
     "tests/",           # a fixtures README
     "scrollcraft/",     # the marketing site's build briefs and its page-shape registry
+    "unshipped/",       # see below
 )
+#: `unshipped/` was added on 2026-10-13, when `rented.py` was moved out of the package for reading
+#: a provider credential while being reachable from nothing. The directory holds modules that are
+#: deliberately not in the wheel and one README stating that rule, so the markdown there is prose
+#: about packaging. It meets the same test already recorded for `web/` and `scrollcraft/`: a small,
+#: single-purpose, reviewable tree with no path by which a run artefact lands in it. The risk this
+#: gate exists for is not absent, because a note quoting a model's output would be a corpus this
+#: cannot see, so a reviewer of anything under it reads with that in mind.
 
 
 def markdown_findings(path: Path, text: str) -> list[str]:

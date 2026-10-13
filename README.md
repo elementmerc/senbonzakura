@@ -109,7 +109,8 @@ without them. `senbonzakura doctor` says which you got.
 
 **If pip refuses with "externally-managed-environment", make a virtual environment.** Debian,
 Ubuntu and Fedora mark the system Python as managed by the package manager, so `pip install` into
-it is blocked, and `--user` is blocked too. A stranger trying this on a fresh Ubuntu hit that and
+it is blocked, and so is installing into your home directory. A stranger trying this on a fresh
+Ubuntu hit that and
 gave up, which is the only install note here written from somebody failing rather than from the
 documentation:
 

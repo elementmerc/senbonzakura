@@ -20,7 +20,7 @@
  * a test holding it to the project's own released version is a release step that cannot be
  * forgotten, which is the difference this project keeps paying for.
  */
-export const RELEASE = '0.5.0';
+export const RELEASE = '0.5.1';
 
 /** The tag that names it on GitHub. */
 export const TAG = `v${RELEASE}`;

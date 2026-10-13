@@ -38,6 +38,8 @@ they ran the command.
 ### Breaking
 - `--inspect` refuses a negative layer index or a negative ablation strength. This landed in 0.5.0
   and was not written down at the time
+- The floor on `senbonzakura-check` moves to 0.5.1. The two distributions share a version line, so
+  a pin holding the checker at 0.5.0 will conflict
 
 ### Docs
 - The README says what to do when pip refuses with "externally-managed-environment", which is the

@@ -31,7 +31,11 @@ import re
 import sys
 from pathlib import Path
 
-import tomllib
+# NOT `import tomllib`. It is 3.11+, this project declares `requires-python = ">=3.10"`, and a
+# direct import makes the whole suite uncollectable on the declared minimum interpreter.
+# `tests/tomlread.py` exists for exactly this, and `test_no_test_imports_tomllib_directly` is the
+# rule that stops it being a convention nobody follows. This file was its sixth catch.
+from tomlread import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))

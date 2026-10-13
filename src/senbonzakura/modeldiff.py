@@ -54,7 +54,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve, checkpoint, say, streaming
+from . import argresolve, checkpoint, crashsafe, say, streaming
 
 HELP = """\
 Compare a checkpoint against the base it claims to come from, tensor by tensor.
@@ -510,10 +510,14 @@ DIFF_OK, DIFF_UNREADABLE = 0, 2
 def _write(args, report, log):
     """The reporting tail, split out so the refusal above returns without duplicating it."""
     if args.out:
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(f"{args.out}.part")
-        tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        tmp.replace(args.out)          # atomic: a reader never sees a half-written report
+        # THROUGH THE SHARED WRITER, which this used to reimplement badly. The hand-rolled version
+        # here renamed on close and did nothing else: no fsync, and no cleanup, so a failure
+        # between writing and renaming left a `.part` behind for ever, which is the pattern
+        # baseline 2.1 forbids. `crashsafe.atomic_write` fsyncs, removes the partial on any
+        # exception, and explains a failed replace by looking at what is on disk. It imports
+        # nothing heavy, so it costs this command none of the startup time it promises.
+        with crashsafe.atomic_write(args.out) as fh:
+            fh.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
         log(f"wrote {args.out}")
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

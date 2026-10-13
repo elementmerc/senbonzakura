@@ -994,12 +994,13 @@ def main(argv=None):
     say.say(f"budget for {a.model}")
     resources.report(budget)
     if a.out:
-        payload = json.dumps(_budget_json(budget), indent=2, sort_keys=True) + "\n"
-        tmp = pathlib.Path(a.out).with_name(pathlib.Path(a.out).name + ".part")
         # Written through a sibling and renamed, like every other artefact this tool emits, so a
-        # crash mid write cannot leave a truncated budget that reads as a complete one.
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, a.out)
+        # crash mid write cannot leave a truncated budget that reads as a complete one. Through
+        # the shared writer rather than by hand, which adds the fsync and the cleanup this did
+        # not have: a failure between the write and the rename used to leave a `.part` behind.
+        from . import crashsafe
+        with crashsafe.atomic_write(a.out) as fh:
+            fh.write(json.dumps(_budget_json(budget), indent=2, sort_keys=True) + "\n")
         print(f"  written to {a.out}")
 
     say.say(f"verdict: {budget.verdict}", indent="  ")

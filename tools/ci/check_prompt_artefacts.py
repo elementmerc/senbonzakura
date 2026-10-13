@@ -250,6 +250,18 @@ KNOWN_TEXT_FILES = frozenset({
     # would fail that test rather than pass this gate.
     "docs/licences/gemma-terms-of-use.txt",
     "docs/licences/meta-llama-3-community-license.txt",
+    # THE VENDORED FONT'S LICENCE, added 2026-10-13. The brand cards are set in Hanken Grotesk,
+    # which lives in `assets/brand/fonts/`; the SIL Open Font License permits redistribution only
+    # if its text travels with the font, so this file is an obligation rather than a convenience.
+    #
+    # Named by exact path, like the two above and for the same reason: a `assets/brand/fonts/*`
+    # rule would clear whatever anybody later dropped in that directory, and this gate is the one
+    # control between a harmful prompt and a public push. A second vendored face costs one line,
+    # and that line is where a human looks at it.
+    #
+    # It is legal prose fetched verbatim from the font project's own repository, and a corpus
+    # substituted into it would have to survive being read by whoever next checks the licence.
+    "assets/brand/fonts/OFL.txt",
 })
 
 
@@ -349,11 +361,18 @@ def notebook_findings(path: Path, raw: bytes) -> list[str]:
 #: review is what covers that. It is a real risk for a MARKETING page specifically, where quoting
 #: a model's output is a tempting thing to do, so the reviewer of any copy change to `web/` should
 #: read it with that in mind rather than relying on this list.
+#: `.ttf` joined on 2026-10-13, when the brand cards began to be set in a vendored face rather than
+#: cropped from an image. A font is a glyph outline table: the only text it carries is its own
+#: metadata, the family name and the licence string, which a corpus cannot hide in at any useful
+#: length. The honest caveat, stated rather than left implied: a TrueType `name` table CAN hold
+#: arbitrary strings, so this clears the kind on the strength of these files being vendored
+#: third-party artefacts with a recorded licence and a notice, not on the strength of the format
+#: being incapable. A font added from somewhere unvetted is a review, exactly like a new dependency.
 IGNORED_KINDS = frozenset({
     ".1", ".bib", ".cff", ".css", ".cuda", ".dockerignore", ".gif", ".gitignore", ".gitkeep",
     ".heretic", ".ico", ".in", ".jinja", ".js", ".lock", ".mjs", ".npmrc", ".png", ".py", ".rb",
     ".rs", ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".template", ".tool",
-    ".toml", ".ts", ".tsx", ".webmanifest", ".yaml", ".yml",
+    ".toml", ".ts", ".tsx", ".ttf", ".webmanifest", ".yaml", ".yml",
     "Dockerfile", "LICENSE", "NOTICE",
 })
 
@@ -410,7 +429,15 @@ DOCUMENTATION_DIRS = (
     "head-to-head/",    # the results notes are handled above; the rest are READMEs
     "tests/",           # a fixtures README
     "scrollcraft/",     # the marketing site's build briefs and its page-shape registry
+    "unshipped/",       # see below
 )
+#: `unshipped/` was added on 2026-10-13, when `rented.py` was moved out of the package for reading
+#: a provider credential while being reachable from nothing. The directory holds modules that are
+#: deliberately not in the wheel and one README stating that rule, so the markdown there is prose
+#: about packaging. It meets the same test already recorded for `web/` and `scrollcraft/`: a small,
+#: single-purpose, reviewable tree with no path by which a run artefact lands in it. The risk this
+#: gate exists for is not absent, because a note quoting a model's output would be a corpus this
+#: cannot see, so a reviewer of anything under it reads with that in mind.
 
 
 def markdown_findings(path: Path, text: str) -> list[str]:

@@ -94,6 +94,69 @@ def test_the_big_distribution_depends_on_the_small_one(main_cfg):
         "command that imports something nobody installed")
 
 
+# ── the floor on that dependency, which has to rise with the release line ────────────────────
+#
+# WHAT THIS COSTS WHEN IT IS WRONG, measured on 2026-10-12. The 0.5.0 release commit went red on
+# ten CI jobs, from one stale character: the pin still said `<0.5` while both distributions had
+# moved to 0.5.0. The two shapes it took are worth naming, because only one of them looks like a
+# failure.
+#
+#   The install jobs died loudly, with `ResolutionImpossible`, pip refusing to hold the in-tree
+#   checker 0.5.0 and a `senbonzakura` that forbids it at the same time.
+#
+#   The test jobs did something worse. pip saw an installed 0.5.0 the constraint disallowed and
+#   SILENTLY DOWNGRADED it to PyPI's 0.4.1, so nine thousand tests then ran against last
+#   release's checker and 68 failed on features the working tree has. Nothing in that output says
+#   "wrong version"; it reads as a code defect, and it cost the first hour of the diagnosis.
+#
+# `tools/ci/check_wheel.py` does enforce this, against a built wheel, in the publish workflow,
+# which is AFTER the tag. A check that only fires once the release is cut cannot stop the release
+# being cut wrong, so the floor is asserted here as well, where a commit meets it.
+
+def test_the_floor_on_the_checker_is_this_release_line(main_cfg):
+    """The floor is the current version, not a number somebody left behind two releases ago.
+
+    Asserted against `_version.py` rather than a literal, so it cannot go stale the way the thing
+    it guards went stale.
+    """
+    from senbonzakura._version import __version__
+
+    pin = next(d for d in main_cfg["project"]["dependencies"]
+               if d.split(">")[0].split("=")[0].strip() == "senbonzakura-check")
+    assert f">={__version__}" in pin, (
+        f"this project is {__version__} and its checker floor is {pin!r}. A floor below the "
+        f"current line lets pip resolve the dependency to the PREVIOUS release, which it does "
+        f"silently, by downgrading an in-tree install that was already correct.")
+
+
+def test_the_ceiling_on_the_checker_is_the_next_minor(main_cfg):
+    """A floor alone would admit a future major, and the two distributions share a version line."""
+    from senbonzakura._version import __version__
+
+    major, minor = (int(p) for p in __version__.split(".")[:2])
+    pin = next(d for d in main_cfg["project"]["dependencies"]
+               if d.split(">")[0].split("=")[0].strip() == "senbonzakura-check")
+    assert f"<{major}.{minor + 1}" in pin, (
+        f"this project is {__version__}, so the checker ceiling should be <{major}.{minor + 1}; "
+        f"the pin reads {pin!r}")
+
+
+def test_both_distributions_declare_the_same_version():
+    """The premise the two tests above rest on, asserted rather than assumed.
+
+    If the checker were allowed to drift to its own number, a floor equal to this project's
+    version would be a floor at a version the checker never publishes, and the pin would be
+    unsatisfiable from the index rather than merely stale.
+    """
+    from senbonzakura_check._version import __version__ as checker_version
+
+    from senbonzakura._version import __version__ as main_version
+
+    assert main_version == checker_version, (
+        f"senbonzakura is {main_version} and senbonzakura-check is {checker_version}; they share "
+        "a version line on purpose, and the pin between them is written from this one")
+
+
 # ── the direction of the imports, which is invisible and therefore gated ─────────────────────
 
 def _imports_of(pkg):

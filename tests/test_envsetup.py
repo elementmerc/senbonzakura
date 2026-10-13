@@ -330,18 +330,24 @@ def _machine(monkeypatch, *, system, gpus, driver, torch_version, variant):
 
 
 def test_apply_runs_the_command_it_printed(capsys, monkeypatch):
-    ran = {}
+    # EVERY CALL, not the last one. From 2026-10-12 `--apply` makes a second subprocess call after
+    # pip, to check the torch it just installed can initialise CUDA, so a recorder that kept only
+    # the most recent argv saw the probe and reported that the install command was never run. The
+    # claim this test makes is about the pip call, which is still made.
+    calls = []
     _machine(monkeypatch, system="Windows", gpus=["GPU 0: RTX 3060"], driver=(13, 0),
              torch_version="2.14.0", variant=None)
+
     def record(argv, **k):
-        ran["argv"] = argv
+        calls.append(argv)
         return _Proc(returncode=0)
 
     monkeypatch.setattr(envsetup.subprocess, "run", record)
     assert envsetup.main(["--apply"]) == 0
-    assert "--index-url" in ran["argv"]
-    assert ran["argv"][-1] == "torch"
-    assert "cu130" in " ".join(ran["argv"])
+    pip = next((c for c in calls if "--index-url" in c), None)
+    assert pip is not None, f"no pip install was run; calls were {calls}"
+    assert pip[-1] == "torch"
+    assert "cu130" in " ".join(pip)
 
 
 def test_a_failing_pip_is_reported_rather_than_swallowed(capsys, monkeypatch):
@@ -838,3 +844,179 @@ def test_a_failing_pip_prints_the_command_rather_than_pointing_at_stdout(capsys,
     assert "pip exited 1" in err
     assert "the command above" not in err
     assert "-m pip install" in err, f"the command to debug is not in the message: {err}"
+
+
+# ── a crashed post-install probe must put the previous torch back ────────────────────
+#
+# Journey 1, 2026-10-13, on a real laptop: `setup --apply` ran for 21 minutes, downloaded 5.3 GB,
+# exited 2, and left the machine with no working torch at all. The CPU build that had been there
+# was gone, so the reader finished STRICTLY WORSE OFF than before they ran the command. The code
+# already knew: it printed "this environment has no working torch at all". Knowing is not fixing.
+def _crashed_after_install(monkeypatch, restore_rc=0, installed=("2.14.0", None)):
+    """Drive `--cuda <channel> --apply` to a clean install whose result segfaults.
+
+    Returns the list of pip argument lists that were run, in order, so a test can assert on the
+    restore command rather than only on the message about it.
+    """
+    calls = []
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: installed)
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+    monkeypatch.setattr(envsetup, "cuda_initialises",
+                        lambda: ("crashed", "the process died with signal 11"))
+
+    def _run(cmd, **kwargs):
+        calls.append(list(cmd[3:]))
+        return _Proc(returncode=0 if len(calls) == 1 else restore_rc)
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _run)
+    return calls
+
+
+def test_a_crashed_new_torch_is_rolled_back_to_the_build_that_was_there(capsys, monkeypatch):
+    calls = _crashed_after_install(monkeypatch)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert len(calls) == 2, f"the restore never ran: {calls}"
+    assert calls[1] == ["install", "--upgrade", "--force-reinstall", "torch==2.14.0"]
+    err = capsys.readouterr().err
+    assert "RESTORED" in err
+    # The old message asserted the environment was broken. Asserting that after a successful
+    # restore would be a lie, and a lie the reader can check.
+    assert "no working torch at all" not in err
+
+
+def test_the_rollback_pins_the_channel_the_previous_build_came_from(capsys, monkeypatch):
+    """An unpinned restore reinstalls the newest build on the channel, not the reader's build."""
+    calls = _crashed_after_install(monkeypatch, installed=("2.13.1+cu126", "cu126"))
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert calls[1] == ["install", "--upgrade", "--force-reinstall",
+                        "--index-url", f"{envsetup.INDEX}/cu126", "torch==2.13.1+cu126"]
+
+
+def test_a_rollback_that_itself_fails_prints_the_command_to_run_by_hand(capsys, monkeypatch):
+    calls = _crashed_after_install(monkeypatch, restore_rc=1)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert len(calls) == 2
+    err = capsys.readouterr().err
+    assert "THE RESTORE ALSO FAILED" in err
+    assert "no working torch" in err
+    assert "torch==2.14.0" in err, f"the restore command is not in the message: {err}"
+
+
+def test_a_rollback_pip_that_cannot_be_run_at_all_is_reported_not_raised(capsys, monkeypatch):
+    calls = []
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+    monkeypatch.setattr(envsetup, "cuda_initialises", lambda: ("crashed", "signal 11"))
+
+    def _run(cmd, **kwargs):
+        calls.append(list(cmd[3:]))
+        if len(calls) == 1:
+            return _Proc(returncode=0)
+        raise OSError("no such file")
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _run)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    err = capsys.readouterr().err
+    assert "the restore could not be run" in err
+    assert "THE RESTORE ALSO FAILED" in err
+
+
+def test_no_rollback_is_attempted_when_there_was_no_torch_to_begin_with(capsys, monkeypatch):
+    """`--cuda` needs torch present to reach this path, so the None case is driven directly."""
+    assert envsetup.restore_args(None, None) is None
+    assert envsetup.restore_args(None, "cu126") is None
+
+
+# ── the WSL cap is named BEFORE the download, not after the crash ────────────────────
+#
+# Journey 1, 2026-10-13: `setup` on a WSL2 Ubuntu with an RTX 3060 proposed cu132, the reader took
+# it, and 21 minutes and 5.3 GB later the result died with SIGSEGV. The cap that explains it was
+# named only in the failure message, by which time the money was spent.
+def _flat(text):
+    """The printed reason, with the wrapping taken out. `textwrap` breaks it at the terminal
+    width, so an assertion on a phrase is an assertion about where the line happened to end.
+    """
+    return " ".join(text.split())
+
+
+def _wsl_machine(monkeypatch, wsl):
+    monkeypatch.setattr(envsetup, "is_wsl", lambda: wsl)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cpu", "cpu"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: (13, 4))
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: (8, 6))
+
+
+def test_a_cuda_proposal_on_wsl_says_so_before_anything_is_downloaded(capsys, monkeypatch):
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main([]) == 0
+    out = _flat(capsys.readouterr().out)
+    assert "THIS IS WSL" in out
+    assert "capped by the libcuda" in out
+    assert "Nothing was changed" in out, "the caveat must appear in the proposal, not after it"
+
+
+def test_the_same_machine_outside_wsl_gains_no_caveat(capsys, monkeypatch):
+    """The cap is a WSL fact. Saying it on bare metal would be noise that teaches readers to skim."""
+    _wsl_machine(monkeypatch, wsl=False)
+    assert envsetup.main([]) == 0
+    assert "THIS IS WSL" not in _flat(capsys.readouterr().out)
+
+
+def test_an_explicit_cuda_flag_on_wsl_carries_the_same_caveat(capsys, monkeypatch):
+    """`--cuda` bypasses `plan`, and used to bypass this with it."""
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main(["--cuda", "cu130"]) == 0
+    assert "THIS IS WSL" in _flat(capsys.readouterr().out)
+
+
+def test_an_explicit_rocm_channel_gains_no_cuda_caveat(capsys, monkeypatch):
+    """A ROCm build has no libcuda to be capped by."""
+    _wsl_machine(monkeypatch, wsl=True)
+    assert envsetup.main(["--cuda", "rocm6.4"]) == 0
+    assert "THIS IS WSL" not in _flat(capsys.readouterr().out)
+
+
+def test_the_caveat_names_the_next_channel_to_try_without_claiming_it_works(monkeypatch):
+    """On the one machine this was measured on, the channel that worked was two steps down."""
+    text = envsetup._wsl_caveat("cu132")
+    assert "--cuda cu130" in text
+    assert "step down a channel at a time" in text
+    for claim in ("is the one that works", "and that one works", "known to work"):
+        assert claim not in text, f"the caveat asserts an unmeasured result: {claim!r}"
+
+
+def test_the_caveat_on_the_oldest_channel_says_there_is_nowhere_to_step(monkeypatch):
+    oldest = envsetup.CUDA_CHANNELS[-1][1]
+    assert envsetup.next_channel_below(oldest) is None
+    assert "no older channel" in envsetup._wsl_caveat(oldest)
+
+
+def test_wsl_is_read_from_proc_version_not_from_the_environment(tmp_path, monkeypatch):
+    """`WSL_DISTRO_NAME` is absent from a service or a cron job, so a caveat built on it vanishes."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.0.0-38-generic (buildd@lcy02) #39-Ubuntu SMP\n")
+    real_open = open
+    monkeypatch.setattr("builtins.open",
+                        lambda f, *a, **k: real_open(fake if f == "/proc/version" else f, *a, **k))
+    assert envsetup.is_wsl() is False
+    fake.write_text("Linux version 6.6.87.2-microsoft-standard-WSL2 (root@build) #1 SMP\n")
+    assert envsetup.is_wsl() is True
+
+
+def test_a_machine_with_no_proc_version_is_not_called_wsl(monkeypatch):
+    """No /proc is every non-Linux platform. Raising inside a diagnosis would be worse."""
+    def _no(f, *a, **k):
+        raise OSError("no such file")
+    monkeypatch.setattr("builtins.open", _no)
+    assert envsetup.is_wsl() is False

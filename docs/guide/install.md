@@ -91,6 +91,53 @@ you get depends on your operating system rather than on what is in the machine:
 | macOS on Apple silicon | a build that uses Metal. Correct |
 | Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
+### If your disk is tight, move the model cache
+
+Models go to Hugging Face's cache, not into this tool's directory, and they are the largest thing
+you will download: Qwen3-1.7B is about 3.8 GB and a bigger model is proportionally worse. The cache
+defaults to `~/.cache/huggingface`, so on a machine whose home partition is nearly full it fills
+the wrong disk and nothing here warned you.
+
+Point it somewhere with room:
+
+```sh
+export HF_HOME=/mnt/big-disk/huggingface
+```
+
+Set it before the first run, in your shell profile if you want it to stick. Nothing in this project
+needs the cache in any particular place.
+
+`senbonzakura doctor` does **not** currently report where the model cache is, or how much room is
+left on the disk holding it. It reports this tool's own track cache, which is small. So if you move
+`HF_HOME`, nothing here will confirm it took effect. `hf env` will: it prints `HF_HUB_CACHE`, which
+is the directory the weights actually land in. (Not `huggingface-cli env`, which is deprecated and
+no longer runs, and which this project already strips out of upstream advice for being stale.)
+
+### If you have no graphics card, choose your torch first
+
+The table's second row is avoidable, and until 2026-10-11 this page described the problem without
+giving you the way round it. Install torch from the CPU index before the tool, and the fifteen CUDA
+packages never arrive:
+
+```sh
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+```
+
+Then install the tool as the section above shows. pip finds torch already satisfied and leaves it
+alone. This is exactly what the Docker image
+does, and it is why that image is **2.11 GB rather than about 6 GB**. That figure is measured; the
+pip route's own total is not, so treat the saving as the same shape rather than the same number.
+
+What you give up is the card you haven't got. Every instrument runs on a processor: `compass`,
+`drift`, `score`, `check`, `doctor`, `convert`, `quantise`. The abliteration itself runs too, and
+slowly enough that the no-card section of [the quickstart](/guide/quickstart#without-a-graphics-card)
+tells you not to plan on it.
+
+If you later get a card, `senbonzakura setup` notices that torch is a CPU build while a card is
+present. When it can read the CUDA version your driver supports, it prints the exact command to
+swap the build out. When it can't read it, it says so and names the channels to choose from rather
+than guessing one for you. `senbonzakura doctor` tells you which build you're on either way.
+
 ::: tip Why the Windows row is in bold
 PyPI's Windows torch is 124 MB and CPU-only; the CUDA build is not on PyPI at all. So a gaming
 laptop with a 3060 in it installs a torch that cannot see the card, and nothing warns you. The
@@ -267,6 +314,18 @@ so the edit would be written into something discarded before the next forward pa
 would come out unedited, still refusing, with nothing reporting it. The refusal names the weight
 and tells you to load with more VRAM or more host-RAM headroom.
 
+**That limit is about writing, not reading, and the difference is the way out.** A forward pass only
+reads the weights, so disk offload is perfectly sound for anything that measures rather than edits.
+`senbonzakura stream-extract` takes the directions off a checkpoint larger than your card and your
+RAM put together, one group of layers at a time, and `senbonzakura stream-bake` applies them the
+same way. `senbonzakura budget --model <a local checkpoint>` prints what a given model will ask of
+the machine before you commit to a run, though it needs the checkpoint on disk already, so it
+answers "should I have done this" better than "should I".
+
+These are in [the command reference](/reference/cli) with their flags. They were missing from this
+page until 2026-10-11, which meant a reader whose machine was too small was told the tool could not
+help them, when the half they wanted worked.
+
 Worth knowing about *when* that refusal arrives: it fires as the first edit is applied, which is
 after the download and the load. On a large model that is a long wait before being told the card is
 too small, so do this arithmetic first.
@@ -303,7 +362,7 @@ a dependency of it.
 and is checked at build time:
 
 ```
-docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:v0.4.1 doctor
+docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:v0.5.0 doctor
 ```
 
 ## The optional extras

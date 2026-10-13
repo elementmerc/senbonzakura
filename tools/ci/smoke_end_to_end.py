@@ -471,7 +471,13 @@ def main(argv=None):
     run("drift, against the base it was made from",
         ["senbonzakura", "drift", "--model", str(model_dir), "--base", MODEL,
          "--prompts", str(prompts), "--out", str(out / "drift.json"), "--label", "smoke",
-         "--batch", "4"],
+         # `--device cpu` LIKE EVERY OTHER STAGE HERE, and its absence was a latent fault this
+         # stage hid. `--device` defaults to `cuda`, and on a card-less runner the loader's
+         # `device_map="auto"` has accelerate place the model on the processor anyway, so this
+         # stage asked for a card it did not have, ran on the CPU, and reported the CPU path as
+         # working. It was the only one of six stages not to say so. Surfaced on 2026-10-11 when
+         # the loader began refusing a device this machine cannot use.
+         "--device", "cpu", "--batch", "4"],
         expect_marker="DRIFT_DONE")
 
     run("the model card that would travel with it",

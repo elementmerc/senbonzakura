@@ -470,6 +470,12 @@ def test_loader_cpu_flips_padding_and_sets_pad(monkeypatch, tiny_model, tiny_tok
 
 
 def test_loader_cuda_n_branch(monkeypatch, tiny_model, tiny_tok):
+    # THE CARD IS DECLARED, because the loader refuses an unusable device from 2026-10-11 and this
+    # test's whole subject is the placement branch taken on a machine that HAS one. Without this
+    # the test passed on a developer box with a card and failed on CI, which is the hardware
+    # dependence the refusal was moved into the loader to avoid; see
+    # tests/test_a_device_this_machine_cannot_use_is_refused_before_the_download.py.
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
     _patch_hf(monkeypatch, tiny_model, tiny_tok)
     m, t = cli.load_model_and_tokenizer("x", device="cuda:1")   # exercises the {"":1} device_map branch
     assert m is tiny_model
@@ -477,6 +483,7 @@ def test_loader_cuda_n_branch(monkeypatch, tiny_model, tiny_tok):
 
 def test_loader_cuda_auto_branch(monkeypatch, tiny_model, tiny_tok):
     seen = {}
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)   # see the note above
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",

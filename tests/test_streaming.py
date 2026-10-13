@@ -98,8 +98,22 @@ def test_a_file_too_short_to_hold_a_header_is_refused(tmp_path):
 
 
 def test_a_header_longer_than_the_file_is_refused(tmp_path):
+    """AMENDED 2026-10-13. This declared 1 TB and matched "header says it is".
+
+    A declared length is now judged against the format's own ceiling BEFORE it is judged against
+    the file, so a terabyte is refused by the cap and carries the cap's message. The property this
+    test was written for, that a header claiming more than the file holds is refused, is unchanged
+    and is asserted by the case below it, which stays under the cap so it reaches that branch.
+    """
     path = tmp_path / "lying.safetensors"
     path.write_bytes(struct.pack("<Q", 1 << 40) + b"{}")
+    with pytest.raises(streaming.ShardError, match="reads at most"):
+        streaming.read_header(path)
+
+
+def test_a_header_under_the_cap_but_longer_than_the_file_is_still_refused(tmp_path):
+    path = tmp_path / "lying-modestly.safetensors"
+    path.write_bytes(struct.pack("<Q", 4096) + b"{}")
     with pytest.raises(streaming.ShardError, match="header says it is"):
         streaming.read_header(path)
 
@@ -727,3 +741,95 @@ def test_a_writable_tensor_comes_back_so_the_bake_can_edit_it(tmp_path):
     index = streaming.index_layers(root)
     got = streaming.load_layer(index, 0)["model.layers.0.mlp.down_proj.weight"]
     got += 1.0  # in place, as the bake does
+
+
+# ── a crafted header must not end the command that was inspecting it ─────────────────
+#
+# `diff` and `budget` exist to inspect checkpoints somebody else published, which is the definition
+# of input you do not trust. Until 2026-10-13 a crafted header ended both with an uncaught
+# `RecursionError`, which is neither a `ValueError` nor an `OSError` and so went straight past both
+# arms of the validation as a traceback.
+#
+# **The demonstrated crash was a 200 KB file**, so the size cap that looked like the obvious fix
+# would not have stopped it. Both bounds are here because neither covers the other.
+def _header(tmp_path, blob, *, name="crafted.safetensors", length=None):
+    path = tmp_path / name
+    path.write_bytes(struct.pack("<Q", len(blob) if length is None else length) + blob)
+    return path
+
+
+def test_a_header_nested_past_the_recursion_limit_is_refused_not_crashed(tmp_path):
+    """The exact file that was demonstrated: 100,001 brackets, about 200 KB on disk."""
+    depth = 100_001
+    path = _header(tmp_path, b'{"a":' + b"[" * depth + b"]" * depth + b"}")
+    assert path.stat().st_size < 1_000_000, "the point is that this is a SMALL file"
+    with pytest.raises(streaming.ShardError, match="nests deeper than this reads"):
+        streaming.read_header(path)
+
+
+def test_a_header_that_parses_and_still_nests_too_deep_is_refused(tmp_path):
+    """A document can be hostile while staying inside the interpreter's limit, and everything
+    below `read_header` walks what it returns.
+    """
+    depth = 300
+    path = _header(tmp_path, b'{"a":' + b"[" * depth + b"]" * depth + b"}")
+    with pytest.raises(streaming.ShardError, match="nests past"):
+        streaming.read_header(path)
+
+
+def test_a_header_declaring_more_than_the_format_allows_is_refused(tmp_path):
+    """Judged on the declared length, so it holds for a checkpoint larger than the cap too.
+
+    A 145 GB checkpoint can declare a 145 GB header without ever exceeding its own size, which is
+    why this is asked before the file-size comparison rather than after it.
+    """
+    path = _header(tmp_path, b'{"a":1}', length=200 * 1024 * 1024)
+    with pytest.raises(streaming.ShardError, match="reads at most"):
+        streaming.read_header(path)
+
+
+def test_the_cap_is_the_formats_own_ceiling_and_not_the_checkers(tmp_path):
+    """A safetensors header on a large sharded model legitimately runs to megabytes.
+
+    Borrowing the checker's artefact bound, set for result files, would refuse real checkpoints.
+    """
+    from senbonzakura_check.registry import MAX_ARTEFACT_BYTES
+    assert streaming.MAX_HEADER_BYTES == 100 * 1024 * 1024
+    assert streaming.MAX_HEADER_BYTES > MAX_ARTEFACT_BYTES
+
+
+def test_an_ordinary_header_is_unaffected_by_either_bound(shard):
+    """The bounds must refuse crafted files and nothing else."""
+    header, offset = streaming.read_header(shard)
+    assert set(header) >= {"a", "b", "c"}
+    assert offset > 8
+
+
+def test_a_realistically_nested_header_is_accepted(tmp_path):
+    """Real headers nest three deep: the object, each tensor's entry, and its shape list."""
+    blob = json.dumps({
+        "__metadata__": {"format": "pt"},
+        "w": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]},
+    }).encode()
+    header, _ = streaming.read_header(_header(tmp_path, blob))
+    assert header["w"]["shape"] == [2, 2]
+
+
+def test_the_depth_bound_is_the_checkers_rather_than_a_second_copy():
+    """Two numbers in two places drift, and this project has paid for that already."""
+    import ast
+    import inspect
+    import textwrap
+
+    from senbonzakura_check.registry import MAX_ARTEFACT_DEPTH
+    src = inspect.getsource(streaming.read_header)
+    assert "MAX_ARTEFACT_DEPTH" in src
+    # THE CODE ONLY, WITH THE PROSE REMOVED. The first version of this searched the whole source
+    # and matched the digits of "200 KB" in the docstring, which is prose about the crash rather
+    # than a restated limit. A substring match over a function that documents itself fails for the
+    # wrong reason, which is the shape of mistake this file's own subject is about.
+    fn = ast.parse(textwrap.dedent(src)).body[0]
+    if ast.get_docstring(fn) is not None:
+        fn.body = fn.body[1:]
+    assert str(MAX_ARTEFACT_DEPTH) not in ast.unparse(fn), \
+        "the limit is restated as a literal beside its name"

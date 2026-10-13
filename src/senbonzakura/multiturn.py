@@ -542,7 +542,7 @@ def main(argv=None):
 
     model, tok = _cli_mod.load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template)
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
 
     def send(conversations):
         return generate_turn(model, tok, conversations, a.device, batch=a.batch,

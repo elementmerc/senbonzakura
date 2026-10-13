@@ -11,6 +11,22 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # ── WHY `main` IS ALSO RUN ON A TIMER, added 2026-10-13 ───────────────────────────────────────
+  #
+  # `main` moves only at a release (baseline §8), so between releases it is the one branch nothing
+  # re-runs. That is not a theoretical gap: `main` sat at 9ffe308 from 2026-10-05 to 2026-10-13
+  # with nine failing jobs, and the README's CI badge tracks the default branch, so the project's
+  # front page said "CI failing" to every visitor for eight days.
+  #
+  # IT WAS NOT BROKEN BY BAD CODE. It failed on `torch: Dependency not found on PyPI and could not
+  # be audited`, a defect `dev` had ALREADY FIXED at the time. `main` was broken by being stale,
+  # which is the failure mode a release branch has and a development branch does not: the world
+  # moves (an index, an advisory feed, a runner image) under a commit nobody is re-testing.
+  #
+  # A push trigger cannot catch that, because the cause is not a push. Only a clock can. Daily
+  # rather than weekly because the badge is public and the cost is zero on a public repository.
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read
@@ -36,6 +52,22 @@ permissions:
 # happened here. If this block's last key is ever removed, remove the `env:` line with it.
 env:
   AUDIT_REQUIRED: 'false'
+  # ── CARGO'S NETWORK RETRY, raised from its default of 3, added 2026-10-13 ─────────────────────
+  #
+  # The macOS leg failed on `Could not resolve host: index.crates.io` while cargo fetched pyo3 for
+  # the native extension. Not a test failure and not our code: DNS on the runner, during the one
+  # step that reaches the network.
+  #
+  # It is worth a fix rather than a re-run because the leg has now failed four times in twelve
+  # runs, and a third of builds going red on infrastructure is how a suite stops being read. The
+  # earlier failures in that window had a different, since-fixed cause, so the DNS share is
+  # smaller than a third; it is still not once.
+  #
+  # Cargo classifies a name-resolution failure as spurious and retries it, so the cheapest real
+  # fix is to let it retry more than three times. This does NOT make the build independent of
+  # crates.io, which would need a vendored registry or a warm cache; it makes a single blip
+  # survivable, which is what actually happened here.
+  CARGO_NET_RETRY: '10'
 
 # THE RUNNER'S COVERAGE FLOOR IS NOW THE DEVELOPER'S FLOOR, and the separate number that used to
 # live here is gone, along with the `env:` block that held it. A workflow with an `env:` key and
@@ -426,6 +458,29 @@ jobs:
         # letting a green tick read as "somebody checked the contents".
         run: python tools/ci/check_probes.py
 
+
+  cla:
+    name: Every author of the pushed commits has agreed to the CLA
+    runs-on: ubuntu-latest
+    # ITS OWN JOB, AND fetch-depth: 0, for two reasons that arrived together.
+    #
+    # It was a step inside the `test` matrix, which ran it five times on five platforms to ask a
+    # question about git history that has no platform in it. Four of those runs were waste.
+    #
+    # And all five were WRONG. `actions/checkout` clones at depth 1, so `github.event.before` is
+    # not present, the fallback resolved the root commit to the only commit there is, and the
+    # range collapsed to HEAD..HEAD. The checker correctly refuses an empty range, because a range
+    # matching nothing and a range whose authors all agreed look identical in a log. So the gate
+    # failed on every push rather than on an unagreed author.
+    #
+    # A check about history needs the history. Asking for it once, in one job, costs one clone.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
       - name: Every author of the pushed commits has agreed to the CLA
         # `CLA.md` clause 2 is the only thing that would ever allow this code to be offered under
         # terms other than the AGPL, and that permission can only come from whoever wrote each

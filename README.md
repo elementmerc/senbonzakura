@@ -11,11 +11,11 @@
 Measure, uncensor and audit.
 
 <p>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the default branch" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=main&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the released branch" /></a>
   <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3776AB?logo=python&amp;logoColor=white&amp;labelColor=24292f" alt="Python 3.10 to 3.14" /></a>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-4C566A?labelColor=24292f" alt="Platform: Linux, macOS and Windows" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-A42E2B?logo=gnu&amp;logoColor=white&amp;labelColor=24292f" alt="Licence: AGPL-3.0-or-later" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-9728-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="9728 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-9935-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="9935 tests" /></a>
   <a href="https://app.codecov.io/gh/elementmerc/senbonzakura/tree/dev"><img src="https://img.shields.io/codecov/c/github/elementmerc/senbonzakura/dev?logo=codecov&amp;logoColor=white&amp;label=coverage%20dev&amp;labelColor=24292f" alt="Coverage on the development branch, measured in CI" /></a>
 </p>
 
@@ -53,15 +53,18 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 
 ## Try it without installing anything
 
-[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.4.1/notebooks/senbonzakura_colab.ipynb).
+[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.5.0/notebooks/senbonzakura_colab.ipynb).
 Free GPU, nothing on your machine. It measures a model, edits it, then measures what that cost.
 Nobody has timed it on Colab's hardware, so it gives you no duration to hold us to.
 
 Or, if you have Docker:
 
 ```sh
-docker run --rm ghcr.io/elementmerc/senbonzakura:v0.4.1 doctor
+docker run --rm ghcr.io/elementmerc/senbonzakura:v0.5.0 doctor
 ```
+
+That image is **2.11 GB** (measured), because its torch comes from the CPU index. It cannot use a
+graphics card even with `--gpus all`, and `doctor` says so rather than pretending.
 
 `doctor` reports what your install can and cannot do, which on a first run is more useful than it
 sounds.
@@ -74,7 +77,20 @@ senbonzakura setup
 ```
 
 That brings torch, transformers, accelerate and optuna with it: **70 packages, 5.9 GB**, fifteen
-of them CUDA wheels. There is nothing to choose.
+of them CUDA wheels.
+
+**If you have no graphics card, install torch from the CPU index first and those fifteen never
+arrive:**
+
+```sh
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+```
+
+Then install the tool as above. pip finds torch already satisfied and leaves it alone. This is the route the Docker image
+takes, which is **2.11 GB rather than about 6 GB** (measured, and the only measured figure here:
+nobody has timed or sized the pip route separately). Everything that doesn't need a card still
+works, which is every instrument: `compass`, `drift`, `score`, `check`, `doctor`, `convert` and
+`quantise`. Editing a model is the part that really wants a card.
 
 > This paragraph used to tell you *not* to run that command, and it was right to until 0.4.0 went
 > out. [What we got wrong](https://elementmerc.github.io/senbonzakura/guide/what-we-got-wrong) has
@@ -90,6 +106,27 @@ the thing to know before you install rather than after;
 2.35 or newer machine receives one carrying llama.cpp's binaries and `convert` and `quantise`
 work immediately. Everywhere else, and on older Linux, the universal wheel installs and works
 without them. `senbonzakura doctor` says which you got.
+
+**If pip refuses with "externally-managed-environment", make a virtual environment.** Debian,
+Ubuntu and Fedora mark the system Python as managed by the package manager, so `pip install` into
+it is blocked, and so is installing into your home directory. A stranger trying this on a fresh
+Ubuntu hit that and
+gave up, which is the only install note here written from somebody failing rather than from the
+documentation:
+
+```sh
+python3 -m venv ~/senbonzakura
+~/senbonzakura/bin/pip install senbonzakura
+~/senbonzakura/bin/senbonzakura doctor
+```
+
+Everything after that uses `~/senbonzakura/bin/senbonzakura`, or you activate it once with
+`source ~/senbonzakura/bin/activate` and type `senbonzakura`. Do not reach for
+`--break-system-packages`: it means what it says, and this package brings torch with it.
+
+**A stale copy on your PATH will shadow a new install.** If `senbonzakura --version` disagrees
+with what you just installed, an older one is earlier in the PATH; `which -a senbonzakura` lists
+every copy.
 
 `senbonzakura setup` exists because **pip picks by platform, not by hardware**. On Windows, PyPI's
 torch is CPU-only, so **a card there sits idle** and nothing warns you. It says what it found and
@@ -110,20 +147,57 @@ so it works straight after `pip install`:
 
 ```sh
 senbonzakura compass \
-    --model Qwen/Qwen3-0.6B \
+    --model Qwen/Qwen3-1.7B \
+    --track default \
     --harmful default/bad_eval_ds \
     --harmless default/good_ds \
-    --skip-harmful 0 --skip-harmless 0 --n 12 \
+    --n 60 \
     --out compass-toy.json --device cpu
 ```
 
-> **Why this model and not a smaller one.** This example used
-> `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26, which downloads in seconds and then
-> exits 1: at 135M the model does not put a verdict token where the compass reads one, so the run
-> says `MARGIN_READOUT_SUSPECT`, refuses to call its own AUC a measurement, and is right to. That
-> is the tool being honest, and it is a poor first command, because it looks like a broken
-> install. Qwen3-0.6B answers with a verdict on 100% of prompts and exits 0. It is a larger
-> download, and a first command that works is worth it.
+**`--track default` is the load-bearing flag, not the model.** The bundled track records where its
+own partition boundaries fell, and passing it is the only way the run skips exactly the rows the
+edit was fitted on and the search selected from, rather than a guess at them. Leave it out and the
+run scores whichever rows happen to come first, which on this track are the fitting rows: a number
+that looks fine and is marking its own homework.
+
+The compass also has to beat a control rather than just score well. A ruler that reads nothing but
+sentence length is run over the same prompts, and if that separates them as well as the compass
+does, the run says so and refuses its own figure.
+
+**Measured: 3 minutes 44 seconds on 16 processor cores**, with the compass at 0.9872 (95% interval
+0.9722 to 0.9972) against the length ruler's 0.6853 and a clean verdict read-out on every prompt.
+The first run also spends longer than that fetching 3.8 GB of weights. The artefact, the exact
+command and the environment it was measured in are in
+[evidence/compass-2026-10-11](evidence/compass-2026-10-11/README.md).
+
+**That is the no-graphics-card case, deliberately**, because it is the one worth promising: the
+command above ends in `--device cpu` and a run that needs no card is a run anyone can repeat. A
+card is faster and **we have published no measured figure for this command on one**, so there is
+nothing here to compare it against. Do not read it against the 108 minutes quoted for an
+abliteration run either. That figure is from a 6 GB card, it is a different command doing a much
+larger job, and the two numbers share neither the work nor the hardware.
+
+> **This example has now been wrong three times, and the third time is the instructive one.** It
+> used `HuggingFaceTB/SmolLM2-135M-Instruct` until 2026-09-26: at 135M the model does not put a
+> verdict token where the compass reads one, so the run said `MARGIN_READOUT_SUSPECT` and refused
+> its own AUC. It was changed to `Qwen3-0.6B --n 12`, which traded one refusal for another and
+> exits 1 with `MARGIN_NULLS_DOMINATE`.
+>
+> On 2026-10-11 it was changed again, to `Qwen3-1.7B --n 60` with `--skip-harmful 0
+> --skip-harmless 0`, and a figure was quoted for it. **That was the worst of the three.** Explicit
+> zero skips mean the harmful arm scores the 132 search rows and the harmless arm scores the 257
+> rows the directions were fitted on, so the run exits 0 and reports a number this README's own
+> opening promises it will not: one taken on rows something was fitted on. The previous version at
+> least had the decency to refuse. A journey persona found it the same day by reading the skip
+> flags' own help text against the arithmetic of the track.
+>
+> The figures that were here could not be traced to anything committed, and the weights they were
+> taken on were not on the machine afterwards, so nobody could reproduce or even locate them. The
+> ones above replace them and come from a committed artefact. The configuration was run three
+> times, at three different commits, and all three gave the same AUC and the same control figure.
+> `evidence/` is where a figure has to live before this file repeats it, and a test now enforces
+> that.
 
 This used to read `examples/toy-track/...`, which is in the repository and in **no install**, so the
 first command under a heading saying "on your own machine" could not be run by anyone who had

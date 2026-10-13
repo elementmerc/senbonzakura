@@ -22,6 +22,7 @@ shrinks on OOM and grows on headroom, so the offset is not a constant anybody wo
 diff; it changes with how busy the card was.
 """
 import re
+import time
 
 import pytest
 
@@ -112,3 +113,47 @@ def test_both_call_sites_are_guarded_not_only_the_governed_one():
         "a call site still extends the output with an unchecked worker return")
     assert src.count("self._checked(") == 2, (
         f"expected both call sites to go through _checked, found {src.count('self._checked(')}")
+
+
+# ── The heartbeat, added 2026-10-10 ─────────────────────────────────────────
+#
+# A journey run that day recorded 250 seconds of complete silence from this governor during
+# direction extraction on a CPU, which is the gap that makes somebody kill a healthy run. Baseline
+# 2.1 asks for a heartbeat every 30 to 60 seconds on every long-running loop and this loop had
+# none. These drive it rather than reading it: the rate limit is set low so a test can see several
+# beats without waiting half a minute.
+
+def test_a_long_run_emits_a_heartbeat_rather_than_going_silent():
+    seen = []
+    gov = ResourceGovernor("cpu", seen.append, max_batch=2, enabled=False, heartbeat_s=0.05)
+
+    def slow(chunk):
+        time.sleep(0.06)
+        return list(chunk)
+
+    out = gov.run(slow, list(range(10)))
+    assert out == list(range(10)), "the heartbeat must not disturb what the governor returns"
+    beats = [m for m in seen if "captured" in m]
+    assert beats, "a loop that took half a second with a 0.05s heartbeat emitted nothing"
+    assert any("/10 captured" in m for m in beats), f"the beat does not name the total: {beats[:2]}"
+
+
+def test_the_heartbeat_is_rate_limited_rather_than_per_batch():
+    """A line per batch is how a heartbeat gets switched off.
+
+    A fast run does hundreds of batches a minute, and one line each is noise rather than
+    reassurance. The contract is a beat at most every `heartbeat_s`, not a beat per chunk.
+    """
+    seen = []
+    gov = ResourceGovernor("cpu", seen.append, max_batch=1, enabled=False, heartbeat_s=3600.0)
+    gov.run(lambda chunk: list(chunk), list(range(50)))
+    beats = [m for m in seen if "captured" in m]
+    assert not beats, (
+        f"50 batches under an hour-long heartbeat should emit no beat, emitted {len(beats)}")
+
+
+def test_an_empty_item_list_emits_no_heartbeat_and_does_not_raise():
+    seen = []
+    gov = ResourceGovernor("cpu", seen.append, max_batch=4, enabled=False, heartbeat_s=0.0)
+    assert gov.run(lambda chunk: list(chunk), []) == []
+    assert not [m for m in seen if "captured" in m]

@@ -40,6 +40,14 @@ NOT_OURS = {
     "--flag",           # a placeholder in prose about flags in general
     "--help",           # argparse's own, present on every command
     "--version",        # likewise
+    "--gpus",           # docker's, in the README's note that a CPU image cannot use a card with it
+    # pip's, in the README's note added 2026-10-13 about PEP 668. A journey persona met
+    # "externally-managed-environment" on a fresh Ubuntu and gave up, so the note exists to send
+    # them to a virtual environment instead. It names this flag in order to tell them NOT to reach
+    # for it, which this guard cannot distinguish from an instruction to type it. Recorded here
+    # rather than reworded, because "do not use --break-system-packages" is clearer to a reader
+    # than a paraphrase that avoids saying which shortcut is the wrong one.
+    "--break-system-packages",
 }
 
 #: Commands that carry sub-verbs, whose flags live on the sub-verb rather than on the command.

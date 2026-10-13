@@ -450,6 +450,12 @@ def test_the_search_knobs_are_zeroed_so_the_offload_notice_does_not_quote_a_sear
 
 def test_the_loader_passes_the_offload_folder_through_to_transformers(monkeypatch, tmp_path):
     seen = {}
+    # THE CARD IS DECLARED, because the loader refuses an unusable device from 2026-10-11
+    # and this test drives the cuda placement path deliberately. Without it the test passes
+    # on a machine with a card and fails on CI, which is the hardware dependence that
+    # refusal was put in the loader to avoid. See
+    # tests/test_a_device_this_machine_cannot_use_is_refused_before_the_download.py.
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
 
     def fake_from_pretrained(model_id, **kw):
         seen.update(kw)
@@ -481,6 +487,12 @@ def test_an_offload_dir_on_the_cpu_path_is_refused_rather_than_silently_unused(m
 
 def test_no_offload_dir_leaves_the_loader_exactly_as_it_was(monkeypatch):
     seen = {}
+    # THE CARD IS DECLARED, because the loader refuses an unusable device from 2026-10-11
+    # and this test drives the cuda placement path deliberately. Without it the test passes
+    # on a machine with a card and fails on CI, which is the hardware dependence that
+    # refusal was put in the loader to avoid. See
+    # tests/test_a_device_this_machine_cannot_use_is_refused_before_the_download.py.
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
 
     def fake_from_pretrained(model_id, **kw):
         seen.update(kw)

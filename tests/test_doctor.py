@@ -262,10 +262,20 @@ def test_an_unrecognised_platform_is_an_advisory(monkeypatch):
     assert doctor.check_platform().status == "warn"
 
 
-def test_a_missing_bundled_track_is_a_failure(monkeypatch, tmp_path):
+def test_a_missing_bundled_track_is_an_advisory_and_not_a_failure(monkeypatch, tmp_path):
+    """It was a failure until 2026-10-11, and that made the README's first command self-condemning.
+
+    A journey persona pasted `docker run ... doctor` out of the README and got exit 2 with "This
+    install cannot do what it claims". The published image ships without the packed track on
+    purpose: it is packed from a held-out corpus no CI job can build. So the one absence the
+    project documents as acceptable was the one that made the tool declare itself broken on first
+    contact. An advisory is the honest weight, because `--track default` is the only thing closed.
+    """
     from senbonzakura import bundled
     monkeypatch.setattr(bundled, "data_path", lambda: tmp_path / "nope.bin")
-    assert doctor.check_track().status == "fail"
+    row = doctor.check_track()
+    assert row.status == "warn", "a held-out artefact's absence must not read as a broken install"
+    assert "--track" in row.fix, "the advisory has to say what still works and how"
 
 
 def test_torch_without_cuda_is_an_advisory_and_names_the_version():
@@ -784,7 +794,13 @@ def test_grouping_changes_no_check_and_drops_none():
     checks = doctor.run_checks(deep=False)
     names = [c.name for c in checks]
     assert names == sorted(set(names), key=names.index), "a check appears twice"
-    assert names[0] == "platform" and names[1] == "torch"
+    # AMENDED 2026-10-13. This read `names[0] == "platform"`, which was the right assertion when
+    # the grouping work it guards was the only thing that had touched the order. `requirements`
+    # now runs ahead of the machine group on purpose (journey 1, J1-2), so pinning index 0 would
+    # make this test refuse a deliberate addition rather than catch an accidental reshuffle. The
+    # property it was defending is that the machine group's own order is untouched, and that is
+    # what it asserts now.
+    assert names.index("torch") == names.index("platform") + 1
     assert "pinned memory" in names and "bundled track" in names
     assert all(c.group for c in checks), "a check reached the report ungrouped"
 
@@ -803,3 +819,249 @@ def test_the_ascii_pass_mark_is_not_a_machine_marker(monkeypatch):
     # Still aligned and still distinguishable, which is the whole reason the fallback exists.
     assert len({marks["pass"], marks["warn"], marks["fail"]}) == 3
     assert len({len(m) for m in marks.values()}) == 1
+
+
+# ── the declared requirement set is checked at all ───────────────────────────────────
+#
+# Journey 1, 2026-10-13: `doctor` said "19 checks, 19 pass, 0 failed" and exited 0 on a --no-deps
+# install, while `score` refused on a missing required package in the very next command and told
+# the reader to run `doctor` to find it. The surface that was wrong was the one that exited 0.
+def _requirement(line):
+    from packaging.requirements import Requirement
+    return Requirement(line)
+
+
+def test_a_missing_declared_requirement_fails_rather_than_passing(monkeypatch):
+    """The ledger's mutant: uninstall senbonzakura_check, and doctor must not report all clear."""
+    from importlib.metadata import PackageNotFoundError
+
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("senbonzakura-check>=0.5,<0.6"),
+                                  _requirement("pyarrow>=23.0.1")], ""))
+
+    def _version(name):
+        if name == "senbonzakura-check":
+            raise PackageNotFoundError(name)
+        return "23.0.1"
+
+    monkeypatch.setattr("importlib.metadata.version", _version)
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["fail"]
+    assert checks[0].name == "requirement senbonzakura-check"
+    assert checks[0].detail == "not installed"
+    assert "pip install" in checks[0].fix
+
+
+def test_a_requirement_installed_at_a_version_the_install_rejects_fails(monkeypatch):
+    """A wrong version breaks the same code a missing one does, so it is the same verdict."""
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("transformers>=5.10.1")], ""))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "4.56.0")
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["fail"]
+    assert "4.56.0 installed" in checks[0].detail
+    assert ">=5.10.1 needed" in checks[0].detail
+
+
+def test_every_missing_requirement_is_named_not_just_the_first(monkeypatch):
+    """A reader fixing a --no-deps install needs the list, not one name at a time."""
+    from importlib.metadata import PackageNotFoundError
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("rich>=13.0"), _requirement("optuna>=4.0"),
+                                  _requirement("gguf>=0.19")], ""))
+    monkeypatch.setattr("importlib.metadata.version",
+                        lambda name: (_ for _ in ()).throw(PackageNotFoundError(name)))
+    checks = doctor.check_requirements()
+    assert len(checks) == 3
+    assert {c.name for c in checks} == {"requirement rich", "requirement optuna",
+                                        "requirement gguf"}
+
+
+def test_a_satisfied_requirement_set_is_one_row_rather_than_fourteen(monkeypatch):
+    monkeypatch.setattr(doctor, "_declared_requirements",
+                        lambda: ([_requirement("rich>=13.0"), _requirement("gguf>=0.19")], ""))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "99.0")
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["pass"]
+    assert checks[0].detail == "2 of 2 declared, all installed"
+
+
+def test_a_declaration_that_cannot_be_read_warns_rather_than_reporting_all_clear(monkeypatch):
+    """An unreadable declaration means no opinion, and no opinion is not a pass.
+
+    Reporting all clear from a list this check could not build is the original defect wearing a
+    different hat.
+    """
+    monkeypatch.setattr(doctor, "_declared_requirements", lambda: ([], "the metadata is missing"))
+    checks = doctor.check_requirements()
+    assert [c.status for c in checks] == ["warn"]
+    assert "cannot be checked" in checks[0].detail
+    assert "the metadata is missing" in checks[0].detail
+
+
+def test_an_uninstalled_distribution_is_a_complaint_not_an_empty_pass(monkeypatch):
+    from importlib.metadata import PackageNotFoundError
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: (_ for _ in ()).throw(PackageNotFoundError(name)))
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "not installed as a distribution" in complaint
+
+
+def test_a_distribution_declaring_no_requirements_is_a_complaint(monkeypatch):
+    monkeypatch.setattr("importlib.metadata.requires", lambda name: None)
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "no requirements at all" in complaint
+
+
+def test_an_unparsable_requirement_line_is_a_complaint_not_a_skip(monkeypatch):
+    monkeypatch.setattr("importlib.metadata.requires", lambda name: ["=== not a requirement"])
+    reqs, complaint = doctor._declared_requirements()
+    assert reqs == []
+    assert "cannot parse" in complaint
+
+
+def test_extras_are_excluded_so_an_opt_in_package_is_not_a_damaged_install(monkeypatch):
+    """`bitsandbytes` lives behind the `quant` extra. Its absence is a choice, not a fault."""
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: ["rich>=13.0", 'bitsandbytes>=0.43; extra == "quant"'])
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    assert [r.name for r in reqs] == ["rich"]
+
+
+def test_a_requirement_whose_marker_excludes_this_interpreter_is_not_demanded(monkeypatch):
+    """`tomli` is declared only below 3.11, and demanding it above would be a false failure."""
+    monkeypatch.setattr("importlib.metadata.requires",
+                        lambda name: ["rich>=13.0", 'tomli>=2.0; python_version < "3.0"'])
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    assert [r.name for r in reqs] == ["rich"]
+
+
+def test_the_real_declaration_of_this_install_is_readable():
+    """Against the actual metadata, not a fixture. A fixture cannot catch a rename."""
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == "", f"this install's own requirements cannot be read: {complaint}"
+    assert len(reqs) >= 8, f"too few requirements to be the real set: {[r.name for r in reqs]}"
+    assert "torch" in {r.name for r in reqs}
+
+
+def test_the_real_verdict_agrees_with_what_the_metadata_actually_says():
+    """The check is right about this environment, whatever state this environment is in.
+
+    THIS USED TO ASSERT A CLEAN PASS, and that was the wrong assertion: it is a claim about the
+    developer's machine rather than about the code, and it failed for a reason that had nothing to
+    do with either.
+
+    What it failed on is worth writing down, because it will happen again. A `python -m build` in
+    the checkout leaves `src/senbonzakura.egg-info` behind, and most test files put `src/` on
+    `sys.path`, so `importlib.metadata` resolves the CHECKOUT's declaration ahead of the installed
+    distribution's. The egg-info said 0.5.0 and required `senbonzakura-check>=0.5.0`; the venv had
+    the checker at 0.4.1. The check reported that mismatch correctly, and only under `-n 4`, where
+    whichever worker had already imported a module that inserted `src/` saw a different answer
+    from the others. **A metadata reading is not a constant, so a test must assert the verdict is
+    CORRECT rather than that it is green.**
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    reqs, complaint = doctor._declared_requirements()
+    assert complaint == ""
+    by_name = {r.name: r for r in reqs}
+    for check in doctor.check_requirements():
+        if check.status == "pass":
+            continue
+        name = check.name.removeprefix("requirement ")
+        req = by_name[name]
+        try:
+            have = version(name)
+        except PackageNotFoundError:
+            assert check.detail == "not installed"
+            continue
+        assert not req.specifier.contains(have, prereleases=True), \
+            f"{name} {have} satisfies {req.specifier} and the check called it a failure"
+        assert have in check.detail and str(req.specifier) in check.detail
+
+
+def test_the_requirement_check_runs_as_part_of_the_report():
+    checks = doctor.run_checks(log=lambda *a, **k: None)
+    assert any(c.group == "install" for c in checks)
+    assert checks[0].group == "install", "the requirement set is checked before anything else"
+
+
+# ── a CPU torch beside an idle card says which card and why ──────────────────────────
+#
+# Journey 1, 2026-10-13: on a laptop with an idle RTX 3060 and a CPU-only torch, `doctor` said
+# "no cuda device" and talked about a four-hour probe, while `setup` in the very next command
+# named the card, named the CPU-only build and gave the line that fixes it. The tool knew.
+class _FakeTorch:
+    __version__ = "2.14.1+cpu"
+
+    class cuda:      # noqa: N801 - the name torch gives it, and the code under test reads it
+        @staticmethod
+        def is_available():
+            return False
+
+
+def _cpu_torch_beside_a_card(monkeypatch, driver=(13, 0), compute=(8, 6)):
+    from senbonzakura import envsetup
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cpu", "cpu"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: driver)
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: compute)
+
+
+def test_an_idle_card_is_diagnosed_rather_than_merely_reported_absent(monkeypatch):
+    _cpu_torch_beside_a_card(monkeypatch)
+    c = doctor.check_torch()
+    assert c.status == "warn"
+    assert "CPU-only build" in c.detail, f"the cause is not named: {c.detail}"
+    assert "idle" in c.detail
+    assert "-m pip install" in c.fix, f"the fix is not a command: {c.fix}"
+    assert "senbonzakura setup --apply" in c.fix
+
+
+def test_the_cpu_advisory_survives_the_diagnosis(monkeypatch):
+    """The four-hour probe refusal is still true and is still what the reader hits next."""
+    _cpu_torch_beside_a_card(monkeypatch)
+    assert "--slow-probe-ok" in doctor.check_torch().fix
+
+
+def test_a_fault_pip_cannot_fix_still_carries_its_reason(monkeypatch):
+    """A card below every channel's floor has no install command, and the reason is the point."""
+    _cpu_torch_beside_a_card(monkeypatch, compute=(3, 0))
+    c = doctor.check_torch()
+    assert "compute capability 3.0" in c.detail
+    assert "-m pip install" not in c.fix
+    assert "senbonzakura setup" in c.fix
+
+
+def test_a_machine_with_no_card_gains_no_invented_diagnosis(monkeypatch):
+    """`plan` answers "ok" here, and inventing a fault would be worse than saying nothing."""
+    from senbonzakura import envsetup
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch)
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(envsetup.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: None)
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: None)
+    assert doctor._no_cuda_diagnosis() == ("", "")
+    c = doctor.check_torch()
+    assert c.detail == "2.14.1+cpu, no cuda device"
+    assert c.fix.startswith("scoring is fine on CPU")
+
+
+def test_a_card_present_with_a_cuda_torch_is_not_this_branch(monkeypatch):
+    """Sanity: the diagnosis is only reached when there is genuinely no CUDA device."""
+    from senbonzakura import envsetup
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.1+cu130", "cu130"))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", lambda: ["GPU 0: NVIDIA GeForce RTX 3060"])
+    monkeypatch.setattr(envsetup, "driver_cuda_version", lambda: (13, 0))
+    monkeypatch.setattr(envsetup, "compute_capability", lambda: (8, 6))
+    assert doctor._no_cuda_diagnosis() == ("", "")

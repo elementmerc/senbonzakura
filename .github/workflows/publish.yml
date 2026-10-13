@@ -54,6 +54,29 @@ on:
 permissions:
   contents: read
 
+# ── QUEUE, NEVER CANCEL. The opposite of every other workflow here, deliberately ───────────────
+#
+# Added 2026-10-13 after the operator asked why two CI runs were alive at once. The answer there
+# was that `ci.yml` keys its group on the ref, so `main` and `dev` do not cancel each other, which
+# is correct. Checking the rest surfaced that this workflow had no group at all, and the reason it
+# needs one is not the reason the others do.
+#
+# **`cancel-in-progress: false` is the whole point.** Cancelling an upload halfway is the one
+# outcome this repository cannot recover from: a filename on PyPI can never be reused and a
+# version number can never be replayed, so a run killed between the checker upload and the main
+# upload leaves the index holding a dependency for a package that never arrived, and no re-run can
+# repair it. Two queued uploads are merely slow. One interrupted upload is permanent.
+#
+# A group is still wanted, because without one a release published twice in quick succession, or a
+# dispatch racing the release event, can have two runs uploading the same files at the same time.
+# Queueing serialises them and the second finds the work already done.
+#
+# Keyed on the ref so a rehearsal against TestPyPI for one tag does not queue behind a real
+# upload for another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check:
     name: check the attached artefacts

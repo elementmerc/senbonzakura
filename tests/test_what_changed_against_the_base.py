@@ -333,3 +333,269 @@ def test_the_command_does_not_import_torch(pair):
          "import sys; import senbonzakura.modeldiff; print('torch' in sys.modules)"],
         capture_output=True, text=True, check=True)
     assert r.stdout.strip() == "False", "modeldiff pulled in torch at import time"
+
+
+# ── a malformed checkpoint gets a sentence, as `budget` already gave it ──────────────
+#
+# `diff` and `budget` read checkpoints through the same `streaming.read_header`. `budget` caught
+# its `ShardError` and printed a reason; `diff` let it out as a traceback, so one malformed file
+# got a clean refusal from one command and a stack trace from the other. The one that crashed is
+# the one whose whole job is inspecting files you have reason to doubt.
+def _crafted(tmp_path, name, blob):
+    d = tmp_path / name
+    d.mkdir(exist_ok=True)
+    (d / "model.safetensors").write_bytes(struct.pack("<Q", len(blob)) + blob)
+    return d
+
+
+def test_a_malformed_base_is_refused_with_a_sentence_not_a_traceback(tmp_path, capsys):
+    base = _crafted(tmp_path, "base", b"not json at all")
+    cand = _crafted(tmp_path, "cand", b'{"__metadata__":{"format":"pt"}}')
+    assert modeldiff.main(["--base", str(base), "--candidate", str(cand)]) \
+        == modeldiff.DIFF_UNREADABLE
+    out = capsys.readouterr().out
+    assert "diff refused" in out
+    assert "not valid JSON" in out, f"the reason is not in the message: {out}"
+
+
+def test_a_crafted_header_ends_the_command_cleanly_rather_than_the_interpreter(tmp_path, capsys):
+    """The 200 KB file that used to raise an uncaught RecursionError through this command."""
+    depth = 100_001
+    base = _crafted(tmp_path, "base", b'{"a":' + b"[" * depth + b"]" * depth + b"}")
+    cand = _crafted(tmp_path, "cand", b'{"__metadata__":{"format":"pt"}}')
+    assert modeldiff.main(["--base", str(base), "--candidate", str(cand)]) \
+        == modeldiff.DIFF_UNREADABLE
+    assert "nests deeper" in capsys.readouterr().out
+
+
+def test_the_refusal_exit_code_matches_the_one_budget_uses(tmp_path):
+    """A script branching on the two commands should not need to learn two conventions."""
+    from senbonzakura import streaming
+    assert modeldiff.DIFF_UNREADABLE == streaming.BUDGET_UNREADABLE
+
+
+def test_an_ordinary_comparison_still_returns_the_success_code(pair, capsys):
+    b, c = pair({WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))},
+                {WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))})
+    assert modeldiff.main(["--base", str(b), "--candidate", str(c)]) == modeldiff.DIFF_OK
+    assert capsys.readouterr().out
+
+
+# ── the memory claim in --help has to be true ────────────────────────────────────────
+#
+# `diff --help` says "it streams, so a pair of checkpoints larger than memory is fine: peak memory
+# is one tensor from each side". The magnitude step decoded each tensor into a Python list of
+# floats, and a Python float costs about 24 bytes against BF16's 2, so peak memory was the tensor
+# many times over. Measured 2026-10-13 on 8-million-element tensors: 967 MB resident for 16 MB of
+# raw data per side, 60 times. A false claim in shipped --help is this project's characteristic
+# failure, so the fix is the code rather than the sentence.
+def _bf16_run(n, value=1.0):
+    word = struct.unpack("<I", struct.pack("<f", value))[0] >> 16
+    return struct.pack(f"<{n}H", *([word] * n))
+
+
+def test_the_magnitude_step_stays_within_a_bound_that_does_not_grow_with_the_tensor():
+    """The ledger's mutant: reinstate the whole-tensor decode and this must exceed its limit."""
+    import tracemalloc
+
+    n = 2_000_000
+    a, b = _bf16_run(n, 1.0), _bf16_run(n, 1.25)
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    modeldiff._magnitude(a, b, "BF16")
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    # MEASURED 0.94 MB and flat in the tensor's size, against 60 times the raw bytes for the
+    # whole-tensor decode this replaced. 4 MB leaves room for an interpreter that sizes its floats
+    # differently without coming anywhere near the thing being guarded against.
+    ceiling = 4_000_000
+    assert peak < ceiling, (
+        f"peak was {peak / 1e6:.0f} MB for {len(a) / 1e6:.0f} MB of data, over the "
+        f"{ceiling / 1e6:.0f} MB this is allowed. The decode is holding the whole tensor again.")
+
+
+def test_the_bound_does_not_move_when_the_tensor_gets_bigger():
+    """A ceiling that scales with the input is not a ceiling."""
+    import tracemalloc
+
+    peaks = []
+    for n in (1_000_000, 4_000_000):
+        a, b = _bf16_run(n, 1.0), _bf16_run(n, 1.25)
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        modeldiff._magnitude(a, b, "BF16")
+        peaks.append(tracemalloc.get_traced_memory()[1])
+        tracemalloc.stop()
+    assert peaks[1] < peaks[0] * 2, f"peak grew with the tensor: {peaks}"
+
+
+@pytest.mark.parametrize(("dtype", "pack"), [
+    ("F32", lambda v: struct.pack(f"<{len(v)}f", *v)),
+    ("F16", lambda v: struct.pack(f"<{len(v)}e", *v)),
+    ("BF16", bf16),
+])
+@pytest.mark.parametrize("size", [1, 7, 4_095, 4_096, 4_097, 8_205])
+def test_chunking_gives_the_same_answer_at_every_size_including_the_boundaries(dtype, pack, size):
+    """Chunking must change the bound and not the answer, especially across a chunk edge."""
+    xs = [1.0] * size
+    ys = [1.5] * size
+    rel, peak, why_not = modeldiff._magnitude(pack(ys), pack(xs), dtype)
+    assert why_not is None
+    assert rel == pytest.approx(0.5, rel=1e-3), f"{dtype} at n={size}"
+    assert peak == pytest.approx(0.5, rel=1e-3)
+
+
+def test_a_chunk_boundary_cannot_silently_drop_a_tail():
+    """A comparison that ignored a tail would report a smaller change than the real one."""
+    n = modeldiff.CHUNK_ELEMENTS + 1
+    xs = [0.0] * n
+    ys = [0.0] * (n - 1) + [4.0]          # the only difference is in the final chunk
+    rel, peak, _ = modeldiff._magnitude(bf16(ys), bf16(xs), "BF16")
+    assert peak == pytest.approx(4.0), "the last element was not compared"
+
+
+def test_the_help_claim_about_peak_memory_is_still_made():
+    """If the claim is ever withdrawn, the tests above are guarding nothing and should be read."""
+    assert "peak memory is one tensor from each side" in modeldiff.HELP
+
+
+# ── a long comparison says something while it runs ───────────────────────────────────
+
+def test_a_large_comparison_says_how_long_it_might_take_before_it_starts(pair, monkeypatch):
+    monkeypatch.setattr(modeldiff, "SLOW_ELEMENTS", 3)   # the pair below holds 4
+    b, c = pair({WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))},
+                {WRITER: ("F32", [2, 2], f32([9, 9, 9, 9]))})
+    said = []
+    modeldiff.compare(b, c, log=said.append)
+    assert any("minutes" in m for m in said), said
+    assert any("Only changed tensors are decoded" in m for m in said), \
+        "the warning must say the ceiling is a ceiling, or it reads as a promise of an hour"
+
+
+def test_a_small_comparison_is_not_warned_about(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))},
+                {WRITER: ("F32", [2, 2], f32([9, 9, 9, 9]))})
+    said = []
+    modeldiff.compare(b, c, log=said.append)
+    assert not any("minutes" in m for m in said), said
+
+
+def test_one_long_tensor_reports_progress_from_inside_itself(pair, monkeypatch):
+    """The existing heartbeat fires every 200 tensors, and one tensor can take minutes."""
+    monkeypatch.setattr(modeldiff, "HEARTBEAT_SECONDS", 0)
+    monkeypatch.setattr(modeldiff, "CHUNK_ELEMENTS", 2)
+    b, c = pair({WRITER: ("F32", [2, 4], f32([1, 2, 3, 4, 5, 6, 7, 8]))},
+                {WRITER: ("F32", [2, 4], f32([8, 7, 6, 5, 4, 3, 2, 1]))})
+    said = []
+    modeldiff.compare(b, c, log=said.append)
+    assert any("still inside" in m for m in said), said
+    assert any(WRITER in m for m in said if "still inside" in m), "the line does not name the tensor"
+
+
+def test_an_identical_tensor_is_not_decoded_at_all(pair, monkeypatch):
+    """Only changed tensors pay, which is why an abliteration is fast. Asserted, not assumed."""
+    monkeypatch.setattr(modeldiff, "HEARTBEAT_SECONDS", 0)
+    calls = []
+    real = modeldiff._magnitude
+    monkeypatch.setattr(modeldiff, "_magnitude",
+                        lambda *a, **k: (calls.append(a[2]), real(*a, **k))[1])
+    same = f32([1, 2, 3, 4])
+    b, c = pair({WRITER: ("F32", [2, 2], same), OTHER: ("F32", [2, 2], same)},
+                {WRITER: ("F32", [2, 2], f32([9, 9, 9, 9])), OTHER: ("F32", [2, 2], same)})
+    modeldiff.compare(b, c, log=lambda _m: None)
+    assert len(calls) == 1, "an identical tensor was decoded"
+
+
+def test_a_progress_line_reads_sensibly_below_a_million(pair, monkeypatch):
+    """It printed "0 of 0 million elements", which looks like a bug rather than progress."""
+    monkeypatch.setattr(modeldiff, "HEARTBEAT_SECONDS", 0)
+    monkeypatch.setattr(modeldiff, "CHUNK_ELEMENTS", 2)
+    b, c = pair({WRITER: ("F32", [2, 2], f32([1, 2, 3, 4]))},
+                {WRITER: ("F32", [2, 2], f32([9, 9, 9, 9]))})
+    said = []
+    modeldiff.compare(b, c, log=said.append)
+    beats = [m for m in said if "still inside" in m]
+    assert beats
+    assert not any("0 of 0" in m for m in beats), beats
+
+
+# ── an unmeasurable magnitude says WHICH of the three reasons it was ─────────────────
+#
+# `_magnitude` returns nothing in three distinct cases and the row reported all three as "this
+# command does not decode {dtype}". That is false for two of them, and most wrong for the one a
+# reader most needs: a non-finite value in a candidate is exactly what a diff is for, and it was
+# explained with a sentence saying F32 is not decoded, when F32 is decoded.
+def _f32_with(values):
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+def test_a_nan_in_the_candidate_is_named_as_a_nan_not_as_an_unreadable_dtype(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, float("nan"), 3.0, 4.0]))})
+    row = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]
+    why = row["magnitude_unavailable_because"]
+    assert row["changed"] is True, "the identity verdict is a byte comparison and is still exact"
+    assert row["relative_change"] is None
+    assert "not a finite number" in why, why
+    assert "the candidate" in why, why
+    assert "does not decode F32" not in why, "the old false reason is back"
+
+
+def test_an_infinity_is_caught_by_the_same_arm(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, float("inf"), 3.0, 4.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "not a finite number" in why
+
+
+def test_a_nan_in_the_base_is_attributed_to_the_base(pair):
+    """A broken base and a broken edit are different findings, and only one is the edit's fault."""
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, float("nan"), 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "the base" in why, why
+
+
+def test_an_undecodable_dtype_still_gets_the_dtype_reason(pair):
+    """The reason that was always right must survive the split."""
+    b, c = pair({WRITER: ("I64", [2], struct.pack("<2q", 1, 2))},
+                {WRITER: ("I64", [2], struct.pack("<2q", 3, 4))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "does not decode I64" in why, why
+
+
+def test_a_measured_tensor_carries_no_reason_at_all(pair):
+    b, c = pair({WRITER: ("F32", [2, 2], _f32_with([1.0, 2.0, 3.0, 4.0]))},
+                {WRITER: ("F32", [2, 2], _f32_with([2.0, 4.0, 6.0, 8.0]))})
+    row = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]
+    assert row["magnitude_unavailable_because"] is None
+    assert row["relative_change"] is not None
+
+
+def test_the_three_reasons_are_distinguishable_from_each_other():
+    """Directly, because the whole point is that they stopped being the same sentence."""
+    nan = modeldiff._magnitude(_f32_with([float("nan")]), _f32_with([1.0]), "F32")[2]
+    dtype = modeldiff._magnitude(b"\x00" * 8, b"\x00" * 8, "I64")[2]
+    length = modeldiff._magnitude(_f32_with([1.0, 2.0]), _f32_with([1.0]), "F32")[2]
+    assert len({nan, dtype, length}) == 3
+    assert "disagrees with its own" in length, length
+
+
+def test_a_nan_on_both_sides_is_reported_as_both(pair):
+    b, c = pair({WRITER: ("F32", [2], _f32_with([float("nan"), 2.0]))},
+                {WRITER: ("F32", [2], _f32_with([float("nan"), 3.0]))})
+    why = modeldiff.compare(b, c, log=lambda _m: None)["rows"][0]["magnitude_unavailable_because"]
+    assert "both sides" in why, why
+
+
+def test_the_side_is_read_from_the_data_rather_than_guessed_from_the_sums():
+    """A NaN in the base poisons both running sums, so the sums cannot tell the two apart.
+
+    This is the mistake the first version made, and it is the kind that looks right in review:
+    every difference taken against a NaN is a NaN, so a broken base reported as "both sides" was
+    arithmetically unsurprising and still wrong about the file.
+    """
+    nan, ok = _f32_with([float("nan")]), _f32_with([1.0])
+    assert modeldiff._which_side_is_not_finite(nan, ok, "F32") == "the candidate holds"
+    assert modeldiff._which_side_is_not_finite(ok, nan, "F32") == "the base holds"
+    assert modeldiff._which_side_is_not_finite(nan, nan, "F32") == "both sides hold"

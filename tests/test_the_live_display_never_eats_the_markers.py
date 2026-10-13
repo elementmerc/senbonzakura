@@ -429,19 +429,35 @@ def test_attach_degrades_to_the_null_panel_when_construction_fails(monkeypatch):
     assert any("could not start" in m for m in said), "the fallback happened silently"
 
 
-def test_a_panel_that_will_not_be_drawn_says_so(monkeypatch):
-    """The reason was computed and discarded, so the panel's absence was unexplained.
+def test_a_panel_the_reader_turned_off_themselves_is_not_explained_back_to_them(monkeypatch):
+    """`--no-panel` is the one cause that needs no sentence, because the reader typed it.
 
-    `why_not` returns a sentence rather than a flag on purpose, and its docstring says why: a panel
-    that silently does not appear gets filed as a bug. `attach` then dropped the sentence on the
-    floor. This asserts the reason reaches the log, because a diagnostic wired to nothing is the
-    same as not having one.
+    The reason was once computed and discarded for every cause, so the panel's absence was
+    unexplained and somebody filed it as a bug; `attach` was wired to say it. Saying it on THIS
+    cause went one step too far: a run told to skip the panel answered by explaining that it had
+    skipped the panel and naming `--no-panel` back at the person who had just typed `--no-panel`.
+    A tool that restates your own flag at you reads as a tool that did not hear you.
+
+    The causes the reader did not choose still speak, which is
+    `test_a_pipe_gets_a_null_panel_and_is_told_why`.
     """
     said = []
     panel = livedisplay.attach(events.EventLog(None), _args(no_panel=True), log=said.append,
                                stream=_NotATerminal())
     assert not panel.active, "a disabled panel reported itself active"
-    assert said, "the panel was skipped and the run was told nothing about why"
-    assert "no live panel" in said[0], said
-    assert "--no-panel" in said[0], (
-        f"the reason does not name the flag that controls it: {said[0]!r}")
+    assert said == [], f"the reader's own flag was explained back to them: {said}"
+
+
+def test_a_panel_nobody_asked_to_turn_off_still_says_why(monkeypatch):
+    """The half that must keep working: an absence the reader did not choose is explained.
+
+    This is the original defect's test, kept whole and pointed at the cause that still reports.
+    A panel that silently does not appear gets filed as a bug, which is what happened.
+    """
+    said = []
+    panel = livedisplay.attach(events.EventLog(None), _args(), log=said.append,
+                               stream=_NotATerminal())
+    assert not panel.active
+    assert said, "the panel was skipped for a reason the reader did not choose, and said nothing"
+    assert "plain log" in said[0], (
+        f"the line should lead with what the reader gets instead: {said[0]!r}")

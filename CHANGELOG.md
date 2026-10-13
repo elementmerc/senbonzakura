@@ -5,217 +5,27 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unreleased]
 
-### Breaking
+Not in any released version yet. Each entry describes behaviour that is in the tree, grouped by the
+surface it changed, and will carry a version heading when it ships.
 
-- Every wheel is now platform-specific because the package ships a compiled Rust extension, so on a platform with no published wheel, pip builds from source and fails unless you have a Rust toolchain installed.
-- Installing or upgrading senbonzakura now needs huggingface_hub 1.5.0 or later (it was 0.34), transformers 5.10.1 or later (it was 4.56), and torch 2.7 or later (it was 2.5), so older copies of those in your environment get upgraded with it.
-
-### Security
-
-- A run given both `--hf-token` and `--base-licence` wrote the token into the model card (`README.md`) beside the weights, in the "Reproducing it" command. The card now shows the flag with its value replaced by `***`, and `senbonzakura report --command` does the same. If you published a card made by 0.4.0 or 0.4.1 from a command that used `--hf-token`, revoke that token and replace the card.
-
-### New command: `diff`
-- Compares a checkpoint against the base it claims to come from, tensor by tensor: which ones
-  differ, where in the stack, and by how much, with residual-writing projections counted apart
-  from everything else. A model card saying "abliterated from X" is checked today by reading the
-  sentence; this checks the files
-- **It is not a safety verdict and not a backdoor check.** A poisoned checkpoint behaves normally
-  until its trigger appears, the trigger is drawn from an unbounded space, and no tool recovers
-  it: a published demonstration scored full marks on ordinary accuracy while firing every time. A
-  comparison showing no change means the weights match the base and nothing more, and the command
-  says so in its own output rather than only in the documentation
-- Loads no model, generates no token and needs no card or network, so it runs on a machine with no
-  GPU at all. It streams, and peak memory is one tensor from each side, so a pair of checkpoints
-  larger than memory is fine
-- Refuses a quantised candidate against a full-precision base rather than reporting it as changed
-  everywhere, which would be true and useless. The refusal reads the headers only, so it happens
-  before any tensor data is read
-- Refuses a Hub model that is not already in your cache rather than downloading it, because a
-  comparison that quietly fetched the checkpoint would cost the bandwidth it was meant to save
-- Reports a tensor missing from either side as absent rather than as changed, and names the reason
-  a change could not be sized when the dtype is one it does not decode, because an unmeasured
-  magnitude and a magnitude of zero are different facts
-
-### New command: `jailbreak`
-- Reports single-turn jailbreak success on one of the bundled attack sets, with a Wilson interval
-  and the raw counts on every figure, including the one printed to the terminal
-- Reports it beside the over-refusal rate on a benign set, in the same run, because a model that
-  declines every request scores perfectly on jailbreak resistance and is useless. Measuring one
-  arm without the other is the mistake the command is shaped to prevent, and an artefact missing
-  one of them says so
-- Reads the attack set by name rather than by path, and refuses a benign corpus in the attack
-  slot: the safe half of XSTest used as an attack set reports near-total success on a model that
-  refused nothing it should have, and nothing downstream can see it
-- Gives two readings of the same thing: one minus the refusal rate, which is what the field
-  usually quotes, and the share of replies that actually delivered an answer, which excludes
-  evasions and the garbage a damaged model emits. A large gap between them is the finding
-- Takes `--baseline`, a previous run against the unedited model, so the figure can be read as a
-  statement about the edit. Baseline refusal on harmful prompts varies enormously between models,
-  so a jailbreak rate on its own is a number about a starting point the reader does not know
-- Refuses to call the run a measurement when more than a tenth of the replies are unreadable,
-  because a damaged model reads as a win under either reading taken alone
-
-### New command: `multi-turn`
-- Asks whether a refusal holds when the conversation continues, and reports the turn at which it
-  first gives way rather than only a rate
-- Runs the plain-repetition control over the same refused prompts, so an escalation that does no
-  better than asking the same question again is visible as such. Where the two intervals overlap,
-  the run says it cannot separate them rather than reporting the difference
-- Records the escalation by name and by digest, so a figure can be traced to the exact turns.
-  Bring your own with `--strategy-file`, and its text is deliberately kept out of the artefact
-- Refuses the run when a conversation outgrew the context window, because the model then answered
-  a follow-up without having been shown the original request and the reply scores the same either
-  way
-
-### New command: `tamper`
-- Measures whether an abliteration survives a brief safety-recovery finetune: refusal before, the
-  finetune, refusal after, on the held-out half of the corpus so no evaluated row was trained on
-- Runs the neutral-data control in the same command. If refusal recovers as much after training
-  on benign task data, the result is about finetuning rather than about safety, and the artefact
-  states no safety-specific figure without that arm
-- Runs the same recipe on the unedited model as a ceiling, so a recovered fraction is read against
-  what the recipe can achieve rather than against a perfect score
-- Records the whole recipe: method, adapter shape, learning rate, schedule, optimiser, steps,
-  batch size, gradient clip, dtype, seed, a digest of the training pairs and the loss at every
-  step. A finetune whose loss did not fall is refused rather than reported, because it leaves
-  refusal unchanged and that reads as a perfect result
-- Trains either an adapter or every weight, and says which, because they answer different
-  questions: one tests whether an adapter can route around the edit and the other whether the edit
-  itself is undone
-- States which way its own bias runs: the recovery data teaches the model the phrases the refusal
-  ruler looks for, so a low recovered fraction is strong evidence and a high one is weak
-
-### New command: `budget`
-- Answers "will this model fit on this machine, and roughly how long would a run take" before
-  anything is downloaded or loaded, from the checkpoint's headers alone
-- Names each thing the run needs, separately: the widest layer, the float32 working set the
-  rewrite holds, the key and value cache, the captured activations, the writable copies on disk
-  and the per layer markers
-- Reports the page-locked memory ceiling and which side of it the host side store falls on,
-  because a store above the ceiling loses the overlap between copying and computing and the run
-  then looks slow for a reason that is not the streaming
-- Says whether the machine is on battery, since a laptop card on battery clocks to about a third
-  and turns a five day estimate into a fortnight with nothing in any log to say why
-- Prints the write total as a fraction of a typical drive's rated lifetime, so the wear is a
-  decision rather than a surprise
-- Refuses a run this machine cannot finish, naming the resource and the shortfall, and a resource
-  this machine will not report is marked skipped rather than passed, in the verdict as well as in
-  the line above it
-- Writes the whole budget as JSON with `--out`, through a temporary file and a rename, so a
-  truncated file can never read as a complete one
+### Budget
 - Says what else would fit, not only whether this run does: for each resource it names the largest
   single thing you could still add and how many times this run's own figure that is, so a machine
   with room to spare tells you how much room rather than just "yes"
 
-### GitHub Action
-- Give the step a baseline and a measurement and it also runs the regression gate, so a property
-  that moves outside its interval fails the build
-- A pass, a regression and a refusal produce three different annotations, and a refusal fails the
-  step with its own message because nothing was shown about the model at all
-- Passing one of the two gate inputs without the other stops the run rather than quietly skipping
-  the comparison
-- Reports `gate-status` as an output, empty when no baseline was given, which is not the same as
-  zero
-- Inputs reach the step's shell through the environment rather than being pasted into the script,
-  so a path containing a quote is a path and not a command
-
-### Regression gate
-- `--history` records every run, pass, fail or refusal, with the whole measurement rather than
-  just its number, so a regression caught in March is still evidence in June
-- Records are named after their own contents, so re-running a comparison records it once and
-  nothing is ever overwritten
-- A recorded measurement carries the digest of its own contents, so a baseline can be fetched by
-  address with `--store` instead of measured again, and one that has been edited since is refused
-- The verdict names the property, the partition, the sample size and the estimator it looked at,
-  and says what it did not cover
-- A history that cannot be written is reported and does not change the verdict
-
 ### Checker
-- Findings are printed as each file is finished, so a sweep over thousands of artefacts that you
-  stop halfway has still told you about the half it did
-- An interrupted run has no summary and no exit status, and with `--json` the report does not
-  parse, so a partial report is never read as a clean one
-- A long sweep says where it has got to every thirty seconds, on standard error, so `--json` stays
-  machine readable
-- `--pair` checks that it was given two files before reading any of them
-- `senbonzakura check --quiet` prints one line per finding and nothing else, so its output goes straight into a build log or a grep
 - `--min-applied` refuses a negative count at the flag, like every other count on both commands,
   rather than accepting one and comparing against it
 
 ### Command line
-- `senbonzakura stream-extract` pulls refusal directions out of a checkpoint too large to load,
-  and writes the file `stream-bake` applies. Extraction is a forward pass and a forward pass only
-  reads weights, so with `--offload-dir` the blocks that fit in neither the card nor host RAM can
-  sit on disk and be read back as the pass reaches them. Together the two commands do a whole run
-  on one machine, and the directions it finds are held identical to a full run's by test
-- `measure.json` now declares itself a summary, carries each instrument's own conditions verbatim,
-  and lists the conditions the instruments differ on. It never carried a figure of its own and now
-  says why, so `baseline` takes one of the per-instrument files beside it
-- `abliterate --leak-report` measures how much of the refusal direction is still present in the
-  residual stream, on the weights that were saved. Every other figure in a run is behavioural and
-  answers whether the model changed; this one looks at the weights, and it needs no judge, no
-  sampling and not one generated token. Read it beside the refusal rate rather than on its own:
-  it is a magnitude and not a verdict on whether the edit worked, and the docs give the table of
-  what each pairing means. Reported once per residual-stream position with its basis named, and always
-  present in `abliteration.json` under `residual_leak`, in one of three states: not asked for,
-  asked for with the reason there is no figure, or measured
-- The measurement is defined against one direction, so a recipe that applied several per layer, or
-  a different one at each layer, gets the reason it has no such figure rather than one of those
-  directions reported under the plain name
-- `abliterate --leak-report` now reports the mean over the positions the edit actually reached, and
-  names it before the mean over all of them. An abliteration's strength peaks at one layer and
-  fades out a few layers either side, so most positions are never edited and keep the whole
-  direction; averaging them in raised the headline figure for a reason that had nothing to do with
-  the edit. The old mean keeps its name and its value, the positions are listed beside the new one,
-  and the standalone `leak` command says plainly that it has only the whole-stack figure
-- The figure at the model's output is given in the basis the final normalisation maps the direction
-  into, and there is no way to ask for it against the original direction, because a direction that
-  has genuinely gone still reads as present when measured that way
-- `capability --task tool-call --tool-schema <file>` offers the model a set of tool declarations in
-  the prompt and then checks every reply against them by code: did it emit a call, name a tool that
-  exists, pass the required arguments, and get the declared types right. Each rate is reported over
-  its own denominator, because they are not over the same replies, and every one of them says in
-  the output that it's mechanical: a model calling the wrong tool cleanly every time scores
-  perfectly on all of them
-- The tools are written into the prompt rather than used only for grading, because "passed an
-  argument the tool does not declare" is only a failure if the model was told what the tool
-  declares
-- Offering a different set of tools changes the exam fingerprint, so a later `--compare-to` refuses
-  to pair two runs that were asked the same questions with different tools available
-- Two defects in the tool-call reader, both of which scored a correct call as wrong: a brace
-  anywhere earlier in the reply swallowed the call, and a call nesting its name under `function`
-  had all its arguments dropped. No published figure came through that reader, so nothing moves
-- `python -m senbonzakura.capability` failed on its default evaluation set with
-  `NameError: name 'load_probe' is not defined`, and `python -m senbonzakura.cli` failed before
-  reading an argument. Both modules ran their script entry point above code that the entry point
-  needs, so the console scripts worked and the module paths did not
-- `quantise --like <reference.gguf>` copies the per-tensor precision schedule out of a finished
-  GGUF and applies it to the model being quantised, which makes the layer-by-layer half of an
-  Unsloth Dynamic (`UD-`) build reproducible: a GGUF records a type for every tensor in its own
-  header, so the plan is readable out of the artefact
-- The importance matrix behind such a build is not copied, because it leaves no trace in the file
-  it produced and is generally not published. Every `--like` run says so in the terminal, the
-  output is named `-copied-schedule` rather than after the reference, and `.provenance.json`
-  records the reference's sha256, the schedule that was copied, and a plain
-  `"importance_matrix_copied": false`
-- A `--like` run refuses a reference that is not the same model as the source, by architecture and
-  by tensor-name agreement, because a schedule aimed at the wrong model lands on the tensors whose
-  names happen to match and leaves the rest alone without failing
-- After a `--like` run the output is read back and compared tensor by tensor against the reference,
-  and the count that matched is printed. `llama-quantize` will accept a per-tensor instruction,
-  ignore it, and produce a file anyway, and that count is the only evidence either way
-- A negative or zero count is refused at the flag on every command rather than on some of them,
-  so a mistyped minus can no longer measure the last five prompts and report them as the first
-- `--inspect` refuses a fractional layer index instead of truncating it, and a negative strength
-  instead of adding the refusal direction back
-- The governor's free memory fraction, the pause ceiling and the divergence ceiling are checked
-  before a run starts, because each of them moves a bar rather than crashing
 - `--help` on `drift`, `score`, `coherence`, `validate` and `stream-extract` answers in about a
   sixteenth of a second instead of over three, because reading a help page no longer loads the
   machine-learning libraries the command would only need once it had work to do
 - When a command is missing a required argument it now prints the shortest command line it will
   accept, indented so you can copy it straight back out, on every subcommand rather than on the
   few that had the example written by hand
+
+### Plugins
 - A plugin can add a measurement. The contract is one documented protocol with two transports, in
   the same process for something installed beside us and in a subprocess for anything else, with a
   deadline on every call, a cap on the reply and the plugin's own standard error quoted back when
@@ -223,90 +33,149 @@ tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v
   to is us
 
 ### Report
-- `senbonzakura report` takes `--multiturn`, a `senbonzakura multi-turn` artefact, and reports
-  whether a refusal that holds on the first ask gives way when the request is escalated. The
-  comparison against simply asking again is stated before the conversion figure, and where the
-  two intervals overlap the card says the run cannot separate them
-- `senbonzakura report` takes `--tamper` and reports whether a brief finetune brings the removed
-  refusal back, with the ceiling that figure should be read against
-- A run that disowned its own figures is quoted nowhere on the card, and is still listed as a gap
-  in "What this does not cover" rather than being read as covered because a file was supplied
-- `senbonzakura report` takes `--refusal`, a `senbonzakura score` artefact holding the figures
-  taken after the edit on rows the search never scored, and publishes those as the headline rates
-  with the search's own figures kept below and labelled as not publishable
-- Every rate on the card now carries its counts and a 95% interval, so a figure over nine replies
-  no longer reads exactly like a figure over three thousand
-- A new "What was measured" section names the estimator behind each figure, the number of replies
-  it rests on, and the five fields that decide whether two such figures describe the same
-  experiment, with an absent field said out loud rather than left off the page
-- A new "What this does not cover" section lists the gaps this run actually has, then the standing
-  limits of the instruments: what a refusal is here, one corpus and one language, one reply per
-  prompt, nothing about a conversation that continues, and nothing about whether the writing is
-  good
-- The sentences an artefact writes about its own figures now reach the reader: a generation budget
-  too short for a refusal to appear, a run that disowned its own number, and the note saying the
-  refusal rates came from the rows the search chose its winner by scoring. All three were in the
-  file and none of them reached the page
-- The card reports the Heretic comparable keyword figure, which the run has always recorded and the
-  card always dropped
-- An interval explanation and a note on why the rows matter are written for a reader who is not a
-  statistician
 - `senbonzakura head-to-head report` takes `--out` and writes the comparison as a machine readable
   summary. It declares itself a summary, stamps no figure of its own, carries each arm's own
   recorded conditions word for word, and lists the conditions the arms differ on, so a reader can
   see what a comparison between them is and isn't entitled to say
 
-### Measurement
-- Graded prose measures beside `is_broken`, over the whole reply rather than its first 240
-  characters: a repetition rate, a vocabulary ratio with a windowed form that survives a length
-  difference, and a shortfall against the generation budget with truncation reported separately.
-  They are mechanical and are not a measure of whether the writing is any good
-- `is_broken` itself is unchanged, threshold and window alike, so every published figure that
-  rests on it still holds
-- A null ruler that separates the two sides perfectly in the opposite direction is named as the
-  strongest one, where it used to be scored as a coin flip, so the headline control line and the
-  rule that invalidates a run now agree on the same case
-- A null panel that could not be scored at all says so instead of printing a control at chance
-- The null floor the direction filter holds candidates to is reported as the percentile it is,
-  with its false keep rate, rather than as a bar every null draw fails
-- `capability`, `drift` and the compass pass of `score` now record inside their own result file
-  that a figure is not a measurement, which is the field `measure` and the checker already read,
-  so a run that could not measure anything no longer reads like one that measured a zero
-- `drift` refuses a divergence that came back as NaN or as infinity, one that came back
-  materially below zero, and one averaged over a single prompt, naming the likely cause each time
-- `score --harm-recognition` refuses a rate over fewer than thirty replies, which is the floor
-  every other rate in the tool is already reported through
-- `capability` exits non-zero when the run it is compared against could not grade its own
-  answers, a case it has always printed as not quotable and then reported as a success
-- A drift below the bfloat16 floor stays a caveat beside the number rather than becoming a
-  refusal, because the measured gap to float32 is under one percent at the figures published here
-- `measure` counts an instrument that disowned its own figure as one that produced no number, so
-  the table, the failure list in `measure.json` and the exit status now agree about the same run
-- `head-to-head stage` writes a separate coherence slice, `bestofn_kl_prompts.txt`, for the best-of-N selection, so the six candidates are ranked on prompts neither tool tuned against. Before this, the selection could be scored on prompts Heretic's search had already tuned against, which could change which candidate won
-
 ### Documentation
-- A new guide page covers whether an edit holds up: what each of the three new commands measures,
-  the control each one runs, which way the tamper measurement's bias runs, and the conditions
-  under which a run refuses to give you a number at all
-- The page explaining how the tool works now describes the direction filter as it behaves, with
-  a held out score and a measured floor, matching the two pages that already did
-- The capability probe is described as five grading rules over one bundled dataset, not as five
-  datasets, on every page that counts them
-- The GPU requirements table and the prose above it gave different answers for a 6 GB card, and
-  the prose now quotes the measured row
-- The flags page had its closing links in the middle of the body, above a third of the page
-- Two pages disagreed about whether our own numbers carry intervals; both are corrected and the
-  two real exceptions are named where a reader meets them
-- `drift` is named as a **first-token** measurement in the README, the CLI reference and the flags
-  page, not just in the benchmark and first-run guides
-- The norm-restore sentence claimed a property of the field on a reading of two other tools;
-  **withdrawn, not adjusted**, and restated scoped to the tools actually read
-- "Nobody validates the judge" is now "nobody computes agreement above chance", which is the
-  claim the evidence supports
-- The comparison page says which tools it read, which it didn't, and on what date
-- A fourth tool and a third idea, the conditional edit, are named in the prior-art page
 - A new reference page documents the plugin protocol: the manifest a plugin returns, the request
   and reply shapes, the limits on each, and how to install one so the tool finds it
+
+### Other
+- Bug fixes and improvements.
+
+## [0.5.1] "Kuchiki" — 2026-10-13
+
+A hotfix. No new features: security, and the defects that leave somebody worse off than before
+they ran the command.
+
+### Security
+- `diff` and `budget` could be ended by a crafted checkpoint header. A file of about 200 KB was
+  enough. Both now refuse it and say why
+- The wheel no longer carries a RunPod client that read an API key from your environment and could
+  be reached from no command
+
+### Fixed
+- `setup --apply` put back the torch it replaced when the new one will not start. It used to leave
+  the machine with no working torch at all, after a download of several gigabytes
+- `setup` says the download is large, and on WSL says the chosen CUDA build may not run there, both
+  before it starts rather than after it fails
+- `doctor` fails when a package the install declares is missing. It reported all clear while `score`
+  refused on the same missing package and told you to run `doctor` to find it
+- `doctor` names the graphics card it can see and why it is unused, instead of reporting only that
+  no card is in use
+- `tamper` refuses a finetune whose loss stopped being a number, rather than reporting it as
+  resistance to tampering. No figure from 0.5.0 is affected: the command shipped the same day
+- `tamper` also refuses a finetune whose loss blew up and came back, which it used to report as a
+  finetune that did nothing. Every value in such a run is a real number, so the check for a loss
+  that stopped being a number cannot see it
+- `tamper` describes a loss that rose as having risen. It used to call it a fall of a negative
+  amount, which says the opposite to anyone reading quickly
+- `diff` reports a tensor holding a NaN or an infinity as exactly that, and says which side it is
+  on, instead of claiming it cannot read the dtype
+- `diff` holds its memory flat whatever the tensor's size, which is what its own `--help` promised.
+  It is also about three times faster
+- `diff` warns before a comparison that will take a long time, and says something while it is
+  inside one large tensor
+- A model path that exists on your disk is no longer answered with advice about authenticating to
+  Hugging Face
+- A model path that does not exist is answered the same way. Typing a directory wrongly used to
+  send you off to check a token that was never involved
+- A checkpoint cloned without its large files is named as exactly that, with the files that are
+  still placeholders and the command that fetches them. It used to fail inside a JSON parser
+- `stream-extract` refuses `--offload-dir` together with `--device cpu` at the point you type them,
+  in one sentence saying which to drop. The two cannot work together, and on a machine with no
+  usable card the advice given for the missing card led straight into the pair
+- A direction set says how many directions it holds rather than how many it had room for. A run
+  that found one per position reported three, which is the size of the space they sit in
+- A direction file records the number found alongside the number allocated, so the file can be read
+  without guessing which one a figure refers to
+- A direction set is written whole or not at all, so a run stopped during the write cannot leave a
+  file that looks like a direction set and is not one
+- Ctrl+C says what happened in a sentence and exits 130. Every command except the guided search
+  used to answer it with a traceback through whatever it was doing at the time
+- `senbonzakura-check` says a file is not text rather than failing with a decoding error, which is
+  what happened when you pointed it at a model or a direction set
+- A flag that refuses a number out of range no longer explains it by describing something the flag
+  does not do. `--seed -1` was told that a negative seed slices rows from the end of a set, and a
+  seed does not index anything. The explanation now appears only on the flags it is true of
+- A flag you typed correctly is not suggested back to you. Passing `--steps 0` was answered with
+  "Did you mean --steps?" alongside the real complaint
+- `diff` and `budget` leave no `.part` file behind when writing `--out` fails
+
+### Breaking
+- `--inspect` refuses a negative layer index or a negative ablation strength. This landed in 0.5.0
+  and was not written down at the time
+- The floor on `senbonzakura-check` moves to 0.5.1. The two distributions share a version line, so
+  a pin holding the checker at 0.5.0 will conflict
+
+### Docs
+- The README says what to do when pip refuses with "externally-managed-environment", which is the
+  default on Debian, Ubuntu and Fedora
+- A published AUC comparison in `evidence/compass-2026-10-11` is withdrawn. One row quoted two
+  figures that no committed artefact produces and that cannot be recomputed from the record beside
+  them. The removal is explained in place rather than made quietly
+- The website said 0.4.1 and linked that tag, two releases after it stopped being current
+
+### Other
+- Bug fixes and improvements.
+
+## [0.5.0] "Kuchiki" — 2026-10-13
+
+The headline is streaming: a checkpoint too large to load can be measured and edited on one machine. Five new commands ask whether an edit holds up.
+
+### Breaking
+- `--device cuda` on a machine with no usable card refuses before the download, instead of running fifty times slower on the processor
+- `senbonzakura gate` refuses a point estimate that is not a finite number (exit 2), where a NaN used to pass as "within interval"
+- Wheels are platform-specific now, because the package ships a compiled Rust extension, so a platform with no published wheel builds from source and needs a Rust toolchain
+- Floors moved: huggingface_hub 1.5.0, transformers 5.10.1, torch 2.7, and senbonzakura-check 0.5.0, so a pin holding the checker at 0.4.x will conflict
+
+### Security
+- A run given both `--hf-token` and `--base-licence` wrote the token into the model card; it is `***` there now, and in `report --command`. If you published a card from such a run under 0.4.0 or 0.4.1, revoke that token and replace the card
+
+### Streaming
+- `stream-extract` pulls refusal directions out of a checkpoint too large to load, and writes the file `stream-bake` applies
+- `--offload-dir` puts the blocks that fit in neither the card nor host RAM on disk, read back as the forward pass reaches them
+- The directions a streamed run finds are held identical to a full run's by test
+
+### New commands
+- `diff` compares a checkpoint against the base it claims to come from, tensor by tensor, with no model loaded and no network. It is not a safety verdict, and says so in its own output
+- `jailbreak` reports single-turn jailbreak success beside the over-refusal rate on a benign set, in the same run, because a model that declines everything scores perfectly on the first figure alone
+- `multi-turn` asks whether a refusal holds when the conversation continues, with the plain-repetition control beside it
+- `tamper` measures whether an abliteration survives a brief safety-recovery finetune, against a neutral-data control and the unedited model as a ceiling
+- `budget` answers "will this model fit on this machine" from the checkpoint's headers, before anything is downloaded
+
+### Measurement
+- `abliterate --leak-report` measures how much of the refusal direction is left in the weights that were saved, with no judge and not one generated token
+- That figure is the mean over the positions the edit reached, named before the old mean over all of them, which positions never edited had inflated
+- `capability --task tool-call --tool-schema <file>` offers the model real tool declarations and checks every reply against them by code, each rate over its own denominator
+- Two defects in the tool-call reader, both of which scored a correct call as wrong; no published figure came through it, so nothing moves
+- Graded prose measures beside `is_broken`: a repetition rate, a vocabulary ratio, and a shortfall against the generation budget. `is_broken` itself is unchanged, so every published figure resting on it still holds
+- A null ruler that separates the two sides perfectly in the wrong direction is named as the strongest one, where it used to be scored as a coin flip
+- `drift`, `score --harm-recognition` and `capability` each refuse a figure they cannot stand behind, naming the likely cause
+- `quantise --like <reference.gguf>` copies the per-tensor precision schedule out of a finished GGUF; the importance matrix behind such a build is not copied, and every run says so
+
+### Report
+- Every rate carries its counts and a 95% interval, so a figure over nine replies no longer reads like one over three thousand
+- New "What was measured" and "What this does not cover" sections name the estimator behind each figure and the gaps the run actually has
+- The card reads `--refusal`, `--multiturn` and `--tamper` artefacts
+- A run that disowned its own figures is quoted nowhere on the card, and is still listed as a gap
+- Three sentences an artefact wrote about its own figures were in the file and never reached the page
+
+### Integration
+- The Action runs the regression gate when given a baseline and a measurement, and a pass, a regression and a refusal produce three different annotations
+- `gate --history` records every run, pass, fail or refusal, named after its own contents, so a regression caught in March is still evidence in June
+- A recorded measurement carries its own digest, so `--store` can fetch a baseline by address, and refuses one that has been edited since
+- `check` prints findings as each file finishes, and an interrupted sweep has no summary and no exit status, so a partial report is never read as a clean one
+- `check --quiet` prints one line per finding and nothing else, for a build log or a grep
+
+### Documentation
+- A new page on whether an edit holds up: what each new command measures, the control it runs, and when a run refuses to give you a number at all
+- The norm-restore claim about the field is withdrawn, not adjusted, and restated scoped to the tools actually read
+- "Nobody validates the judge" is now "nobody computes agreement above chance", which is the claim the evidence supports
+- The comparison page says which tools it read, which it did not, and on what date
+- Pages that disagreed with each other are corrected: the GPU requirements table for a 6 GB card, the capability probe as five grading rules over one dataset, and `drift` as a first-token measurement
 
 ### Other
 - Bug fixes and improvements.

@@ -300,6 +300,69 @@ def test_a_finetune_whose_loss_did_not_fall_invalidates_the_run():
     assert "--lr" in why and "--steps" in why
 
 
+def test_a_diverged_finetune_is_refused_rather_than_certified():
+    """THE GUARD FOR A DEFECT THAT SHIPPED IN 0.5.0, found by the release gate review on 2026-10-13.
+
+    `validity` decided a finetune had happened with `drop = first - last` and `if drop < min_drop`.
+    **Every comparison against a NaN is False**, so a finetune whose loss diverged produced
+    `drop = nan`, failed to trip the guard, and was certified as valid. The command then stated a
+    tamper resistance figure for a run that did not take place, which is the exact failure the
+    flat-loss condition above exists to prevent, wearing different clothes.
+
+    THE MUTANT THIS CATCHES, verified 2026-10-13 by running it: replace the `math.isfinite(v)`
+    condition in `tamper.validity` with one that never fires, and exactly TWO tests fail, this one
+    and the mid-series case below. The other 101 tests in this file pass, which is precisely why
+    the defect survived a release with 1,163 lines of tests already pointed at this command.
+    """
+    import math as _math
+    nan, inf = _math.nan, _math.inf
+
+    # Diverged at the end, so the endpoints alone would also catch it.
+    why = tamper.validity({"recovery": {"loss": tamper.loss_trace([2.0, 1.5, nan]),
+                                        "pre": _pre()}}, _pre())
+    assert why is not None, "a NaN final loss must not be certified as a valid finetune"
+    assert "stopped being a number at step 3 of 3" in why
+    assert "diverged rather than converged" in why
+    assert "--lr" in why
+
+    # NaN from the first step.
+    why = tamper.validity({"recovery": {"loss": tamper.loss_trace([nan, nan]),
+                                        "pre": _pre()}}, _pre())
+    assert why is not None and "at step 1 of 2" in why
+
+    # Infinity counts, and so does the arm's name.
+    why = tamper.validity({"recovery": {"loss": tamper.loss_trace([2.0, 1.0]), "pre": _pre()},
+                           "neutral": {"loss": tamper.loss_trace([2.0, 1.0, inf]),
+                                       "pre": _pre()}}, _pre())
+    assert why is not None and "the neutral finetune's loss" in why
+
+
+def test_a_loss_that_fell_then_diverged_then_recovered_is_still_refused():
+    """WHY THE WHOLE SERIES IS CHECKED AND NOT THE ENDPOINTS.
+
+    `loss_trace`'s own docstring says the series is kept because "a loss that fell and then
+    diverged, and one that fell smoothly, give the same first and last values and are not the same
+    run". This is that case: finite endpoints, a healthy-looking drop, and a NaN in the middle. An
+    endpoint check passes it. The weights are still not the weights a converged finetune leaves.
+    """
+    import math as _math
+    series = [2.0, 1.5, _math.nan, 1.2, 0.9]
+    trace = tamper.loss_trace(series)
+    assert _math.isfinite(trace["first"]) and _math.isfinite(trace["last"])
+    assert trace["first"] - trace["last"] > 0.01, "the endpoints look like a healthy finetune"
+
+    why = tamper.validity({"recovery": {"loss": trace, "pre": _pre()}}, _pre())
+    assert why is not None, "a NaN mid-series must be refused even when the endpoints look fine"
+    assert "at step 3 of 5" in why
+
+
+def test_a_healthy_loss_series_is_still_a_measurement():
+    """The counterpart, so the new refusal cannot pass by refusing everything."""
+    assert tamper.validity(
+        {"recovery": {"loss": tamper.loss_trace([2.0, 1.6, 1.1, 0.7]), "pre": _pre()}},
+        _pre()) is None
+
+
 def test_a_loss_that_rose_invalidates_too():
     assert "recovery finetune's loss" in tamper.validity(
         {"recovery": _arm(first=1.0, last=3.0)}, _pre())
@@ -1167,3 +1230,77 @@ def test_the_mismatch_reaches_the_terminal():
     lines = tamper._report(_res(headroom_mismatch="the arms started from different places"),
                            "r.json")
     assert any("TAMPER_HEADROOM_MISMATCH" in ln for ln in lines)
+
+
+# ── a diverged run whose every value is finite ────────────────────────────────────────────────
+#
+# Journey 2, 2026-10-13, drove `--lr 10` on purpose against the released build and got the series
+# below. The guard caught the run, which is the behaviour this release added. It caught it with
+# the WRONG REASON: the NaN test saw nothing, because nothing in the series is a NaN, so the
+# flat-finetune test underneath fired and told the reader their finetune "did nothing" after it
+# had briefly multiplied the loss by five thousand.
+#
+# The NaN test's own comment already stated the broader rule: the whole series is read "because a
+# loss that fell and then diverged has a finite first and last". That reasoning is right and it is
+# wider than `math.isfinite`, which is the test it was written to justify.
+
+
+def test_a_loss_that_blew_up_and_came_back_is_refused_as_divergence():
+    """The journey's actual numbers, to four decimal places, with no NaN anywhere in them."""
+    import math as _math
+
+    series = [1.839076, 9536.120117, 1533.661865, 11.090356]
+    assert all(_math.isfinite(v) for v in series), (
+        "the whole point of this case is that the NaN test cannot see it")
+
+    why = tamper.validity({"neutral": {"loss": tamper.loss_trace(series), "pre": _pre()}}, _pre())
+    assert why is not None
+    assert "diverged" in why, why
+    assert "did nothing" not in why, (
+        f"a run that multiplied its loss by five thousand is told it did nothing: {why}")
+    assert "at step 2 of 4" in why, why
+    assert "Lower --lr" in why, why
+
+
+def test_the_excursion_is_measured_against_where_the_loss_started():
+    """And it names the multiple, because the number is the argument."""
+    why = tamper.validity(
+        {"recovery": {"loss": tamper.loss_trace([2.0, 100.0, 1.0]), "pre": _pre()}}, _pre())
+    assert "50 times the 2.0000 it started at" in why, why
+
+
+def test_an_ordinary_bad_step_is_not_called_divergence():
+    """The guard must not fire on training that wobbled and then converged.
+
+    A refusal that fires on healthy runs costs more than the defect it prevents, because the next
+    reader learns to ignore it.
+    """
+    assert tamper.validity(
+        {"recovery": {"loss": tamper.loss_trace([2.0, 3.5, 1.4, 0.8]), "pre": _pre()}},
+        _pre()) is None
+
+
+def test_a_loss_that_starts_at_almost_zero_does_not_fake_an_excursion():
+    """Dividing by something near zero makes any later value look like a blow-up."""
+    why = tamper.validity(
+        {"recovery": {"loss": tamper.loss_trace([1e-9, 1e-4, 1e-9]), "pre": _pre()}}, _pre())
+    assert why is None or "diverged" not in why, (
+        f"a tiny starting loss produced a divergence verdict from a ratio that means nothing: {why}")
+
+
+def test_a_loss_that_rose_is_described_as_a_rise_and_not_as_a_negative_fall():
+    """The smaller half of the same defect: a correct verdict explained backwards.
+
+    The released build printed "a fall of -9.5189" for a loss that rose by 9.5, which states the
+    opposite of what happened to somebody reading it quickly.
+    """
+    why = tamper.validity({"recovery": _arm(first=1.0, last=3.0)}, _pre())
+    assert "RISE of 2.0000" in why, why
+    assert "a fall of -" not in why, why
+
+
+def test_a_loss_that_fell_short_of_the_floor_still_reads_as_a_fall():
+    """The fix must not reword the case that was always right."""
+    why = tamper.validity({"recovery": _arm(first=1.8, last=1.7995)}, _pre())
+    assert "a fall of 0.0005" in why, why
+    assert "RISE" not in why, why

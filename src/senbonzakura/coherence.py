@@ -199,7 +199,8 @@ def main(argv=None):
 
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code, needs_chat_template=False)
+        trust_remote_code=a.trust_remote_code, needs_chat_template=False,
+        log=print)
     res = {"label": a.label, "model": a.model, **coherence(model, tok)}
     _stamp_coherence(res, model_precision(model, a.load_in_4bit))
     with atomic_write(a.out) as f:

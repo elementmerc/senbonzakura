@@ -157,6 +157,93 @@ def check_platform():
     return _pass("platform", key)
 
 
+#: The distribution whose declared requirements `check_requirements` reads. Named once rather than
+#: spelled at each use, because a typo here would make the check pass by finding nothing.
+_DIST = "senbonzakura"
+
+
+def _declared_requirements():
+    """The base requirements of this install that apply to this interpreter.
+
+    Read from the INSTALLED distribution's metadata rather than from `pyproject.toml`: a wheel
+    carries no `pyproject.toml`, and the question this answers is what this install was built to
+    need, not what the checkout currently declares.
+
+    Extras are excluded on purpose. An extra is opt-in, so a missing `bitsandbytes` is not a
+    damaged install, and failing on one would teach the reader to ignore this check.
+
+    Returns `(requirements, complaint)`. A complaint means the list is not trustworthy and the
+    caller must say so rather than report all clear from a short list, which is the exact failure
+    shape this whole check exists to close.
+    """
+    from importlib.metadata import PackageNotFoundError, requires
+    try:
+        declared = requires(_DIST)
+    except PackageNotFoundError:
+        return [], (f"{_DIST} is not installed as a distribution, so its requirements cannot be "
+                    f"read. This is a checkout running from source without an install")
+    if not declared:
+        return [], f"{_DIST}'s metadata declares no requirements at all, which cannot be right"
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        return [], ("`packaging` is not importable, so requirement markers cannot be evaluated "
+                    "and this check cannot tell which requirements apply here")
+    out = []
+    for line in declared:
+        try:
+            req = Requirement(line)
+        except Exception as e:
+            return [], f"{_DIST} declares a requirement this check cannot parse ({line!r}: {e})"
+        # `evaluate()` with no `extra` in the environment is False for every `extra == "..."`
+        # marker, which is how the extras drop out without being named here.
+        if req.marker is not None and not req.marker.evaluate():
+            continue
+        out.append(req)
+    return out, ""
+
+
+def check_requirements():
+    """Every package this install declares it needs is installed, at a version it accepts.
+
+    WHY THIS EXISTS. Journey 1, 2026-10-13: `doctor` reported "19 checks, 19 pass, 0 failed" and
+    exited 0 on a `--no-deps` install, while `score` refused in the very next command on a missing
+    required package AND told the reader to run `doctor` to find it. Two surfaces contradicting
+    each other, with the one that was wrong being the one that exited 0. A doctor that cannot see a
+    missing required dependency is not doing the job its own error messages promise it does.
+
+    THIS ONE IS A PRESENCE CHECK, against this module's rule that every check proves work rather
+    than presence, and the exception is deliberate. Importing all fourteen would add the cost of
+    `transformers` and `optuna` to a command people run to answer a quick question, and the heavy
+    ones are already proved to WORK further down: `check_torch` imports torch and runs a tensor
+    through it, `check_quantize` and `check_converter` start the binaries, `check_corpora` decodes
+    the packs. What was missing was anybody asking whether the declared set is there at all.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    reqs, complaint = _declared_requirements()
+    if complaint:
+        # NOT A PASS AND NOT SILENCE. An unreadable declaration means this check has no opinion,
+        # and reporting the absence of an opinion as all clear is how the original defect read.
+        return [_warn("requirements", f"cannot be checked: {complaint}",
+                      "`pip install --force-reinstall senbonzakura` rebuilds the metadata")]
+    bad = []
+    for req in reqs:
+        try:
+            have = version(req.name)
+        except PackageNotFoundError:
+            bad.append(_fail(f"requirement {req.name}", "not installed",
+                             f"`pip install '{req}'`, or `pip install --force-reinstall "
+                             f"{_DIST}` to put the whole declared set back"))
+            continue
+        if req.specifier and not req.specifier.contains(have, prereleases=True):
+            bad.append(_fail(f"requirement {req.name}", f"{have} installed, {req.specifier} needed",
+                             f"`pip install -U '{req}'`"))
+    if bad:
+        return bad
+    return [_pass("requirements", f"{len(reqs)} of {len(reqs)} declared, all installed")]
+
+
 def check_pins():
     from .vendoring import load_manifest
     try:
@@ -304,28 +391,68 @@ def _corpus_fix():
 
 
 def check_corpora():
+    """Does each packed corpus hold the rows the registry says it does?
+
+    A COUNT, NOT A USE, and `attribute=False` is what says so.
+
+    Operator ruling, 2026-10-11. This loop reads all six packs to assert six row counts. It
+    publishes no figure, derives nothing and keeps no rows, and for that it was printing six full
+    citations: twenty-nine lines of attribution above the report, on the very command the README
+    tells a stranger to run first. The answer the reader came for started on line 33 of 68.
+
+    The obligation stays where it was. `pointer()` still prints, so the file holding every
+    citation is still named in the output; every corpus's licence is on its own row below, which
+    is what `README.md` promises this report does; and a run that uses the prompts for a
+    measurement prints the full citation unchanged. See `corpora.load`'s docstring for the whole
+    reasoning, which lives there because that is where the decision is enforced.
+    """
     from .corpora import CORPORA, CorpusError, load
     out = []
     for key in sorted(CORPORA):
         try:
-            rows = load(key)
+            rows = load(key, attribute=False)
         except CorpusError as e:
             out.append(_fail(f"corpus {key}", str(e).split(".")[0], _corpus_fix()))
             continue
         expected = CORPORA[key].rows
-        out.append(_pass(f"corpus {key}", f"{len(rows)} prompts")
+        # THE LICENCE ON THE ROW, not only in the citation block that used to sit above the
+        # report. `README.md` sends a reader here with "lists every bundled corpus it can decode,
+        # with its licence", so the licence per corpus is a promise this report makes and the row
+        # was answering only half of it. With the citations gone from this surface it is now the
+        # only thing keeping that sentence true, which is why it landed before they moved.
+        licence = CORPORA[key].licence
+        out.append(_pass(f"corpus {key}", f"{len(rows)} prompts, {licence}")
                    if len(rows) == expected else
-                   _fail(f"corpus {key}", f"{len(rows)} prompts, expected {expected}",
+                   _fail(f"corpus {key}", f"{len(rows)} prompts, expected {expected} ({licence})",
                          "the pack and the code disagree; rebuild it"))
     return out
 
 
 def check_track():
+    """Is the packed evaluation track in this install?
+
+    AN ADVISORY, NOT A FAILURE, and the distinction is the whole of the first impression.
+
+    The track is packed from a held-out corpus that lives outside this repository, so no CI job
+    can build one and the published container image genuinely ships without it. That made the
+    README's own first command, `docker run ... doctor`, exit 2 and print "This install cannot do
+    what it claims" at somebody thirty seconds into meeting the tool. The image was right about
+    the fact and wrong about the weight: an install with no packed track cannot run `--track
+    default` and can do everything else, which is the definition of an advisory here.
+
+    The distribute gate had already reached the same conclusion from the other side, on
+    2026-10-10 in `0e95d5f`: it captures doctor's status rather than obeying it, specifically so
+    this one absence cannot abort the step. Two places deciding the same thing is one too many,
+    and this is the place that a user reads.
+    """
     try:
         from . import bundled
         p = Path(bundled.data_path())
         if not p.is_file():
-            return _fail("bundled track", "not installed", "reinstall, or rebuild it")
+            return _warn("bundled track", "not installed, so `--track default` is closed",
+                         "every other command works. Point `--track` at a track you built, or "
+                         "pack one with tools/packaging/pack_track.py. Published builds ship "
+                         "without it because the corpus it is packed from is held out")
         # THE PATH, not just the size. Auditing the bundled track is a real task and it is the
         # one that decides a rented-card booking, and the only way to find where it unpacks to
         # was to import `senbonzakura.bundled` and call `ensure()` in a REPL. Reading the source
@@ -417,12 +544,55 @@ def check_torch():
     # default 200-item, 512-token probe at roughly four hours of host generation and exits rather
     # than spending it. An advisory that promises a slow success where the tool delivers a refusal
     # sends the reader looking for a fault in their install.
-    return _warn("torch", f"{torch.__version__}, no cuda device",
-                 "scoring is fine on CPU. An edit is not, on the default flags: the capability "
-                 "probe costs about four hours at host speed, so the run refuses rather than "
-                 "starting, and names the ways past it. They are --capability-n 0 for no "
-                 "capability number, or --slow-probe-ok to spend the hours. The edit itself "
-                 "works on CPU, slowly.")
+    cpu_only = ("scoring is fine on CPU. An edit is not, on the default flags: the capability "
+                "probe costs about four hours at host speed, so the run refuses rather than "
+                "starting, and names the ways past it. They are --capability-n 0 for no "
+                "capability number, or --slow-probe-ok to spend the hours. The edit itself "
+                "works on CPU, slowly.")
+    why, fix = _no_cuda_diagnosis()
+    if why:
+        return _warn("torch", f"{torch.__version__}, no cuda device: {why}",
+                     f"{fix}\n\nUntil then, {cpu_only[0].lower()}{cpu_only[1:]}")
+    return _warn("torch", f"{torch.__version__}, no cuda device", cpu_only)
+
+
+def _no_cuda_diagnosis():
+    """Why there is no CUDA device here, as `(what is wrong, what to do)`, or `("", "")`.
+
+    WHY THIS IS BORROWED RATHER THAN WRITTEN. Journey 1, 2026-10-13, on a laptop with an idle
+    RTX 3060 and a CPU-only torch: `doctor` said "no cuda device" and offered advice about a
+    four-hour probe, and `setup` in the very next command named the card, named the CPU-only
+    build, and gave the exact line to fix it. **The tool knew. `doctor` just did not say it**, and
+    the reader had to run a second command to find out that the hardware they had bought was
+    sitting idle.
+
+    So this asks `envsetup` the question it already answers, rather than growing a second copy of
+    a hardware table that would drift from the first. Every fact-gatherer it calls returns a
+    "could not tell" value of its own rather than raising, and `plan` is pure, so there is nothing
+    here to catch.
+
+    Returns empty strings when there is nothing useful to add, which is the common and correct
+    case: a machine with no NVIDIA card at all has no diagnosis to give beyond the absence, and
+    `plan`'s own answer there is "ok", meaning nothing is wrong that it can see.
+    """
+    from . import envsetup
+
+    torch_version, variant = envsetup.installed_torch()
+    verdict, reason, args = envsetup.plan(
+        gpus=envsetup.nvidia_gpus(), driver=envsetup.driver_cuda_version(),
+        torch_version=torch_version, variant=variant, compute=envsetup.compute_capability())
+    if verdict == "ok":
+        return "", ""
+    if args:
+        import sys as _sys
+        fix = (f"{' '.join([_sys.executable, '-m', 'pip', *args])}\n\n"
+               f"`senbonzakura setup --apply` runs that for you and checks the result starts.")
+    else:
+        # NO COMMAND IS NOT NO ANSWER. `plan` returns a reason without arguments whenever the fault
+        # is one pip cannot fix (a driver too old, a card below every channel's floor), and that
+        # reason is the whole value of asking.
+        fix = "`senbonzakura setup` says the same thing at more length."
+    return reason, fix
 
 
 #: Steps for the page-locked probe. Big enough that the per-allocation overhead does not dominate,
@@ -599,11 +769,42 @@ def _in_group(checks, name):
     return checks
 
 
+#: The line that goes above everything, including the licence attribution the checks trigger.
+#:
+#: WHY IT IS BACK, AND IT IS NOT THE TITLE THAT WAS REMOVED. A title used to print inside `main`
+#: and was dropped on the reasoning that the banner the entry point draws already names the tool.
+#: That reasoning holds on a terminal and nowhere else: the banner is drawn only for a terminal, so
+#: a piped run and `docker run` with no tty open on thirty-one lines of third-party citations with
+#: nothing above them saying what command is running. The README's first command is
+#: `docker run ... doctor`, so that cold open is the first thing this project shows anybody.
+#:
+#: It is a sentence rather than a title because it has a job a title does not: it tells the reader
+#: that the prose about to appear is not the answer they asked for, which is the complaint a
+#: journey persona actually made. `Installed:` already marks where that prose ends; this marks
+#: where it begins.
+OPENING = "senbonzakura doctor: checking what this install can do."
+
+
 def run_checks(*, deep=False, log=print):
+    log(OPENING)
+    log("")
+    # THE POINTER WITHOUT THE CITATIONS, which is this report's half of the 2026-10-11 ruling.
+    # `check_corpora` reads the packs with `attribute=False` because a row count is not a use, so
+    # nothing down there prints the sentence naming the file that holds every citation. It is
+    # printed here instead rather than dropped: the licences ask for the notice to travel with the
+    # work, and naming `THIRD-PARTY-CORPORA.md` on a surface that lists the corpora is the part of
+    # that which was never in question.
+    # No blank line after it: `report` opens with one of its own, and two reads as a gap where
+    # something was removed.
+    from . import corpora
+    corpora.pointer(log=log)
     # Cheap by default (one 256 MB probe: can this machine pin at all), thorough under --deep,
     # where finding the real ceiling means climbing to it.
-    checks = _in_group([check_platform(), check_torch(),
-                        check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None)], "machine")
+    # FIRST, because every other check below assumes the declared set is present, and a reader
+    # looking at twelve failures wants to be told once that nothing was installed.
+    checks = _in_group(check_requirements(), "install")
+    checks += _in_group([check_platform(), check_torch(),
+                         check_pinned_memory(PINNED_DEEP_MAX_BYTES if deep else None)], "machine")
     checks += _in_group([*check_pins(), check_quantize(), *check_converter()], "tools")
     checks += _in_group([check_track(), check_table_io(), *check_corpora()], "data")
     if deep:

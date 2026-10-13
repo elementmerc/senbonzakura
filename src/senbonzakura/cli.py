@@ -54,7 +54,10 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+# Torch-free on purpose: the measurement commands take the model as a positional too and must not
+# import THIS module in order to parse a command line.
 from . import (
+    argresolve,
     checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
@@ -69,9 +72,6 @@ from . import (
 # Defined in a module that imports nothing, so the entry point and `doctor` can read
 # it without paying for torch. Re-exported here because everything already asks cli.
 from ._version import __version__
-
-# Torch-free on purpose: the measurement commands take the model as a positional too and must not
-# import THIS module in order to parse a command line.
 from .argresolve import pick_model
 from .crashsafe import (  # crash-resilience: persist by default, recover a lost save, fail loud early
     MIN_TORCH,
@@ -2283,6 +2283,60 @@ def _track_digests(track):
 _THEIR_ADVICE_IS_FOR_THE_PYTHON_API = hubmessage.ADVICE_FOR_THE_PYTHON_API
 
 
+#: How a git-lfs pointer file begins. The spec line is the first thing in the file and it is
+#: fixed text, so this is a reliable test rather than a guess.
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+#: The files worth examining for the pointer. Not a glob over the whole directory: a model
+#: directory can hold hundreds of shards, and the point is a cheap answer, not a complete audit.
+_LFS_SUSPECTS = ("config.json", "tokenizer.json", "tokenizer_config.json",
+                 "model.safetensors", "pytorch_model.bin", "model.safetensors.index.json")
+
+
+def _unfetched_lfs_files(model_dir):
+    """The files in a local model directory that are git-lfs pointers rather than their contents.
+
+    A `git clone` of a model repository without `git lfs pull`, or with lfs absent, leaves every
+    large file as a 130-byte text stub naming where the real one lives. The directory then looks
+    complete: the file names are right, `config.json` may even be real, and the failure arrives
+    from inside `transformers` as whatever that stub fails to parse as. The streaming journey of
+    2026-10-13 met it as `json.decoder.JSONDecodeError: Expecting value: line 1 column 1` out of
+    `tokenization_utils_base.py`, which is eleven frames describing our dependency's parser and
+    not one word about the actual problem.
+
+    Cheap on purpose: a bounded list of names, 64 bytes read from each.
+    """
+    found = []
+    for name in _LFS_SUSPECTS:
+        candidate = Path(model_dir) / name
+        try:
+            if not candidate.is_file():
+                continue
+            with open(candidate, "rb") as fh:
+                if fh.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
+                    found.append(name)
+        except OSError:
+            # This function runs while another failure is being explained. It must not be able to
+            # replace that explanation with one of its own.
+            continue
+    return found
+
+
+def _looks_like_a_local_path(model_id):
+    """Whether this string names the filesystem in a way a hub model id cannot.
+
+    A hub id is `org/model`: one slash, no leading dot or tilde, no trailing separator. So an
+    absolute path, an explicitly relative one, a `~` path, a trailing separator and three or more
+    segments are all shapes an id cannot take, and anything else is left ambiguous on purpose.
+    """
+    text = str(model_id or "").strip()
+    if not text:
+        return False
+    if text.startswith(("/", "./", "../", "~")) or text.endswith("/"):
+        return True
+    return text.count("/") >= 2
+
+
 def _could_not_load(model_id, error):
     """One refusal for a model that will not load, shared by both loaders.
 
@@ -2293,9 +2347,53 @@ def _could_not_load(model_id, error):
     # every line was advice, left a blank line where the detail should be, which reads as output
     # that got cut off.
     detail = "".join(f"  {ln}\n" for ln in hubmessage.useful_lines(error))
+    # THE TOKEN ADVICE IS FOR THE HUB, and it used to be printed for a local path too. A reader who
+    # passed a file that is already on their disk was told to authenticate to a service that is not
+    # involved, which sends them to fix something that is not broken. Found by a user journey on
+    # 2026-10-13, where the path given was a .jsonl.
+    #
+    # The test is "does this name something on disk", not "does it look like an id": an id with a
+    # slash and a path with a slash are the same shape, and a relative path that exists is the case
+    # this has to catch.
+    try:
+        local = Path(model_id).exists()
+    except (OSError, ValueError):
+        # An over-long path or one with a null byte is not a thing on disk, and raising here would
+        # replace a refusal the reader can act on with a traceback.
+        local = False
+    # AND THE THIRD CASE, WHICH THE PAIR ABOVE SENT TO THE WRONG FIX, 2026-10-13. A string that
+    # plainly names the filesystem and is not there got the hub's token advice, so a reader who
+    # mistyped a directory was told to go and authenticate. The two cases above were "it is on
+    # disk" and "everything else", and a mistyped path falls in the second.
+    #
+    # Deliberately conservative about what counts as plainly a path. A hub id carries exactly one
+    # slash, so `org/model` stays a hub id and only the shapes an id cannot have are claimed here.
+    # The ambiguous middle, a bare `name` or a single-slash `a/b` that is not on disk, keeps the
+    # hub advice, because that genuinely is the likelier reading of it.
+    if local:
+        # AND IF THE FILES ARE STUBS, SAY SO, because "about the files themselves" is true and
+        # unhelpful next to the one cause that accounts for most of it.
+        stubs = _unfetched_lfs_files(model_id) if Path(model_id).is_dir() else []
+        if stubs:
+            one = len(stubs) == 1
+            advice = (f"  {', '.join(stubs)} "
+                      f"{'is a git-lfs pointer' if one else 'are git-lfs pointers'} rather than "
+                      f"{'the real file' if one else 'the real files'}, so this checkpoint was "
+                      f"cloned without its large files. Fetch them with `git lfs pull` in that "
+                      f"directory, or download the model with `senbonzakura fetch` instead of "
+                      f"git.\n")
+        else:
+            advice = ("  That path exists, so this is about the files themselves rather than "
+                      "about access.\n")
+    elif _looks_like_a_local_path(model_id):
+        advice = ("  Nothing exists at that path, and it is a path rather than a model id, so "
+                  "the hub is not involved. Check the spelling, and that the directory holds a "
+                  "config.json beside its weights.\n")
+    else:
+        advice = "  If it is gated or private, pass --hf-token or log in with `hf auth login`.\n"
     return (f"senbonzakura: could not load the model '{model_id}'.\n"
             f"{detail}"
-            f"  If it is gated or private, pass --hf-token or log in with `hf auth login`.")
+            f"{advice}".rstrip("\n"))
 
 
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
@@ -2317,7 +2415,13 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     # reason: transformers' sentence is good, the frames around it are not.
     try:
         tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-    except OSError as e:
+    # `ValueError` BESIDE `OSError`, 2026-10-13. A missing file raises `OSError` and that was the
+    # only shape handled; a file that is PRESENT and is not what it claims raises out of whatever
+    # parser `transformers` hands it to, and `json.JSONDecodeError` is a `ValueError`. So a
+    # checkpoint cloned without its large files reached the user as eleven frames ending inside
+    # `tokenization_utils_base.py`. Both are the same question to the reader, "this model will not
+    # load, why", and `_could_not_load` now answers the git-lfs case by name.
+    except (OSError, ValueError) as e:
         raise SystemExit(_could_not_load(model_id, e)) from e
     tok.padding_side = "left"
     if tok.pad_token is None:
@@ -2333,6 +2437,59 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     return tok
 
 
+#: The one declared dependency that is imported from inside a function rather than at module top.
+#:
+#: `senbonzakura_check` owns the measurement stamp, so every command that writes a figure reaches
+#: for it at the END of its run. The imports are deferred on purpose, to keep `--help` fast, and
+#: that is exactly why nothing caught its absence early: `entry.dispatch` only sees imports that
+#: happen while a module is LOADING, and the handler around the run catches the late failure and
+#: says the right thing far too late.
+CHECKER = "senbonzakura_check"
+
+
+def _refuse_without_the_checker():
+    """Refuse before the weights, if the package that will write the result is missing.
+
+    MEASURED 2026-10-11 on sixteen cores. `senbonzakura compass` spent 3 minutes 45 seconds and 28
+    CPU-minutes loading Qwen3-1.7B and scoring sixty prompts, then refused with "it needs
+    senbonzakura_check, which is not installed". True, actionable, and after all the work. Section
+    2.1 asks for dependency presence to be checked "before a long job starts, not halfway
+    through", and this project already does that for the CUDA device, the skip boundaries and the
+    capability-probe budget.
+
+    HERE, AND NOT IN A TABLE IN `entry`. The first attempt listed which commands defer the import
+    and pre-flighted them before dispatch. A test derived the same list from the source and showed
+    the hand-written one was wrong in both directions, then showed that neither a direct-import
+    walk nor a transitive one can produce the right answer: direct misses `leak`, which reaches
+    the checker through `residualleak`, and transitive reachability sweeps in `doctor`, which must
+    run with nothing installed. Predicting the set was the wrong idea.
+
+    The loader is the honest place. Everything expensive is downstream of it, every command that
+    writes a stamped figure passes through it, and the commands that never load a model, `doctor`
+    and `diff` and `track` among them, never reach it and keep working with the checker absent.
+    No table, nothing to drift, and the cost avoided is the whole load plus the scoring.
+
+    `find_spec` rather than an import, so this costs microseconds and executes nothing.
+    """
+    import importlib.util
+
+    try:
+        present = importlib.util.find_spec(CHECKER) is not None
+    except (ImportError, ValueError):
+        present = False
+    if present:
+        return
+    raise SystemExit(
+        f"senbonzakura: {CHECKER} is not installed, and every measurement this writes is stamped "
+        f"through it.\n"
+        f"  Refusing now rather than after the model loads: on a processor that wait is minutes, "
+        f"and the answer at the end of it would be this same sentence.\n"
+        f"  Install it with:\n"
+        f"    pip install senbonzakura\n"
+        f"  `senbonzakura doctor` lists everything this install is missing in one go, and it runs "
+        f"without any of it.")
+
+
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
                              chat_template=None, needs_chat_template=True,
@@ -2343,6 +2500,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
     # the weight bake rewrites tensors in place and needs full precision.
     _log = log or (lambda m: None)
+    _refuse_without_the_checker()
     # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
     # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
     # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
@@ -2352,6 +2510,23 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         checkpoint.refuse_unsafe_index(model_id)
     else:
         checkpoint.refuse_unsafe_hub_index(model_id)
+    # AND THE DEVICE, AFTER THE INDEX CHECK AND BEFORE ANY WEIGHTS. `--device` defaults to `cuda`,
+    # and `_preflight_device` refused an unusable one on the abliterate path and the guided mode
+    # only. Every other command reached `.to(device)` with the weights already fetched and loaded,
+    # and died there under fourteen frames of torch. On a metered connection that download is the
+    # whole cost of finding out. Found by the constrained-user journey, 2026-10-11.
+    #
+    # HERE RATHER THAN AT EACH `main`, which is where it went first and was wrong. A surface check
+    # preempts every refusal the command does for itself, so eighteen tests that assert a specific
+    # early refusal got this one instead. Worse, they only got it on a machine with no card, which
+    # is CI: the suite's behaviour would have depended on the test host's hardware.
+    #
+    # AND AFTER THE INDEX CHECK RATHER THAN BEFORE IT, which is the second ordering mistake in the
+    # same fix. Put first, it preempted the PYSEC-2026-3804 refusal above, so a hostile checkpoint
+    # went unexamined whenever the device string was also wrong. A convenience check must not be
+    # able to stand in front of a security one. The weights are still downstream of this line, so
+    # the cost it exists to save is still saved.
+    argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
@@ -2414,9 +2589,23 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         corrected = _corrected_max_memory(_log, cfg)
         if corrected is not None:
             kw["max_memory"] = corrected
+    # SAID BEFORE THE WAIT, NOT AFTER IT. Measured 2026-10-11 while reproducing a journey
+    # finding: `senbonzakura compass` on a processor sat for six minutes having printed exactly
+    # one line, and that line was huggingface's own rate-limit warning. Nothing of ours said a
+    # model was being fetched, so the only thing on screen was somebody else's prose and the run
+    # looked wedged. Section 2 asks for a heartbeat on every long wait; a fetch over a slow or
+    # throttled link is one of the longest this tool has, and it had no entry line at all.
+    #
+    # The download note is added only for a Hub id. A local directory loads at disk speed, so
+    # telling that reader about a download would be wrong about what they are waiting for, and
+    # being confidently wrong about the cause is the shape of message this project keeps removing.
+    _log(f"  loading {model_id} on {device}"
+         f"{'' if Path(model_id).is_dir() else ' (a first run downloads it, which is the slow part)'}")
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
-    except OSError as e:
+    # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
+    # present and malformed fails in a parser rather than in the filesystem.
+    except (OSError, ValueError) as e:
         raise SystemExit(_could_not_load(model_id, e)) from e
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
@@ -3090,13 +3279,27 @@ class Abliterator:
                 if floors_by_size:
                     layer_null_floors[li] = round(max(floors_by_size.values()), 4)
                 if dropped and li == self.lo:   # one representative log line, not NL of them
-                    floor_lo, floor_hi = min(floors_by_size.values()), max(floors_by_size.values())
-                    log(f"  layer {li}: dropped {dropped} cluster direction(s) below the "
-                        f"refusal-separation threshold ({sep_stat.name}, the larger of the fixed "
-                        f"{sep_stat.threshold} and a null floor measured at each candidate's own "
-                        f"row count, which ranged {floor_lo:.4f} to {floor_hi:.4f} across "
-                        f"{len(floors_by_size)} distinct cluster size(s)); {dropped_by_null} of "
-                        f"them cleared the constant and lost to a direction carrying nothing")
+                    # PLAIN LANGUAGE, AND THE NUMBERS STAY IN THE ARTEFACT. This line used to run
+                    # to five wrapped lines beginning "below the refusal-separation threshold
+                    # (cohens-d, the larger of the fixed 0.5 and a null floor measured at each
+                    # candidate's own row count, which ranged ...)". A journey persona quoted it
+                    # back as the clearest example of this tool explaining its internals at a
+                    # reader instead of telling them what happened, and Section 20 agrees: CLI
+                    # output is public documentation and is written for somebody with no prior
+                    # context.
+                    #
+                    # Nothing is dropped, only moved. Every floor is already recorded per layer as
+                    # `null_separation_floor_per_layer` in abliteration.json, which is the right
+                    # home for a number somebody wants to audit, and the line names it so the
+                    # reader can get there. The counts stay in the log because they are what a
+                    # person watching the run needs: how many went, and how many went on the
+                    # noise check rather than the fixed bar.
+                    log(f"  layer {li}: dropped {dropped} of the candidate directions. Each one "
+                        f"has to separate harmful prompts from harmless ones better than a "
+                        f"direction carrying nothing does, and these did not.")
+                    log(f"    {dropped_by_null} of them cleared the fixed bar and lost to that "
+                        f"noise check. The bars are in abliteration.json, as "
+                        f"null_separation_floor_per_layer.")
             for j, v in enumerate(kept):
                 dirs_multi[li, j] = v
         # FLOAT32, NOT BFLOAT16, and the cast was costing orthogonality for nothing.
@@ -4972,9 +5175,8 @@ class Abliterator:
                     f"itself is complete and the model in {args.out} is unaffected.")
             else:
                 log(f"  directions saved to {args.save_directions} "
-                    f"({self.dirs_multi.shape[0]} positions, {self.dirs_multi.shape[1]} per "
-                    f"position); `senbonzakura stream-bake` applies them to a checkpoint too "
-                    f"large to load")
+                    f"({streambake.describe_directions(self.dirs_multi.cpu().numpy())}); "
+                    f"`senbonzakura stream-bake` applies them to a checkpoint too large to load")
         self._write_model_card(args, log)
         self.events.emit("done", out=str(args.out))
         self.events.close()
@@ -6046,62 +6248,13 @@ def _preflight_device(args, log=print):
 
     Cheap, local, and decidable before the first byte is fetched, so it belongs beside the other
     command-line pre-flights rather than inside the model load.
+
+    THE CHECK ITSELF MOVED to `argresolve.refuse_unusable_device` on 2026-10-11, because it was
+    wired here and into the guided mode and nowhere else, so `compass` still died on `.to(device)`
+    after paying for the download. This stays as the name the abliterate path calls and that
+    several tests monkeypatch; the reasoning is on the shared function.
     """
-    device = str(getattr(args, "device", "") or "").strip().lower()
-    if not device or device.startswith("cpu"):
-        return device
-    kind = device.split(":", 1)[0]
-    if kind == "cuda" and not torch.cuda.is_available():
-        # THROUGH `say.refusal_text`, which wraps to the terminal, rather than hand wrapped.
-        # This was built with explicit newlines at about a hundred and twenty columns, so the
-        # reason line ran off the edge of any ordinary window, and it runs off it twice now that
-        # the guided mode quotes a failing check's refusal on its pre-flight board. Found by a
-        # journey driving the walk with `--device cuda` on a machine with no card.
-        #
-        # The two command lines keep their own indentation: `say` leaves an indented line alone
-        # deliberately, because an indented line is something somebody has to paste.
-        raise SystemExit(say.refusal_text(
-            "senbonzakura: --device is 'cuda' and this machine has no usable CUDA device.",
-            "Checked before the model is downloaded, because finding out afterwards costs the "
-            "download and tells you the same thing.",
-            "What to do:\n"
-            "    run on the processor instead:  --device cpu   (correct, and much slower)\n"
-            "    or fix the install:            senbonzakura setup --apply",
-            "`senbonzakura doctor` reports the same thing as an advisory and runs without a "
-            "card."))
-    if kind == "mps" and not getattr(getattr(torch.backends, "mps", None), "is_available",
-                                     lambda: False)():
-        raise SystemExit(
-            "senbonzakura: --device is 'mps' and this build of torch reports no MPS device.\n"
-            "  Use --device cpu, or install a torch built with MPS support.\n"
-            "  `senbonzakura doctor` reports what this install can and cannot do.")
-    # AND FINALLY, WHETHER IT IS A DEVICE AT ALL. Everything above asks whether a KNOWN device is
-    # usable; nothing asked whether the string names a device, so `--device banana` fell straight
-    # through to `model.to("banana")` and reached the user as fourteen frames of traceback out of
-    # torch, AFTER the model had downloaded and loaded. Found by a surface audit on 2026-09-27, and
-    # it is the one flag in this pre-flight block that was not checked here: `--track`, `--out`,
-    # `--trials`, the direction budget and CUDA availability all are.
-    #
-    # The accepted set is what `--help` documents, plus the accelerators torch names that somebody
-    # may legitimately have. An unknown one is refused with the list rather than passed on, because
-    # torch's own message is a comma-separated dump of twenty backend names with no advice in it.
-    if kind not in _KNOWN_DEVICES:
-        raise SystemExit(say.refusal_text(
-            f"senbonzakura: --device {device!r} is not a device this tool knows.",
-            "Checked here rather than at load time, because torch raises on it only after the model "
-            "has been downloaded and placed, and then says so in twenty frames.",
-            "What to pass:\n"
-            "    --device cpu       every machine, correct and slow\n"
-            "    --device cuda      an NVIDIA card\n"
-            "    --device cuda:1    a specific card when there are several",
-            "`senbonzakura doctor` says what this machine actually has."))
-    return device
-
-
-#: Device kinds this tool accepts. `cpu` and `cuda` are what the documentation offers; the rest are
-#: accelerators torch names, accepted because somebody with one should not be told their hardware is
-#: a typo. Anything else is a typo, and saying so before a download is the whole point.
-_KNOWN_DEVICES = frozenset({"cpu", "cuda", "mps", "xpu", "hpu", "npu", "mtia", "meta"})
+    return argresolve.refuse_unusable_device(getattr(args, "device", ""))
 
 
 def _budget_warning(budget):

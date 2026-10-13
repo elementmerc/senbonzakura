@@ -7,14 +7,21 @@ Here's the summary, and I'd rather you got it from me in the first paragraph tha
 out from the appendix.
 
 ::: warning The short version
-**We tested it, and on the one model we can measure properly the claim is false.** Two
-directions cost about **1.9 times** the collateral damage of one at the same refusal rate, on the
-mean over five seeds a side (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 on the mean
-dropping the one outlying two-direction seed, which is a sensitivity check rather than the bottom of
-an interval). The feature had also never worked at all until it was
-rewritten on 2026-08-03, which is why the question could not be asked before then, and those
-arms predate the held-out direction selection, so what they price is an *arbitrary* second
-direction rather than a chosen one.
+**We tested it, and on the one model we can measure properly, two directions did worse than one.**
+Two directions cost about **1.9 times** the collateral damage of one, on the mean over five seeds a
+side (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 on the mean
+dropping the one outlying two-direction seed, which is a sensitivity check rather than the bottom
+of an interval).
+
+**That is not the same as the claim being false**, and where this page and the CHANGELOG differ the
+CHANGELOG is the wording to trust: whether removing several directions beats removing one is
+**unanswered**. Three things stand between the result and the claim. It is one model. The feature
+had never worked at all until it was rewritten on 2026-08-03, so the arms predate the held-out
+direction selection the tool now ships, which means what they price is an *arbitrary* second
+direction rather than a chosen one. And the two arms are comparable on collateral damage because
+both landed at the floor on refusal, 1 hard refusal in 1000 against 3 in 1000, which is a
+difference no test could call apart (Fisher exact, two-sided, p = 0.62) rather than two arms tuned
+to meet at one rate.
 :::
 
 The rest of this page is how we got there, because the failures are more instructive than

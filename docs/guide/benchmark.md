@@ -91,8 +91,11 @@ detector, and not before.
 :::
 
 **The two tools' self-reported figures are not a comparison, and that is the durable point.**
-Heretic self-reports a KL divergence of 0.0014 to 0.0032 against our 0.157 to 0.212, a
-hundredfold apart, because each measured its own model on its own prompts during its own search.
+Heretic's own `kl_divergence` attribute took values from 0.0014 to 0.0032 across our runs, against
+our 0.157 to 0.212, a hundredfold apart, because each measured its own model on its own prompts
+during its own search. Those are the ranges we observed in the attribute, not figures either tool
+publishes, and the arithmetic they feed is in `head-to-head/best_of_n_heretic.py`, which is where a
+reader can see what was done with them.
 Put them on one instrument, on prompts held back from both, and that hundredfold gap goes away. An
 apparent reversal was published here for a month on the strength of a run in which only one tool
 got the selection pass.

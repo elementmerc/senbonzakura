@@ -40,7 +40,10 @@ CONFIG = ROOT / ".baseline-hook-config"
 
 #: Strings that ARE references to a version after 0.4, and must be refused in public docs.
 MUST_REFUSE = [
-    "v0.5", "v0.5.0", "0.5.0", "0.6.0", "v0.9", "v1.0", "1.0.0", "v2.3", "12.0.1",
+    # MOVED WITH THE RELEASE on 2026-10-12, when 0.5.0 became the shipping version. v0.5, v0.5.0
+    # and 0.5.0 used to live here and are now in MUST_ALLOW: the gate refusing the version that is
+    # actually shipping would block its own release, which is the failure the expiry test catches.
+    "v0.6", "v0.6.0", "0.6.0", "0.7.0", "v0.9", "v1.0", "1.0.0", "v2.3", "12.0.1",
     "planned for v0.7.0", "landing in 1.2.0",
 ]
 
@@ -55,7 +58,8 @@ MUST_ALLOW = [
     "94.5",                     # the coverage floor
     "AUC 0.9887", "0.6616",     # compass figures, one of them a withdrawn one
     "0.2066 KL", "0.05 floor", "0.73 GB",
-    "0.4.0", "v0.4.0",          # THE CURRENT RELEASE, which must never be refused
+    "0.5.0", "v0.5.0", "v0.5",  # THE CURRENT RELEASE, which must never be refused
+    "0.4.0", "v0.4.0", "0.4.1", # PAST releases, which the CHANGELOG's own headings carry
     "108 minutes", "857 seconds", "1.1B", "1.7B", "16 GB", "6 GB",
 ]
 

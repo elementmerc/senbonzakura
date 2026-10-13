@@ -86,6 +86,47 @@ def test_the_assessed_version_is_still_the_pinned_one(advisory):
         f"assessed_version because it is not")
 
 
+# ── the other accepted-gap list, which had no guard at all until 2026-10-12 ──────────────────
+#
+# `unauditable_packages` is the second way this repository decides to live with something: not a
+# known finding silenced, but a package the advisory service cannot look up, counted as clean.
+# `tools/ci/audit_env.py` refuses an undeclared skip and its error tells the reader to record the
+# package "with a reason and a condition for revisiting", which was a promise about a shape that
+# NOTHING CHECKED. An entry carrying a bare package name would have satisfied the gate, silenced
+# a package, and explained nothing, which is precisely what the list above is guarded against.
+#
+# Found while adding our own two distributions to the list during the 0.5.0 release, for the
+# honest reason that an external feed cannot describe a working tree. Adding to an ungoverned
+# accepted-gap list is the moment to govern it.
+
+def _unauditable():
+    return _pyproject()["tool"]["senbonzakura"]["security"]["unauditable_packages"]
+
+
+@pytest.mark.parametrize("entry", _unauditable(), ids=lambda e: e["package"])
+def test_an_unauditable_package_names_why_and_when_to_look_again(entry):
+    for field in ("package", "reason", "revisit"):
+        assert entry.get(field), (
+            f"{entry.get('package')} is declared unauditable with no {field}. The gate counts it "
+            f"as clean, so this text is the only thing standing between a skipped package and a "
+            f"hole nobody revisits")
+
+
+def test_the_unauditable_list_is_the_one_the_gate_actually_reads():
+    """Two readers of one list, held to the same answer.
+
+    These tests read `pyproject.toml` directly; the gate reads it through `audit_env`, which
+    canonicalises names. If those ever diverge, this file would be policing entries that silence
+    nothing while the gate silences packages this file never saw.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "tools" / "ci"))
+    import audit_env
+
+    assert set(audit_env.declared_unauditable()) == {
+        audit_env._canonical(e["package"]) for e in _unauditable()}
+
+
 def test_the_mitigation_named_for_the_accelerate_advisory_actually_exists():
     """A mitigation described in prose and absent from the tree is the worst of both: the finding
     is silenced AND nothing is guarding it. So the claim is held to a module that must import and

@@ -36,12 +36,64 @@ def test_blank_lines_are_dropped_and_whitespace_stripped(tmp_path):
 
 
 def test_a_prompt_file_with_nothing_in_it_is_refused(tmp_path):
-    """Measuring on zero prompts would report a drift of nan and print it as a result."""
+    """Measuring on zero prompts would report a drift of nan and print it as a result.
+
+    The contract is the refusal, not one phrase. `read_prompts` routed through `dataset.resolve`
+    on 2026-10-11, so an all-blank file is now refused by `resolve` with a better sentence than
+    this function had: it gives the row count and says every one was blank in the text column.
+    This asserts what matters, which is that nothing proceeds to measure on an empty set and that
+    the reader is told the file is the problem.
+    """
     p = tmp_path / "empty.txt"
     p.write_text("\n  \n", encoding="utf-8")
     with pytest.raises(SystemExit) as e:
         drift.read_prompts(str(p))
-    assert "no prompts" in str(e.value)
+    said = str(e.value)
+    assert "empty.txt" in said, f"the refusal does not name the file: {said}"
+    assert any(w in said for w in ("no prompts", "blank")), (
+        f"the refusal does not say the file holds nothing to measure on: {said}")
+
+
+def test_a_prompt_file_that_does_not_exist_is_a_sentence_not_a_traceback(tmp_path):
+    """It used to be a bare `open()`, so a missing file was a FileNotFoundError traceback.
+
+    The same change that let `measure` hand this function a track spec also put it behind
+    `dataset.resolve`, which refuses readably. `margin.load_prompts` converts that to SystemExit
+    for the same reason and this follows it, because a prompt file that is not there is something
+    the reader can fix from one sentence.
+    """
+    with pytest.raises(SystemExit) as e:
+        drift.read_prompts(str(tmp_path / "nope.txt"))
+    assert "nope.txt" in str(e.value)
+
+
+def test_the_prompts_can_be_a_track_split_which_is_what_measure_passes(tmp_path):
+    """The journey-2 defect, at the unit level.
+
+    `measure --only drift` passed `default/good_ds` and the bare `open()` raised
+    `FileNotFoundError` on a path that looks like a typo and is not. Drift was the one instrument
+    of the five that could never run on a track.
+
+    ON A TRACK BUILT HERE, not the bundled one. The first draft of this test read
+    `default/good_ds`, which passes on a development machine and fails on every CI platform: the
+    packed track is not in git, because the blob holds harmful prompts and is kept out on purpose.
+    A split in a directory reaches the same `dataset.resolve` path and nothing about the defect was
+    specific to the bundled alias.
+    """
+    split = tmp_path / "good_ds"
+    split.write_text("".join(f"prompt {i}\n" for i in range(120)), encoding="utf-8")
+    rows = drift.read_prompts(str(split))
+    assert len(rows) == 120, f"a track split resolved to {len(rows)} prompts, not 120"
+    assert all(isinstance(r, str) and r.strip() for r in rows)
+
+
+def test_the_bundled_split_resolves_too_where_a_track_is_installed():
+    """The bundled alias, which takes its own path through `dataset`. Guarded, not asserted."""
+    from senbonzakura import bundled
+
+    if not bundled.is_available():
+        pytest.skip("no packed track in this tree; run tools/packaging/pack_track.py to make one")
+    assert len(drift.read_prompts("default/good_ds")) > 100
 
 
 # ── the fingerprint, which is what the cache is allowed to be reused for ──────────────

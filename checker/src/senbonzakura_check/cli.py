@@ -262,6 +262,19 @@ def read_artefact(path, *, row_select=None):
         return None, f"could not read it: {e}"
     except json.JSONDecodeError as e:
         return None, f"not valid JSON: {e}"
+    except UnicodeDecodeError as e:
+        # THE ONE READ FAILURE THAT WAS NOT CAUGHT HERE, found 2026-10-13 by naming a safetensors
+        # file on the command line. `UnicodeDecodeError` is a `ValueError`, so it is a sibling of
+        # `JSONDecodeError` above and not a subclass of it, and nothing else in this block is its
+        # ancestor either: it went straight to the top as a traceback. This tool exists partly to
+        # be pointed at files nobody here wrote, and the first thing somebody does with a checker
+        # is point it at the wrong file.
+        #
+        # Reported as a problem rather than as `Unrecognised`, which is the distinction that class
+        # documents: being unable to read the bytes is a fact about the file, true whether or not
+        # anybody claimed it was a result, so it reads as unchecked in a sweep as well.
+        return None, (f"not a text file, so it cannot be a result artefact: {e.reason} at byte "
+                      f"{e.start}. Results this tool reads are JSON, CSV or JSONL.")
     except ArtefactTooLargeError as e:
         # A third refusal beside the other two, in the same shape, because this path reads files
         # nobody here wrote. SECURITY.md puts a crafted result file in scope in those words.

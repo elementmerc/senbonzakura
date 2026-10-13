@@ -359,6 +359,27 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
                 f"unknown separation statistic {separation_statistic!r}. This build knows: "
                 f"{', '.join(sorted(_separation.CHOICES))}.")
 
+    # AND WHETHER THESE TWO FLAGS CAN BE HELD AT ONCE, BEFORE THE DISK CHECK BELOW. The loader has
+    # always refused a processor placement with disk offload, correctly and for a good reason, but
+    # it refused it as a `ValueError` fourteen frames down and AFTER `check_offload_dir` had
+    # already printed the free space and the word OK. So the run told a reader their offload target
+    # was fine and then died on the flag that target was for. Worse, the no-card refusal in
+    # `argresolve` sent them here: it recommended `--device cpu`, which is this pair.
+    #
+    # The loader's own raise stays where it is. It guards every other caller and it is an internal
+    # invariant; this is the surface, and a person who typed two flags should be told in a sentence
+    # which one to drop. Found by the streaming journey, 2026-10-13.
+    if offload_dir and str(device or "").strip().lower().startswith("cpu"):
+        raise StreamExtractError(
+            f"--offload-dir was given with --device {device}, and the two cannot work together.\n"
+            f"  Spilling to disk is something accelerate does while it spreads a model over a "
+            f"card, host memory and disk. A processor run is placed by a plain copy that "
+            f"accelerate never sees, so there is nothing to spill from and the directory would "
+            f"be created and left empty.\n"
+            f"  Drop --offload-dir and the whole checkpoint has to fit in memory, which is the "
+            f"real constraint on the processor. A checkpoint too large for that needs a card, not "
+            f"a different flag.")
+
     out = Path(out)
     if not force and already_done(out, model=model_id, dir_prompts=dir_prompts,
                                   k_max=k_max, seed=seed, log=log):
@@ -430,8 +451,8 @@ def extract(model_id, out, *, dir_prompts, k_max, k_min, mode, seed, device,
                     # the mode its search chose; nothing here searched, so the mode is the bake's
                     # default and the set is a hypothesis until a bake is measured.
                     "searched": False})
-    log(f"directions written to {out} ({abl.dirs_multi.shape[0]} positions, "
-        f"{abl.dirs_multi.shape[1]} per position)")
+    log(f"directions written to {out} "
+        f"({streambake.describe_directions(abl.dirs_multi.cpu().numpy())})")
     log("")
     log("NOTHING HERE HAS BEEN MEASURED. This is a direction set and not a result: no bake ran, "
         "no refusal rate was scored and no KL was computed, so whether these directions work on "

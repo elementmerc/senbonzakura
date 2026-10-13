@@ -37,7 +37,7 @@ from . import argresolve, say, stamps
 from .crashsafe import atomic_write, provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
-from .track import read_manifest
+from .track import read_manifest, revision_entry
 
 # `.cli` IS NOT IMPORTED HERE, AND THE REASON IS MEASURED. It pulls transformers (0.79s) and optuna
 # (0.19s) on top of torch, so `senbonzakura compass --help` took 3.14 seconds to print a page of
@@ -1162,7 +1162,7 @@ def main(argv=None):
     model, tok = load_model_and_tokenizer(a.model, device=a.device,
                                           load_in_4bit=a.load_in_4bit,
                                           trust_remote_code=a.trust_remote_code,
-                                          chat_template=a.chat_template)
+                                          chat_template=a.chat_template, log=print)
     # Slice arithmetic makes a nonsense argument silently produce a plausible file rather
     # than an error: --n 0 scores nothing and then dies inside round(None), and a negative
     # skip reads the TAIL of the set, which is real data from the wrong partition.
@@ -1262,7 +1262,22 @@ def main(argv=None):
             "HARMFUL": [{"id": i, "token_text": tok.decode([i])} for i in hid],
             "BENIGN": [{"id": i, "token_text": tok.decode([i])} for i in bid],
         },
-        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device)),
+        # THE TWO FIELDS `evidence/README.md` HAS REQUIRED SINCE 2026-09-25 AND NOTHING WROTE.
+        #
+        # An id and a corpus name are not identities: a Hub repository can be pushed to and a
+        # corpus can be rebuilt in place, so two artefacts can agree on both names and describe
+        # different measurements. The mechanism for the corpus half already existed, in
+        # `crashsafe.provenance(corpus=)` and `track.revision_entry`, with both docstrings arguing
+        # for exactly this; it simply was never passed from here. The model half had no mechanism
+        # at all until `stamps.model_revision_of`.
+        #
+        # Found 2026-10-11 when the provenance guard refused a fresh artefact. The two artefacts
+        # already in the tree are listed as exceptions for missing these, described as predating
+        # the rule, and they did predate it; the tool had not caught up, so every new artefact
+        # landed in the same hole and the exemption list was quietly absorbing a live gap.
+        "model_revision": stamps.model_revision_of(model),
+        "provenance": provenance(device=a.device, accelerator=accelerator_name(a.device),
+                                 corpus=revision_entry(a.harmful)),
         "mean_margin_harmful": round(sum(mh) / len(mh), 4),
         "mean_margin_harmless": round(sum(ml) / len(ml), 4),
         # A model whose margin never crosses zero always says the same thing. That

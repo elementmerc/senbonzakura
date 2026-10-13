@@ -227,6 +227,136 @@ def card_is_too_old_for(channel, compute):
             f"channel is the fix; pass --cuda to choose one.")
 
 
+#: What the CUDA probe exits with when torch imports cleanly and reports no device. Distinct from
+#: 0, which means a card is usable, and from dying on a signal, which is the case the probe exists
+#: to catch.
+CUDA_PROBE_NO_DEVICE = 3
+
+#: The probe loads torch and initialises a CUDA context, which on a cold driver is not instant.
+CUDA_PROBE_TIMEOUT = 300
+
+
+def next_channel_below(tag):
+    """The next older published channel after `tag`, or None when there is none.
+
+    For the case where the newest channel the driver claims to support turns out not to work: the
+    honest next move is one step down, not a guess.
+    """
+    tags = [t for _, t in CUDA_CHANNELS]
+    if tag not in tags:
+        return None
+    i = tags.index(tag)
+    return tags[i + 1] if i + 1 < len(tags) else None
+
+
+#: What a CUDA channel install actually costs, measured rather than estimated. Taken from the user
+#: journey of 2026-10-13 on a laptop with a home connection: `--apply` on this channel downloaded
+#: this much and took this long. Named as constants so the sentence that quotes them cannot drift
+#: from the record, and dated so a reader can judge how stale it is.
+CUDA_MEASURED_CHANNEL = "cu132"
+CUDA_MEASURED_SIZE = "about 5.3 GB"
+CUDA_MEASURED_MINUTES = 21
+CUDA_MEASURED_ON = "2026-10-13"
+
+
+def is_wsl():
+    """Whether this Linux is running inside Windows Subsystem for Linux.
+
+    Read from `/proc/version`, which carries the kernel's build string and says "microsoft" under
+    both WSL1 and WSL2. The `WSL_DISTRO_NAME` environment variable says the same thing and is not
+    used, because it is absent from a service, a cron job and anything started without the login
+    environment, and a caveat that disappears under systemd is worse than no caveat.
+    """
+    try:
+        with open("/proc/version", encoding="utf-8", errors="replace") as fh:
+            return "microsoft" in fh.read(4096).lower()
+    except OSError:
+        # No /proc at all, which is every non-Linux platform and a very unusual Linux. Not WSL as
+        # far as anything here can tell, and saying so is better than raising inside a diagnosis.
+        return False
+
+
+#: What a CUDA channel proposal has to say on WSL, where the driver's own answer is not the bound
+#: that matters. Written once because `plan` and the post-crash message both need it, and the two
+#: drifting apart is how a reader ends up with two different accounts of one problem.
+def _wsl_caveat(channel):
+    nxt = next_channel_below(channel)
+    # NOT "and that one works". The next channel down is the next thing to TRY, and on the one
+    # machine this was measured on the working channel was two steps down rather than one. Naming
+    # a channel as known-good when nothing measured it here is the kind of confident wrong answer
+    # this module keeps having to withdraw.
+    step = (f"If it segfaults, step down a channel at a time, starting with `--cuda {nxt}`."
+            if nxt else
+            "If it segfaults, there is no older channel to try and the driver needs updating.")
+    return (f" THIS IS WSL, where the usable CUDA version is capped by the libcuda the Windows "
+            f"driver ships, which can be older than nvidia-smi reports. So {channel} is the right "
+            f"answer to what the driver claims and may still not run here. {step} The install "
+            f"checks that the result starts before it reports success, so a bad channel costs the "
+            f"download rather than a silent failure later.")
+
+
+def cuda_initialises(python=None, timeout=CUDA_PROBE_TIMEOUT):
+    """Whether `torch.cuda.is_available()` survives being called. In a process of its own.
+
+    Returns `(state, detail)`, where state is one of "ok", "no-device", "crashed", "timeout" or
+    "error".
+
+    **IN A SUBPROCESS, AND THAT IS THE WHOLE POINT.** Measured on the operator's own machine on
+    2026-10-12: a Windows laptop with an RTX 3060 and a WSL2 Ubuntu inside, driver reporting a CUDA
+    13.4 ceiling, card compute 8.6. `pick_cuda_channel` returns `cu132` for that pair, both of its
+    modelled constraints are satisfied, and `torch.cuda.is_available()` on the resulting
+    2.14.1+cu132 build **dies with SIGSEGV**. `cu128` on the same machine returns True and names
+    the card. A segfault takes the interpreter with it, so an in-process check cannot report it and
+    a `try/except` around the call never runs.
+
+    **THE THIRD CONSTRAINT.** `pick_cuda_channel`'s docstring says the driver ceiling is "necessary
+    and NOT sufficient" about the card's compute capability. On WSL there is one more bound nobody
+    modelled: the usable CUDA version is capped by the `libcuda` stub the Windows driver ships into
+    `/usr/lib/wsl/lib/`, and that can lag what `nvidia-smi` reports. Rather than sniff for WSL and
+    cap the channel, which is a guess about a moving target, this verifies the thing we actually
+    care about: that the build we just installed can initialise.
+
+    Why it matters more than an ordinary environment quirk: `setup` is the command this project
+    advertises as the remedy for a torch that cannot see the card, and the install guide puts the
+    Windows row in bold precisely because that platform gets a CPU build by default. Without this
+    check, following our advice there replaces a working CPU torch with one that crashes, and
+    `doctor` afterwards reports no CUDA device, which reads like the original problem rather than
+    like our fix.
+    """
+    exe = python or sys.executable
+    code = (f"import torch; raise SystemExit(0 if torch.cuda.is_available() "
+            f"else {CUDA_PROBE_NO_DEVICE})")
+    try:
+        out = subprocess.run([exe, "-c", code], capture_output=True, text=True,
+                             timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"the probe did not finish within {timeout}s"
+    except (OSError, subprocess.SubprocessError) as e:
+        return "error", f"{type(e).__name__}: {e}"
+    rc = out.returncode
+    if rc == 0:
+        return "ok", "a CUDA device is usable"
+    if rc == CUDA_PROBE_NO_DEVICE:
+        return "no-device", "torch loaded and reports no CUDA device"
+    # NEGATIVE ON POSIX, where `subprocess` reports a signal as its negation, and 128+N when a
+    # shell sat in between. Both spellings mean the interpreter was killed.
+    if rc < 0 or rc in (139, 134, 132):
+        sig = -rc if rc < 0 else rc - 128
+        return "crashed", f"the interpreter was killed by signal {sig} while initialising CUDA"
+    # AND WINDOWS SPELLS IT ENTIRELY DIFFERENTLY, which the first version of this function missed
+    # because it was written and measured on Linux. A process killed by an access violation there
+    # exits with an NTSTATUS failure code: 0xC0000005 for the access violation itself, and the
+    # 0xC000xxxx range for heap corruption, illegal instruction and stack overflow. Those are large
+    # positive integers, so the POSIX checks above read them as an ordinary non-zero exit and the
+    # reader got "the probe exited 3221225477" instead of "it crashed". Windows with a card is the
+    # platform `install.md` puts in bold, so it is the last place this should be vague.
+    if rc >= 0xC0000000:
+        return "crashed", (f"the interpreter was killed while initialising CUDA "
+                           f"(Windows status 0x{rc:08X})")
+    tail = (out.stderr or out.stdout or "").strip().splitlines()
+    return "error", (tail[-1][:200] if tail else f"the probe exited {rc} with no output")
+
+
 def pick_cuda_channel(driver, compute=None):
     """The newest channel this machine can actually run, or None when it can run none of them.
 
@@ -260,6 +390,28 @@ def installed_torch():
     return v, (m.group("tag") if m else None)
 
 
+def restore_args(version, variant):
+    """The pip arguments that put back the torch that was here before `--apply` replaced it.
+
+    `None` when there is nothing to put back, which is the genuine case where torch was not
+    installed at all before the run: there is then no worse state to return the reader to.
+
+    WHY A SEPARATE FUNCTION. It is pure, so the argument construction is testable without running
+    pip, and the one thing that must never be wrong here is the version pin. Restoring an
+    unpinned `torch` would reinstall the newest build on the channel, which on the cpu channel is
+    not the build the reader had, and the whole point of this path is returning them to the state
+    they chose.
+    """
+    if not version:
+        return None
+    # A build with no local tag came from the default index (plain PyPI), so naming a channel
+    # would send pip somewhere the reader never installed from.
+    if not variant:
+        return ["install", "--upgrade", "--force-reinstall", f"torch=={version}"]
+    return ["install", "--upgrade", "--force-reinstall",
+            "--index-url", f"{INDEX}/{variant}", f"torch=={version}"]
+
+
 def cuda_orphans(names=None):
     """Installed CUDA support packages that swapping torch alone would leave behind.
 
@@ -281,13 +433,14 @@ def cuda_orphans(names=None):
 
 
 def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=None, variant=None,
-         compute=None):
+         compute=None, wsl=None):
     """What this machine should do, as (verdict, reason, pip arguments or None).
 
     Pure, and every input is injectable, so the table can be tested for machines nobody here owns.
     """
     system = system or platform.system()
     machine = machine or platform.machine()
+    wsl = is_wsl() if wsl is None else wsl
 
     has_gpu = bool(gpus)
     cannot_tell = gpus is None
@@ -398,6 +551,12 @@ def plan(*, system=None, machine=None, gpus=None, driver=None, torch_version=Non
                     return ("blocked", reason, None)
                 reason = (f"an NVIDIA GPU is present and torch is {torch_version}, a CPU-only "
                           f"build, so the card is idle.")
+                # THE CAVEAT BEFORE THE DOWNLOAD, not after the crash. Journey 1, 2026-10-13: this
+                # exact proposal on this exact machine cost 21 minutes and 5.3 GB and ended in a
+                # SIGSEGV, and the WSL cap that explains it was named only in the failure message.
+                # A reader who is told first can pick the cheaper channel and skip the whole thing.
+                if wsl:
+                    reason += _wsl_caveat(channel)
                 return ("fix", reason, swap(channel))
             if compute is not None and compute < min(CHANNEL_ARCH_FLOOR.values()):
                 reason = (f"an NVIDIA GPU is present and torch is {torch_version}, but the card is "
@@ -510,6 +669,8 @@ def main(argv=None):
         if too_old:
             print(f"\n  WARNING: {too_old}")
         verdict, reason = "fix", f"--cuda {a.cuda} was given, so the driver's own answer is not used."
+        if a.cuda.startswith("cu") and is_wsl():
+            reason += _wsl_caveat(a.cuda)
         args = ["install", "--upgrade", "--force-reinstall",
                 "--index-url", f"{INDEX}/{a.cuda}", "torch"]
     else:
@@ -535,6 +696,22 @@ def main(argv=None):
     for line in textwrap.wrap(f"{verdict.upper()}: {reason}", width=say.width(),
                               initial_indent="  ", subsequent_indent="    "):
         print(line)
+    if verdict == "unknown":
+        # SAID OUT LOUD, because the exit status cannot say it and is not going to start.
+        #
+        # This command exits 0 on an UNKNOWN verdict, so a CI step reading the status sees green
+        # on a result that means "I could not tell". A journey persona raised that on 2026-10-11
+        # against `doctor`, which exits 1 on an advisory. The division is deliberate: `setup`
+        # advises and changes nothing without `--apply`, `doctor` is the command that gates. But
+        # a reader cannot infer a division from a zero, and anything scripted as
+        # `senbonzakura setup && ...` would break if the status changed, so the sentence is the
+        # fix rather than the code.
+        for line in textwrap.wrap(
+                "This exits 0 because nothing is wrong that it can see, not because the question "
+                "was answered. `senbonzakura doctor` is the one that gates: it exits 1 on an "
+                "advisory and 2 on a failure, so a CI step should read that one.",
+                width=say.width(), initial_indent="    ", subsequent_indent="    "):
+            print(line)
     if args is None:
         # "blocked" means there is a real problem here that this command cannot fix, which is not
         # the same answer as "nothing to do". Exiting 0 on both makes them indistinguishable to
@@ -550,6 +727,21 @@ def main(argv=None):
         print(f"\n  and then, to actually free the space, because the line above replaces torch "
               f"and leaves these {len(orphans)} packages behind:\n")
         print("  " + " ".join([sys.executable, "-m", "pip", "uninstall", "-y", *orphans]))
+
+    # HOW BIG, BEFORE IT STARTS. Journey 1 ran this not knowing, and found out 21 minutes later.
+    # The figure is the one that journey measured rather than one read from the index: a pip
+    # dry-run against the PyTorch channel takes minutes of its own, which is a strange thing to
+    # spend before a download, and a resolver answer is not more honest than a stopwatch.
+    if any(v == "--index-url" and args[i + 1].rsplit("/", 1)[-1].startswith("cu")
+           for i, v in enumerate(args[:-1])):
+        for line in textwrap.wrap(
+                f"This is a large download. The {CUDA_MEASURED_CHANNEL} build measured "
+                f"{CUDA_MEASURED_SIZE} and took {CUDA_MEASURED_MINUTES} minutes on a home "
+                f"connection on {CUDA_MEASURED_ON}; other channels are the same order of size. It "
+                f"replaces the torch that is here now, and if the result turns out not to run on "
+                f"this machine the previous build is put back.",
+                width=say.width(), initial_indent="  ", subsequent_indent="  "):
+            print(line)
 
     if not a.apply:
         print("\n  Nothing was changed. Re-run with --apply to do it.")
@@ -575,6 +767,80 @@ def main(argv=None):
         print(f"\n  pip exited {rc}. Nothing here can fix that; this is the command to debug:\n"
               f"    {printable}", file=sys.stderr)
         return rc
+    # AND NOW CHECK THAT WHAT WE JUST INSTALLED CAN ACTUALLY START, which until 2026-10-12 nothing
+    # did. See `cuda_initialises`: the channel this command recommends is chosen from the driver's
+    # CUDA ceiling and the card's compute capability, and on WSL a third bound applies that neither
+    # describes, so the newest channel the driver claims can segfault. Printing "done" over a torch
+    # that dies on first use is the worst outcome available here, because the next thing the reader
+    # runs is `doctor`, which then reports no CUDA device and looks like the problem they started
+    # with.
+    channel = next((args[i + 1].rsplit("/", 1)[-1] for i, v in enumerate(args)
+                    if v == "--index-url"), None)
+    if channel and channel.startswith("cu"):
+        print("\n  checking that the new torch can actually start...")
+        state, detail = cuda_initialises()
+        if state == "crashed":
+            nxt = next_channel_below(channel)
+            step_down = (f"\n  Try the next channel down:\n"
+                         f"    {sys.executable} -m pip install --upgrade --force-reinstall "
+                         f"--index-url {INDEX}/{nxt} torch" if nxt else
+                         "\n  There is no older channel to try, so this needs a driver update or a "
+                         "report.")
+            print(f"\n  THE INSTALL SUCCEEDED AND THE RESULT DOES NOT WORK.\n"
+                  f"  torch from the {channel} channel installed cleanly, and {detail}.\n"
+                  f"  So this machine cannot run that build, even though the driver reports a CUDA\n"
+                  f"  version high enough for it. On WSL the usable version is capped by the\n"
+                  f"  libcuda the Windows driver ships, which can be older than nvidia-smi says."
+                  f"{step_down}", file=sys.stderr)
+            # PUT BACK WHAT WAS HERE, which until 2026-10-13 this did not do. Journey 1 ran this
+            # path on a real laptop: 21 minutes, 5.3 GB, exit 2, and an environment left with no
+            # working torch at all. The reader ended up STRICTLY WORSE OFF than before they ran
+            # the command, having lost a CPU build that could at least score. A command that
+            # replaces a working thing owns putting it back when the replacement fails; printing
+            # that the environment is now broken is a description, not a remedy.
+            back = restore_args(torch_version, variant)
+            if back is None:      # pragma: no cover - not reachable today, kept as a guard
+                # UNREACHABLE AS THE TWO CALLERS STAND: `plan` returns no command at all when
+                # torch is absent, and the `--cuda` branch requires it present, so this path
+                # needs a torch version. It stays because the invariant lives in two other
+                # functions rather than here, and the cost of it changing is a TypeError in the
+                # middle of a rollback.
+                print("\n  There was no torch here before this ran, so there is nothing to put "
+                      "back and this environment is no worse than it started.", file=sys.stderr)
+                return 2
+            print(f"\n  putting back the torch that was here before ({torch_version})...",
+                  file=sys.stderr)
+            try:
+                back_rc = subprocess.run([sys.executable, "-m", "pip", *back], check=False,
+                                         timeout=PIP_TIMEOUT).returncode
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"\n  the restore could not be run: {e}", file=sys.stderr)
+                back_rc = 1
+            if back_rc == 0:
+                print(f"\n  RESTORED. torch {torch_version} is back, so this environment is as it "
+                      f"was before this command ran. The channel above is still the thing to try.",
+                      file=sys.stderr)
+            else:
+                # THE COMMAND, NOT A POINTER TO IT, matching the timeout branch above: a reader
+                # whose restore failed is the one least able to reconstruct it themselves.
+                printable_back = " ".join([sys.executable, "-m", "pip", *back])
+                print(f"\n  THE RESTORE ALSO FAILED (pip exited {back_rc}), so this environment "
+                      f"has no working torch. Run this by hand to get back to where you were:\n"
+                      f"    {printable_back}", file=sys.stderr)
+            return 2
+        if state == "no-device":
+            print("\n  torch starts and still reports no CUDA device. That is not what this "
+                  "command set out to achieve, and `senbonzakura doctor` will say the same. The "
+                  "usual causes are a driver that needs a restart, or a card held by another "
+                  "operating system.", file=sys.stderr)
+            return 2
+        if state in ("timeout", "error"):
+            # NOT A FAILURE OF THE INSTALL. Reported as unverified rather than broken, because an
+            # unreadable probe is not evidence that the thing it probed is wrong.
+            print(f"\n  the new torch was installed and could NOT be verified: {detail}. "
+                  f"Run `senbonzakura doctor` before relying on it.", file=sys.stderr)
+            return 0
+        print(f"\n  verified: {detail}.")
     print("\n  done. `senbonzakura doctor` will confirm what this install can now do.")
     return 0
 

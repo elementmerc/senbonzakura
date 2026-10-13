@@ -73,11 +73,22 @@ def test_i_reaches_the_guided_mode_and_nothing_else(monkeypatch):
 
     def fake_dispatch(name):
         seen["name"] = name
-        return lambda rest: 0
+        # One argument, which is the dispatch contract: `main` hands every delegated command its
+        # argv and nothing else. A draft on 2026-10-11 passed `interactive` an extra keyword
+        # saying which spelling was typed; this stub and the one in `test_exit_status` both broke
+        # on it, and the draft was withdrawn rather than the stubs widened. A stub that models the
+        # real contract failing is the boundary doing its job.
+        def entry_point(rest, **kw):
+            seen["kw"] = kw
+            return 0
+        return entry_point
 
     monkeypatch.setattr(entry, "dispatch", fake_dispatch)
     assert entry.main(["-i"]) == 0
     assert seen["name"] == "interactive"
+    assert seen["kw"] == {}, (
+        f"`main` is passing a delegated command something other than argv: {seen['kw']}. Every "
+        f"stub of this boundary takes argv alone, so widening it here breaks them all.")
 
 
 def test_the_descriptions_share_one_edge():

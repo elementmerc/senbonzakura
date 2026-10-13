@@ -388,6 +388,39 @@ class FakeProvider:
 
 # ── and the real one ──────────────────────────────────────────────────────────────────
 
+#: What an edge refusal looks like in a response body. Cloudflare answers with `error code: NNNN`
+#: as bare text rather than the JSON an API returns, so the shape is as telling as the number.
+#: 1010 is the one observed here; the others are its neighbours in the same family and are matched
+#: so that a sibling rule does not reintroduce the same false diagnosis under a different number.
+_EDGE_MARKERS = ("error code: 10", "cloudflare", "attention required", "<!doctype html")
+
+
+def _is_edge_block(detail):
+    """Does this body look like an edge refusal rather than an API's answer?
+
+    Judged on the body, because the status code cannot tell them apart: a gateway that blocks a
+    request and an API that rejects a credential both say 403.
+    """
+    low = (detail or "").lower()
+    return any(m in low for m in _EDGE_MARKERS)
+
+
+def _version():
+    """The package version, for the User-Agent, or "dev" when it is not installed.
+
+    Never raises. A client that cannot start because it could not read its own version number
+    would be a worse failure than an unversioned header.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            return version("senbonzakura")
+        except PackageNotFoundError:
+            return "dev"
+    except Exception:
+        return "dev"
+
+
 class RunPodProvider:
     """RunPod over its REST API. The only provider-specific code in this module.
 
@@ -399,7 +432,30 @@ class RunPodProvider:
     name = "runpod"
     BASE = "https://rest.runpod.io/v1"
 
-    def __init__(self, token=None, *, base=None, opener=None):
+    #: GPU types and their prices are NOT in the REST API. Read from its own OpenAPI document on
+    #: 2026-10-13: 23 paths, covering pods, endpoints, templates, network volumes, container
+    #: registry auth and billing, and not one of them about GPUs or pricing. The catalogue lives
+    #: behind GraphQL, so this class speaks to two services rather than one. Discovered by asking
+    #: the API what it has rather than by guessing a path spelling, after `/gputypes`,
+    #: `/gpuTypes` and `/gpu-types` all returned HTTP 400 "that path does not exist in the spec".
+    GRAPHQL = "https://api.runpod.io/graphql"
+
+    #: SENT ON EVERY REQUEST, AND ITS ABSENCE MADE THIS CLIENT TOTALLY NON-FUNCTIONAL.
+    #:
+    #: `urllib` sends `Python-urllib/3.x` when nothing sets this, and RunPod sits behind
+    #: Cloudflare, which refuses that signature at the edge with `error code: 1010` before the
+    #: request reaches RunPod at all. Every call this class made came back 403.
+    #:
+    #: The expensive part was not the block. It was that the 403 handler below read it as a
+    #: rejected credential and said "Check RUNPOD_API_KEY", so the one diagnostic the user got
+    #: sent them to rotate a key that was working perfectly. Proved by sending the same request
+    #: with NO key at all and getting the identical 403.
+    #:
+    #: Found on 2026-10-13, the first time this client was ever pointed at the real service. It
+    #: had 31 passing tests, every one of which injects a fake opener.
+    USER_AGENT = "senbonzakura"
+
+    def __init__(self, token=None, *, base=None, graphql=None, opener=None, user_agent=None):
         self.token = token or os.environ.get("RUNPOD_API_KEY", "").strip()
         if not self.token:
             raise RentalError(
@@ -407,6 +463,11 @@ class RunPodProvider:
                 "command-line flag on purpose: an argument is visible in `ps` to anyone else on "
                 "the machine. The key is yours and is never sent anywhere but RunPod.")
         self.base = base or self.BASE
+        self.graphql = graphql or self.GRAPHQL
+        # Versioned so RunPod can tell our traffic apart, and so a future edge rule that blocks us
+        # is attributable rather than mysterious. Built here rather than at module import because
+        # reading the version is the only thing in this module that touches the package.
+        self.user_agent = user_agent or f"{self.USER_AGENT}/{_version()}"
         self._opener = opener or urllib.request.urlopen
 
     def _call(self, path, payload=None, method=None):
@@ -420,13 +481,21 @@ class RunPodProvider:
                 f"the provider base URL is {self.base!r}, and this only speaks https. A plain "
                 f"http or file URL would send your API key somewhere it should not go.")
         data = json.dumps(payload).encode() if payload is not None else None
+        # THE VERB IS WORKED OUT ONCE AND REUSED, which it was not. The request used
+        # `method or ("POST" if data else "GET")` and every error message below used
+        # `method or 'GET'`, so a POST whose method was inferred rather than passed was reported
+        # as a GET. Found on 2026-10-13 against the real API: a failed pod creation said
+        # "RunPod answered HTTP 500 for GET /pods", which tells a reader trying to work out
+        # whether a machine was created the wrong thing about what was attempted.
+        verb = method or ("POST" if data else "GET")
         # The suppression on the next line is not a shrug: the lint's concern is a scheme we did
         # not choose, and the https check immediately above IS that check. It just happens earlier
         # than the analyser looks.
         req = urllib.request.Request(  # noqa: S310
-            url, data=data, method=method or ("POST" if data else "GET"),
+            url, data=data, method=verb,
             headers={"Authorization": f"Bearer {self.token}",
-                     "Content-Type": "application/json"})
+                     "Content-Type": "application/json",
+                     "User-Agent": self.user_agent})
         try:
             with self._opener(req, timeout=HTTP_TIMEOUT_S) as r:
                 body = r.read()
@@ -440,14 +509,27 @@ class RunPodProvider:
             finally:
                 e.close()
             if e.code in (401, 403):
+                # NOT EVERY 403 IS A BAD KEY, and saying so cost a day. RunPod sits behind
+                # Cloudflare, which refuses a request it does not like at the edge, before the
+                # API ever sees it or the key. Its answer is a 403 whose body is `error code:
+                # NNNN`, and this used to read that as a rejected credential and send the reader
+                # off to rotate a key that was working. The two are told apart by what the body
+                # says, because the status code alone genuinely cannot distinguish them.
+                if _is_edge_block(detail):
+                    raise RentalError(
+                        f"the request was refused by RunPod's edge before it reached their API "
+                        f"(HTTP {e.code}, {detail.strip()[:80]}). **This is not about your key**: "
+                        f"the same refusal comes back with no key at all. It usually means the "
+                        f"User-Agent was not accepted, and this client sends "
+                        f"{self.user_agent!r}. Nothing was provisioned.") from e
                 raise RentalError(
                     f"RunPod rejected the API key (HTTP {e.code}). Check RUNPOD_API_KEY. The key itself "
                     "is not printed here or anywhere else.") from e
             raise RentalError(
-                f"RunPod answered HTTP {e.code} for {method or 'GET'} {path}: {detail}") from e
+                f"RunPod answered HTTP {e.code} for {verb} {path}: {detail}") from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise RentalError(
-                f"RunPod could not be reached for {method or 'GET'} {path} "
+                f"RunPod could not be reached for {verb} {path} "
                 f"({type(e).__name__}: {e}). Nothing was provisioned by this call.") from e
         if not body:
             return {}
@@ -458,23 +540,96 @@ class RunPodProvider:
                 f"RunPod's answer to {path} was not JSON, so this cannot tell success from "
                 f"failure and refuses to assume either: {body[:200]!r}") from e
 
+    #: The catalogue query. `lowestPrice` needs a gpuCount, and 1 is what this ever asks for.
+    GPU_QUERY = ("query { gpuTypes { id displayName memoryInGb secureCloud communityCloud "
+                 "lowestPrice(input: {gpuCount: 1}) { uninterruptablePrice minimumBidPrice } } }")
+
     def offers(self):
-        got = self._call("/gputypes")
-        rows = got if isinstance(got, list) else got.get("data", [])
+        """Every card on offer, with its hourly price, from the GraphQL catalogue.
+
+        THIS CALLED `GET /v1/gputypes` AND THAT PATH HAS NEVER EXISTED. Read from RunPod's own
+        OpenAPI document on 2026-10-13: the REST API publishes 23 paths and not one is about GPUs
+        or prices. So the previous implementation could not have returned an offer on any day of
+        its life, whatever the key, and `offers()` is the entry point every other operation here
+        starts from.
+
+        The on-demand price is preferred over the spot bid. A spot instance is cheaper and can be
+        taken away mid-run, and a tool whose promise is "the pod goes back" should not quote a
+        price it cannot hold. A card with no on-demand price is reported unavailable rather than
+        quoted at its bid.
+        """
+        doc = self._graphql(self.GPU_QUERY)
+        rows = ((doc.get("data") or {}).get("gpuTypes")) or []
         out = []
         for r in rows:
             if not isinstance(r, dict):
                 continue
-            price = r.get("securePrice") or r.get("communityPrice") or r.get("pricePerHr")
-            vram = r.get("memoryInGb") or r.get("vramGb") or 0
             ident = r.get("id") or r.get("displayName") or ""
+            price = (r.get("lowestPrice") or {}).get("uninterruptablePrice")
             if not ident or price is None:
                 continue
             out.append(GpuOffer(
                 id=str(ident), name=str(r.get("displayName") or ident),
-                vram_gb=int(vram or 0), usd_per_hour=float(price),
-                available=bool(r.get("secureCloud", True) or r.get("communityCloud", False))))
+                vram_gb=int(r.get("memoryInGb") or 0), usd_per_hour=float(price),
+                available=bool(r.get("secureCloud", False) or r.get("communityCloud", False))))
         return out
+
+    def _graphql(self, query):
+        """One GraphQL call, with the same refusals as `_call` and one of its own.
+
+        A GraphQL service answers HTTP 200 and puts the failure in the body, so a caller that
+        checked only the status would read an error as an empty catalogue. That is the shape of
+        bug this project keeps paying for, so the `errors` key is a refusal here.
+        """
+        if not self.graphql.startswith("https://"):
+            raise RentalError(
+                f"the GraphQL URL is {self.graphql!r}, and this only speaks https. A plain http "
+                f"or file URL would send your API key somewhere it should not go.")
+        req = urllib.request.Request(  # noqa: S310
+            self.graphql, data=json.dumps({"query": query}).encode(), method="POST",
+            headers={"Authorization": f"Bearer {self.token}",
+                     "Content-Type": "application/json",
+                     "User-Agent": self.user_agent})
+        try:
+            with self._opener(req, timeout=HTTP_TIMEOUT_S) as r:
+                body = r.read()
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read()[:400].decode("utf-8", "replace")
+            finally:
+                e.close()
+            if e.code in (401, 403) and _is_edge_block(detail):
+                raise RentalError(
+                    f"the catalogue request was refused by RunPod's edge before it reached their "
+                    f"API (HTTP {e.code}, {detail.strip()[:80]}). This is not about your key.") from e
+            if e.code in (401, 403):
+                raise RentalError(
+                    f"RunPod rejected the API key (HTTP {e.code}) for the catalogue. Check "
+                    f"RUNPOD_API_KEY. The key itself is not printed here or anywhere else.") from e
+            raise RentalError(f"RunPod's catalogue answered HTTP {e.code}: {detail}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise RentalError(
+                f"RunPod's catalogue could not be reached ({type(e).__name__}: {e}). Nothing was "
+                f"provisioned by this call.") from e
+        try:
+            doc = json.loads(body)
+        except ValueError as e:
+            raise RentalError(
+                f"RunPod's catalogue answer was not JSON: {body[:200]!r}") from e
+        # SHAPE CHECKED BEFORE ANYTHING REACHES INTO IT. A GraphQL answer is an object carrying
+        # `data` and `errors`; anything else means this is not talking to the service it thinks
+        # it is. The check lives here rather than in `offers` because this is where the answer is
+        # parsed, and the first version put it downstream, where `doc.get("errors")` on the line
+        # below had already raised AttributeError from inside a parser.
+        if not isinstance(doc, dict):
+            raise RentalError(
+                f"RunPod's catalogue answered with a {type(doc).__name__} where a GraphQL object "
+                f"was expected, so this cannot read a price list from it and refuses to guess.")
+        if doc.get("errors"):
+            raise RentalError(
+                f"RunPod's catalogue returned an error rather than a list of cards: "
+                f"{json.dumps(doc['errors'])[:300]}")
+        return doc
 
     def create(self, spec, offer):
         payload = {

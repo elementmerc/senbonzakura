@@ -454,6 +454,15 @@ def why_not(args, stream=None):
     return None
 
 
+def _was_asked_for(args):
+    """Did this run ask for the panel to be off?
+
+    A flag the reader typed needs no explanation, and explaining it reads as the tool not having
+    heard them. Every other cause is something they did not choose and may want to know about.
+    """
+    return chosen_layout(args) == "off"
+
+
 def chosen_layout(args, guided=None):
     """Which panel this run should draw: "full", "inline" or "off".
 
@@ -491,8 +500,15 @@ def attach(events, args, *, total_trials=None, log=None, stream=None, console=No
         # of thing somebody files a bug about. It was then thrown away here, so the one person who
         # needed the sentence never saw it, and on 2026-09-28 the question was asked out loud.
         # One line, on the way past, naming the flag that turns it off.
-        if log:
-            log(f"  no live panel: {reason}. The run is unaffected; --no-panel controls it.")
+        #
+        # NOT WHEN THE READER ASKED FOR IT, since 2026-10-11. The old line fired on every cause
+        # including `--no-panel`, so a run that was told to skip the panel answered by explaining
+        # that it had skipped the panel and naming the flag back at the person who typed it. A
+        # journey persona read the remaining case, a redirected run, as an implementation note
+        # that had escaped into the log, which is fair: it led with the machinery rather than with
+        # what the reader gets instead.
+        if log and not _was_asked_for(args):
+            log(f"  writing the plain log instead of the live panel, because {reason}.")
         return NullPanel()
     try:
         return _RichPanel(events, total_trials=total_trials, log=log,

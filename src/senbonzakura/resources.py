@@ -272,9 +272,12 @@ class ResourceGovernor:
                  poll_s=2.0, max_pause_s=None, max_batch=16, enabled=True, max_batch1_ooms=20,
                  background_mode=False, external_pressure_mb=500,
                  mem_fn=None, reclaim_fn=None, own_fn=None, empty_cache_fn=None, sleep_fn=None,
-                 clock=None, oom_types=()):
+                 clock=None, oom_types=(), heartbeat_s=30.0):
         self.device = str(device)
         self.log = log or (lambda _m: None)
+        # 30 seconds, the floor baseline 2.1 asks for. Exposed so a caller with a different idea
+        # of long can raise it, and so a test can drive the beat without waiting half a minute.
+        self.heartbeat_s = float(heartbeat_s)
         # Thresholds are on AVAILABILITY = (free VRAM + senbon's own reclaimable cache) / total, not
         # raw free, so a model that simply fills the card does not read as starved: only memory taken
         # by ANOTHER process (a game, a browser) pulls availability down and trips a pause.
@@ -534,12 +537,38 @@ class ResourceGovernor:
     def run(self, fn, items):
         """Process ``items`` through ``fn`` in adaptive, OOM-safe, pause-aware chunks.
 
-        ``fn`` takes a list of items and returns a list of results of the same length. On CPU/disabled
-        the whole list goes through in one call. On GPU the batch size floats with free VRAM.
+        ``fn`` takes a list of items and returns a list of results of the same length. On
+        CPU/disabled the list is chunked at ``max_batch`` with the pause and shrink machinery
+        skipped. On GPU the batch size floats with free VRAM.
+
+        THE SECOND SENTENCE USED TO SAY "the whole list goes through in one call", and the code
+        below has chunked the CPU path for as long as anyone can tell. A docstring that describes
+        a loop as a single call is worse than no docstring: it was read on 2026-10-10 while
+        looking for the place to put a heartbeat, and it says there is nowhere to put one.
+
+        BOTH PATHS EMIT A HEARTBEAT, because without one this is the quietest expensive thing in
+        the program. A journey on 2026-10-10 recorded 250 seconds of complete silence here during
+        direction extraction on a CPU, which is the gap that makes somebody kill a healthy run.
+        Baseline 2.1 asks for one every 30 to 60 seconds on every long-running loop and this loop
+        did not have one.
         """
         items = list(items)
         if not items:
             return []
+        # Rate limited rather than per batch: a fast GPU run does hundreds of batches a minute and
+        # a line each would be noise, which is how heartbeats get switched off.
+        _hb_last = time.monotonic()
+        _hb_n = len(items)
+
+        def _beat(done, forced=False):
+            nonlocal _hb_last
+            now = time.monotonic()
+            if not forced and now - _hb_last < self.heartbeat_s:
+                return
+            _hb_last = now
+            self.log(f"  {done}/{_hb_n} captured, {fmt_duration(now - _hb_start)} elapsed")
+
+        _hb_start = time.monotonic()
         if not self.enabled:
             # No VRAM to police (CPU/disabled): still chunk at the ceiling so batches stay bounded,
             # but skip the pause/shrink/grow machinery entirely.
@@ -549,6 +578,7 @@ class ResourceGovernor:
                 bs = len(chunk)
                 self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
                 out.extend(self._checked(fn(chunk), bs, i))
+                _beat(len(out))
             return out
         self._calibrate_once()
         out = []
@@ -588,6 +618,7 @@ class ResourceGovernor:
             self.batch_sizes[bs] = self.batch_sizes.get(bs, 0) + 1
             i += bs
             self._grow_maybe(bs)
+            _beat(len(out))
         return out
 
     def report(self):

@@ -62,7 +62,7 @@ classifiers = [
   # Declared because CI runs on all three, not because the code looks portable.
   # Before 2026-07-30 there were no OS classifiers at all, which PyPI presents as
   # OS-independent: a claim nothing had ever tested. macOS means arm64; the CPU
-  # index's newest x86_64 torch is 2.2.2, below this project's 2.5 floor.
+  # index's newest x86_64 torch is 2.2.2, below this project's floor.
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS :: MacOS X",
   "Operating System :: Microsoft :: Windows",
@@ -70,11 +70,12 @@ classifiers = [
 # ── THE PINNING POLICY, decided 2026-09-21 ──────────────────────────────────────────
 #
 # NO SPECULATIVE CEILINGS. Nothing here is capped because a future release MIGHT break
-# it. The evidence is against that reflex: this project declares a floor of
-# `transformers>=4.56` and CI currently resolves 5.14.1, `datasets` 5.0.1 and torch
-# 2.13.0, green, two major boundaries above the floor. A cap written a year ago on
-# suspicion would have blocked exactly that, and would have needed a release of its own
-# to lift.
+# it. The evidence is against that reflex: when this was written the declared floor was
+# `transformers>=4.56` and CI resolved 5.14.1, `datasets` 5.0.1 and torch 2.13.0, green,
+# two major boundaries above the floor. A cap written a year ago on suspicion would have
+# blocked exactly that, and would have needed a release of its own to lift. The floor has
+# since been raised to 5.10.1 for a reason recorded below; the argument is unchanged and
+# the figures are kept as the dated evidence for it rather than updated to today's.
 #
 # AN EXCLUSION IS A MEMORY, NOT A GUESS. A `!=` goes in when a version has been MEASURED
 # broken here, and it carries the symptom in a comment beside it so the next reader can
@@ -140,9 +141,12 @@ dependencies = [
   # code at install time, and PyPI forbids depending on PyTorch's own index. So the default is the
   # platform's wheel, which is CUDA on Linux and CPU-ONLY on Windows, and `senbonzakura setup`
   # corrects it on the machine it is run on.
-  # The code refuses to start below 2.5 (crashsafe.MIN_TORCH): transformers' MoE
-  # path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
-  # succeed into an environment the tool then rejects.
+  # The code refuses to start below `crashsafe.MIN_TORCH`, which is 2.7: transformers'
+  # MoE path imports torch.distributed.tensor.DTensor. Declaring 2.2 let `pip install`
+  # succeed into an environment the tool then rejects. The constant is named rather than
+  # its value restated, because the two said different things from 2026-10-07 until this
+  # was corrected on 2026-10-13: the floor moved to 2.7 and the sentence beside it went on
+  # saying 2.5, in the file whose job is declaring floors.
   #
   # The floors above 3.12 are wheel availability, not a code requirement: 2.5 has
   # no cp313 wheels and the first build with cp314 is 2.9 (checked against PyPI,
@@ -263,13 +267,13 @@ dependencies = [
   # pre-releases resolves to whatever is newest for ever after, which is how a pinned-looking
   # build changes underneath a rented card.
   #
-  # `<0.5` because a floor alone would let a future major checker satisfy a 0.4 wheel, and the
+  # `<0.6` because a floor alone would let a future major checker satisfy a 0.5 wheel, and the
   # two distributions share a version line on purpose.
   #
   # `tools/ci/check_wheel.py` refuses a stable wheel carrying the loosened form, and it asks the
   # wheel's own version rather than trusting anyone to remember. The floor must therefore rise
   # with each release line; it is not a constant anyone may leave behind.
-  "senbonzakura-check>=0.4.0,<0.5",
+  "senbonzakura-check>=0.5.1,<0.6",
 ]
 
 [project.optional-dependencies]
@@ -549,6 +553,12 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # run, and a broken line there is worse than a broken line in the source, because the reader
 # cannot tell whether they did something wrong.
 "notebooks/*.ipynb" = ["CPY001"]
+
+# `unshipped/` holds single modules kept deliberately out of the wheel, so they are deliberately
+# NOT a package: being a package under `src/` is precisely how a module gets discovered and
+# shipped, which is the thing that went wrong. INP001 asks for the `__init__.py` that would undo
+# that. See `unshipped/README.md`.
+"unshipped/*.py" = ["INP001"]
 # Only rules that are NOT in the global `ignore` above belong here. A per-file
 # entry duplicating a global one is dead config that reads as a decision, and
 # the wrong lesson gets drawn from it when the global entry is later lifted.
@@ -632,6 +642,16 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # still COLLECTED by default, which is what lets the ratchet count them without a second
 # mechanism. A later -m on the command line wins over this one.
 addopts = "--cov=senbonzakura --cov-branch --cov-report=term-missing -W error::ResourceWarning -rs -m 'not journey'"
+# WHERE THE SUITE LOOKS, which until 2026-10-13 was "everywhere below the root". A bare `pytest`
+# collected `private/`, so a design prototype's `lightdark_test.py` matched the default
+# `*_test.py` pattern, ran its argv parsing at import time and ended four workers with
+# `IndexError` before a single test of ours had run. The errors were reported as collection
+# errors rather than failures, which is the quiet kind: the run still prints a pass count.
+#
+# `private/` is a tree of research notes, design work and symlinks that is not this project's
+# source, and nothing in it is a test of this package. Naming the one directory that holds the
+# suite is both the fix and the honest description.
+testpaths = ["tests"]
 markers = [
   "journey: a scripted session through a real terminal, run with `pytest -m journey`. See tests/journeys/harness.py.",
   "reads_the_real_install(*probes): this test is about what the machine actually has, so `a_machine_with_nothing_on_it` leaves the named probes real. Naming none leaves them all real.",
@@ -765,6 +785,19 @@ accepted_advisories = [
 # What is still true, because an accepted gap described as a closed one is worse than no note:
 # torch is not advisory-scanned by this gate. The pin is exact, the index is declared, and the
 # supply-chain workflow checks the channel separately, but no advisory feed is consulted for it.
+# Our own two distributions are the other entry, and the reason is not a release-window excuse.
+# Every job installs them from the checkout, so what the advisory service is asked about is a
+# version string that exists only here. Until 0.5.0 this passed, and it passed BY COINCIDENCE: the
+# working tree carried 0.4.1, a number PyPI also carried, so the lookup matched our own published
+# release and said nothing whatever about the code in front of it. Bumping to 0.5.0 removed the
+# coincidence and the step failed, which is the gate reporting the truth it had been missing.
+#
+# THE COST, stated rather than glossed: if an advisory were ever filed against either
+# distribution, this declaration would keep the gate quiet about it. That is a real gap. It is
+# accepted because an external feed cannot describe an unpublished working tree at all, so the
+# alternative is not coverage, it is a lookup of a different artefact wearing the same number.
 unauditable_packages = [
   { package = "torch", reason = "installed from download.pytorch.org/whl/cpu, and a local version such as 2.13.0+cpu has no PyPI release for the advisory service to match", revisit = "if the CPU build is ever published to PyPI, or if the jobs stop installing from the PyTorch index" },
+  { package = "senbonzakura", reason = "installed from this checkout, so the version asked about exists only here and the advisory service has no release to match; a match before 0.5.0 was the working tree happening to share a number with a published release", revisit = "if an advisory is ever filed against this package, which has to be watched for by hand because this entry is what stops the gate saying it" },
+  { package = "senbonzakura-check", reason = "installed from ./checker in every job, for the same reason as the package above; it resolved from PyPI only while the main package's pin excluded the in-tree version, which was the defect fixed in 0.5.0", revisit = "if an advisory is ever filed against this package, or if a job stops installing it from the checkout" },
 ]

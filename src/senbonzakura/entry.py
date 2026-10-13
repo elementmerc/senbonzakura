@@ -546,6 +546,41 @@ def short_help(columns=None):
 
 
 def main(argv=None):
+    """The console script, and the one place Ctrl+C is answered rather than dumped.
+
+    CTRL+C IS A DECISION, NOT A CRASH. The guided search has said so since 2026-09-16 and handles
+    it properly, and that handler covers the search alone: every other command let the
+    `KeyboardInterrupt` reach the top of the interpreter, where Python prints a traceback through
+    whatever happened to be on the stack. On `stream-extract` that is a forward pass, so a person
+    who stopped a long run on purpose got twenty frames of torch and transformers internals and no
+    statement of what had happened to their files. Found by the streaming journey, 2026-10-13.
+
+    HERE RATHER THAN IN EACH COMMAND, because there are dozens of them and the next one added
+    would miss it. This is the single entry point for the console script and for
+    `python -m senbonzakura`, so one handler covers every path through the tool.
+
+    It deliberately does NOT claim the run left nothing behind. A draft of this message said every
+    file is written whole or not at all, which was false the moment it was written: `save_directions`
+    wrote safetensors straight to the destination. That writer is atomic now, and the claim is still
+    not made, because it would have to hold for every writer in the tool and nothing checks that it
+    does. A reassurance that is sometimes false is worse than none.
+
+    130 is the shell's convention for death by SIGINT, so a script can still tell a stop from a
+    failure.
+    """
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        # On stderr, and with a leading newline: Ctrl+C echoes `^C` at the cursor on most
+        # terminals, so without it the message starts halfway across the line.
+        print("\nsenbonzakura: stopped on Ctrl+C. Whatever had already finished is on disk; the "
+              "step that was in flight is not. A command that takes --resume can carry on from "
+              "where this stopped, and a `.part` file beside an output is a write that did not "
+              "finish and is safe to delete.", file=sys.stderr)
+        return 130
+
+
+def _main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
     # Decoration only, and structurally unable to reach a result: it prints nothing unless stdout
@@ -564,6 +599,12 @@ def main(argv=None):
     # rather than added to ALIASES because everything in that table is a word: a flag spelling
     # living beside `harm-recognition` would reach `_not_a_command`, the near-miss search and the
     # documentation guards, none of which are written for flags.
+    # IT DOES NOT TELL `interactive` WHICH SPELLING WAS TYPED, and a draft that did was withdrawn
+    # on 2026-10-11. Passing it meant `run(argv[1:], invoked_as=...)`, which makes this call
+    # non-uniform: every other delegated command takes argv alone, and two separate tests stub a
+    # dispatched entry point as exactly that, correctly, because that has always been the
+    # contract. Breaking it to carry one word is a bad trade, and the help page names both
+    # spellings instead, which answers the same question without touching the boundary.
     if argv[0] == "-i":
         argv[0] = "interactive"
 

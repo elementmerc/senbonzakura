@@ -25,9 +25,9 @@ class SenbonzakuraCheck < Formula
   desc "Read an evaluation result file and report how the number could be wrong"
   homepage "https://github.com/elementmerc/senbonzakura"
   # PLACEHOLDER-URL
-  url "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.4.1.tar.gz"
+  url "https://github.com/elementmerc/senbonzakura/archive/refs/tags/v0.5.0.tar.gz"
   # PLACEHOLDER-SHA256
-  sha256 "aedc05412e869a8363061b51c146345c2a87518b8a2892ebf654e8ca937521cf"
+  sha256 "f81aead8f0dc3308edaf7d4c0bd9d8b005b23c786361b8db755fffcbd7fe58ab"
   license "AGPL-3.0-or-later"
 
   depends_on "python@3.12"

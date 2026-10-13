@@ -47,8 +47,35 @@ import pathlib
 import subprocess
 import sys
 
-#: The kit's deepest stop, and the background of every card. Read from `mark.svg` rather than typed
-#: in twice: the gradient's last stop is the identity's background colour.
+#: REDESIGNED 2026-10-13 by the operator. The cards were navy with the mark and the name stacked
+#: and centred. They are now white, with the mark on the left sitting in a soft gradient bleed, and
+#: the name and tagline set to its right. What that buys, and it is the point of the change: a
+#: reader scrolling past learns what the project IS, where before they learned only that it exists.
+#:
+#: The petals keep their own colour. An earlier pass recoloured them to the docs' bronze and the
+#: operator rejected it: `mark.svg` is the source for the favicons, the icons and the site nav, so
+#: the mark has to look the same in a preview as it does on the page the preview leads to.
+WHITE = (255, 255, 255)
+
+#: Near-black for the type. Not pure black: against a white card at thumbnail size, #000 reads as a
+#: hole rather than as ink.
+INK = (28, 28, 30)
+
+#: The bleed behind the mark, lifted from the documentation site's hero rather than invented here:
+#:
+#:     --vp-home-hero-image-background-image:
+#:         linear-gradient(-45deg, rgba(61,77,107,0.55) 45%, rgba(199,123,90,0.45) 55%);
+#:     --vp-home-hero-image-filter: blur(48px);
+#:
+#: Two departures from those values, both deliberate. The alphas are raised, because the docs' were
+#: tuned against a dark page and wash out to nothing on white. And the axis is turned so the WARM
+#: stop falls at the bottom left: at the docs' angle the cool stop lands behind the petals' dark
+#: purple bases and the two muddy each other.
+HALO_WARM = (199, 123, 90, 205)
+HALO_COOL = (61, 77, 107, 190)
+
+#: The kit's deepest stop. No longer a background, kept because `glow()` and the measuring helper
+#: still refer to the old card's navy when keying the lifted wordmark out of it.
 NAVY = (20, 26, 66)
 
 #: The kit's pink, used for the supporting line at low weight so it sits under the wordmark.
@@ -172,6 +199,62 @@ def glow(size, radius_frac=0.62, strength=0.30):
     return layer.filter(ImageFilter.GaussianBlur(size * 0.13))
 
 
+#: The brand's own face, vendored beside the mark with its licence. Hanken Grotesk is what the SITE
+#: loads (`next/font/google` in `web/app/layout.tsx`); the documentation site uses Inter. Hanken is
+#: the right one for a card because a reader who clicks a card lands on the site, so the preview
+#: should look like the place it leads.
+#:
+#: Two static cuts rather than the variable original, instantiated from its own `wght` axis at 500
+#: and 700. Instantiated rather than synthesised: Pillow cannot set a variable axis and has no real
+#: bold, so asking it for weight would have got a smeared regular.
+#:
+#: Vendored rather than fetched, so a clean clone can rebuild the cards with no network and no
+#: dependency on a web build having run. SIL Open Font License, text alongside in `OFL.txt`.
+BRAND_FONTS = ROOT / "assets" / "brand" / "fonts"
+
+
+def brand_face(weight, px):
+    """Hanken Grotesk at `weight` and `px`, or None when the vendored file is missing."""
+    ImageFont = __import__("PIL.ImageFont", fromlist=["ImageFont"])
+    path = BRAND_FONTS / f"HankenGrotesk-{weight}.ttf"
+    if not path.is_file():
+        return None
+    return ImageFont.truetype(str(path), px)
+
+
+def halo(size):
+    """The documentation site's hero bleed: a -45deg two-stop ramp, ellipse-masked, blurred hard.
+
+    Drawn on a canvas larger than the blob so the blur falls off into transparency instead of being
+    clipped into a hard edge at the tile boundary, which is what made the first attempt look like a
+    pasted circle rather than light.
+    """
+    Image = __import__("PIL.Image", fromlist=["Image"])
+    ImageDraw = __import__("PIL.ImageDraw", fromlist=["ImageDraw"])
+    ImageFilter = __import__("PIL.ImageFilter", fromlist=["ImageFilter"])
+
+    blur = max(8, round(size * 0.14))
+    pad = blur * 3
+    w = h = size + pad * 2
+    grad = Image.new("RGBA", (w, h))
+    px = grad.load()
+    for y in range(h):
+        for x in range(w):
+            t = ((x / w) + (1 - y / h)) / 2
+            if t <= 0.42:
+                c = HALO_WARM
+            elif t >= 0.58:
+                c = HALO_COOL
+            else:
+                u = (t - 0.42) / 0.16
+                c = tuple(round(HALO_WARM[i] + (HALO_COOL[i] - HALO_WARM[i]) * u) for i in range(4))
+            px[x, y] = c
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).ellipse((pad, pad, pad + size, pad + size), fill=255)
+    grad.putalpha(Image.composite(grad.getchannel("A"), Image.new("L", (w, h), 0), mask))
+    return grad.filter(ImageFilter.GaussianBlur(blur))
+
+
 def _font(px):
     """DejaVu Sans at `px`, or None when it is not on this machine."""
     ImageFont = __import__("PIL.ImageFont", fromlist=["ImageFont"])
@@ -198,8 +281,141 @@ def _tracked_text(draw, text, font, tracking, fill, centre_x, y):
     return total
 
 
+#: The tagline, broken where it should break rather than wherever the column runs out. "AI model
+#: workshop." is the half a reader needs to keep, so it gets its own line instead of being orphaned
+#: mid-phrase by a width calculation.
+TAGLINE_LINES = ["The world's top open-weight", "AI model workshop."]
+
+
+def _tracked(draw, text, font, tracking):
+    return sum(draw.textlength(c, font=font) for c in text) + tracking * (len(text) - 1)
+
+
+def _draw_tracked(draw, text, font, tracking, fill, x, y):
+    for c in text:
+        draw.text((x, y), c, font=font, fill=fill)
+        x += draw.textlength(c, font=font) + tracking
+
+
 def compose(width, height):
-    """One card. Every proportion is stated against the canvas so each size composes the same."""
+    """One card. Every proportion is stated against the canvas so each size composes the same.
+
+    TWO ARRANGEMENTS, because one does not survive both shapes. The wide cards put the mark on the
+    left and the type beside it, which is what the operator asked for and what uses a 1.91:1 canvas
+    properly. The square has no width to give away, so it stacks: mark above, type below, same
+    bleed, same faces. Resizing the wide layout into a square would have shrunk the type to
+    illegibility, which is the failure the per-platform sizes exist to avoid.
+    """
+    Image = __import__("PIL.Image", fromlist=["Image"])
+    ImageDraw = __import__("PIL.ImageDraw", fromlist=["ImageDraw"])
+
+    card = Image.new("RGB", (width, height), WHITE)
+    draw = ImageDraw.Draw(card)
+    square = width == height
+
+    title_face = brand_face(700, 10)
+    if title_face is None:
+        print(f"{BRAND_FONTS}: the vendored brand font is missing, so the cards cannot be set.",
+              file=sys.stderr)
+        raise SystemExit(2)
+
+    if square:
+        return _compose_square(card, draw, width, height)
+    return _compose_wide(card, draw, width, height)
+
+
+def _compose_wide(card, draw, width, height):
+    """Mark left, name and tagline right. The arrangement for every link-preview size."""
+    pad = round(width * 0.06)
+    mark_h = round(height * 0.30)
+    mark = render_mark(mark_h)
+    blob = round(mark_h * 2.05)
+    cx, cy = pad + blob // 2, height // 2
+
+    h_img = halo(blob)
+    card.paste(h_img, (cx - h_img.width // 2, cy - h_img.height // 2), h_img)
+    card.paste(mark, (cx - mark.width // 2, cy - mark.height // 2), mark)
+
+    col_x = pad + blob + round(width * 0.045)
+    avail = width - col_x - pad
+
+    # The name fills the column on ONE line. Tracked, because the wordmark it replaces was.
+    t_px = round(height * 0.115)
+    track = round(t_px * 0.14)
+    f_title = brand_face(700, t_px)
+    while _tracked(draw, "SENBONZAKURA", f_title, track) > avail and t_px > 20:
+        t_px -= 1
+        track = round(t_px * 0.14)
+        f_title = brand_face(700, t_px)
+    t_w = _tracked(draw, "SENBONZAKURA", f_title, track)
+
+    s_px = round(height * 0.055)
+    f_sub = brand_face(500, s_px)
+    while max(draw.textlength(ln, font=f_sub) for ln in TAGLINE_LINES) > avail and s_px > 12:
+        s_px -= 1
+        f_sub = brand_face(500, s_px)
+
+    leading = round(s_px * 1.30)
+    gap = round(height * 0.052)
+    block = t_px + gap + leading * len(TAGLINE_LINES)
+    top = (height - block) // 2
+
+    _draw_tracked(draw, "SENBONZAKURA", f_title, track, INK, col_x, top)
+    # The tagline is centred on the NAME rather than ranged left with it: two short lines hanging
+    # off a long tracked word read as an afterthought, centred they read as a unit.
+    centre = col_x + t_w / 2
+    y = top + t_px + gap
+    for line in TAGLINE_LINES:
+        w = draw.textlength(line, font=f_sub)
+        draw.text((centre - w / 2, y), line, font=f_sub, fill=INK)
+        y += leading
+    return card
+
+
+def _compose_square(card, draw, width, height):
+    """Mark above, name and tagline below, centred. The feed-post arrangement."""
+    pad = round(width * 0.08)
+    mark_h = round(height * 0.26)
+    mark = render_mark(mark_h)
+    blob = round(mark_h * 2.05)
+    cx = width // 2
+    cy = round(height * 0.36)
+
+    h_img = halo(blob)
+    card.paste(h_img, (cx - h_img.width // 2, cy - h_img.height // 2), h_img)
+    card.paste(mark, (cx - mark.width // 2, cy - mark.height // 2), mark)
+
+    avail = width - pad * 2
+    t_px = round(height * 0.082)
+    track = round(t_px * 0.14)
+    f_title = brand_face(700, t_px)
+    while _tracked(draw, "SENBONZAKURA", f_title, track) > avail and t_px > 18:
+        t_px -= 1
+        track = round(t_px * 0.14)
+        f_title = brand_face(700, t_px)
+    t_w = _tracked(draw, "SENBONZAKURA", f_title, track)
+
+    s_px = round(height * 0.042)
+    f_sub = brand_face(500, s_px)
+    while max(draw.textlength(ln, font=f_sub) for ln in TAGLINE_LINES) > avail and s_px > 12:
+        s_px -= 1
+        f_sub = brand_face(500, s_px)
+
+    leading = round(s_px * 1.32)
+    gap = round(height * 0.040)
+    top = cy + blob // 2 - round(height * 0.03)
+
+    _draw_tracked(draw, "SENBONZAKURA", f_title, track, INK, cx - t_w / 2, top)
+    y = top + t_px + gap
+    for line in TAGLINE_LINES:
+        w = draw.textlength(line, font=f_sub)
+        draw.text((cx - w / 2, y), line, font=f_sub, fill=INK)
+        y += leading
+    return card
+
+
+def _compose_retired(width, height):
+    """The navy stacked card, kept only so its measurements are not lost. Not called."""
     Image = __import__("PIL.Image", fromlist=["Image"])
     ImageDraw = __import__("PIL.ImageDraw", fromlist=["ImageDraw"])
 

@@ -352,7 +352,18 @@ export function DriftBars() {
   );
 }
 
-/** What a run writes out, typed as a terminal transcript that loops. */
+/** What a run writes out, typed as a terminal transcript that loops.
+ *
+ * THE COMMAND HAS TO PRODUCE THE FILES UNDER IT. This showed `senbonzakura measure ./model`
+ * writing five files including `drift.json`, and said it wrote `./results/`. Both were wrong, and
+ * a journey persona found them by running the command on 2026-10-11: drift needs a second model
+ * to compare against, so without `--baseline` it is skipped rather than guessed at and only four
+ * files appear; and `--out` defaults to `./measurements`.
+ *
+ * A marketing page showing a command whose output does not match is the cheapest possible way to
+ * lose a careful reader, because it is the first thing they can check without installing
+ * anything.
+ */
 export function RunOutput() {
   const root = useRef<HTMLDivElement>(null);
   const FILES = [
@@ -396,13 +407,13 @@ export function RunOutput() {
       <div style={{ whiteSpace: 'pre', overflow: 'hidden' }}>
         <span style={{ color: 'var(--measured)' }}>$ </span>
         <span data-line style={{ color: 'var(--ink)' }}>
-          senbonzakura measure ./model
+          senbonzakura measure ./model --baseline ./base
         </span>
         <span className="caret" />
       </div>
 
       <div data-line style={{ color: 'var(--ink-faint)', whiteSpace: 'pre', overflow: 'hidden' }}>
-        wrote ./results/
+        wrote ./measurements/
       </div>
 
       {FILES.map(([name, what]) => (

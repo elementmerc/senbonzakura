@@ -844,3 +844,90 @@ def test_a_failing_pip_prints_the_command_rather_than_pointing_at_stdout(capsys,
     assert "pip exited 1" in err
     assert "the command above" not in err
     assert "-m pip install" in err, f"the command to debug is not in the message: {err}"
+
+
+# ── a crashed post-install probe must put the previous torch back ────────────────────
+#
+# Journey 1, 2026-10-13, on a real laptop: `setup --apply` ran for 21 minutes, downloaded 5.3 GB,
+# exited 2, and left the machine with no working torch at all. The CPU build that had been there
+# was gone, so the reader finished STRICTLY WORSE OFF than before they ran the command. The code
+# already knew: it printed "this environment has no working torch at all". Knowing is not fixing.
+def _crashed_after_install(monkeypatch, restore_rc=0, installed=("2.14.0", None)):
+    """Drive `--cuda <channel> --apply` to a clean install whose result segfaults.
+
+    Returns the list of pip argument lists that were run, in order, so a test can assert on the
+    restore command rather than only on the message about it.
+    """
+    calls = []
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: installed)
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+    monkeypatch.setattr(envsetup, "cuda_initialises",
+                        lambda: ("crashed", "the process died with signal 11"))
+
+    def _run(cmd, **kwargs):
+        calls.append(list(cmd[3:]))
+        return _Proc(returncode=0 if len(calls) == 1 else restore_rc)
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _run)
+    return calls
+
+
+def test_a_crashed_new_torch_is_rolled_back_to_the_build_that_was_there(capsys, monkeypatch):
+    calls = _crashed_after_install(monkeypatch)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert len(calls) == 2, f"the restore never ran: {calls}"
+    assert calls[1] == ["install", "--upgrade", "--force-reinstall", "torch==2.14.0"]
+    err = capsys.readouterr().err
+    assert "RESTORED" in err
+    # The old message asserted the environment was broken. Asserting that after a successful
+    # restore would be a lie, and a lie the reader can check.
+    assert "no working torch at all" not in err
+
+
+def test_the_rollback_pins_the_channel_the_previous_build_came_from(capsys, monkeypatch):
+    """An unpinned restore reinstalls the newest build on the channel, not the reader's build."""
+    calls = _crashed_after_install(monkeypatch, installed=("2.13.1+cu126", "cu126"))
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert calls[1] == ["install", "--upgrade", "--force-reinstall",
+                        "--index-url", f"{envsetup.INDEX}/cu126", "torch==2.13.1+cu126"]
+
+
+def test_a_rollback_that_itself_fails_prints_the_command_to_run_by_hand(capsys, monkeypatch):
+    calls = _crashed_after_install(monkeypatch, restore_rc=1)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    assert len(calls) == 2
+    err = capsys.readouterr().err
+    assert "THE RESTORE ALSO FAILED" in err
+    assert "no working torch" in err
+    assert "torch==2.14.0" in err, f"the restore command is not in the message: {err}"
+
+
+def test_a_rollback_pip_that_cannot_be_run_at_all_is_reported_not_raised(capsys, monkeypatch):
+    calls = []
+    monkeypatch.setattr(envsetup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "installed_torch", lambda: ("2.14.0", None))
+    monkeypatch.setattr(envsetup, "nvidia_gpus", list)
+    monkeypatch.setattr(envsetup, "cuda_orphans", list)
+    monkeypatch.setattr(envsetup, "cuda_initialises", lambda: ("crashed", "signal 11"))
+
+    def _run(cmd, **kwargs):
+        calls.append(list(cmd[3:]))
+        if len(calls) == 1:
+            return _Proc(returncode=0)
+        raise OSError("no such file")
+
+    monkeypatch.setattr(envsetup.subprocess, "run", _run)
+    assert envsetup.main(["--cuda", "cu130", "--apply"]) == 2
+    err = capsys.readouterr().err
+    assert "the restore could not be run" in err
+    assert "THE RESTORE ALSO FAILED" in err
+
+
+def test_no_rollback_is_attempted_when_there_was_no_torch_to_begin_with(capsys, monkeypatch):
+    """`--cuda` needs torch present to reach this path, so the None case is driven directly."""
+    assert envsetup.restore_args(None, None) is None
+    assert envsetup.restore_args(None, "cu126") is None

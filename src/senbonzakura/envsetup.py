@@ -344,6 +344,28 @@ def installed_torch():
     return v, (m.group("tag") if m else None)
 
 
+def restore_args(version, variant):
+    """The pip arguments that put back the torch that was here before `--apply` replaced it.
+
+    `None` when there is nothing to put back, which is the genuine case where torch was not
+    installed at all before the run: there is then no worse state to return the reader to.
+
+    WHY A SEPARATE FUNCTION. It is pure, so the argument construction is testable without running
+    pip, and the one thing that must never be wrong here is the version pin. Restoring an
+    unpinned `torch` would reinstall the newest build on the channel, which on the cpu channel is
+    not the build the reader had, and the whole point of this path is returning them to the state
+    they chose.
+    """
+    if not version:
+        return None
+    # A build with no local tag came from the default index (plain PyPI), so naming a channel
+    # would send pip somewhere the reader never installed from.
+    if not variant:
+        return ["install", "--upgrade", "--force-reinstall", f"torch=={version}"]
+    return ["install", "--upgrade", "--force-reinstall",
+            "--index-url", f"{INDEX}/{variant}", f"torch=={version}"]
+
+
 def cuda_orphans(names=None):
     """Installed CUDA support packages that swapping torch alone would leave behind.
 
@@ -699,10 +721,42 @@ def main(argv=None):
                   f"  So this machine cannot run that build, even though the driver reports a CUDA\n"
                   f"  version high enough for it. On WSL the usable version is capped by the\n"
                   f"  libcuda the Windows driver ships, which can be older than nvidia-smi says."
-                  f"{step_down}\n"
-                  f"  Your previous torch has been replaced, so until this is resolved this\n"
-                  f"  environment has no working torch at all. `senbonzakura doctor` will say so.",
+                  f"{step_down}", file=sys.stderr)
+            # PUT BACK WHAT WAS HERE, which until 2026-10-13 this did not do. Journey 1 ran this
+            # path on a real laptop: 21 minutes, 5.3 GB, exit 2, and an environment left with no
+            # working torch at all. The reader ended up STRICTLY WORSE OFF than before they ran
+            # the command, having lost a CPU build that could at least score. A command that
+            # replaces a working thing owns putting it back when the replacement fails; printing
+            # that the environment is now broken is a description, not a remedy.
+            back = restore_args(torch_version, variant)
+            if back is None:      # pragma: no cover - not reachable today, kept as a guard
+                # UNREACHABLE AS THE TWO CALLERS STAND: `plan` returns no command at all when
+                # torch is absent, and the `--cuda` branch requires it present, so this path
+                # needs a torch version. It stays because the invariant lives in two other
+                # functions rather than here, and the cost of it changing is a TypeError in the
+                # middle of a rollback.
+                print("\n  There was no torch here before this ran, so there is nothing to put "
+                      "back and this environment is no worse than it started.", file=sys.stderr)
+                return 2
+            print(f"\n  putting back the torch that was here before ({torch_version})...",
                   file=sys.stderr)
+            try:
+                back_rc = subprocess.run([sys.executable, "-m", "pip", *back], check=False,
+                                         timeout=PIP_TIMEOUT).returncode
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"\n  the restore could not be run: {e}", file=sys.stderr)
+                back_rc = 1
+            if back_rc == 0:
+                print(f"\n  RESTORED. torch {torch_version} is back, so this environment is as it "
+                      f"was before this command ran. The channel above is still the thing to try.",
+                      file=sys.stderr)
+            else:
+                # THE COMMAND, NOT A POINTER TO IT, matching the timeout branch above: a reader
+                # whose restore failed is the one least able to reconstruct it themselves.
+                printable_back = " ".join([sys.executable, "-m", "pip", *back])
+                print(f"\n  THE RESTORE ALSO FAILED (pip exited {back_rc}), so this environment "
+                      f"has no working torch. Run this by hand to get back to where you were:\n"
+                      f"    {printable_back}", file=sys.stderr)
             return 2
         if state == "no-device":
             print("\n  torch starts and still reports no CUDA device. That is not what this "

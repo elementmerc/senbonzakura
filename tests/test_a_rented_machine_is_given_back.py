@@ -18,8 +18,11 @@ credentials handed to a box that did not need them.
 The test that matters most on this page is `test_the_pod_goes_back_even_when_the_work_raises`.
 Everything else is arithmetic; that one is the bill.
 """
+import io
+import json
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -308,14 +311,32 @@ def _provider(body, monkeypatch):
 
 
 def test_the_price_list_is_parsed_into_offers(monkeypatch):
-    p = _provider({"data": [
-        {"id": "NVIDIA A40", "displayName": "A40", "memoryInGb": 48, "securePrice": 0.44},
+    """REWRITTEN 2026-10-13, because the shape it asserted was never real.
+
+    This fed `{"data": [...]}` with a `securePrice` field, which is what `GET /v1/gputypes` was
+    imagined to return. That path has never existed: RunPod's REST API publishes 23 paths and
+    none of them is about GPUs or prices. The catalogue is a GraphQL query, so the shape below is
+    the one the service actually answers with, copied from a real response.
+
+    The old version passed for the whole life of this module while the code it covered could not
+    return a single offer. That is what makes it worth a note rather than a quiet edit.
+    """
+    p = _provider({"data": {"gpuTypes": [
+        {"id": "NVIDIA A40", "displayName": "A40", "memoryInGb": 48, "secureCloud": True,
+         "lowestPrice": {"uninterruptablePrice": 0.44, "minimumBidPrice": 0.12}},
         {"id": "broken"},                                    # no price: skipped, not crashed
-    ]}, monkeypatch)
+    ]}}, monkeypatch)
     offers = p.offers()
     assert len(offers) == 1
     assert offers[0].usd_per_hour == pytest.approx(0.44)
     assert offers[0].vram_gb == 48
+
+
+def test_a_catalogue_answer_of_the_wrong_shape_is_refused_not_crashed(monkeypatch):
+    """A bare list used to reach the parser and raise AttributeError from inside it."""
+    p = _provider([{"id": "x"}], monkeypatch)
+    with pytest.raises(rented.RentalError, match="where a GraphQL object was expected"):
+        p.offers()
 
 
 def test_a_create_that_returns_no_id_refuses_rather_than_assuming(monkeypatch):
@@ -418,3 +439,146 @@ def test_the_fake_does_not_freeze_its_clock():
     assert pod.cost_so_far() > opening, (
         "the cost did not move in five seconds, so the fake is billing against a stopped clock "
         "and every ceiling and deadline test built on it proves nothing")
+
+
+# ── what the fake opener never asked, and the real service refused over ──────────────
+#
+# This file had 31 passing tests and the client had never made a successful request in its life.
+# Driven against RunPod for the first time on 2026-10-13, it failed three ways, and every one of
+# them was unit-testable from here. The tests simply never looked at the REQUEST, only at what a
+# canned response was turned into.
+#
+# That is the lesson worth keeping: a fake lets you assert on both halves of a call, and asserting
+# only on the half you control is how a client passes its whole suite and cannot talk to anybody.
+class _Captured:
+    """An opener that records the request and returns a canned body."""
+
+    def __init__(self, body=b"{}"):
+        self.body, self.requests = body, []
+
+    def __call__(self, req, timeout=None):
+        self.requests.append(req)
+        return _Resp(self.body)
+
+    @property
+    def last(self):
+        return self.requests[-1]
+
+
+def test_every_request_carries_a_user_agent(monkeypatch):
+    """Its absence made this client totally non-functional, and nothing here noticed.
+
+    urllib sends `Python-urllib/3.x` when nothing sets one, and RunPod sits behind Cloudflare,
+    which refuses that signature at the edge with `error code: 1010`. Every call came back 403.
+    """
+    op = _Captured(b'{"id": "p1"}')
+    p = rented.RunPodProvider(token="t", opener=op)  # noqa: S106 - a stub token for a fake opener, not a credential
+    p._call("/pods")
+    ua = op.last.get_header("User-agent")
+    assert ua, "no User-Agent header, which is what made every request fail at the edge"
+    assert "Python-urllib" not in ua
+    assert ua.startswith("senbonzakura/")
+
+
+def test_the_catalogue_request_carries_one_too():
+    """It is a different method on a different host, so it is a different place to forget."""
+    op = _Captured(b'{"data": {"gpuTypes": []}}')
+    rented.RunPodProvider(token="t", opener=op).offers()  # noqa: S106 - a stub token for a fake opener, not a credential
+    assert op.last.get_header("User-agent", "").startswith("senbonzakura/")
+
+
+def test_an_edge_refusal_is_not_reported_as_a_rejected_key():
+    """The expensive half of the defect. The 403 was read as a bad credential, so the one
+    diagnostic a user got sent them to rotate a key that was working perfectly.
+
+    Proved against the real service by sending the same request with NO key and getting the
+    identical 403.
+    """
+    def _blocked(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {},
+                                     io.BytesIO(b"error code: 1010"))
+
+    p = rented.RunPodProvider(token="t", opener=_blocked)  # noqa: S106 - a stub token for a fake opener, not a credential
+    with pytest.raises(rented.RentalError) as got:
+        p._call("/pods")
+    said = str(got.value)
+    assert "not about your key" in said
+    assert "Check RUNPOD_API_KEY" not in said, "still blaming the credential for an edge block"
+    assert "User-Agent" in said, "the message does not name the thing that actually causes it"
+
+
+def test_a_genuine_credential_rejection_still_says_so():
+    """The exemption must not swallow the case the message was written for."""
+    def _rejected(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {},
+                                     io.BytesIO(b'{"error":"invalid api key"}'))
+
+    p = rented.RunPodProvider(token="t", opener=_rejected)  # noqa: S106 - a stub token for a fake opener, not a credential
+    with pytest.raises(rented.RentalError, match="rejected the API key"):
+        p._call("/pods")
+
+
+def test_a_failure_message_names_the_method_that_was_actually_sent():
+    """It said GET for a POST. A reader working out whether a pod was created is told the wrong
+    thing about what was attempted, which is the worst moment for that.
+    """
+    def _boom(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 500, "Server Error", {},
+                                     io.BytesIO(b'{"error":"create pod: no instances"}'))
+
+    p = rented.RunPodProvider(token="t", opener=_boom)  # noqa: S106 - a stub token for a fake opener, not a credential
+    with pytest.raises(rented.RentalError) as got:
+        p._call("/pods", {"gpuTypeIds": ["x"]})
+    assert "for POST /pods" in str(got.value), str(got.value)
+
+
+def test_the_catalogue_is_read_from_graphql_not_from_a_rest_path():
+    """`GET /v1/gputypes` has never existed. RunPod's REST API publishes 23 paths and not one is
+    about GPUs or prices; the catalogue is behind GraphQL. Read from their own OpenAPI document
+    on 2026-10-13, after three spellings of the path all returned 400.
+    """
+    op = _Captured(b'{"data": {"gpuTypes": []}}')
+    rented.RunPodProvider(token="t", opener=op).offers()  # noqa: S106 - a stub token for a fake opener, not a credential
+    assert op.last.full_url == "https://api.runpod.io/graphql"
+    assert op.last.get_method() == "POST"
+    assert b"gpuTypes" in op.last.data
+
+
+def test_an_offer_is_built_from_the_on_demand_price_not_the_spot_bid():
+    """A spot instance is cheaper and can be taken away mid-run, and a module whose promise is
+    that the pod goes back should not quote a price it cannot hold.
+    """
+    body = json.dumps({"data": {"gpuTypes": [
+        {"id": "NVIDIA A40", "displayName": "A40", "memoryInGb": 48,
+         "secureCloud": True, "communityCloud": False,
+         "lowestPrice": {"uninterruptablePrice": 0.35, "minimumBidPrice": 0.11}}]}}).encode()
+    offers = rented.RunPodProvider(token="t", opener=_Captured(body)).offers()  # noqa: S106 - a stub token for a fake opener, not a credential
+    assert len(offers) == 1
+    assert offers[0].usd_per_hour == 0.35
+    assert offers[0].vram_gb == 48
+
+
+def test_a_card_with_no_on_demand_price_is_dropped_rather_than_quoted_at_its_bid():
+    body = json.dumps({"data": {"gpuTypes": [
+        {"id": "x", "displayName": "x", "memoryInGb": 8, "secureCloud": True,
+         "lowestPrice": {"uninterruptablePrice": None, "minimumBidPrice": 0.05}}]}}).encode()
+    assert rented.RunPodProvider(token="t", opener=_Captured(body)).offers() == []  # noqa: S106 - a stub token for a fake opener, not a credential
+
+
+def test_a_graphql_error_is_a_refusal_rather_than_an_empty_catalogue():
+    """GraphQL answers HTTP 200 and puts the failure in the body, so a caller checking only the
+    status reads an error as "no cards available".
+    """
+    body = json.dumps({"errors": [{"message": "unauthorised"}]}).encode()
+    p = rented.RunPodProvider(token="t", opener=_Captured(body))  # noqa: S106 - a stub token for a fake opener, not a credential
+    with pytest.raises(rented.RentalError, match="returned an error rather than a list"):
+        p.offers()
+
+
+def test_the_graphql_url_has_to_be_https():
+    """Same boundary check the REST base gets: an opener handed another scheme would carry the
+    Authorization header somewhere it should not go.
+    """
+    with pytest.raises(rented.RentalError, match="only speaks https"):
+        rented.RunPodProvider(token="t", graphql="http://example.invalid/graphql",  # noqa: S106 - a stub token for a fake opener, not a credential
+                              opener=_Captured()).offers()

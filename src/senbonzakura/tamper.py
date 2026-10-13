@@ -79,6 +79,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 
 from . import argresolve, corpora, jailbreak, lengthsweep, metrics, stamps, track
@@ -546,6 +547,23 @@ def validity(arms, pre, *, floor=metrics.MIN_REPORTABLE_N, ceiling=jailbreak.MAX
             f"describes breakage. Raise --max-new, or the edit has damaged the model and that is "
             f"the finding.")
     for name, arm in sorted(arms.items()):
+        # A DIVERGED FINETUNE IS THE SAME SHAPE AS A FLAT ONE AND USED TO PASS. The drop test
+        # below is a `<` comparison, and every comparison against a NaN is False, so a finetune
+        # whose loss blew up produced `drop = nan`, failed to trip `nan < min_drop`, and was
+        # certified as having happened. The figure that followed described a run that did not
+        # take place, which is the failure the paragraph above exists to prevent and the one this
+        # project has withdrawn four published claims over. Checked across the WHOLE series
+        # rather than the endpoints, because a loss that fell and then diverged has a finite
+        # first and last and is not a run anybody should read a number off.
+        bad = [i for i, v in enumerate(arm["loss"]["series"]) if not math.isfinite(v)]
+        if bad:
+            reasons.append(
+                f"the {name} finetune's loss stopped being a number at step {bad[0] + 1} of "
+                f"{arm['loss']['steps']}, so the training diverged rather than converged and the "
+                f"weights it left behind are not the weights a recovery finetune produces. A "
+                f"diverged run moves refusal unpredictably, and the figure would read as a "
+                f"measurement of tamper resistance. Lower --lr, or raise --train-batch.")
+            continue
         drop = arm["loss"]["first"] - arm["loss"]["last"]
         if drop < min_drop:
             reasons.append(

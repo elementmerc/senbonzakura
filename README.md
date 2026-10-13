@@ -15,7 +15,7 @@ Measure, uncensor and audit.
   <a href="https://pypi.org/project/senbonzakura/"><img src="https://img.shields.io/badge/python-3.10%20to%203.14-3776AB?logo=python&amp;logoColor=white&amp;labelColor=24292f" alt="Python 3.10 to 3.14" /></a>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-4C566A?labelColor=24292f" alt="Platform: Linux, macOS and Windows" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-A42E2B?logo=gnu&amp;logoColor=white&amp;labelColor=24292f" alt="Licence: AGPL-3.0-or-later" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-9935-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="9935 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-10100-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="10100 tests" /></a>
   <a href="https://app.codecov.io/gh/elementmerc/senbonzakura/tree/dev"><img src="https://img.shields.io/codecov/c/github/elementmerc/senbonzakura/dev?logo=codecov&amp;logoColor=white&amp;label=coverage%20dev&amp;labelColor=24292f" alt="Coverage on the development branch, measured in CI" /></a>
 </p>
 
@@ -53,14 +53,14 @@ Named for Byakuya Kuchiki's zanpakutō, the sword that scatters into a thousand 
 
 ## Try it without installing anything
 
-[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.5.0/notebooks/senbonzakura_colab.ipynb).
+[**Open the notebook in Colab**](https://colab.research.google.com/github/elementmerc/senbonzakura/blob/v0.5.1/notebooks/senbonzakura_colab.ipynb).
 Free GPU, nothing on your machine. It measures a model, edits it, then measures what that cost.
 Nobody has timed it on Colab's hardware, so it gives you no duration to hold us to.
 
 Or, if you have Docker:
 
 ```sh
-docker run --rm ghcr.io/elementmerc/senbonzakura:v0.5.0 doctor
+docker run --rm ghcr.io/elementmerc/senbonzakura:v0.5.1 doctor
 ```
 
 That image is **2.11 GB** (measured), because its torch comes from the CPU index. It cannot use a

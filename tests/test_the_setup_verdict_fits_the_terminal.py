@@ -95,6 +95,13 @@ def _verdict_lines(configuration, monkeypatch):
                         lambda: (configuration["torch_version"], configuration["variant"]))
     monkeypatch.setattr(envsetup.platform, "system", lambda: configuration["system"])
     monkeypatch.setattr(envsetup.platform, "machine", lambda: configuration["machine"])
+    # THE SECOND DIMENSION, AND IT USED TO BE THE HOST'S, 2026-10-13. `plan` consults `is_wsl`
+    # when it is not told, and that probe reads /proc/version, so this file inherited whatever
+    # machine it ran on. Under WSL the caveat about the libcuda cap is appended and the verdict
+    # grows, which is this module's own stated failure mode: "picking one case would have tested
+    # whichever case the author happened to hold". Found by running the suite on the WSL laptop,
+    # where it failed while passing everywhere else.
+    monkeypatch.setattr(envsetup, "is_wsl", lambda: configuration.get("wsl", False))
 
     out = io.StringIO()
     with redirect_stdout(out):
@@ -115,9 +122,10 @@ def _verdict_lines(configuration, monkeypatch):
     return block
 
 
+@pytest.mark.parametrize("wsl", [False, True])
 @pytest.mark.parametrize("situation", sorted(CONFIGURATIONS))
 @pytest.mark.parametrize("columns", [80, 120, 40])
-def test_no_verdict_line_exceeds_the_ceiling(situation, columns, monkeypatch):
+def test_no_verdict_line_exceeds_the_ceiling(situation, columns, wsl, monkeypatch):
     """The rule the rest of the tool already follows, applied to the one paragraph that did not.
 
     120 is in the list deliberately: `say.width()` caps at `say.CEILING`, so a wide terminal must
@@ -125,7 +133,7 @@ def test_no_verdict_line_exceeds_the_ceiling(situation, columns, monkeypatch):
     and fail here.
     """
     monkeypatch.setenv("COLUMNS", str(columns))
-    lines = _verdict_lines(CONFIGURATIONS[situation], monkeypatch)
+    lines = _verdict_lines({**CONFIGURATIONS[situation], "wsl": wsl}, monkeypatch)
     assert lines, f"{situation}: the verdict printed nothing"
     for line in lines:
         assert len(line) <= say.CEILING, (
@@ -133,32 +141,51 @@ def test_no_verdict_line_exceeds_the_ceiling(situation, columns, monkeypatch):
             f"{say.CEILING}: {line!r}")
 
 
+@pytest.mark.parametrize("wsl", [False, True])
 @pytest.mark.parametrize("situation", sorted(CONFIGURATIONS))
-def test_the_indent_is_two_then_four(situation, monkeypatch):
+def test_the_indent_is_two_then_four(situation, wsl, monkeypatch):
     """The shape is load-bearing: the hanging indent is what makes a wrapped verdict read as one
     paragraph rather than as several findings. Asserted because the fix moved responsibility for
     the indent from the print statement to textwrap, and a silent change of shape there would look
     like nothing.
     """
     monkeypatch.setenv("COLUMNS", "80")
-    first, *rest = _verdict_lines(CONFIGURATIONS[situation], monkeypatch)
+    first, *rest = _verdict_lines({**CONFIGURATIONS[situation], "wsl": wsl}, monkeypatch)
     assert first.startswith("  ") and not first.startswith("   "), repr(first)
     for line in rest:
         assert line.startswith("    "), f"a continuation line lost its hanging indent: {line!r}"
 
 
-def test_the_longest_reason_is_the_one_a_working_machine_never_sees():
+#: Which configuration produces the longest verdict, per WSL state. Two answers rather than one,
+#: because the WSL caveat is appended to the case that has a card and a CPU build, and that is
+#: enough to make it longer than the blocked case it is measured against.
+WORST_CASE = {
+    False: "torch is not installed at all",
+    True: "a CPU build beside an NVIDIA card",
+}
+
+
+@pytest.mark.parametrize("wsl", [False, True])
+def test_the_longest_reason_is_the_one_a_working_machine_never_sees(wsl):
     """Guards the reason this test enumerates configurations instead of picking one.
 
-    If the longest reason ever stops being the `blocked` one, the argument above is stale and
+    If the longest reason ever stops being the expected one, the argument above is stale and
     somebody should re-read which case is worst rather than trusting this file's docstring.
+
+    **WSL IS PASSED RATHER THAN PROBED, 2026-10-13.** This called `plan` without it, so `plan`
+    asked `is_wsl`, which reads `/proc/version`, and the test then described the machine it ran on.
+    It passed everywhere this project's CI runs and failed on the WSL laptop, where the libcuda
+    caveat makes the CPU-build-beside-a-card case the longest. **That is the exact failure this
+    module's docstring says it exists to prevent**, reintroduced through a dimension nobody had
+    enumerated, so the fix is to enumerate it rather than to pin the host.
     """
-    lengths = {name: len("{}: {}".format(*envsetup.plan(**kw)[:2]))
+    lengths = {name: len("{}: {}".format(*envsetup.plan(**kw, wsl=wsl)[:2]))
                for name, kw in CONFIGURATIONS.items()}
     worst = max(lengths, key=lengths.get)
-    assert worst == "torch is not installed at all", (
-        f"the longest verdict is now {worst!r} at {lengths[worst]} characters; this file's "
-        f"docstring explains the test's shape in terms of the blocked case and needs re-reading")
+    assert worst == WORST_CASE[wsl], (
+        f"with wsl={wsl} the longest verdict is now {worst!r} at {lengths[worst]} characters; "
+        f"this file's docstring explains the test's shape in terms of the blocked case and needs "
+        f"re-reading")
     assert lengths[worst] > say.CEILING, (
         "the longest reason now fits on one line, so this test can no longer fail for the reason "
         "it was written; check whether the reasons were shortened deliberately")

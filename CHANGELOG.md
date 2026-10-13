@@ -55,6 +55,11 @@ they ran the command.
   used to answer it with a traceback through whatever it was doing at the time
 - `senbonzakura-check` says a file is not text rather than failing with a decoding error, which is
   what happened when you pointed it at a model or a direction set
+- A flag that refuses a number out of range no longer explains it by describing something the flag
+  does not do. `--seed -1` was told that a negative seed slices rows from the end of a set, and a
+  seed does not index anything. The explanation now appears only on the flags it is true of
+- A flag you typed correctly is not suggested back to you. Passing `--steps 0` was answered with
+  "Did you mean --steps?" alongside the real complaint
 - `diff` and `budget` leave no `.part` file behind when writing `--out` fails
 
 ### Breaking

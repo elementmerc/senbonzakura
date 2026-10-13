@@ -479,3 +479,67 @@ def test_an_unreadable_file_is_a_problem_rather_than_an_unrecognised_one():
     assert not isinstance(problem, check_cli.Unrecognised), (
         "an unreadable file reported as Unrecognised goes green when swept out of a directory, "
         "which is the exact bug fixed on 2026-09-28 in a different shape")
+
+
+# ---------------------------------------------------------------------------------------------
+# G and H. Journey 2's bad-input findings: a confident explanation of a mechanism that is absent,
+# and a suggestion to type the thing you just typed
+# ---------------------------------------------------------------------------------------------
+
+
+def _refusal(argv):
+    """What the CLI says to stderr for a bad flag, as a single string."""
+    import subprocess
+    import sys
+
+    done = subprocess.run([sys.executable, "-m", "senbonzakura", *argv],
+                          capture_output=True, text=True, check=False,
+                          cwd=str(pathlib.Path(__file__).resolve().parents[1]))
+    return done.stderr + done.stdout
+
+
+@pytest.mark.parametrize(("flag", "value"), [("--steps", "0"), ("--seed", "-1")])
+def test_a_flag_that_slices_nothing_is_not_told_it_slices(flag, value):
+    """`--seed -1` was told a negative seed "slices from the END of the set".
+
+    There is no set. The explanation was printed for every flag this validator guards, and it is
+    false for most of the ninety places it is used: a seed, a batch size, an optimiser step count,
+    a token budget and a thread count do not index into anything. Found by journey 2 on three
+    flags; it was wrong on far more than three.
+    """
+    said = _refusal(["tamper", "--model", "./x", "--out", "/tmp/t.json", flag, value])
+    assert "cannot be below" in said, said
+    assert "slices from the END" not in said, (
+        f"{flag} is told about slicing a set it does not index: {said}")
+    assert "Pass" in said, "the remedy must survive the trim"
+
+
+@pytest.mark.parametrize(("command", "flag", "value"), [("score", "--skip", "-5"),
+                                                       ("tamper", "--train-n", "0")])
+def test_a_flag_that_does_slice_keeps_the_explanation(command, flag, value):
+    """And the case the validator was written for keeps the reason that made it worth writing.
+
+    `score --skip -5` scored the LAST five prompts and stamped the partition `rows-from--5`, a
+    boundary that does not exist. That is the hazard, and it is still worth explaining where it
+    is real.
+    """
+    said = _refusal([command, "--model", "./x", "--out", "/tmp/t.json", flag, value])
+    assert "slices from the END" in said, said
+
+
+def test_a_flag_you_typed_correctly_is_not_suggested_back_to_you():
+    """"Did you mean --steps?", said to somebody who typed --steps.
+
+    The near-match search reads flags out of argparse's message, which was sound while the only
+    messages naming a flag were about UNKNOWN ones. A type error names the flag too, and with a
+    colon after it, so the token did not match the known set and was offered as its own nearest
+    neighbour.
+    """
+    said = _refusal(["tamper", "--model", "./x", "--out", "/tmp/t.json", "--steps", "0"])
+    assert "Did you mean" not in said, said
+
+
+def test_a_genuine_typo_is_still_offered_the_real_flag():
+    """The fix must not cost the suggestion its whole reason for existing."""
+    said = _refusal(["score", "--model", "./x", "--batchh", "4"])
+    assert "Did you mean --batch?" in said, said

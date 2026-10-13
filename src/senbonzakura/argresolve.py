@@ -32,6 +32,26 @@ import math
 import os
 import sys
 
+#: The flags where a negative value would genuinely slice a sequence from its end, which is the
+#: hazard this validator was written for: `score --skip -5` scored the LAST five prompts and
+#: stamped the partition `rows-from--5`, a boundary that does not exist.
+#:
+#: WHY A SET RATHER THAN THE DEFAULT, 2026-10-13. That explanation was printed for every flag,
+#: and it is false for most of the ninety places this validator is used. A seed does not slice
+#: anything. Neither does a batch size, an optimiser step count, a token budget, a thread count or
+#: a direction cap. `senbonzakura tamper --seed -1` was told that a negative seed "slices from the
+#: END of the set, so the run would measure rows nobody asked for", which is a confident
+#: explanation of a mechanism that is not there. Found by journey 2, which met it on three flags;
+#: it was wrong on far more than three.
+#:
+#: Named here rather than passed at each call site because there are ninety of them, and a reason
+#: that has to be repeated ninety times is a reason that will be wrong somewhere within a month.
+SLICES_ROWS = frozenset({
+    "--n", "--skip", "--skip-harmful", "--skip-harmless", "--skip-matched", "--train-n",
+    "--dir-prompts", "--eval-refusal", "--eval-refusal-final", "--eval-kl", "--trials",
+    "--capability-n", "--probe-n", "--top-rescore",
+})
+
 
 def whole_number(what, *, minimum=0):
     """An argparse `type=` for a count or an offset: a whole number, never below `minimum`.
@@ -60,10 +80,12 @@ def whole_number(what, *, minimum=0):
             raise argparse.ArgumentTypeError(
                 f"{what} wants a whole number and got {value!r}.") from None
         if number < minimum:
+            # The slicing explanation only where it is true. See `SLICES_ROWS`.
+            why = (" A negative one slices from the END of the set, so the run would measure rows "
+                   "nobody asked for and report them under the rows they did."
+                   if what in SLICES_ROWS else "")
             raise argparse.ArgumentTypeError(
-                f"{what} is {number}, and a count or an offset cannot be below {minimum}. A "
-                f"negative one slices from the END of the set, so the run would measure rows "
-                f"nobody asked for and report them under the rows they did. Pass {minimum} or "
+                f"{what} is {number}, and it cannot be below {minimum}.{why} Pass {minimum} or "
                 f"more.")
         return number
     return parse
@@ -276,12 +298,23 @@ class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
         """
         import difflib
 
-        typed = [tok.rstrip(",") for tok in message.split()
+        # `:.` as well as the comma, because argparse writes the flag with a colon after it in
+        # "argument --steps: ...". Left as a bare comma, `--steps:` matched nothing in the known
+        # set, survived the filter below and was then suggested as the near match for itself.
+        typed = [tok.rstrip(",:.") for tok in message.split()
                  if tok.startswith("--") and len(tok) > 2]
         if not typed:
             return []
         known = sorted({opt for action in self._actions
                         for opt in action.option_strings if opt.startswith("--")})
+        # A FLAG THAT EXISTS NEEDS NO SUGGESTION, 2026-10-13. The reasoning above holds only for a
+        # message about an UNKNOWN flag, and argparse writes the flag's own name into a type error
+        # too: "argument --steps: --steps is 0, and ...". So `senbonzakura tamper --steps 0` was
+        # answered with "Did you mean --steps?", which suggests the thing the reader has just
+        # typed and reads as the tool not having understood them. Found by journey 2.
+        typed = [tok for tok in typed if tok.split("=", 1)[0] not in known]
+        if not typed:
+            return []
         out = []
         for tok in typed:
             for hit in difflib.get_close_matches(tok.split("=", 1)[0], known, n=1, cutoff=0.8):

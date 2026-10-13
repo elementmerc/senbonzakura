@@ -23,6 +23,20 @@ model or onto this project.
 
 **Do not use it against a model you are not permitted to modify.** See the licence section.
 
+## Who may use it
+
+**You must be 18 or over.** This tool's whole purpose is to remove the behaviour that stops a
+model answering harmful requests, and one ordinary run unpacks thousands of harmful prompts onto
+the machine it runs on. There is no version of that which is suitable for a child, and nothing in
+the tool checks your age, so this is a condition of use rather than a control.
+
+Writing simply is not the same as writing for children. The documentation here explains things
+plainly because a researcher reading about a method they have not met before deserves plain
+language, not because the audience is young.
+
+If you are running this on a machine somebody else administers, or on an account shared with
+somebody under 18, that corpus lands on it too.
+
 ## What it is for
 
 - Measuring how much capability an abliteration costs, which is the thing the field mostly does
@@ -90,8 +104,19 @@ Security issues, licence problems, and misuse of anything this project publishes
 at the repository, or contact the maintainer. If the report is sensitive, say so and do not put
 the detail in the issue.
 
-## No warranty
+## No warranty, and where responsibility sits
 
 This software comes with no warranty of any kind, on its correctness, its fitness for any
 purpose, or the accuracy of any number it produces. Responsibility for what is done with it, and
 with any model modified or measured using it, sits with whoever does it.
+
+That is worth spelling out, because the thing this tool produces is a model that will answer
+requests the original declined. **You are the one who runs it, you are the one who decides what to
+ask the result, and you are the one answerable for what comes out.** Neither the project nor its
+maintainer is a party to your use of it, reviews what you generate, or carries liability for it.
+To the extent the law where you are allows, that liability is excluded; where it does not, it is
+limited to the minimum that law permits.
+
+Nothing here is legal advice, and nothing here changes the AGPL-3.0-or-later terms the software is
+under. Sections 15 and 16 of that licence are the warranty and liability terms that govern; this
+section says in plainer words what they already say.

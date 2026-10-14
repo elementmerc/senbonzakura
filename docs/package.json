@@ -10,5 +10,10 @@
   },
   "devDependencies": {
     "vitepress": "1.6.4"
+  },
+  "overrides": {
+    "@vue/server-renderer": "3.5.42",
+    "vue": "3.5.42",
+    "esbuild": "0.25.0"
   }
 }

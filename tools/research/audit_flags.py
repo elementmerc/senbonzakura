@@ -73,6 +73,35 @@ SELF_HANDLED_DESTS = {
     "print_completion",
 }
 
+#: Flags a module inherits from a parser it imports and never receives, each with the reason it is
+#: here and what would remove it. Keyed exactly: (importing module path, parser function, flag dest).
+#: An exception that no longer matches an inherited flag fails the gate, so the list shrinks as the
+#: code changes rather than growing as it is forgotten. A new entry is a decision to say why.
+_S1_PANEL = "workbench/slices/s1_fit/panel.py"
+_S1_NOT_RECEIVED = (
+    "the S1 fit panel calls the budget parser with its own fixed argument list, `--model` and nothing "
+    "else, to read the defaults a `senbonzakura budget` run would plan with. No operator flag reaches "
+    "the panel, so this one is not offered to anybody through it, and the panel is not a command that "
+    "could drop it. ")
+NOT_OFFERED = {
+    (_S1_PANEL, "build_budget_parser", "out"): (
+        _S1_NOT_RECEIVED + "`--out` names where the budget command writes its report, and the panel "
+        "writes nothing. Removed when the panel takes its run settings from a caller that can pass them."),
+    (_S1_PANEL, "build_budget_parser", "read_rate"): (
+        _S1_NOT_RECEIVED + "`--read-rate` overrides the disk speed the budget assumes, and the panel "
+        "plans with the default the command plans with. Removed when the panel takes its run settings "
+        "from a caller that can pass them."),
+    (_S1_PANEL, "build_budget_parser", "no_pinned_probe"): (
+        _S1_NOT_RECEIVED + "`--no-pinned-probe` skips the page-locked memory probe, and the panel never "
+        "runs that probe, which its machine section records as not measured. Removed when the panel "
+        "takes its run settings from a caller that can pass them."),
+    (_S1_PANEL, "build_budget_parser", "model"): (
+        "the S1 fit panel supplies `--model` itself, from the checkpoint it is budgeting, so the value is "
+        "passed rather than offered, and the panel uses the path it already holds instead of reading it "
+        "back from the namespace. Removed when the panel reads its model from the parsed namespace, or "
+        "stops parsing with the budget parser at all."),
+}
+
 # The names an argparse Namespace travels under in this codebase. `own` is the one that matters:
 # several commands separate their own flags from the shared loader's `args`, and a checker that
 # does not know that reports every one of them dead.
@@ -284,12 +313,17 @@ def resolve_import(importer, level, module, package, known):
     return None
 
 
-def analyse(root):
+def analyse(root, not_offered=None):
     """Return (declared, read, splat, parsed_count) for every first-party module under `root`.
 
     Modules are named by their path under `root`, so two modules that share a leaf name stay two
     modules. The package name is the root's own name, which is what its absolute imports begin with.
+
+    `not_offered` is the reasoned exception table (`NOT_OFFERED` by default). An inherited flag listed
+    there is not attributed to the importer, and only that importer, that parser and that flag.
     """
+    if not_offered is None:
+        not_offered = NOT_OFFERED
     root = pathlib.Path(root)
     package = root.name
     paths = [p for p in sorted(root.rglob("*.py")) if not any(s in str(p) for s in SKIP_DIRS)]
@@ -325,6 +359,9 @@ def analyse(root):
                 # The importer asked this parser for a version without that flag, so it never
                 # offered it and cannot have dropped it.
                 if (imported, dest) in off:
+                    continue
+                # A reasoned exception: the importer never receives this flag, and the table says why.
+                if (module, imported, dest) in not_offered:
                     continue
                 declared[dest].append((module, 0, imported))
 

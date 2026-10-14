@@ -502,3 +502,71 @@ def test_a_parameter_shadows_an_outer_parse_result(tmp_path):
             return inner
     """)
     assert [d for d, _ in dead] == ["thing"]
+
+
+# ── the reasoned exceptions: exact, reasoned, and not stale ──────────────────────────────────────
+def test_every_not_offered_exception_says_why_it_is_there_and_what_would_remove_it():
+    for key, reason in audit_flags.NOT_OFFERED.items():
+        assert reason.strip(), key
+        assert "Removed when" in reason or "removed when" in reason, (
+            f"{key} must say what would remove it, so the exception has an owner: {reason!r}")
+
+
+def test_every_not_offered_exception_still_matches_an_inherited_flag_so_none_is_stale():
+    """With the table switched off, each exception must be a flag the audit would otherwise report.
+    An exception that matches nothing is a flag somebody fixed, and it should be deleted.
+    """
+    declared, read, _splat, _n = audit_flags.analyse(PACKAGE, not_offered={})
+    _dead, _inspected, unkept = audit_flags.findings(declared, read)
+    reported = {(module, fn, dest) for dest, module, _line, fn, _mods in unkept}
+    stale = [key for key in audit_flags.NOT_OFFERED if key not in reported]
+    assert not stale, f"these exceptions no longer match an inherited flag; delete them: {stale}"
+
+
+def test_an_exception_excuses_only_its_own_importer_and_its_own_flag(tmp_path):
+    """Two importers of the same parser. The exception names one of them, so the other still answers
+    for the same flag. An exception keyed loosely would silently excuse every importer.
+    """
+    (tmp_path / "parser.py").write_text(textwrap.dedent("""
+        def build_parser():
+            ap = make()
+            ap.add_argument("--thing", default="")
+            ap.add_argument("--other", default="")
+            return ap
+    """), encoding="utf-8")
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(textwrap.dedent("""
+            from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.other
+        """), encoding="utf-8")
+    (tmp_path / "elsewhere.py").write_text("def go(args):\n    return args.thing\n", encoding="utf-8")
+    declared, read, _splat, _n = audit_flags.analyse(
+        tmp_path, not_offered={("a.py", "build_parser", "thing"): "test"})
+    _dead, _inspected, unkept = audit_flags.findings(declared, read)
+    thing = sorted(module for dest, module, *_ in unkept if dest == "thing")
+    assert thing == ["b.py"], thing
+
+
+def test_an_exception_does_not_excuse_a_flag_that_nothing_reads(tmp_path):
+    """An exception only removes an inherited promise. It does not make a flag read, so a flag that
+    nothing reads is still reported dead, whatever the table says.
+    """
+    (tmp_path / "parser.py").write_text(textwrap.dedent("""
+        def build_parser():
+            ap = make()
+            ap.add_argument("--gone", default="")
+            return ap
+    """), encoding="utf-8")
+    (tmp_path / "a.py").write_text(textwrap.dedent("""
+        from .parser import build_parser
+
+        def main(argv=None):
+            return build_parser().parse_args(argv)
+    """), encoding="utf-8")
+    declared, read, _splat, _n = audit_flags.analyse(
+        tmp_path, not_offered={("a.py", "build_parser", "gone"): "test"})
+    dead, _inspected, _unkept = audit_flags.findings(declared, read)
+    assert [d for d, _ in dead] == ["gone"]

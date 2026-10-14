@@ -277,6 +277,39 @@ def estimator_description(metric: str, estimator: str) -> str:
     return described
 
 
+#: What a writer records in `seeds` when its interval draws no samples, so there is no seed for it to
+#: name. The stamp must say this out loud rather than leave the field out: an absent field means "not
+#: recorded", and the gate treats that as unknown and refuses. "No seed because none applies" and
+#: "seed not recorded" must not look alike, or a writer that forgot would pass as one that is sound.
+NO_SEED = "no-seed"
+
+
+def normalise_seeds(seeds):
+    """The `seeds` value a stamp records: a sorted list of integers, or `NO_SEED`.
+
+    None is refused, because it is what a writer that did not decide would pass, and absence and
+    `None` are the claims the gate has to tell apart from a recorded method with no seed.
+    """
+    if seeds is None:
+        raise MeasurementError(
+            "a measurement was stamped with seeds=None, which says the writer did not decide what "
+            "its interval rests on. Pass the seeds the interval was drawn over, or NO_SEED if the "
+            "method draws no samples.")
+    if isinstance(seeds, str):
+        if seeds == NO_SEED:
+            return NO_SEED
+        raise MeasurementError(f"seeds may be a list of integers or NO_SEED, not {seeds!r}")
+    try:
+        values = [int(s) for s in seeds]
+    except (TypeError, ValueError) as e:
+        raise MeasurementError(f"seeds must be a list of integers, got {seeds!r}") from e
+    if not values:
+        raise MeasurementError(
+            "seeds is an empty list. A sampled interval has at least one seed, and a method that "
+            "draws no samples says so with NO_SEED.")
+    return sorted(values)
+
+
 def identity(metric: str, estimator: str, *, n=None, units=None, **extra) -> dict:
     """The identity block for one measurement.
 

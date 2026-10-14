@@ -599,8 +599,9 @@ def main(argv=None):
         if a.no_control else None)
     res["self_invalidated"] = validity(single_turn, arms, overflowed)
 
+    # THE CONVERSION INTERVAL IS A WILSON SCORE on the converted count: no sampling, no seed.
     pinned = stamps.pinned(prompts=requests, model=model, tok=tok,
-                           load_in_4bit=a.load_in_4bit)
+                           load_in_4bit=a.load_in_4bit, seeds=stamps.NO_SEED)
     _stamp(res, arm_blocks["arm"], pinned)
     _save_transcripts(a.save_transcripts, transcript_rows)
     with atomic_write(a.out) as f:

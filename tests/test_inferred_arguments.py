@@ -173,8 +173,9 @@ def test_the_metric_and_the_path_are_both_worked_out_end_to_end(tmp_path, monkey
         "value": 11.2, "interval": [11.0, 11.4], "n": 200, "higher_is_better": False,
         "estimator": "senbonzakura-ruler", "units": "perplexity",
         "input_digest": "0" * 64, "partition": "measure",
-        "prompt_format": "chat", "tool_version": "0.4.0", "precision": "bfloat16"}}}))
-    rc = baseline.main([str(art), "--seeds", "0"])
+        "prompt_format": "chat", "tool_version": "0.4.0", "precision": "bfloat16",
+        "seeds": "no-seed"}}}))
+    rc = baseline.main([str(art), "--seeds", "no-seed"])
     out = capsys.readouterr()
     assert rc == 0, out.err
     assert (tmp_path / "baselines" / "coherence.json").is_file(), out.out

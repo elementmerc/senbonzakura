@@ -222,6 +222,8 @@ def _stamped(value, n, count, **over):
         "value": value, "n": n, "count": count, "interval": [0.1, 0.3], "reportable": True,
         "input_digest": "abc123", "partition": "all-rows", "prompt_format": "raw",
         "precision": "bfloat16", "tool_version": "0.4.1",
+        # GREEDY DECODING AND A WILSON INTERVAL: the writer stamps NO_SEED, and so must the fixture.
+        "seeds": "no-seed",
     }
     block.update(over)
     return block

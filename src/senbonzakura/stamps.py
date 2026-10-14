@@ -26,6 +26,13 @@ than silently compared against one whose partition is known.
 
 import hashlib
 
+from senbonzakura_check import measurement
+from senbonzakura_check.measurement import normalise_seeds
+
+#: The writer-facing name for "this method draws no samples", so a caller reads `stamps.NO_SEED`
+#: beside `stamps.pinned` rather than reaching into the checker package.
+NO_SEED = measurement.NO_SEED
+
 #: What `partition` says for a run that covered every row of its input.
 #:
 #: Not a hole and not `measure`: a run over the whole set includes the rows the surgery was fitted
@@ -320,9 +327,15 @@ def pinned_fields_that_differ(stamps):
     return sorted(field for field, values in seen.items() if len(values) > 1)
 
 
-def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorded_skip=None,
+def pinned(*, prompts, seeds, model=None, tok=None, load_in_4bit=False, skip=0, recorded_skip=None,
            verified=None, input_digest=None, partition=None, prompt_format=None, precision=None):
-    """The five pinned fields a writer passes straight into `measurement.stamp`, plus the version.
+    """The pinned fields a writer passes straight into `measurement.stamp`, plus the version.
+
+    `seeds` is REQUIRED, with no default, and that is the point. The seed set an interval was drawn
+    over is part of what the number is, and a derivation cannot know it: only the writer does. A
+    default would let a writer that never thought about seeds stamp a figure the gate compares as if
+    it were a figure from any other seed set. Pass the seeds the interval was drawn over, or
+    `NO_SEED` when the method draws no samples (a Wilson interval, a deterministic probe).
 
     Every derived value can be overridden, because two of the five writers genuinely know better
     than the derivation does: `capability` has a digest of its exam items, and `coherence` reads a
@@ -331,6 +344,7 @@ def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorde
     """
     from ._version import __version__
     return {
+        "seeds": normalise_seeds(seeds),
         "input_digest": input_digest if input_digest is not None else input_digest_of(prompts),
         "partition": partition if partition is not None else partition_of(
             skip, recorded_skip, verified=verified),

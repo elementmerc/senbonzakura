@@ -1402,9 +1402,10 @@ def main(argv=None):
     # the track's own manifest records the same skip: `resolve_skips` accepts an explicit flag
     # too, and a flag nobody checked is not a partition anybody can trace afterwards.
     _recorded = (read_manifest(a.track) or {}).get("skip_harmful") if a.track else None
+    # THE COMPASS AUC IS A SEEDED BOOTSTRAP, and so is its null panel: both were drawn over a.seed.
     _stamp_compass(res, stamps.pinned(prompts=[*harmful, *harmless], model=model, tok=tok,
                                       load_in_4bit=a.load_in_4bit, skip=a.skip_harmful,
-                                      recorded_skip=_recorded))
+                                      recorded_skip=_recorded, seeds=[a.seed]))
     # BEFORE THE FILE IS WRITTEN, which is the whole point and which the first version of this got
     # wrong. The field was being set further down, beside the message that prints it, so the exit
     # status was right and the artefact carried nothing: the checker rule written to refuse such a

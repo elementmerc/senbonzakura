@@ -12,11 +12,9 @@ moved". The reassurance was the defect.
 
 The defect was confirmed against the real gate command on 2026-10-14, before this change.
 
-Also pinned here, as a strict expected failure rather than a silent gap: the gate does not compare the
-seed set a baseline was measured over. The seed set is recorded and printed, but it is not pinned, so a
-run over different seeds passes with the baseline's seeds in its own output. That needs every writer to
-state its seeds, which is a larger change than this one; the strict marker turns the gap into a failure
-the moment somebody closes it, so the marker has to come off in the same commit.
+Also pinned here: the gate compares the seed set a baseline was measured over, so a run over different
+seeds is refused rather than passed with the baseline's seeds printed beside it. That was a strict
+expected failure until the writers stated their seeds, and the marker came off in the same commit.
 """
 from __future__ import annotations
 
@@ -82,11 +80,6 @@ def test_the_gate_refuses_a_wide_run_against_a_zero_width_baseline_end_to_end(tm
     assert any("zero width" in line for line in lines), lines
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "KNOWN GAP, 2026-10-14: the gate does not pin the seed set. A baseline and a run over different "
-    "seeds compare silently, and the gate prints the baseline's seeds beside a result from another "
-    "set. Closing it needs every writer to state its seeds, which is a change across the pinned() "
-    "callers and their tests. Remove this marker in the commit that pins seeds."))
 def test_a_run_over_a_different_seed_set_is_refused(tmp_path):
     base = _addressed(b.record(point=0.094, interval=[0.061, 0.133], **COMMON))
     other = dict(COMMON, seeds=[1, 2, 3])

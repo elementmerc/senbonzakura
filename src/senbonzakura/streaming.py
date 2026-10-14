@@ -139,7 +139,11 @@ def _element_count(shape):
 MAX_HEADER_BYTES = 100 * 1024 * 1024
 
 
-def read_header(path):
+def _open_binary(path):
+    return open(path, "rb")
+
+
+def read_header(path, *, opener=_open_binary):
     """The header of a safetensors shard, and the offset its tensor data starts at.
 
     Validated rather than trusted. The failure being guarded against is not a corrupt file, which
@@ -168,7 +172,9 @@ def read_header(path):
     # The read and the judgement are kept apart: only the read can raise OSError, and wrapping the
     # validation in the same try would turn a future bug in it into "cannot be read".
     try:
-        with open(path, "rb") as fh:
+        # The opener is injected so a caller that has already checked the path can open it through
+        # that check, rather than by the default, which follows a link in the last component.
+        with opener(path) as fh:
             raw = fh.read(8)
             size = os.fstat(fh.fileno()).st_size
             length = struct.unpack("<Q", raw)[0] if len(raw) == 8 else None
